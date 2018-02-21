@@ -1,0 +1,19 @@
+VISUALISATION
+- Plotter for complex magnetizations!
+
+PROPAGATION
+- Instead of summing 512^3 matrix to get complex signal, take take k=0 term
+  in k-space
+- Along the same lines, instead of keeping only the total complex signal,
+  include some other components of kspace in the iFFT; this allows one to
+  to save a low-resolution, spatially averaged signal with an accurate
+  total complex signal
+    - May not really be possible (or would much slower time-wise, at least)
+      using VTV propagation methods
+
+GEOMETRY
+- Periodic minor cylinders!
+
+
+
+MEASURING BLOOD OXYGENATION INDIRECTLY VIA BEAT PATTERNS IDEA
