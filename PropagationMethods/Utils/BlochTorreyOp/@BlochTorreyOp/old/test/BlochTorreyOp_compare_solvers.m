@@ -38,10 +38,10 @@ end
 %         dy = BlochTorreyAction(y, A.h, A.D, A.Diag, A.gsize);
     end
 
-% Compare with expmv_jd
+% Compare with expmv
 tic
-ODESOLVER{end+1} = @expmv_jd;
-SOLNS{end+1} = expmv_jd(tspan(end),A,x(:),[],'double',true,false);
+ODESOLVER{end+1} = @expmv;
+SOLNS{end+1} = expmv(tspan(end),A,x(:),[],'double',true,false);
 display_toc_time(toc,'expmv');
 
 % Display errors with expmv result (should be on the order of set tol's)

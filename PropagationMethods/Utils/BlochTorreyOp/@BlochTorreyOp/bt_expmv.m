@@ -11,13 +11,13 @@ expmvargs = {opts.prec,opts.shift,opts.bal,opts.full_term,opts.prnt};
 x = x0(:);
 switch upper(opts.type)
     case 'GRE'
-        M = select_taylor_degree_jd(t*A,x,[],[],selectdegargs{:});
-        x = expmv_jd(t,A,x,M,expmvargs{:});
+        M = select_taylor_degree(t*A,x,[],[],selectdegargs{:});
+        x = expmv(t,A,x,M,expmvargs{:});
     case 'SE'
-        M = select_taylor_degree_jd((t/2)*A,x,[],[],selectdegargs{:});
-        x = expmv_jd(t/2,A,x,M,expmvargs{:});
+        M = select_taylor_degree((t/2)*A,x,[],[],selectdegargs{:});
+        x = expmv(t/2,A,x,M,expmvargs{:});
         x = conj(x);
-        x = expmv_jd(t/2,A,x,M,expmvargs{:});
+        x = expmv(t/2,A,x,M,expmvargs{:});
     otherwise
         error('type must be either ''SE'' or ''GRE''.');
 end

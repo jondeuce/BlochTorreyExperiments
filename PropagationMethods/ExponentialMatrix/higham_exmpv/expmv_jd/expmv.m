@@ -1,6 +1,6 @@
 function [f,s,m,mv,mvd,unA] = ...
-          expmv_jd(t,A,b,M,prec,shift,bal,full_term,prnt)
-%EXPMV_JD   Matrix exponential times vector or matrix.
+          expmv(t,A,b,M,prec,shift,bal,full_term,prnt)
+%EXPMV   Matrix exponential times vector or matrix.
 %   [F,S,M,MV,MVD] = EXPMV(t,A,B,[],PREC) computes EXPM(t*A)*B without
 %   explicitly forming EXPM(t*A). PREC is the required accuracy, 'double',
 %   'single' or 'half', and defaults to CLASS(A).
@@ -19,6 +19,8 @@ function [f,s,m,mv,mvd,unA] = ...
 %   SIAM J. Sci. Comput., 33(2):488--511, 2011.  Algorithm 3.2.
 
 %   Awad H. Al-Mohy and Nicholas J. Higham, November 9, 2010.
+
+%   Edited by JD: June 2017
 
 if nargin < 9 || isempty(prnt), prnt = false; end
 if nargin < 8 || isempty(full_term), full_term = false; end
@@ -39,14 +41,10 @@ end
 if nargin < 5 || isempty(prec), prec = class(A); end
 if nargin < 4 || isempty(M)
    tt = 1;
-   [M,mvd,alpha,unA] = select_taylor_degree_jd(t*A,b,[],[],prec,false,false);
+   [M,mvd,alpha,unA] = select_taylor_degree(t*A,b,[],[],prec,false,false);
    mv = mvd;
 else
-   %tt = t; mv = 0; mvd = 0;
-   
-   % jd: tt = 1 so that we can just hoist select_taylor_degree_jd(t*A,...)
-   %     outside of this function call
-   tt = 1; mv = 0; mvd = 0;
+   tt = t; mv = 0; mvd = 0;
 end
 
 switch prec

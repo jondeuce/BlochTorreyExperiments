@@ -463,7 +463,7 @@ classdef BlochTorreyOp
         end
         
         function [ c, mv ] = normAm( A, m, checkpos ) %jd
-            %NORMAM_JD   Estimate of 1-norm of power of matrix.
+            %NORMAM   Estimate of 1-norm of power of matrix.
             %   NORMAM(A,m) estimates norm(A^m,1).
             %   If A has nonnegative elements the estimate is exact.
             %   [C,MV] = NORMAM(A,m) returns the estimate C and the number MV of

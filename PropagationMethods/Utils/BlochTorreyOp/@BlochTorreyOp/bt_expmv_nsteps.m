@@ -18,12 +18,12 @@ if strcmpi(opts.calcsignal,'all')
 end
 
 x = x0(:);
-M = select_taylor_degree_jd(dt*A,x,[],[],selectdegargs{:});
+M = select_taylor_degree(dt*A,x,[],[],selectdegargs{:});
 
 for jj = 1:n
     looptime = tic;
     
-    x = expmv_jd(dt,A,x,M,expmvargs{:});
+    x = expmv(dt,A,x,M,expmvargs{:});
     
     if strcmpi(opts.calcsignal,'all')
         signal(jj+1) = scalesum * sum(x);

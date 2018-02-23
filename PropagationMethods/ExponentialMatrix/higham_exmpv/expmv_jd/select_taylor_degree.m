@@ -1,6 +1,6 @@
 function  [M,mv,alpha,unA] = ...
-           select_taylor_degree_jd(A,b,m_max,p_max,prec,shift,bal,force_estm,force_no_estm)
-%SELECT_TAYLOR_DEGREE_JD   Select degree of Taylor approximation.
+           select_taylor_degree(A,b,m_max,p_max,prec,shift,bal,force_estm,force_no_estm)
+%SELECT_TAYLOR_DEGREE   Select degree of Taylor approximation.
 %   [M,MV,alpha,unA] = SELECT_TAYLOR_DEGREE(A,b,m_max,p_max) forms a matrix M
 %   for use in determining the truncated Taylor series degree in EXPMV
 %   and EXPMV_TSPAN, based on parameters m_max and p_max.

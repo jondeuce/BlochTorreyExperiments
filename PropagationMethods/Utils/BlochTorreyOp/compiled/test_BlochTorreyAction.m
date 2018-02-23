@@ -2,8 +2,8 @@ function test_BlochTorreyAction
 %TEST_BLOCHTORREYACTION Tests the function BlochTorreyAction
 
 n = 25;
-main_test([num2str(n),' 3D complex double'],n,50,[1,3]);
-main_test([num2str(n),' 4D complex double'],n,20,[1,4]);
+main_test([num2str(n),' 3D complex double'],n,100,[1,3]);
+main_test([num2str(n),' 4D complex double'],n,30,[1,4]);
 
 end
 
@@ -17,7 +17,7 @@ for ii = 1:n
     h  = rand;
     D  = rand;
     f  = -6*D/h^2 - G;
-    iters = randi(5);
+    iters = randi(3);
     
     gsize = size(x);
     ndim  = ndims(x);
@@ -30,10 +30,19 @@ for ii = 1:n
     end
     
     y1 = BlochTorreyAction(z,h,D,f,gsize(1:3),iters);
-    y2 = BlochTorreyAction_brute(x,h,D,f,iters);
-    
     y1 = reshape(y1,size(x));
+    y2 = BlochTorreyAction_brute(x,h,D,f,iters);
+        
+    err  = infnorm(y1-y2);
+    maxy = infnorm(y1);
+    if err >= 10 * eps(maxy)
+        keyboard;
+    end
     
+    y1 = BlochTorreyAction(z,h,D,f,gsize(1:3),iters,'transp');
+    y1 = reshape(y1,size(x));
+    y2 = BlochTorreyAction_brute(x,h,D,conj(f),iters);
+        
     err  = infnorm(y1-y2);
     maxy = infnorm(y1);
     if err >= 10 * eps(maxy)

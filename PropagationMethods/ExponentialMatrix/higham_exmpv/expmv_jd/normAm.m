@@ -1,5 +1,5 @@
-function [c,mv] = normAm_jd(A,m,checkpos) %jd
-%NORMAM_JD   Estimate of 1-norm of power of matrix.
+function [c,mv] = normAm(A,m,checkpos) %jd
+%NORMAM   Estimate of 1-norm of power of matrix.
 %   NORMAM(A,m) estimates norm(A^m,1).
 %   If A has nonnegative elements the estimate is exact.
 %   [C,MV] = NORMAM(A,m) returns the estimate C and the number MV of
@@ -10,6 +10,8 @@ function [c,mv] = normAm_jd(A,m,checkpos) %jd
 %   970-989, 2009.
 
 %   Awad H. Al-Mohy and Nicholas J. Higham, September 7, 2010.
+
+%   Edited by JD: June 2017
 
 if nargin < 3 %jd
     checkpos = true;
