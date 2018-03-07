@@ -1,5 +1,5 @@
 function [ G ] = ImproveMajorBVF( G, prnt )
-%IMPROVEMAJORBVF 
+%IMPROVEMAJORBVF
 
 if nargin < 2
     prnt = false;
@@ -11,12 +11,47 @@ isUnit      =   true;
 isCentered  =   true;
 prec        =   'double';
 
+% We call the angle of the major vessels to be effectively zero if the sine
+% of the angle is less than one tenth the smallest relative subvoxel size,
+% as in this case, the angle between the major vessel and vertical would
+% not affect the discrete cylinder map significantly, and we can
+% approximate the cylinders as uniformly vertical.
+% Similarly, we can check if the cosine of the angle is small to check if
+% the vessel is effectively perpendicular.
+isAngleZero = @(th) abs(sind(th)) < 0.1 * G.SubVoxSize / max(G.VoxelSize);
+isAngleNinety = @(th) abs(cosd(th)) < 0.1 * G.SubVoxSize / max(G.VoxelSize);
+
 % Anonymous functions and parameters for minimization
-get_Vmap    =  @(R,p0) getCylinderMask( [G.GridSize(1:2),1], G.SubVoxSize, G.VoxelCenter, [G.VoxelSize(1:2),G.SubVoxSize], p0, G.vz0, R*ones(1,G.Nmajor), G.vx0, G.vy0, isUnit, isCentered, prec, [] );
-get_BV      =  @(R,p0) G.GridSize(3) * sum(reshape(get_Vmap(R,p0),[],1));
-get_rand_p0 =  @() G.p0 + G.SubVoxSize * [2*rand(2,G.Nmajor)-1; zeros(1,G.Nmajor)];
-dBV_Fun     =  @(R) 2*pi*R * G.Nmajor * (G.GridSize(3) / G.SubVoxSize^2);
-r0_bounds   =  [ 0.5 * G.Rmajor, min( 1.5 * G.Rmajor, min(G.VoxelSize(1:2))/(2*sqrt(G.Nmajor)) ) ]; % max allowed radius satisfies 2*R*sqrt(N) = Width, e.g. if they were all in a regular grid
+if isAngleZero( G.MajorAngle )
+    SliceGsize  =  [G.GridSize(1:2), 1];
+    SliceVsize  =  [G.VoxelSize(1:2), G.SubVoxSize];
+    RepDimGsize =  G.GridSize(3); % repeated dimension size
+    
+    get_Vmap    =  @(R,p0) getCylinderMask( SliceGsize, G.SubVoxSize, G.VoxelCenter, SliceVsize, p0, G.vz0, R*ones(1,G.Nmajor), G.vx0, G.vy0, isUnit, isCentered, prec, [] );
+    get_BV      =  @(R,p0) RepDimGsize * sum(vec(get_Vmap(R,p0)));
+    get_rand_p0 =  @() G.p0 + G.SubVoxSize * [2*rand(2,G.Nmajor)-1; zeros(1,G.Nmajor)];
+    % dBV_Fun     =  @(R) 2*pi*R * G.Nmajor * (RepDimGsize / G.SubVoxSize^2);
+elseif isAngleNinety( G.MajorAngle )
+    SliceGsize  =  [1, G.GridSize(2:3)];
+    SliceVsize  =  [G.SubVoxSize, G.VoxelSize(2:3)];
+    RepDimGsize =  G.GridSize(1); % repeated dimension size
+    
+    get_Vmap    =  @(R,p0) getCylinderMask( SliceGsize, G.SubVoxSize, G.VoxelCenter, SliceVsize, p0, G.vz0, R*ones(1,G.Nmajor), G.vx0, G.vy0, isUnit, isCentered, prec, [] );
+    get_BV      =  @(R,p0) RepDimGsize * sum(vec(get_Vmap(R,p0)));
+    get_rand_p0 =  @() G.p0 + G.SubVoxSize * [zeros(1,G.Nmajor); 2*rand(2,G.Nmajor)-1];
+    % dBV_Fun     =  @(R) 2*pi*R * G.Nmajor * (RepDimGsize / G.SubVoxSize^2);
+else
+    get_Vmap    =  @(R,p0) getCylinderMask( G.GridSize, G.SubVoxSize, G.VoxelCenter, G.VoxelSize, p0, G.vz0, R*ones(1,G.Nmajor), G.vx0, G.vy0, isUnit, isCentered, prec, [] );
+    get_BV      =  @(R,p0) sum(vec(get_Vmap(R,p0)));
+    get_rand_p0 =  @() G.p0 + roty(G.MajorAngle) * [G.SubVoxSize * (2*rand(2,G.Nmajor)-1); zeros(1,G.Nmajor)];
+    
+    % TODO: this has not been updated
+    % dBV_Fun   =  @(R) 2*pi*R * G.Nmajor * (G.GridSize(3) / G.SubVoxSize^2);
+end
+
+% max allowed radius satisfies 2*R*sqrt(N) = Width, e.g. if they were all in a regular grid
+r0_bounds   =  [ 0.5 * G.Rmajor, min( 1.5 * G.Rmajor, min(G.VoxelSize)/(2*sqrt(G.Nmajor)) ) ];
+
 BV_Target   =  G.Targets.aBVF * prod(G.GridSize); % Blood Volume in units of voxels
 BV_Tol      =  0.001 * BV_Target * (G.SubVoxSize/max(G.r0));
 
@@ -42,7 +77,7 @@ BV_Tol      =  0.001 * BV_Target * (G.SubVoxSize/max(G.r0));
 %     'TolX',             1e-3 * G.SubVoxSize, ...
 %     'TypicalX',        	mean(G.r0) ...
 %     );
-% 
+%
 % f2016a = fields(R2016a_And_Later_Opts);
 % f2015a = fields(R2015a_And_Earlier_Opts);
 % lsqnonlin_opts = optimoptions('lsqnonlin');
@@ -51,7 +86,7 @@ BV_Tol      =  0.001 * BV_Target * (G.SubVoxSize/max(G.r0));
 %         lsqnonlin_opts.(f2016a{ii}) = R2016a_And_Later_Opts.(f2016a{ii});
 %     elseif any(ismember(fields(lsqnonlin_opts),f2015a{ii}))
 %         lsqnonlin_opts.(f2015a{ii}) = R2015a_And_Earlier_Opts.(f2015a{ii});
-%     end        
+%     end
 % end
 
 % Initial parameters
@@ -71,14 +106,21 @@ while (iter < iter_MAX) && (abs(BV_CurrentBest - BV_Target) > BV_Tol)
     %[r0, BV_err_norm, BV_err] = lsqnonlin( @fopt, G.Rmajor, ...
     %    r0 - 2*G.SubVoxSize, r0 + 2*G.SubVoxSize, lsqnonlin_opts );
     
-    ri = linspace(r0_bounds(1),r0_bounds(2),9);
+    ri = linspace(r0_bounds(1),r0_bounds(2),5);
     yi = fopt(ri);
     cp = polyfit(ri,yi,2); % Should be approx. quandratic; minimize this first
     fp = @(R) polyval(cp,R);
     r0 = fzero(fp,r0_bounds);
     
+    % minimize objective with small penalty on moving far from initial
+    % guess with the hopes of providing a unique solution
     foptsq_penalized = @(R) (fopt(R)/prod(G.GridSize)).^2 + 1e-9*((R-r0)/r0).^2;
-    [r0,BV_err_norm] = patternsearch(foptsq_penalized,r0,[],[],[],[],r0-0.5*G.SubVoxSize,r0+0.5*G.SubVoxSize);
+    
+    [Acon,bcon,Aeq,beq] = deal([]);
+    [lb,ub] = deal(r0 - 0.5*G.SubVoxSize, r0 + 0.5*G.SubVoxSize);
+    [r0,BV_err_norm] = patternsearch(foptsq_penalized,r0,Acon,bcon,Aeq,beq,lb,ub,...
+        ...%psoptimset('tolx', 1e-6*G.SubVoxSize, 'tolmesh', 1e-6*G.SubVoxSize));
+        psoptimset('tolx', 1e-6 * max(G.r0), 'tolmesh', 1e-6 * max(G.r0)) );
     BV_err = sqrt(BV_err_norm); %unsigned, but doesn't matter
     
     if abs(BV_err) < abs(BV_CurrentBest - BV_Target)
@@ -106,89 +148,6 @@ if iter >= iter_MAX
 end
 
 G.Rmajor = r0_CurrentBest;
-G.aBVF = BV_CurrentBest/prod(G.GridSize);
-G.p0 = p0_CurrentBest;
-
-G.RmajorFun = @(varargin) G.Rmajor*ones(varargin{:});
-G.r0 = G.RmajorFun(1,G.Nmajor);
-
-end
-
-function G = ImproveMajorBVF_legacy(G)
-
-% Ensure cylinder direction vectors are unit, and set parameters
-G           =   NormalizeCylinderVecs(G);
-isUnit      =   true;
-isCentered    =   true;
-prec        =   'double';
-
-% Calculate Map for Major Vessels
-R0                  =   G.Rmajor;
-BV_Best             =   G.Targets.aBVF * prod(G.GridSize); % Blood Volume in units of voxels
-VMap_RmajorSlice    =    @(R,p0) getCylinderMask( [G.GridSize(1:2),1], G.SubVoxSize, G.VoxelCenter, [G.VoxelSize(1:2),G.SubVoxSize], ...
-    p0, G.vz0, R*ones(1,G.Nmajor), G.vx0, G.vy0, isUnit, isCentered, prec, [] );
-get_BV_RmajorSlice  =   @(R,p0) G.GridSize(3) * sum(reshape(VMap_RmajorSlice(R,p0),[],1));
-% VMap_Rmajor       =   @(R,p0) getCylinderMask( G.GridSize, G.SubVoxSize, G.VoxelCenter, G.VoxelSize, ...
-%     G.p0, vz0, R*ones(1,G.Nmajor), vx0, vy0, isUnit, isCentered, prec, [] );
-% get_BV_Rmajor     =   @(R,p0) sum(reshape(VMap_Rmajor(R,G.p0),[],1));
-
-BV_CurrentBest   = -inf;
-p0_CurrentBest   =  G.p0;
-R_CurrentBest    =  R0 * ones(1,G.Nmajor);
-
-iters = 0;
-iters_MAX = 50;
-while (iters < iters_MAX) && (abs(BV_CurrentBest - BV_Best) > 0.25 * (1/max(G.GridSize)) * BV_Best)
-    
-    iters = iters + 1;
-    
-    p1 = G.p0;
-    if iters > 1
-        p1 = p1 + G.SubVoxSize * [2*rand(2,size(G.p0,2))-1; zeros(1,size(G.p0,2))];
-    end
-    
-    [Rlow,Rhigh] = deal( 0.5 * R0, 1.5 * R0 );
-    %[BVlow,BVhigh] = deal( get_BV_Rmajor(Rlow,p1), get_BV_Rmajor(Rhigh,p1) );
-    [BVlow,BVhigh] = deal( get_BV_RmajorSlice(Rlow,p1), get_BV_RmajorSlice(Rhigh,p1) );
-    
-    [BVlow_last,BVhigh_last] = deal(-1);
-    
-    while ~(BVlow == BVlow_last && BVhigh == BVhigh_last)
-        [BVlow_last,BVhigh_last] = deal(BVlow,BVhigh);
-        
-        Rmid    =   (Rlow + Rhigh)/2;
-        %BVmid    =   get_BV_Rmajor(Rmid,p1);
-        BVmid    =   get_BV_RmajorSlice(Rmid,p1);
-        
-        if BVmid >= BV_Best
-            BVhigh    =   BVmid;
-            Rhigh    =   Rmid;
-        else
-            BVlow    =   BVmid;
-            Rlow    =   Rmid;
-        end
-    end
-        
-    if abs(BVhigh - BV_Best) <= abs(BVlow - BV_Best)
-        BVmid = BVhigh;
-        Rmid  = Rhigh;
-    else
-        BVmid = BVlow;
-        Rmid  = Rlow;
-    end
-    
-    if abs(BVmid - BV_Best) < abs(BV_CurrentBest - BV_Best)
-        BV_CurrentBest = BVmid;
-        R_CurrentBest  = Rmid;
-        p0_CurrentBest = p1;
-    end
-    
-end
-if iters >= iters_MAX
-    warning('Number of iterations exceeded for: Major Vasculature');
-end
-
-G.Rmajor = R_CurrentBest;
 G.aBVF = BV_CurrentBest/prod(G.GridSize);
 G.p0 = p0_CurrentBest;
 

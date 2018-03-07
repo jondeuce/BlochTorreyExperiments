@@ -8,6 +8,7 @@ classdef CylindricalVesselFilledVoxel
         VoxelCenter       % Center of Voxel, e.g. [1500, 1500, 1500] um
         SubVoxSize        % Size of subvoxels, e.g. [3000/512,3000/512,3000/512] um
         Nmajor            % Number of major vessels
+        MajorAngle        % Angle of major vessels w.r.t z-axis (default 0)
         NumMajorArteries  % Number of major vessels which are arteries
         NumMinorArteries  % Number of minor vessels which are arteries
         MinorArterialFrac % (Target) Fraction of minor vessels which are arteries

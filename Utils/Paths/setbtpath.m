@@ -1,5 +1,6 @@
-function btpath( type, varargin )
-%BTPATH Set BlochTorreyExperiments path.
+function setbtpath( type, varargin )
+%SETBTPATH Set BlochTorreyExperiments and BlochTorreyResults path, e.g.
+% setbtpath home/coopar7/master
 
 if nargin == 0
     return
@@ -34,12 +35,15 @@ end
 folders_to_remove = dir([btroot, 'BlochTorrey*']);
 cleanpath(folders_to_remove.name);
 
-addpath(genpath([btroot, '/BlochTorreyExperiments', '-', btexp_branch]));
-addpath(genpath([btroot, '/BlochTorreyResults']));
+% Cannot add library directories to path (i.e. starting with "+").
+% Also, want to ignore .git folders
+genPath = @(s) genpath_exclude(s,{'*\.git*', '\+*'});
+addpath(genPath([btroot, 'BlochTorreyExperiments', '-', btexp_branch]));
+addpath(genPath([btroot, 'BlochTorreyResults']));
 cleanpath(remove_list{:});
 
 cd(btroot);
-savepath(which('pathdef'));
+savepath([btroot, 'btpathdef.m']);
 
 end
 

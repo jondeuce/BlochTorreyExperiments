@@ -41,6 +41,7 @@ addParameter(p,'VoxelSize', [3000,3000,3000]);
 addParameter(p,'VoxelCenter', [0,0,0]);
 addParameter(p,'GridSize', [512,512,512]);
 addParameter(p,'Nmajor', 5);
+addParameter(p,'MajorAngle', 0.0);
 addParameter(p,'NumMajorArteries', 0);
 addParameter(p,'MinorArterialFrac', 0.0);
 addParameter(p,'seed', rng);
@@ -77,7 +78,7 @@ end
 
 function G = setParsedArgs(G,p)
 
-NamedArgs = {'VoxelSize','VoxelCenter','GridSize','Nmajor','NumMajorArteries', ...
+NamedArgs = {'VoxelSize','VoxelCenter','GridSize','Nmajor','MajorAngle','NumMajorArteries', ...
     'MinorArterialFrac','MinorDilation','Rmajor','Rminor_mu','Rminor_sig','seed'};
 TargetArgs = {'BVF','iRBVF','aRBVF','iBVF','aBVF'};
 
@@ -142,8 +143,29 @@ Minor_Area = pi * ( G.Rminor_mu.^2 + G.Rminor_sig.^2 );
 VoxHeight = G.VoxelSize(3);
 NumMinorVesselsGuess = round( Minor_BloodVol ./ (VoxHeight * Minor_Area) );
 
-% Major blood vessel diameters: N*pi*r^2*h = V
-R_MajorGuess = sqrt( Major_BloodVol./( G.Nmajor * pi * VoxHeight ) );
+% Empirical model for average cylinder length:
+%     see: GeometryGeneration/old/test/AvgLineLength.m
+[xc,yc,zc] = deal(1, 2/3, 0);
+[xr,yr,zr] = deal(1, 4/3, 1/2);
+avgCylLengthFun = @(relX, relY) zc + zr * sqrt(1 - min((relX-xc).^2 / xr^2 + (relY-yc).^2 / yr^2, 1));
+
+% avg length should be greater than the smallest dimension; if not,
+% something is likely wrong with the empirical estimate, so should default
+% to the smallLength
+sVSize = sort(G.VoxelSize);
+smallLength = min(G.VoxelSize);
+avgCylLength = norm(G.VoxelSize) * avgCylLengthFun(sVSize(1)/sVSize(3), sVSize(2)/sVSize(3));
+avgCylLength = max(avgCylLength, smallLength);
+
+NumMinorVesselsGuess = round( Minor_BloodVol ./ (avgCylLength * Minor_Area) );
+
+% Major blood vessel diameters: N*pi*r^2*len = V
+majAngleRad = deg2rad(G.MajorAngle);
+majorDir = [sin(majAngleRad), 0, cos(majAngleRad)];
+[tmin, tmax, ~, ~] = rayBoxIntersection( G.VoxelCenter(:), majorDir(:), G.VoxelSize(:), G.VoxelCenter(:) );
+
+MajorLength = tmax - tmin;
+R_MajorGuess = sqrt( Major_BloodVol./( G.Nmajor * pi * MajorLength ) );
 
 G.InitGuesses = struct( ...
     'N',      G.Nmajor + NumMinorVesselsGuess, ...

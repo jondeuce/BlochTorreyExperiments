@@ -1,46 +1,53 @@
 function test()
 
 %% Test parameters
-t = 60e-3;
-Glen = 256; % Grid side length [voxels]
-Vlen = 3000; % Voxel side length [um]
-Scale = Vlen/Glen;
-TypicalScale = 3000/512; % Typical scale [um/voxel]
+% Glen = 256; % Grid side length [voxels]
+% Vlen = 3000; % Voxel side length [um]
+% Scale = Vlen/Glen;
+% TypicalScale = 3000/512; % Typical scale [um/voxel]
+% Gsize = Glen * [1,1,1];
+% Vsize = Vlen * [1,1,1];
 
-Gsize = Glen * [1,1,1];
-Vsize = Vlen * [1,1,1];
+ScaleGsize = 2;
+Gsize = [350,350,800] / ScaleGsize;
+Vsize = [1750,1750,4000];
+TypicalScale = 4000/800;
+Scale = Vsize(3)/Gsize(3);
+
+t = 60e-3;
+% type = 'gre';
+type = 'se';
 Dcoeff = 3037 * (Scale/TypicalScale)^2; % Scale diffusion to mimic [3000 um]^3 512^3 grid
-% pckernels = true;
-% pcexparrays = true;
+
+% Rminor_mu  = 25;
+% Rminor_sig = 0;
+% Rminor_mu  = 13.7;
+% Rminor_sig = 2.1;
+Rminor_mu  = 7;
+Rminor_sig = 0;
 
 iBVF = 1.1803/100;
 aBVF = 1.3425/100;
 Nmajor = 4; % Number of major vessels (optimal number is from SE perf. orientation. sim)
+MajorAngle = 45; % Angle of major vessels
 NumMajorArteries = 1; % Number of major arteries
 MinorArterialFrac = 1/3; % Fraction of minor vessels which are arteries
 rng('default'); seed = rng;
-% type = 'gre';
-type = 'se';
 
-Rminor_mu  = 25;
-Rminor_sig = 0;
-% Rminor_mu  = 13.7;
-% Rminor_sig = 2.1;
-% Rminor_mu  = 7;
-% Rminor_sig = 0;
-
-%% Calculate Geometry and ComplexDecay
+%% Calculate Geometry
 GammaSettings = Geometry.ComplexDecaySettings('Angle_Deg', 90, 'B0', -3);
 Geom = Geometry.CylindricalVesselFilledVoxel( ...
     'iBVF', iBVF, 'aBVF', aBVF, ...
     'VoxelSize', Vsize, 'GridSize', Gsize, 'VoxelCenter', [0,0,0], ...
-    'Nmajor', Nmajor, 'NumMajorArteries', NumMajorArteries, 'MinorArterialFrac', MinorArterialFrac, ...
+    'Nmajor', Nmajor, 'MajorAngle', MajorAngle, ...
+    'NumMajorArteries', NumMajorArteries, 'MinorArterialFrac', MinorArterialFrac, ...
     'Rminor_mu', Rminor_mu, 'Rminor_sig', Rminor_sig, ...
     'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', false, ...
     'PopulateIdx', true, 'seed', seed );
+
+%% Calculate ComplexDecay
 Gamma = CalculateComplexDecay(GammaSettings, Geom);
 dGamma = {};
-
 
 %% Initial data
 % x0 = randnc(Gsize);
