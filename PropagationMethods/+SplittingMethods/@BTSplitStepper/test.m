@@ -8,7 +8,7 @@ function test()
 % Gsize = Glen * [1,1,1];
 % Vsize = Vlen * [1,1,1];
 
-ScaleGsize = 2;
+ScaleGsize = 1;
 Gsize = [350,350,800] / ScaleGsize;
 Vsize = [1750,1750,4000];
 TypicalScale = 4000/800;

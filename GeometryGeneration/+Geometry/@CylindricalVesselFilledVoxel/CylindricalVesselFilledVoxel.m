@@ -89,7 +89,7 @@ classdef CylindricalVesselFilledVoxel
             vz0 = G.Vz(:,1:G.Nmajor);
         end
         function idx0 = get.idx0(G)
-            idx0 = G.Idx(:,1:G.Nmajor);
+            idx0 = G.Idx(1:G.Nmajor);
         end
         
         function G = set.p0(G,in)
@@ -108,7 +108,7 @@ classdef CylindricalVesselFilledVoxel
             G.Vz(:,1:G.Nmajor) = in;
         end
         function G = set.idx0(G,in)
-            G.Idx(:,1:G.Nmajor) = in;
+            G.Idx(1:G.Nmajor) = in;
         end
         
         % Overloads for minor cylinders
@@ -128,7 +128,7 @@ classdef CylindricalVesselFilledVoxel
             vz = G.Vz(:,G.Nmajor+1:end);
         end
         function idx = get.idx(G)
-            idx = G.Idx(:,G.Nmajor+1:end);
+            idx = G.Idx(G.Nmajor+1:end);
         end
         
         function G = set.p(G,in)
@@ -147,7 +147,7 @@ classdef CylindricalVesselFilledVoxel
             G.Vz(:,G.Nmajor+1:end) = in;
         end
         function G = set.idx(G,in)
-            G.Idx(:,G.Nmajor+1:end) = in;
+            G.Idx(G.Nmajor+1:end) = in;
         end
     end
     

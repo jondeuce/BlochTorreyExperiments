@@ -1,27 +1,24 @@
-function [dR2, ResultsStruct] = perforientation_lsqoptfun(params,xdata,dR2_Data,TE,VoxelSize,VoxelCenter,GridSize,B0,Dcoeff,Nsteps,Nmajor,Rminor_mu,Rminor_sig,Navgs,type,order,SaveFigs,SaveResults,DiaryFilename,geomseed)
+function [dR2, ResultsStruct] = perforientation_lsqoptfun(varargin)
 %perforientation_lsqoptfun
 
-if nargin < 20 || isempty(geomseed); geomseed = []; end
-if nargin < 19 || isempty(DiaryFilename); DiaryFilename = []; end
-if nargin < 18 || isempty(SaveResults); SaveResults = true; end
-if nargin < 17 || isempty(SaveFigs); SaveFigs = true; end
+opts = parseinputs(varargin{:});
 
-CA = params(1);
-iBVF = params(2);
-aBVF = params(3);
+CA = opts.params(1);
+iBVF = opts.params(2);
+aBVF = opts.params(3);
 BVF = iBVF + aBVF;
 iRBVF = iBVF/BVF;
-alpha_range = xdata;
+alpha_range = opts.xdata;
 
 new_geometry = @() Geometry.CylindricalVesselFilledVoxel( ...
     'BVF', BVF, 'iRBVF', iRBVF, ...
-    'VoxelSize', VoxelSize, 'GridSize', GridSize, 'VoxelCenter', VoxelCenter, ...
-    'Nmajor', Nmajor, 'Rminor_mu', Rminor_mu, 'Rminor_sig', Rminor_sig, ...
+    'VoxelSize', opts.VoxelSize, 'GridSize', opts.GridSize, 'VoxelCenter', opts.VoxelCenter, ...
+    'Nmajor', opts.Nmajor, 'Rminor_mu', opts.Rminor_mu, 'Rminor_sig', opts.Rminor_sig, ...
     'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', false, ...
-    'PopulateIdx', true, 'seed', geomseed );
+    'PopulateIdx', true, 'seed', opts.geomseed );
 
 solver = @(G) SplittingMethods.PerfusionCurve( ...
-    TE, Nsteps, Dcoeff, CA, B0, alpha_range, G, type, 'Order', order );
+    opts.TE, opts.Nsteps, opts.Dcoeff, CA, opts.B0, alpha_range, G, opts.type, 'Order', opts.order );
 
 Geom = new_geometry();
 AllGeoms = Compress(Geom);
@@ -29,7 +26,7 @@ AllGeoms = Compress(Geom);
 %S_noCA and S_CA are arrays of size [numel(TimePts) x Nalphas x Navgs]
 [~, S_noCA, S_CA, TimePts] = solver(Geom);
 
-for ii = 2:Navgs
+for ii = 2:opts.Navgs
     Geom = new_geometry();
     AllGeoms = [AllGeoms; Compress(Geom)];
     [~, S_noCA__, S_CA__, TimePts__] = solver(Geom);
@@ -43,13 +40,13 @@ S_noCA_avg = mean(S_noCA(end,:,:),3); %row vector: [1 x Nalphas]
 S_CA_avg   = mean(S_CA(end,:,:),3); %row vector: [1 x Nalphas]
 
 %Need to squeeze after shift dim to handle cases of Navgs = 1
-dR2_all = -1/TE .* squeeze( shiftdim( log(abs(S_CA(end,:,:)./S_noCA(end,:,:))) ) ).'; %array: [Navgs x Nalphas]
-dR2 = -1/TE .* log( abs(S_CA_avg)./abs(S_noCA_avg) ); %row vector: [1 x Nalphas]
+dR2_all = -1/opts.TE .* squeeze( shiftdim( log(abs(S_CA(end,:,:)./S_noCA(end,:,:))) ) ).'; %array: [Navgs x Nalphas]
+dR2 = -1/opts.TE .* log( abs(S_CA_avg)./abs(S_noCA_avg) ); %row vector: [1 x Nalphas]
 
 Results = struct( ...
-    'params', params, ...
-    'xdata', xdata, ...
-    'dR2_Data', dR2_Data, ...
+    'params', opts.params, ...
+    'xdata', opts.xdata, ...
+    'dR2_Data', opts.dR2_Data, ...
     'CA', CA, ...
     'iBVF', iBVF, ...
     'aBVF', aBVF, ...
@@ -72,7 +69,7 @@ try
     
     title_lines = {...
         sprintf('iBVF = %.4f%%, aBVF = %.4f%%, CA = %.4f, BVF = %.4f%%, iRBVF = %.2f%%', iBVF*100, aBVF*100, CA, BVF*100, iRBVF*100 ), ...
-        sprintf('N = %d, Rmajor = %.2fum, Rminor = %.2fum, L2-residual = %.4f', Nmajor, avg_rmajor, avg_rminor, res) ...
+        sprintf('N = %d, Rmajor = %.2fum, Rminor = %.2fum, L2-residual = %.4f', opts.Nmajor, avg_rmajor, avg_rminor, res) ...
         };
     title_lines = cellfun(@(s)strrep(s,'%','\%'),title_lines,'uniformoutput',false);
     title_str = [title_lines{1},', ',title_lines{2}];
@@ -87,13 +84,13 @@ try
     fig = figure; set(gcf,'color','w'); hold on
     
     plot(alpha_range(:), dR2_all.', '-.');
-    h = plot(alpha_range(:), [dR2_Data(:), dR2.'], '-', ...
+    h = plot(alpha_range(:), [opts.dR2_Data(:), dR2.'], '-', ...
         'marker', '+', 'linewidth', 4, 'markersize', 10);
     
     props = {'fontsize',14,'interpreter','latex'};
     title(title_lines, props{:});
     
-    dR2str = '\Delta R_2'; if strcmpi(type,'GRE'); dR2str = [dR2str, '^*']; end
+    dR2str = '\Delta R_2'; if strcmpi(opts.type,'GRE'); dR2str = [dR2str, '^*']; end
     xlabel('$\alpha$ [deg]', props{:});
     ylabel(['$',dR2str,'$ [Hz]'], props{:});
     
@@ -107,7 +104,7 @@ end
 
 % ---- Save Figure ---- %
 try
-    if SaveFigs
+    if opts.SaveFigs
         savefig(fig, fname);
         export_fig(fname, '-pdf', '-transparent');
     end
@@ -117,7 +114,7 @@ end
 
 % ---- Save Results ---- %
 try
-    if SaveResults
+    if opts.SaveResults
         save(fname,'Results')
     end
 catch me
@@ -127,8 +124,8 @@ end
 
 % ---- Save Diary ---- %
 try
-    if ~isempty(DiaryFilename)
-        diary(DiaryFilename);
+    if ~isempty(opts.DiaryFilename)
+        diary(opts.DiaryFilename);
     end
 catch me
     warning('Unable to save diary.\nError message: %s', me.message);
@@ -137,6 +134,41 @@ end
 if nargout > 1
     ResultsStruct = Results;
 end
+
+end
+
+function opts = parseinputs(varargin)
+
+RequiredArgs = { ...
+    'params', 'xdata', 'dR2_Data', 'TE', 'type', ...
+    'VoxelSize', 'VoxelCenter', 'GridSize', ...
+    'B0', 'Dcoeff', 'Nsteps', 'Nmajor', ...
+    'Rminor_mu', 'Rminor_sig' ...
+    };
+DefaultArgs = struct(...
+    'Navgs', 1, ...
+    'order', 2, ...
+    'SaveFigs', true, ...
+    'SaveResults', true, ...
+    'DiaryFilename', [datestr(now,30),'__','diary.txt'], ...
+    'geomseed', rng ...
+    );
+
+p = inputParser;
+
+for f = RequiredArgs
+    paramName = f{1};
+    addRequired(p,paramName)
+end
+
+for f = fieldnames(DefaultArgs).'
+    paramName = f{1};
+    defaultVal = DefaultArgs.(f{1});
+    addParameter(p,paramName,defaultVal)
+end
+
+parse(p, varargin{:});
+opts = p.Results;
 
 end
 

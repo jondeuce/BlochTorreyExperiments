@@ -2,7 +2,7 @@ function [ G ] = CalculateVasculatureMap( G, AddIndices )
 %CALCULATEVASCULATUREMAP Calculates the vasculature map and stores it in G.
 % If AddIndices is true, stores indices of vasculature map which
 % correspond to each individual cylinder as well.
-% 
+%
 % N.B. add_indices overrides G.opts.PopulateIdx, if given
 
 if nargin < 2 || isempty( AddIndices )
@@ -21,13 +21,10 @@ BVF_Fun = @(x) sum(x(:))/numel(x);
 
 if AddIndices
     
-    for ii = 1:G.N
-        [ G.VasculatureMap, G.Idx{ii} ] = getCylinderMask( ...
-            G.GridSize, G.SubVoxSize, G.VoxelCenter, G.VoxelSize, ...
-            G.P(:,ii), G.Vz(:,ii), G.R(ii), G.Vx(:,ii), G.Vy(:,ii), ...
-            isUnit, isCentered, prec, G.VasculatureMap );
-        G.Idx{ii} = sort(G.Idx{ii});
-    end
+    [ G.VasculatureMap, G.Idx ] = getCylinderMask( ...
+        G.GridSize, G.SubVoxSize, G.VoxelCenter, G.VoxelSize, ...
+        G.P, G.Vz, G.R, G.Vx, G.Vy, ...
+        isUnit, isCentered, prec, G.VasculatureMap );
     
     G.BVF = BVF_Fun(G.VasculatureMap);
     G.aBVF = numel(unique(cat(1,G.idx0{:})))/prod(G.GridSize);
