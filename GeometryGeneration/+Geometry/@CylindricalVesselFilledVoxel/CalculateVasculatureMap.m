@@ -62,7 +62,6 @@ isCentered = true;
 prec = 'double';
 is_2D = false;
 
-
 if isempty(G.VasculatureMap)
     G.BVF = [];
 else

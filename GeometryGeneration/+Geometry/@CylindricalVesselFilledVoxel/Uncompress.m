@@ -1,8 +1,10 @@
 function [ G ] = Uncompress( G )
 %UNCOMPRESS Repopulates properties compressed by COMPRESS for saving.
 
-G = CalculateVasculatureMap(G);
-G = AddArteries(G, G.MajorArteries, G.MinorArteries);
+for ii = 1:numel(G)
+    G(ii) = CalculateVasculatureMap(G(ii));
+    G(ii) = AddArteries(G(ii), G(ii).MajorArteries, G(ii).MinorArteries);
+end
 
 end
 

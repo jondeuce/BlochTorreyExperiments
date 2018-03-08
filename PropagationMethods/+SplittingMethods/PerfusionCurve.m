@@ -1,28 +1,31 @@
-function [ dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs ] = PerfusionCurve( varargin )
-%PERFUSIONCURVE [ dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs ] = PerfusionCurve( varargin )
+function [ dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs, Geometries ] = PerfusionCurve( varargin )
+%PERFUSIONCURVE [ dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs, Geometries ] = PerfusionCurve( varargin )
 % See docs for example usage.
 %{
 TE = 60e-3; Nsteps = 8; type = 'SE'; Dcoeff = 3037; CA = 6; B0 = -3;
 CADerivative = true; AlphaRange = [0,90];
 
-[dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs] = SplittingMethods.PerfusionCurve(...
-TE, Nsteps, Dcoeff, CA, B0, AlphaRange, Geom, type, ... % positional args
+[dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs, Geometries] = SplittingMethods.PerfusionCurve(...
+TE, Nsteps, Dcoeff, CA, B0, AlphaRange, type, ... % positional args
 'Order', 2, 'CADerivative', true ); %optional positionless args
 %}
 
-opts = parseinputs(varargin{:});
-[ dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs ] = ...
-    PerfusionCurveWithDiffusion( opts );
+args = parseinputs(varargin{:});
+[ dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs, Geometries ] = ...
+    PerfusionCurveWithDiffusion( args );
 
 end
 
 % ---- Perfusion Curve Calculation ---- %
-function [ dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs ] = PerfusionCurveWithDiffusion( opts )
+function [ dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs, Geometries ] = PerfusionCurveWithDiffusion( args )
+
+% Get initial geometry
+Geom = InitialGeometry(args);
+Geometries = Compress(Geom);
 
 % Deal out options for convenience
-[Geom, AlphaRange, TE, Nsteps, type, Dcoeff, CA, B0] = deal(...
-    opts.Geom, opts.AlphaRange, opts.TE, opts.Nsteps, ...
-    opts.type, opts.Dcoeff, opts.CA, opts.B0);
+[AlphaRange, TE, Nsteps, type, Dcoeff] = deal(...
+    args.AlphaRange, args.TE, args.Nsteps, args.type, args.Dcoeff);
 
 dt = TE/Nsteps;
 y0 = 1i;
@@ -36,7 +39,7 @@ Vox_Volume = prod(Geom.VoxelSize);
 um3_per_voxel = Vox_Volume/prod(Geom.GridSize);
 IntegrateSignal = @(y) um3_per_voxel * sum(sum(sum(y,1),2),3); % more accurate than sum(y(:))
 
-switch upper(opts.Stepper)
+switch upper(args.Stepper)
     case 'BTSPLITSTEPPER'
         V = SplittingMethods.BTSplitStepper(...
             dt, Dcoeff, Gamma, dGamma, Geom.GridSize, Geom.VoxelSize, ...
@@ -45,7 +48,7 @@ end
 
 % Initialize outputs
 [dR2, S0, S] = deal(zeros(Nsteps, Nalphas));
-if opts.CADerivative
+if args.CADerivative
     [dS_Derivs, dR2_Derivs] = deal( struct( 'CA', zeros(Nsteps, Nalphas) ) );
 else
     [dS_Derivs, dR2_Derivs] = deal( [] );
@@ -54,11 +57,13 @@ end
 for jj = 1:Nalphas
     
     alpha_loop_time = tic;
-    
     alpha = AlphaRange(jj);
     
-    GammaSettingsNoCA = Geometry.ComplexDecaySettings('Angle_Deg', alpha, 'B0', B0, 'CA', 0.0);
-    GammaSettingsCA   = Geometry.ComplexDecaySettings('Angle_Deg', alpha, 'B0', B0, 'CA', CA);
+    % Update geometry
+    Geom = UpdateGeometry(alpha, Geom, args);
+    
+    % Calculate complex decay settings
+    [GammaSettingsNoCA, GammaSettingsCA] = GetGammaSettings(alpha, args);
     
     Gamma = CalculateComplexDecay( GammaSettingsNoCA, Geom );
     V = precomputeExpDecays(V, Gamma);
@@ -80,7 +85,7 @@ for jj = 1:Nalphas
     % ---- Adjust Gamma to account for CA ---- %
     y = y0*ones(Geom.GridSize); %initial state
     
-    if opts.CADerivative
+    if args.CADerivative
         Gamma_CA = AddContrastAgent(GammaSettingsNoCA, GammaSettingsCA, Geom, Gamma);
         V = precomputeGammaDerivs(V, ComplexDecayDerivative(GammaSettingsCA, Geom, Gamma_CA, 'CA', Gamma));
         clear Gamma
@@ -99,13 +104,13 @@ for jj = 1:Nalphas
         
         [y,dy] = step(V,y,dy);
         S(ii,jj) = IntegrateSignal(y);
-        if opts.CADerivative
+        if args.CADerivative
             dS_Derivs.CA(ii,jj) = IntegrateSignal(dy{CAidx});
         end
         
         if strcmpi(type,'SE') && 2*ii == Nsteps
             y = conj(y);
-            if opts.CADerivative
+            if args.CADerivative
                 dy{CAidx} = conj(dy{CAidx});
             end
         end
@@ -114,7 +119,7 @@ for jj = 1:Nalphas
         display_toc_time(toc(with_CA_time), str);
     end
     
-    if opts.CADerivative
+    if args.CADerivative
         V = clearGammaDerivs(V);
     end
     
@@ -126,7 +131,7 @@ end
 % Add t=0 signals
 S0 = [y0*Vox_Volume*ones(1,Nalphas); S0];
 S  = [y0*Vox_Volume*ones(1,Nalphas); S  ];
-if opts.CADerivative
+if args.CADerivative
     dS_Derivs.CA = [zeros(1,Nalphas); dS_Derivs.CA];
 end
 
@@ -135,15 +140,75 @@ TimePts = linspace(0,TE,Nsteps+1).';
 
 % Compute dR2 and derivatives
 dR2 = (-1/TE) * log( abs(S) ./ abs(S0) );
-if opts.CADerivative
-    dR2_Derivs = calc_dR2_Derivs(TE, S, dS_Derivs, dR2_Derivs, opts);
+if args.CADerivative
+    dR2_Derivs = calc_dR2_Derivs(TE, S, dS_Derivs, dR2_Derivs, args);
+end
+
+end
+
+function Geom = InitialGeometry(args)
+
+% Check if initial geometry is supplied
+if ~isempty(args.Geom)
+    Geom = args.Geom;
+    return
+end
+
+if isempty(args.GeomArgs)
+    error('Neither initial geometry nor settings are supplied.');
+else
+    GivenNameValueArgs = struct2arglist(args.GeomArgs);
+end
+
+switch upper(args.MajorOrientation)
+    case 'FIXEDPOSITION'
+        % Initial geometry generated will be used for all angles
+        Geom = Geometry.CylindricalVesselFilledVoxel( GivenNameValueArgs{:} );
+        
+    case 'FIXEDRADIUS'
+        % Geometry will be generated for zero degrees (vertical major
+        % vessels) and rotated with this fixed radius
+        GeomArgs = args.GeomArgs;
+        GeomArgs.MajorAngle = 0.0;
+        NameValueArgs = struct2arglist(GeomArgs);
+        
+        Geom = Geometry.CylindricalVesselFilledVoxel( NameValueArgs{:} );
+end
+
+end
+
+function Geom = UpdateGeometry(AngleDeg, Geom, args)
+
+switch upper(args.MajorOrientation)
+    case 'FIXEDPOSITION'
+        % Initial geometry generated is used for all angles; do nothing
+        
+    case 'FIXEDRADIUS'
+        % Geometry is rotated from previous position
+        Geom = RotateMajor(Geom, 'to', AngleDeg);
+end
+
+end
+
+function [GammaSettingsNoCA, GammaSettingsCA] = GetGammaSettings(AngleDeg, args)
+    
+switch upper(args.MajorOrientation)
+    case 'FIXEDPOSITION'
+        % Gamma settings change with angle
+        GammaSettingsNoCA = Geometry.ComplexDecaySettings('Angle_Deg', AngleDeg, 'B0', args.B0, 'CA', 0.0);
+        GammaSettingsCA   = Geometry.ComplexDecaySettings('Angle_Deg', AngleDeg, 'B0', args.B0, 'CA', args.CA);
+        
+    case 'FIXEDRADIUS'
+        % Gamma settings are fixed, as B0 is vertical
+        GammaSettingsNoCA = Geometry.ComplexDecaySettings('Angle_Deg', 0.0, 'B0', args.B0, 'CA', 0.0);
+        GammaSettingsCA   = Geometry.ComplexDecaySettings('Angle_Deg', 0.0, 'B0', args.B0, 'CA', args.CA);
 end
 
 end
 
 
 % ---- delta R2(*) derivative calculation ---- %
-function dR2_Derivs = calc_dR2_Derivs(TE, S, dS_Derivs, dR2_Derivs, opts)
+function dR2_Derivs = calc_dR2_Derivs(TE, S, dS_Derivs, dR2_Derivs, args)
 % For any parameter P, since we have that
 %   dR2 = (-1/TE) * log(|S|/|S0|)
 %
@@ -159,17 +224,20 @@ function dR2_Derivs = calc_dR2_Derivs(TE, S, dS_Derivs, dR2_Derivs, opts)
 %   d|S|_dP = (R*dR_dP + I*dI_dP) / |S|
 %           = real( S * conj(dS_dP) ) / |S|
 
-if opts.CADerivative
+if args.CADerivative
     dR2_Derivs.CA = (-1/TE) * real( S .* conj(dS_Derivs.CA) ) ./ (abs(S).^2);
 end
 
 end
 
 % ---- InputParsing ---- %
-function opts = parseinputs(varargin)
+function args = parseinputs(varargin)
 
-RequiredArgs = { 'TE', 'Nsteps', 'Dcoeff', 'CA', 'B0', 'AlphaRange', 'Geom', 'type' };
+RequiredArgs = { 'TE', 'Nsteps', 'Dcoeff', 'CA', 'B0', 'AlphaRange', 'type' };
 DefaultArgs = struct(...
+    'Geom', [], ...
+    'GeomArgs', [], ...
+    'MajorOrientation', 'FixedPosition', ...
     'Order', 2, ...
     'Stepper', 'BTSplitStepper', ...
     'CADerivative', false, ...
@@ -190,15 +258,21 @@ for f = fieldnames(DefaultArgs).'
 end
 
 parse(p, varargin{:});
-opts = p.Results;
+args = p.Results;
 
 % Mean-squared diffusion length in n-dimensions is
 %   d = sqrt(2*n*D*t)
 % If this distance (where t is the entire simulation time TE) is less than
 % half the minimum subvoxel dimension, we say that diffusion is negligible.
-isDiffusionNegligible = (sqrt( 6 * opts.Dcoeff * opts.TE ) <= 0.5 * opts.Geom.SubVoxSize);
+if ~isempty(args.Geom)
+    SubVoxSize = args.Geom.SubVoxSize;
+else
+    SubVoxSize = min( args.GeomArgs.VoxelSize ./ args.GeomArgs.GridSize );
+end
+
+isDiffusionNegligible = (sqrt( 6 * args.Dcoeff * args.TE ) <= 0.5 * SubVoxSize);
 if isDiffusionNegligible
-    opts.Dcoeff = 0.0;
+    args.Dcoeff = 0.0;
 end
 
 end

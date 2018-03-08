@@ -3,9 +3,11 @@ function [ G ] = Compress( G )
 % properties that are large and can easily be recreated, such as
 % VasculatureMap and Idx. UNCOMPRESS repopulates these properties.
 
-G.Idx = [];
-G.VasculatureMap = [];
-G.ArterialIndices = [];
+for ii = 1:numel(G)
+    G(ii).Idx = [];
+    G(ii).VasculatureMap = [];
+    G(ii).ArterialIndices = [];
+end
 
 end
 
