@@ -24,14 +24,15 @@ diary(DiaryFilename);
 % ub  = [ 8.000,          3.5000/100,         1.5000/100 ];
 
 % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
-lb  = [ 2.000,          0.7500/100,         0.6500/100 ];
-CA0 =   4.350;  iBVF0 = 1.3000/100; aBVF0 = 0.8500/100;
-ub  = [ 7.000,          2.0000/100,         1.3000/100 ];
+lb  = [ 3.000,          0.7500/100,         0.7500/100 ];
+CA0 =   5.500;  iBVF0 = 1.8000/100; aBVF0 = 1.2000/100;
+ub  = [ 9.000,          2.5000/100,         2.0000/100 ];
 
 x0 = [CA0, iBVF0, aBVF0];
 
-alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
+% alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
 % alpha_range = 17.5:10.0:87.5;
+alpha_range = 2.5:5.0:87.5;
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize, BinCounts] = get_GRE_data(alpha_range);
 
 % % ---- SE w/ Diffusion Initial Guess ---- %
@@ -57,12 +58,12 @@ Nmajor = 4;
 % Rminor_mu = 13.7;
 % Rminor_sig = 2.1;
 Rminor_mu = 7.0;
-Rminor_sig = 0.5;
+Rminor_sig = 0.0;
 
 B0 = -3.0; %[Tesla]
 Dcoeff = 3037; %[um^2/s]
 order = 2;
-Nsteps = 20/order;
+Nsteps = 8;
 rng('default'); seed = rng; % for consistent geometries between sims.
 Navgs  = 1; % for now, if geom seed is 'default', there is no point doing > 1 averages
 % type = 'SE';
