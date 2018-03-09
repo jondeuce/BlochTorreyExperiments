@@ -1,7 +1,8 @@
-function [dR2, ResultsStruct] = perforientation_lsqoptfun(varargin)
-%perforientation_lsqoptfun
+function [dR2, ResultsStruct] = perforientation_fun(params, xdata, dR2_Data, varargin)
+%[dR2, ResultsStruct] = PERFORIENTATION_FUN(params, xdata, dR2_Data, varargin)
+% Calculates the perfusion curve dR2(*) vs. angle. dR2 is [1xNumAngles].
 
-args = parseinputs(varargin{:});
+args = parseinputs(params, xdata, dR2_Data, varargin{:});
 
 CA = args.params(1);
 iBVF = args.params(2);
@@ -10,8 +11,7 @@ BVF = iBVF + aBVF;
 iRBVF = iBVF/BVF;
 alpha_range = args.xdata;
 
-GeomArgs = struct( ...
-    'iBVF', iBVF, 'aBVF', aBVF, ...
+GeomArgs = struct( 'iBVF', iBVF, 'aBVF', aBVF, ...
     'VoxelSize', args.VoxelSize, 'GridSize', args.GridSize, 'VoxelCenter', args.VoxelCenter, ...
     'Nmajor', args.Nmajor, 'MajorAngle', args.MajorAngle, ...
     'NumMajorArteries', args.NumMajorArteries, 'MinorArterialFrac', args.MinorArterialFrac, ...
@@ -61,16 +61,22 @@ Results = struct( ...
     'args', args ...
     );
 
+% ----------------------------------------------------------------------- %
+% Cleanup: plotting and saving simulation
+% ----------------------------------------------------------------------- %
+
 % ---- Plotting ---- %
 try
-    [fig, FileName] = perforientation_plot( dR2, dR2_all, AllGeoms, args );
+    if args.PlotFigs
+        [fig, FileName] = perforientation_plot( dR2, dR2_all, AllGeoms, args );
+    end
 catch me
     warning('Unable to draw figures.\nError message: %s', me.message);
 end
 
 % ---- Save Figure ---- %
 try
-    if args.SaveFigs
+    if args.PlotFigs && args.SaveFigs
         savefig(fig, FileName);
         export_fig(FileName, '-pdf', '-transparent');
     end
@@ -121,6 +127,7 @@ DefaultArgs = struct(...
     'AllowMinorSelfIntersect', true, ...
     'AllowMinorMajorIntersect', false, ...
     'PopulateIdx', true, ...
+    'PlotFigs', true, ...
     'SaveFigs', true, ...
     'SaveResults', true, ...
     'DiaryFilename', [datestr(now,30),'__','diary.txt'], ...

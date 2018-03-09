@@ -1,5 +1,5 @@
 function [ fig, FileName ] = perforientation_plot( dR2, dR2_all, AllGeoms, args )
-%PERFORIENTATION_PLOT Plotter for perforientation_lsqoptfun
+%PERFORIENTATION_PLOT Plotter for perforientation_fun
 
 CA = args.params(1);
 iBVF = args.params(2);
