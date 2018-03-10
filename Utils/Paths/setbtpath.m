@@ -17,7 +17,7 @@ end
 switch upper(type)
     case 'UBCITAR' % ubcitar/jdoucette server path
         error('not impl.');
-        btroot = '/data/ubcitar/jdoucette/magprop_master';
+        btroot = '/data/ubcitar/jdoucette/magprop_master/';
         
     case 'HOME/COOPAR7/MASTER' % coopar7 local path
         btroot = '/home/coopar7/Documents/code/';
@@ -25,19 +25,22 @@ switch upper(type)
         
     case 'ASUS' % home asus laptop
         error('not impl.');
-        btroot = '/home/jon/Documents/UBCMRI';
+        btroot = '/home/jon/Documents/UBCMRI/';
         
     case 'THINKPAD' % home thinkpad laptop
-        error('not impl.');
-        btroot = 'C:\Users\Jonathan\Documents\MATLAB\magprop_master';
+        btroot = 'C:\Users\Jonathan\Documents\MATLAB\';
+        btexp_branch = 'master';
 end
-
-folders_to_remove = dir([btroot, 'BlochTorrey*']);
-cleanpath(folders_to_remove.name);
 
 % Cannot add library directories to path (i.e. starting with "+").
 % Also, want to ignore .git folders
 genPath = @(s) genpath_exclude(s,{'*\.git*', '\+*'});
+
+% remove folders
+folders_to_remove = dir([btroot, 'BlochTorrey*']);
+cleanpath(folders_to_remove.name);
+
+% add folders
 addpath(genPath([btroot, 'BlochTorreyExperiments', '-', btexp_branch]));
 addpath(genPath([btroot, 'BlochTorreyResults']));
 cleanpath(remove_list{:});
