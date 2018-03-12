@@ -74,22 +74,28 @@ classdef CylindricalVesselFilledVoxel
     methods
         % Overloads for major cylinders
         function p0 = get.p0(G)
-            p0 = G.P(:,1:G.Nmajor);
+            Nmaj = min(size(G.P,2),G.Nmajor); % in case p0 is empty
+            p0 = G.P(:,1:Nmaj);
         end
         function r0 = get.r0(G)
-            r0 = G.R(:,1:G.Nmajor);
+            Nmaj = min(size(G.R,2),G.Nmajor); % in case r0 is empty
+            r0 = G.R(:,1:Nmaj);
         end
         function vx0 = get.vx0(G)
-            vx0 = G.Vx(:,1:G.Nmajor);
+            Nmaj = min(size(G.Vx,2),G.Nmajor); % in case vx0 is empty
+            vx0 = G.Vx(:,1:Nmaj);
         end
         function vy0 = get.vy0(G)
-            vy0 = G.Vy(:,1:G.Nmajor);
+            Nmaj = min(size(G.Vy,2),G.Nmajor); % in case vy0 is empty
+            vy0 = G.Vy(:,1:Nmaj);
         end
         function vz0 = get.vz0(G)
-            vz0 = G.Vz(:,1:G.Nmajor);
+            Nmaj = min(size(G.Vz,2),G.Nmajor); % in case vz0 is empty
+            vz0 = G.Vz(:,1:Nmaj);
         end
         function idx0 = get.idx0(G)
-            idx0 = G.Idx(1:G.Nmajor);
+            Nmaj = min(size(G.Idx,2),G.Nmajor); % in case idx0 is empty
+            idx0 = G.Idx(1:Nmaj);
         end
         
         function G = set.p0(G,in)

@@ -9,8 +9,8 @@ iRBVF = iBVF/BVF;
 alpha_range = args.xdata;
 
 vec = @(x) x(:);
-%res = sqrt(sum((vec(dR2_Data)-vec(dR2(end,:))).^2)/numel(xdata));
-res = norm( vec( args.dR2_Data - dR2(end,:) ) )^2;
+res = perforientation_objfun( args.params, alpha_range, args.dR2_Data, dR2(end,:), args.Weights, [] );
+
 avg_rminor = mean(vec([AllGeoms.Rminor_mu]));
 avg_rmajor = mean(vec([AllGeoms.Rmajor]));
 

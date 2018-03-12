@@ -357,7 +357,7 @@ if SimSettings.flags.SaveData
         sprintf( 'Results_Rep%d', Params.Rep ) ];
     
     try
-        save( filename, 'Results' );
+        save( filename, 'Results', '-v7' );
     catch me
         warning(me.identifier,me.message);
     end
@@ -373,11 +373,11 @@ if SimSettings.flags.SaveData
     try
         if size(Params,1) > 1 || all(~isnan(SimSettings.MinimizationType))
             filename = [ SimSettings.SavePath, '/', 'All_Results' ];
-            save( filename, 'AllResults' );
+            save( filename, 'AllResults', '-v7' );
             
             if SimSettings.NumRepetitions > 1
                 filename = [ SimSettings.SavePath, '/', 'Avg_Results' ];
-                save( filename, 'AvgResults' );
+                save( filename, 'AvgResults', '-v7' );
             end
         end
     catch me
@@ -393,10 +393,10 @@ if SimSettings.flags.SaveData
     try
         ParamSet	=   Params(1,:);
         filename	=    [ SimSettings.SavePath, '/', 'ParamSet' ];
-        save( filename, 'ParamSet' );
+        save( filename, 'ParamSet', '-v7' );
         
         filename	=    [ SimSettings.SavePath, '/', 'SimSettings' ];
-        save( filename, 'SimSettings' );
+        save( filename, 'SimSettings', '-v7' );
     catch me
         warning(me.identifier,me.message);
     end

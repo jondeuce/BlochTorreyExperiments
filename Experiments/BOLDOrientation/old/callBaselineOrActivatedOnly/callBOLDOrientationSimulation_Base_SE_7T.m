@@ -172,7 +172,7 @@ clearvars( '-except', 'Params', 'SimSettings' );
 %% Save initial workspace and zip MagnetizationPropagation folder
 if SimSettings.flags.SaveData
     try
-        save( [SimSettings.RootSavePath, '/', 'Initial_Workspace'] );
+        save( [SimSettings.RootSavePath, '/', 'Initial_Workspace'], '-v7' );
         zip( [SimSettings.RootSavePath, '/', 'MagnetizationPropagation', '_', SimSettings.Date, '.zip'], MagnetizationPropagationPath() );
     catch me
         warning('Couldn''t save initial workspace to specified folder; check your settings!');
@@ -191,9 +191,9 @@ clearvars( '-except', 'Results', 'AvgResults', 'ParamCombinations', 'SimSettings
 %% Save whole workspace
 if SimSettings.flags.SaveData
     try
-        save( [SimSettings.RootSavePath, '/', 'Final_Workspace'] );
+        save( [SimSettings.RootSavePath, '/', 'Final_Workspace'], '-v7' );
     catch me
         warning('Couldn''t save final workspace to specified folder; saving it to current directory.');
-        save( [ 'Final_Workspace_', SimSettings.Date ] );
+        save( [ 'Final_Workspace_', SimSettings.Date ], '-v7' );
     end
 end

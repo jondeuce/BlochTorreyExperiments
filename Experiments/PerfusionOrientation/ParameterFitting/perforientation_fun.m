@@ -77,21 +77,38 @@ end
 % ---- Save Figure ---- %
 try
     if args.PlotFigs && args.SaveFigs
-        savefig(fig, FileName);
-        export_fig(FileName, '-pdf', '-transparent');
+        FigTypes = args.FigTypes;
+        [v,ix] = ismember('fig',FigTypes);
+        if v
+            savefig(fig, FileName);
+        end
+        FigTypes = FigTypes([1:ix-1,ix+1:end]);
+        if ~isempty(FigTypes)
+            FigTypes = strcat('-', FigTypes);
+            export_fig(FileName, FigTypes{:});
+        end
     end
 catch me
     warning('Unable to save figure.\nError message: %s', me.message);
 end
 
+% ---- Close Figure ---- %
+try
+    if args.PlotFigs && args.CloseFigs
+        close(fig);
+    end
+catch me
+    warning('Unable to close figure.\nError message: %s', me.message);
+end
+
 % ---- Save Results ---- %
 try
     if args.SaveResults
-        save(FileName,'Results')
+        save(FileName,'Results', '-v7')
     end
 catch me
     warning('Unable to save results.\nError message: %s', me.message);
-    save(datestr(now,30),'Results');
+    save(datestr(now,30),'Results', '-v7');
 end
 
 % ---- Save Diary ---- %
@@ -127,8 +144,11 @@ DefaultArgs = struct(...
     'AllowMinorSelfIntersect', true, ...
     'AllowMinorMajorIntersect', false, ...
     'PopulateIdx', true, ...
+    'Weights', [], ...
     'PlotFigs', true, ...
     'SaveFigs', true, ...
+    'FigTypes', {'fig','pdf'}, ...
+    'CloseFigs', true, ...
     'SaveResults', true, ...
     'DiaryFilename', [datestr(now,30),'__','diary.txt'], ...
     'geomseed', rng ...

@@ -347,7 +347,7 @@ if SimSettings.flags.SaveData
         sprintf( 'Geometry_Rep%d', Params.Rep ) ];
     
     try
-        save( filename, 'Geometry' );
+        save( filename, 'Geometry', '-v7' );
     catch me
         warning(me.identifier,me.message);
     end
@@ -362,7 +362,7 @@ function save_AllResults( AllResults, SimSettings )
 if SimSettings.flags.SaveData
     filename	=	[ SimSettings.SavePath, '/', 'All_Results' ];
     try
-        save( filename, 'AllResults' );
+        save( filename, 'AllResults', '-v7' );
     catch me
         warning(me.identifier,me.message);
     end
@@ -375,7 +375,7 @@ function save_AvgResults( AvgResults, SimSettings )
 if SimSettings.flags.SaveData
     filename	=	[ SimSettings.SavePath, '/', 'Avg_Results' ];
     try
-        save( filename, 'AvgResults' );
+        save( filename, 'AvgResults', '-v7' );
     catch me
         warning(me.identifier,me.message);
     end
@@ -389,10 +389,10 @@ if SimSettings.flags.SaveData
     try
         if size(Params,1) > 1 || all(~isnan(SimSettings.MinimizationType))
             filename	=	[ SimSettings.SavePath, '/', 'All_Results' ];
-            save( filename, 'AllResults' );
+            save( filename, 'AllResults', '-v7' );
             
             filename	=	[ SimSettings.SavePath, '/', 'Avg_Results' ];
-            save( filename, 'AvgResults' );
+            save( filename, 'AvgResults', '-v7' );
         end
     catch me
         warning(me.identifier,me.message);
@@ -407,10 +407,10 @@ if SimSettings.flags.SaveData
     try
         ParamSet	=   Params(1,1:3);
         filename	=	[ SimSettings.SavePath, '/', 'ParamSet' ];
-        save( filename, 'ParamSet' );
+        save( filename, 'ParamSet', '-v7' );
         
         filename	=	[ SimSettings.SavePath, '/', 'SimSettings' ];
-        save( filename, 'SimSettings' );
+        save( filename, 'SimSettings', '-v7' );
     catch me
         warning(me.identifier,me.message);
     end

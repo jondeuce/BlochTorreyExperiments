@@ -45,7 +45,7 @@ datafun     =   @(x,xdata) datafun_lsqcurvefit(x,xdata,lb,ub,SimSettings);
 %% Save SimSettings with optimzation options
 if SimSettings.flags.SaveData
     try
-        save( [SimSettings.RootSavePath, '/', 'SimSettings'], 'SimSettings' );
+        save( [SimSettings.RootSavePath, '/', 'SimSettings'], 'SimSettings', '-v7' );
     catch me
         warning(me.message);
     end

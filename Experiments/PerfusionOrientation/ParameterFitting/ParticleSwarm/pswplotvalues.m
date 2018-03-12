@@ -35,7 +35,7 @@ switch state
             ylabel(sprintf('Particle %d',i));
         end
         drawnow % Show the plot
-        %savefig(gcf,sprintf('%s__pswplotvalue',DateString)); % save the figure
+        savefig(gcf,sprintf('%s__pswplotvalue',DateString)); % save the figure
     case 'done'
         % No cleanup necessary
 end

@@ -37,7 +37,7 @@ switch state
             set(gca,'xlim',[0,optimValues.iteration]); % adjust xlim
         end
         drawnow % Show the plot
-        %savefig(fig,sprintf('%s__pswplotrange',DateString)); % save the figure
+        savefig(fig,sprintf('%s__pswplotrange',DateString)); % save the figure
     case 'done'
         % No cleanup necessary
 end

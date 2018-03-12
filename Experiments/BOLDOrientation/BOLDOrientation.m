@@ -136,7 +136,7 @@ for ii = 1:Navgs
         fname = strrep( fname, ' ', '' ); fname = strrep( fname, '\%', '' ); fname = strrep( fname, '=', '-' );
         fname = strrep( fname, ',', '__' );   fname = strrep( fname, '.', 'p' ); fname = [datestr(now,30), '__', fname];
         
-        save(fname,'Results','Geom');
+        save(fname,'Results','Geom','-v7');
         diary(DiaryFilename);
         savefig(fig, fname);
         export_fig(fname, '-pdf', '-transparent');
@@ -146,7 +146,7 @@ for ii = 1:Navgs
 end
 
 %% Save workspace in current directory
-save([datestr(now,30),'__','BOLDOrientationResults']);
+save([datestr(now,30),'__','BOLDOrientationResults'],'-v7');
 
 diary(DiaryFilename);
 diary off

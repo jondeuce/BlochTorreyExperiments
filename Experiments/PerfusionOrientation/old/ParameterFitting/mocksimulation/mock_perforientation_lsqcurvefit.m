@@ -99,7 +99,7 @@ BVF = iBVF + aBVF;
 iRBVF = iBVF/BVF;
 aRBVF = aBVF/BVF;
 
-save([datestr(now,30),'__','LsqcurvefitResults']);
+save([datestr(now,30),'__','LsqcurvefitResults'], '-v7');
 
 %Go back to original directory
 % cd(currentpath);

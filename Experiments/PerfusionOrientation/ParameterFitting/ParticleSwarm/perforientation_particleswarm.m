@@ -19,8 +19,8 @@ diary(DiaryFilename);
 % cd '/home/coopar7/Dropbox/Masters Year 1/UBCMRI/CurveFitting_Trial2_7umMinor'
 
 % ---- Angles to simulate ---- %
-% alpha_range = 2.5:5.0:87.5;
-alpha_range = 7.5:10.0:87.5;
+alpha_range = 2.5:5.0:87.5;
+% alpha_range = 7.5:10.0:87.5;
 % alpha_range = 17.5:10.0:87.5;
 % alpha_range = 7.5:20.0:87.5;
 % alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
@@ -33,8 +33,11 @@ alpha_range = 7.5:10.0:87.5;
 
 % ---- GRE w/ Diffusion Bounds (small minor) ---- %
 %       CA       iBVF          aBVF
-lb  = [ 3.000,   0.8000/100,   0.5000/100 ];
-ub  = [ 5.000,   1.8000/100,   1.5000/100 ];
+lb  = [ 4.500,   1.1000/100,   0.4000/100 ];
+ub  = [ 5.750,   1.5000/100,   0.7000/100 ];
+
+% particle swarm (iso vox):   5.0000    0.0142    0.0052
+% particle swarm (reg vox):   3.8176    0.0207    0.0050
 
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize, BinCounts] = get_GRE_data(alpha_range);
 
@@ -59,15 +62,20 @@ Rminor_sig = 0.0;
 B0 = -3.0; %[Tesla]
 Dcoeff = 3037; %[um^2/s]
 order = 2;
-Nsteps = 8;
+Nsteps = 10;
 rng('default'); seed = rng; % for consistent geometries between sims.
 Navgs  = 1; % for now, if geom seed is 'default', there is no point doing > 1 averages
 % type = 'SE';
 type = 'GRE';
 MajorOrient = 'FixedPosition';
+
 PlotFigs = true;
 SaveFigs = true;
+FigTypes = {'png'};
+CloseFigs = true;
 SaveResults = true;
+StallTime_Days = 0.5;
+MaxTime_Days = 2.0;
 
 % Initial Swarm
 CA_init   = linspacePeriodic(lb(1), ub(1), 2);
@@ -87,8 +95,8 @@ PSOpts = optimoptions(@particleswarm, ...
     'Display', 'iter', ...
     'SwarmSize', SwarmSize, ...
     'InitialSwarm', InitSwarm, ...
-    'StallTimeLimit', 1*24*60*60, ... % one day
-    'MaxTime', 1*24*60*60, ... % four days
+    'StallTimeLimit', StallTime_Days*24*60*60, ... % StallTime_Days days [secs]
+    'MaxTime', MaxTime_Days*24*60*60, ... % MaxTime_Days days [secs]
     'OutputFcn', {@pswplotranges, @pswplotvalues} ...
     );
 
@@ -96,15 +104,16 @@ PSOpts = optimoptions(@particleswarm, ...
 diary(DiaryFilename);
 
 % Objective function
-weights = 'uniform';
 normfun = 'default';
+% weights = 'uniform';
+weights = BinCounts/sum(BinCounts);
 
 optfun = @(x) perforientation_objfun( ...
-    x, alpha_range, dR2_Data, weights, normfun, ...
+    x, alpha_range, dR2_Data, [], weights, normfun, ...
     TE, type, VoxelSize, VoxelCenter, GridSize, ...
     B0, Dcoeff, Nsteps, Nmajor, Rminor_mu, Rminor_sig, ...
     'Navgs', Navgs, 'order', order, ...
-    'PlotFigs', PlotFigs, 'SaveFigs', SaveFigs, ...
+    'PlotFigs', PlotFigs, 'SaveFigs', SaveFigs, 'CloseFigs', CloseFigs, 'FigTypes', {FigTypes}, ...
     'SaveResults', SaveResults, 'DiaryFilename', DiaryFilename, ...
     'MajorOrientation', MajorOrient, 'geomseed', seed);
 
@@ -117,7 +126,7 @@ BVF = iBVF + aBVF;
 iRBVF = iBVF/BVF;
 aRBVF = aBVF/BVF;
 
-save([datestr(now,30),'__','ParticleSwarmFitResults']);
+save([datestr(now,30),'__','ParticleSwarmFitResults'], '-v7');
 
 %Go back to original directory
 % cd(currentpath);

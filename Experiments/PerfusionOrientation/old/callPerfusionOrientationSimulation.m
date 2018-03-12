@@ -140,14 +140,14 @@ if SimSettings.flags.SaveData
         end
         
         if isnan(SimSettings.MinimizationType)
-            save( [SimSettings.RootSavePath, '/', 'Initial_Workspace'] );
+            save( [SimSettings.RootSavePath, '/', 'Initial_Workspace'], '-v7' );
         else
             SimSettings.RootSavePath    =   [ SimSettings.SavePath, '/', ...
                 SimSettings.MinimizationType, '_Initial' ];
             mkdir( SimSettings.RootSavePath );
             
             % Save Initial Workspace
-            save( [SimSettings.RootSavePath, '/', 'Initial_Workspace'] );
+            save( [SimSettings.RootSavePath, '/', 'Initial_Workspace'], '-v7' );
         end
     catch me
         warning('Couldn''t save initial workspace to specified folder; check your settings!');
@@ -190,7 +190,7 @@ clearvars( '-except', 'Results', 'AvgResults', 'ParamCombinations', 'SimSettings
 if SimSettings.flags.SaveData
     try
         if isnan(SimSettings.MinimizationType)
-            save( [SimSettings.RootSavePath, '/', 'Final_Workspace'] );
+            save( [SimSettings.RootSavePath, '/', 'Final_Workspace'], '-v7' );
         else
             SimSettings.RootSavePath    =   [ SimSettings.SavePath, '/', ...
                 SimSettings.MinimizationType, '_Final' ];
@@ -200,10 +200,10 @@ if SimSettings.flags.SaveData
             save_simulation_figure( 'MinimizationProgress', [], false, SimSettings );
             
             % Save Final Workspace
-            save( [SimSettings.RootSavePath, '/', 'Final_Workspace'] );
+            save( [SimSettings.RootSavePath, '/', 'Final_Workspace'], '-v7' );
         end
     catch me
         warning('Couldn''t save final workspace to specified folder; saving it to current directory.');
-        save( [ 'Final_Workspace_', SimSettings.Date ] );
+        save( [ 'Final_Workspace_', SimSettings.Date ], '-v7' );
     end
 end

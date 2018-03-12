@@ -1,4 +1,4 @@
-function [ objval ] = perforientation_objfun( params, xdata, dR2_Data, weights, normfun, varargin )
+function [ objval ] = perforientation_objfun( params, xdata, dR2_Data, dR2, weights, normfun, varargin )
 %[ objval ] = perforientation_objfun( params, xdata, dR2_Data, weights, normfun, varargin )
 % Calls perforientation_fun and returns the (weighted) residual norm.
 
@@ -19,15 +19,16 @@ if ischar(weights)
     end
 end
 
-dR2    = perforientation_fun(params, xdata, dR2_Data, varargin{:});
+if isempty(dR2)
+    dR2 = perforientation_fun(params, xdata, dR2_Data, 'Weights', weights, varargin{:});
+    
+    % Fake dR2 with unique minimum at params = params0 for testing
+    %     fakerand = @(siz) reshape( mod(1:prod(siz),pi)/pi, siz ); %deterministic ~uniformly random
+    %     params0 = [5; 1.25/100; 0.5/100]; % [CA; iBVF; aBVF]
+    %     dR2_noise = reshape( sin( fakerand([numel(dR2_Data), numel(params)]) * (params(:) - params0(:)).^2 ), size(dR2_Data) );
+    %     dR2 = dR2_Data + dR2_noise;
+end
+
 objval = normfun(dR2, dR2_Data, weights);
 
 end
-
-% Creating mock data for simulation with a unique minimum @ params = params0
-%{
-fakerand = @(siz) reshape( mod(1:prod(siz),pi)/pi, siz ); %deterministic ~uniformly random
-params0 = [4; 1/100; 1/100]; % [CA; iBVF; aBVF]
-dR2_noise = reshape( sin( fakerand([numel(dR2_Data), numel(params)]) * (params(:) - params0(:)).^2 ), size(dR2_Data) );
-dR2 = dR2_Data + dR2_noise;
-%}
