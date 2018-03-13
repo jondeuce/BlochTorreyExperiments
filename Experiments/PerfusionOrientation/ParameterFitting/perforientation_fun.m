@@ -89,6 +89,7 @@ try
         end
     end
 catch me
+    keyboard
     warning('Unable to save figure.\nError message: %s', me.message);
 end
 

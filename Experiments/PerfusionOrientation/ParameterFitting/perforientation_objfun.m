@@ -20,7 +20,7 @@ if ischar(weights)
 end
 
 if isempty(dR2)
-    dR2 = perforientation_fun(params, xdata, dR2_Data, 'Weights', weights, varargin{:});
+    dR2 = perforientation_fun(params, xdata, dR2_Data, varargin{:}, 'Weights', weights);
     
     % Fake dR2 with unique minimum at params = params0 for testing
     %     fakerand = @(siz) reshape( mod(1:prod(siz),pi)/pi, siz ); %deterministic ~uniformly random

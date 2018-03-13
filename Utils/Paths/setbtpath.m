@@ -23,6 +23,10 @@ switch upper(type)
         btroot = '/home/coopar7/Documents/code/';
         btexp_branch = 'master';
         
+    case 'HOME/COOPAR7/TEMP1' % coopar7 local path
+        btroot = '/home/coopar7/Documents/code/';
+        btexp_branch = 'temp1';
+        
     case 'ASUS' % home asus laptop
         error('not impl.');
         btroot = '/home/jon/Documents/UBCMRI/';
@@ -30,6 +34,10 @@ switch upper(type)
     case 'THINKPAD' % home thinkpad laptop
         btroot = 'C:\Users\Jonathan\Documents\MATLAB\';
         btexp_branch = 'master';
+        
+    case 'THINKPAD/TEMP1' % home thinkpad laptop
+        btroot = 'C:\Users\Jonathan\Documents\MATLAB\';
+        btexp_branch = 'TEMP1';
 end
 
 % Cannot add library directories to path (i.e. starting with "+").
