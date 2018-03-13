@@ -37,6 +37,9 @@ alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 % lb  = [ 4.500,   1.1000/100,   0.4000/100 ];
 % ub  = [ 5.750,   1.5000/100,   0.7000/100 ];
 
+% lb  = [ 4.000,   0.9000/100,   0.4000/100 ];
+% ub  = [ 6.500,   1.7000/100,   1.3000/100 ];
+
 lb  = [ 2.000,   0.4000/100,   0.4000/100 ];
 ub  = [ 9.000,   2.5000/100,   2.5000/100 ];
 
@@ -76,7 +79,7 @@ FigTypes = {'png'};
 CloseFigs = true;
 SaveResults = true;
 StallTime_Days = 0.5;
-MaxTime_Days = 2.0;
+MaxTime_Days = 3.0;
 
 % Initial Swarm
 CA_init   = linspacePeriodic(lb(1), ub(1), 2);
@@ -116,6 +119,7 @@ optfun = @(x) perforientation_objfun( ...
     'Navgs', Navgs, 'order', order, ...
     'PlotFigs', PlotFigs, 'SaveFigs', SaveFigs, 'CloseFigs', CloseFigs, 'FigTypes', FigTypes, ...
     'SaveResults', SaveResults, 'DiaryFilename', DiaryFilename, ...
+    'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', true, ...
     'MajorOrientation', MajorOrient, 'geomseed', seed);
 
 [x,objval,exitflag,output] = particleswarm(optfun,NVars,lb,ub,PSOpts);

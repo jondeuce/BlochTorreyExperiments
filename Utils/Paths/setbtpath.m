@@ -27,9 +27,13 @@ switch upper(type)
         btroot = '/home/coopar7/Documents/code/';
         btexp_branch = 'temp1';
         
-    case 'ASUS' % home asus laptop
-        error('not impl.');
+    case 'ASUS/MASTER' % home asus laptop
         btroot = '/home/jon/Documents/UBCMRI/';
+        btexp_branch = 'master';
+        
+    case 'ASUS/TEMP1' % home asus laptop
+        btroot = '/home/jon/Documents/UBCMRI/';
+        btexp_branch = 'temp1';
         
     case 'THINKPAD' % home thinkpad laptop
         btroot = 'C:\Users\Jonathan\Documents\MATLAB\';
