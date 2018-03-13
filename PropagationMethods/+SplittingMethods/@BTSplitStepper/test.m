@@ -9,7 +9,9 @@ function test()
 % Vsize = Vlen * [1,1,1];
 
 ScaleGsize = 1;
-Gsize = [350,350,350] / ScaleGsize;
+% Gsize = [350,350,350] / ScaleGsize;
+% Vsize = [1750,1750,1750];
+Gsize = [350,350,800] / ScaleGsize;
 Vsize = [1750,1750,4000];
 TypicalScale = 4000/800;
 Scale = Vsize(3)/Gsize(3);
@@ -29,7 +31,7 @@ Rminor_sig = 0;
 iBVF = 1.1803/100;
 aBVF = 1.3425/100;
 Nmajor = 4; % Number of major vessels (optimal number is from SE perf. orientation. sim)
-MajorAngle = 45; % Angle of major vessels
+MajorAngle = 0.0; % Angle of major vessels
 NumMajorArteries = 1; % Number of major arteries
 MinorArterialFrac = 1/3; % Fraction of minor vessels which are arteries
 rng('default'); seed = rng;
@@ -42,7 +44,7 @@ Geom = Geometry.CylindricalVesselFilledVoxel( ...
     'Nmajor', Nmajor, 'MajorAngle', MajorAngle, ...
     'NumMajorArteries', NumMajorArteries, 'MinorArterialFrac', MinorArterialFrac, ...
     'Rminor_mu', Rminor_mu, 'Rminor_sig', Rminor_sig, ...
-    'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', false, ...
+    'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', true, ...
     'PopulateIdx', true, 'seed', seed );
 
 %% Calculate ComplexDecay

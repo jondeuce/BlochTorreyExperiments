@@ -33,11 +33,11 @@ alpha_range = 2.5:5.0:87.5;
 
 % ---- GRE w/ Diffusion Bounds (small minor) ---- %
 %       CA       iBVF          aBVF
-lb  = [ 4.500,   1.1000/100,   0.4000/100 ];
-ub  = [ 5.750,   1.5000/100,   0.7000/100 ];
+% lb  = [ 4.500,   1.1000/100,   0.4000/100 ];
+% ub  = [ 5.750,   1.5000/100,   0.7000/100 ];
 
-% particle swarm (iso vox):   5.0000    0.0142    0.0052
-% particle swarm (reg vox):   3.8176    0.0207    0.0050
+lb  = [ 2.000,   0.4000/100,   0.4000/100 ];
+ub  = [ 9.000,   2.5000/100,   2.5000/100 ];
 
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize, BinCounts] = get_GRE_data(alpha_range);
 
@@ -50,7 +50,7 @@ ub  = [ 5.750,   1.5000/100,   0.7000/100 ];
 
 % Override some terms
 % TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512,512,512];
-TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
+% TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
 
 VoxelCenter = [0,0,0];
 Nmajor = 4;

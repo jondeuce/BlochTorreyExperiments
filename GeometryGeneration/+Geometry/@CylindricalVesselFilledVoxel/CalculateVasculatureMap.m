@@ -20,11 +20,12 @@ G.VasculatureMap = [];
     isUnit, isCentered, prec, G.VasculatureMap );
 
 % ---- Calculate BVF ---- %
-BVF_Fun = @(x) sum(x(:))/numel(x);
+vec     = @(x) x(:);
+BVF_Fun = @(x) sum(vec(sum(x,1)))/numel(x); % faster than sum(x(:)) for logical arrays
 
 G.BVF = BVF_Fun(G.VasculatureMap);
 G.aBVF = numel(unique(cat(1,G.idx0{:})))/prod(G.GridSize);
-G.iBVF = numel(unique(cat(1,G.idx{:})))/prod(G.GridSize);
+G.iBVF = G.BVF - G.aBVF;
 
 end
 

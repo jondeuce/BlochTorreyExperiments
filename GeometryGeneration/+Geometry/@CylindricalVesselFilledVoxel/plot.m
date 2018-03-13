@@ -1,6 +1,5 @@
 function [ h ] = plot( G, plotmajor, plotminor )
-%PLOT Summary of this function goes here
-%   Detailed explanation goes here
+%PLOT Plots the CylindricalVesselFilledVoxel G.
 
 if nargin < 2 || isempty(plotmajor); plotmajor = true; end
 if nargin < 3 || isempty(plotminor); plotminor = true; end

@@ -30,8 +30,9 @@ G.r = G.RminorFun(1,G.InitGuesses.Nminor,'double');
 PlotCyls = false;
 if G.opts.AllowMinorSelfIntersect
     if G.opts.AllowMinorMajorIntersect
-        [G.P,G.Vz,G.R] = addIntersectingCylinders( G.VoxelSize(:), G.VoxelCenter(:), G.r, ...
+        [p,vz,r] = addIntersectingCylinders( G.VoxelSize(:), G.VoxelCenter(:), G.r, ...
             G.InitGuesses.Nminor, G.opts.MinorOrientation, PlotCyls, [], [], [], G.Targets.BVF );
+        [G.P,G.Vz,G.R] = deal([G.p0, p], [G.vz0, vz], [G.r0, r]);
     else
         [G.P,G.Vz,G.R] = addIntersectingCylinders( G.VoxelSize(:), G.VoxelCenter(:), G.r, ...
             G.InitGuesses.Nminor, G.opts.MinorOrientation, PlotCyls, G.p0, G.vz0, G.r0, G.Targets.BVF );
