@@ -19,12 +19,13 @@ diary(DiaryFilename);
 % cd '/home/coopar7/Dropbox/Masters Year 1/UBCMRI/CurveFitting_Trial2_7umMinor'
 
 % ---- Angles to simulate ---- %
-alpha_range = 2.5:5.0:87.5;
+% alpha_range = 2.5:5.0:87.5;
 % alpha_range = 7.5:10.0:87.5;
 % alpha_range = 17.5:10.0:87.5;
 % alpha_range = 7.5:20.0:87.5;
 % alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
 % alpha_range = [37.5, 52.5, 72.5, 17.5, 87.5];
+alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 
 % % ---- GRE w/ Diffusion Bounds (large minor) ---- %
 % %       CA       iBVF          aBVF
