@@ -33,7 +33,7 @@ alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 % ub  = [ 5.000,   1.5000/100,   1.2000/100 ];
 
 % ---- GRE w/ Diffusion Bounds (small minor) ---- %
-%       CA       iBVF          aBVF
+% %       CA       iBVF          aBVF
 % lb  = [ 4.500,   1.1000/100,   0.4000/100 ];
 % ub  = [ 5.750,   1.5000/100,   0.7000/100 ];
 
@@ -41,7 +41,7 @@ alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 % ub  = [ 6.500,   1.7000/100,   1.3000/100 ];
 
 lb  = [ 2.000,   0.4000/100,   0.4000/100 ];
-ub  = [ 9.000,   2.5000/100,   2.5000/100 ];
+ub  = [ 8.000,   2.5000/100,   2.5000/100 ];
 
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize, BinCounts] = get_GRE_data(alpha_range);
 
@@ -57,7 +57,7 @@ ub  = [ 9.000,   2.5000/100,   2.5000/100 ];
 % TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
 
 VoxelCenter = [0,0,0];
-Nmajor = 4;
+Nmajor = 1;
 % Rminor_mu = 13.7;
 % Rminor_sig = 2.1;
 Rminor_mu = 7.0;
