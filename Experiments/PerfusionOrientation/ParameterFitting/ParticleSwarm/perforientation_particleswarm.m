@@ -19,13 +19,13 @@ diary(DiaryFilename);
 % cd '/home/coopar7/Dropbox/Masters Year 1/UBCMRI/CurveFitting_Trial2_7umMinor'
 
 % ---- Angles to simulate ---- %
-alpha_range = 2.5:5.0:87.5;
+% alpha_range = 2.5:5.0:87.5;
 % alpha_range = 7.5:10.0:87.5;
 % alpha_range = 17.5:10.0:87.5;
 % alpha_range = 7.5:20.0:87.5;
 % alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
 % alpha_range = [37.5, 52.5, 72.5, 17.5, 87.5];
-% alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
+alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 
 % % ---- GRE w/ Diffusion Bounds (large minor) ---- %
 % %       CA       iBVF          aBVF
@@ -37,11 +37,11 @@ alpha_range = 2.5:5.0:87.5;
 % lb  = [ 4.500,   1.1000/100,   0.4000/100 ];
 % ub  = [ 5.750,   1.5000/100,   0.7000/100 ];
 
-% lb  = [ 4.000,   0.9000/100,   0.4000/100 ];
-% ub  = [ 6.500,   1.7000/100,   1.3000/100 ];
+lb  = [ 3.000,   0.9000/100,   0.4000/100 ];
+ub  = [ 5.500,   1.7500/100,   1.0000/100 ];
 
-lb  = [ 2.000,   0.4000/100,   0.4000/100 ];
-ub  = [ 8.000,   2.5000/100,   2.5000/100 ];
+% lb  = [ 2.000,   0.4000/100,   0.4000/100 ];
+% ub  = [ 8.000,   2.5000/100,   2.5000/100 ];
 
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize, BinCounts] = get_GRE_data(alpha_range);
 
@@ -52,29 +52,28 @@ ub  = [ 8.000,   2.5000/100,   2.5000/100 ];
 % 
 % [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize] = get_SE_data(alpha_range);
 
-% Override some terms
-% TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512,512,512];
-TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
-
-VoxelCenter = [0,0,0];
-Nmajor = 1;
+Nmajor = 4;
 % Rminor_mu = 13.7;
 % Rminor_sig = 2.1;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 
 % type = 'SE';
+% TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512,512,512];
 type = 'GRE';
+TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
 
 %with diffusion
 % Dcoeff = 3037; %[um^2/s]
 % order = 2;
 % Nsteps = 10;
+% Nswarms = 2;
 
 %diffusionless
 Dcoeff = 0; %[um^2/s]
 order = 2;
 Nsteps = 1;
+Nswarms = 3;
 
 B0 = -3.0; %[Tesla]
 rng('default'); seed = rng; % for consistent geometries between sims.
@@ -90,9 +89,9 @@ StallTime_Days = 0.5;
 MaxTime_Days = 3.0;
 
 % Initial Swarm
-CA_init   = linspacePeriodic(lb(1), ub(1), 2);
-iBVF_init = linspacePeriodic(lb(2), ub(2), 2);
-aBVF_init = linspacePeriodic(lb(3), ub(3), 2);
+CA_init   = linspacePeriodic(lb(1), ub(1), Nswarms);
+iBVF_init = linspacePeriodic(lb(2), ub(2), Nswarms);
+aBVF_init = linspacePeriodic(lb(3), ub(3), Nswarms);
 
 [CA_mesh, iBVF_mesh, aBVF_mesh] = meshgrid(CA_init, iBVF_init, aBVF_init);
 
