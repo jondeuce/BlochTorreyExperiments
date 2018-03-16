@@ -53,10 +53,10 @@ ub  = [ 5.500,   1.7500/100,   1.0000/100 ];
 % [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize] = get_SE_data(alpha_range);
 
 Nmajor = 4;
-% Rminor_mu = 13.7;
-% Rminor_sig = 2.1;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
+% Rminor_mu = 13.7;
+% Rminor_sig = 2.1;
 
 % type = 'SE';
 % TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512,512,512];
@@ -64,16 +64,16 @@ type = 'GRE';
 TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
 
 %with diffusion
-% Dcoeff = 3037; %[um^2/s]
-% order = 2;
-% Nsteps = 10;
-% Nswarms = 2;
+Dcoeff = 3037; %[um^2/s]
+order = 2;
+Nsteps = 10;
+NparticlesPerParam = 2;
 
 %diffusionless
-Dcoeff = 0; %[um^2/s]
-order = 2;
-Nsteps = 1;
-Nswarms = 3;
+% Dcoeff = 0; %[um^2/s]
+% order = 2;
+% Nsteps = 1;
+% NparticlesPerParam = 3;
 
 B0 = -3.0; %[Tesla]
 rng('default'); seed = rng; % for consistent geometries between sims.
@@ -82,16 +82,18 @@ MajorOrient = 'FixedPosition';
 
 PlotFigs = true;
 SaveFigs = true;
-FigTypes = {'png'};
+FigTypes = {'png'}; % outputs a lot of figures, so just 'png' is probably best
 CloseFigs = true;
 SaveResults = true;
-StallTime_Days = 0.5;
-MaxTime_Days = 3.0;
+StallTime_Days = 0.5; % max time without seeing an improvement in objective
+MaxTime_Days = 3.0; % max time for full simulation
 
 % Initial Swarm
-CA_init   = linspacePeriodic(lb(1), ub(1), Nswarms);
-iBVF_init = linspacePeriodic(lb(2), ub(2), Nswarms);
-aBVF_init = linspacePeriodic(lb(3), ub(3), Nswarms);
+linspace_fun = @linspacePeriodic; % lb < initial_param < ub
+% linspace_fun = @linspace; % lb <= initial_param <= ub
+CA_init   = linspace_fun(lb(1), ub(1), NparticlesPerParam);
+iBVF_init = linspace_fun(lb(2), ub(2), NparticlesPerParam);
+aBVF_init = linspace_fun(lb(3), ub(3), NparticlesPerParam);
 
 [CA_mesh, iBVF_mesh, aBVF_mesh] = meshgrid(CA_init, iBVF_init, aBVF_init);
 
