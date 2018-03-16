@@ -19,13 +19,13 @@ diary(DiaryFilename);
 % cd '/home/coopar7/Dropbox/Masters Year 1/UBCMRI/CurveFitting_Trial2_7umMinor'
 
 % ---- Angles to simulate ---- %
-% alpha_range = 2.5:5.0:87.5;
+alpha_range = 2.5:5.0:87.5;
 % alpha_range = 7.5:10.0:87.5;
 % alpha_range = 17.5:10.0:87.5;
 % alpha_range = 7.5:20.0:87.5;
 % alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
 % alpha_range = [37.5, 52.5, 72.5, 17.5, 87.5];
-alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
+% alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 
 % % ---- GRE w/ Diffusion Bounds (large minor) ---- %
 % %       CA       iBVF          aBVF
@@ -54,7 +54,7 @@ ub  = [ 8.000,   2.5000/100,   2.5000/100 ];
 
 % Override some terms
 % TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512,512,512];
-% TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
+TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
 
 VoxelCenter = [0,0,0];
 Nmajor = 1;
@@ -63,14 +63,22 @@ Nmajor = 1;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 
-B0 = -3.0; %[Tesla]
-Dcoeff = 3037; %[um^2/s]
-order = 2;
-Nsteps = 10;
-rng('default'); seed = rng; % for consistent geometries between sims.
-Navgs  = 1; % for now, if geom seed is 'default', there is no point doing > 1 averages
 % type = 'SE';
 type = 'GRE';
+
+%with diffusion
+% Dcoeff = 3037; %[um^2/s]
+% order = 2;
+% Nsteps = 10;
+
+%diffusionless
+Dcoeff = 0; %[um^2/s]
+order = 2;
+Nsteps = 1;
+
+B0 = -3.0; %[Tesla]
+rng('default'); seed = rng; % for consistent geometries between sims.
+Navgs  = 1; % for now, if geom seed is 'default', there is no point doing > 1 averages
 MajorOrient = 'FixedPosition';
 
 PlotFigs = true;

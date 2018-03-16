@@ -3,7 +3,8 @@ function [ objval ] = perforientation_objfun( params, xdata, dR2_Data, dR2, weig
 % Calls perforientation_fun and returns the (weighted) residual norm.
 
 if isempty(normfun) || (ischar(normfun) && strcmpi(normfun, 'default'))
-    normfun = @(x,xdata,w) sqrt(sum(vec(w).*vec(x-xdata).^2));
+    % Vectorized weighted rms residual: sqrt(sum(w*(x-xdata)^2))
+    normfun = @(x,xdata,w) sqrt(sum(bsxfun(@times,w,bsxfun(@minus,x,xdata).^2)));
 end
 if isempty(weights); weights = 'uniform'; end
 
