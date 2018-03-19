@@ -38,7 +38,7 @@ alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 % ub  = [ 5.750,   1.5000/100,   0.7000/100 ];
 
 lb  = [ 3.000,   0.9000/100,   0.4000/100 ];
-ub  = [ 5.500,   1.7500/100,   1.0000/100 ];
+ub  = [ 6.000,   1.7500/100,   1.0000/100 ];
 
 % lb  = [ 2.000,   0.4000/100,   0.4000/100 ];
 % ub  = [ 8.000,   2.5000/100,   2.5000/100 ];
@@ -52,7 +52,7 @@ ub  = [ 5.500,   1.7500/100,   1.0000/100 ];
 % 
 % [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize] = get_SE_data(alpha_range);
 
-Nmajor = 4;
+Nmajor = 3;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
@@ -61,7 +61,8 @@ Rminor_sig = 0.0;
 % type = 'SE';
 % TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512,512,512];
 type = 'GRE';
-TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
+% TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
+TE = 40e-3; VoxelSize = [3500,3500,3500]; VoxelCenter = [0,0,0]; GridSize = [700,700,700];
 
 %with diffusion
 Dcoeff = 3037; %[um^2/s]
@@ -85,8 +86,8 @@ SaveFigs = true;
 FigTypes = {'png'}; % outputs a lot of figures, so just 'png' is probably best
 CloseFigs = true;
 SaveResults = true;
-StallTime_Days = 0.5; % max time without seeing an improvement in objective
-MaxTime_Days = 3.0; % max time for full simulation
+StallTime_Days = 1.0; % max time without seeing an improvement in objective
+MaxTime_Days = 4.0; % max time for full simulation
 
 % Initial Swarm
 linspace_fun = @linspacePeriodic; % lb < initial_param < ub
