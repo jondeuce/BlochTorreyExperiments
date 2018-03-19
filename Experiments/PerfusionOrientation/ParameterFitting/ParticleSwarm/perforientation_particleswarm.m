@@ -61,7 +61,8 @@ Rminor_sig = 0.0;
 % type = 'SE';
 % TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512,512,512];
 type = 'GRE';
-TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
+% TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
+TE = 40e-3; VoxelSize = [3500,3500,3500]; VoxelCenter = [0,0,0]; GridSize = [700,700,700];
 
 %with diffusion
 Dcoeff = 3037; %[um^2/s]
@@ -85,8 +86,8 @@ SaveFigs = true;
 FigTypes = {'png'}; % outputs a lot of figures, so just 'png' is probably best
 CloseFigs = true;
 SaveResults = true;
-StallTime_Days = 0.5; % max time without seeing an improvement in objective
-MaxTime_Days = 3.0; % max time for full simulation
+StallTime_Days = 1.0; % max time without seeing an improvement in objective
+MaxTime_Days = 4.0; % max time for full simulation
 
 % Initial Swarm
 linspace_fun = @linspacePeriodic; % lb < initial_param < ub
