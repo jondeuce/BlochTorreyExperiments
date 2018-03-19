@@ -52,7 +52,7 @@ ub  = [ 6.000,   1.7500/100,   1.0000/100 ];
 % 
 % [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize] = get_SE_data(alpha_range);
 
-Nmajor = 3;
+Nmajor = 4;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
@@ -62,7 +62,8 @@ Rminor_sig = 0.0;
 % TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512,512,512];
 type = 'GRE';
 % TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
-TE = 40e-3; VoxelSize = [3500,3500,3500]; VoxelCenter = [0,0,0]; GridSize = [700,700,700];
+% TE = 40e-3; VoxelSize = [3500,3500,3500]; VoxelCenter = [0,0,0]; GridSize = [700,700,700];
+TE = 40e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [600,600,600];
 
 %with diffusion
 Dcoeff = 3037; %[um^2/s]
@@ -86,7 +87,7 @@ SaveFigs = true;
 FigTypes = {'png'}; % outputs a lot of figures, so just 'png' is probably best
 CloseFigs = true;
 SaveResults = true;
-StallTime_Days = 1.0; % max time without seeing an improvement in objective
+StallTime_Days = 0.5; % max time without seeing an improvement in objective
 MaxTime_Days = 4.0; % max time for full simulation
 
 % Initial Swarm
