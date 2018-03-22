@@ -52,7 +52,7 @@ ub  = [ 5.000,   1.7500/100,   1.0000/100 ];
 % 
 % [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize] = get_SE_data(alpha_range);
 
-Nmajor = 5;
+Nmajor = 3;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
