@@ -50,5 +50,24 @@ set(leg, 'location', 'best', props{:});
 
 drawnow
 
+% ---- Save Figure ---- %
+try
+    if args.PlotFigs && args.SaveFigs
+        FigTypes = args.FigTypes;
+        [v,ix] = ismember('fig',FigTypes);
+        if v
+            savefig(fig, FileName);
+        end
+        FigTypes = FigTypes([1:ix-1,ix+1:end]);
+        if ~isempty(FigTypes)
+            FigTypes = strcat('-', FigTypes);
+            export_fig(FileName, FigTypes{:});
+        end
+    end
+catch me
+    keyboard
+    warning('Unable to save figure.\nError message: %s', me.message);
+end
+
 end
 

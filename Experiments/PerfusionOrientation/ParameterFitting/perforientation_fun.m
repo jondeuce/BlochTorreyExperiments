@@ -2,7 +2,12 @@ function [dR2, ResultsStruct] = perforientation_fun(params, xdata, dR2_Data, var
 %[dR2, ResultsStruct] = PERFORIENTATION_FUN(params, xdata, dR2_Data, varargin)
 % Calculates the perfusion curve dR2(*) vs. angle. dR2 is [1xNumAngles].
 
-args = parseinputs(params, xdata, dR2_Data, varargin{:});
+if nargin == 1
+    % all arguments are given in a single struct
+    args = parseinputs(params);
+else
+    args = parseinputs(params, xdata, dR2_Data, varargin{:});
+end
 
 CA = args.params(1);
 iBVF = args.params(2);
@@ -80,25 +85,6 @@ catch me
     warning('Unable to draw figures.\nError message: %s', me.message);
 end
 
-% ---- Save Figure ---- %
-try
-    if args.PlotFigs && args.SaveFigs
-        FigTypes = args.FigTypes;
-        [v,ix] = ismember('fig',FigTypes);
-        if v
-            savefig(fig, FileName);
-        end
-        FigTypes = FigTypes([1:ix-1,ix+1:end]);
-        if ~isempty(FigTypes)
-            FigTypes = strcat('-', FigTypes);
-            export_fig(FileName, FigTypes{:});
-        end
-    end
-catch me
-    keyboard
-    warning('Unable to save figure.\nError message: %s', me.message);
-end
-
 % ---- Close Figure ---- %
 try
     if args.PlotFigs && args.CloseFigs
@@ -111,11 +97,11 @@ end
 % ---- Save Results ---- %
 try
     if args.SaveResults
-        save(FileName,'Results', '-v7')
+        save(FileName, 'Results', '-v7')
     end
 catch me
     warning('Unable to save results.\nError message: %s', me.message);
-    save(datestr(now,30),'Results', '-v7');
+    save(datestr(now,30), 'Results', '-v7');
 end
 
 % ---- Save Diary ---- %
@@ -174,7 +160,18 @@ for f = fieldnames(DefaultArgs).'
     addParameter(p,paramName,defaultVal)
 end
 
-parse(p, varargin{:});
+if nargin == 1
+    % all arguments are given in a single struct
+    inputargs = varargin{1};
+    requiredargs = cell(1,numel(RequiredArgs));
+    for ii = 1:numel(RequiredArgs)
+        requiredargs{ii} = inputargs.(RequiredArgs{ii});
+    end
+    inputarglist = struct2arglist(rmfield(inputargs,RequiredArgs));
+    parse(p, requiredargs{:}, inputarglist{:});
+else
+    parse(p, varargin{:});
+end
 args = p.Results;
 
 end

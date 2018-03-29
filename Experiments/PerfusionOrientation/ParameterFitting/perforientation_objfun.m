@@ -1,5 +1,5 @@
-function [ objval ] = perforientation_objfun( params, xdata, dR2_Data, dR2, weights, normfun, varargin )
-%[ objval ] = perforientation_objfun( params, xdata, dR2_Data, weights, normfun, varargin )
+function [ objval, dR2, ResultsStruct ] = perforientation_objfun( params, xdata, dR2_Data, dR2, weights, normfun, varargin )
+%[ objval, dR2, ResultsStruct ] = perforientation_objfun( params, xdata, dR2_Data, weights, normfun, varargin )
 % Calls perforientation_fun and returns the (weighted) residual norm.
 
 if isempty(normfun) || (ischar(normfun) && strcmpi(normfun, 'default'))
@@ -21,7 +21,7 @@ if ischar(weights)
 end
 
 if isempty(dR2)
-    dR2 = perforientation_fun(params, xdata, dR2_Data, varargin{:}, 'Weights', weights);
+    [dR2, ResultsStruct] = perforientation_fun(params, xdata, dR2_Data, varargin{:}, 'Weights', weights);
     
     % Fake dR2 with unique minimum at params = params0 for testing
     %     fakerand = @(siz) reshape( mod(1:prod(siz),pi)/pi, siz ); %deterministic ~uniformly random

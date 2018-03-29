@@ -11,10 +11,18 @@ if endsWith(files(end).name, 'InterruptedWorkspace.mat')
 end
 
 r = load(files(1).name);
-Results = repmat(r.Results, numel(files), 1);
+resfield = 'Results';
+if isfield(r,'CompleteResults')
+    resfield = 'CompleteResults';
+end
+Results = repmat(r.(resfield), numel(files), 1);
 for ii = 2:length(files)
     r = load(files(ii).name);
-    Results(ii) = r.Results;
+    resfield = 'Results';
+    if isfield(r,'CompleteResults')
+        resfield = 'CompleteResults';
+    end
+    Results(ii) = r.(resfield);
 end
 if ~isempty(res_file)
     LsqResults = load(res_file.name);
