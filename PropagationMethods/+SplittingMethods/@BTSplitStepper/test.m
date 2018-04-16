@@ -8,17 +8,18 @@ function test()
 % Gsize = Glen * [1,1,1];
 % Vsize = Vlen * [1,1,1];
 
-ScaleGsize = 1;
-% Gsize = [350,350,350] / ScaleGsize;
+ScaleGsize = 2;
+Gsize = [350,350,350] / ScaleGsize;
 % Vsize = [1750,1750,1750];
-Gsize = [350,350,800] / ScaleGsize;
+% Gsize = [350,350,800] / ScaleGsize;
 Vsize = [1750,1750,4000];
 TypicalScale = 4000/800;
 Scale = Vsize(3)/Gsize(3);
 
-t = 60e-3;
-% type = 'gre';
-type = 'se';
+t = 40e-3;
+type = 'gre';
+% t = 60e-3;
+% type = 'se';
 Dcoeff = 3037 * (Scale/TypicalScale)^2; % Scale diffusion to mimic [3000 um]^3 512^3 grid
 
 % Rminor_mu  = 25;

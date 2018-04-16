@@ -1,13 +1,26 @@
 function [ objval, dR2, ResultsStruct ] = perforientation_objfun( params, xdata, dR2_Data, dR2, weights, normfun, varargin )
 %[ objval, dR2, ResultsStruct ] = perforientation_objfun( params, xdata, dR2_Data, weights, normfun, varargin )
 % Calls perforientation_fun and returns the (weighted) residual norm.
+%    xdata:    [1xN] row vector of angle values
+%    dR2_Data: [1xN] row vector of dR2 data values
+%    dR2:      [MxN] matrix of dR2 simulted values
+%    weights:  [1xN] row vector of data weights
+%    normfun:  [fun] fcn. handle with arguments: @(dR2,dR2_data,weights)
 
-if isempty(normfun) || (ischar(normfun) && strcmpi(normfun, 'default'))
-    % Vectorized weighted rms residual: sqrt(sum(w*(x-xdata)^2))
-    normfun = @(x,xdata,w) sqrt(sum(bsxfun(@times,w,bsxfun(@minus,x,xdata).^2)));
+if isempty(normfun); normfun = 'default'; end
+if ischar(normfun)
+    switch upper(normfun)
+        case 'R2'
+            normfun = @calc_R2w;
+        otherwise
+            if ~(strcmpi(normfun,'default') || strcmpi(normfun,'L2'))
+                warning('Using default normfun: weighted L2-residual');
+            end
+            normfun = @calc_L2w;
+    end
 end
-if isempty(weights); weights = 'uniform'; end
 
+if isempty(weights); weights = 'uniform'; end
 if ischar(weights)
     switch upper(weights)
         case 'UNIT' % unit weighting (dependent on number of datapoints)
@@ -31,5 +44,45 @@ if isempty(dR2)
 end
 
 objval = normfun(dR2, dR2_Data, weights);
+
+end
+
+
+function [ L2w ] = calc_L2w( ymodel, ydata, w )
+
+ydata = ydata(:).';
+w = w(:).';
+
+ymodel = reshape(ymodel, [], length(ydata));
+ydata = repmat(ydata, size(ymodel,1), 1);
+w = repmat(w, size(ymodel,1), 1);
+
+L2w = sqrt(sum(w.*(ymodel-ydata).^2, 2)); % sqrt(sum( w*(x-xdata)^2 ))
+
+end
+
+function [ R2w, ybar ] = calc_R2w( ymodel, ydata, w )
+%CALC_R2 Calculate the (weighted) coefficient of determination R^2.
+%   xdata: dataset values
+%   xmodel: predicted values by model
+%   weights: weights for forming weighted squared residuals
+
+% Standard form (note: scaling w by a constant doesn't change R2, but is
+% more convenient for calculating ybar)
+w = w(:).'./sum(w(:));
+ydata = ydata(:).';
+ybar = sum(w.*ydata);
+
+% Reshape and replicate
+ymodel = reshape(ymodel, [], length(ydata));
+ydata = repmat(ydata, size(ymodel,1), 1);
+w = repmat(w, size(ymodel,1), 1);
+
+% Calculate R2 using the Sum of Squares method
+% https://en.wikipedia.org/wiki/Coefficient_of_determination#Definitions
+ss_residual = sum(w.*(ydata-ymodel).^2, 2);
+ss_total = sum(w.*(ydata-ybar).^2, 2);
+
+R2w = 1 - ss_residual ./ ss_total;
 
 end

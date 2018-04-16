@@ -14,7 +14,7 @@ prevstate = rng(G.seed);
 t_InitialGuess = tic;
 G = MajorMinorInitialGuess(G);
 t_InitialGuess = toc(t_InitialGuess);
-display_toc_time( t_InitialGuess, 'major/minor cylinders initial guess' );
+if G.Verbose; display_toc_time( t_InitialGuess, 'major/minor cylinders initial guess' ); end
 
 %==========================================================================
 % Improve Major Cylinders
@@ -23,7 +23,7 @@ display_toc_time( t_InitialGuess, 'major/minor cylinders initial guess' );
 t_ImproveMajor = tic;
 G = ImproveMajorBVF(G);
 t_ImproveMajor = toc(t_ImproveMajor);
-display_toc_time( t_ImproveMajor, 'impoving major cylinders BVF', 0 );
+if G.Verbose; display_toc_time( t_ImproveMajor, 'impoving major cylinders BVF', 0 ); end
 
 %==========================================================================
 % Improve Minor Cylinders
@@ -32,7 +32,7 @@ display_toc_time( t_ImproveMajor, 'impoving major cylinders BVF', 0 );
 t_ImproveMinor = tic;
 G = ImproveMinorBVF(G);
 t_ImproveMinor = toc(t_ImproveMinor);
-display_toc_time( t_ImproveMinor, 'impoving minor cylinders BVF', 0 );
+if G.Verbose; display_toc_time( t_ImproveMinor, 'impoving minor cylinders BVF', 0 ); end
 
 %==========================================================================
 % Calculate Vascular Map from Major/Minor Cylinders
@@ -47,13 +47,13 @@ G = CalculateVasculatureMap( G );
 t_AddArteries = tic;
 G = AddArteries(G);
 t_AddArteries = toc(t_AddArteries);
-display_toc_time( t_AddArteries, 'adding arteries', 0 );
+if G.Verbose; display_toc_time( t_AddArteries, 'adding arteries', 0 ); end
 
 %==========================================================================
 % Show Resulting Accuracy Info
 %==========================================================================
 
-ShowBVFResults(G);
+if G.Verbose; ShowBVFResults(G); end
 
 %==========================================================================
 % Return the random number generator to the previous state
@@ -65,7 +65,7 @@ rng(prevstate);
 %==========================================================================
 
 t_TotalTime = toc(t_StartTime);
-display_toc_time( t_TotalTime, 'total cylinder construction time', 0 );
+if G.Verbose; display_toc_time( t_TotalTime, 'total cylinder construction time', 0 ); end
 
 G.MetaData.Timings = struct( ...
     'GenerateInitGuess', t_InitialGuess, ...

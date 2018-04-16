@@ -35,7 +35,11 @@ n = length(A);
 if shift
     mu = trace(A)/n;
     mu = full(mu); % Much slower without the full! (for sparse matrices)
-    A = A - mu*eye(size(A),'like',A); %jd
+    if issparse(A) %jd
+        A = A - mu*speye(size(A));
+    else
+        A = A - mu*eye(size(A),'like',A);
+    end
 end
 
 if nargin < 5 || isempty(prec), prec = class(A); end

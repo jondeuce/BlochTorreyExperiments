@@ -1,5 +1,5 @@
 function G = parseinputs( G, varargin )
-%PARSEKEYWORDARGS Parses keyword and required arguments for class 
+%PARSEKEYWORDARGS Parses keyword and required arguments for class
 % CylindricalVesselFilledVoxel.
 
 if length(varargin) >= 2 && isstruct(varargin{1}) && isstruct(varargin{2})
@@ -44,6 +44,7 @@ addParameter(p,'Nmajor', 5);
 addParameter(p,'MajorAngle', 0.0);
 addParameter(p,'NumMajorArteries', 0);
 addParameter(p,'MinorArterialFrac', 0.0);
+addParameter(p,'Verbose', true);
 addParameter(p,'seed', rng);
 
 addParameter(p,'Rminor_mu', 13.7); % Minor vessel mean radius [um]
@@ -79,7 +80,7 @@ end
 function G = setParsedArgs(G,p)
 
 NamedArgs = {'VoxelSize','VoxelCenter','GridSize','Nmajor','MajorAngle','NumMajorArteries', ...
-    'MinorArterialFrac','MinorDilation','Rmajor','Rminor_mu','Rminor_sig','seed'};
+    'MinorArterialFrac','MinorDilation','Rmajor','Rminor_mu','Rminor_sig','Verbose','seed'};
 TargetArgs = {'BVF','iRBVF','aRBVF','iBVF','aBVF'};
 
 for f = NamedArgs; G.(f{1}) = p.Results.(f{1}); end
@@ -95,19 +96,21 @@ else
     G.opts.MajorVesselMode = 'Rmajor_Fixed';
 end
 
-display_text('CylindricalVesselFilledVoxel: using the following default values:',75,'-',true,[1,1]);
-for f = p.UsingDefaults
-    val = p.Results.(f{1});
-    if isnumeric(val) || islogical(val)
-        str = mat2str(val);
-    elseif ischar(val)
-        str = val;
-    else
-        str = strcat('\n',evalc('disp(val)'));
+if G.Verbose
+    display_text('CylindricalVesselFilledVoxel: using the following default values:',75,'-',true,[1,1]);
+    for f = p.UsingDefaults
+        val = p.Results.(f{1});
+        if isnumeric(val) || islogical(val)
+            str = mat2str(val);
+        elseif ischar(val)
+            str = val;
+        else
+            str = strcat('\n',evalc('disp(val)'));
+        end
+        fprintf(['*** Using default: %s = ', str, '\n'], f{1});
     end
-    fprintf(['*** Using default: %s = ', str, '\n'], f{1});
+    fprintf('\n');
 end
-fprintf('\n');
 
 G.opts.parser = p;
 
@@ -197,7 +200,7 @@ for ii = 1:numel(BVFfields)
         BVFvalues{ii} = G.opts.parser.Results.(b);
     end
 end
-        
+
 if ~( NumSpecified == 0 || NumSpecified == 2 )
     bvffieldstrings = strcat(BVFfields,',');
     bvffieldstrings{end} = [bvffieldstrings{end}(1:end-1),'.'];
@@ -214,59 +217,59 @@ end
 %-------------------------------------------------------------%
 if ~isempty(BVFvalues{1}) && ~isempty(BVFvalues{2})
     %BVF and iRBVF
-	BVF = BVFvalues{1}; iRBVF = BVFvalues{2};
+    BVF = BVFvalues{1}; iRBVF = BVFvalues{2};
     G.Targets.BVF   = BVF;
     G.Targets.iRBVF = iRBVF;
     
 elseif ~isempty(BVFvalues{1}) && ~isempty(BVFvalues{3})
-	%BVF and aRBVF
-	BVF = BVFvalues{1}; aRBVF = BVFvalues{3};
+    %BVF and aRBVF
+    BVF = BVFvalues{1}; aRBVF = BVFvalues{3};
     G.Targets.BVF   = BVF;
     G.Targets.iRBVF = (1-aRBVF);
     
 elseif ~isempty(BVFvalues{1}) && ~isempty(BVFvalues{4})
-	%BVF and iBVF
-	BVF = BVFvalues{1}; iBVF = BVFvalues{4};
+    %BVF and iBVF
+    BVF = BVFvalues{1}; iBVF = BVFvalues{4};
     G.Targets.BVF   = BVF;
     G.Targets.iRBVF = iBVF/BVF;
     
 elseif ~isempty(BVFvalues{1}) && ~isempty(BVFvalues{5})
-	%BVF and aBVF
-	BVF = BVFvalues{1}; aBVF = BVFvalues{5};
+    %BVF and aBVF
+    BVF = BVFvalues{1}; aBVF = BVFvalues{5};
     G.Targets.BVF   = BVF;
     G.Targets.iRBVF = (1-aBVF/BVF);
     
-%--------- iRBVF and aRBVF is NOT enough information ---------%
-% elseif ~isempty(BVFvalues{2}) && ~isempty(BVFvalues{3})
-%-------------------------------------------------------------%
-
+    %--------- iRBVF and aRBVF is NOT enough information ---------%
+    % elseif ~isempty(BVFvalues{2}) && ~isempty(BVFvalues{3})
+    %-------------------------------------------------------------%
+    
 elseif ~isempty(BVFvalues{2}) && ~isempty(BVFvalues{4})
-	%iRBVF and iBVF
-	iRBVF = BVFvalues{2}; iBVF = BVFvalues{4};
+    %iRBVF and iBVF
+    iRBVF = BVFvalues{2}; iBVF = BVFvalues{4};
     G.Targets.BVF   = iBVF/iRBVF;
     G.Targets.iRBVF = iRBVF;
     
 elseif ~isempty(BVFvalues{2}) && ~isempty(BVFvalues{5})
-	%iRBVF and aBVF
-	iRBVF = BVFvalues{2}; aBVF = BVFvalues{5};
+    %iRBVF and aBVF
+    iRBVF = BVFvalues{2}; aBVF = BVFvalues{5};
     G.Targets.BVF   = aBVF/(1-iRBVF);
     G.Targets.iRBVF = iRBVF;
     
 elseif ~isempty(BVFvalues{3}) && ~isempty(BVFvalues{4})
-	%aRBVF and iBVF
-	aRBVF = BVFvalues{3}; iBVF = BVFvalues{4};
+    %aRBVF and iBVF
+    aRBVF = BVFvalues{3}; iBVF = BVFvalues{4};
     G.Targets.BVF   = iBVF/(1-aRBVF);
     G.Targets.iRBVF = (1-aRBVF);
     
 elseif ~isempty(BVFvalues{3}) && ~isempty(BVFvalues{5})
-	%aRBVF and aBVF
-	aRBVF = BVFvalues{3}; aBVF = BVFvalues{5};
+    %aRBVF and aBVF
+    aRBVF = BVFvalues{3}; aBVF = BVFvalues{5};
     G.Targets.BVF   = aBVF/aRBVF;
     G.Targets.iRBVF = (1-aRBVF);
     
 elseif ~isempty(BVFvalues{4}) && ~isempty(BVFvalues{5})
-	%iBVF and aBVF
-	iBVF = BVFvalues{4}; aBVF = BVFvalues{5};
+    %iBVF and aBVF
+    iBVF = BVFvalues{4}; aBVF = BVFvalues{5};
     G.Targets.BVF   = (iBVF+aBVF);
     G.Targets.iRBVF = iBVF/(iBVF+aBVF);
 end
@@ -275,7 +278,7 @@ G.Targets.iBVF  = G.Targets.iRBVF * G.Targets.BVF;
 G.Targets.aBVF  = G.Targets.BVF - G.Targets.iBVF;
 G.Targets.aRBVF = 1 - G.Targets.iRBVF;
 
-disp(G.Targets)
+if G.Verbose; disp(G.Targets); end
 
 end
 

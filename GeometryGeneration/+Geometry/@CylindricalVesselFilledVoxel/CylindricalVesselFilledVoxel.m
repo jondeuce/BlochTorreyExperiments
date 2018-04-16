@@ -12,6 +12,7 @@ classdef CylindricalVesselFilledVoxel
         NumMajorArteries  % Number of major vessels which are arteries
         NumMinorArteries  % Number of minor vessels which are arteries
         MinorArterialFrac % (Target) Fraction of minor vessels which are arteries
+        Verbose           % Indicates whether output is verbose [true]
         seed              % Random number generator seed used in constructor
     end
     
@@ -58,7 +59,7 @@ classdef CylindricalVesselFilledVoxel
             % Parse keyword arguments and get options structure
             %==============================================================
             G = parseinputs(G, varargin{:});
-                        
+            
             %==============================================================
             % Fill geometry with random cylinders
             %==============================================================
