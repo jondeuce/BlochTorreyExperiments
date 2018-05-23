@@ -8,12 +8,12 @@ function test()
 % Gsize = Glen * [1,1,1];
 % Vsize = Vlen * [1,1,1];
 
-ScaleGsize = 2;
-Gsize = [350,350,350] / ScaleGsize;
+Vsize = [1000,1000,1000];
+Gsize = [100,100,100];
 % Vsize = [1750,1750,1750];
 % Gsize = [350,350,800] / ScaleGsize;
-Vsize = [1750,1750,4000];
-TypicalScale = 4000/800;
+% Vsize = [1750,1750,4000];
+% TypicalScale = 4000/800;
 Scale = Vsize(3)/Gsize(3);
 
 t = 40e-3;
@@ -22,19 +22,23 @@ type = 'gre';
 % type = 'se';
 Dcoeff = 3037 * (Scale/TypicalScale)^2; % Scale diffusion to mimic [3000 um]^3 512^3 grid
 
-% Rminor_mu  = 25;
-% Rminor_sig = 0;
+Rminor_mu  = 25;
+Rminor_sig = 0;
 % Rminor_mu  = 13.7;
 % Rminor_sig = 2.1;
-Rminor_mu  = 7;
-Rminor_sig = 0;
+% Rminor_mu  = 7;
+% Rminor_sig = 0;
 
-iBVF = 1.1803/100;
-aBVF = 1.3425/100;
+iBVF = 1/100;
+aBVF = 1/100;
+NumMajorArteries = 0; % Number of major arteries
+MinorArterialFrac = 0; % Fraction of minor vessels which are arteries
+% iBVF = 1.1803/100;
+% aBVF = 1.3425/100;
 Nmajor = 4; % Number of major vessels (optimal number is from SE perf. orientation. sim)
 MajorAngle = 0.0; % Angle of major vessels
-NumMajorArteries = 1; % Number of major arteries
-MinorArterialFrac = 1/3; % Fraction of minor vessels which are arteries
+% NumMajorArteries = 1; % Number of major arteries
+% MinorArterialFrac = 1/3; % Fraction of minor vessels which are arteries
 rng('default'); seed = rng;
 
 %% Calculate Geometry
@@ -57,14 +61,38 @@ dGamma = {};
 x0 = 1i*ones(Gsize);
 
 %% Calculate exact solution via expmv
-t_expmv = tic;
+% t_expmv = tic;
+% 
+% A = BlochTorreyOp(Gamma, Dcoeff, Gsize, Vsize); % A = D*laplacian - Gamma, as a matrix operator
+% x = bt_expmv( t, A, x0, 'prnt', true, 'type', type, 'forcesparse', true, 'full_term', true); % solves dx/dt = A*x; x(0) = x0 for t in [0,t]
+% S = sum(sum(sum(x,1),2),3); %more accurate than sum(x(:))
+% 
+% t_expmv = toc(t_expmv);
+% display_toc_time(t_expmv,'expmv');
 
-A = BlochTorreyOp(Gamma, Dcoeff, Gsize, Vsize);
-x = bt_expmv( t, A, x0, 'prnt', false, 'type', type );
-S = sum(sum(sum(x,1),2),3); %more accurate than sum(x(:))
+S0 = sum(sum(sum(x0,1),2),3);
+DcoeffList = [0, logspace(0,7,15)];
+Signals = zeros(numel(DcoeffList), 1);
+for ii = 1:length(DcoeffList)
+    Dcoeff = DcoeffList(ii);
+    fprintf('\nDcoeff = %f\n\n', Dcoeff);
+    
+    t_expmv = tic;
 
-t_expmv = toc(t_expmv);
-display_toc_time(t_expmv,'expmv');
+    A = BlochTorreyOp(Gamma, Dcoeff, Gsize, Vsize); % A = D*laplacian - Gamma, as a matrix operator
+    x = bt_expmv( t, A, x0, 'prnt', true, 'type', type, 'forcesparse', true, 'full_term', true); % solves dx/dt = A*x; x(0) = x0 for t in [0,t]
+    Signals(ii) = sum(sum(sum(x,1),2),3); %more accurate than sum(x(:))
+
+    t_expmv = toc(t_expmv);
+    display_toc_time(t_expmv,'expmv');
+end
+
+T2 = -1000 * t./log(abs(Signals)/abs(S0)); % T2 [ms], assuming monoexponential S = S0*exp(-t/T2)
+
+h = mean(Vsize./Gsize);
+D0 = h^2/t; % "typical/characteristic" diffusion constant
+semilogx( DcoeffList/D0, T2, 'o--' );
+xlabel('D'); ylabel('T2* [ms]');
 
 %% BTStepper Test Loop
 xnorm = norm(vec(x));

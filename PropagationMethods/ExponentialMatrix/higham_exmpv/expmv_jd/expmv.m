@@ -75,6 +75,7 @@ else
 end
 eta = 1;
 if shift, eta = exp(t*mu/s); end
+
 f = b;
 for ii = 1:s
     if ~full_term; c1 = infnorm(b); else c1 = NaN; end %jd
