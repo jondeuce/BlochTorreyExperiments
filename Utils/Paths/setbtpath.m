@@ -16,8 +16,8 @@ end
 
 switch upper(type)
     case 'UBCITAR' % ubcitar/jdoucette server path
-        error('not impl.');
-        btroot = '/data/ubcitar/jdoucette/magprop_master/';
+        btroot = '/data/ubcitar/jdoucette/';
+        btexp_branch = '';
         
     case 'HOME/COOPAR7/MASTER' % coopar7 local path
         btroot = '/home/coopar7/Documents/code/';
@@ -44,6 +44,12 @@ switch upper(type)
         btexp_branch = 'TEMP1';
 end
 
+BlochTorreyResults = 'BlochTorreyResults';
+BlochTorreyExperiments = 'BlochTorreyExperiments';
+if ~isempty(btexp_branch)
+    BlochTorreyExperiments = [BlochTorreyExperiments, '-', btexp_branch];
+end
+
 % Cannot add library directories to path (i.e. starting with "+").
 % Also, want to ignore .git folders
 genPath = @(s) genpath_exclude(s,{'*\.git*', '\+*'});
@@ -53,8 +59,8 @@ folders_to_remove = dir([btroot, 'BlochTorrey*']);
 cleanpath(folders_to_remove.name);
 
 % add folders
-addpath(genPath([btroot, 'BlochTorreyExperiments', '-', btexp_branch]));
-addpath(genPath([btroot, 'BlochTorreyResults']));
+addpath(genPath([btroot, BlochTorreyExperiments]));
+addpath(genPath([btroot, BlochTorreyResults]));
 cleanpath(remove_list{:});
 
 cd(btroot);
