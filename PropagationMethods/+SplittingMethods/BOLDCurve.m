@@ -69,7 +69,7 @@ SE_FirstHalfSteps  = [SE_SecondHalfSteps(1), diff(SE_SecondHalfSteps)];
 Time0 = 0;
 M0 = double(1i);
 Signal0 = M0 * prod(V.VoxelSize);
-Signal  = cell(NumEchoTimes,1);
+Signal = cell(NumEchoTimes,1);
 for ll = 1:NumEchoTimes; Signal{ll} = [Time0, Signal0]; end
 
 % ScaleSum converts from units of voxels^3 to um^3
@@ -77,7 +77,7 @@ for ll = 1:NumEchoTimes; Signal{ll} = [Time0, Signal0]; end
 IntegrateMagnetization = @(M) ScaleSum * sum_pw(M);
 
 % Initialize current magnetization
-Mcurr  =  M0 * ones( V.GridSize );
+Mcurr = M0 * ones( V.GridSize );
 
 for kk = 1:NumEchoTimes
     
@@ -85,6 +85,7 @@ for kk = 1:NumEchoTimes
 
     switch upper(type)
         case 'GRE'
+            
             for jj = 1:GRE_Steps(kk)
                 
                 Mcurr = step(V,Mcurr);
@@ -95,6 +96,7 @@ for kk = 1:NumEchoTimes
             end
             
         case 'SE'
+            
             for jj = 1:SE_FirstHalfSteps(kk)
                 
                 Mcurr = step(V,Mcurr);
@@ -121,7 +123,8 @@ for kk = 1:NumEchoTimes
 end
 
 if addStartPoint
-    Signal = [Signal{1}(1,:); Signal]; %Add first timepoint back onto front
+    % Add initial signal to the front of subsequent simulated signals
+    Signal = [Signal{1}(1,:); Signal];
 end
 
 end

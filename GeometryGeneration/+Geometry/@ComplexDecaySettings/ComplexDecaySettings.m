@@ -24,6 +24,8 @@ classdef ComplexDecaySettings
         R2_ArterialBlood
         R2_Tissue
         R2_Tissue_Base
+        R2_VirchowRobin
+        R2_CSF
         Y
         Ya
     end

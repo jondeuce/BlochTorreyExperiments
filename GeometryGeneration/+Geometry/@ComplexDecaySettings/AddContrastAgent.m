@@ -3,13 +3,14 @@ function [Gamma] = AddContrastAgent(GammaSettingsNoCA, GammaSettingsCA, Geom, Ga
 % Adds contrast agent to the existing complex decay array Gamma
 
 % ---- Adjust Gamma to account for CA ---- %
-if isempty(Geom.ArterialIndices)
-    %Gamma = AddContrastAgent_NoArterialBlood_V1( GammaSettingsNoCA, GammaSettingsCA, Geom, Gamma );
+if isempty(Geom.ArterialIndices) && isempty(Geom.VRSIndices)
+    % Geometry is simply separated into two regions (blood-containing and
+    % tissue), and calculation can be simplified as both susceptibility
+    % and R2 maps are piecewise constant in each region
     Gamma = AddContrastAgent_NoArterialBlood_V2( GammaSettingsNoCA, GammaSettingsCA, Geom, Gamma );
 else
-    %Due to separate regions of venous/arterial blood susceptibility being
-    %convolved the the dipole kernel, I don't think there's any way to do
-    %this other than generically re-computing
+    %There are more than two regions with different properties; Gamma must
+    %be generically re-computed
     Gamma = GenericAddContrastAgent( GammaSettingsCA, Geom );
 end
 
