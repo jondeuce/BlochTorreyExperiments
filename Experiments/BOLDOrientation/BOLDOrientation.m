@@ -28,10 +28,10 @@ Hct = 0.44; % Hematocrit = volume fraction of red blood cells
 
 %% BOLD Common Settings
 
-% type = 'SE';
-% dt = 2.5e-3;
-type = 'GRE';
-dt = 5.0e-3;
+type = 'SE';
+dt = 2.5e-3;
+% type = 'GRE';
+% dt = 5.0e-3;
 
 EchoTimes = (0:5:120)/1000; % Echotimes in seconds to simulate [s]
 % alpha_range = [0, 45, 90];

@@ -38,7 +38,7 @@
 // #define OMP_PARFOR_ARGS
 #define OMP_PARFOR_ARGS schedule(static) num_threads(NUM_THREADS)
 
-/* Enum for different implementations (Type 2 currently fastest) */
+/* Enum for different implementations (Type 1 currently fastest) */
 #define BLOCHTORREY3D_TYPE 1
 
 /* Alias for basic element type, for easier switching between single/double */

@@ -34,22 +34,27 @@ end
 if nargin < 5 || isempty(prec), prec = class(A); end
 switch prec
     case 'double'
-        load theta_taylor
+        load theta_taylor theta
     case 'single'
-        load theta_taylor_single
+        load theta_taylor_single theta
     case 'half'
-        load theta_taylor_half
+        load theta_taylor_half theta
 end
 if shift
     mu = trace(A)/n;
     mu = full(mu); % Much slower without the full! (for sparse matrices)
-    A = A-mu*eye(size(A),'like',A);
+    if issparse(A) %jd: special case sparse matrix
+        A = A - mu*speye(size(A));
+    else
+        A = A - mu*eye(size(A),'like',A);
+    end
 end
 mv = 0;
 if ~force_estm, normA = norm(A,1); end
 
-b_cols = round(numel(b)/size(A,2)); % jd: for the case where b is e.g. [512,512,512,N], but should be interpreted as [512^3,N]
+b_cols = numel(b)/size(A,2); % jd: for the case where b is e.g. [512,512,512,N], but should be interpreted as [512^3,N]
 alpha_estm_expensive = (normA <= 4*theta(m_max)*p_max*(p_max + 3)/(m_max*b_cols)); % jd: size(b,2) -> b_cols
+
 if force_no_estm || (~force_estm && alpha_estm_expensive)
     % Base choice of m on normA, not the alpha_p.
     unA = 1;

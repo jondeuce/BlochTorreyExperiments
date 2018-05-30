@@ -15,8 +15,7 @@ end
 x = x0(:);
 switch upper(opts.type)
     case 'GRE'
-        %M = select_taylor_degree(t*A,x,[],[],selectdegargs{:}); %TODO: not
-        %correct pre-computation?
+        %M = select_taylor_degree(t*A,x,[],[],selectdegargs{:}); %TODO: not correct pre-computation?
         M = [];
         x = expmv(t,A,x,M,expmvargs{:});
     case 'SE'
