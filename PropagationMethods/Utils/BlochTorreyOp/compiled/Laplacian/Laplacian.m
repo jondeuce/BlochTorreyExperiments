@@ -1,22 +1,12 @@
 function y = Laplacian(x, h, gsize, iters)
-%BLOCHTORREYACTION Discrete Bloch-Torrey operator w/ 2nd order
-% central difference approximations on derivatives and periodic boundary
-% conditions. The operator is:
-%
-%   L[x] = div(D*grad(x)) - Gamma*x
-%        = D*lap(x) - Gamma*x          % for scalar D
-%
-% Currently, D must be a scalar and f must be a 3D array of the same size
-% as x.
-%
+%BLOCHTORREYACTION Laplacian operator w/ 2nd order central difference
+% approximations on derivatives and periodic boundary conditions.
+% 
 % INPUTS:
 %   x:     input array (3D (or flattened 1D) or 4D (or flattened 2D) complex double array)
 %   h:     grid spacing (scalar double)
-%   D:     diffusion constant (scalar double)
-%   f:     diagonal term = -6*D/h^2 - Gamma (3D complex double array)
 %   gsize: size of grid operated on (3-element array)
 %   iters: Number of iterations to apply the operator to the input (default 1)
-%   type:  regular operator (default '') or conjugate transpose ('transp')
 
 if nargin < 4 || isempty(iters); iters = 1; end
 if ~( iters > 0 && iters == round(iters) ); error('iters must be a positive integer'); end

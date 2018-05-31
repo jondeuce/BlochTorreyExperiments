@@ -39,10 +39,10 @@ for ii = 1:n
         keyboard;
     end
     
-    y1 = BlochTorreyAction(z,h,D,f,gsize(1:3),iters,'transp');
+    y1 = BlochTorreyAction(z,h,D,f,gsize(1:3),iters,true);
     y1 = reshape(y1,size(x));
     y2 = BlochTorreyAction_brute(x,h,D,conj(f),iters);
-        
+    
     err  = infnorm(y1-y2);
     maxy = infnorm(y1);
     if err >= 10 * eps(maxy)

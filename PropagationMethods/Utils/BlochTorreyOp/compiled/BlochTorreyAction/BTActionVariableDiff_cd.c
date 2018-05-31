@@ -3,16 +3,16 @@
 #include <omp.h>
 #include "mex.h"
 
-/* BLOCHTORREYACTION_CD
+/* BTACTIONVARIABLEDIFF_CD
  *
  * INPUT ARGUMENTS
  *  prhs[0] -> x:     input array (3D complex REAL array)
  *  prhs[1] -> h:     grid spacing (scalar REAL)
- *  prhs[2] -> D:     diffusion constant (scalar REAL)
- *  prhs[3] -> f:     diagonal term: combined Gamma and -6*D/h^2 (3D complex REAL array)
+ *  prhs[2] -> D:     diffusion constant (3D REAL array)
+ *  prhs[3] -> f:     Complex decay term Gamma = R2 + i*dw (3D complex REAL array)
  *  prhs[4] -> gsize: size of grid operated on (3 or 4 element REAL array)
  *  prhs[5] -> ndim:  number of dimensions operated on (scalar REAL = 3 or 4)
- *  prhs[6] -> iters: number of iterations to apply the BlochTorreyAction (scalar REAL)
+ *  prhs[6] -> iters: number of iterations to apply the BTActionVariableDiff (scalar REAL)
  *
  * OUTPUT ARGUMENTS
  *  plhs[0] -> dx:    output array (3D complex REAL array)
@@ -23,7 +23,7 @@
 #define __x__ (prhs[0])
 #define __h__ (prhs[1])
 #define __D__ (prhs[2])
-#define __f__ (prhs[3])
+#define __G__ (prhs[3])
 #define __gsize__ (prhs[4])
 #define __ndim__ (prhs[5])
 #define __iters__ (prhs[6])
@@ -54,19 +54,16 @@
 /* Simple unsafe swap macro: https://stackoverflow.com/questions/3982348/implement-generic-swap-macro-in-c */
 #define SWAP(x,y) do { typeof(x) SWAP = x; x = y; y = SWAP; } while (0)
 
-void BlochTorreyAction3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL K, const REAL *gsize );
-void BlochTorreyAction4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL K, const REAL *gsize );
+void BTActionVariableDiff3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const REAL K, const REAL *gsize );
+void BTActionVariableDiff4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const REAL K, const REAL *gsize );
 
 void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
 {
     /* grid spacing h */
     const REAL h = ((const REAL*)mxGetData(__h__))[0];
     
-    /* diffusion constant D */
-    const REAL D = ((const REAL*)mxGetData(__D__))[0];
-    
-    /* Normalized and scaled diffusion constant K = D/h^2 */
-    const REAL K = D/(h*h);
+    /* Inverse square grid size constant K = 1/h^2 */
+    const REAL K = 1/(h*h);
     
     /* Represented dimensions of input: ndim will be 3 or 4, and gsize will have respectively 3 or 4 elements */
     const REAL  *gsize = (const REAL*)mxGetData(__gsize__);
@@ -83,6 +80,10 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     const REAL *xr = (const REAL*)mxGetData(__x__);
     const REAL *xi = (const REAL*)mxGetImagData(__x__);
     
+    /* Diffusion coefficient input array */
+    const REAL *Dr = (const REAL*)mxGetData(__D__);
+    const REAL *Di = (const REAL*)mxGetImagData(__D__);
+    
     /* Dummy temp variable (needed for multiple iterations) */
     REAL *yr, *yi;
     
@@ -94,28 +95,28 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     }
     
     /* complex diagonal term */
-    const REAL *fr = (const REAL*)mxGetData(__f__);
-    const REAL *fi = (const REAL*)mxGetImagData(__f__);
+    const REAL *fr = (const REAL*)mxGetData(__G__);
+    const REAL *fi = (const REAL*)mxGetImagData(__G__);
     
     /* temporary variable which will be later associated with the complex output array */
     REAL *dxr = mxMalloc(mxGetNumberOfElements(__x__) * sizeof(REAL));
     REAL *dxi = mxMalloc(mxGetNumberOfElements(__x__) * sizeof(REAL));
     
-    void (*BlochTorreyAction)(REAL *, REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL, const REAL *);
+    void (*BTActionVariableDiff)(REAL *, REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL, const REAL *);
     if( ndim == 3 )
-        BlochTorreyAction = &BlochTorreyAction3D;
+        BTActionVariableDiff = &BTActionVariableDiff3D;
     else
-        BlochTorreyAction = &BlochTorreyAction4D;
+        BTActionVariableDiff = &BTActionVariableDiff4D;
     
-    /* Evaluate the BlochTorreyAction once with input data */
-    BlochTorreyAction( dxr, dxi, xr, xi, fr, fi, K, gsize );
+    /* Evaluate the BTActionVariableDiff once with input data */
+    BTActionVariableDiff( dxr, dxi, xr, xi, fr, fi, Dr, Di, K, gsize );
     
-    /* Evaluate the BlochTorreyAction iters-1 times using temp variable, if necessary */
+    /* Evaluate the BTActionVariableDiff iters-1 times using temp variable, if necessary */
     int i;
     for(i = 1; i < iters; ++i) {
         SWAP(dxr, yr);
         SWAP(dxi, yi);
-        BlochTorreyAction( dxr, dxi, yr, yi, fr, fi, K, gsize );
+        BTActionVariableDiff( dxr, dxi, yr, yi, fr, fi, Dr, Di, K, gsize );
     }
     
     /* Create complex output array */
@@ -135,7 +136,15 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     return;
 }
 
-void BlochTorreyAction3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL K, const REAL *gsize ) {
+void BTActionVariableDiff3D(
+        REAL *dxr, REAL *dxi,
+        const REAL *xr, const REAL *xi,
+        const REAL *fr, const REAL *fi,
+        const REAL *Dr, const REAL *Di,
+        const REAL K,
+        const REAL *gsize
+        )
+{
     
     const uint32_t nx     = (uint32_t)gsize[0];
     const uint32_t ny     = (uint32_t)gsize[1];
@@ -147,7 +156,7 @@ void BlochTorreyAction3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, 
     const uint32_t NZ     = nxny*(nz-1);
     
     uint32_t i, j, k, l, il, ir, jl, jr, kl, kr;
-    
+    const REAL Khalf = 0.5 * K;
     
     /* *******************************************************************
      * Triply-nested for-loop, twice collapsed
@@ -165,27 +174,41 @@ void BlochTorreyAction3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, 
             kr = (k==NZ) ? l-NZ : l+nxny;
             
             /* LHS Boundary Condition */
-            dxr[l] = K * (xr[l+NX] + xr[l+1] + xr[jl] + xr[jr] + xr[kl] + xr[kr]) + (fr[l] * xr[l] - fi[l] * xi[l]);
-            dxi[l] = K * (xi[l+NX] + xi[l+1] + xi[jl] + xi[jr] + xi[kl] + xi[kr]) + (fr[l] * xi[l] + fi[l] * xr[l]);
+            dxr[l] = Khalf * ((xr[kl] - xr[l])*Dr[kl] + (xr[kl] + xr[kr] + xr[jl] + xr[jr] + xr[l+NX] + xr[l+1] - 6*xr[l])*Dr[l] + (xr[kr] - xr[l])*Dr[kr] + (xr[jl] - xr[l])*Dr[jl] + (xr[jr] - xr[l])*Dr[jr] + (xr[l+NX] - xr[l])*Dr[l+NX] + (xr[l+1] - xr[l])*Dr[l+1])
+                           + (fi[l]*xi[l] - fr[l]*xr[l]);
+            dxi[l] = Khalf * ((xi[kl] - xi[l])*Dr[kl] + (xi[kl] + xi[kr] + xi[jl] + xi[jr] + xi[l+NX] + xi[l+1] - 6*xi[l])*Dr[l] + (xi[kr] - xi[l])*Dr[kr] + (xi[jl] - xi[l])*Dr[jl] + (xi[jr] - xi[l])*Dr[jr] + (xi[l+NX] - xi[l])*Dr[l+NX] + (xi[l+1] - xi[l])*Dr[l+1])
+                           - (fi[l]*xr[l] + fr[l]*xi[l]);
             
             /* Inner Points */
             ++l, ++jl, ++jr, ++kl, ++kr;
             for(i = 1; i < nx-1; ++i) {
-                dxr[l] = K * (xr[l-1] + xr[l+1] + xr[jl] + xr[jr] + xr[kl] + xr[kr]) + (fr[l] * xr[l] - fi[l] * xi[l]);
-                dxi[l] = K * (xi[l-1] + xi[l+1] + xi[jl] + xi[jr] + xi[kl] + xi[kr]) + (fr[l] * xi[l] + fi[l] * xr[l]);
+                dxr[l] = Khalf * ((xr[kl] - xr[l])*Dr[kl] + (xr[kl] + xr[kr] + xr[jl] + xr[jr] + xr[l-1] + xr[l+1] - 6*xr[l])*Dr[l] + (xr[kr] - xr[l])*Dr[kr] + (xr[jl] - xr[l])*Dr[jl] + (xr[jr] - xr[l])*Dr[jr] + (xr[l-1] - xr[l])*Dr[l-1] + (xr[l+1] - xr[l])*Dr[l+1])
+                               + (fi[l]*xi[l] - fr[l]*xr[l]);
+                dxi[l] = Khalf * ((xi[kl] - xi[l])*Dr[kl] + (xi[kl] + xi[kr] + xi[jl] + xi[jr] + xi[l-1] + xi[l+1] - 6*xi[l])*Dr[l] + (xi[kr] - xi[l])*Dr[kr] + (xi[jl] - xi[l])*Dr[jl] + (xi[jr] - xi[l])*Dr[jr] + (xi[l-1] - xi[l])*Dr[l-1] + (xi[l+1] - xi[l])*Dr[l+1])
+                               - (fi[l]*xr[l] + fr[l]*xi[l]);
                 ++l, ++jl, ++jr, ++kl, ++kr;
             }
             
             /* RHS Boundary Condition */
-            dxr[l] = K * (xr[l-1] + xr[l-NX] + xr[jl] + xr[jr] + xr[kl] + xr[kr]) + (fr[l] * xr[l] - fi[l] * xi[l]);
-            dxi[l] = K * (xi[l-1] + xi[l-NX] + xi[jl] + xi[jr] + xi[kl] + xi[kr]) + (fr[l] * xi[l] + fi[l] * xr[l]);
+            dxr[l] = Khalf * ((xr[kl] - xr[l])*Dr[kl] + (xr[kl] + xr[kr] + xr[jl] + xr[jr] + xr[l-1] + xr[l-NX] - 6*xr[l])*Dr[l] + (xr[kr] - xr[l])*Dr[kr] + (xr[jl] - xr[l])*Dr[jl] + (xr[jr] - xr[l])*Dr[jr] + (xr[l-1] - xr[l])*Dr[l-1] + (xr[l-NX] - xr[l])*Dr[l-NX])
+                           + (fi[l]*xi[l] - fr[l]*xr[l]);
+            dxi[l] = Khalf * ((xi[kl] - xi[l])*Dr[kl] + (xi[kl] + xi[kr] + xi[jl] + xi[jr] + xi[l-1] + xi[l-NX] - 6*xi[l])*Dr[l] + (xi[kr] - xi[l])*Dr[kr] + (xi[jl] - xi[l])*Dr[jl] + (xi[jr] - xi[l])*Dr[jr] + (xi[l-1] - xi[l])*Dr[l-1] + (xi[l-NX] - xi[l])*Dr[l-NX])
+                           - (fi[l]*xr[l] + fr[l]*xi[l]);
         }
     }
     
     return;
 }
 
-void BlochTorreyAction4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL K, const REAL *gsize ) {
+void BTActionVariableDiff4D(
+        REAL *dxr, REAL *dxi,
+        const REAL *xr, const REAL *xi,
+        const REAL *fr, const REAL *fi,
+        const REAL *Dr, const REAL *Di,
+        const REAL K,
+        const REAL *gsize
+        )
+{
     
     const uint32_t nx       = (uint32_t)gsize[0];
     const uint32_t ny       = (uint32_t)gsize[1];
@@ -212,22 +235,28 @@ void BlochTorreyAction4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, 
                 jr = (j==NY) ? l-NY : l+nx;
                 kl = (k==0 ) ? l+NZ : l-nxny;
                 kr = (k==NZ) ? l-NZ : l+nxny;
-                
+
                 /* LHS Boundary Condition */
-                dxr[l] = K * (xr[l+NX] + xr[l+1] + xr[jl] + xr[jr] + xr[kl] + xr[kr]) + (fr[l] * xr[l] - fi[l] * xi[l]);
-                dxi[l] = K * (xi[l+NX] + xi[l+1] + xi[jl] + xi[jr] + xi[kl] + xi[kr]) + (fr[l] * xi[l] + fi[l] * xr[l]);
-                
+                dxr[l] = Khalf * ((xr[kl] - xr[l])*Dr[kl] + (xr[kl] + xr[kr] + xr[jl] + xr[jr] + xr[l+NX] + xr[l+1] - 6*xr[l])*Dr[l] + (xr[kr] - xr[l])*Dr[kr] + (xr[jl] - xr[l])*Dr[jl] + (xr[jr] - xr[l])*Dr[jr] + (xr[l+NX] - xr[l])*Dr[l+NX] + (xr[l+1] - xr[l])*Dr[l+1])
+                               + (fi[l]*xi[l] - fr[l]*xr[l]);
+                dxi[l] = Khalf * ((xi[kl] - xi[l])*Dr[kl] + (xi[kl] + xi[kr] + xi[jl] + xi[jr] + xi[l+NX] + xi[l+1] - 6*xi[l])*Dr[l] + (xi[kr] - xi[l])*Dr[kr] + (xi[jl] - xi[l])*Dr[jl] + (xi[jr] - xi[l])*Dr[jr] + (xi[l+NX] - xi[l])*Dr[l+NX] + (xi[l+1] - xi[l])*Dr[l+1])
+                               - (fi[l]*xr[l] + fr[l]*xi[l]);
+
                 /* Inner Points */
                 ++l, ++jl, ++jr, ++kl, ++kr;
                 for(i = 1; i < nx-1; ++i) {
-                    dxr[l] = K * (xr[l-1] + xr[l+1] + xr[jl] + xr[jr] + xr[kl] + xr[kr]) + (fr[l] * xr[l] - fi[l] * xi[l]);
-                    dxi[l] = K * (xi[l-1] + xi[l+1] + xi[jl] + xi[jr] + xi[kl] + xi[kr]) + (fr[l] * xi[l] + fi[l] * xr[l]);
+                    dxr[l] = Khalf * ((xr[kl] - xr[l])*Dr[kl] + (xr[kl] + xr[kr] + xr[jl] + xr[jr] + xr[l-1] + xr[l+1] - 6*xr[l])*Dr[l] + (xr[kr] - xr[l])*Dr[kr] + (xr[jl] - xr[l])*Dr[jl] + (xr[jr] - xr[l])*Dr[jr] + (xr[l-1] - xr[l])*Dr[l-1] + (xr[l+1] - xr[l])*Dr[l+1])
+                                   + (fi[l]*xi[l] - fr[l]*xr[l]);
+                    dxi[l] = Khalf * ((xi[kl] - xi[l])*Dr[kl] + (xi[kl] + xi[kr] + xi[jl] + xi[jr] + xi[l-1] + xi[l+1] - 6*xi[l])*Dr[l] + (xi[kr] - xi[l])*Dr[kr] + (xi[jl] - xi[l])*Dr[jl] + (xi[jr] - xi[l])*Dr[jr] + (xi[l-1] - xi[l])*Dr[l-1] + (xi[l+1] - xi[l])*Dr[l+1])
+                                   - (fi[l]*xr[l] + fr[l]*xi[l]);
                     ++l, ++jl, ++jr, ++kl, ++kr;
                 }
-                
+
                 /* RHS Boundary Condition */
-                dxr[l] = K * (xr[l-1] + xr[l-NX] + xr[jl] + xr[jr] + xr[kl] + xr[kr]) + (fr[l] * xr[l] - fi[l] * xi[l]);
-                dxi[l] = K * (xi[l-1] + xi[l-NX] + xi[jl] + xi[jr] + xi[kl] + xi[kr]) + (fr[l] * xi[l] + fi[l] * xr[l]);
+                dxr[l] = Khalf * ((xr[kl] - xr[l])*Dr[kl] + (xr[kl] + xr[kr] + xr[jl] + xr[jr] + xr[l-1] + xr[l-NX] - 6*xr[l])*Dr[l] + (xr[kr] - xr[l])*Dr[kr] + (xr[jl] - xr[l])*Dr[jl] + (xr[jr] - xr[l])*Dr[jr] + (xr[l-1] - xr[l])*Dr[l-1] + (xr[l-NX] - xr[l])*Dr[l-NX])
+                               + (fi[l]*xi[l] - fr[l]*xr[l]);
+                dxi[l] = Khalf * ((xi[kl] - xi[l])*Dr[kl] + (xi[kl] + xi[kr] + xi[jl] + xi[jr] + xi[l-1] + xi[l-NX] - 6*xi[l])*Dr[l] + (xi[kr] - xi[l])*Dr[kr] + (xi[jl] - xi[l])*Dr[jl] + (xi[jr] - xi[l])*Dr[jr] + (xi[l-1] - xi[l])*Dr[l-1] + (xi[l-NX] - xi[l])*Dr[l-NX])
+                               - (fi[l]*xr[l] + fr[l]*xi[l]);
             }
         }
     }

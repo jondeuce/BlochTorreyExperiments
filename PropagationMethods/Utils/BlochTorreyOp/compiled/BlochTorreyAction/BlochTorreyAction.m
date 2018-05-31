@@ -1,4 +1,4 @@
-function y = BlochTorreyAction(x, h, D, f, gsize, iters, type)
+function y = BlochTorreyAction(x, h, D, f, gsize, iters, istrans, isdiag)
 %BLOCHTORREYACTION Discrete Bloch-Torrey operator w/ 2nd order
 % central difference approximations on derivatives and periodic boundary
 % conditions. The operator is:
@@ -10,15 +10,18 @@ function y = BlochTorreyAction(x, h, D, f, gsize, iters, type)
 % as x.
 %
 % INPUTS:
-%   x:     input array (3D (or flattened 1D) or 4D (or flattened 2D) complex double array)
-%   h:     grid spacing (scalar double)
-%   D:     diffusion constant (scalar double)
-%   f:     diagonal term = -6*D/h^2 - Gamma (3D complex double array)
-%   gsize: size of grid operated on (3-element array)
-%   iters: Number of iterations to apply the operator to the input (default 1)
-%   type:  regular operator (default '') or conjugate transpose ('transp')
+%   x:          Input array (3D (or flattened 1D) or 4D (or flattened 2D) complex double array)
+%   h:          Grid spacing (scalar double)
+%   D:          Diffusion constant (scalar double)
+%   f:          Represents either the complex decay Gamma = R2+i*dw, or the
+%               isotropic diagonal term f = -6*D/h^2 - Gamma (3D complex double array)
+%   gsize:      Size of grid operated on (3-element array)
+%   iters:      Number of iterations to apply the operator to the input (default 1)
+%   istrans:    Applies conjugate transpose operator if true (default false)
+%   isdiag:     Assumes f represents the diagonal term (default true)
 
-if nargin < 7 || ~isa(type,'char'); type = ''; end
+if nargin < 8 || ~isa(isdiag, 'logical'); isdiag  = false; end
+if nargin < 7 || ~isa(istrans,'logical'); istrans = false; end
 
 if nargin < 6 || isempty(iters); iters = 1; end
 if ~( iters > 0 && iters == round(iters) ); error('iters must be a positive integer'); end
@@ -43,8 +46,8 @@ if ~checkDims(x, ndim, gsize, gsize1D, gsize2D, gsize4D)
     error('size(x) must be either the (repeated-)grid size or (repeated-)flattened size');
 end
 
-f = checkDiag(f, ndim, ntime, xsize, gsize, gsize1D, gsize2D, gsize4D);
-D = checkDiffusionCoeff(D);
+f = checkArray(f, ndim, ntime, xsize, gsize, gsize1D, gsize2D, gsize4D, true);
+D = checkArray(D, ndim, ntime, xsize, gsize, gsize1D, gsize2D, gsize4D, false);
 h = checkGridSpacing(h);
 
 %----------------------------------------------------------------------
@@ -57,31 +60,57 @@ if ~(isSingle || isDouble), error('x must be double or single.'); end
 if isSingle, x = double(x); end
 if isReal, x = complex(x); end
 
-if strcmpi(type,'transp')
-    if isscalar(f)
-        % Avoid allocating f*ones by just taking laplacian
-        Gamma = conj(-6*D/h^2 - f);
-        y = D*Laplacian(x, h, gsize4D, iters) - Gamma*x;
-    else
-        if ~isreal(D)
-            % trans_BlochTorreyAction_cd assumes real D
-            y = D*trans_BlochTorreyAction_cd(x, h, 1, f/D, gsize4D, ndim, iters);
+if istrans
+    if isscalar(D)
+        if isscalar(f)
+            % Avoid allocating f*ones by just taking laplacian
+            Gamma = f;
+            if isdiag; Gamma = conj(-6*D/h^2 - Gamma); end
+            y = D*Laplacian(x, h, gsize4D, iters) - Gamma*x;
         else
-            y = trans_BlochTorreyAction_cd(x, h, D, f, gsize4D, ndim, iters);
+            if ~isdiag
+                f = conj(-6*D/h^2 - f); % f represents Gamma
+            end
+            if ~isreal(D)
+                % trans_BlochTorreyAction_cd assumes real D
+                y = D*trans_BlochTorreyAction_cd(x, h, 1, f/D, gsize4D, ndim, iters);
+            else
+                y = trans_BlochTorreyAction_cd(x, h, D, f, gsize4D, ndim, iters);
+            end
         end
+    else
+        error('non-scalar D conjugate transpose not implemented');        
     end
 else
-    if isscalar(f)
-        % Avoid allocating f*ones by just taking laplacian
-        Gamma = -6*D/h^2 - f;
-        y = D*Laplacian(x, h, gsize, iters) - Gamma*x;
-    else
-        if ~isreal(D)
-            % BlochTorreyAction_cd assumes real D
-            y = D*BlochTorreyAction_cd(x, h, 1, f/D, gsize4D, ndim, iters);
+    if isscalar(D)
+        if isscalar(f)
+            % Avoid allocating f*ones by just taking laplacian
+            Gamma = f;
+            if isdiag; Gamma = -6*D/h^2 - Gamma; end
+            y = D*Laplacian(x, h, gsize, iters) - Gamma*x;
         else
-            y = BlochTorreyAction_cd(x, h, D, f, gsize4D, ndim, iters);
+            if ~isdiag
+                f = -6*D/h^2 - f; % f represents Gamma
+            end
+            if ~isreal(D)
+                % BlochTorreyAction_cd assumes real D
+                y = D*BlochTorreyAction_cd(x, h, 1, f/D, gsize4D, ndim, iters);
+            else
+                y = BlochTorreyAction_cd(x, h, D, f, gsize4D, ndim, iters);
+            end
         end
+    else
+        if isdiag
+            error('For non-scalar diffusion coefficient D, "f" must represent Gamma = R2 + i*dw');
+        end
+        if isscalar(f)
+            warning('TODO: expanding Gamma to size of grid');
+            f = f*ones(xsize);
+        end
+        if ~isreal(D)
+            error('Diffusion coefficient array must be real currently');
+        end
+        y = BTActionVariableDiff_cd(x, h, D, f, gsize4D, ndim, iters);
     end
 end
 
@@ -102,7 +131,7 @@ function bool = checkDims4D(x, gsize2D, gsize4D)
 bool = ( isequal(size(x), gsize2D) || isequal(size(x), gsize4D) );
 end
 
-function f = checkDiag(f, ndim, ntime, xsize, gsize, gsize1D, gsize2D, gsize4D)
+function f = checkArray(f, ndim, ntime, xsize, gsize, gsize1D, gsize2D, gsize4D, forcecplx)
 
 if isempty(f)
     f = 0;
@@ -119,22 +148,9 @@ elseif checkDims3D(f, gsize, gsize1D)
 elseif ~checkDims4D(f, gsize2D, gsize4D)
     error('size(f) must be one of: scalar, (repeated-)grid size, (repeated-)flattened size');
 end
+
 if ~isa(f,'double'), f = double(f); end
-if isreal(f); f = complex(f); end
-
-end
-
-function D = checkDiffusionCoeff(D)
-
-if isempty(D)
-    D = 0;
-elseif ~(isscalar(D) && isfloat(D))
-    error('D must be a floating point scalar');
-end
-
-if ~isa(D,'double')
-    D = double(D);
-end
+if isreal(f) && forcecplx; f = complex(f); end
 
 end
 
