@@ -2,50 +2,63 @@ function test
 
 rng('default')
 
-Gsize = [10,10,10];
-Vsize = 1000*rand()*[1,1,1];
+Gsize = [8,11,6];
+Vsize = 1000*rand()*(Gsize./max(Gsize));
 h = mean(Vsize./Gsize);
+x0 = randnc(Gsize);
 
 % Gamma randnc, Dcoeff scalar positive
-x0 = randnc(Gsize);
 Gamma = randnc(Gsize);
 Dcoeff = rand()*h^2;
 run_suite_combinations('Gamma randnc, Dcoeff scalar positive', ...
     x0, Gamma, Dcoeff, Gsize, Vsize);
 
 % Gamma randnc, Dcoeff scalar negative
-x0 = randnc(Gsize);
 Gamma = randnc(Gsize);
 Dcoeff = -rand()*h^2;
 run_suite_combinations('Gamma randnc, Dcoeff scalar negative', ...
     x0, Gamma, Dcoeff, Gsize, Vsize);
 
 % Gamma randnc, Dcoeff randnc
-x0 = randnc(Gsize);
 Gamma = randnc(Gsize);
 Dcoeff = randnc()*h^2;
 run_suite_combinations('Gamma randnc, Dcoeff randnc', ...
     x0, Gamma, Dcoeff, Gsize, Vsize);
 
 % Gamma scalar randnc, Dcoeff randnc
-x0 = randnc(Gsize);
 Gamma = randnc();
 Dcoeff = randnc()*h^2;
 run_suite_combinations('Gamma scalar randnc, Dcoeff randnc', ...
     x0, Gamma, Dcoeff, Gsize, Vsize);
 
 % Gamma scalar randnc, Dcoeff positive
-x0 = randnc(Gsize);
 Gamma = randnc();
 Dcoeff = rand()*h^2;
 run_suite_combinations('Gamma scalar randnc, Dcoeff positive', ...
     x0, Gamma, Dcoeff, Gsize, Vsize);
 
 % Gamma == -1, Dcoeff == 0
-x0 = randnc(Gsize);
 Gamma = -1;
 Dcoeff = 0;
 run_suite_combinations('Gamma == -1, Dcoeff == 0', ...
+    x0, Gamma, Dcoeff, Gsize, Vsize);
+
+% Gamma zeros, Dcoeff const array
+Gamma = zeros(Gsize);
+Dcoeff = rand()*ones(Gsize);
+run_suite_combinations('Gamma zeros, Dcoeff const array', ...
+    x0, Gamma, Dcoeff, Gsize, Vsize);
+
+% Gamma zeros, Dcoeff randn array
+Gamma = zeros(Gsize);
+Dcoeff = randn(Gsize);
+run_suite_combinations('Gamma zeros, Dcoeff randn array', ...
+    x0, Gamma, Dcoeff, Gsize, Vsize);
+
+% Gamma randnc, Dcoeff randn array
+Gamma = randnc(Gsize);
+Dcoeff = randn(Gsize);
+run_suite_combinations('Gamma randnc, Dcoeff randn array', ...
     x0, Gamma, Dcoeff, Gsize, Vsize);
 
 end
@@ -74,7 +87,7 @@ end
 
 function b = run_suite(name, x0, Gamma, Dcoeff, Gsize, Vsize)
 
-Ns = 35; %pad length
+Ns = 35; % string message pad length
 
 A = BlochTorreyOp(Gamma, Dcoeff, Gsize, Vsize);
 As = sparse(A);
@@ -151,13 +164,8 @@ b = true;
 end
 
 function y = BlochTorreyBrute(x0, Gamma, D, Gsize, Vsize)
-
-h = Vsize./Gsize;
-y = D.*(circshift(x0,1,1) - 2*x0 + circshift(x0,-1,1))/h(1)^2 + ...
-    D.*(circshift(x0,1,2) - 2*x0 + circshift(x0,-1,2))/h(2)^2 + ...
-    D.*(circshift(x0,1,3) - 2*x0 + circshift(x0,-1,3))/h(3)^2 - ...
-    Gamma .* x0;
-
+h = mean(Vsize./Gsize);
+y = BlochTorreyAction_brute(x0, h, D, Gamma, 1, false);
 end
 
 function p = strpad(s,N)

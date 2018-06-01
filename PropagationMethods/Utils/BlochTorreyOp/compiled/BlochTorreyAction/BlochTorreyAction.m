@@ -20,7 +20,7 @@ function y = BlochTorreyAction(x, h, D, f, gsize, iters, istrans, isdiag)
 %   istrans:    Applies conjugate transpose operator if true (default false)
 %   isdiag:     Assumes f represents the diagonal term (default true)
 
-if nargin < 8 || ~isa(isdiag, 'logical'); isdiag  = false; end
+if nargin < 8 || ~isa(isdiag, 'logical'); isdiag  = true; end
 if nargin < 7 || ~isa(istrans,'logical'); istrans = false; end
 
 if nargin < 6 || isempty(iters); iters = 1; end
@@ -79,6 +79,7 @@ if istrans
             end
         end
     else
+        %TODO
         error('non-scalar D conjugate transpose not implemented');        
     end
 else
@@ -108,9 +109,13 @@ else
             f = f*ones(xsize);
         end
         if ~isreal(D)
-            error('Diffusion coefficient array must be real currently');
+            %TODO this is very inefficient
+            Z = complex(zeros(size(f))); %need to use zeros for one input
+            y = 1i * BTActionVariableDiff_cd(x, h, imag(D), Z, gsize4D, ndim, iters) + ...
+                BTActionVariableDiff_cd(x, h, real(D), f, gsize4D, ndim, iters);
+        else
+            y = BTActionVariableDiff_cd(x, h, D, f, gsize4D, ndim, iters);
         end
-        y = BTActionVariableDiff_cd(x, h, D, f, gsize4D, ndim, iters);
     end
 end
 

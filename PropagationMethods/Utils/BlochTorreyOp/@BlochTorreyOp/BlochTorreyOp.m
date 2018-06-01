@@ -46,27 +46,33 @@ classdef BlochTorreyOp
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     methods ( Access = public, Static = false )
         
-        function [ A ] = BlochTorreyOp( Gamma, Dcoeff, GridSize, GridDims )
+        function [ A ] = BlochTorreyOp( Buffer, Dcoeff, GridSize, GridDims, isdiag )
             % [ A ] = BlochTorreyOp( Gamma, Dcoeff, GridSize, GridDims )
             %   INPUTS:
-            %       Gamma:      Complex decay array
+            %       Buffer:     Complex array which may represent Gamma = R2 + i*dw, or the diagonal of the numeral BT operator
             %       Dcoeff:     Diffusion coefficient [um^2/s == 1000 * mm^2/ms], e.g. water ~ 3037 um^2/s
             %       GridSize:   Grid size, e.g. [512,512,512]
             %       GridDims:   Grid dimensions, e.g. [3000,3000,3000] (in um)
             
-            if ~(isscalar(Gamma) || isequal(numel(Gamma), prod(GridSize)))
+            if nargin < 5
+                isdiag = false; %default is Buffer = Gamma
+            end
+            
+            if ~(isscalar(Buffer) || isequal(numel(Buffer), prod(GridSize)))
                 error('Gamma must be scalar or have the same number of elements as the grid');
             end
             
-            if ~isscalar(Dcoeff)
-                error('Diffusion coefficient must be a scalar constant');
+            if ~(isscalar(Dcoeff) || isequal(numel(Dcoeff), prod(GridSize)))
+                error('Diffusion coefficient must be scalar or have the same number of elements as the grid');
             end
             
-            if ~isequal(size(GridSize),[1,3]) || ~isequal(size(GridDims),[1,3])
-                error('gsize and gdims must have size [1,3], corresponding to a 3D grid');
+            if ~isequal(numel(GridSize),3) || ~isequal(numel(GridDims),3)
+                error('gsize and gdims must be 3-element vectors, corresponding to a 3D grid');
             end
+            GridSize = GridSize(:).';
+            GridDims = GridDims(:).';
             
-            if maxabs(diff(GridDims./GridSize)) > 5*eps(max(GridDims))
+            if ~is_isotropic(GridDims./GridSize)
                 error('Currently, grid size must be isotropic');
             end
             
@@ -79,8 +85,12 @@ classdef BlochTorreyOp
             A.N      = prod(A.gsize);
             A.D      = Dcoeff;
             A.h      = A.gdims./A.gsize;
-            A.buffer = -2*A.D*sum(1./A.h.^2) - Gamma;
-            A.state  = BlochTorreyOp.DiagState;
+            A.buffer = Buffer;
+            if isdiag
+                A.state  = BlochTorreyOp.DiagState;
+            else
+                A.state  = BlochTorreyOp.GammaState;
+            end
         end
         
     end
@@ -93,12 +103,12 @@ classdef BlochTorreyOp
             if A.state == BlochTorreyOp.DiagState
                 diag = A.buffer;
             else % BlochTorreyOp.GammaState
-                diag = -2*A.D*sum(1./A.h.^2) - A.buffer;
+                diag = calculate_diagonal(A.D,A.buffer,A.h);
             end
         end
         function gamma = get.Gamma(A)
             if A.state == BlochTorreyOp.DiagState
-                gamma = -2*A.D*sum(1./A.h.^2) - A.buffer;
+                gamma = calculate_gamma(A.D,A.buffer,A.h);
             else % BlochTorreyOp.GammaState
                 gamma = A.buffer;
             end
@@ -106,11 +116,11 @@ classdef BlochTorreyOp
         
         function A = set.Diag(A,diag)
             A.buffer = diag;
-            A.state = BlochTorreyOp.DiagState;
+            A.state  = BlochTorreyOp.DiagState;
         end
         function A = set.Gamma(A,gamma)
             A.buffer = gamma;
-            A.state = BlochTorreyOp.GammaState;
+            A.state  = BlochTorreyOp.GammaState;
         end
         
         function A = switchbuffer(A,State)
@@ -119,11 +129,11 @@ classdef BlochTorreyOp
             end
             switch State
                 case BlochTorreyOp.DiagState % in GammaState; switch to DiagState
-                    A.buffer = -2*A.D*sum(1./A.h.^2) - A.buffer;
-                    A.state = BlochTorreyOp.DiagState;
+                    A.buffer = calculate_diagonal(A.D,A.buffer,A.h);
+                    A.state  = BlochTorreyOp.DiagState;
                 case BlochTorreyOp.GammaState % in DiagState; switch to GammaState
-                    A.buffer = -2*A.D*sum(1./A.h.^2) - A.buffer;
-                    A.state = BlochTorreyOp.GammaState;
+                    A.buffer = calculate_gamma(A.D,A.buffer,A.h);
+                    A.state  = BlochTorreyOp.GammaState;
             end
         end
         
@@ -155,14 +165,16 @@ classdef BlochTorreyOp
             xIsBTOp = isa(x, 'BlochTorreyOp');
             
             if AIsBTOp && xIsBTOp
-                error('Composition of BlochTorreyOp''s is not implemented');
+                error('Composition of BlochTorreyOp''s is not supported');
             elseif  AIsBTOp && ~xIsBTOp
                 if isscalar(x) && isnumeric(x)
                     y = times( A, x ); %A should act like a MATRIX, not an OPERATOR
                 else
-                    if A.D == 0
+                    if isequal(A.D, 0)
+                        % A is simply a diagonal matrix, with minus-Gamma
+                        % on the diagonal
                         if isscalar(A.Diag)
-                            if A.Diag == 1
+                            if abs(A.Diag - 1) <= 5*eps(class(A.Diag))
                                 y = x;
                             else
                                 y = A.Diag .* x;
@@ -184,23 +196,30 @@ classdef BlochTorreyOp
                             end
                         end
                     else
-                        y = BlochTorreyAction(x, A.h, A.D, A.Diag, A.gsize);
+                        if isscalar(A.D)
+                            y = BlochTorreyAction(x, A.h, A.D, A.Diag, A.gsize, 1, false, true);
+                        else
+                            y = BlochTorreyAction(x, A.h, A.D, A.Gamma, A.gsize, 1, false, false);
+                        end
                     end
                 end
             elseif ~AIsBTOp && xIsBTOp
                 if isscalar(A) && isnumeric(A)
                     y = times( A, x );
                 else
-                    % A*x = (x' * A')', x is the BT operator
+                    % A*x = (x' * A')' and variants (where x is the BT
+                    % operator) can be reimplemented using the mtimes
+                    % branch above, assuming that (c)transpose is known for
+                    % BT operators
                     isrealx = isreal(x);
                     isrealA = isreal(A);
                     if isvector(x)
                         if isrealx && isrealA
-                            %(x' * A')' = (x * A.').'
-                            y = x * A;
+                            %(x' * A')' = (x.' * A.').'
+                            y = x.' * A;
                         elseif  isrealx && ~isrealA
-                            %(x' * A')' = (x * A')'
-                            y = conj(x * conj(A));
+                            %(x' * A')' = (x.' * A')'
+                            y = conj(x.' * conj(A));
                         elseif ~isrealx &&  isrealA
                             %(x' * A')' = (x' * A.')'
                             y = conj(x' * A);
@@ -210,17 +229,17 @@ classdef BlochTorreyOp
                         end
                     else
                         if isrealx && isrealA
-                            %(x' * A')' = (x * A.').'
-                            y = reshape( x * A(:), size(A) );
+                            %(x' * A')' = (x.' * A.').'
+                            y = x.' * A; %y = reshape( x * A(:), size(A) );
                         elseif  isrealx && ~isrealA
-                            %(x' * A')' = (x * A')'
-                            y = reshape( conj(x * conj(A(:))), size(A) );
+                            %(x' * A')' = (x.' * A')'
+                            y = conj(x.' * conj(A)); %y = reshape( conj(x * conj(A(:))), size(A) );
                         elseif ~isrealx &&  isrealA
                             %(x' * A')' = (x' * A.')'
-                            y = reshape( conj(x' * A(:)), size(A) );
+                            y = conj(x' * A); %y = reshape( conj(x' * A(:)), size(A) );
                         else % ~isrealx && ~isrealA
                             %(x' * A')'
-                            y = reshape( conj(x' * conj(A(:))), size(A) );
+                            y = conj(x' * conj(A)); %y = reshape( conj(x' * conj(A(:))), size(A) );
                         end
                     end
                 end
@@ -232,33 +251,34 @@ classdef BlochTorreyOp
             xIsBTOp = isa(x, 'BlochTorreyOp');
             
             if AIsBTOp && xIsBTOp
-                if iscompatible( A, x ) && isisotropic( A )
-                    %isotropic grid is required, else can't have single equivalent D
-                    y = A;
-                    if ~isequal( size(y.Diag), size(x.Diag) ) && ~( isscalar(y.Diag) || isscalar(x.Diag) )
-                        % If one is scalar, no need to reshape; just broadcast and multiply
-                        y.Diag = reshape(y.Diag, size(x.Diag));
-                    end
-                    y.Diag = y.Diag .* x.Diag; %simply multiply diagonals
-                    y.D    = (y.D / y.h(1))^2; %off-diags are each D/h^2; (D/h^2)^2 = (D^2/h^2)/h^2 = D_new/h^2
-                else
-                    error('Multiplying BlochTorreyOp''s is only supported for isotropic grids of the same size, and physical dimensions');
-                end
+                % if iscompatible( A, x ) && isisotropic( A )
+                %     %isotropic grid is required, else can't have single equivalent D
+                %     y = A;
+                %     if ~isequal( size(y.Diag), size(x.Diag) ) && ~( isscalar(y.Diag) || isscalar(x.Diag) )
+                %         % If one is scalar, no need to reshape; just broadcast and multiply
+                %         y.Diag = reshape(y.Diag, size(x.Diag));
+                %     end
+                %     y.Diag = y.Diag .* x.Diag; %simply multiply diagonals
+                %     y.D    = (y.D / y.h(1))^2; %off-diags are each D/h^2; (D/h^2)^2 = (D^2/h^2)/h^2 = D_new/h^2
+                % else
+                %     error('Multiplying BlochTorreyOp''s is only supported for isotropic grids of the same size, and physical dimensions');
+                % end
+                error('Multiplying BlochTorreyOp''s is not supported.');
             elseif AIsBTOp && ~xIsBTOp
                 if isscalar(x) && isnumeric(x)
                     y      = A;
-                    y.D    = y.D .* x;
                     y.Diag = y.Diag .* x;
+                    y.D    = y.D .* x;
                 else
-                    error('Only allowed scalar multiplication on RHS of BlochTorreyOp');
+                    error('Only scalar multiplication is allowed on RHS of BlochTorreyOp');
                 end
             elseif ~AIsBTOp && xIsBTOp
                 if isscalar(A) && isnumeric(A)
                     y      = x;
-                    y.D    = A .* y.D;
                     y.Diag = A .* y.Diag;
+                    y.D    = A .* y.D;
                 else
-                    error('Only allowed scalar multiplication on LHS of BlochTorreyOp');
+                    error('Only scalar multiplication is allowed on LHS of BlochTorreyOp');
                 end
             end
         end
@@ -278,7 +298,7 @@ classdef BlochTorreyOp
                 if isequal(size(A),size(B)) && isdiag(B)
                     y = A;
                     if isscalar(y.Diag)
-                        y.Diag = y.Diag + full(diag(B));
+                        y.Diag = y.Diag + reshape(full(diag(B)),A.gsize);
                     else
                         y.Diag = y.Diag + reshape(full(diag(B)),size(y.Diag));
                     end
@@ -289,7 +309,7 @@ classdef BlochTorreyOp
                 if isequal(size(A),size(B)) && isdiag(A)
                     y = B;
                     if isscalar(y.Diag)
-                        y.Diag = y.Diag + full(diag(A));
+                        y.Diag = y.Diag + reshape(full(diag(A)),A.gsize);
                     else
                         y.Diag = y.Diag + reshape(full(diag(A)),size(y.Diag));
                     end
@@ -310,12 +330,13 @@ classdef BlochTorreyOp
         
         function [ B ] = uminus( A )
             B = A;
-            B.D = -B.D;
             B.Diag = -B.Diag;
+            B.D = -B.D;
         end
         
         function [ B ] = transpose( A )
             % it's symmetric; return input
+            %TODO symmetric for non-constant D?
             B = A;
         end
         
@@ -342,7 +363,7 @@ classdef BlochTorreyOp
             if isscalar(A.Diag)
                 Tr = A.Diag * A.N;
             else
-                Tr = sum(A.Diag(:));
+                Tr = sum(sum(sum(A.Diag,1),2),3);
             end
         end
         
@@ -360,13 +381,14 @@ classdef BlochTorreyOp
         
         function [ B ] = imag( A )
             B = A;
-            B.D = imag(B.D);
             B.Diag = imag(B.Diag);
+            B.D = imag(B.D);
         end
         
-        function [ B ] = full( A )
-            if A.N > 5000
-                error('FULL: Matrix too large; threshold set at 5000x5000');
+        function [ B ] = full( A, thresh )
+            if nargin < 2; thresh = 5000; end
+            if A.N > thresh
+                error('FULL: Matrix too large; threshold set at size(A) = %dx%d', thresh, thresh);
             end
             B = A * eye(size(A),'double');
         end
@@ -413,16 +435,26 @@ classdef BlochTorreyOp
             end
             
             if isa(p,'char') && strcmpi(p,'fro')
-                if isscalar(A.Diag)
-                    out = sqrt( A.N * abs(A.Diag).^2 + A.N * sum(offdiagonals(A).^2) );
+                if isscalar(A.D)
+                    if isscalar(A.Diag)
+                        out = sqrt( A.N * abs(A.Diag).^2 + A.N * sum(offdiagonals(A).^2) );
+                    else
+                        out = sqrt( sum(abs(A.Diag(:)).^2) + A.N * sum(offdiagonals(A).^2) );
+                    end
                 else
-                    out = sqrt( sum(abs(A.Diag(:)).^2) + A.N * sum(offdiagonals(A).^2) );
+                    %TODO
+                    error('Frobenius norm not implemented for non-scalar D.');
                 end
             elseif isnumeric(p) && isscalar(p) && (p == 1 || p == inf)
-                % 1-norm is same as infinity-norm for symmetric matrices
-                out = maxabs(diag(A)) + sum(offdiagonals(A));
+                if isscalar(A.D)
+                    % 1-norm is same as infinity-norm for symmetric matrices
+                    out = maxabs(diag(A)) + sum(offdiagonals(A));
+                else
+                    %TODO
+                    error('1-norm and infinity-norm not implemented for non-scalar D.');
+                end
             else
-                error('Only 1- and infinity-norms are implemented for BlochTorreyOp''s');
+                error('Only Frobenius-, 1-, and infinity-norms are implemented for BlochTorreyOp''s');
             end
         end
         
@@ -439,11 +471,11 @@ classdef BlochTorreyOp
         end
         
         function [ bool ] = isdiag( A )
-            bool = (A.D == 0);
+            bool = isequal(A.D, 0);
         end
         
         function [ bool ] = isreal( A )
-            bool = isreal(A.Diag) && isreal(A.D);
+            bool = isreal(A.D) && isreal(A.Diag);
         end
         
         function [ B ] = conj( A )
@@ -460,15 +492,17 @@ classdef BlochTorreyOp
         end
         
         function [ bool ] = issymmetric( A )
+            %TODO is it for non-scalar D?
             bool = true;
         end
         
         function [ bool ] = ishermitian( A )
+            %TODO is it for non-scalar D?
             bool = isreal(A.D) && isreal(A.Diag);
         end
         
         function [ bool ] = ishandle( A )
-            bool = true;
+            bool = false;
         end
         
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -481,20 +515,20 @@ classdef BlochTorreyOp
             
             if AIsBTOp && BIsBTOp
                 bool = ( isequal(A.gsize, B.gsize) && ... %must operate on same grid
-                    isequal(A.gdims, B.gdims) );     %grids must have same physical dimensions
+                         isequal(A.gdims, B.gdims) );     %grids must have same physical dimensions
             else
                 error('ISCOMPATIBLE(A,B) is for comparing two BlochTorreyOp''s A and B');
             end
         end
         
         function [ bool ] = isisotropic( A ) %ISISOTROPIC
-            bool = ( norm(diff(A.h)) < 2*eps(class(A.h)) );
+            bool = ( max(abs(diff(A.h))) <= 5*eps(max(A.h)) );
         end
         
         function [ out ] = offdiagonals( A ) %OFFDIAGONALS
             %Returns list of 6 off-diagonal elements, in no particular
             %order. These 6 elements are the same for any row or column.
-            out = A.D ./ [A.h, A.h].^2;
+            out = calculate_offdiagonals(A.D,A.h);
         end
         
         function [ c, mv ] = normAm( A, m, checkpos ) %jd
@@ -581,9 +615,7 @@ classdef BlochTorreyOp
         function B = zerosLike( A, varargin )
             if nargin == 1
                 % For zeros('like',obj)
-                B = A;
-                B.D = 0;
-                B.Diag = 0;
+                B = BlochTorreyOp(0,0,A.gsize,A.gdims);
             elseif  any([varargin{:}] <= 0)
                 % For zeros with any dimension <= 0
                 error('Dimensions <= 0, and empty method is not implemented.');
@@ -599,9 +631,7 @@ classdef BlochTorreyOp
         function B = eyeLike( A, varargin )
             if nargin == 1
                 % For eye('like',obj)
-                B = A;
-                B.D = 0;
-                B.Diag = 1;
+                B = BlochTorreyOp(-1,0,A.gsize,A.gdims);
             elseif any([varargin{:}] <= 0)
                 % For eye with any dimension <= 0
                 error('Dimensions <= 0, and empty method is not implemented.');
@@ -626,5 +656,56 @@ classdef BlochTorreyOp
         test
     end
     
+end
+
+function b = is_isotropic(h)
+b = isscalar(h) || (max(abs(diff(h))) <= 10*eps(max(h)));
+end
+
+function f = calculate_offdiagonals(D,h)
+
+if ~is_isotropic(h)
+    error('h must be isotropic for offdiagonals calculation');
+end
+h = mean(h(:));
+
+if isscalar(D)
+    f = (D/h^2) * ones(1,6);
+else
+    %TODO
+    error('offdiagonals(A) not implemented for non-scalar D.');
+    f = 0.5*Laplacian(D,h,size(D),1) - (6/h^2)*D - Gamma;
+end
+
+end
+
+function Diagonal = calculate_diagonal(D,Gamma,h)
+
+if ~is_isotropic(h)
+    error('h must be isotropic for diagonal calculation');
+end
+h = mean(h(:));
+
+if isscalar(D)
+    Diagonal = (-6*D/h^2) - Gamma;
+else
+    Diagonal = 0.5*Laplacian(D,h,size(D),1) - (6/h^2)*D - Gamma;
+end
+
+end
+
+function Gamma = calculate_gamma(D,Diagonal,h)
+
+if ~is_isotropic(h)
+    error('h must be isotropic for diagonal calculation');
+end
+h = mean(h(:));
+
+if isscalar(D)
+    Gamma = (-6*D/h^2) - Diagonal;
+else
+    Gamma = 0.5*Laplacian(D,h,size(D),1) - (6/h^2)*D - Diagonal;
+end
+
 end
 
