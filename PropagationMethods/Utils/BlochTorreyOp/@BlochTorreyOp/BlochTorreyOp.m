@@ -123,15 +123,18 @@ classdef BlochTorreyOp
             A.state  = BlochTorreyOp.GammaState;
         end
         
-        function A = switchbuffer(A,State)
+        function A = setbuffer(A,State)
             if isequal(State, A.state)
-                return % already in state State, do nothing
+                % already in state State, do nothing
+                return
             end
             switch State
-                case BlochTorreyOp.DiagState % in GammaState; switch to DiagState
+                case BlochTorreyOp.DiagState
+                    % in GammaState; switch to DiagState
                     A.buffer = calculate_diagonal(A.D,A.buffer,A.h,A.gsize);
                     A.state  = BlochTorreyOp.DiagState;
-                case BlochTorreyOp.GammaState % in DiagState; switch to GammaState
+                case BlochTorreyOp.GammaState
+                    % in DiagState; switch to GammaState
                     A.buffer = calculate_gamma(A.D,A.buffer,A.h,A.gsize);
                     A.state  = BlochTorreyOp.GammaState;
             end
@@ -144,10 +147,10 @@ classdef BlochTorreyOp
             dw = imag(A.Gamma);
         end
         function A = set.R2map(A,r2)
-            A.Gamma = complex(r2, A.dw);
+            A.Gamma = complex(r2, A.dOmega);
         end
         function A = set.dOmega(A,dw)
-            A.Gamma = complex(A.r2, dw);
+            A.Gamma = complex(A.R2map, dw);
         end
     end
     
@@ -372,7 +375,7 @@ classdef BlochTorreyOp
                     Tr = sum(sum(sum(A.Diag,1),2),3);
                 end
             else
-                % Faster equivalent is below
+                % More accurate equivalent is below
                 %Tr = sum(sum(sum(A.Diag,1),2),3);
                 
                 Tr = (-6/mean(A.h)^2)*sum(sum(sum(A.D,1),2),3);
@@ -507,7 +510,7 @@ classdef BlochTorreyOp
         end
         
         function [ bool ] = ishermitian( A )
-            bool = isreal(A.D) && isreal(A.Gamma);
+            bool = isreal(A.D) && isreal(A.Diag);
         end
         
         function [ bool ] = ishandle( A )
@@ -707,7 +710,7 @@ else
     kern = (-1/h^2) * [3,1,0,1,0,1,0];
     Diagonal = SevenPointStencil(D, kern, gsize, 1) - Gamma;
     
-    %Slower version of above
+    % Slower version of above
     %Diagonal = (-1/h^2)*(3*D + circshift(D,1,1) + circshift(D,1,2) + circshift(D,1,3)) - Gamma;
     
     % Symmetrized D*lap(x)-dot(grad(D),grad(x))
@@ -730,7 +733,7 @@ else
     kern = (-1/h^2) * [3,1,0,1,0,1,0];
     Gamma = SevenPointStencil(D, kern, gsize, 1) - Diagonal;
     
-    %Slower version of above
+    % Slower version of above
     %Gamma = (-1/h^2)*(3*D + circshift(D,1,1) + circshift(D,1,2) + circshift(D,1,3)) - Diagonal;
     
     % Symmetrized D*lap(x)-dot(grad(D),grad(x))

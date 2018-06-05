@@ -27,7 +27,7 @@ sig = complex(zeros(size(tspan)));
 sig(1) = scale * sum(x);
 
 degree_time = tic;
-M = select_taylor_degree(dt*A,x,[],[],prec,shift,bal,force_estm);
+M = select_taylor_degree(A,x,[],[],prec,shift,bal,force_estm);
 display_toc_time( toc(degree_time), 'Selecting Taylor Degree' );
 
 start_time = tic;
@@ -36,7 +36,7 @@ for ii = 2:n+1
     %     t = tspan(ii);
     %
     %     degree_time = tic;
-    %     M = select_taylor_degree(t*A,x,[],[],prec,shift,bal,force_estm);
+    %     M = select_taylor_degree(A,x,[],[],prec,shift,bal,force_estm);
     %     display_toc_time( toc(degree_time), 'Selecting Taylor Degree' );
     %
     %     expmv_time = tic;

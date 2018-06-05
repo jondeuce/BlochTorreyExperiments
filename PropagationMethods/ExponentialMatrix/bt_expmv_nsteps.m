@@ -1,5 +1,5 @@
-function [ x ] = bt_expmv( t, A, x0, varargin )
-%BT_EXPMV calls expmv for the BlochTorreyOp A
+function [ x, signal, time ] = bt_expmv_nsteps( dt, A, x0, n, varargin )
+%BT_EXPMV_NSTEPS Calls expmv for the BlochTorreyOp for n small timesteps dt
 
 p = getInputParser;
 parse(p,varargin{:})
@@ -8,23 +8,37 @@ opts = p.Results;
 selectdegargs = {opts.prec,opts.shift,opts.bal,opts.force_estm,opts.force_no_estm};
 expmvargs = {opts.prec,opts.shift,opts.bal,opts.full_term,opts.prnt};
 
-if opts.forcesparse
-    A = sparse(A);
+time = dt*(0:n).';
+scalesum = prod(A.gdims)/prod(A.gsize);
+signal = [];
+
+if strcmpi(opts.calcsignal,'all')
+    signal = zeros(n+1,1);
+    signal(1) = scalesum * sum(x0);
 end
 
 x = x0(:);
-switch upper(opts.type)
-    case 'GRE'
-        %M = select_taylor_degree(t*A,x,[],[],selectdegargs{:}); %TODO: not correct pre-computation?
-        M = [];
-        x = expmv(t,A,x,M,expmvargs{:});
-    case 'SE'
-        M = select_taylor_degree((t/2)*A,x,[],[],selectdegargs{:});
-        x = expmv(t/2,A,x,M,expmvargs{:});
+M = select_taylor_degree(A,x,[],[],selectdegargs{:});
+
+for jj = 1:n
+    looptime = tic;
+    
+    x = expmv(dt,A,x,M,expmvargs{:});
+    
+    if strcmpi(opts.calcsignal,'all')
+        signal(jj+1) = scalesum * sum(x);
+    end
+    
+    if ( 2*jj == n ) && strcmpi( opts.type, 'SE' )
         x = conj(x);
-        x = expmv(t/2,A,x,M,expmvargs{:});
-    otherwise
-        error('type must be either ''SE'' or ''GRE''.');
+    end
+    
+    str = sprintf('t = %4.1fms', 1000*dt*jj);
+    if opts.prnt, display_toc_time(toc(looptime),str); end
+end
+
+if strcmpi(opts.calcsignal,'last')
+    signal = scalesum * sum(x);
 end
 
 if ~isequal(size(x),size(x0))
@@ -32,7 +46,6 @@ if ~isequal(size(x),size(x0))
 end
 
 end
-
 
 function p = getInputParser
 
@@ -43,6 +56,8 @@ VA = @(varargin) validateattributes(varargin{:});
 VS = @(varargin) validatestring(varargin{:});
 
 % BlochTorrey args
+calcsignalopts = {'all','last','none'};
+addParameter(p,'calcsignal','all',@(x) any(VS(x,calcsignalopts)));
 addParameter(p,'type','gre',@(x)VA(x,{'char'},{'nonempty'}));
 
 % expmv args
@@ -54,7 +69,6 @@ addParameter(p,'force_estm',false,@islogical);
 addParameter(p,'force_no_estm',true,@islogical);
 addParameter(p,'full_term',false,@islogical);
 addParameter(p,'prnt',true,@islogical);
-addParameter(p,'forcesparse',false,@islogical);
 
 end
 

@@ -13,6 +13,15 @@ switch upper(stepper)
             dt, Dcoeff, Gamma, dGamma, Geom.GridSize, Geom.VoxelSize, ...
             'NReps', 1, 'Order', 2);
         getstepper = @(gamma) precomputeExpDecays(kernelstepper, gamma);
+    case 'EXPMVSTEPPER'
+        getstepper = @(gamma) precompute(...
+            ExpmvStepper(dt, ...
+                BlochTorreyOp(gamma, Dcoeff, Geom.GridSize, Geom.VoxelSize), ...
+                Geom.GridSize, Geom.VoxelSize, ...
+                'type', 'GRE', 'prec', 'half', ...%1e-6, ...
+                'prnt', true, 'forcesparse', false, 'shift', true, ...
+                'bal', false, 'full_term', false), ...
+            gamma);
 end
 
 for ii = 1:NumAngles
@@ -88,7 +97,7 @@ for kk = 1:NumEchoTimes
             
             for jj = 1:GRE_Steps(kk)
                 
-                Mcurr = step(V,Mcurr);
+                Mcurr = step(V, Mcurr);
                 for ll = kk:NumEchoTimes
                     Signal{ll} = [Signal{ll}; [Signal{ll}(end,1)+dt, IntegrateMagnetization(Mcurr)]];
                 end
@@ -99,7 +108,7 @@ for kk = 1:NumEchoTimes
             
             for jj = 1:SE_FirstHalfSteps(kk)
                 
-                Mcurr = step(V,Mcurr);
+                Mcurr = step(V, Mcurr);
                 for ll = kk:NumEchoTimes
                     Signal{ll} = [Signal{ll}; [Signal{ll}(end,1)+dt, IntegrateMagnetization(Mcurr)]];
                 end
@@ -111,7 +120,7 @@ for kk = 1:NumEchoTimes
             
             for jj = 1:SE_SecondHalfSteps(kk)
                 
-                M = step(V,M);
+                M = step(V, M);
                 Signal{kk}  =  [Signal{kk}; [Signal{kk}(end,1)+dt, IntegrateMagnetization(M)]];
                 
             end

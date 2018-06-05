@@ -28,17 +28,21 @@ Hct = 0.44; % Hematocrit = volume fraction of red blood cells
 
 %% BOLD Common Settings
 
-type = 'SE';
+% type = 'SE';
+% dt = 2.5e-3;
+type = 'GRE';
 dt = 2.5e-3;
-% type = 'GRE';
-% dt = 5.0e-3;
 
-EchoTimes = (0:5:120)/1000; % Echotimes in seconds to simulate [s]
-% alpha_range = [0, 45, 90];
-alpha_range = 0:5:90;
+EchoTimes = 0:dt:60e-3; % Echotimes in seconds to simulate [s]
+alpha_range = [0, 45, 90];
+% EchoTimes = (0:5:120)/1000; % Echotimes in seconds to simulate [s]
+% alpha_range = 0:5:90;
 
-B0 = -3.0; %[Tesla]
-Dcoeff = 3037; %[um^2/s]
+B0 = -7.0; %[Tesla]
+D_Tissue = 1000; %[um^2/s]
+D_Blood = []; %[um^2/s]
+D_VRS = 3037; %[um^2/s]
+
 order = 2; %Order of time stepper (must be 2 or 4 currently)
 
 %% Geometry Settings
@@ -80,7 +84,8 @@ NewGeometry = @() Geometry.CylindricalVesselFilledVoxel( ...
     'PopulateIdx', true, 'seed', seed );
 
 %% Bloch-Torrey propagation stepper
-stepper = 'BTSplitStepper';
+% stepper = 'BTSplitStepper';
+stepper = 'ExpmvStepper';
 
 %% Update Diary
 diary(DiaryFilename);
@@ -91,7 +96,9 @@ diary(DiaryFilename);
 AllResults = BOLDResults( EchoTimes, deg2rad(alpha_range), Y0, Y, Hct, 1:Navgs );
 
 % Anon. func. for computing the BOLD Curve
-ComputeBOLDCurve = @(R,G) SplittingMethods.BOLDCurve(R, EchoTimes, dt, Y0, Y, Hct, Dcoeff, B0, alpha_range, G, type, stepper);
+ComputeBOLDCurve = @(R,G) SplittingMethods.BOLDCurve(R, EchoTimes, dt, Y0, Y, Hct, ...
+    CalculateDiffusionMap( G, D_Tissue, D_Blood, D_VRS ), ...
+    B0, alpha_range, G, type, stepper);
 
 Geometries = [];
 for ii = 1:Navgs

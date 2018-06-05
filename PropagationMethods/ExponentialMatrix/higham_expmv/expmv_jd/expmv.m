@@ -20,14 +20,14 @@ function [f,s,m,mv,mvd,unA] = ...
 
 %   Awad H. Al-Mohy and Nicholas J. Higham, November 9, 2010.
 
-%   Edited by JD: June 2017
+%   Edited by JD: June 2017, June 2018
 
 if nargin < 9 || isempty(prnt), prnt = false; end
 if nargin < 8 || isempty(full_term), full_term = false; end
 if nargin < 7 || isempty(bal), bal = false; end
 if bal
     [D,B] = balance(A);
-    if norm(B,1) < norm(A,1), A = B; b = D\b; else bal = false; end
+    if norm(B,1) < norm(A,1), A = B; b = D\b; else; bal = false; end
 end
 
 if nargin < 6 || isempty(shift), shift = true; end
@@ -55,6 +55,8 @@ switch prec
     case 'double', tol = 2^(-53);
     case 'single', tol = 2^(-24);
     case 'half',   tol = 2^(-10);
+    otherwise %jd
+        tol = prec;
 end
 
 s = 1;
@@ -78,14 +80,22 @@ if shift, eta = exp(t*mu/s); end
 
 f = b;
 for ii = 1:s
-    if ~full_term; c1 = infnorm(b); else c1 = NaN; end %jd
+    c1 = -1; % jd: print junk value if ~full_term; infnorm calculation is not needed
+    if ~full_term
+        c1 = infnorm(b);
+    end %jd
+    
     for kk = 1:m
         
         b = A*b;
         b = (t/(s*kk))*b;
         mv = mv + 1;
         f =  f + b;
-        if ~full_term; c2 = infnorm(b); else c2 = NaN; end %jd
+        
+        c2 = -1; % jd: junk value for printing
+        if ~full_term
+            c2 = infnorm(b);
+        end %jd
         
         if prnt, fprintf('i = %2d/%2d, k = %2d/%2d, err = %6e\n', ii, s, kk, m, c1+c2), end %jd
         
@@ -98,9 +108,11 @@ for ii = 1:s
             c1 = c2;
         end
     end
+    
     f = eta*f;
     b = f;
 end
+
 if prnt, fprintf('\n'); end
 if bal, f = D*f; end
 

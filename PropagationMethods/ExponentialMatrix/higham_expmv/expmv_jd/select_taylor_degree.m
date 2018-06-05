@@ -12,6 +12,8 @@ function  [M,mv,alpha,unA] = ...
 
 %   Awad H. Al-Mohy and Nicholas J. Higham, November 9, 2010.
 
+%   Edited by JD: June 2017, June 2018
+
 if nargin < 9, force_no_estm = false; end %jd
 if nargin < 8, force_estm = false; end
 if nargin < 4 || isempty(p_max), p_max = 8; end
@@ -32,6 +34,14 @@ if bal
     if norm(B,1) < norm(A,1), A = B; end
 end
 if nargin < 5 || isempty(prec), prec = class(A); end
+
+if isnumeric(prec) %jd
+    if     prec >= 2^(-10); prec = 'half';
+    elseif prec >= 2^(-24); prec = 'single';
+    else;  prec = 'double';
+    end
+end
+
 switch prec
     case 'double'
         load theta_taylor theta
@@ -52,8 +62,15 @@ end
 mv = 0;
 if ~force_estm, normA = norm(A,1); end
 
-b_cols = numel(b)/size(A,2); % jd: for the case where b is e.g. [512,512,512,N], but should be interpreted as [512^3,N]
-alpha_estm_expensive = (normA <= 4*theta(m_max)*p_max*(p_max + 3)/(m_max*b_cols)); % jd: size(b,2) -> b_cols
+% jd: Often, we would like to pass a matrix object `A` which represents the
+% action of some linear operator, with the appropriate methods overloaded.
+% In such a case, `b` need not be restricted to be simply a column vector,
+% but rather an array of any shape indexed in column major order. Then, the
+% number of "columns" of b is more closely the number of "repetitions" of
+% b, for example for the case where b has size e.g. [512,512,512,N], but
+% should be interpreted as a matrix of size [512^3,N]
+ncols = numel(b)/size(A,2);
+alpha_estm_expensive = (normA <= 4*theta(m_max)*p_max*(p_max + 3)/(m_max*ncols)); % jd: size(b,2) -> b_cols
 
 if force_no_estm || (~force_estm && alpha_estm_expensive)
     % Base choice of m on normA, not the alpha_p.
