@@ -145,7 +145,6 @@ void BTActionVariableDiff3D(
         const REAL *gsize
         )
 {
-    
     const uint32_t nx     = (uint32_t)gsize[0];
     const uint32_t ny     = (uint32_t)gsize[1];
     const uint32_t nz     = (uint32_t)gsize[2];
@@ -167,43 +166,50 @@ void BTActionVariableDiff3D(
     for(k = 0; k < nxnynz; k += nxny) {
         for(j = 0; j < nxny; j += nx) {
             /* Periodic Boundary Conditions on y, z indexes */
-            l = k + j;
+            l  = j + k;
             jl = (j==0 ) ? l+NY : l-nx;
             jr = (j==NY) ? l-NY : l+nx;
             kl = (k==0 ) ? l+NZ : l-nxny;
             kr = (k==NZ) ? l-NZ : l+nxny;
-            
+
             /* LHS Boundary Condition */
-            dxr[l] = Khalf * ((xr[l] - xr[kr])*Dr[kl] + (xr[l] - xr[kl])*Dr[kr] + (xr[l] - xr[jl])*Dr[jr] + (xr[l] - xr[jr])*Dr[jl] + (xr[l] - xr[l+NX])*Dr[l+1] + (xr[l] - xr[l+1])*Dr[l+NX] + 3*(xr[kl] + xr[kr] + xr[jl] + xr[jr] + xr[l+NX] + xr[l+1] - 6*xr[l])*Dr[l])
-                           - (fr[l]*xr[l] - fi[l]*xi[l]);
-            dxi[l] = Khalf * ((xi[l] - xi[kr])*Dr[kl] + (xi[l] - xi[kl])*Dr[kr] + (xi[l] - xi[jl])*Dr[jr] + (xi[l] - xi[jr])*Dr[jl] + (xi[l] - xi[l+NX])*Dr[l+1] + (xi[l] - xi[l+1])*Dr[l+NX] + 3*(xi[kl] + xi[kr] + xi[jl] + xi[jr] + xi[l+NX] + xi[l+1] - 6*xi[l])*Dr[l])
-                           - (fi[l]*xr[l] + fr[l]*xi[l]);
-            
+            dxr[l] = K * ((xr[kr] + xr[jr] + xr[l+1] - 3*xr[l])*Dr[l] + (xr[kl] - xr[l])*Dr[kl] + (xr[jl] - xr[l])*Dr[jl] + (xr[l+NX] - xr[l])*Dr[l+NX])
+                       - (fr[l]*xr[l] - fi[l]*xi[l]);
+            dxi[l] = K * ((xi[kr] + xi[jr] + xi[l+1] - 3*xi[l])*Dr[l] + (xi[kl] - xi[l])*Dr[kl] + (xi[jl] - xi[l])*Dr[jl] + (xi[l+NX] - xi[l])*Dr[l+NX])
+                       - (fi[l]*xr[l] + fr[l]*xi[l]);
+
             /* Inner Points */
             ++l, ++jl, ++jr, ++kl, ++kr;
             for(i = 1; i < nx-1; ++i) {
+                /* Discretising using `div( D * grad(x) )` with backward divergence/forward gradient */
+                dxr[l] = K * ((xr[kr] + xr[jr] + xr[l+1] - 3*xr[l])*Dr[l] + (xr[kl] - xr[l])*Dr[kl] + (xr[jl] - xr[l])*Dr[jl] + (xr[l-1] - xr[l])*Dr[l-1])
+                           - (fr[l]*xr[l] - fi[l]*xi[l]);
+                dxi[l] = K * ((xi[kr] + xi[jr] + xi[l+1] - 3*xi[l])*Dr[l] + (xi[kl] - xi[l])*Dr[kl] + (xi[jl] - xi[l])*Dr[jl] + (xi[l-1] - xi[l])*Dr[l-1])
+                           - (fi[l]*xr[l] + fr[l]*xi[l]);
+
                 /*
-                 * Discretising using averaged div(D*grad(x))
+                 * Discretising using `div( D * grad(x) )` with symmetrized divergence/gradient
                 dxr[l] = Khalf * ((xr[kl] - xr[l])*Dr[kl] + (xr[kl] + xr[kr] + xr[jl] + xr[jr] + xr[l-1] + xr[l+1] - 6*xr[l])*Dr[l] + (xr[kr] - xr[l])*Dr[kr] + (xr[jl] - xr[l])*Dr[jl] + (xr[jr] - xr[l])*Dr[jr] + (xr[l-1] - xr[l])*Dr[l-1] + (xr[l+1] - xr[l])*Dr[l+1])
                                - (fr[l]*xr[l] - fi[l]*xi[l]);
                 dxi[l] = Khalf * ((xi[kl] - xi[l])*Dr[kl] + (xi[kl] + xi[kr] + xi[jl] + xi[jr] + xi[l-1] + xi[l+1] - 6*xi[l])*Dr[l] + (xi[kr] - xi[l])*Dr[kr] + (xi[jl] - xi[l])*Dr[jl] + (xi[jr] - xi[l])*Dr[jr] + (xi[l-1] - xi[l])*Dr[l-1] + (xi[l+1] - xi[l])*Dr[l+1])
                                - (fi[l]*xr[l] + fr[l]*xi[l]);
                  */
-                
-                /* Discretising using averaged D*lap(x)+dot(grad(D),grad(x)) */
+
+                /*
+                 * Discretising using `D * lap(x) + dot( grad(D), grad(x) )` with symmetrized gradients
                 dxr[l] = Khalf * ((xr[l] - xr[kr])*Dr[kl] + (xr[l] - xr[kl])*Dr[kr] + (xr[l] - xr[jl])*Dr[jr] + (xr[l] - xr[jr])*Dr[jl] + (xr[l] - xr[l-1])*Dr[l+1] + (xr[l] - xr[l+1])*Dr[l-1] + 3*(xr[kl] + xr[kr] + xr[jl] + xr[jr] + xr[l-1] + xr[l+1] - 6*xr[l])*Dr[l])
                                - (fr[l]*xr[l] - fi[l]*xi[l]);
                 dxi[l] = Khalf * ((xi[l] - xi[kr])*Dr[kl] + (xi[l] - xi[kl])*Dr[kr] + (xi[l] - xi[jl])*Dr[jr] + (xi[l] - xi[jr])*Dr[jl] + (xi[l] - xi[l-1])*Dr[l+1] + (xi[l] - xi[l+1])*Dr[l-1] + 3*(xi[kl] + xi[kr] + xi[jl] + xi[jr] + xi[l-1] + xi[l+1] - 6*xi[l])*Dr[l])
                                - (fi[l]*xr[l] + fr[l]*xi[l]);
+                 */
                 ++l, ++jl, ++jr, ++kl, ++kr;
             }
-            
-            /* RHS Boundary Condition */
-            dxr[l] = Khalf * ((xr[l] - xr[kr])*Dr[kl] + (xr[l] - xr[kl])*Dr[kr] + (xr[l] - xr[jl])*Dr[jr] + (xr[l] - xr[jr])*Dr[jl] + (xr[l] - xr[l-1])*Dr[l-NX] + (xr[l] - xr[l-NX])*Dr[l-1] + 3*(xr[kl] + xr[kr] + xr[jl] + xr[jr] + xr[l-1] + xr[l-NX] - 6*xr[l])*Dr[l])
-                           - (fr[l]*xr[l] - fi[l]*xi[l]);
-            dxi[l] = Khalf * ((xi[l] - xi[kr])*Dr[kl] + (xi[l] - xi[kl])*Dr[kr] + (xi[l] - xi[jl])*Dr[jr] + (xi[l] - xi[jr])*Dr[jl] + (xi[l] - xi[l-1])*Dr[l-NX] + (xi[l] - xi[l-NX])*Dr[l-1] + 3*(xi[kl] + xi[kr] + xi[jl] + xi[jr] + xi[l-1] + xi[l-NX] - 6*xi[l])*Dr[l])
-                           - (fi[l]*xr[l] + fr[l]*xi[l]);
 
+            /* RHS Boundary Condition */
+            dxr[l] = K * ((xr[kr] + xr[jr] + xr[l-NX] - 3*xr[l])*Dr[l] + (xr[kl] - xr[l])*Dr[kl] + (xr[jl] - xr[l])*Dr[jl] + (xr[l-1] - xr[l])*Dr[l-1])
+                       - (fr[l]*xr[l] - fi[l]*xi[l]);
+            dxi[l] = K * ((xi[kr] + xi[jr] + xi[l-NX] - 3*xi[l])*Dr[l] + (xi[kl] - xi[l])*Dr[kl] + (xi[jl] - xi[l])*Dr[jl] + (xi[l-1] - xi[l])*Dr[l-1])
+                       - (fi[l]*xr[l] + fr[l]*xi[l]);
         }
     }
     
@@ -219,7 +225,6 @@ void BTActionVariableDiff4D(
         const REAL *gsize
         )
 {
-    
     const uint32_t nx       = (uint32_t)gsize[0];
     const uint32_t ny       = (uint32_t)gsize[1];
     const uint32_t nz       = (uint32_t)gsize[2];
@@ -232,54 +237,14 @@ void BTActionVariableDiff4D(
     const uint32_t NZ       = nxny*(nz-1);
     const uint32_t NW       = nxnynz*(nw-1);
     
-    uint32_t i, j, k, w, l, il, ir, jl, jr, kl, kr;
-    const REAL Khalf = 0.5 * K;
+    int64_t w = 0;
     
 #if USE_PARALLEL
-#pragma omp parallel for collapse(3) OMP_PARFOR_ARGS
+#pragma omp parallel for OMP_PARFOR_ARGS
 #endif /* USE_PARALLEL */
     for(w = 0; w < nxnynznw; w += nxnynz) {
-        for(k = 0; k < nxnynz; k += nxny) {
-            for(j = 0; j < nxny; j += nx) {
-                l = k + j + w;
-                jl = (j==0 ) ? l+NY : l-nx;
-                jr = (j==NY) ? l-NY : l+nx;
-                kl = (k==0 ) ? l+NZ : l-nxny;
-                kr = (k==NZ) ? l-NZ : l+nxny;
-                
-                /* LHS Boundary Condition */
-                dxr[l] = Khalf * ((xr[l] - xr[kr])*Dr[kl] + (xr[l] - xr[kl])*Dr[kr] + (xr[l] - xr[jl])*Dr[jr] + (xr[l] - xr[jr])*Dr[jl] + (xr[l] - xr[l+NX])*Dr[l+1] + (xr[l] - xr[l+1])*Dr[l+NX] + 3*(xr[kl] + xr[kr] + xr[jl] + xr[jr] + xr[l+NX] + xr[l+1] - 6*xr[l])*Dr[l])
-                               - (fr[l]*xr[l] - fi[l]*xi[l]);
-                dxi[l] = Khalf * ((xi[l] - xi[kr])*Dr[kl] + (xi[l] - xi[kl])*Dr[kr] + (xi[l] - xi[jl])*Dr[jr] + (xi[l] - xi[jr])*Dr[jl] + (xi[l] - xi[l+NX])*Dr[l+1] + (xi[l] - xi[l+1])*Dr[l+NX] + 3*(xi[kl] + xi[kr] + xi[jl] + xi[jr] + xi[l+NX] + xi[l+1] - 6*xi[l])*Dr[l])
-                               - (fi[l]*xr[l] + fr[l]*xi[l]);
-
-                /* Inner Points */
-                ++l, ++jl, ++jr, ++kl, ++kr;
-                for(i = 1; i < nx-1; ++i) {
-                    /*
-                     * Discretising using averaged div(D*grad(x))
-                    dxr[l] = Khalf * ((xr[kl] - xr[l])*Dr[kl] + (xr[kl] + xr[kr] + xr[jl] + xr[jr] + xr[l-1] + xr[l+1] - 6*xr[l])*Dr[l] + (xr[kr] - xr[l])*Dr[kr] + (xr[jl] - xr[l])*Dr[jl] + (xr[jr] - xr[l])*Dr[jr] + (xr[l-1] - xr[l])*Dr[l-1] + (xr[l+1] - xr[l])*Dr[l+1])
-                                   - (fr[l]*xr[l] - fi[l]*xi[l]);
-                    dxi[l] = Khalf * ((xi[kl] - xi[l])*Dr[kl] + (xi[kl] + xi[kr] + xi[jl] + xi[jr] + xi[l-1] + xi[l+1] - 6*xi[l])*Dr[l] + (xi[kr] - xi[l])*Dr[kr] + (xi[jl] - xi[l])*Dr[jl] + (xi[jr] - xi[l])*Dr[jr] + (xi[l-1] - xi[l])*Dr[l-1] + (xi[l+1] - xi[l])*Dr[l+1])
-                                   - (fi[l]*xr[l] + fr[l]*xi[l]);
-                     */
-
-                    /* Discretising using averaged D*lap(x)+dot(grad(D),grad(x)) */
-                    dxr[l] = Khalf * ((xr[l] - xr[kr])*Dr[kl] + (xr[l] - xr[kl])*Dr[kr] + (xr[l] - xr[jl])*Dr[jr] + (xr[l] - xr[jr])*Dr[jl] + (xr[l] - xr[l-1])*Dr[l+1] + (xr[l] - xr[l+1])*Dr[l-1] + 3*(xr[kl] + xr[kr] + xr[jl] + xr[jr] + xr[l-1] + xr[l+1] - 6*xr[l])*Dr[l])
-                                   - (fr[l]*xr[l] - fi[l]*xi[l]);
-                    dxi[l] = Khalf * ((xi[l] - xi[kr])*Dr[kl] + (xi[l] - xi[kl])*Dr[kr] + (xi[l] - xi[jl])*Dr[jr] + (xi[l] - xi[jr])*Dr[jl] + (xi[l] - xi[l-1])*Dr[l+1] + (xi[l] - xi[l+1])*Dr[l-1] + 3*(xi[kl] + xi[kr] + xi[jl] + xi[jr] + xi[l-1] + xi[l+1] - 6*xi[l])*Dr[l])
-                                   - (fi[l]*xr[l] + fr[l]*xi[l]);
-                    ++l, ++jl, ++jr, ++kl, ++kr;
-                }
-
-                /* RHS Boundary Condition */
-                dxr[l] = Khalf * ((xr[l] - xr[kr])*Dr[kl] + (xr[l] - xr[kl])*Dr[kr] + (xr[l] - xr[jl])*Dr[jr] + (xr[l] - xr[jr])*Dr[jl] + (xr[l] - xr[l-1])*Dr[l-NX] + (xr[l] - xr[l-NX])*Dr[l-1] + 3*(xr[kl] + xr[kr] + xr[jl] + xr[jr] + xr[l-1] + xr[l-NX] - 6*xr[l])*Dr[l])
-                               - (fr[l]*xr[l] - fi[l]*xi[l]);
-                dxi[l] = Khalf * ((xi[l] - xi[kr])*Dr[kl] + (xi[l] - xi[kl])*Dr[kr] + (xi[l] - xi[jl])*Dr[jr] + (xi[l] - xi[jr])*Dr[jl] + (xi[l] - xi[l-1])*Dr[l-NX] + (xi[l] - xi[l-NX])*Dr[l-1] + 3*(xi[kl] + xi[kr] + xi[jl] + xi[jr] + xi[l-1] + xi[l-NX] - 6*xi[l])*Dr[l])
-                               - (fi[l]*xr[l] + fr[l]*xi[l]);
-            }
-        }
+        BTActionVariableDiff3D( &dxr[w], &dxi[w], &xr[w], &xi[w], fr, fi, Dr, Di, K, gsize );
     }
-    
+        
     return;
 }

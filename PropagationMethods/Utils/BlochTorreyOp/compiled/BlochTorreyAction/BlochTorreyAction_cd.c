@@ -38,9 +38,6 @@
 // #define OMP_PARFOR_ARGS
 #define OMP_PARFOR_ARGS schedule(static) num_threads(NUM_THREADS)
 
-/* Enum for different implementations (Type 1 currently fastest) */
-#define BLOCHTORREY3D_TYPE 1
-
 /* Alias for basic element type, for easier switching between single/double */
 #define REALTYPE 1 /* 1 for double, 0 for single */
 #if REALTYPE
@@ -69,8 +66,8 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     const REAL K = D/(h*h);
     
     /* Represented dimensions of input: ndim will be 3 or 4, and gsize will have respectively 3 or 4 elements */
-    const REAL  *gsize = (const REAL*)mxGetData(__gsize__);
-    const uint32_t ndim  = (const uint32_t) ((REAL*)mxGetData(__ndim__))[0];
+    const REAL  *gsize  = (const REAL*)mxGetData(__gsize__);
+    const uint32_t ndim = (const uint32_t) ((REAL*)mxGetData(__ndim__))[0];
     
     /* Number of iterations to apply */
     const uint32_t iters = (const uint32_t) ((REAL*)mxGetData(__iters__))[0];
@@ -199,37 +196,13 @@ void BlochTorreyAction4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, 
     const uint32_t NZ       = nxny*(nz-1);
     const uint32_t NW       = nxnynz*(nw-1);
     
-    uint32_t i, j, k, w, l, il, ir, jl, jr, kl, kr;
+    int64_t w = 0;
     
 #if USE_PARALLEL
-#pragma omp parallel for collapse(3) OMP_PARFOR_ARGS
+#pragma omp parallel for OMP_PARFOR_ARGS
 #endif /* USE_PARALLEL */
     for(w = 0; w < nxnynznw; w += nxnynz) {
-        for(k = 0; k < nxnynz; k += nxny) {
-            for(j = 0; j < nxny; j += nx) {
-                l = k + j + w;
-                jl = (j==0 ) ? l+NY : l-nx;
-                jr = (j==NY) ? l-NY : l+nx;
-                kl = (k==0 ) ? l+NZ : l-nxny;
-                kr = (k==NZ) ? l-NZ : l+nxny;
-                
-                /* LHS Boundary Condition */
-                dxr[l] = K * (xr[l+NX] + xr[l+1] + xr[jl] + xr[jr] + xr[kl] + xr[kr]) + (fr[l] * xr[l] - fi[l] * xi[l]);
-                dxi[l] = K * (xi[l+NX] + xi[l+1] + xi[jl] + xi[jr] + xi[kl] + xi[kr]) + (fr[l] * xi[l] + fi[l] * xr[l]);
-                
-                /* Inner Points */
-                ++l, ++jl, ++jr, ++kl, ++kr;
-                for(i = 1; i < nx-1; ++i) {
-                    dxr[l] = K * (xr[l-1] + xr[l+1] + xr[jl] + xr[jr] + xr[kl] + xr[kr]) + (fr[l] * xr[l] - fi[l] * xi[l]);
-                    dxi[l] = K * (xi[l-1] + xi[l+1] + xi[jl] + xi[jr] + xi[kl] + xi[kr]) + (fr[l] * xi[l] + fi[l] * xr[l]);
-                    ++l, ++jl, ++jr, ++kl, ++kr;
-                }
-                
-                /* RHS Boundary Condition */
-                dxr[l] = K * (xr[l-1] + xr[l-NX] + xr[jl] + xr[jr] + xr[kl] + xr[kr]) + (fr[l] * xr[l] - fi[l] * xi[l]);
-                dxi[l] = K * (xi[l-1] + xi[l-NX] + xi[jl] + xi[jr] + xi[kl] + xi[kr]) + (fr[l] * xi[l] + fi[l] * xr[l]);
-            }
-        }
+        BlochTorreyAction3D( &dxr[w], &dxi[w], &xr[w], &xi[w], fr, fi, K, gsize );
     }
     
     return;

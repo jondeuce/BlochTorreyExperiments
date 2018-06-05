@@ -26,6 +26,14 @@ end
 
 end
 
+function y = fwd_diff(x,d)
+y = circshift(x, -1, d) - x;
+end
+
+function y = bwd_diff(x,d)
+y = x - circshift(x, 1, d);
+end
+
 function y = Lap(x,includecenter)
 if nargin < 2; includecenter = true; end
 y = circshift(x, 1, 1);
@@ -37,15 +45,22 @@ y = y + circshift(x,-1, 3);
 if includecenter; y = y - 6*x; end
 end
 
-function g = GradDot(x,y)
-g = 0.5 * ( ...
-    (x - circshift(x, -1, 1)) .* (circshift(y, 1, 1) - y) + ...
-    (x - circshift(x, -1, 2)) .* (circshift(y, 1, 2) - y) + ...
-    (x - circshift(x, -1, 3)) .* (circshift(y, 1, 3) - y) + ...
-    (circshift(x, 1, 1) - x) .* (y - circshift(y, -1, 1)) + ...
-    (circshift(x, 1, 2) - x) .* (y - circshift(y, -1, 2)) + ...
-    (circshift(x, 1, 3) - x) .* (y - circshift(y, -1, 3)) ...
+function z = GradDot(x,y)
+z = 0.5 * ( ...
+    bwd_diff(x,1) .* fwd_diff(y,1) + ...
+    bwd_diff(x,2) .* fwd_diff(y,2) + ...
+    bwd_diff(x,3) .* fwd_diff(y,3) + ...
+    fwd_diff(x,1) .* bwd_diff(x,1) + ...
+    fwd_diff(x,2) .* bwd_diff(x,2) + ...
+    fwd_diff(x,3) .* bwd_diff(x,3) ...
     );
+end
+
+function z = DivDGrad(x,D)
+% div(D*grad(x)) with backward divergence/forward gradient
+z =     bwd_diff( D .* fwd_diff(x,1), 1 );
+z = z + bwd_diff( D .* fwd_diff(x,2), 2 );
+z = z + bwd_diff( D .* fwd_diff(x,3), 3 );
 end
 
 function y = BTAction_Scalar_D(x,h,D,f)
@@ -54,7 +69,10 @@ y = (D/h^2) * Lap(x,false) + f.*x;
 end
 
 function y = BTAction_Variable_D(x,h,D,f)
-% Isotropic term plus Flux term minus Gamma term (f is Gamma := R2 + i*dw)
-y = (D.*Lap(x,true))/h^2 + GradDot(D,x)/h^2 - f.*x;
+% Divergence of gradient minus Gamma term (f is Gamma := R2 + i*dw)
+y = DivDGrad(x,D)/h^2 - f.*x;
+
+% Symmetrized expanded diffusion term minus Gamma term (f is Gamma := R2 + i*dw)
+% y = (D.*Lap(x,true))/h^2 + GradDot(D,x)/h^2 - f.*x;
 end
 

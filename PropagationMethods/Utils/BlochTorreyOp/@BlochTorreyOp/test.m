@@ -1,69 +1,75 @@
 function test
 
 rng('default')
+b = true;
 
-Gsize = [8,11,6];
-Vsize = 1000*rand()*(Gsize./max(Gsize));
+Gsize = [5,6,4];
+Vsize = (1+rand())*(Gsize./max(Gsize));
 h = mean(Vsize./Gsize);
 x0 = randnc(Gsize);
 
 % Gamma randnc, Dcoeff scalar positive
-Gamma = randnc(Gsize);
+Gamma = randnc(Gsize)/10;
 Dcoeff = rand()*h^2;
-run_suite_combinations('Gamma randnc, Dcoeff scalar positive', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize);
+b = run_suite_combinations('Gamma randnc, Dcoeff scalar positive', ...
+    x0, Gamma, Dcoeff, Gsize, Vsize) && b;
 
 % Gamma randnc, Dcoeff scalar negative
-Gamma = randnc(Gsize);
+Gamma = randnc(Gsize)/10;
 Dcoeff = -rand()*h^2;
-run_suite_combinations('Gamma randnc, Dcoeff scalar negative', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize);
+b = run_suite_combinations('Gamma randnc, Dcoeff scalar negative', ...
+    x0, Gamma, Dcoeff, Gsize, Vsize) && b;
 
 % Gamma randnc, Dcoeff randnc
-Gamma = randnc(Gsize);
+Gamma = randnc(Gsize)/10;
 Dcoeff = randnc()*h^2;
-run_suite_combinations('Gamma randnc, Dcoeff randnc', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize);
+b = run_suite_combinations('Gamma randnc, Dcoeff randnc', ...
+    x0, Gamma, Dcoeff, Gsize, Vsize) && b;
 
 % Gamma scalar randnc, Dcoeff randnc
-Gamma = randnc();
+Gamma = randnc()/10;
 Dcoeff = randnc()*h^2;
-run_suite_combinations('Gamma scalar randnc, Dcoeff randnc', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize);
+b = run_suite_combinations('Gamma scalar randnc, Dcoeff randnc', ...
+    x0, Gamma, Dcoeff, Gsize, Vsize) && b;
 
 % Gamma scalar randnc, Dcoeff positive
-Gamma = randnc();
+Gamma = randnc()/10;
 Dcoeff = rand()*h^2;
-run_suite_combinations('Gamma scalar randnc, Dcoeff positive', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize);
+b = run_suite_combinations('Gamma scalar randnc, Dcoeff positive', ...
+    x0, Gamma, Dcoeff, Gsize, Vsize) && b;
 
-% Gamma == -1, Dcoeff == 0
+% Identity test: Gamma == -1, Dcoeff == 0
 Gamma = -1;
 Dcoeff = 0;
-run_suite_combinations('Gamma == -1, Dcoeff == 0', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize);
-
-% Gamma zeros, Dcoeff const array
-Gamma = zeros(Gsize);
-Dcoeff = rand()*ones(Gsize);
-run_suite_combinations('Gamma zeros, Dcoeff const array', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize);
+b = run_suite_combinations('Gamma == -1, Dcoeff == 0', ...
+    x0, Gamma, Dcoeff, Gsize, Vsize) && b;
 
 % Gamma zeros, Dcoeff randn array
 Gamma = zeros(Gsize);
-Dcoeff = randn(Gsize);
-run_suite_combinations('Gamma zeros, Dcoeff randn array', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize);
+Dcoeff = randn(Gsize)*h^2;
+b = run_suite_combinations('Gamma zeros, Dcoeff randn array', ...
+    x0, Gamma, Dcoeff, Gsize, Vsize) && b;
 
 % Gamma randnc, Dcoeff randn array
-Gamma = randnc(Gsize);
-Dcoeff = randn(Gsize);
-run_suite_combinations('Gamma randnc, Dcoeff randn array', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize);
+Gamma = randnc(Gsize)/10;
+Dcoeff = randn(Gsize)*h^2;
+b = run_suite_combinations('Gamma randnc, Dcoeff randn array', ...
+    x0, Gamma, Dcoeff, Gsize, Vsize) && b;
+
+% Gamma zeros, Dcoeff const array
+Gamma = zeros(Gsize);
+Dcoeff = rand()*ones(Gsize)*h^2;
+b = run_suite_combinations('Gamma zeros, Dcoeff const array', ...
+    x0, Gamma, Dcoeff, Gsize, Vsize) && b;
+
+% Finish up
+if b; fprintf('\nAll tests passed\n\n');
+else; warning('Some tests failed');
+end
 
 end
 
-function run_suite_combinations(name, x0, Gamma, Dcoeff, Gsize, Vsize)
+function b = run_suite_combinations(name, x0, Gamma, Dcoeff, Gsize, Vsize)
 
 % run all (necessary) combinations of real/complex inputs
 [xreal, greal, dreal] = deal(isreal(x0), isreal(Gamma), isreal(Dcoeff));
@@ -72,25 +78,43 @@ function run_suite_combinations(name, x0, Gamma, Dcoeff, Gsize, Vsize)
     ~xreal && ~greal, ~xreal && ~dreal, ~greal && ~dreal, ...
     ~xreal && ~greal && ~dreal);
 
-c1 && run_suite(name, x0,       Gamma,       Dcoeff,       Gsize, Vsize);
-c2 && run_suite(name, real(x0), Gamma,       Dcoeff,       Gsize, Vsize);
-c3 && run_suite(name, x0,       real(Gamma), Dcoeff,       Gsize, Vsize);
-c4 && run_suite(name, x0,       Gamma,       real(Dcoeff), Gsize, Vsize);
-c5 && run_suite(name, real(x0), real(Gamma), Dcoeff,       Gsize, Vsize);
-c6 && run_suite(name, real(x0), Gamma,       real(Dcoeff), Gsize, Vsize);
-c7 && run_suite(name, x0,       real(Gamma), real(Dcoeff), Gsize, Vsize);
-c8 && run_suite(name, real(x0), real(Gamma), real(Dcoeff), Gsize, Vsize);
-
-fprintf('\n');
+b = true;
+if c1; b = run_suite(name, x0,       Gamma,       Dcoeff,       Gsize, Vsize) && b; end
+if c2; b = run_suite(name, real(x0), Gamma,       Dcoeff,       Gsize, Vsize) && b; end
+if c3; b = run_suite(name, x0,       real(Gamma), Dcoeff,       Gsize, Vsize) && b; end
+if c4; b = run_suite(name, x0,       Gamma,       real(Dcoeff), Gsize, Vsize) && b; end
+if c5; b = run_suite(name, real(x0), real(Gamma), Dcoeff,       Gsize, Vsize) && b; end
+if c6; b = run_suite(name, real(x0), Gamma,       real(Dcoeff), Gsize, Vsize) && b; end
+if c7; b = run_suite(name, x0,       real(Gamma), real(Dcoeff), Gsize, Vsize) && b; end
+if c8; b = run_suite(name, real(x0), real(Gamma), real(Dcoeff), Gsize, Vsize) && b; end
 
 end
 
 function b = run_suite(name, x0, Gamma, Dcoeff, Gsize, Vsize)
 
 Ns = 35; % string message pad length
+b = true;
 
 A = BlochTorreyOp(Gamma, Dcoeff, Gsize, Vsize);
 As = sparse(A);
+Af = full(A);
+Ab = full_Brute(Gamma, Dcoeff, Gsize, Vsize);
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Matrix properties testing
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+b = test_approx_eq(Ab, Af, name, strpad('BTop matrix equal',Ns)) && b;
+b = test_approx_eq(Ab, full(As), name, strpad('BTsparse matrix equal',Ns)) && b;
+b = test_approx_eq(abs(Ab), full(abs(A)), name, strpad('BTop abs equal',Ns)) && b;
+b = test_approx_eq(real(Ab), full(real(A)), name, strpad('BTop real equal',Ns)) && b;
+b = test_approx_eq(imag(Ab), full(imag(A)), name, strpad('BTop imag equal',Ns)) && b;
+b = test_approx_eq(diag(Ab), diag(A), name, strpad('BTop diag equal',Ns)) && b;
+b = test_approx_eq(norm(Ab,1), norm(A,1), name, strpad('BTop 1-norm equal',Ns)) && b;
+b = test_approx_eq(norm(Ab,inf), norm(A,inf), name, strpad('BTop inf-norm equal',Ns)) && b;
+b = test_approx_eq(norm(Ab,'fro'), norm(A,'fro'), name, strpad('BTop frob-norm equal',Ns)) && b;
+
+% trace is sensitive to floating point arithmetic; error should be O(sqrt(N))*eps
+b = test_approx_eq(trace(Ab), trace(A), name, strpad('BTop trace equal',Ns), 5*sqrt(length(A))) && b;
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Matrix multiplication testing
@@ -101,32 +125,45 @@ y_BTbrute = BlochTorreyBrute(x0, Gamma, Dcoeff, Gsize, Vsize);
 y_BTop = A*x0;
 y_BTsparse = reshape(As*x0(:), size(x0));
 
-test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop mat*vec',Ns));
-test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse mat*vec',Ns));
+b = test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop mat*vec',Ns)) && b;
+b = test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse mat*vec',Ns)) && b;
+A.Gamma;
 
 % Matrix-transpose multiplication
 y_BTbrute = BlochTorreyBrute(x0, Gamma, Dcoeff, Gsize, Vsize); % symmetric
 y_BTop = A.'*x0;
 y_BTsparse = reshape(As.'*x0(:), size(x0));
 
-test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop trans-mat*vec',Ns));
-test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse trans-mat*vec',Ns));
+b = test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop trans-mat*vec',Ns)) && b;
+b = test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse trans-mat*vec',Ns)) && b;
+A.Diag;
 
 % Matrix-conjugate-transpose multiplication
 y_BTbrute = BlochTorreyBrute(x0, conj(Gamma), conj(Dcoeff), Gsize, Vsize);
 y_BTop = A'*x0;
 y_BTsparse = reshape(As'*x0(:), size(x0));
 
-test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop conj-trans-mat*vec',Ns));
-test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse conj-trans-mat*vec',Ns));
+b = test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop conj-trans-mat*vec',Ns)) && b;
+b = test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse conj-trans-mat*vec',Ns)) && b;
+A.Gamma;
 
-% Vector*Matrix multiplication
-y_BTbrute = BlochTorreyBrute(x0, Gamma, Dcoeff, Gsize, Vsize);
-y_BTop = x0*A;
-y_BTsparse = reshape(x0(:).'*As, size(x0));
+% Vector*Matrix multiplication (3D grid)
+y_BTbrute = BlochTorreyBrute(conj(x0), Gamma, Dcoeff, Gsize, Vsize);
+y_BTop = conj(x0)*A;
+y_BTsparse = reshape(x0(:)'*As, size(x0));
 
-test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop vec*mat',Ns));
-test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse vec*mat',Ns));
+b = test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop vec-ctrans*mat (3D)',Ns)) && b;
+b = test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse vec-ctrans*mat (3D)',Ns)) && b;
+A.Diag;
+
+% Vector*Matrix multiplication (1D vector)
+y_BTbrute = BlochTorreyBrute(conj(x0), Gamma, Dcoeff, Gsize, Vsize);
+y_BTop = x0(:)'*A;
+y_BTsparse = x0(:)'*As;
+
+b = test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop vec-ctrans*mat (1D)',Ns)) && b;
+b = test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse vec-ctrans*mat (1D)',Ns)) && b;
+A.Gamma;
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Scalar multiplication testing
@@ -138,12 +175,14 @@ y_BTbrute = a*BlochTorreyBrute(x0, Gamma, Dcoeff, Gsize, Vsize);
 y_BTop = (a*A)*x0;
 y_BTsparse = reshape((a*As)*x0(:), size(x0));
 
-test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop RHS-real-scalar*mat*vec',Ns));
-test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse RHS-real-scalar*mat*vec',Ns));
+b = test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop RHS-real-scalar*mat*vec',Ns)) && b;
+b = test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse RHS-real-scalar*mat*vec',Ns)) && b;
+A.Diag;
 
 y_BTop = (A*a)*x0;
-test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop LHS-real-scalar*mat*vec',Ns));
-test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse LHS-real-scalar*mat*vec',Ns));
+b = test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop LHS-real-scalar*mat*vec',Ns)) && b;
+b = test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse LHS-real-scalar*mat*vec',Ns)) && b;
+A.Gamma;
 
 % Complex-scalar multiplication
 a = randnc();
@@ -151,21 +190,53 @@ y_BTbrute = a*BlochTorreyBrute(x0, Gamma, Dcoeff, Gsize, Vsize);
 y_BTop = (a*A)*x0;
 y_BTsparse = reshape((a*As)*x0(:), size(x0));
 
-test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop RHS-cplx-scalar*mat*vec',Ns));
-test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse RHS-cplx-scalar*mat*vec',Ns));
+b = test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop RHS-cplx-scalar*mat*vec',Ns)) && b;
+b = test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse RHS-cplx-scalar*mat*vec',Ns)) && b;
+A.Diag;
 
 y_BTop = (A*a)*x0;
-test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop LHS-cplx-scalar*mat*vec',Ns));
-test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse LHS-cplx-scalar*mat*vec',Ns));
-
-% Success
-b = true;
+b = test_approx_eq(y_BTbrute, y_BTop, name, strpad('BTop LHS-cplx-scalar*mat*vec',Ns)) && b;
+b = test_approx_eq(y_BTbrute, y_BTsparse, name, strpad('BTsparse LHS-cplx-scalar*mat*vec',Ns)) && b;
+A.Gamma;
 
 end
 
 function y = BlochTorreyBrute(x0, Gamma, D, Gsize, Vsize)
 h = mean(Vsize./Gsize);
 y = BlochTorreyAction_brute(x0, h, D, Gamma, 1, false);
+end
+
+function A = full_Brute(Gamma, D, Gsize, Vsize)
+N = prod(Gsize);
+A = zeros(N,N);
+ei = zeros(Gsize);
+
+ei(1) = 1;
+A(:,1) = vec(BlochTorreyBrute(ei, Gamma, D, Gsize, Vsize));
+for ii = 2:size(A,2)
+    ei(ii-1) = 0;
+    ei(ii) = 1;
+    A(:,ii) = vec(BlochTorreyBrute(ei, Gamma, D, Gsize, Vsize));
+end
+
+end
+
+function A = full_BTAction(Gamma, D, Gsize, Vsize)
+N = prod(Gsize);
+h = mean(Vsize./Gsize);
+Gamma = complex(Gamma);
+
+A = zeros(N,N);
+ei = complex(zeros(Gsize));
+
+ei(1) = 1;
+A(:,1) = vec(BlochTorreyAction(ei, h, D, Gamma, Gsize, 1, false, false));
+for ii = 2:size(A,2)
+    ei(ii-1) = 0;
+    ei(ii) = 1;
+    A(:,ii) = vec(BlochTorreyAction(ei, h, D, Gamma, Gsize, 1, false, false));
+end
+
 end
 
 function p = strpad(s,N)
@@ -181,12 +252,25 @@ function str = passedmsg(name, msg)
 str = sprintf('Test passed: %s (test suite: %s)', msg, name);
 end
 
-function b = test_approx_eq(x,y,name,msg,tol)
-if nargin < 5; tol = 10*max(eps(max(abs(x(:)))), eps(max(abs(y(:))))); end
+function b = test_approx_eq(x,y,name,msg,tolfact)
+if nargin < 5; tolfact = 5; end
 if nargin < 4; msg = 'test failed'; end
 if nargin < 3; name = 'N/A'; end
-% tol = sqrt(tol);
+
+tol = tolfact * max(eps(max(abs(x(:)))), eps(max(abs(y(:)))));
+% tol = sqrt(tol); % For testing if failures are due to tolerance
+
 maxdiff = max(abs(x(:)-y(:)));
 b = (maxdiff <= tol);
-if ~b; warning(errmsg(name,msg)); else; fprintf('%s\n',passedmsg(name,msg)); end
+
+if b
+    fprintf('%s\n',passedmsg(name,msg));
+else
+    warning(errmsg(name,msg));
+    if isscalar(x) && isscalar(y)
+        fprintf('val1: '); disp(x);
+        fprintf('val2: '); disp(y);
+    end
+end
+
 end

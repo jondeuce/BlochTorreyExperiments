@@ -12,8 +12,8 @@ switch upper(stepper)
         kernelstepper = SplittingMethods.BTSplitStepper(...
             dt, Dcoeff, Gamma, dGamma, Geom.GridSize, Geom.VoxelSize, ...
             'NReps', 1, 'Order', 2);
+        getstepper = @(gamma) precomputeExpDecays(kernelstepper, gamma);
 end
-getstepper = @(gamma) precomputeExpDecays(kernelstepper, gamma);
 
 for ii = 1:NumAngles
     

@@ -28,7 +28,7 @@ sym_graddot = @(f,g) ( ...
     (f - subs(f,z,z-1)) .* (subs(g,z,z+1) - g) + ...
     (subs(f,x,x+1) - f) .* (g - subs(g,x,x-1)) + ...
     (subs(f,y,y+1) - f) .* (g - subs(g,y,y-1)) + ...
-    (subs(f,z,z+1) - f) .* (g - subs(g,z,z-1)) ...
+    (subs(f,z,z+1) - f) .* (g - subs(g,z,z-1))   ...
     )/(2*h^2);
 
 cplx = @(x,y) x+1i*y;
@@ -52,44 +52,68 @@ fprintf('\nBloch-Torrey Operator: D constant scalar\n\n');
 disp(to_C_str(BTop_Const_D_Real_Factors));
 disp(to_C_str(BTop_Const_D_Imag_Factors));
 
-% Variable array D = Dr, using div(D*grad(x)) and averaging forward/backward gradients
-BTop_Array_D = cleanexpr( (bwd_div(Dr*fwd_grad(xc)) + fwd_div(Dr*bwd_grad(xc)))/2 - Gc*xc );
+% Variable array D = Dr, using div(D*grad(x)) with backward divergence/forward gradient
+BTop_Array_D = cleanexpr( bwd_div(Dr*fwd_grad(xc)) - Gc*xc );
 BTop_Array_D = collect_recurse( BTop_Array_D, sym(1i) );
-BTop_Array_D_Real = collect_recurse( simplify(expand(real(BTop_Array_D))), sym(1/2) );
-BTop_Array_D_Imag = collect_recurse( simplify(expand(imag(BTop_Array_D))), sym(1/2) );
+BTop_Array_D_Real = collect_recurse( simplify(expand(real(BTop_Array_D))), sym(1) );
+BTop_Array_D_Imag = collect_recurse( simplify(expand(imag(BTop_Array_D))), sym(1) );
 
-fprintf('\nBloch-Torrey Operator: D variable array using div(D*grad(x))\n\n');
+fprintf('\nBloch-Torrey Operator: D variable array using div(D*grad(x)) with backward divergence/forward gradient\n\n');
 BTop_Array_D_Real_Factors = factor(BTop_Array_D_Real);
-BTop_Array_D_Real_Factors(2) = collect_recurse(BTop_Array_D_Real_Factors(2),Dr,subs(Dr,x,x+1),subs(Dr,x,x-1),subs(Dr,y,y+1),subs(Dr,y,y-1),subs(Dr,z,z+1),subs(Dr,z,z-1));
+BTop_Array_D_Real_Factors(1) = collect_recurse(BTop_Array_D_Real_Factors(1),Dr,subs(Dr,x,x+1),subs(Dr,x,x-1),subs(Dr,y,y+1),subs(Dr,y,y-1),subs(Dr,z,z+1),subs(Dr,z,z-1),Dr);
 disp(to_C_str(BTop_Array_D_Real_Factors));
 
 BTop_Array_D_Imag_Factors = -factor(BTop_Array_D_Imag);
-BTop_Array_D_Imag_Factors(2) = collect_recurse(BTop_Array_D_Imag_Factors(2),Dr,subs(Dr,x,x+1),subs(Dr,x,x-1),subs(Dr,y,y+1),subs(Dr,y,y-1),subs(Dr,z,z+1),subs(Dr,z,z-1));
+BTop_Array_D_Imag_Factors(2) = collect_recurse(BTop_Array_D_Imag_Factors(2),Dr,subs(Dr,x,x+1),subs(Dr,x,x-1),subs(Dr,y,y+1),subs(Dr,y,y-1),subs(Dr,z,z+1),subs(Dr,z,z-1),Dr);
 disp(to_C_str(BTop_Array_D_Imag_Factors));
 
-% Variable array D = Dr, using D*lap(x)+dot(grad(D),grad(x)) and averaging forward/backward gradients
-BTop_Array_D_Expanded = cleanexpr( Dr*lap(xc) + sym_graddot(Dr,xc) - Gc*xc );
-BTop_Array_D_Expanded = collect_recurse( BTop_Array_D_Expanded, sym(1i) );
-BTop_Array_D_Expanded_Real = collect_recurse( simplify(expand(real(BTop_Array_D_Expanded))), sym(1/2) );
-BTop_Array_D_Expanded_Imag = collect_recurse( simplify(expand(imag(BTop_Array_D_Expanded))), sym(1/2) );
+fprintf('\nBloch-Torrey Operator: D variable array using div(D*grad(x)) with backward divergence/forward gradient (rearranged)\n\n');
+BTop_Array_D_Real_Factors = factor(BTop_Array_D_Real);
+BTop_Array_D_Real_Factors(1) = collect_recurse(BTop_Array_D_Real_Factors(1),xr,subs(xr,x,x+1),subs(xr,x,x-1),subs(xr,y,y+1),subs(xr,y,y-1),subs(xr,z,z+1),subs(xr,z,z-1),xr);
+disp(to_C_str(BTop_Array_D_Real_Factors));
 
-fprintf('\nBloch-Torrey Operator: D variable array using D*lap(x)+dot(grad(D),grad(x))\n\n');
-BTop_Array_D_Expanded_Real_Factors = factor(BTop_Array_D_Expanded_Real);
-BTop_Array_D_Expanded_Real_Factors(2) = collect_recurse(BTop_Array_D_Expanded_Real_Factors(2),Dr,subs(Dr,x,x+1),subs(Dr,x,x-1),subs(Dr,y,y+1),subs(Dr,y,y-1),subs(Dr,z,z+1),subs(Dr,z,z-1));
-disp(to_C_str(BTop_Array_D_Expanded_Real_Factors));
+BTop_Array_D_Imag_Factors = -factor(BTop_Array_D_Imag);
+BTop_Array_D_Imag_Factors(2) = collect_recurse(BTop_Array_D_Imag_Factors(2),xi,subs(xi,x,x+1),subs(xi,x,x-1),subs(xi,y,y+1),subs(xi,y,y-1),subs(xi,z,z+1),subs(xi,z,z-1),xi);
+disp(to_C_str(BTop_Array_D_Imag_Factors));
 
-BTop_Array_D_Expanded_Imag_Factors = -factor(BTop_Array_D_Expanded_Imag);
-BTop_Array_D_Expanded_Imag_Factors(2) = collect_recurse(BTop_Array_D_Expanded_Imag_Factors(2),Dr,subs(Dr,x,x+1),subs(Dr,x,x-1),subs(Dr,y,y+1),subs(Dr,y,y-1),subs(Dr,z,z+1),subs(Dr,z,z-1));
-disp(to_C_str(BTop_Array_D_Expanded_Imag_Factors));
+% Variable array D = Dr, using div(D*grad(x)) with symmetrized divergence/gradient
+BTop_Array_D_Avg = cleanexpr( (bwd_div(Dr*fwd_grad(xc)) + fwd_div(Dr*bwd_grad(xc)))/2 - Gc*xc );
+BTop_Array_D_Avg = collect_recurse( BTop_Array_D_Avg, sym(1i) );
+BTop_Array_D_Avg_Real = collect_recurse( simplify(expand(real(BTop_Array_D_Avg))), sym(1/2) );
+BTop_Array_D_Avg_Imag = collect_recurse( simplify(expand(imag(BTop_Array_D_Avg))), sym(1/2) );
 
-fprintf('\nBloch-Torrey Operator: D variable array using D*lap(x)+dot(grad(D),grad(x))\n\n');
-BTop_Array_D_Expanded_Real_Factors = factor(BTop_Array_D_Expanded_Real);
-BTop_Array_D_Expanded_Real_Factors(2) = collect_recurse(BTop_Array_D_Expanded_Real_Factors(2),xr,subs(xr,x,x+1),subs(xr,x,x-1),subs(xr,y,y+1),subs(xr,y,y-1),subs(xr,z,z+1),subs(xr,z,z-1));
-disp(to_C_str(BTop_Array_D_Expanded_Real_Factors));
+fprintf('\nBloch-Torrey Operator: D variable array using div(D*grad(x)) with symmetrized divergence/gradient\n\n');
+BTop_Array_D_Avg_Real_Factors = factor(BTop_Array_D_Avg_Real);
+BTop_Array_D_Avg_Real_Factors(2) = collect_recurse(BTop_Array_D_Avg_Real_Factors(2),Dr,subs(Dr,x,x+1),subs(Dr,x,x-1),subs(Dr,y,y+1),subs(Dr,y,y-1),subs(Dr,z,z+1),subs(Dr,z,z-1));
+disp(to_C_str(BTop_Array_D_Avg_Real_Factors));
 
-BTop_Array_D_Expanded_Imag_Factors = -factor(BTop_Array_D_Expanded_Imag);
-BTop_Array_D_Expanded_Imag_Factors(2) = collect_recurse(BTop_Array_D_Expanded_Imag_Factors(2),xi,subs(xi,x,x+1),subs(xi,x,x-1),subs(xi,y,y+1),subs(xi,y,y-1),subs(xi,z,z+1),subs(xi,z,z-1));
-disp(to_C_str(BTop_Array_D_Expanded_Imag_Factors));
+BTop_Array_D_Avg_Imag_Factors = -factor(BTop_Array_D_Avg_Imag);
+BTop_Array_D_Avg_Imag_Factors(2) = collect_recurse(BTop_Array_D_Avg_Imag_Factors(2),Dr,subs(Dr,x,x+1),subs(Dr,x,x-1),subs(Dr,y,y+1),subs(Dr,y,y-1),subs(Dr,z,z+1),subs(Dr,z,z-1));
+disp(to_C_str(BTop_Array_D_Avg_Imag_Factors));
+
+% Variable array D = Dr, using D*lap(x)+dot(grad(D),grad(x)) with symmetrized gradients
+BTop_Array_D_ExpandAvg = cleanexpr( Dr*lap(xc) + sym_graddot(Dr,xc) - Gc*xc );
+BTop_Array_D_ExpandAvg = collect_recurse( BTop_Array_D_ExpandAvg, sym(1i) );
+BTop_Array_D_ExpandAvg_Real = collect_recurse( simplify(expand(real(BTop_Array_D_ExpandAvg))), sym(1/2) );
+BTop_Array_D_ExpandAvg_Imag = collect_recurse( simplify(expand(imag(BTop_Array_D_ExpandAvg))), sym(1/2) );
+
+fprintf('\nBloch-Torrey Operator: D variable array using D*lap(x)+dot(grad(D),grad(x)) with symmetrized gradients\n\n');
+BTop_Array_D_ExpandAvg_Real_Factors = factor(BTop_Array_D_ExpandAvg_Real);
+BTop_Array_D_ExpandAvg_Real_Factors(2) = collect_recurse(BTop_Array_D_ExpandAvg_Real_Factors(2),Dr,subs(Dr,x,x+1),subs(Dr,x,x-1),subs(Dr,y,y+1),subs(Dr,y,y-1),subs(Dr,z,z+1),subs(Dr,z,z-1));
+disp(to_C_str(BTop_Array_D_ExpandAvg_Real_Factors));
+
+BTop_Array_D_ExpandAvg_Imag_Factors = -factor(BTop_Array_D_ExpandAvg_Imag);
+BTop_Array_D_ExpandAvg_Imag_Factors(2) = collect_recurse(BTop_Array_D_ExpandAvg_Imag_Factors(2),Dr,subs(Dr,x,x+1),subs(Dr,x,x-1),subs(Dr,y,y+1),subs(Dr,y,y-1),subs(Dr,z,z+1),subs(Dr,z,z-1));
+disp(to_C_str(BTop_Array_D_ExpandAvg_Imag_Factors));
+
+fprintf('\nBloch-Torrey Operator: D variable array using D*lap(x)+dot(grad(D),grad(x)) with symmetrized gradients (rearranged)\n\n');
+BTop_Array_D_ExpandAvg_Real_Factors = factor(BTop_Array_D_ExpandAvg_Real);
+BTop_Array_D_ExpandAvg_Real_Factors(2) = collect_recurse(BTop_Array_D_ExpandAvg_Real_Factors(2),xr,subs(xr,x,x+1),subs(xr,x,x-1),subs(xr,y,y+1),subs(xr,y,y-1),subs(xr,z,z+1),subs(xr,z,z-1));
+disp(to_C_str(BTop_Array_D_ExpandAvg_Real_Factors));
+
+BTop_Array_D_ExpandAvg_Imag_Factors = -factor(BTop_Array_D_ExpandAvg_Imag);
+BTop_Array_D_ExpandAvg_Imag_Factors(2) = collect_recurse(BTop_Array_D_ExpandAvg_Imag_Factors(2),xi,subs(xi,x,x+1),subs(xi,x,x-1),subs(xi,y,y+1),subs(xi,y,y-1),subs(xi,z,z+1),subs(xi,z,z-1));
+disp(to_C_str(BTop_Array_D_ExpandAvg_Imag_Factors));
 
 end
 

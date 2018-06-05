@@ -3,7 +3,7 @@
 #include <omp.h>
 #include "mex.h"
 
-/* LAPLACIAN_CD
+/* LAPLACIAN_CS
  *
  * INPUT ARGUMENTS
  *  prhs[0] -> x:     input array (3D complex REAL array)
@@ -181,39 +181,14 @@ void Laplacian4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const RE
     const uint32_t NY       = nx*(ny-1);
     const uint32_t NZ       = nxny*(nz-1);
     const uint32_t NW       = nxnynz*(nw-1);
-    
-    uint32_t i, j, k, w, l, il, ir, jl, jr, kl, kr;
-    REAL K6 = 6*K;
+        
+    int64_t w = 0;
     
 #if USE_PARALLEL
-#pragma omp parallel for collapse(3) OMP_PARFOR_ARGS
+#pragma omp parallel for OMP_PARFOR_ARGS
 #endif /* USE_PARALLEL */
     for(w = 0; w < nxnynznw; w += nxnynz) {
-        for(k = 0; k < nxnynz; k += nxny) {
-            for(j = 0; j < nxny; j += nx) {
-                l = k + j + w;
-                jl = (j==0 ) ? l+NY : l-nx;
-                jr = (j==NY) ? l-NY : l+nx;
-                kl = (k==0 ) ? l+NZ : l-nxny;
-                kr = (k==NZ) ? l-NZ : l+nxny;
-
-                /* LHS Boundary Condition */
-                dxr[l] = K * (xr[l+NX] + xr[l+1] + xr[jl] + xr[jr] + xr[kl] + xr[kr]) - K6 * xr[l];
-                dxi[l] = K * (xi[l+NX] + xi[l+1] + xi[jl] + xi[jr] + xi[kl] + xi[kr]) - K6 * xi[l];
-
-                /* Inner Points */
-                ++l, ++jl, ++jr, ++kl, ++kr;
-                for(i = 1; i < nx-1; ++i) {
-                    dxr[l] = K * (xr[l-1] + xr[l+1] + xr[jl] + xr[jr] + xr[kl] + xr[kr]) - K6 * xr[l];
-                    dxi[l] = K * (xi[l-1] + xi[l+1] + xi[jl] + xi[jr] + xi[kl] + xi[kr]) - K6 * xi[l];
-                    ++l, ++jl, ++jr, ++kl, ++kr;
-                }
-
-                /* RHS Boundary Condition */
-                dxr[l] = K * (xr[l-1] + xr[l-NX] + xr[jl] + xr[jr] + xr[kl] + xr[kr]) - K6 * xr[l];
-                dxi[l] = K * (xi[l-1] + xi[l-NX] + xi[jl] + xi[jr] + xi[kl] + xi[kr]) - K6 * xi[l];
-            }
-        }
+        Laplacian3D( &dxr[w], &dxi[w], &xr[w], &xi[w], K, gsize );
     }
     
     return;
