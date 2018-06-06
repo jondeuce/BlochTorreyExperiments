@@ -111,7 +111,7 @@ b = test_approx_eq(imag(Ab), full(imag(A)), name, strpad('BTop imag equal', Ns))
 b = test_approx_eq(diag(Ab), diag(A), name, strpad('BTop diag equal', Ns)) && b;
 b = test_approx_eq(norm(Ab,1), norm(A,1), name, strpad('BTop 1-norm equal', Ns)) && b;
 b = test_approx_eq(norm(Ab,inf), norm(A,inf), name, strpad('BTop inf-norm equal', Ns)) && b;
-b = test_approx_eq(norm(Ab,'fro'), norm(A,'fro'), name, strpad('BTop frob-norm equal', Ns), 100) && b;
+b = test_approx_eq(norm(Ab,'fro'), norm(A,'fro'), name, strpad('BTop frob-norm equal', Ns), 100) && b; % more roundoff errors from squaring
 
 % trace is sensitive to floating point arithmetic; error should be O(sqrt(N))*eps
 b = test_approx_eq(trace(Ab), trace(A), name, strpad('BTop trace equal', Ns), 5*sqrt(length(A))) && b;

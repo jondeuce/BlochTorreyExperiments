@@ -33,15 +33,15 @@ Hct = 0.44; % Hematocrit = volume fraction of red blood cells
 type = 'GRE';
 dt = 2.5e-3;
 
-EchoTimes = 0:dt:60e-3; % Echotimes in seconds to simulate [s]
-alpha_range = [0, 45, 90];
-% EchoTimes = (0:5:120)/1000; % Echotimes in seconds to simulate [s]
-% alpha_range = 0:5:90;
+% EchoTimes = 0:dt:120e-3; % Echotimes in seconds to simulate [s]
+% alpha_range = [0, 45, 90];
+EchoTimes = 0:dt:120e-3; % Echotimes in seconds to simulate [s]
+alpha_range = 0:5:90;
 
-B0 = -7.0; %[Tesla]
+B0 = -3.0; %[Tesla]
 D_Tissue = 1000; %[um^2/s]
 D_Blood = []; %[um^2/s]
-D_VRS = 3037; %[um^2/s]
+D_VRS = 2000; %[um^2/s]
 
 order = 2; %Order of time stepper (must be 2 or 4 currently)
 
