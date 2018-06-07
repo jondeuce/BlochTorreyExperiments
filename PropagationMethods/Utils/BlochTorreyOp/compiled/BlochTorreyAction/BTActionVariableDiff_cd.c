@@ -27,6 +27,7 @@
 #define __gsize__ (prhs[4])
 #define __ndim__ (prhs[5])
 #define __iters__ (prhs[6])
+#define __isdiag__ (prhs[7])
 
 /* Simple aliases for output pointers */
 #define __dx__ (plhs[0])
@@ -56,6 +57,8 @@
 
 void BTActionVariableDiff3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const REAL K, const REAL *gsize );
 void BTActionVariableDiff4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const REAL K, const REAL *gsize );
+void BTActionVariableDiffDiagonal3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const REAL K, const REAL *gsize );
+void BTActionVariableDiffDiagonal4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const REAL K, const REAL *gsize );
 
 void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
 {
@@ -71,6 +74,9 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     
     /* Number of iterations to apply */
     const uint32_t iters = (const uint32_t) ((REAL*)mxGetData(__iters__))[0];
+    
+    /* Flag for diagonal vs. Gamma input */
+    const bool isdiag = mxIsLogicalScalarTrue(__isdiag__);
     
     /* Actual dimensions of input: want to support 'flattened' 3D -> 1D, as well as full 3D */
     const mwSize *xsize = mxGetDimensions(__x__);
@@ -104,9 +110,15 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     
     void (*BTActionVariableDiff)(REAL *, REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL, const REAL *);
     if( ndim == 3 )
-        BTActionVariableDiff = &BTActionVariableDiff3D;
+        if( isdiag )
+            BTActionVariableDiff = &BTActionVariableDiffDiagonal3D;
+        else
+            BTActionVariableDiff = &BTActionVariableDiff3D;
     else
-        BTActionVariableDiff = &BTActionVariableDiff4D;
+        if( isdiag )
+            BTActionVariableDiff = &BTActionVariableDiffDiagonal4D;
+        else
+            BTActionVariableDiff = &BTActionVariableDiff4D;
     
     /* Evaluate the BTActionVariableDiff once with input data */
     BTActionVariableDiff( dxr, dxi, xr, xi, fr, fi, Dr, Di, K, gsize );
@@ -136,6 +148,9 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     return;
 }
 
+/* *******************************************************************
+ * Bloch-Torrey action when the input is Gamma
+ ******************************************************************* */
 void BTActionVariableDiff3D(
         REAL *dxr, REAL *dxi,
         const REAL *xr, const REAL *xi,
@@ -244,6 +259,108 @@ void BTActionVariableDiff4D(
 #endif /* USE_PARALLEL */
     for(w = 0; w < nxnynznw; w += nxnynz) {
         BTActionVariableDiff3D( &dxr[w], &dxi[w], &xr[w], &xi[w], fr, fi, Dr, Di, K, gsize );
+    }
+        
+    return;
+}
+
+
+/* *******************************************************************
+ * Bloch-Torrey action when the input is the matrix diagonal
+ ******************************************************************* */
+void BTActionVariableDiffDiagonal3D(
+        REAL *dxr, REAL *dxi,
+        const REAL *xr, const REAL *xi,
+        const REAL *fr, const REAL *fi,
+        const REAL *Dr, const REAL *Di,
+        const REAL K,
+        const REAL *gsize
+        )
+{
+    const uint32_t nx     = (uint32_t)gsize[0];
+    const uint32_t ny     = (uint32_t)gsize[1];
+    const uint32_t nz     = (uint32_t)gsize[2];
+    const uint32_t nxny   = nx*ny;
+    const uint32_t nxnynz = nxny*nz;
+    const uint32_t NX     = nx-1;
+    const uint32_t NY     = nx*(ny-1);
+    const uint32_t NZ     = nxny*(nz-1);
+    
+    uint32_t i, j, k, l, il, ir, jl, jr, kl, kr;
+    const REAL Khalf = 0.5 * K;
+    
+    /* *******************************************************************
+     * Triply-nested for-loop, twice collapsed
+     ******************************************************************* */
+#if USE_PARALLEL
+#pragma omp parallel for collapse(2) OMP_PARFOR_ARGS
+#endif /* USE_PARALLEL */
+    for(k = 0; k < nxnynz; k += nxny) {
+        for(j = 0; j < nxny; j += nx) {
+            /* Periodic Boundary Conditions on y, z indexes */
+            l  = j + k;
+            jl = (j==0 ) ? l+NY : l-nx;
+            jr = (j==NY) ? l-NY : l+nx;
+            kl = (k==0 ) ? l+NZ : l-nxny;
+            kr = (k==NZ) ? l-NZ : l+nxny;
+
+            /* LHS Boundary Condition */
+            dxr[l] = K * ((xr[kr] + xr[jr] + xr[l+1])*Dr[l] + xr[kl]*Dr[kl] + xr[jl]*Dr[jl] + xr[l+NX]*Dr[l+NX])
+                       + (fr[l]*xr[l] - fi[l]*xi[l]);
+            dxi[l] = K * ((xi[kr] + xi[jr] + xi[l+1])*Dr[l] + xi[kl]*Dr[kl] + xi[jl]*Dr[jl] + xi[l+NX]*Dr[l+NX])
+                       + (fi[l]*xr[l] + fr[l]*xi[l]);
+
+            /* Inner Points */
+            ++l, ++jl, ++jr, ++kl, ++kr;
+            for(i = 1; i < nx-1; ++i) {
+                /* Discretising using `div( D * grad(x) )` with backward divergence/forward gradient */
+                dxr[l] = K * ((xr[kr] + xr[jr] + xr[l+1])*Dr[l] + xr[kl]*Dr[kl] + xr[jl]*Dr[jl] + xr[l-1]*Dr[l-1])
+                           + (fr[l]*xr[l] - fi[l]*xi[l]);
+                dxi[l] = K * ((xi[kr] + xi[jr] + xi[l+1])*Dr[l] + xi[kl]*Dr[kl] + xi[jl]*Dr[jl] + xi[l-1]*Dr[l-1])
+                           + (fi[l]*xr[l] + fr[l]*xi[l]);
+
+                ++l, ++jl, ++jr, ++kl, ++kr;
+            }
+
+            /* RHS Boundary Condition */
+            dxr[l] = K * ((xr[kr] + xr[jr] + xr[l-NX])*Dr[l] + xr[kl]*Dr[kl] + xr[jl]*Dr[jl] + xr[l-1]*Dr[l-1])
+                       + (fr[l]*xr[l] - fi[l]*xi[l]);
+            dxi[l] = K * ((xi[kr] + xi[jr] + xi[l-NX])*Dr[l] + xi[kl]*Dr[kl] + xi[jl]*Dr[jl] + xi[l-1]*Dr[l-1])
+                       + (fi[l]*xr[l] + fr[l]*xi[l]);
+        }
+    }
+    
+    return;
+}
+
+void BTActionVariableDiffDiagonal4D(
+        REAL *dxr, REAL *dxi,
+        const REAL *xr, const REAL *xi,
+        const REAL *fr, const REAL *fi,
+        const REAL *Dr, const REAL *Di,
+        const REAL K,
+        const REAL *gsize
+        )
+{
+    const uint32_t nx       = (uint32_t)gsize[0];
+    const uint32_t ny       = (uint32_t)gsize[1];
+    const uint32_t nz       = (uint32_t)gsize[2];
+    const uint32_t nw       = (uint32_t)gsize[3];
+    const uint32_t nxny     = nx*ny;
+    const uint32_t nxnynz   = nxny*nz;
+    const uint32_t nxnynznw = nxnynz*nw;
+    const uint32_t NX       = nx-1;
+    const uint32_t NY       = nx*(ny-1);
+    const uint32_t NZ       = nxny*(nz-1);
+    const uint32_t NW       = nxnynz*(nw-1);
+    
+    int64_t w = 0;
+    
+#if USE_PARALLEL
+#pragma omp parallel for OMP_PARFOR_ARGS
+#endif /* USE_PARALLEL */
+    for(w = 0; w < nxnynznw; w += nxnynz) {
+        BTActionVariableDiffDiagonal3D( &dxr[w], &dxi[w], &xr[w], &xi[w], fr, fi, Dr, Di, K, gsize );
     }
         
     return;

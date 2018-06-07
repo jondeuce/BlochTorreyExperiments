@@ -175,42 +175,70 @@ classdef BlochTorreyOp
                 else
                     if isequal(A.D, 0)
                         % A is simply a diagonal matrix, with negative-Gamma on the diagonal
-                        if isscalar(A.Diag)
-                            if abs(A.Diag - 1) <= 5*eps(class(A.Diag))
-                                y = x;
-                            else
-                                y = A.Diag .* x;
-                            end
-                        else
-                            if size(A,2) == numel(x)
-                                y = reshape(A.Diag, size(x)) .* x;
-                            else
-                                ncols = round(numel(x)/size(A,2));
-                                if ncols * size(A,2) ~= numel(x)
-                                    error('size(x) must be either the (repeated-)grid size or (repeated-)flattened size');
-                                end
-                                if ismatrix(x)
-                                    % x is a (possibly repeated) matrix;
-                                    % multiply x across rows by A.Diag
-                                    y = bsxfun(@times,A.Diag(:),x);
+                        if isscalar(A.buffer)
+                            if A.state == BlochTorreyOp.DiagState
+                                if abs(A.Diag - 1) <= 5*eps(class(A.Diag))
+                                    y =  x;
+                                elseif abs(A.Diag + 1) <= 5*eps(class(A.Diag))
+                                    y = -x;
                                 else
-                                    % x is a (possibly repeated) 3D array;
-                                    % multiply x along dimensions 1:3 by A.Diag
-                                    sizx = size(x);
-                                    y = bsxfun(@times,reshape(A.Diag,sizx(1:3)),x);
+                                    y = A.Diag .* x;
+                                end
+                            else
+                                if abs(A.Gamma - 1) <= 5*eps(class(A.Gamma))
+                                    y = -x;
+                                elseif abs(A.Gamma + 1) <= 5*eps(class(A.Gamma))
+                                    y =  x;
+                                else
+                                    y = (-A.Gamma) .* x;
+                                end
+                            end                                
+                        else
+                            if A.state == BlochTorreyOp.DiagState
+                                if size(A,2) == numel(x)
+                                    y = reshape(A.Diag, size(x)) .* x;
+                                else
+                                    ncols = round(numel(x)/size(A,2));
+                                    if ncols * size(A,2) ~= numel(x)
+                                        error('size(x) must be either the (repeated-)grid size or (repeated-)flattened size');
+                                    end
+                                    if ismatrix(x)
+                                        % x is a (possibly repeated) matrix;
+                                        % multiply x across rows by A.Diag
+                                        y = bsxfun(@times,A.Diag(:),x);
+                                    else
+                                        % x is a (possibly repeated) 3D array;
+                                        % multiply x along dimensions 1:3 by A.Diag
+                                        sizx = size(x);
+                                        y = bsxfun(@times,reshape(A.Diag,sizx(1:3)),x);
+                                    end
+                                end
+                            else
+                                if size(A,2) == numel(x)
+                                    y = reshape(-A.Gamma, size(x)) .* x;
+                                else
+                                    ncols = round(numel(x)/size(A,2));
+                                    if ncols * size(A,2) ~= numel(x)
+                                        error('size(x) must be either the (repeated-)grid size or (repeated-)flattened size');
+                                    end
+                                    if ismatrix(x)
+                                        % x is a (possibly repeated) matrix;
+                                        % multiply x across rows by -A.Gamma
+                                        y = bsxfun(@times,-A.Gamma(:),x);
+                                    else
+                                        % x is a (possibly repeated) 3D array;
+                                        % multiply x along dimensions 1:3 by -A.Gamma
+                                        sizx = size(x);
+                                        y = bsxfun(@times,reshape(-A.Gamma,sizx(1:3)),x);
+                                    end
                                 end
                             end
                         end
                     else
-                        iters = 1;
-                        istrans = false;
-                        isdiag = isscalar(A.D); % scalar version is written to accept the matrix diagonal
-                        
-                        if isscalar(A.D)
-                            y = BlochTorreyAction(x, A.h, A.D, A.Diag, A.gsize, iters, istrans, isdiag);
-                        else
-                            y = BlochTorreyAction(x, A.h, A.D, A.Gamma, A.gsize, iters, istrans, isdiag);
-                        end
+                        iters = 1; % one iteration, i.e. x->A*x
+                        istrans = false; % regular application, not A'
+                        isdiag = (A.state == BlochTorreyOp.DiagState);
+                        y = BlochTorreyAction(x, A.h, A.D, A.buffer, A.gsize, iters, istrans, isdiag);
                     end
                 end
             elseif ~AIsBTOp && xIsBTOp
@@ -239,6 +267,8 @@ classdef BlochTorreyOp
                             y = (x' * A')';
                         end
                     else
+                        % In this case, we interpret the 3D array A as a
+                        % vector, and do conjugation manually
                         if isrealx && isrealA
                             %(x' * A')' = (x.' * A.').'
                             y = x.' * A; %y = reshape( x * A(:), size(A) );
@@ -277,17 +307,17 @@ classdef BlochTorreyOp
                 error('Multiplying BlochTorreyOp''s is not supported.');
             elseif AIsBTOp && ~xIsBTOp
                 if isscalar(x) && isnumeric(x)
-                    y      = A;
-                    y.Diag = y.Diag .* x;
-                    y.D    = y.D .* x;
+                    y        = A;
+                    y.buffer = y.buffer .* x;
+                    y.D      = y.D .* x;
                 else
                     error('Only scalar multiplication is allowed on RHS of BlochTorreyOp');
                 end
             elseif ~AIsBTOp && xIsBTOp
                 if isscalar(A) && isnumeric(A)
-                    y      = x;
-                    y.Diag = A .* y.Diag;
-                    y.D    = A .* y.D;
+                    y        = x;
+                    y.buffer = A .* y.buffer;
+                    y.D      = A .* y.D;
                 else
                     error('Only scalar multiplication is allowed on LHS of BlochTorreyOp');
                 end
@@ -302,16 +332,32 @@ classdef BlochTorreyOp
                 if ~iscompatible(A,B)
                     error('PLUS: Dimension mismatch');
                 end
+                
                 y = A;
-                y.Diag = y.Diag + B.Diag;
-                y.D    = y.D    + B.D;
+                if A.state == B.state
+                    y.buffer = y.buffer + B.buffer;
+                elseif A.state == BlochTorreyOp.DiagState
+                    y.buffer = y.buffer + B.Diag;
+                else
+                    y.buffer = y.buffer + B.Gamma;
+                end
+                y.D = y.D + B.D;
+                
             elseif  AIsBTOp && ~BIsBTOp
                 if isequal(size(A),size(B)) && isdiag(B)
                     y = A;
-                    if isscalar(y.Diag)
-                        y.Diag = y.Diag + reshape(full(diag(B)),A.gsize);
+                    if A.state == BlochTorreyOp.DiagState
+                        if isscalar(y.buffer)
+                            y.buffer = y.buffer + reshape(full(diag(B)),A.gsize);
+                        else
+                            y.buffer = y.buffer + reshape(full(diag(B)),size(y.buffer));
+                        end
                     else
-                        y.Diag = y.Diag + reshape(full(diag(B)),size(y.Diag));
+                        if isscalar(y.buffer)
+                            y.buffer = y.buffer - reshape(full(diag(B)),A.gsize);
+                        else
+                            y.buffer = y.buffer - reshape(full(diag(B)),size(y.buffer));
+                        end
                     end
                 else
                     error('PLUS: second argument must be a BlochTorreyOp or a diagonal matrix.');
@@ -319,10 +365,18 @@ classdef BlochTorreyOp
             elseif ~AIsBTOp &&  BIsBTOp
                 if isequal(size(A),size(B)) && isdiag(A)
                     y = B;
-                    if isscalar(y.Diag)
-                        y.Diag = y.Diag + reshape(full(diag(A)),A.gsize);
+                    if A.state == BlochTorreyOp.DiagState
+                        if isscalar(y.buffer)
+                            y.buffer = y.buffer + reshape(full(diag(A)),A.gsize);
+                        else
+                            y.buffer = y.buffer + reshape(full(diag(A)),size(y.buffer));
+                        end
                     else
-                        y.Diag = y.Diag + reshape(full(diag(A)),size(y.Diag));
+                        if isscalar(y.buffer)
+                            y.buffer = y.buffer - reshape(full(diag(A)),A.gsize);
+                        else
+                            y.buffer = y.buffer - reshape(full(diag(A)),size(y.buffer));
+                        end
                     end
                 else
                     error('PLUS: first argument must be a BlochTorreyOp or a diagonal matrix.');
@@ -340,7 +394,8 @@ classdef BlochTorreyOp
         end
         
         function [ B ] = uminus( A )
-            B = BlochTorreyOp( -A.Diag, -A.D, A.gsize, A.gdims, true );
+            isdiagstate = (A.state == BlochTorreyOp.DiagState);
+            B = BlochTorreyOp( -A.buffer, -A.D, A.gsize, A.gdims, isdiagstate );
         end
         
         function [ B ] = transpose( A )
@@ -352,7 +407,8 @@ classdef BlochTorreyOp
             if isreal(A)
                 B = A;
             else
-                B = BlochTorreyOp( conj(A.Diag), conj(A.D), A.gsize, A.gdims, true );
+                isdiagstate = (A.state == BlochTorreyOp.DiagState);
+                B = BlochTorreyOp( conj(A.buffer), conj(A.D), A.gsize, A.gdims, isdiagstate );
             end
         end
         
@@ -368,39 +424,40 @@ classdef BlochTorreyOp
         end
         
         function [ Tr ] = trace( A )
-            if isscalar(A.D)
-                if isscalar(A.Diag)
-                    Tr = A.Diag * A.N;
-                else
-                    Tr = sum(sum(sum(A.Diag,1),2),3);
-                end
+            % matrix trace
+            if isscalar(A.buffer)
+                Tr = A.buffer * A.N;
             else
-                % More accurate equivalent is below
-                %Tr = sum(sum(sum(A.Diag,1),2),3);
-                
-                Tr = (-6/mean(A.h)^2)*sum(sum(sum(A.D,1),2),3);
-                if isscalar(A.Gamma)
-                    Tr = Tr - A.N * A.Gamma;
+                Tr = sumall(A.buffer);
+            end
+            
+            if A.state == BlochTorreyOp.GammaState
+                if isscalar(A.D)
+                    Tr = (-6*A.D/mean(A.h)^2) * A.N - Tr;
                 else
-                    Tr = Tr - sum(sum(sum(A.Gamma,1),2),3);
+                    Tr = (-6/mean(A.h)^2)*sumall(A.D) - Tr;
                 end
             end
         end
         
         function [ B ] = abs( A )
+            % need to take full abs(A.Diag); no linearity
             B = BlochTorreyOp( abs(A.Diag), abs(A.D), A.gsize, A.gdims, true );
         end
         
         function [ B ] = real( A )
-            B = BlochTorreyOp( real(A.Diag), real(A.D), A.gsize, A.gdims, true );
+            isdiagstate = (A.state == BlochTorreyOp.DiagState);
+            B = BlochTorreyOp( real(A.buffer), real(A.D), A.gsize, A.gdims, isdiagstate );
         end
         
         function [ B ] = imag( A )
-            B = BlochTorreyOp( imag(A.Diag), imag(A.D), A.gsize, A.gdims, true );
+            isdiagstate = (A.state == BlochTorreyOp.DiagState);
+            B = BlochTorreyOp( imag(A.buffer), imag(A.D), A.gsize, A.gdims, isdiagstate );
         end
         
         function [ B ] = conj( A )
-            B = BlochTorreyOp( conj(A.Diag), conj(A.D), A.gsize, A.gdims, true );
+            isdiagstate = (A.state == BlochTorreyOp.DiagState);
+            B = BlochTorreyOp( conj(A.buffer), conj(A.D), A.gsize, A.gdims, isdiagstate );
         end
         
         function [ B ] = full( A, thresh )
@@ -452,7 +509,6 @@ classdef BlochTorreyOp
                 p = 2;
             end
             
-            abs2 = @(x) real(x.*conj(x)); % avoids sqrt call in abs(x)^2
             hh = mean(A.h);
             
             if isa(p,'char') && strcmpi(p,'fro')
@@ -460,18 +516,18 @@ classdef BlochTorreyOp
                     if isscalar(A.Diag)
                         out = sqrt( A.N * abs2(A.Diag) + A.N * sum(abs2(offdiagonals(A))) );
                     else
-                        out = sqrt( sum(abs2(vec(A.Diag))) + A.N * sum(abs2(offdiagonals(A))) );
+                        out = sqrt( sumall(abs2(A.Diag)) + A.N * sum(abs2(offdiagonals(A))) );
                     end
                 else
-                    out = sqrt(sum( abs2(vec(A.Diag)) + 6*abs2((1/hh^2)*vec(A.D)) ));
+                    out = sqrt(sumall( abs2(A.Diag) + (6/hh^4)*abs2(A.D) ));
                 end
             elseif isnumeric(p) && isscalar(p) && (p == 1 || p == inf)
                 % 1-norm is same as infinity-norm for symmetric matrices
                 if isscalar(A.D)
-                    out = maxabs(A.Diag) + sum(abs(offdiagonals(A)));
+                    out = infnorm(A.Diag) + sum(abs(offdiagonals(A)));
                 else
                     kern = (1/mean(A.h)^2) * [3,1,0,1,0,1,0];
-                    out = max(abs(vec(A.Diag)) + vec(SevenPointStencil(abs(A.D), kern, A.gsize, 1)));
+                    out = maximum(abs(A.Diag) + SevenPointStencil(abs(A.D), kern, A.gsize, 1));
                 end
             else
                 error('Only Frobenius-, 1-, and infinity-norms are implemented for BlochTorreyOp''s');
@@ -495,7 +551,7 @@ classdef BlochTorreyOp
         end
         
         function [ bool ] = isreal( A )
-            bool = isreal(A.D) && isreal(A.Diag);
+            bool = isreal(A.D) && isreal(A.buffer);
         end
         
         function [ y ] = complex( A, B )
@@ -510,7 +566,7 @@ classdef BlochTorreyOp
         end
         
         function [ bool ] = ishermitian( A )
-            bool = isreal(A.D) && isreal(A.Diag);
+            bool = isreal(A.D) && isreal(A.buffer);
         end
         
         function [ bool ] = ishandle( A )
@@ -613,8 +669,8 @@ classdef BlochTorreyOp
     methods (Hidden)
         
         function disp(A)
-            classtype = class(A.Diag);
-            cplxstr = ''; if ~isreal(A.Diag); cplxstr = 'complex '; end
+            classtype = class(A.buffer);
+            cplxstr = ''; if ~isreal(A.buffer); cplxstr = 'complex '; end
             fprintf('%dx%d BlochTorreyOp array with properties:\n\n',A.N,A.N);
             fprintf('   gsize: %s\n', mat2str(A.gsize));
             fprintf('   gdims: %s\n', mat2str(A.gdims));
@@ -679,6 +735,16 @@ classdef BlochTorreyOp
         
     end
     
+end
+
+function y = abs2(x)
+% avoids sqrt call in abs(x)^2
+y = real(x.*conj(x));
+end
+
+function y = sumall(x)
+% faster and more accurate than sum(x(:))
+y = sum(sum(sum(x)));
 end
 
 function out = calculate_offdiagonals(D,h)

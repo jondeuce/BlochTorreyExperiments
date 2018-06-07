@@ -68,7 +68,7 @@ if prnt, disp('** Hard case **'), end
 mu = 0;
 if shift
     mu = full(trace(A))/n;
-    A = A-mu*speye(n);
+    A  = A - mu*eye(size(A),'like',A); %jd: speye(...) -> eye(...,'like',A)
 end
 d = floor(q/s); j = floor(q/d); r = q-d*j;
 if prnt, fprintf('d = %g, j = %g, r = %g\n', d, j, r), end

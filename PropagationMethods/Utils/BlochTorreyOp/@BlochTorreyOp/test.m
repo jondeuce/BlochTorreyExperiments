@@ -26,6 +26,12 @@ Dcoeff = randnc()*h^2;
 b = run_suite_combinations('Gamma randnc, Dcoeff randnc', ...
     x0, Gamma, Dcoeff, Gsize, Vsize) && b;
 
+% Gamma randnc, Dcoeff == 0
+Gamma = randnc(Gsize)/10;
+Dcoeff = 0;
+b = run_suite_combinations('Gamma randnc, Dcoeff == 0', ...
+    x0, Gamma, Dcoeff, Gsize, Vsize) && b;
+
 % Gamma scalar randnc, Dcoeff randnc
 Gamma = randnc()/10;
 Dcoeff = randnc()*h^2;
@@ -100,9 +106,12 @@ As = sparse(A);
 Af = full(A);
 Ab = full_Brute(Gamma, Dcoeff, Gsize, Vsize);
 
+randstate = @() (rand()>0.5) * (BlochTorreyOp.DiagState - BlochTorreyOp.GammaState) + BlochTorreyOp.GammaState;
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Matrix properties testing
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+A = setbuffer(A,randstate());
 b = test_approx_eq(Ab, Af, name, strpad('BTop matrix equal', Ns)) && b;
 b = test_approx_eq(Ab, full(As), name, strpad('BTsparse matrix equal', Ns)) && b;
 b = test_approx_eq(abs(Ab), full(abs(A)), name, strpad('BTop abs equal', Ns)) && b;
@@ -116,7 +125,13 @@ b = test_approx_eq(norm(Ab,'fro'), norm(A,'fro'), name, strpad('BTop frob-norm e
 % trace is sensitive to floating point arithmetic; error should be O(sqrt(N))*eps
 b = test_approx_eq(trace(Ab), trace(A), name, strpad('BTop trace equal', Ns), 5*sqrt(length(A))) && b;
 
+D = diag(randnc(length(A),1));
+b = test_approx_eq(Ab+D, full(A+D), name, strpad('BTop add diag mat equal', Ns)) && b;
+b = test_approx_eq(2*Ab, full(A+A), name, strpad('BTop + BTop mat equal', Ns)) && b;
+b = test_approx_eq(zeros(size(A)), full(A-A), name, strpad('BTop - BTop mat equal zeros', Ns)) && b;
+
 % exponential matrix-vector product testing
+A = setbuffer(A,randstate());
 t  = 0.1*rand();
 yb = expm(t*Af)*x0(:);
 V  = ExpmvStepper(t, A, [], [], 'prnt', false);
@@ -127,6 +142,7 @@ ys = expmv(t, As, x0(:), [], 'double', true, false, false, false);
 b  = test_approx_eq(yb, y, name, strpad('BTop expmv equal (GRE)', Ns), 100) && b;
 b  = test_approx_eq(ys, y, name, strpad('BTsparse expmv equal (GRE)', Ns), 100) && b;
 
+A = setbuffer(A,randstate());
 t  = 0.1*rand();
 Ef = expm(t/2*Af);
 yb = Ef * conj( Ef * x0(:) );
@@ -144,55 +160,56 @@ b  = test_approx_eq(ys, y, name, strpad('BTsparse expmv equal (SE)', Ns), 100) &
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % Matrix multiplication
+A = setbuffer(A,randstate());
 yb = BlochTorreyBrute(x0, Gamma, Dcoeff, Gsize, Vsize);
 y  = A*x0;
 ys = reshape(As*x0(:), size(x0));
 
 b = test_approx_eq(yb, y, name, strpad('BTop mat*vec', Ns)) && b;
 b = test_approx_eq(yb, ys, name, strpad('BTsparse mat*vec', Ns)) && b;
-A.Gamma;
 
 % Matrix-transpose multiplication
+A = setbuffer(A,randstate());
 yb = BlochTorreyBrute(x0, Gamma, Dcoeff, Gsize, Vsize); % symmetric
 y  = A.'*x0;
 ys = reshape(As.'*x0(:), size(x0));
 
 b = test_approx_eq(yb, y, name, strpad('BTop trans-mat*vec', Ns)) && b;
 b = test_approx_eq(yb, ys, name, strpad('BTsparse trans-mat*vec', Ns)) && b;
-A.Diag;
 
 % Matrix-conjugate-transpose multiplication
+A = setbuffer(A,randstate());
 yb = BlochTorreyBrute(x0, conj(Gamma), conj(Dcoeff), Gsize, Vsize);
 y  = A'*x0;
 ys = reshape(As'*x0(:), size(x0));
 
 b = test_approx_eq(yb, y, name, strpad('BTop conj-trans-mat*vec', Ns)) && b;
 b = test_approx_eq(yb, ys, name, strpad('BTsparse conj-trans-mat*vec', Ns)) && b;
-A.Gamma;
 
 % Vector*Matrix multiplication (3D grid)
+A = setbuffer(A,randstate());
 yb = BlochTorreyBrute(conj(x0), Gamma, Dcoeff, Gsize, Vsize);
 y  = conj(x0)*A;
 ys = reshape(x0(:)'*As, size(x0));
 
 b = test_approx_eq(yb, y, name, strpad('BTop vec-ctrans*mat (3D)', Ns)) && b;
 b = test_approx_eq(yb, ys, name, strpad('BTsparse vec-ctrans*mat (3D)', Ns)) && b;
-A.Diag;
 
 % Vector*Matrix multiplication (1D vector)
+A = setbuffer(A,randstate());
 yb = BlochTorreyBrute(conj(x0), Gamma, Dcoeff, Gsize, Vsize);
 y  = x0(:)'*A;
 ys = x0(:)'*As;
 
 b = test_approx_eq(yb, y, name, strpad('BTop vec-ctrans*mat (1D)', Ns)) && b;
 b = test_approx_eq(yb, ys, name, strpad('BTsparse vec-ctrans*mat (1D)', Ns)) && b;
-A.Gamma;
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Scalar multiplication testing
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % Real-scalar multiplication
+A  = setbuffer(A,randstate());
 a  = randn();
 yb = a*BlochTorreyBrute(x0, Gamma, Dcoeff, Gsize, Vsize);
 y  = (a*A)*x0;
@@ -200,14 +217,13 @@ ys = reshape((a*As)*x0(:), size(x0));
 
 b = test_approx_eq(yb, y, name, strpad('BTop RHS-real-scalar*mat*vec', Ns)) && b;
 b = test_approx_eq(yb, ys, name, strpad('BTsparse RHS-real-scalar*mat*vec', Ns)) && b;
-A.Diag;
 
 y = (A*a)*x0;
 b = test_approx_eq(yb, y, name, strpad('BTop LHS-real-scalar*mat*vec', Ns)) && b;
 b = test_approx_eq(yb, ys, name, strpad('BTsparse LHS-real-scalar*mat*vec', Ns)) && b;
-A.Gamma;
 
 % Complex-scalar multiplication
+A  = setbuffer(A,randstate());
 a  = randnc();
 yb = a*BlochTorreyBrute(x0, Gamma, Dcoeff, Gsize, Vsize);
 y  = (a*A)*x0;
@@ -215,12 +231,10 @@ ys = reshape((a*As)*x0(:), size(x0));
 
 b = test_approx_eq(yb, y, name, strpad('BTop RHS-cplx-scalar*mat*vec', Ns)) && b;
 b = test_approx_eq(yb, ys, name, strpad('BTsparse RHS-cplx-scalar*mat*vec', Ns)) && b;
-A.Diag;
 
 y = (A*a)*x0;
 b = test_approx_eq(yb, y, name, strpad('BTop LHS-cplx-scalar*mat*vec', Ns)) && b;
 b = test_approx_eq(yb, ys, name, strpad('BTsparse LHS-cplx-scalar*mat*vec', Ns)) && b;
-A.Gamma;
 
 end
 

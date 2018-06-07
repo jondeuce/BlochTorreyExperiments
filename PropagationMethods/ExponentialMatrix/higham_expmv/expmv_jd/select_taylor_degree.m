@@ -53,11 +53,7 @@ end
 if shift
     mu = trace(A)/n;
     mu = full(mu); % Much slower without the full! (for sparse matrices)
-    if issparse(A) %jd: special case sparse matrix
-        A = A - mu*speye(size(A));
-    else
-        A = A - mu*eye(size(A),'like',A);
-    end
+    A  = A - mu*eye(size(A),'like',A); %jd: speye(...) -> eye(...,'like',A)
 end
 mv = 0;
 if ~force_estm, normA = norm(A,1); end

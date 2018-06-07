@@ -43,66 +43,81 @@ if isSingle, x = double(x); end
 if isReal, x = complex(x); end
 
 if istrans
-    if isscalar(D)
-        if isscalar(f)
-            % Avoid allocating f*ones by just taking laplacian
-            Gamma = f;
-            if isdiag; Gamma = conj(-6*D/h^2 - Gamma); end
-            y = D*Laplacian(x, h, gsize4D, iters) - Gamma*x;
-        else
-            if ~isdiag
-                f = conj(-6*D/h^2 - f); % f represents Gamma
-            end
-            if ~isreal(D)
-                % trans_BlochTorreyAction_cd assumes real D
-                y = D*trans_BlochTorreyAction_cd(x, h, 1, f/D, gsize4D, ndim, iters);
-            else
-                y = trans_BlochTorreyAction_cd(x, h, D, f, gsize4D, ndim, iters);
-            end
-        end
+    if ~isreal(f); f = conj(f); end
+    if ~isreal(D); D = conj(D); end
+end
+
+if isscalar(D)
+    if isscalar(f)
+        % Avoid allocating f*ones by just taking laplacian
+        Gamma = f;
+        if isdiag; Gamma = -6*D/h^2 - Gamma; end
+        y = D*Laplacian(x, h, gsize3D, iters) - Gamma*x;
     else
-        %TODO
-        error('non-scalar D conjugate transpose not implemented');        
+        if ~isreal(D)
+            % BlochTorreyAction_cd assumes real D
+            y = D*BlochTorreyAction_cd(x, h, 1, f/D, gsize4D, ndim, iters, isdiag);
+        else
+            y = BlochTorreyAction_cd(x, h, D, f, gsize4D, ndim, iters, isdiag);
+        end
     end
 else
-    if isscalar(D)
-        if isscalar(f)
-            % Avoid allocating f*ones by just taking laplacian
-            Gamma = f;
-            if isdiag; Gamma = -6*D/h^2 - Gamma; end
-            y = D*Laplacian(x, h, gsize3D, iters) - Gamma*x;
-        else
-            if ~isdiag
-                f = -6*D/h^2 - f; % f represents Gamma
-            end
-            if ~isreal(D)
-                % BlochTorreyAction_cd assumes real D
-                y = D*BlochTorreyAction_cd(x, h, 1, f/D, gsize4D, ndim, iters);
-            else
-                y = BlochTorreyAction_cd(x, h, D, f, gsize4D, ndim, iters);
-            end
-        end
+    if isscalar(f)
+        %warning('TODO: expanding Gamma to size of grid');
+        f = f*ones(gsize3D);
+    end
+    if ~isreal(D)
+        %TODO this is somewhat inefficient allocation-wise
+        y = BTActionVariableDiff_cd(x, h, real(D), f, gsize4D, ndim, iters, isdiag);
+        y = y + 1i * BTActionVariableDiff_cd(x, h, imag(D), complex(zeros(size(f))), gsize4D, ndim, iters, isdiag);
     else
-        if isdiag
-            error('For non-scalar diffusion coefficient D, "f" must represent Gamma = R2 + i*dw');
-        end
-        if isscalar(f)
-            warning('TODO: expanding Gamma to size of grid');
-            f = f*ones(gsize3D);
-        end
-        if ~isreal(D)
-            %TODO this is somewhat inefficient allocation-wise
-            y = BTActionVariableDiff_cd(x, h, real(D), f, gsize4D, ndim, iters);
-            y = y + 1i * BTActionVariableDiff_cd(x, h, imag(D), complex(zeros(size(f))), gsize4D, ndim, iters);
-        else
-            y = BTActionVariableDiff_cd(x, h, D, f, gsize4D, ndim, iters);
-        end
+        y = BTActionVariableDiff_cd(x, h, D, f, gsize4D, ndim, iters, isdiag);
     end
 end
 
 if isSingle, y = single(y); end
 
 end
+
+% ----------------------------------------------------------------------- %
+% Old transpose code
+% ----------------------------------------------------------------------- %
+
+% if isscalar(D)
+%     if isscalar(f)
+%         % Avoid allocating f*ones by just taking laplacian
+%         Gamma = f;
+%         if isdiag; Gamma = conj(-6*D/h^2 - Gamma); end
+%         y = D*Laplacian(x, h, gsize4D, iters) - Gamma*x;
+%     else
+%         if ~isdiag
+%             f = conj(-6*D/h^2 - f); % f represents Gamma
+%         end
+%         if ~isreal(D)
+%             % trans_BlochTorreyAction_cd assumes real D
+%             y = D*trans_BlochTorreyAction_cd(x, h, 1, f/D, gsize4D, ndim, iters);
+%         else
+%             y = trans_BlochTorreyAction_cd(x, h, D, f, gsize4D, ndim, iters);
+%         end
+%     end
+% else
+%     if isscalar(f)
+%         warning('TODO: expanding Gamma to size of grid');
+%         f = f*ones(gsize3D);
+%     end
+%     if ~isreal(D)
+%         %TODO this is somewhat inefficient allocation-wise
+%         y = BTActionVariableDiff_cd(x, h, real(D), conj(f), gsize4D, ndim, iters, isdiag);
+%         y = y + 1i * BTActionVariableDiff_cd(x, h, -imag(D), complex(zeros(size(f))), gsize4D, ndim, iters, isdiag);
+%     else
+%         y = BTActionVariableDiff_cd(x, h, D, conj(f), gsize4D, ndim, iters, isdiag);
+%     end
+% end
+
+
+% ----------------------------------------------------------------------- %
+% Old array size checking code
+% ----------------------------------------------------------------------- %
 
 % function bool = checkDims(x, ndim, gsize1D, gsize2D, gsize3D, gsize4D)
 % bool = ( ndim == 3 && checkDims3D(x, gsize1D, gsize3D) ) || ...

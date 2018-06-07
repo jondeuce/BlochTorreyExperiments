@@ -27,6 +27,7 @@
 #define __gsize__ (prhs[4])
 #define __ndim__ (prhs[5])
 #define __iters__ (prhs[6])
+#define __isdiag__ (prhs[7])
 
 /* Simple aliases for output pointers */
 #define __dx__ (plhs[0])
@@ -53,6 +54,8 @@
 
 void BlochTorreyAction3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL K, const REAL *gsize );
 void BlochTorreyAction4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL K, const REAL *gsize );
+void BlochTorreyActionDiagonal3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL K, const REAL *gsize );
+void BlochTorreyActionDiagonal4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL K, const REAL *gsize );
 
 void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
 {
@@ -71,6 +74,9 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     
     /* Number of iterations to apply */
     const uint32_t iters = (const uint32_t) ((REAL*)mxGetData(__iters__))[0];
+    
+    /* Flag for diagonal vs. Gamma input */
+    const bool isdiag = mxIsLogicalScalarTrue(__isdiag__);
     
     /* Actual dimensions of input: want to support 'flattened' 3D -> 1D, as well as full 3D */
     const mwSize *xsize = mxGetDimensions(__x__);
@@ -100,9 +106,15 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     
     void (*BlochTorreyAction)(REAL *, REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL, const REAL *);
     if( ndim == 3 )
-        BlochTorreyAction = &BlochTorreyAction3D;
+        if( isdiag )
+            BlochTorreyAction = &BlochTorreyActionDiagonal3D;
+        else
+            BlochTorreyAction = &BlochTorreyAction3D;
     else
-        BlochTorreyAction = &BlochTorreyAction4D;
+        if( isdiag )
+            BlochTorreyAction = &BlochTorreyActionDiagonal4D;
+        else
+            BlochTorreyAction = &BlochTorreyAction4D;
     
     /* Evaluate the BlochTorreyAction once with input data */
     BlochTorreyAction( dxr, dxi, xr, xi, fr, fi, K, gsize );
@@ -132,7 +144,91 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     return;
 }
 
+
+/* *******************************************************************
+ * Bloch-Torrey action when the input is Gamma
+ ******************************************************************* */
 void BlochTorreyAction3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL K, const REAL *gsize ) {
+    
+    const uint32_t nx     = (uint32_t)gsize[0];
+    const uint32_t ny     = (uint32_t)gsize[1];
+    const uint32_t nz     = (uint32_t)gsize[2];
+    const uint32_t nxny   = nx*ny;
+    const uint32_t nxnynz = nxny*nz;
+    const uint32_t NX     = nx-1;
+    const uint32_t NY     = nx*(ny-1);
+    const uint32_t NZ     = nxny*(nz-1);
+    
+    uint32_t i, j, k, l, il, ir, jl, jr, kl, kr;
+    
+    
+    /* *******************************************************************
+     * Triply-nested for-loop, twice collapsed
+     ******************************************************************* */
+#if USE_PARALLEL
+#pragma omp parallel for collapse(2) OMP_PARFOR_ARGS
+#endif /* USE_PARALLEL */
+    for(k = 0; k < nxnynz; k += nxny) {
+        for(j = 0; j < nxny; j += nx) {
+            /* Periodic Boundary Conditions on y, z indexes */
+            l = k + j;
+            jl = (j==0 ) ? l+NY : l-nx;
+            jr = (j==NY) ? l-NY : l+nx;
+            kl = (k==0 ) ? l+NZ : l-nxny;
+            kr = (k==NZ) ? l-NZ : l+nxny;
+            
+            /* LHS Boundary Condition */
+            dxr[l] = K * (xr[l+NX] + xr[l+1] + xr[jl] + xr[jr] + xr[kl] + xr[kr] - 6*xr[l]) - (fr[l] * xr[l] - fi[l] * xi[l]);
+            dxi[l] = K * (xi[l+NX] + xi[l+1] + xi[jl] + xi[jr] + xi[kl] + xi[kr] - 6*xi[l]) - (fr[l] * xi[l] + fi[l] * xr[l]);
+            
+            /* Inner Points */
+            ++l, ++jl, ++jr, ++kl, ++kr;
+            for(i = 1; i < nx-1; ++i) {
+                dxr[l] = K * (xr[l-1] + xr[l+1] + xr[jl] + xr[jr] + xr[kl] + xr[kr] - 6*xr[l]) - (fr[l] * xr[l] - fi[l] * xi[l]);
+                dxi[l] = K * (xi[l-1] + xi[l+1] + xi[jl] + xi[jr] + xi[kl] + xi[kr] - 6*xi[l]) - (fr[l] * xi[l] + fi[l] * xr[l]);
+                ++l, ++jl, ++jr, ++kl, ++kr;
+            }
+            
+            /* RHS Boundary Condition */
+            dxr[l] = K * (xr[l-1] + xr[l-NX] + xr[jl] + xr[jr] + xr[kl] + xr[kr] - 6*xr[l]) - (fr[l] * xr[l] - fi[l] * xi[l]);
+            dxi[l] = K * (xi[l-1] + xi[l-NX] + xi[jl] + xi[jr] + xi[kl] + xi[kr] - 6*xi[l]) - (fr[l] * xi[l] + fi[l] * xr[l]);
+        }
+    }
+    
+    return;
+}
+
+void BlochTorreyAction4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL K, const REAL *gsize ) {
+    
+    const uint32_t nx       = (uint32_t)gsize[0];
+    const uint32_t ny       = (uint32_t)gsize[1];
+    const uint32_t nz       = (uint32_t)gsize[2];
+    const uint32_t nw       = (uint32_t)gsize[3];
+    const uint32_t nxny     = nx*ny;
+    const uint32_t nxnynz   = nxny*nz;
+    const uint32_t nxnynznw = nxnynz*nw;
+    const uint32_t NX       = nx-1;
+    const uint32_t NY       = nx*(ny-1);
+    const uint32_t NZ       = nxny*(nz-1);
+    const uint32_t NW       = nxnynz*(nw-1);
+    
+    int64_t w = 0;
+    
+#if USE_PARALLEL
+#pragma omp parallel for OMP_PARFOR_ARGS
+#endif /* USE_PARALLEL */
+    for(w = 0; w < nxnynznw; w += nxnynz) {
+        BlochTorreyAction3D( &dxr[w], &dxi[w], &xr[w], &xi[w], fr, fi, K, gsize );
+    }
+    
+    return;
+}
+
+
+/* *******************************************************************
+ * Bloch-Torrey action when the input is the matrix diagonal
+ ******************************************************************* */
+void BlochTorreyActionDiagonal3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL K, const REAL *gsize ) {
     
     const uint32_t nx     = (uint32_t)gsize[0];
     const uint32_t ny     = (uint32_t)gsize[1];
@@ -182,7 +278,7 @@ void BlochTorreyAction3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, 
     return;
 }
 
-void BlochTorreyAction4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL K, const REAL *gsize ) {
+void BlochTorreyActionDiagonal4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL K, const REAL *gsize ) {
     
     const uint32_t nx       = (uint32_t)gsize[0];
     const uint32_t ny       = (uint32_t)gsize[1];
@@ -202,7 +298,7 @@ void BlochTorreyAction4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, 
 #pragma omp parallel for OMP_PARFOR_ARGS
 #endif /* USE_PARALLEL */
     for(w = 0; w < nxnynznw; w += nxnynz) {
-        BlochTorreyAction3D( &dxr[w], &dxi[w], &xr[w], &xi[w], fr, fi, K, gsize );
+        BlochTorreyActionDiagonal3D( &dxr[w], &dxi[w], &xr[w], &xi[w], fr, fi, K, gsize );
     }
     
     return;
