@@ -1,4 +1,4 @@
-function [ x ] = bt_expmv( t, A, x0, varargin )
+function [ x, s, m, m_min ] = bt_expmv( t, A, x0, varargin )
 %BT_EXPMV calls expmv using the matrix or object A, forming the exponential
 %matrix-vector product expm(A*t)*x0 without explicity calculating the full
 %matrix A. Uses Higham et al.'s expmv program.
@@ -21,11 +21,12 @@ end
 
 switch upper(opts.type)
     case 'GRE'
-        x = expmv(t,A,x0,expmvargs{:});
+        [x,s,m,~,~,~,m_min] = expmv(t,A,x0,expmvargs{:});
     case 'SE'
-        x = expmv(t/2,A,x0,expmvargs{:});
+        [x,~,~,~,~,~,m_min1] = expmv(t/2,A,x0,expmvargs{:});
         x = conj(x);
-        x = expmv(t/2,A,x,expmvargs{:});
+        [x,s,m,~,~,~,m_min2] = expmv(t/2,A,x,expmvargs{:});
+        m_min = min(m_min1, m_min2);
     otherwise
         error('type must be either ''SE'' or ''GRE''.');
 end

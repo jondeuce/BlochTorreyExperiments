@@ -35,7 +35,7 @@ dt = 2.5e-3;
 
 % EchoTimes = 0:dt:120e-3; % Echotimes in seconds to simulate [s]
 % alpha_range = [0, 45, 90];
-EchoTimes = 0:dt:120e-3; % Echotimes in seconds to simulate [s]
+EchoTimes = 0:5e-3:120e-3; % Echotimes in seconds to simulate [s]
 alpha_range = 0:15:90;
 
 B0 = -7.0; %[Tesla]

@@ -6,7 +6,7 @@ parse(p,varargin{:})
 
 opts = p.Results;
 selectdegargs = {opts.m_max,opts.p_max,opts.prec,opts.shift,opts.bal,opts.force_estm,opts.force_no_estm};
-expmvargs = {opts.M,opts.prec,opts.shift,opts.bal,opts.full_term,opts.prnt};
+expmvargs = {opts.M,opts.prec,opts.shift,opts.bal,opts.full_term,opts.prnt,opts.m_min};
 
 end
 
@@ -36,5 +36,7 @@ addParameter(p,'forcesparse',false,@islogical);
 addParameter(p,'M',[],@isnumeric);
 addParameter(p,'m_max',[],@isnumeric);
 addParameter(p,'p_max',[],@isnumeric);
+addParameter(p,'m_min',[],@isnumeric);
+addParameter(p,'adapttaylor',false,@islogical);
 
 end

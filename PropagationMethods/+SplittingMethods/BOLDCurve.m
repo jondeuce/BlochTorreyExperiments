@@ -69,6 +69,18 @@ ScaleSum = prod(V.VoxelSize) / prod(V.GridSize);
 TE = EchoTimes(:).';
 dt = V.TimeStep;
 
+is_approx_eq = @(x,y) max(abs(x(:)-y(:))) <= 5*eps(max(max(abs(x(:))), max(abs(y(:)))));
+switch upper(type)
+    case 'GRE'
+        if ~is_approx_eq(dt*round(TE/dt), TE)
+            error('Each echotime must be disible by the timestep for GRE');
+        end
+    case 'SE'
+        if ~is_approx_eq(2*dt*round(TE/(2*dt)), TE)
+            error('Each echotime must be disible by twice the timestep for SE');
+        end
+end
+
 addStartPoint = (TE(1)==0.0); % Can add back TE = 0.0 solution later
 TE = TE(1+addStartPoint:end); % Don't simulate TE = 0.0
 NumEchoTimes = numel( TE );
@@ -99,7 +111,7 @@ for kk = 1:NumEchoTimes
             
             for jj = 1:GRE_Steps(kk)
                 
-                Mcurr = step(V, Mcurr);
+                [Mcurr,~,~,V] = step(V, Mcurr);
                 for ll = kk:NumEchoTimes
                     Signal{ll} = [Signal{ll}; [Signal{ll}(end,1)+dt, IntegrateMagnetization(Mcurr)]];
                 end
@@ -110,7 +122,7 @@ for kk = 1:NumEchoTimes
             
             for jj = 1:SE_FirstHalfSteps(kk)
                 
-                Mcurr = step(V, Mcurr);
+                [Mcurr,~,~,V] = step(V, Mcurr);
                 for ll = kk:NumEchoTimes
                     Signal{ll} = [Signal{ll}; [Signal{ll}(end,1)+dt, IntegrateMagnetization(Mcurr)]];
                 end
@@ -122,7 +134,7 @@ for kk = 1:NumEchoTimes
             
             for jj = 1:SE_SecondHalfSteps(kk)
                 
-                M = step(V, M);
+                [M,~,~,V] = step(V, M);
                 Signal{kk}  =  [Signal{kk}; [Signal{kk}(end,1)+dt, IntegrateMagnetization(M)]];
                 
             end

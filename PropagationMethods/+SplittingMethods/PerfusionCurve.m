@@ -2,12 +2,22 @@ function [ dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs, Geometries ] = PerfusionC
 %PERFUSIONCURVE [ dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs, Geometries ] = PerfusionCurve( varargin )
 % See docs for example usage.
 %{
-TE = 60e-3; Nsteps = 8; type = 'SE'; Dcoeff = 3037; CA = 6; B0 = -3;
+TE = 60e-3; Nsteps = 2; type = 'SE'; Dcoeff = 3037; CA = 6; B0 = -3;
 CADerivative = true; AlphaRange = [0,90];
+rng('default');
+GeomArgs = struct( 'iBVF', 1/100, 'aBVF', 1/100, ...
+    'VoxelSize', [3000,3000,3000], 'GridSize', [256,256,256], 'VoxelCenter', [0,0,0], ...
+    'Nmajor', 4, 'MajorAngle', 0, ...
+    'NumMajorArteries', 1, 'MinorArterialFrac', 1/3, ...
+    'Rminor_mu', 25, 'Rminor_sig', 0, ...
+    'AllowMinorSelfIntersect', true, ...
+    'AllowMinorMajorIntersect', true, ...
+    'PopulateIdx', true, ...
+    'seed', rng('default') );
 
 [dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs, Geometries] = SplittingMethods.PerfusionCurve(...
 TE, Nsteps, Dcoeff, CA, B0, AlphaRange, type, ... % positional args
-'Order', 2, 'CADerivative', true ); %optional positionless args
+'Order', 2, 'CADerivative', false, 'GeomArgs', GeomArgs, 'Stepper', 'ExpmvStepper' ); %positionless args
 %}
 
 args = parseinputs(varargin{:});
@@ -36,7 +46,8 @@ dGamma = {}; % same for dGamma
 CAidx = 1; % index in cell array dGamma where CA deriv will go
 
 Vox_Volume = prod(Geom.VoxelSize);
-um3_per_voxel = Vox_Volume/prod(Geom.GridSize);
+Num_Voxels = prod(Geom.GridSize);
+um3_per_voxel = Vox_Volume/Num_Voxels;
 IntegrateSignal = @(y) um3_per_voxel * sum(sum(sum(y,1),2),3); % more accurate than sum(y(:))
 
 switch upper(args.Stepper)
@@ -44,6 +55,13 @@ switch upper(args.Stepper)
         V = SplittingMethods.BTSplitStepper(...
             dt, Dcoeff, Gamma, dGamma, Geom.GridSize, Geom.VoxelSize, ...
             'NReps', 1, 'Order', 2);
+    case 'EXPMVSTEPPER'
+        V = ExpmvStepper(dt, ...
+                BlochTorreyOp(0, Dcoeff, Geom.GridSize, Geom.VoxelSize), ...
+                Geom.GridSize, Geom.VoxelSize, ...
+                'type', 'GRE', 'prec', 'half', ...
+                'prnt', false, 'forcesparse', false, 'shift', true, ...
+                'bal', false, 'full_term', false);
 end
 
 % Initialize outputs
@@ -66,13 +84,13 @@ for jj = 1:Nalphas
     [GammaSettingsNoCA, GammaSettingsCA] = GetGammaSettings(alpha, args);
     
     Gamma = CalculateComplexDecay( GammaSettingsNoCA, Geom );
-    V = precomputeExpDecays(V, Gamma);
+    V = updateStepper(V, Gamma, 'Gamma');
     y = y0*ones(Geom.GridSize); %initial state
     
     for ii = 1:Nsteps
         no_CA_time = tic;
         
-        y = step(V,y);
+        [y,~,~,V] = step(V,y);
         S0(ii,jj) = IntegrateSignal(y);
         if strcmpi(type,'SE') && 2*ii == Nsteps
             y = conj(y);
@@ -87,14 +105,14 @@ for jj = 1:Nalphas
     
     if args.CADerivative
         Gamma_CA = AddContrastAgent(GammaSettingsNoCA, GammaSettingsCA, Geom, Gamma);
-        V = precomputeGammaDerivs(V, ComplexDecayDerivative(GammaSettingsCA, Geom, Gamma_CA, 'CA', Gamma));
+        V = updateStepper(V, ComplexDecayDerivative(GammaSettingsCA, Geom, Gamma_CA, 'CA', Gamma), 'dGamma');
         clear Gamma
         
-        V = precomputeExpDecays(V, Gamma_CA);
+        V = updateStepper(V, Gamma_CA, 'Gamma');
         clear Gamma_CA
         dy = {zeros(size(y),'like',y)};
     else
-        V = precomputeExpDecays(V, AddContrastAgent(GammaSettingsNoCA, GammaSettingsCA, Geom, Gamma));
+        V = updateStepper(V, AddContrastAgent(GammaSettingsNoCA, GammaSettingsCA, Geom, Gamma), 'Gamma');
         dy = {};
         clear Gamma
     end
@@ -102,7 +120,7 @@ for jj = 1:Nalphas
     for ii = 1:Nsteps
         with_CA_time = tic;
         
-        [y,dy] = step(V,y,dy);
+        [y,dy,~,V] = step(V,y,dy);
         S(ii,jj) = IntegrateSignal(y);
         if args.CADerivative
             dS_Derivs.CA(ii,jj) = IntegrateSignal(dy{CAidx});
@@ -120,7 +138,7 @@ for jj = 1:Nalphas
     end
     
     if args.CADerivative
-        V = clearGammaDerivs(V);
+        V = updateStepper(V, [], 'cleardgamma');
     end
     
     str = sprintf('alpha = %.2f',alpha);
@@ -206,6 +224,38 @@ end
 
 end
 
+function V = updateStepper(V, in, mode)
+
+switch upper(class(V))
+    case 'SPLITTINGMETHODS.BTSPLITSTEPPER'
+        
+        switch upper(mode)
+            case 'GAMMA'
+                V = precomputeExpDecays(V, in);
+            case 'DGAMMA'
+                V = precomputeGammaDerivs(V, in);
+            case 'CLEARDGAMMA'
+                V = clearGammaDerivs(V);
+        end
+        
+    case 'EXPMVSTEPPER'
+        
+        switch upper(mode)
+            case 'GAMMA'
+                A = BlochTorreyOp( in, V.A.D, V.A.gsize, V.A.gdims, false );
+                A = setbuffer( A, BlochTorreyOp.DiagState );
+                V = updateMatrix( V, A );
+                clear A
+                V = precompute( V, in );
+            case 'DGAMMA'
+                error('Gamma derivatives are not implemented for ExpmvStepper''s');
+            case 'CLEARDGAMMA'
+                error('Gamma derivatives are not implemented for ExpmvStepper''s');
+        end
+        
+end
+        
+end
 
 % ---- delta R2(*) derivative calculation ---- %
 function dR2_Derivs = calc_dR2_Derivs(TE, S, dS_Derivs, dR2_Derivs, args)
@@ -264,16 +314,20 @@ args = p.Results;
 %   d = sqrt(2*n*D*t)
 % If this distance (where t is the entire simulation time TE) is less than
 % half the minimum subvoxel dimension, we say that diffusion is negligible.
-if ~isempty(args.Geom)
-    SubVoxSize = args.Geom.SubVoxSize;
-else
-    SubVoxSize = min( args.GeomArgs.VoxelSize ./ args.GeomArgs.GridSize );
-end
-
-isDiffusionNegligible = (sqrt( 6 * args.Dcoeff * args.TE ) <= 0.5 * SubVoxSize);
-if isDiffusionNegligible
-    args.Dcoeff = 0.0;
-end
+% if ~isempty(args.Geom)
+%     SubVoxSize = args.Geom.SubVoxSize;
+% else
+%     if ~isempty(args.GeomArgs)
+%         SubVoxSize = min( args.GeomArgs.VoxelSize ./ args.GeomArgs.GridSize );
+%     else
+%         SubVoxSize = 1;
+%     end
+% end
+% 
+% isDiffusionNegligible = (sqrt( 6 * args.Dcoeff * args.TE ) <= 0.5 * SubVoxSize);
+% if isDiffusionNegligible
+%     args.Dcoeff = 0.0;
+% end
 
 end
 

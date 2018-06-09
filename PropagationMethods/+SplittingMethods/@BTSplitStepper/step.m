@@ -1,5 +1,5 @@
-function [y,dy,t] = step(V, x, dx, t0, varargin)
-%STEP [y,dy,t] = step(V, x, dx, t0, varargin)
+function [y,dy,t,V] = step(V, x, dx, t0, varargin)
+%STEP [y,dy,t,V] = step(V, x, dx, t0, varargin)
 %{
 [y,dy,t] = step(V, x, dx, t0, ... % positional args (V and x required)
 'Verbose', false, 'CompDerivs', true, ... % optional positionless args

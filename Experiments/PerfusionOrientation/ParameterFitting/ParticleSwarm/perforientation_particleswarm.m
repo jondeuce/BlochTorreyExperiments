@@ -37,8 +37,8 @@ alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 % lb  = [ 4.500,   1.1000/100,   0.4000/100 ];
 % ub  = [ 5.750,   1.5000/100,   0.7000/100 ];
 
-lb  = [ 3.000,   1.2500/100,   0.6000/100 ];
-ub  = [ 5.000,   1.7500/100,   1.0000/100 ];
+lb  = [ 2.000,   1.2500/100,   0.6000/100 ];
+ub  = [ 6.000,   1.7500/100,   1.0000/100 ];
 
 % lb  = [ 2.000,   0.4000/100,   0.4000/100 ];
 % ub  = [ 8.000,   2.5000/100,   2.5000/100 ];
@@ -68,7 +68,10 @@ TE = 40e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [600
 %with diffusion
 Dcoeff = 3037; %[um^2/s]
 order = 2;
-Nsteps = 10;
+% Stepper = 'BTSplitStepper';
+% Nsteps = 10;
+Nsteps = 4;
+Stepper = 'ExpmvStepper';
 NparticlesPerParam = 2;
 
 %diffusionless
@@ -127,7 +130,7 @@ optfun = @(x) perforientation_objfun( ...
     x, alpha_range, dR2_Data, [], weights, normfun, ...
     TE, type, VoxelSize, VoxelCenter, GridSize, ...
     B0, Dcoeff, Nsteps, Nmajor, Rminor_mu, Rminor_sig, ...
-    'Navgs', Navgs, 'order', order, ...
+    'Navgs', Navgs, 'order', order, 'Stepper', 'ExpmvStepper', ...
     'PlotFigs', PlotFigs, 'SaveFigs', SaveFigs, 'CloseFigs', CloseFigs, 'FigTypes', FigTypes, ...
     'SaveResults', SaveResults, 'DiaryFilename', DiaryFilename, ...
     'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', true, ...

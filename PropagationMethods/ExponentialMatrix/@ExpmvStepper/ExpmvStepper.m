@@ -16,6 +16,7 @@ classdef ExpmvStepper
         isprecomputed  % Flag indicating if M was been precomputed
         selectdegargs  % Parsed arguments for select_taylor_degree
         expmvargs      % Parsed arguments for expmv
+        adapttaylor    % Allow adapting taylor steps based on previous iterations
     end
     
     methods
@@ -41,21 +42,30 @@ classdef ExpmvStepper
             V.isprecomputed = false;
             
         end
-                
+        
         function V = precompute(V,b)
             
             V.expmvargs{1}  = select_taylor_degree(V.A,b,V.selectdegargs{:});
             V.isprecomputed = true;
             
         end
-                
+        
         function V = clearPrecomputation(V)
+            
             V.expmvargs{1}  = [];
             V.isprecomputed = false;
+            
         end
-                
-    end
         
+        function V = updateMatrix(V,newA)
+            
+            V.A = newA;
+            V = clearPrecomputation(V);
+            
+        end
+        
+    end
+    
     methods (Static = true)
         % ----- Testing ----- %
         test

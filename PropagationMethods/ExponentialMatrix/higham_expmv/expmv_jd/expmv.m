@@ -1,5 +1,5 @@
-function [f,s,m,mv,mvd,unA] = ...
-          expmv(t,A,b,M,prec,shift,bal,full_term,prnt)
+function [f,s,m,mv,mvd,unA,m_min] = ...
+    expmv(t,A,b,M,prec,shift,bal,full_term,prnt,m_min)
 %EXPMV   Matrix exponential times vector or matrix.
 %   [F,S,M,MV,MVD] = EXPMV(t,A,B,[],PREC) computes EXPM(t*A)*B without
 %   explicitly forming EXPM(t*A). PREC is the required accuracy, 'double',
@@ -22,9 +22,10 @@ function [f,s,m,mv,mvd,unA] = ...
 
 %   Edited by JD: June 2017, June 2018
 
-if nargin < 9 || isempty(prnt), prnt = false; end
-if nargin < 8 || isempty(full_term), full_term = false; end
-if nargin < 7 || isempty(bal), bal = false; end
+if nargin < 10 || isempty(m_min), m_min = []; end
+if nargin < 9  || isempty(prnt), prnt = false; end
+if nargin < 8  || isempty(full_term), full_term = false; end
+if nargin < 7  || isempty(bal), bal = false; end
 if bal
     [D,B] = balance(A);
     if norm(B,1) < norm(A,1), A = B; b = D\b; else; bal = false; end
@@ -39,11 +40,11 @@ end
 
 if nargin < 5 || isempty(prec), prec = class(A); end
 if nargin < 4 || isempty(M)
-   tt = 1;
-   [M,mvd,alpha,unA] = select_taylor_degree(t*A,b,[],[],prec,false,false);
-   mv = mvd;
+    tt = 1;
+    [M,mvd,alpha,unA] = select_taylor_degree(t*A,b,[],[],prec,false,false);
+    mv = mvd;
 else
-   tt = t; mv = 0; mvd = 0;
+    tt = t; mv = 0; mvd = 0; unA = 1;
 end
 
 switch prec
@@ -59,49 +60,65 @@ if t == 0
     m = 0;
 else
     [m_max,p] = size(M);
-     U = diag(1:m_max);
-     C = ( (ceil(abs(tt)*M))'*U );
-     C (C == 0) = inf;
-     if p > 1
-         [cost, m] = min(min(C)); % cost is the overall cost.
-     else
-         [cost, m] = min(C);  % when C is one column. Happens if p_max = 2.
-     end
-     if cost == inf; cost = 0; end
-     s = max(cost/m,1);
+    U = diag(1:m_max);
+    C = ( (ceil(abs(tt)*M))'*U );
+    C (C == 0) = inf;
+    if p > 1
+        [cost, m] = min(min(C)); % cost is the overall cost.
+    else
+        [cost, m] = min(C);  % when C is one column. Happens if p_max = 2.
+    end
+    if cost == inf; cost = 0; end
+    s = max(cost/m,1);
 end
 eta = 1;
 if shift, eta = exp(t*mu/s); end
 
+skip_min = ~isempty(m_min);
+if skip_min
+    if length(m_min) < s; m_min(end+1:s) = 1;
+    elseif length(m_min) > s; m_min = m_min(1:s);
+    end
+else
+    m_min = zeros(1,s);
+end
+
 f = b;
 for ii = 1:s
-    c1 = -1; % jd: print junk value if ~full_term; infnorm calculation is not needed
-    if ~full_term
+    c1 = Inf; c2 = Inf; % jd: junk values for printing
+    if ~full_term && ~skip_min
         c1 = infnorm(b);
     end %jd
     
     for kk = 1:m
         
+        is_first_min = (kk == m_min(ii));
+        is_min = (kk < m_min(ii));
+        
+        if ~full_term && (skip_min && is_first_min)
+            c1 = infnorm(b); % c1 hasn't been initialized; do so before b update
+        end %jd
+        
         b = A*b;
         b = (t/(s*kk))*b;
-        mv = mv + 1;
         f =  f + b;
+        mv = mv + 1;
         
-        c2 = -1; % jd: junk value for printing
-        if ~full_term
+        if ~full_term && (~skip_min || (skip_min && ~is_min))
             c2 = infnorm(b);
         end %jd
         
-        if prnt, fprintf('i = %2d/%2d, k = %2d/%2d, err = %6e\n', ii, s, kk, m, c1+c2), end %jd
+        if prnt, print_iter(s,m,ii,kk,c1,c2,NaN,NaN), end %jd
         
-        if ~full_term
-            %if prnt, fprintf(' %9.2e, \n', (c1+c2)/norm(f,inf)), pause, end
-            if c1 + c2 <= tol*infnorm(f) %jd
-                %if prnt, fprintf('m = %2.0f, s = %g, m_actual = %2.0f\n', m, s, kk), end
+        if ~full_term && (~skip_min || (skip_min && ~is_min))
+            finf = infnorm(f); %jd
+            if c1 + c2 <= tol*finf %jd
+                m_min(ii) = kk;
+                if prnt, print_iter(s,m,ii,kk,c1,c2,finf,tol), end
                 break;
             end
-            c1 = c2;
         end
+        c1 = c2;
     end
     
     f = eta*f;
@@ -110,5 +127,24 @@ end
 
 if prnt, fprintf('\n'); end
 if bal, f = D*f; end
+
+end
+
+function print_iter(s,m,ii,kk,c1,c2,finf,tol)
+
+if ~(isinf(c1) || isinf(c2))
+    if ~isnan(finf)
+        % Final iteration; print resulting relative error
+        fprintf('i = %2d/%2d, k = %2d/%2d, rel = %6e, tol = %6e\n', ...
+            ii, s, kk, m, (c1+c2)/finf, tol);
+    else
+        % Intermediate iteration; print iteration numbers
+        fprintf('i = %2d/%2d, k = %2d/%2d, err = %6e\n', ...
+            ii, s, kk, m, c1+c2);
+    end
+else
+    % c1 or c2 is not set
+    fprintf('i = %2d/%2d, k = %2d/%2d, err = --\n', ii, s, kk, m);
+end
 
 end
