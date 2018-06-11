@@ -20,15 +20,16 @@ if opts.forcesparse
 end
 
 switch upper(opts.type)
-    case 'GRE'
-        [x,s,m,~,~,~,m_min] = expmv(t,A,x0,expmvargs{:});
     case 'SE'
         [x,~,~,~,~,~,m_min1] = expmv(t/2,A,x0,expmvargs{:});
         x = conj(x);
         [x,s,m,~,~,~,m_min2] = expmv(t/2,A,x,expmvargs{:});
         m_min = min(m_min1, m_min2);
     otherwise
-        error('type must be either ''SE'' or ''GRE''.');
+        if ~(strcmpi(opts.type,'GRE') || strcmpi(opts.type,'default'))
+            warning('Defaulting to regular propagation, i.e. GRE');
+        end
+        [x,s,m,~,~,~,m_min] = expmv(t,A,x0,expmvargs{:});
 end
 
 end

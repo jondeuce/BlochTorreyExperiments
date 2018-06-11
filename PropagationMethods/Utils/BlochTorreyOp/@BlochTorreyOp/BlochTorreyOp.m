@@ -125,7 +125,7 @@ classdef BlochTorreyOp
         
         function A = setbuffer(A,State)
             if isequal(State, A.state)
-                % already in state State, do nothing
+                % already in state State; do nothing
                 return
             end
             switch State
@@ -176,61 +176,35 @@ classdef BlochTorreyOp
                     if isequal(A.D, 0)
                         % A is simply a diagonal matrix, with negative-Gamma on the diagonal
                         if isscalar(A.buffer)
-                            if A.state == BlochTorreyOp.DiagState
-                                if abs(A.Diag - 1) <= 5*eps(class(A.Diag))
-                                    y =  x;
-                                elseif abs(A.Diag + 1) <= 5*eps(class(A.Diag))
-                                    y = -x;
-                                else
-                                    y = A.Diag .* x;
-                                end
+                            diag = A.Diag; % cheap, since buffer is scalar
+                            tol  = 5*eps(class(diag));
+                            if abs(diag) <= tol
+                                y =  zeros(size(x),'like',x);
+                            elseif abs(diag - 1) <= tol
+                                y =  x;
+                            elseif abs(diag + 1) <= tol
+                                y = -x;
                             else
-                                if abs(A.Gamma - 1) <= 5*eps(class(A.Gamma))
-                                    y = -x;
-                                elseif abs(A.Gamma + 1) <= 5*eps(class(A.Gamma))
-                                    y =  x;
-                                else
-                                    y = (-A.Gamma) .* x;
-                                end
-                            end                                
+                                y = diag .* x;
+                            end
                         else
-                            if A.state == BlochTorreyOp.DiagState
-                                if size(A,2) == numel(x)
-                                    y = reshape(A.Diag, size(x)) .* x;
-                                else
-                                    ncols = round(numel(x)/size(A,2));
-                                    if ncols * size(A,2) ~= numel(x)
-                                        error('size(x) must be either the (repeated-)grid size or (repeated-)flattened size');
-                                    end
-                                    if ismatrix(x)
-                                        % x is a (possibly repeated) matrix;
-                                        % multiply x across rows by A.Diag
-                                        y = bsxfun(@times,A.Diag(:),x);
-                                    else
-                                        % x is a (possibly repeated) 3D array;
-                                        % multiply x along dimensions 1:3 by A.Diag
-                                        sizx = size(x);
-                                        y = bsxfun(@times,reshape(A.Diag,sizx(1:3)),x);
-                                    end
-                                end
+                            diag = A.Diag; % equally cheap to taking -A.Gamma when A.D == 0
+                            if size(A,2) == numel(x)
+                                y = reshape(diag, size(x)) .* x;
                             else
-                                if size(A,2) == numel(x)
-                                    y = reshape(-A.Gamma, size(x)) .* x;
+                                ncols = round(numel(x)/size(A,2));
+                                if ncols * size(A,2) ~= numel(x)
+                                    error('size(x) must be either the (repeated-)grid size or (repeated-)flattened size');
+                                end
+                                if ismatrix(x)
+                                    % x is a (possibly repeated) matrix;
+                                    % multiply x across rows by diag
+                                    y = bsxfun(@times,diag(:),x);
                                 else
-                                    ncols = round(numel(x)/size(A,2));
-                                    if ncols * size(A,2) ~= numel(x)
-                                        error('size(x) must be either the (repeated-)grid size or (repeated-)flattened size');
-                                    end
-                                    if ismatrix(x)
-                                        % x is a (possibly repeated) matrix;
-                                        % multiply x across rows by -A.Gamma
-                                        y = bsxfun(@times,-A.Gamma(:),x);
-                                    else
-                                        % x is a (possibly repeated) 3D array;
-                                        % multiply x along dimensions 1:3 by -A.Gamma
-                                        sizx = size(x);
-                                        y = bsxfun(@times,reshape(-A.Gamma,sizx(1:3)),x);
-                                    end
+                                    % x is a (possibly repeated) 3D array;
+                                    % multiply x along dimensions 1:3 by diag
+                                    sizx = size(x);
+                                    y = bsxfun(@times,reshape(diag,sizx(1:3)),x);
                                 end
                             end
                         end
@@ -333,13 +307,15 @@ classdef BlochTorreyOp
                     error('PLUS: Dimension mismatch');
                 end
                 
-                y = A;
                 if A.state == B.state
+                    y = A;
                     y.buffer = y.buffer + B.buffer;
                 elseif A.state == BlochTorreyOp.DiagState
+                    y = A;
                     y.buffer = y.buffer + B.Diag;
                 else
-                    y.buffer = y.buffer + B.Gamma;
+                    y = B;
+                    y.buffer = y.buffer + A.Diag;
                 end
                 y.D = y.D + B.D;
                 
@@ -512,22 +488,24 @@ classdef BlochTorreyOp
             hh = mean(A.h);
             
             if isa(p,'char') && strcmpi(p,'fro')
+                diag = A.Diag;
                 if isscalar(A.D)
-                    if isscalar(A.Diag)
-                        out = sqrt( A.N * abs2(A.Diag) + A.N * sum(abs2(offdiagonals(A))) );
+                    if isscalar(diag)
+                        out = sqrt( A.N * abs2(diag) + A.N * sum(abs2(offdiagonals(A))) );
                     else
-                        out = sqrt( sumall(abs2(A.Diag)) + A.N * sum(abs2(offdiagonals(A))) );
+                        out = sqrt( sumall(abs2(diag)) + A.N * sum(abs2(offdiagonals(A))) );
                     end
                 else
-                    out = sqrt(sumall( abs2(A.Diag) + (6/hh^4)*abs2(A.D) ));
+                    out = sqrt(sumall( abs2(diag) + (6/hh^4)*abs2(A.D) ));
                 end
             elseif isnumeric(p) && isscalar(p) && (p == 1 || p == inf)
                 % 1-norm is same as infinity-norm for symmetric matrices
+                diag = A.Diag;
                 if isscalar(A.D)
-                    out = infnorm(A.Diag) + sum(abs(offdiagonals(A)));
+                    out = infnorm(diag) + sum(abs(offdiagonals(A)));
                 else
                     kern = (1/mean(A.h)^2) * [3,1,0,1,0,1,0];
-                    out = maximum(abs(A.Diag) + SevenPointStencil(abs(A.D), kern, A.gsize, 1));
+                    out = maximum(abs(diag) + SevenPointStencil(abs(A.D), kern, A.gsize, 1));
                 end
             else
                 error('Only Frobenius-, 1-, and infinity-norms are implemented for BlochTorreyOp''s');
@@ -583,7 +561,7 @@ classdef BlochTorreyOp
             
             if AIsBTOp && BIsBTOp
                 bool = ( isequal(A.gsize, B.gsize) && ... %must operate on same grid
-                         isequal(A.gdims, B.gdims) );     %grids must have same physical dimensions
+                    isequal(A.gdims, B.gdims) );     %grids must have same physical dimensions
             else
                 error('ISCOMPATIBLE(A,B) is for comparing two BlochTorreyOp''s A and B');
             end
@@ -730,21 +708,16 @@ classdef BlochTorreyOp
         
         % Check if grid size is isotropic
         function b = is_isotropic(h)
-            b = isscalar(h) || (max(abs(diff(h))) <= 10*eps(max(h)));
+            b = isscalar(h) || (max(abs(diff(h))) <= 10*eps(max(abs(h(:)))));
         end
         
     end
     
 end
 
-function y = abs2(x)
-% avoids sqrt call in abs(x)^2
-y = real(x.*conj(x));
-end
-
 function y = sumall(x)
 % faster and more accurate than sum(x(:))
-y = sum(sum(sum(x)));
+y = sum(sum(sum(x,1),2),3);
 end
 
 function out = calculate_offdiagonals(D,h)
@@ -770,7 +743,11 @@ end
 h = mean(h(:));
 
 if isscalar(D)
-    Diagonal = (-6*D/h^2) - Gamma;
+    if isequal(D, 0)
+        Diagonal = -Gamma;
+    else
+        Diagonal = (-6*D/h^2) - Gamma;
+    end
 else
     % Backward divergence/forward gradient div(D*grad(x))
     kern = (-1/h^2) * [3,1,0,1,0,1,0];
@@ -787,24 +764,10 @@ end
 
 function Gamma = calculate_gamma(D,Diagonal,h,gsize)
 
-if ~BlochTorreyOp.is_isotropic(h)
-    error('h must be isotropic for diagonal calculation');
-end
-h = mean(h(:));
-
-if isscalar(D)
-    Gamma = (-6*D/h^2) - Diagonal;
-else
-    % Backward divergence/forward gradient div(D*grad(x))
-    kern = (-1/h^2) * [3,1,0,1,0,1,0];
-    Gamma = SevenPointStencil(D, kern, gsize, 1) - Diagonal;
-    
-    % Slower version of above
-    %Gamma = (-1/h^2)*(3*D + circshift(D,1,1) + circshift(D,1,2) + circshift(D,1,3)) - Diagonal;
-    
-    % Symmetrized D*lap(x)-dot(grad(D),grad(x))
-    %Gamma = 0.5*Laplacian(D,h,size(D),1) - (6/h^2)*D - Diagonal;
-end
+% By linearity, since Diagonal == L - Gamma for some generic diagonal L, we
+% similarly have Gamma == L - Diagonal. Therefore, just reuse the
+% calculate_diagonal function
+Gamma = calculate_diagonal(D,Diagonal,h,gsize);
 
 end
 

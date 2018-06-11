@@ -91,7 +91,6 @@ for ii = 1:s
     end %jd
     
     for kk = 1:m
-        
         is_first_min = (kk == m_min(ii));
         is_min = (kk < m_min(ii));
         

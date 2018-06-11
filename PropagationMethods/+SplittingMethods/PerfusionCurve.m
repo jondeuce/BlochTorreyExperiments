@@ -2,8 +2,9 @@ function [ dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs, Geometries ] = PerfusionC
 %PERFUSIONCURVE [ dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs, Geometries ] = PerfusionCurve( varargin )
 % See docs for example usage.
 %{
-TE = 60e-3; Nsteps = 2; type = 'SE'; Dcoeff = 3037; CA = 6; B0 = -3;
-CADerivative = true; AlphaRange = [0,90];
+AlphaRange = [0,90]; TE = 60e-3; Nsteps = 2; type = 'SE'; CA = 6; B0 = -3;
+D_Tissue = 3037; D_Blood = []; D_VRS = [];
+CADerivative = true;
 rng('default');
 GeomArgs = struct( 'iBVF', 1/100, 'aBVF', 1/100, ...
     'VoxelSize', [3000,3000,3000], 'GridSize', [256,256,256], 'VoxelCenter', [0,0,0], ...
@@ -14,10 +15,13 @@ GeomArgs = struct( 'iBVF', 1/100, 'aBVF', 1/100, ...
     'AllowMinorMajorIntersect', true, ...
     'PopulateIdx', true, ...
     'seed', rng('default') );
+% StepperArgs = struct('Stepper','BTSplitStepper','Order',2);
+StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
 
 [dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs, Geometries] = SplittingMethods.PerfusionCurve(...
-TE, Nsteps, Dcoeff, CA, B0, AlphaRange, type, ... % positional args
-'Order', 2, 'CADerivative', false, 'GeomArgs', GeomArgs, 'Stepper', 'ExpmvStepper' ); %positionless args
+AlphaRange, TE, Nsteps, type, CA, B0, D_Tissue, ... % positional args
+D_Blood, D_VRS, ... % optional positional args
+'GeomArgs', GeomArgs, 'StepperArgs', StepperArgs, 'CADerivative', false ); %positionless args
 %}
 
 args = parseinputs(varargin{:});
@@ -34,8 +38,8 @@ Geom = InitialGeometry(args);
 Geometries = Compress(Geom);
 
 % Deal out options for convenience
-[AlphaRange, TE, Nsteps, type, Dcoeff] = deal(...
-    args.AlphaRange, args.TE, args.Nsteps, args.type, args.Dcoeff);
+[AlphaRange, TE, Nsteps, type, D_Tissue, D_VRS, D_Blood] = deal(...
+    args.AlphaRange, args.TE, args.Nsteps, args.type, args.D_Tissue, args.D_VRS, args.D_Blood);
 
 dt = TE/Nsteps;
 y0 = 1i;
@@ -50,18 +54,21 @@ Num_Voxels = prod(Geom.GridSize);
 um3_per_voxel = Vox_Volume/Num_Voxels;
 IntegrateSignal = @(y) um3_per_voxel * sum(sum(sum(y,1),2),3); % more accurate than sum(y(:))
 
-switch upper(args.Stepper)
+StepperArgs = args.StepperArgs;
+switch upper(StepperArgs.Stepper)
     case 'BTSPLITSTEPPER'
         V = SplittingMethods.BTSplitStepper(...
-            dt, Dcoeff, Gamma, dGamma, Geom.GridSize, Geom.VoxelSize, ...
-            'NReps', 1, 'Order', 2);
+            dt, D_Tissue, Gamma, dGamma, Geom.GridSize, Geom.VoxelSize, ...
+            'NReps', 1, 'Order', StepperArgs.Order);
     case 'EXPMVSTEPPER'
         V = ExpmvStepper(dt, ...
-                BlochTorreyOp(0, Dcoeff, Geom.GridSize, Geom.VoxelSize), ...
-                Geom.GridSize, Geom.VoxelSize, ...
-                'type', 'GRE', 'prec', 'half', ...
-                'prnt', false, 'forcesparse', false, 'shift', true, ...
-                'bal', false, 'full_term', false);
+            BlochTorreyOp(0, 0, Geom.GridSize, Geom.VoxelSize), ...
+            Geom.GridSize, Geom.VoxelSize, ...
+            'prec', StepperArgs.prec, ...
+            'full_term', StepperArgs.full_term, ...
+            'prnt', StepperArgs.prnt, ...
+            'type', 'default', 'forcesparse', false, ...
+            'shift', true, 'bal', false);
 end
 
 % Initialize outputs
@@ -79,6 +86,7 @@ for jj = 1:Nalphas
     
     % Update geometry
     Geom = UpdateGeometry(alpha, Geom, args);
+    V = updateStepper(V, CalculateDiffusionMap( Geom, D_Tissue, D_Blood, D_VRS ), 'Diffusion', false);
     
     % Calculate complex decay settings
     [GammaSettingsNoCA, GammaSettingsCA] = GetGammaSettings(alpha, args);
@@ -178,64 +186,62 @@ else
     GivenNameValueArgs = struct2arglist(args.GeomArgs);
 end
 
-switch upper(args.MajorOrientation)
-    case 'FIXEDPOSITION'
-        % Initial geometry generated will be used for all angles
-        Geom = Geometry.CylindricalVesselFilledVoxel( GivenNameValueArgs{:} );
-        
-    case 'FIXEDRADIUS'
-        % Geometry will be generated for zero degrees (vertical major
-        % vessels) and rotated with this fixed radius
-        GeomArgs = args.GeomArgs;
-        GeomArgs.MajorAngle = 0.0;
-        NameValueArgs = struct2arglist(GeomArgs);
-        
-        Geom = Geometry.CylindricalVesselFilledVoxel( NameValueArgs{:} );
+if args.RotateGeom
+    % Geometry will be generated for zero degrees (vertical major
+    % vessels) and rotated with this fixed radius
+    GeomArgs = args.GeomArgs;
+    GeomArgs.MajorAngle = 0.0;
+    NameValueArgs = struct2arglist(GeomArgs);
+    
+    Geom = Geometry.CylindricalVesselFilledVoxel( NameValueArgs{:} );
+else
+    % Initial geometry generated will be used for all angles
+    Geom = Geometry.CylindricalVesselFilledVoxel( GivenNameValueArgs{:} );
 end
 
 end
 
 function Geom = UpdateGeometry(AngleDeg, Geom, args)
 
-switch upper(args.MajorOrientation)
-    case 'FIXEDPOSITION'
-        % Initial geometry generated is used for all angles; do nothing
-        
-    case 'FIXEDRADIUS'
-        % Geometry is rotated from previous position
-        Geom = RotateMajor(Geom, 'to', AngleDeg);
+if args.RotateGeom
+    % Geometry is rotated from previous position
+    Geom = RotateMajor(Geom, 'to', AngleDeg);
+else
+    % Initial geometry generated is used for all angles; do nothing
 end
 
 end
 
 function [GammaSettingsNoCA, GammaSettingsCA] = GetGammaSettings(AngleDeg, args)
-    
-switch upper(args.MajorOrientation)
-    case 'FIXEDPOSITION'
-        % Gamma settings change with angle
-        GammaSettingsNoCA = Geometry.ComplexDecaySettings('Angle_Deg', AngleDeg, 'B0', args.B0, 'CA', 0.0);
-        GammaSettingsCA   = Geometry.ComplexDecaySettings('Angle_Deg', AngleDeg, 'B0', args.B0, 'CA', args.CA);
-        
-    case 'FIXEDRADIUS'
-        % Gamma settings are fixed, as B0 is vertical
-        GammaSettingsNoCA = Geometry.ComplexDecaySettings('Angle_Deg', 0.0, 'B0', args.B0, 'CA', 0.0);
-        GammaSettingsCA   = Geometry.ComplexDecaySettings('Angle_Deg', 0.0, 'B0', args.B0, 'CA', args.CA);
+
+if args.RotateGeom
+    % Gamma settings (i.e. dipole orientation) are fixed, as B0 is vertical
+    GammaSettingsNoCA = Geometry.ComplexDecaySettings('Angle_Deg', 0.0, 'B0', args.B0, 'CA', 0.0);
+    GammaSettingsCA   = Geometry.ComplexDecaySettings('Angle_Deg', 0.0, 'B0', args.B0, 'CA', args.CA);
+else
+    % Gamma settings (i.e. dipole orientation) changes with angle
+    GammaSettingsNoCA = Geometry.ComplexDecaySettings('Angle_Deg', AngleDeg, 'B0', args.B0, 'CA', 0.0);
+    GammaSettingsCA   = Geometry.ComplexDecaySettings('Angle_Deg', AngleDeg, 'B0', args.B0, 'CA', args.CA);
 end
 
 end
 
-function V = updateStepper(V, in, mode)
+function V = updateStepper(V, in, mode, precomp)
+
+if nargin < 4; precomp = true; end
 
 switch upper(class(V))
     case 'SPLITTINGMETHODS.BTSPLITSTEPPER'
         
         switch upper(mode)
             case 'GAMMA'
-                V = precomputeExpDecays(V, in);
+                if precomp; V = precomputeExpDecays(V, in); end
             case 'DGAMMA'
-                V = precomputeGammaDerivs(V, in);
+                if precomp; V = precomputeGammaDerivs(V, in); end
             case 'CLEARDGAMMA'
                 V = clearGammaDerivs(V);
+            case 'DIFFUSION'
+                % Do nothing; diffusion is constant isotropic
         end
         
     case 'EXPMVSTEPPER'
@@ -246,15 +252,21 @@ switch upper(class(V))
                 A = setbuffer( A, BlochTorreyOp.DiagState );
                 V = updateMatrix( V, A );
                 clear A
-                V = precompute( V, in );
+                if precomp; V = precompute( V, in ); end
             case 'DGAMMA'
                 error('Gamma derivatives are not implemented for ExpmvStepper''s');
             case 'CLEARDGAMMA'
                 error('Gamma derivatives are not implemented for ExpmvStepper''s');
+            case 'DIFFUSION'
+                A = BlochTorreyOp( V.A.Gamma, in, V.A.gsize, V.A.gdims, false );
+                A = setbuffer( A, BlochTorreyOp.DiagState );
+                V = updateMatrix( V, A );
+                clear A
+                if precomp; V = precompute( V, in ); end
         end
         
 end
-        
+
 end
 
 % ---- delta R2(*) derivative calculation ---- %
@@ -283,13 +295,12 @@ end
 % ---- InputParsing ---- %
 function args = parseinputs(varargin)
 
-RequiredArgs = { 'TE', 'Nsteps', 'Dcoeff', 'CA', 'B0', 'AlphaRange', 'type' };
+RequiredArgs = { 'AlphaRange', 'TE', 'Nsteps', 'type', 'CA', 'B0', 'D_Tissue' };
+OptionalArgs = struct( 'D_Blood', [], 'D_VRS', [] );
 DefaultArgs = struct(...
     'Geom', [], ...
     'GeomArgs', [], ...
-    'MajorOrientation', 'FixedPosition', ...
-    'Order', 2, ...
-    'Stepper', 'BTSplitStepper', ...
+    'StepperArgs', struct('Stepper','BTSplitStepper','Order',2), ...
     'CADerivative', false, ...
     'RotateGeom', false ...
     );
@@ -299,6 +310,12 @@ p = inputParser;
 for f = RequiredArgs
     paramName = f{1};
     addRequired(p,paramName)
+end
+
+for f = fieldnames(OptionalArgs).'
+    paramName = f{1};
+    defaultVal = OptionalArgs.(f{1});
+    addOptional(p,paramName,defaultVal)
 end
 
 for f = fieldnames(DefaultArgs).'
@@ -323,10 +340,10 @@ args = p.Results;
 %         SubVoxSize = 1;
 %     end
 % end
-% 
-% isDiffusionNegligible = (sqrt( 6 * args.Dcoeff * args.TE ) <= 0.5 * SubVoxSize);
+%
+% isDiffusionNegligible = (sqrt( 6 * args.D_Tissue * args.TE ) <= 0.5 * SubVoxSize);
 % if isDiffusionNegligible
-%     args.Dcoeff = 0.0;
+%     args.D_Tissue = 0.0;
 % end
 
 end
@@ -334,18 +351,18 @@ end
 % ---- Derivative testing ---- %
 %{
 % ---- initialize params ---- %
-TE = 60e-3; Nsteps = 8; type = 'GRE'; Dcoeff = 4*3037; CA = 6; B0 = -3;
+TE = 60e-3; Nsteps = 8; type = 'GRE'; D_Tissue = 4*3037; CA = 6; B0 = -3;
 CADerivative = true; AlphaRange = [0,90];
 
 % ---- function call with analytic derivative ---- %
 [dR2, S0, S, TimePts, dR2_Derivs, dS_Derivs] = SplittingMethods.PerfusionCurve(...
-TE, Nsteps, Dcoeff, CA, B0, AlphaRange, Geom, type, ... % positional args
+TE, Nsteps, D_Tissue, CA, B0, AlphaRange, Geom, type, ... % positional args
 'Order', 2, 'CADerivative', true ); %optional positionless args
 
 % ---- derivative test: forward difference ---- %
 dCA = 1e-3 * CA;
 [dR2_fwd, S0_fwd, S_fwd, ~, ~, ~] = SplittingMethods.PerfusionCurve(...
-TE, Nsteps, Dcoeff, CA + dCA, B0, AlphaRange, Geom, type, ... % positional args
+TE, Nsteps, D_Tissue, CA + dCA, B0, AlphaRange, Geom, type, ... % positional args
 'Order', 2, 'CADerivative', false ); %optional positionless args
 
 dR2_Derivs.CA
@@ -355,11 +372,11 @@ dR2_dCA_fwd - dR2_Derivs.CA
 % ---- derivative test: centered difference ---- %
 dCA = 1e-6 * CA;
 [dR2_fwd, S0_fwd, S_fwd, ~, ~, ~] = SplittingMethods.PerfusionCurve(...
-TE, Nsteps, Dcoeff, CA + dCA, B0, AlphaRange, Geom, type, ... % positional args
+TE, Nsteps, D_Tissue, CA + dCA, B0, AlphaRange, Geom, type, ... % positional args
 'Order', 2, 'CADerivative', false ); %optional positionless args
 
 [dR2_bwd, S0_bwd, S_bwd, ~, ~, ~] = SplittingMethods.PerfusionCurve(...
-TE, Nsteps, Dcoeff, CA - dCA, B0, AlphaRange, Geom, type, ... % positional args
+TE, Nsteps, D_Tissue, CA - dCA, B0, AlphaRange, Geom, type, ... % positional args
 'Order', 2, 'CADerivative', false ); %optional positionless args
 
 dR2_Derivs.CA

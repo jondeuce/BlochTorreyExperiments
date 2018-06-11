@@ -16,16 +16,22 @@ end
 if ~V.isprecomputed; V = precompute(V, x); end
 
 % ---- Step solution ---- %
-[ y, ~, ~, m_min ] = bt_expmv( V.TimeStep, V.A, x, V.opts, V.selectdegargs, V.expmvargs );
+if isdiag(V.A)
+    E = exp(V.TimeStep * diag(V.A));
+    y = reshape(x, [size(V.A,2), numel(x)/size(V.A,2)]);
+    y = bsxfun(@times, E, y);
+    y = reshape(y, size(x));
+    m_min = [];
+else
+    [y, ~, ~, m_min] = bt_expmv(V.TimeStep, V.A, x, V.opts, V.selectdegargs, V.expmvargs);
+end
 t = t0 + V.TimeStep;
 
 % ---- Step derivative ---- %
 dy = {}; %TODO
 
 % ---- Update stepper ---- %
-if V.adapttaylor
-    V = update_m_min(V, m_min);
-end
+if V.adapttaylor; V = update_m_min(V, m_min); end
 
 end
 

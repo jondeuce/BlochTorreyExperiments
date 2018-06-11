@@ -7,7 +7,7 @@ function [ D ] = CalculateDiffusionMap( G, D_Tissue, D_Blood, D_VRS )
 if nargin < 4; D_VRS = []; end
 if nargin < 3; D_Blood = []; end
 
-if isempty(D_Blood) && isempty(D_VRS)
+if isempty(D_Blood) && (isempty(D_VRS) || isempty(G.VRSIndices))
     % Constant coefficient isotropic diffusion
     D = D_Tissue;
 else
@@ -22,7 +22,7 @@ else
     end
     
     % Set VRS diffusion coefficient
-    if ~isempty(D_VRS) && ~isempty(G.VRSIndices)
+    if ~(isempty(D_VRS) || isempty(G.VRSIndices))
         % set Virchow-Robin space R2 value
         D(G.VRSIndices) = D_VRS;
     end

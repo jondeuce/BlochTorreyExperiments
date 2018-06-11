@@ -164,11 +164,11 @@ dChi_Blood_CA = CA * dChi_CA_per_mM;
 % Susceptibilty of blood relative to tissue due to blood oxygenation and 
 % hematocrit concentration is given by:
 %   deltaChi_Blood_Tissue  :=   Hct * (1-Y) * 2.26e-6 [T/T]
-dChi_Blood_Oxy   = 2.26e-6 * Hct.*(1-Yv);
-dChi_ArterialBlood_Oxy = 2.26e-6 * Hct.*(1-Ya);
+dChi_Blood_Oxy = 2.26e-6 * Hct .* (1-Yv);
+dChi_ArterialBlood_Oxy = 2.26e-6 * Hct .* (1-Ya);
 
 % Susceptibility difference in blood vs. tissue including contrast agent as well
-dChi_Blood   = dChi_Blood_Oxy   + dChi_Blood_CA;
+dChi_Blood = dChi_Blood_Oxy + dChi_Blood_CA;
 dChi_ArterialBlood = dChi_ArterialBlood_Oxy + dChi_Blood_CA;
 
 end
