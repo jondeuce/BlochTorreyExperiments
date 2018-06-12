@@ -53,8 +53,15 @@ Geom = Geometry.CylindricalVesselFilledVoxel( ...
     'PopulateIdx', true, 'seed', seed );
 
 %% Calculate ComplexDecay
-Gamma = CalculateComplexDecay(GammaSettings, Geom);
-dGamma = {};
+%Gamma = CalculateComplexDecay(GammaSettings, Geom);
+%dGamma = {};
+Gamma = complex(Geometry.R2Map, dWMap);
+Vsize = VoxelSize;
+Gsize = GridSize;
+Scale = Vsize(3)/Gsize(3);
+
+t = 100e-3;
+type = 'gre';
 
 %% Initial data
 % x0 = randnc(Gsize);
@@ -70,17 +77,23 @@ x0 = 1i*ones(Gsize);
 % t_expmv = toc(t_expmv);
 % display_toc_time(t_expmv,'expmv');
 
+prec = 'half';
 S0 = sum(sum(sum(x0,1),2),3);
-DcoeffList = [0, logspace(0,7,15)];
+DcoeffList = [1,3037];%logspace(1,7,15)];
 Signals = zeros(numel(DcoeffList), 1);
+
 for ii = 1:length(DcoeffList)
     Dcoeff = DcoeffList(ii);
     fprintf('\nDcoeff = %f\n\n', Dcoeff);
     
     t_expmv = tic;
-
     A = BlochTorreyOp(Gamma, Dcoeff, Gsize, Vsize); % A = D*laplacian - Gamma, as a matrix operator
-    x = bt_expmv( t, A, x0, 'prnt', true, 'type', type, 'forcesparse', true, 'full_term', true); % solves dx/dt = A*x; x(0) = x0 for t in [0,t]
+    
+    % solves dx/dt = A*x; x(0) = x0 for t in [0,t]
+    x = bt_expmv( t, A, x0, ... 
+        'prnt', true, 'type', type, 'prec', prec, ...
+        'forcesparse', true, 'full_term', false);
+    
     Signals(ii) = sum(sum(sum(x,1),2),3); %more accurate than sum(x(:))
 
     t_expmv = toc(t_expmv);
