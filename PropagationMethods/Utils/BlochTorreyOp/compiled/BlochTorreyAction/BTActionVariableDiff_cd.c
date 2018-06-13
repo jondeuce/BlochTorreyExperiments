@@ -64,21 +64,21 @@
 
 /* Discretising using `div( D * grad(x) )` with backward divergence/forward gradient */
 #define DIFFUSION_FWDDIV_D_BCKGRAD(x,xD,xU,xL,xR,xB,xF,D,DD,DL,DB) \
-        ((xF + xR + xU - 3*x)*D + (xB - x)*DB + (xL - x)*DL + (xD - x)*DD)
+((xF + xR + xU - 3*x)*D + (xB - x)*DB + (xL - x)*DL + (xD - x)*DD)
 #define DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(x,xD,xU,xL,xR,xB,xF,D,DD,DL,DB) \
-        ((xF + xR + xU)*D + xB*DB + xL*DL + xD*DD)
+((xF + xR + xU)*D + xB*DB + xL*DL + xD*DD)
 
 /* Discretising using `div( D * grad(x) )` with symmetrized divergence/gradient */
 #define DIFFUSION_SYM_DIV_D_GRAD(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF) \
-        ((xB + xF + xL + xR + xD + xU - 6*x)*D + (xB - x)*DB + (xF - x)*DF + (xL - x)*DL + (xR - x)*DR + (xD - x)*DD + (xU - x)*DU)
+((xB + xF + xL + xR + xD + xU - 6*x)*D + (xB - x)*DB + (xF - x)*DF + (xL - x)*DL + (xR - x)*DR + (xD - x)*DD + (xU - x)*DU)
 #define DIFFUSION_SYM_DIV_D_GRAD_DIAG(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF) \
-        ((xB + xF + xL + xR + xD + xU)*D + xB*DB + xF*DF + xL*DL + xR*DR + xD*DD + xU*DU)
+((xB + xF + xL + xR + xD + xU)*D + xB*DB + xF*DF + xL*DL + xR*DR + xD*DD + xU*DU)
 
 /* Discretising using `D * lap(x) + dot( grad(D), grad(x) )` with symmetrized gradients */
 #define DIFFUSION_D_LAP_SYM_GRAD_DOT(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF) \
-        (3*(xB + xF + xL + xR + xD + xU - 6*x)*D + (x - xF)*DB + (x - xB)*DF + (x - xL)*DR + (x - xR)*DL + (x - xD)*DU + (x - xU)*DD)
+(3*(xB + xF + xL + xR + xD + xU - 6*x)*D + (x - xF)*DB + (x - xB)*DF + (x - xL)*DR + (x - xR)*DL + (x - xD)*DU + (x - xU)*DD)
 #define DIFFUSION_D_LAP_SYM_GRAD_DOT_DIAG(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF) \
-        (3*(xB + xF + xL + xR + xD + xU)*D - xF*DB - xB*DF - xL*DR - xR*DL - xD*DU - xU*DD)
+(3*(xB + xF + xL + xR + xD + xU)*D - xF*DB - xB*DF - xL*DR - xR*DL - xD*DU - xU*DD)
 
 void BTActionVariableDiff3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const REAL K, const REAL *gsize );
 void BTActionVariableDiff4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const REAL K, const REAL *gsize );
@@ -197,7 +197,7 @@ void BTActionVariableDiff3D(
     uint32_t i, j, k, l, il, ir, jl, jr, kl, kr;
     const REAL Khalf = 0.5 * K;
     const uint32_t NUNROLL = 4;
-        
+    
     /* *******************************************************************
      * Triply-nested for-loop, twice collapsed
      ******************************************************************* */
@@ -231,11 +231,9 @@ void BTActionVariableDiff3D(
             Dr4 = Dr[l]; DrD4 = Dr[l+NX]; DrL4 = Dr[jl];  DrB4 = Dr[kl];
             Fr4 = fr[l]; Fi4  = fi[l];
             
-            dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrL4, DrB4)
-                       - (Fr4*Xr4 - Fi4*Xi4);
-            dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrL4, DrB4)
-                       - (Fi4*Xr4 + Fr4*Xi4);
-
+            dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrL4, DrB4) - (Fr4*Xr4 - Fi4*Xi4);
+            dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrL4, DrB4) - (Fi4*Xr4 + Fr4*Xi4);
+            
             /* Inner Points */
             ++l; ++jl; ++jr; ++kl; ++kr;
             for(i = 1; i + NUNROLL < nx; i+=NUNROLL) {
@@ -244,17 +242,17 @@ void BTActionVariableDiff3D(
 //                 XiD1 = Xi4;     Xi1 = XiU4;    XiU1 = xi[l+1];   XiL1 = xi[jl];   XiR1 = xi[jr];   XiB1 = xi[kl];   XiF1 = xi[kr];
 //                 DrD1 = Dr4;     Dr1 = Dr[l];   DrL1 = Dr[jl];    DrB1 = Dr[kl];
 //                 Fr1  = fr[l];   Fi1 = fi[l];
-//                 
+//
 //                 XrD2 = Xr1;     Xr2 = XrU1;    XrU2 = xr[l+2];   XrL2 = xr[jl+1]; XrR2 = xr[jr+1]; XrB2 = xr[kl+1]; XrF2 = xr[kr+1];
 //                 XiD2 = Xi1;     Xi2 = XiU1;    XiU2 = xi[l+2];   XiL2 = xi[jl+1]; XiR2 = xi[jr+1]; XiB2 = xi[kl+1]; XiF2 = xi[kr+1];
 //                 DrD2 = Dr1;     Dr2 = Dr[l+1]; DrL2 = Dr[jl+1];  DrB2 = Dr[kl+1];
 //                 Fr2  = fr[l+1]; Fi2 = fi[l+1];
-//                 
+//
 //                 XrD3 = Xr2;     Xr3 = XrU2;    XrU3 = xr[l+3];   XrL3 = xr[jl+2]; XrR3 = xr[jr+2]; XrB3 = xr[kl+2]; XrF3 = xr[kr+2];
 //                 XiD3 = Xi2;     Xi3 = XiU2;    XiU3 = xi[l+3];   XiL3 = xi[jl+2]; XiR3 = xi[jr+2]; XiB3 = xi[kl+2]; XiF3 = xi[kr+2];
 //                 DrD3 = Dr2;     Dr3 = Dr[l+2]; DrL3 = Dr[jl+2];  DrB3 = Dr[kl+2];
 //                 Fr3  = fr[l+2]; Fi3 = fi[l+2];
-//                 
+//
 //                 XrD4 = Xr3;     Xr4 = XrU3;    XrU4 = xr[l+4];   XrL4 = xr[jl+3]; XrR4 = xr[jr+3]; XrB4 = xr[kl+3]; XrF4 = xr[kr+3];
 //                 XiD4 = Xi3;     Xi4 = XiU3;    XiU4 = xi[l+4];   XiL4 = xi[jl+3]; XiR4 = xi[jr+3]; XiB4 = xi[kl+3]; XiF4 = xi[kr+3];
 //                 DrD4 = Dr3;     Dr4 = Dr[l+3]; DrL4 = Dr[jl+3];  DrB4 = Dr[kl+3];
@@ -265,47 +263,37 @@ void BTActionVariableDiff3D(
                 
                 XrU1 = xr[l+1]; XrU2 = xr[l+2];  XrU3 = xr[l+3];  XrU4 = xr[l+4];
                 XrL1 = xr[jl];  XrL2 = xr[jl+1]; XrL3 = xr[jl+2]; XrL4 = xr[jl+3];
-                XrR1 = xr[jr];  XrR2 = xr[jr+1]; XrR3 = xr[jr+2]; XrR4 = xr[jr+3]; 
-                XrB1 = xr[kl];  XrB2 = xr[kl+1]; XrB3 = xr[kl+2]; XrB4 = xr[kl+3]; 
+                XrR1 = xr[jr];  XrR2 = xr[jr+1]; XrR3 = xr[jr+2]; XrR4 = xr[jr+3];
+                XrB1 = xr[kl];  XrB2 = xr[kl+1]; XrB3 = xr[kl+2]; XrB4 = xr[kl+3];
                 XrF1 = xr[kr];  XrF2 = xr[kr+1]; XrF3 = xr[kr+2]; XrF4 = xr[kr+3];
                 
                 XiU1 = xi[l+1]; XiU2 = xi[l+2];  XiU3 = xi[l+3];  XiU4 = xi[l+4];
                 XiL1 = xi[jl];  XiL2 = xi[jl+1]; XiL3 = xi[jl+2]; XiL4 = xi[jl+3];
-                XiR1 = xi[jr];  XiR2 = xi[jr+1]; XiR3 = xi[jr+2]; XiR4 = xi[jr+3]; 
-                XiB1 = xi[kl];  XiB2 = xi[kl+1]; XiB3 = xi[kl+2]; XiB4 = xi[kl+3]; 
+                XiR1 = xi[jr];  XiR2 = xi[jr+1]; XiR3 = xi[jr+2]; XiR4 = xi[jr+3];
+                XiB1 = xi[kl];  XiB2 = xi[kl+1]; XiB3 = xi[kl+2]; XiB4 = xi[kl+3];
                 XiF1 = xi[kr];  XiF2 = xi[kr+1]; XiF3 = xi[kr+2]; XiF4 = xi[kr+3];
                 
-                XrD2 = Xr1; Xr2 = XrU1; XrD3 = Xr2; Xr3 = XrU2; XrD4 = Xr3; Xr4 = XrU3; 
+                XrD2 = Xr1; Xr2 = XrU1; XrD3 = Xr2; Xr3 = XrU2; XrD4 = Xr3; Xr4 = XrU3;
                 XiD2 = Xi1; Xi2 = XiU1; XiD3 = Xi2; Xi3 = XiU2; XiD4 = Xi3; Xi4 = XiU3;
                 
                 DrD1 = Dr4;
                 Dr1  = Dr[l];  Dr2  = Dr[l+1];  Dr3  = Dr[l+2];  Dr4 = Dr[l+3];
-                DrL1 = Dr[jl]; DrL2 = Dr[jl+1]; DrL3 = Dr[jl+2]; DrL4 = Dr[jl+3];  
+                DrL1 = Dr[jl]; DrL2 = Dr[jl+1]; DrL3 = Dr[jl+2]; DrL4 = Dr[jl+3];
                 DrB1 = Dr[kl]; DrB2 = Dr[kl+1]; DrB3 = Dr[kl+2]; DrB4 = Dr[kl+3];
                 DrD2 = Dr1; DrD3 = Dr2; DrD4 = Dr3;
                 
                 Fr1 = fr[l]; Fr2 = fr[l+1]; Fr3 = fr[l+2]; Fr4 = fr[l+3];
                 Fi1 = fi[l]; Fi2 = fi[l+1]; Fi3 = fi[l+2]; Fi4 = fi[l+3];
-                                
-                dxr[l]   = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xr1, XrD1, XrU1, XrL1, XrR1, XrB1, XrF1, Dr1, DrD1, DrL1, DrB1)
-                           - (Fr1*Xr1 - Fi1*Xi1);
-                dxi[l]   = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xi1, XiD1, XiU1, XiL1, XiR1, XiB1, XiF1, Dr1, DrD1, DrL1, DrB1)
-                           - (Fi1*Xr1 + Fr1*Xi1);
-
-                dxr[l+1] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xr2, XrD2, XrU2, XrL2, XrR2, XrB2, XrF2, Dr2, DrD2, DrL2, DrB2)
-                           - (Fr2*Xr2 - Fi2*Xi2);
-                dxi[l+1] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xi2, XiD2, XiU2, XiL2, XiR2, XiB2, XiF2, Dr2, DrD2, DrL2, DrB2)
-                           - (Fi2*Xr2 + Fr2*Xi2);
-
-                dxr[l+2] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Dr3, DrD3, DrL3, DrB3)
-                           - (Fr3*Xr3 - Fi3*Xi3);
-                dxi[l+2] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xi3, XiD3, XiU3, XiL3, XiR3, XiB3, XiF3, Dr3, DrD3, DrL3, DrB3)
-                           - (Fi3*Xr3 + Fr3*Xi3);
-
-                dxr[l+3] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrL4, DrB4)
-                           - (Fr4*Xr4 - Fi4*Xi4);
-                dxi[l+3] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrL4, DrB4)
-                           - (Fi4*Xr4 + Fr4*Xi4);
+                
+                dxr[l]   = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xr1, XrD1, XrU1, XrL1, XrR1, XrB1, XrF1, Dr1, DrD1, DrL1, DrB1) - (Fr1*Xr1 - Fi1*Xi1);
+                dxr[l+1] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xr2, XrD2, XrU2, XrL2, XrR2, XrB2, XrF2, Dr2, DrD2, DrL2, DrB2) - (Fr2*Xr2 - Fi2*Xi2);
+                dxr[l+2] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Dr3, DrD3, DrL3, DrB3) - (Fr3*Xr3 - Fi3*Xi3);
+                dxr[l+3] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrL4, DrB4) - (Fr4*Xr4 - Fi4*Xi4);
+                
+                dxi[l]   = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xi1, XiD1, XiU1, XiL1, XiR1, XiB1, XiF1, Dr1, DrD1, DrL1, DrB1) - (Fi1*Xr1 + Fr1*Xi1);
+                dxi[l+1] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xi2, XiD2, XiU2, XiL2, XiR2, XiB2, XiF2, Dr2, DrD2, DrL2, DrB2) - (Fi2*Xr2 + Fr2*Xi2);
+                dxi[l+2] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xi3, XiD3, XiU3, XiL3, XiR3, XiB3, XiF3, Dr3, DrD3, DrL3, DrB3) - (Fi3*Xr3 + Fr3*Xi3);
+                dxi[l+3] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrL4, DrB4) - (Fi4*Xr4 + Fr4*Xi4);
                 
                 l+=NUNROLL; jl+=NUNROLL; jr+=NUNROLL; kl+=NUNROLL; kr+=NUNROLL;
             }
@@ -317,47 +305,37 @@ void BTActionVariableDiff3D(
                 XiD4 = Xi4;  Xi4 = XiU4;  XiU4 = xi[l+1]; XiL4 = xi[jl]; XiR4 = xi[jr]; XiB4 = xi[kl]; XiF4 = xi[kr];
                 DrD4 = Dr4;  Dr4 = Dr[l]; DrL4 = Dr[jl];  DrB4 = Dr[kl];
                 Fr4 = fr[l]; Fi4 = fi[l];
-
-                dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrL4, DrB4)
-                           - (Fr4*Xr4 - Fi4*Xi4);
-                dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrL4, DrB4)
-                           - (Fi4*Xr4 + Fr4*Xi4);
+                
+                dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrL4, DrB4) - (Fr4*Xr4 - Fi4*Xi4);
+                dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrL4, DrB4) - (Fi4*Xr4 + Fr4*Xi4);
                 ++l; ++jl; ++jr; ++kl; ++kr;
             }
-
+            
             /* RHS Boundary Condition */
             XrD4 = Xr4;  Xr4 = XrU4;  XrU4 = xr[l-NX]; XrL4 = xr[jl]; XrR4 = xr[jr]; XrB4 = xr[kl]; XrF4 = xr[kr];
             XiD4 = Xi4;  Xi4 = XiU4;  XiU4 = xi[l-NX]; XiL4 = xi[jl]; XiR4 = xi[jr]; XiB4 = xi[kl]; XiF4 = xi[kr];
             DrD4 = Dr4;  Dr4 = Dr[l]; DrL4 = Dr[jl];  DrB4 = Dr[kl];
             Fr4 = fr[l]; Fi4 = fi[l];
-
-            dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrL4, DrB4)
-                       - (Fr4*Xr4 - Fi4*Xi4);
-            dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrL4, DrB4)
-                       - (Fi4*Xr4 + Fr4*Xi4);
+            
+            dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrL4, DrB4) - (Fr4*Xr4 - Fi4*Xi4);
+            dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrL4, DrB4) - (Fi4*Xr4 + Fr4*Xi4);
             
 //             /* LHS Boundary Condition */
-//             dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(xr[l],xr[l+NX],xr[l+1],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l+NX],Dr[jl],Dr[kl])
-//                        - (fr[l]*xr[l] - fi[l]*xi[l]);
-//             dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(xi[l],xi[l+NX],xi[l+1],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l+NX],Dr[jl],Dr[kl])
-//                        - (fi[l]*xr[l] + fr[l]*xi[l]);
-// 
+//             dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(xr[l],xr[l+NX],xr[l+1],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l+NX],Dr[jl],Dr[kl]) - (fr[l]*xr[l] - fi[l]*xi[l]);
+//             dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(xi[l],xi[l+NX],xi[l+1],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l+NX],Dr[jl],Dr[kl]) - (fi[l]*xr[l] + fr[l]*xi[l]);
+//
 //             /* Inner Points */
 //             ++l, ++jl, ++jr, ++kl, ++kr;
 //             for(i = 1; i < nx-1; ++i) {
 //                 /* Discretising using `div( D * grad(x) )` with backward divergence/forward gradient */
-//                 dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(xr[l],xr[l-1],xr[l+1],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl])
-//                            - (fr[l]*xr[l] - fi[l]*xi[l]);
-//                 dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(xi[l],xi[l-1],xi[l+1],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl])
-//                            - (fi[l]*xr[l] + fr[l]*xi[l]);
+//                 dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(xr[l],xr[l-1],xr[l+1],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl]) - (fr[l]*xr[l] - fi[l]*xi[l]);
+//                 dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(xi[l],xi[l-1],xi[l+1],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl]) - (fi[l]*xr[l] + fr[l]*xi[l]);
 //                 ++l, ++jl, ++jr, ++kl, ++kr;
 //             }
-// 
+//
 //             /* RHS Boundary Condition */
-//             dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(xr[l],xr[l-1],xr[l-NX],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl])
-//                        - (fr[l]*xr[l] - fi[l]*xi[l]);
-//             dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(xi[l],xi[l-1],xi[l-NX],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl])
-//                        - (fi[l]*xr[l] + fr[l]*xi[l]);
+//             dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(xr[l],xr[l-1],xr[l-NX],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl]) - (fr[l]*xr[l] - fi[l]*xi[l]);
+//             dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD(xi[l],xi[l-1],xi[l-NX],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl]) - (fi[l]*xr[l] + fr[l]*xi[l]);
         }
     }
     
@@ -393,7 +371,7 @@ void BTActionVariableDiff4D(
     for(w = 0; w < nxnynznw; w += nxnynz) {
         BTActionVariableDiff3D( &dxr[w], &dxi[w], &xr[w], &xi[w], fr, fi, Dr, Di, K, gsize );
     }
-        
+    
     return;
 }
 
@@ -437,8 +415,8 @@ void BTActionVariableDiffDiagonal3D(
             jr = (j==NY) ? l-NY : l+nx;
             kl = (k==0 ) ? l+NZ : l-nxny;
             kr = (k==NZ) ? l-NZ : l+nxny;
-
-
+            
+            
             /* Notation:
              *  x     = x[l]          = "center"
              *  xD/xU = x[l-1]/x[l+1] = "down/up"
@@ -457,11 +435,9 @@ void BTActionVariableDiffDiagonal3D(
             Dr4 = Dr[l]; DrD4 = Dr[l+NX]; DrL4 = Dr[jl];  DrB4 = Dr[kl];
             Fr4 = fr[l]; Fi4  = fi[l];
             
-            dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrL4, DrB4)
-                       + (Fr4*Xr4 - Fi4*Xi4);
-            dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrL4, DrB4)
-                       + (Fi4*Xr4 + Fr4*Xi4);
-
+            dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrL4, DrB4) + (Fr4*Xr4 - Fi4*Xi4);
+            dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrL4, DrB4) + (Fi4*Xr4 + Fr4*Xi4);
+            
             /* Inner Points */
             ++l; ++jl; ++jr; ++kl; ++kr;
             for(i = 1; i + NUNROLL < nx; i+=NUNROLL) {
@@ -470,17 +446,17 @@ void BTActionVariableDiffDiagonal3D(
 //                 XiD1 = Xi4;     Xi1 = XiU4;    XiU1 = xi[l+1];   XiL1 = xi[jl];   XiR1 = xi[jr];   XiB1 = xi[kl];   XiF1 = xi[kr];
 //                 DrD1 = Dr4;     Dr1 = Dr[l];   DrL1 = Dr[jl];    DrB1 = Dr[kl];
 //                 Fr1  = fr[l];   Fi1 = fi[l];
-//                 
+//
 //                 XrD2 = Xr1;     Xr2 = XrU1;    XrU2 = xr[l+2];   XrL2 = xr[jl+1]; XrR2 = xr[jr+1]; XrB2 = xr[kl+1]; XrF2 = xr[kr+1];
 //                 XiD2 = Xi1;     Xi2 = XiU1;    XiU2 = xi[l+2];   XiL2 = xi[jl+1]; XiR2 = xi[jr+1]; XiB2 = xi[kl+1]; XiF2 = xi[kr+1];
 //                 DrD2 = Dr1;     Dr2 = Dr[l+1]; DrL2 = Dr[jl+1];  DrB2 = Dr[kl+1];
 //                 Fr2  = fr[l+1]; Fi2 = fi[l+1];
-//                 
+//
 //                 XrD3 = Xr2;     Xr3 = XrU2;    XrU3 = xr[l+3];   XrL3 = xr[jl+2]; XrR3 = xr[jr+2]; XrB3 = xr[kl+2]; XrF3 = xr[kr+2];
 //                 XiD3 = Xi2;     Xi3 = XiU2;    XiU3 = xi[l+3];   XiL3 = xi[jl+2]; XiR3 = xi[jr+2]; XiB3 = xi[kl+2]; XiF3 = xi[kr+2];
 //                 DrD3 = Dr2;     Dr3 = Dr[l+2]; DrL3 = Dr[jl+2];  DrB3 = Dr[kl+2];
 //                 Fr3  = fr[l+2]; Fi3 = fi[l+2];
-//                 
+//
 //                 XrD4 = Xr3;     Xr4 = XrU3;    XrU4 = xr[l+4];   XrL4 = xr[jl+3]; XrR4 = xr[jr+3]; XrB4 = xr[kl+3]; XrF4 = xr[kr+3];
 //                 XiD4 = Xi3;     Xi4 = XiU3;    XiU4 = xi[l+4];   XiL4 = xi[jl+3]; XiR4 = xi[jr+3]; XiB4 = xi[kl+3]; XiF4 = xi[kr+3];
 //                 DrD4 = Dr3;     Dr4 = Dr[l+3]; DrL4 = Dr[jl+3];  DrB4 = Dr[kl+3];
@@ -491,47 +467,37 @@ void BTActionVariableDiffDiagonal3D(
                 
                 XrU1 = xr[l+1]; XrU2 = xr[l+2];  XrU3 = xr[l+3];  XrU4 = xr[l+4];
                 XrL1 = xr[jl];  XrL2 = xr[jl+1]; XrL3 = xr[jl+2]; XrL4 = xr[jl+3];
-                XrR1 = xr[jr];  XrR2 = xr[jr+1]; XrR3 = xr[jr+2]; XrR4 = xr[jr+3]; 
-                XrB1 = xr[kl];  XrB2 = xr[kl+1]; XrB3 = xr[kl+2]; XrB4 = xr[kl+3]; 
+                XrR1 = xr[jr];  XrR2 = xr[jr+1]; XrR3 = xr[jr+2]; XrR4 = xr[jr+3];
+                XrB1 = xr[kl];  XrB2 = xr[kl+1]; XrB3 = xr[kl+2]; XrB4 = xr[kl+3];
                 XrF1 = xr[kr];  XrF2 = xr[kr+1]; XrF3 = xr[kr+2]; XrF4 = xr[kr+3];
                 
                 XiU1 = xi[l+1]; XiU2 = xi[l+2];  XiU3 = xi[l+3];  XiU4 = xi[l+4];
                 XiL1 = xi[jl];  XiL2 = xi[jl+1]; XiL3 = xi[jl+2]; XiL4 = xi[jl+3];
-                XiR1 = xi[jr];  XiR2 = xi[jr+1]; XiR3 = xi[jr+2]; XiR4 = xi[jr+3]; 
-                XiB1 = xi[kl];  XiB2 = xi[kl+1]; XiB3 = xi[kl+2]; XiB4 = xi[kl+3]; 
+                XiR1 = xi[jr];  XiR2 = xi[jr+1]; XiR3 = xi[jr+2]; XiR4 = xi[jr+3];
+                XiB1 = xi[kl];  XiB2 = xi[kl+1]; XiB3 = xi[kl+2]; XiB4 = xi[kl+3];
                 XiF1 = xi[kr];  XiF2 = xi[kr+1]; XiF3 = xi[kr+2]; XiF4 = xi[kr+3];
                 
-                XrD2 = Xr1; Xr2 = XrU1; XrD3 = Xr2; Xr3 = XrU2; XrD4 = Xr3; Xr4 = XrU3; 
+                XrD2 = Xr1; Xr2 = XrU1; XrD3 = Xr2; Xr3 = XrU2; XrD4 = Xr3; Xr4 = XrU3;
                 XiD2 = Xi1; Xi2 = XiU1; XiD3 = Xi2; Xi3 = XiU2; XiD4 = Xi3; Xi4 = XiU3;
                 
                 DrD1 = Dr4;
                 Dr1  = Dr[l];  Dr2  = Dr[l+1];  Dr3  = Dr[l+2];  Dr4 = Dr[l+3];
-                DrL1 = Dr[jl]; DrL2 = Dr[jl+1]; DrL3 = Dr[jl+2]; DrL4 = Dr[jl+3];  
+                DrL1 = Dr[jl]; DrL2 = Dr[jl+1]; DrL3 = Dr[jl+2]; DrL4 = Dr[jl+3];
                 DrB1 = Dr[kl]; DrB2 = Dr[kl+1]; DrB3 = Dr[kl+2]; DrB4 = Dr[kl+3];
                 DrD2 = Dr1; DrD3 = Dr2; DrD4 = Dr3;
                 
                 Fr1 = fr[l]; Fr2 = fr[l+1]; Fr3 = fr[l+2]; Fr4 = fr[l+3];
                 Fi1 = fi[l]; Fi2 = fi[l+1]; Fi3 = fi[l+2]; Fi4 = fi[l+3];
-                                
-                dxr[l]   = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xr1, XrD1, XrU1, XrL1, XrR1, XrB1, XrF1, Dr1, DrD1, DrL1, DrB1)
-                           + (Fr1*Xr1 - Fi1*Xi1);
-                dxi[l]   = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xi1, XiD1, XiU1, XiL1, XiR1, XiB1, XiF1, Dr1, DrD1, DrL1, DrB1)
-                           + (Fi1*Xr1 + Fr1*Xi1);
-
-                dxr[l+1] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xr2, XrD2, XrU2, XrL2, XrR2, XrB2, XrF2, Dr2, DrD2, DrL2, DrB2)
-                           + (Fr2*Xr2 - Fi2*Xi2);
-                dxi[l+1] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xi2, XiD2, XiU2, XiL2, XiR2, XiB2, XiF2, Dr2, DrD2, DrL2, DrB2)
-                           + (Fi2*Xr2 + Fr2*Xi2);
-
-                dxr[l+2] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Dr3, DrD3, DrL3, DrB3)
-                           + (Fr3*Xr3 - Fi3*Xi3);
-                dxi[l+2] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xi3, XiD3, XiU3, XiL3, XiR3, XiB3, XiF3, Dr3, DrD3, DrL3, DrB3)
-                           + (Fi3*Xr3 + Fr3*Xi3);
-
-                dxr[l+3] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrL4, DrB4)
-                           + (Fr4*Xr4 - Fi4*Xi4);
-                dxi[l+3] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrL4, DrB4)
-                           + (Fi4*Xr4 + Fr4*Xi4);
+                
+                dxr[l]   = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xr1, XrD1, XrU1, XrL1, XrR1, XrB1, XrF1, Dr1, DrD1, DrL1, DrB1) + (Fr1*Xr1 - Fi1*Xi1);
+                dxr[l+1] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xr2, XrD2, XrU2, XrL2, XrR2, XrB2, XrF2, Dr2, DrD2, DrL2, DrB2) + (Fr2*Xr2 - Fi2*Xi2);
+                dxr[l+2] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Dr3, DrD3, DrL3, DrB3) + (Fr3*Xr3 - Fi3*Xi3);
+                dxr[l+3] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrL4, DrB4) + (Fr4*Xr4 - Fi4*Xi4);
+                
+                dxi[l]   = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xi1, XiD1, XiU1, XiL1, XiR1, XiB1, XiF1, Dr1, DrD1, DrL1, DrB1) + (Fi1*Xr1 + Fr1*Xi1);
+                dxi[l+1] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xi2, XiD2, XiU2, XiL2, XiR2, XiB2, XiF2, Dr2, DrD2, DrL2, DrB2) + (Fi2*Xr2 + Fr2*Xi2);
+                dxi[l+2] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xi3, XiD3, XiU3, XiL3, XiR3, XiB3, XiF3, Dr3, DrD3, DrL3, DrB3) + (Fi3*Xr3 + Fr3*Xi3);
+                dxi[l+3] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrL4, DrB4) + (Fi4*Xr4 + Fr4*Xi4);
                 
                 l+=NUNROLL; jl+=NUNROLL; jr+=NUNROLL; kl+=NUNROLL; kr+=NUNROLL;
             }
@@ -543,48 +509,38 @@ void BTActionVariableDiffDiagonal3D(
                 XiD4 = Xi4;  Xi4 = XiU4;  XiU4 = xi[l+1]; XiL4 = xi[jl]; XiR4 = xi[jr]; XiB4 = xi[kl]; XiF4 = xi[kr];
                 DrD4 = Dr4;  Dr4 = Dr[l]; DrL4 = Dr[jl];  DrB4 = Dr[kl];
                 Fr4 = fr[l]; Fi4 = fi[l];
-
-                dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrL4, DrB4)
-                           + (Fr4*Xr4 - Fi4*Xi4);
-                dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrL4, DrB4)
-                           + (Fi4*Xr4 + Fr4*Xi4);
+                
+                dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrL4, DrB4) + (Fr4*Xr4 - Fi4*Xi4);
+                dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrL4, DrB4) + (Fi4*Xr4 + Fr4*Xi4);
                 ++l; ++jl; ++jr; ++kl; ++kr;
             }
-
+            
             /* RHS Boundary Condition */
             XrD4 = Xr4;  Xr4 = XrU4;  XrU4 = xr[l-NX]; XrL4 = xr[jl]; XrR4 = xr[jr]; XrB4 = xr[kl]; XrF4 = xr[kr];
             XiD4 = Xi4;  Xi4 = XiU4;  XiU4 = xi[l-NX]; XiL4 = xi[jl]; XiR4 = xi[jr]; XiB4 = xi[kl]; XiF4 = xi[kr];
             DrD4 = Dr4;  Dr4 = Dr[l]; DrL4 = Dr[jl];  DrB4 = Dr[kl];
             Fr4 = fr[l]; Fi4 = fi[l];
-
-            dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrL4, DrB4)
-                       + (Fr4*Xr4 - Fi4*Xi4);
-            dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrL4, DrB4)
-                       + (Fi4*Xr4 + Fr4*Xi4);
+            
+            dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrL4, DrB4) + (Fr4*Xr4 - Fi4*Xi4);
+            dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrL4, DrB4) + (Fi4*Xr4 + Fr4*Xi4);
             
             
 //             /* LHS Boundary Condition */
-//             dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(xr[l],xr[l+NX],xr[l+1],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l+NX],Dr[jl],Dr[kl])
-//                        + (fr[l]*xr[l] - fi[l]*xi[l]);
-//             dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(xi[l],xi[l+NX],xi[l+1],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l+NX],Dr[jl],Dr[kl])
-//                        + (fi[l]*xr[l] + fr[l]*xi[l]);
-// 
+//             dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(xr[l],xr[l+NX],xr[l+1],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l+NX],Dr[jl],Dr[kl]) + (fr[l]*xr[l] - fi[l]*xi[l]);
+//             dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(xi[l],xi[l+NX],xi[l+1],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l+NX],Dr[jl],Dr[kl]) + (fi[l]*xr[l] + fr[l]*xi[l]);
+//
 //             /* Inner Points */
 //             ++l, ++jl, ++jr, ++kl, ++kr;
 //             for(i = 1; i < nx-1; ++i) {
 //                 /* Discretising using `div( D * grad(x) )` with backward divergence/forward gradient */
-//                 dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(xr[l],xr[l-1],xr[l+1],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl])
-//                            + (fr[l]*xr[l] - fi[l]*xi[l]);
-//                 dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(xi[l],xi[l-1],xi[l+1],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl])
-//                            + (fi[l]*xr[l] + fr[l]*xi[l]);
+//                 dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(xr[l],xr[l-1],xr[l+1],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl]) + (fr[l]*xr[l] - fi[l]*xi[l]);
+//                 dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(xi[l],xi[l-1],xi[l+1],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl]) + (fi[l]*xr[l] + fr[l]*xi[l]);
 //                 ++l, ++jl, ++jr, ++kl, ++kr;
 //             }
-// 
+//
 //             /* RHS Boundary Condition */
-//             dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(xr[l],xr[l-1],xr[l-NX],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl])
-//                        + (fr[l]*xr[l] - fi[l]*xi[l]);
-//             dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(xi[l],xi[l-1],xi[l-NX],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl])
-//                        + (fi[l]*xr[l] + fr[l]*xi[l]);
+//             dxr[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(xr[l],xr[l-1],xr[l-NX],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl]) + (fr[l]*xr[l] - fi[l]*xi[l]);
+//             dxi[l] = K * DIFFUSION_FWDDIV_D_BCKGRAD_DIAG(xi[l],xi[l-1],xi[l-NX],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl]) + (fi[l]*xr[l] + fr[l]*xi[l]);
         }
     }
     
@@ -620,6 +576,6 @@ void BTActionVariableDiffDiagonal4D(
     for(w = 0; w < nxnynznw; w += nxnynz) {
         BTActionVariableDiffDiagonal3D( &dxr[w], &dxi[w], &xr[w], &xi[w], fr, fi, Dr, Di, K, gsize );
     }
-        
+    
     return;
 }
