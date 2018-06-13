@@ -43,8 +43,6 @@ D_Tissue = 2000; %[um^2/s]
 D_Blood = []; %[um^2/s]
 D_VRS = 3037; %[um^2/s]
 
-order = 2; %Order of time stepper (must be 2 or 4 currently)
-
 %% Geometry Settings
 % Results from SE perfusion orientation simulations
 % NOTE: For calculating the BOLD curve, it is important to consider that

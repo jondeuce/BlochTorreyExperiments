@@ -136,8 +136,8 @@ diary(DiaryFilename);
 
 % Objective function
 normfun = 'default';
-% weights = 'uniform';
-weights = BinCounts/sum(BinCounts);
+weights = 'uniform';
+% weights = BinCounts/sum(BinCounts);
 
 optfun = @(x) perforientation_objfun( ...
     x, alpha_range, dR2_Data, [], weights, normfun, ...

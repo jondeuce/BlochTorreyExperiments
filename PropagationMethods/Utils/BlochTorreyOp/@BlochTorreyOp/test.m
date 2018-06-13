@@ -1,9 +1,9 @@
-function test
+function test(Gsize)
 
 rng('default')
 b = true;
 
-Gsize = [5,6,4];
+if nargin < 1; Gsize = [5,4,3]; end
 Vsize = (1+rand())*(Gsize./max(Gsize));
 h = mean(Vsize./Gsize);
 x0 = randnc(Gsize);
