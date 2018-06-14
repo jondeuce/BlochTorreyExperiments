@@ -73,7 +73,7 @@ TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512
 % input('Press enter to continue...');
 
 %with diffusion
-D_Tissue = 2000; %[um^2/s]
+D_Tissue = 1500; %[um^2/s]
 D_Blood = 3037; %[um^2/s]
 D_VRS = 3037; %[um^2/s]
 VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless]
@@ -104,7 +104,7 @@ FigTypes = {'png'}; % outputs a lot of figures, so just 'png' is probably best
 CloseFigs = true;
 SaveResults = true;
 StallTime_Days = 100; % max time without seeing an improvement in objective
-MaxTime_Days = 21; % max time for full simulation
+MaxTime_Days = 20; % max time for full simulation
 
 % Initial Swarm
 linspace_fun = @linspacePeriodic; % lb < initial_param < ub
