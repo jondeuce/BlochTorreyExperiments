@@ -1,4 +1,4 @@
-function test(Gsize)
+function all_tests_passed = test(Gsize)
 
 rng('default')
 b = true;
@@ -72,6 +72,8 @@ b = run_suite_combinations('Gamma zeros, Dcoeff const array', ...
 if b; fprintf('\nAll tests passed\n\n');
 else; warning('Some tests failed');
 end
+
+if nargout > 0; all_tests_passed = b; end
 
 end
 

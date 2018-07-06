@@ -47,8 +47,8 @@ alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
 
 % ---- SE w/ Diffusion Initial Guess ---- %
 %       CA        iBVF          aBVF
-lb  = [ 4.0000,   0.8000/100,   0.8000/100 ];
-ub  = [ 8.0000,   2.0000/100,   2.0000/100 ];
+lb  = [ 4.0000,   0.9000/100,   0.9000/100 ];
+ub  = [ 8.0000,   1.8000/100,   1.8000/100 ];
 
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize] = get_SE_data(alpha_range);
 
@@ -76,7 +76,9 @@ TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512
 D_Tissue = 2000; %[um^2/s]
 D_Blood = 3037; %[um^2/s]
 D_VRS = 3037; %[um^2/s]
-VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless]
+% VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless]
+VRSRelativeRad = sqrt(5/2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(5/2) => 1.5X
+
 % Nsteps = 10;
 % StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
 Nsteps = 2;
@@ -104,7 +106,7 @@ FigTypes = {'png'}; % outputs a lot of figures, so just 'png' is probably best
 CloseFigs = true;
 SaveResults = true;
 StallTime_Days = 100; % max time without seeing an improvement in objective
-MaxTime_Days = 21; % max time for full simulation
+MaxTime_Days = 5; % max time for full simulation
 
 % Initial Swarm
 linspace_fun = @linspacePeriodic; % lb < initial_param < ub
@@ -127,6 +129,7 @@ PSOpts = optimoptions(@particleswarm, ...
     'SwarmSize', SwarmSize, ...
     'InitialSwarm', InitSwarm, ...
     'StallTimeLimit', StallTime_Days*24*60*60, ... % StallTime_Days days [secs]
+    'MaxStallIterations', 100, ... % Max number of stall iterations
     'MaxTime', MaxTime_Days*24*60*60, ... % MaxTime_Days days [secs]
     'OutputFcn', {@pswplotranges, @pswplotvalues} ...
     );
@@ -170,3 +173,23 @@ save([datestr(now,30),'__','ParticleSwarmFitResults'], '-v7');
 diary(DiaryFilename);
 diary off
 
+%Parse for particle swarm printed
+fin = fopen(DiaryFilename, 'r');
+fout = fopen([datestr(now,30),'__','PSIterationsOutput.txt'], 'w');
+
+fprintf(fout, '%s\n', '                                 Best            Mean     Stall');
+fprintf(fout, '%s\n', 'Iteration     f-count            f(x)            f(x)    Iterations');
+
+tline = fgetl(fin);
+while ischar(tline)
+    if ~isempty(tline)
+        C = textscan(tline, '%d%d%f%f%d');
+        if ~any(cellfun(@isempty,C))
+            fprintf(fout, '%s\n', tline);
+        end
+    end
+    tline = fgetl(fin);
+end
+
+fclose(fout);
+fclose(fin);

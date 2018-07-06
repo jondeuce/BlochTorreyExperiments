@@ -709,7 +709,7 @@ classdef BlochTorreyOp
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     methods (Static = true)
         % Testing script
-        test(Gsize)
+        all_tests_passed = test(Gsize)
         
         % Check if grid size is isotropic
         function b = is_isotropic(h)

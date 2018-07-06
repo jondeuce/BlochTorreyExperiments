@@ -36,11 +36,11 @@ end
 if isempty(dR2)
     [dR2, ResultsStruct] = perforientation_fun(params, xdata, dR2_Data, varargin{:}, 'Weights', weights);
     
-    % Fake dR2 with unique minimum at params = params0 for testing
-    %     fakerand = @(siz) reshape( mod(1:prod(siz),pi)/pi, siz ); %deterministic ~uniformly random
-    %     params0 = [5; 1.25/100; 0.5/100]; % [CA; iBVF; aBVF]
-    %     dR2_noise = reshape( sin( fakerand([numel(dR2_Data), numel(params)]) * (params(:) - params0(:)).^2 ), size(dR2_Data) );
-    %     dR2 = dR2_Data + dR2_noise;
+%     % Fake dR2 with unique minimum at params = params0 for testing
+%     fakerand = @(siz) reshape( mod(1:prod(siz),pi)/pi, siz ); %deterministic ~uniformly random
+%     params0 = [5; 1.0/100; 1.0/100]; % [CA; iBVF; aBVF]
+%     dR2_noise = reshape( sin( fakerand([numel(dR2_Data), numel(params)]) * (params(:) - params0(:)).^2 ), size(dR2_Data) );
+%     dR2 = dR2_Data + dR2_noise;
 end
 
 objval = normfun(dR2, dR2_Data, weights);

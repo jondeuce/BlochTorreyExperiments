@@ -25,6 +25,9 @@ sccprj/
 # Simulink autosave extension
 *.autosave
 
+# Lock files
+*.nfs*
+
 #######################
 ## GENERAL GITIGNORE ##
 #######################
