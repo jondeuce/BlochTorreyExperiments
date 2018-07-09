@@ -20,8 +20,7 @@ args = p.Results;
 args = appendDerivedQuantities(args);
 
 for f = fieldnames(args).'
-    fname = f{1};
-    GammaSettings.(fname) = args.(fname);
+    GammaSettings.(f{1}) = args.(f{1});
 end
 
 end
@@ -50,9 +49,7 @@ args.Angle_Rad = args.Angle_Deg * (pi/180);
     args.dR2_Blood_Oxy,   ... % Change in R2 in Venous Blood due to Oxygenation [ms]
     args.R2_ArterialBlood,      ... % Total R2 in Arterial Blood [ms]
     args.dR2_ArterialBlood_Oxy, ... % Change in R2 in Arterial Blood due to Oxygenation [ms]
-    args.dR2_Blood_CA,          ... % Change in R2 in both Venous and Arterial Blood due to CA [ms]
-    args.R2_CSF,                ... % CSF relaxation constant [Hz] 
-    args.R2_VirchowRobin,       ... % Virchow-Robin space relaxation constant [Hz]
+    args.dR2_Blood_CA           ... % Change in R2 in both Venous and Arterial Blood due to CA [ms]
 	] = ...
     R2_Model(args.B0, args.Hct, args.Y, args.Ya, args.CA, args.dR2_CA_per_mM);
 
@@ -69,10 +66,9 @@ args.Angle_Rad = args.Angle_Deg * (pi/180);
 end
 
 function [R2_Tissue, R2_Tissue_Base, R2_Blood, dR2_Blood_Oxy, ...
-          R2_ArterialBlood, dR2_ArterialBlood_Oxy, dR2_Blood_CA, ...
-          R2_CSF, R2_VirchowRobin] = ...
+          R2_ArterialBlood, dR2_ArterialBlood_Oxy, dR2_Blood_CA] = ...
           R2_Model(B0, Hct, Yv, Ya, CA, dR2_CA_per_mM)
-        
+
 if B0 == -3.0
     % Relaxation constant in blood vs. tissue as a function of Hct and Y:
     % 	Zhao et al., Oxygenation and Hematocrit Dependence of Transverse
@@ -102,13 +98,7 @@ if B0 == -3.0
     %    Magnetic Field Strengths: Theoretical Considerations and
     %    Experimental Results, MRM 2008
     T2_Tissue_Base = 69; % +/- 3 [ms]
-    R2_Tissue_Base = 1000/T2_Tissue_Base; % [ms] -> [Hz]
-    
-    %Spijkerman J, Petersen E, Hendrikse J, et al. T2 mapping of cerebrospinal fluid: 3T versus 7T.
-    %Magnetic Resonance Materials in Physics, Biology and Medicine. Epub ahead of print 6 November 2017. DOI: 10.1007/s10334-017-0659-3.
-    T2_CSF = 1790; % T2 of CSF at 3T [ms]; value corrected for partial volume effects; uncorrected value is 1672 ms
-    R2_CSF = 1000/T2_CSF; % CSF relaxation constant [ms] -> [Hz] 
-    R2_VirchowRobin = R2_CSF; % Virchow-Robin space relaxation constant [Hz]
+    R2_Tissue_Base = 1000/T2_Tissue_Base; % [ms] -> [1/s]
     
 elseif B0 == -7.0
     
@@ -132,17 +122,10 @@ elseif B0 == -7.0
     %    Experimental Results, MRM 2008
     
     T2_Tissue_Base = 45.9; % +/-1.9 [ms]
-    R2_Tissue_Base = 1000/T2_Tissue_Base; % [ms] -> [Hz]
-    
-    %Spijkerman J, Petersen E, Hendrikse J, et al. T2 mapping of cerebrospinal fluid: 3T versus 7T.
-    %Magnetic Resonance Materials in Physics, Biology and Medicine. Epub ahead of print 6 November 2017. DOI: 10.1007/s10334-017-0659-3.
-    T2_CSF = 1010; % T2 of CSF at 7T [ms]; value corrected for partial volume effects; uncorrected value is 892 ms
-    R2_CSF = 1000/T2_CSF; % CSF relaxation constant [ms] -> [Hz] 
-    R2_VirchowRobin = R2_CSF; % Virchow-Robin space relaxation constant [Hz]
+    R2_Tissue_Base = 1000/T2_Tissue_Base; % [ms] -> [1/s]
     
 else
-    error(['R2 relaxation times are only configured for B0 = -3T or -7T; ', ...
-           'input B0 is %s'], num2str(B0,3));
+    error('Only have R2_Tissue baseline values for B0 = -3.0 or B0 = -7.0');
 end
 
 % R2_Blood_Base = 31.1; % Typical value [ms]
@@ -164,11 +147,11 @@ dChi_Blood_CA = CA * dChi_CA_per_mM;
 % Susceptibilty of blood relative to tissue due to blood oxygenation and 
 % hematocrit concentration is given by:
 %   deltaChi_Blood_Tissue  :=   Hct * (1-Y) * 2.26e-6 [T/T]
-dChi_Blood_Oxy = 2.26e-6 * Hct .* (1-Yv);
-dChi_ArterialBlood_Oxy = 2.26e-6 * Hct .* (1-Ya);
+dChi_Blood_Oxy   = 2.26e-6 * Hct.*(1-Yv);
+dChi_ArterialBlood_Oxy = 2.26e-6 * Hct.*(1-Ya);
 
 % Susceptibility difference in blood vs. tissue including contrast agent as well
-dChi_Blood = dChi_Blood_Oxy + dChi_Blood_CA;
+dChi_Blood   = dChi_Blood_Oxy   + dChi_Blood_CA;
 dChi_ArterialBlood = dChi_ArterialBlood_Oxy + dChi_Blood_CA;
 
 end

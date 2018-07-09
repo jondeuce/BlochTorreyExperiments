@@ -7,7 +7,6 @@ for ii = 1:numel(G)
     G(ii).Idx = [];
     G(ii).VasculatureMap = [];
     G(ii).ArterialIndices = [];
-    G(ii).VRSIndices = [];
 end
 
 end

@@ -57,8 +57,7 @@ addParameter(p,'iBVF',  []);
 addParameter(p,'aBVF',  []);
 
 addParameter(p,'Rmajor',[]);
-addParameter(p,'VRSRelativeRad',[]);
-        
+
 %-------------------------------------------------------------------------%
 % Optional parameters
 %-------------------------------------------------------------------------%
@@ -80,9 +79,8 @@ end
 
 function G = setParsedArgs(G,p)
 
-NamedArgs = {'VoxelSize','VoxelCenter','GridSize','Nmajor','MajorAngle',...
-    'NumMajorArteries','MinorArterialFrac','MinorDilation','Rmajor',...
-    'Rminor_mu','Rminor_sig','VRSRelativeRad','Verbose','seed'};
+NamedArgs = {'VoxelSize','VoxelCenter','GridSize','Nmajor','MajorAngle','NumMajorArteries', ...
+    'MinorArterialFrac','MinorDilation','Rmajor','Rminor_mu','Rminor_sig','Verbose','seed'};
 TargetArgs = {'BVF','iRBVF','aRBVF','iBVF','aBVF'};
 
 for f = NamedArgs; G.(f{1}) = p.Results.(f{1}); end
@@ -128,9 +126,7 @@ switch upper(G.opts.MajorVesselMode)
     case 'ABVF_FIXED'
         [G] = CalculateBVFValues(G);
     case 'RMAJOR_FIXED'
-        % do nothing
-    otherwise
-        error('Unknown option "MajorVesselMode = %s"', G.opts.MajorVesselMode)
+        
 end
 
 G.SubVoxSize  = mean(G.VoxelSize./G.GridSize);
@@ -148,7 +144,7 @@ Minor_Area = pi * ( G.Rminor_mu.^2 + G.Rminor_sig.^2 );
 
 % Minor Volume ~ N*Area*Height (underestimated)
 VoxHeight = G.VoxelSize(3);
-% NumMinorVesselsGuess = round( Minor_BloodVol ./ (VoxHeight * Minor_Area) );
+NumMinorVesselsGuess = round( Minor_BloodVol ./ (VoxHeight * Minor_Area) );
 
 % Empirical model for average cylinder length:
 %     see: GeometryGeneration/old/test/AvgLineLength.m

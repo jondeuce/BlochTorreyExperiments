@@ -33,9 +33,6 @@ function D = dipole(mSize, vSize, BDir, prec)
                        -mLow(2) : dxyz(2) : mHigh(2),...
                        -mLow(3) : dxyz(3) : mHigh(3));
     
-%     X = ifftshift(X);
-%     Y = ifftshift(Y);
-%     Z = ifftshift(Z);               
     kz = X.*BDir(1) + Y.*BDir(2) + Z.*BDir(3);
     k2 = X.*X + Y.*Y + Z.*Z;
     clear X Y Z

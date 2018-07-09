@@ -37,7 +37,7 @@ BDir  = [sin(alpha); 0; cos(alpha)];
 % tmp here is just dChi scaled by gyro*B0 to save a multiplication later
 tmp   = (gyro * B0 * dChiV) .* Geom.VasculatureMap;
 if ~isempty(Geom.ArterialIndices)
-    tmp(Geom.ArterialIndices) = gyro * B0 * dChiA;
+    tmp(Geom.ArterialIndices) = tmp(Geom.ArterialIndices) + (gyro * B0 * (dChiA - dChiV));
 end
 
 % convolve the (scaled) dChi map with the dipole kernel
@@ -52,22 +52,16 @@ end
 
 function r2 = get_R2(GammaSettings, Geom)
 
-R2_ven = GammaSettings.R2_Blood; % venous blood R2
-R2_art = GammaSettings.R2_ArterialBlood; % arterial blood R2
-R2_tis = GammaSettings.R2_Tissue; % tissue R2
-R2_vrs = GammaSettings.R2_VirchowRobin; % Virchow-Robin space R2
+R2_vb = GammaSettings.R2_Blood;
+R2_ab = GammaSettings.R2_ArterialBlood;
+R2t = GammaSettings.R2_Tissue;
 
 % r2 equals R2_Blood where Vmap == 1, and R2_Tissue where Vmap == 0
-r2 = (R2_ven - R2_tis) .* Geom.VasculatureMap + R2_tis;
+r2 = (R2_vb - R2t) .* Geom.VasculatureMap + R2t;
 
-% set arterial blood parameters, if present
+% add in arterial blood effects, if present
 if ~isempty(Geom.ArterialIndices)
-    r2(Geom.ArterialIndices) = R2_art;
-end
-
-% set Virchow-Robin space R2 value
-if ~isempty(Geom.VRSIndices)
-    r2(Geom.VRSIndices) = R2_vrs;
+    r2(Geom.ArterialIndices) = r2(Geom.ArterialIndices) + (R2_ab - R2_vb);
 end
 
 end

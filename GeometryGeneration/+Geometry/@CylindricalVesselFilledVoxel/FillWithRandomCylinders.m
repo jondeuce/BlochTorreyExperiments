@@ -44,19 +44,10 @@ G = CalculateVasculatureMap( G );
 % Add arteries
 %==========================================================================
 
-t_SetArteries = tic;
-G = SetArteries(G);
-t_SetArteries = toc(t_SetArteries);
-if G.Verbose; display_toc_time( t_SetArteries, 'setting arteries', 0 ); end
-
-%==========================================================================
-% Add Virchow-Robin space
-%==========================================================================
-
-t_VirchowRobin = tic;
-G = SetVirchowRobinSpace(G);
-t_VirchowRobin = toc(t_VirchowRobin);
-if G.Verbose; display_toc_time( t_VirchowRobin, 'setting VRS', 0 ); end
+t_AddArteries = tic;
+G = AddArteries(G);
+t_AddArteries = toc(t_AddArteries);
+if G.Verbose; display_toc_time( t_AddArteries, 'adding arteries', 0 ); end
 
 %==========================================================================
 % Show Resulting Accuracy Info

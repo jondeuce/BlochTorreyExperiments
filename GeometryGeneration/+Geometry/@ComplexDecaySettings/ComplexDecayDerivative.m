@@ -5,9 +5,9 @@ if nargin < 5; varargin = {}; end
 
 switch upper(Variable)
     case 'CA'
-        if isempty(Geom.ArterialIndices) && isempty(Geom.VRSIndices) && isempty(varargin)
-            % No arteries or VRS, so can compute derivative exactly and
-            % efficiently (no fft's) using only Gamma (no Gamma_0 needed)
+        if isempty(Geom.ArterialIndices) && isempty(varargin)
+            % No arteries, so can compute derivative exactly and
+            % efficiently (no fft's) using only Gamma
             dGamma = CADerivative_NoArteries(GammaSettings_CA, Geom, Gamma, varargin{:});
         else
             % Gamma depends linearly on CA, so finite difference is exact,

@@ -8,7 +8,7 @@ classdef CylindricalVesselFilledVoxel
         VoxelCenter       % Center of Voxel, e.g. [1500, 1500, 1500] um
         SubVoxSize        % Size of subvoxels, e.g. [3000/512,3000/512,3000/512] um
         Nmajor            % Number of major vessels
-        MajorAngle        % Angle of major vessels w.r.t z-axis (default 0) [degrees]
+        MajorAngle        % Angle of major vessels w.r.t z-axis (default 0)
         NumMajorArteries  % Number of major vessels which are arteries
         NumMinorArteries  % Number of minor vessels which are arteries
         MinorArterialFrac % (Target) Fraction of minor vessels which are arteries
@@ -27,8 +27,6 @@ classdef CylindricalVesselFilledVoxel
         MinorDilation, MinorRadiusFactor, isMinorDilated % Minor dilation settings
         MajorArteries, MinorArteries % Lists of vessels which are arteries
         ArterialIndices % Indices for all arteries
-        VRSRelativeRad % Virchow-Robin space radius relative to the major vessel radius
-        VRSIndices % Indices for the Virchow-Robin space surrounding the anisotropic vessels
         VasculatureMap % Boolean map which is 1 at points containings vessels, and 0 elsewhere
         MetaData % Field for storing arbitrary MetaData of interest
     end
