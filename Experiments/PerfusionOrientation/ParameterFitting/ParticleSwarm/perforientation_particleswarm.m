@@ -21,9 +21,9 @@ diary(DiaryFilename);
 % ---- Angles to simulate ---- %
 % alpha_range = 2.5:5.0:87.5;
 % alpha_range = 7.5:10.0:87.5;
-% alpha_range = 17.5:10.0:87.5;
+alpha_range = 17.5:10.0:87.5;
 % alpha_range = 7.5:20.0:87.5;
-alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
+% alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
 % alpha_range = [37.5, 52.5, 72.5, 17.5, 87.5];
 % alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 
@@ -47,8 +47,8 @@ alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
 
 % ---- SE w/ Diffusion Initial Guess ---- %
 %       CA        iBVF          aBVF
-lb  = [ 4.0000,   0.9000/100,   0.9000/100 ];
-ub  = [ 8.0000,   1.8000/100,   1.8000/100 ];
+lb  = [ 3.0000,   1.5000/100,   1.2000/100 ];
+ub  = [ 5.0000,   2.1000/100,   1.8000/100 ];
 
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize] = get_SE_data(alpha_range);
 
