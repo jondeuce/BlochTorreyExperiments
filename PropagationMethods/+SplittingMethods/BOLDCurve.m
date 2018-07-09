@@ -39,8 +39,11 @@ for ii = 1:NumAngles
     t_Base  =  tic;
     
     V = getstepper( CalculateComplexDecay( GammaSettingsY0, Geom ) );
-    [ Signal_Baseline ] = PropBOLDSignal( V, EchoTimes, type );
-    Results = push( Results, Signal_Baseline, [], EchoTimes, deg2rad(alpha), ResultsArgs{3:end} );
+    [ Signal_Baseline, Signal_Baseline_Intra, Signal_Baseline_Extra, Signal_Baseline_VRS ] = PropBOLDSignal( V, EchoTimes, Geom, type );
+    Results = push( Results, Signal_Baseline,[],                   [],                   [],                  [], [], [], [], EchoTimes, deg2rad(alpha), ResultsArgs{3:end} );
+    Results = push( Results, [],             Signal_Baseline_Intra,[],                   [],                  [], [], [], [], EchoTimes, deg2rad(alpha), ResultsArgs{3:end} );
+    Results = push( Results, [],             [],                   Signal_Baseline_Extra,[],                  [], [], [], [], EchoTimes, deg2rad(alpha), ResultsArgs{3:end} );
+    Results = push( Results, [],             [],                   [],                   Signal_Baseline_VRS, [], [], [], [], EchoTimes, deg2rad(alpha), ResultsArgs{3:end} );
     
     display_toc_time( toc(t_Base), sprintf( 'Angle %2d/%2d, %5.2f%s, Baseline ', ...
         ii, NumAngles, alpha, '°' ) );
@@ -49,8 +52,11 @@ for ii = 1:NumAngles
     t_Base  =  tic;
     
     V = getstepper( CalculateComplexDecay( GammaSettingsY, Geom ) );
-    [ Signal_Activated ] = PropBOLDSignal( V, EchoTimes, type );
-    Results = push( Results, [], Signal_Activated, EchoTimes, deg2rad(alpha), ResultsArgs{3:end} );
+    [ Signal_Activated, Signal_Activated_Intra, Signal_Activated_Extra, Signal_Activated_VRS] = PropBOLDSignal( V, EchoTimes, Geom, type );
+    Results = push( Results, [], [], [], [], Signal_Activated, [],                     [],                     [],                   EchoTimes, deg2rad(alpha), ResultsArgs{3:end} );
+    Results = push( Results, [], [], [], [], [],               Signal_Activated_Intra, [],                     [],                   EchoTimes, deg2rad(alpha), ResultsArgs{3:end} );
+    Results = push( Results, [], [], [], [], [],               [],                     Signal_Activated_Extra, [],                   EchoTimes, deg2rad(alpha), ResultsArgs{3:end} );
+    Results = push( Results, [], [], [], [], [],               [],                     [],                     Signal_Activated_VRS, EchoTimes, deg2rad(alpha), ResultsArgs{3:end} );
     
     display_toc_time( toc(t_Base), sprintf( 'Angle %2d/%2d, %5.2f%s, Activated', ...
         ii, NumAngles, alpha, '°' ) );
@@ -63,7 +69,7 @@ end
 
 end
 
-function [ Signal ] = PropBOLDSignal( V, EchoTimes, type )
+function [ Signal, SignalIntra, SignalExtra, SignalVRS] = PropBOLDSignal( V, EchoTimes, Geom, type )
 
 ScaleSum = prod(V.VoxelSize) / prod(V.GridSize);
 TE = EchoTimes(:).';
@@ -94,13 +100,27 @@ Time0 = 0;
 M0 = double(1i);
 Signal0 = M0 * prod(V.VoxelSize);
 Signal = cell(NumEchoTimes,1);
-for ll = 1:NumEchoTimes; Signal{ll} = [Time0, Signal0]; end
+SignalIntra = cell(NumEchoTimes,1);
+SignalExtra = cell(NumEchoTimes,1);
+SignalVRS = cell(NumEchoTimes,1);
+for ll = 1:NumEchoTimes
+    Signal{ll} = [Time0, Signal0]; 
+    SignalIntra{ll} = [Time0, Signal0]; 
+    SignalExtra{ll} = [Time0, Signal0]; 
+    SignalVRS{ll} = [Time0, Signal0]; 
+end
 
 % ScaleSum converts from units of voxels^3 to um^3
 IntegrateMagnetization = @(M) ScaleSum * sum(sum(sum(M,1),2),3);
 
 % Initialize current magnetization
 Mcurr = M0 * ones( V.GridSize );
+
+
+GeomSize = size(Geom.VasculatureMap);
+VRS_Map = zeros(GeomSize);
+VRS_Map(Geom.VRSIndices) = 1;
+
 
 for kk = 1:NumEchoTimes
     
@@ -114,6 +134,12 @@ for kk = 1:NumEchoTimes
                 [Mcurr,~,~,V] = step(V, Mcurr);
                 for ll = kk:NumEchoTimes
                     Signal{ll} = [Signal{ll}; [Signal{ll}(end,1)+dt, IntegrateMagnetization(Mcurr)]];
+                    SignalIntra{ll} = [SignalIntra{ll}; ...
+                                    [SignalIntra{ll}(end,1)+dt, IntegrateMagnetization(Mcurr.*Geom.VasculatureMap)]];
+                    SignalExtra{ll} = Signal{ll};
+                    SignalExtra{ll}(:,2) =  Signal{ll}(:,2) - SignalIntra{ll}(:,2); % assign signal difference
+                    SignalVRS{ll} = [SignalVRS{ll}; ...
+                                    [SignalVRS{ll}(end,1)+dt, IntegrateMagnetization(Mcurr.*VRS_Map)]];
                 end
                 
             end
@@ -149,5 +175,16 @@ if addStartPoint
     % Add initial signal to the front of subsequent simulated signals
     Signal = [Signal{1}(1,:); Signal];
 end
-
+if addStartPoint
+    % Add initial signal to the front of subsequent simulated signals
+    SignalIntra = [SignalIntra{1}(1,:); SignalIntra];
+end
+if addStartPoint
+    % Add initial signal to the front of subsequent simulated signals
+    SignalExtra = [SignalExtra{1}(1,:); SignalExtra];
+end
+if addStartPoint
+    % Add initial signal to the front of subsequent simulated signals
+    SignalVRS = [SignalVRS{1}(1,:); SignalVRS];
+end
 end

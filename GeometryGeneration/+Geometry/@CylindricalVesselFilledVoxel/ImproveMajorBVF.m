@@ -11,6 +11,11 @@ isUnit      =   true;
 isCentered  =   true;
 prec        =   'double';
 
+% Check if need to add minor vessels
+if G.Targets.aBVF == 0
+    return
+end
+
 % We call the angle of the major vessels to be effectively zero if the sine
 % of the angle is less than one tenth the smallest relative subvoxel size,
 % as in this case, the angle between the major vessel and vertical would

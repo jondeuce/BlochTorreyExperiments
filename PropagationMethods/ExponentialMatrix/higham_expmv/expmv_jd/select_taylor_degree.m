@@ -72,7 +72,7 @@ if force_no_estm || (~force_estm && alpha_estm_expensive)
     % Base choice of m on normA, not the alpha_p.
     unA = 1;
     c = normA;
-    alpha = c*ones(p_max-1,1);
+    alpha = c.*ones(p_max-1,1);
 else
     unA = 0;
     eta = zeros(p_max,1); alpha = zeros(p_max-1,1);

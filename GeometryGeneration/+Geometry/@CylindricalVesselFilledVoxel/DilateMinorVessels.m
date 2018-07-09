@@ -11,6 +11,11 @@ if nargin < 2
     DilationFactor = G.MinorDilation;
 end
 
+% Check if there are minor vessels to dilate
+if G.Nminor == 0
+    return
+end
+
 if abs(DilationFactor - 1.0) < 1e-8
     return
 elseif DilationFactor < 0

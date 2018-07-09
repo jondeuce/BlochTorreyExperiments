@@ -1,33 +1,34 @@
-function [ varargout ] = plot( R, varargin )
+function [ varargout ] = plotOxyIntra( R, varargin )
 %PLOT
 
 p = getInputParser;
 parse(p,varargin{:})
 opts = p.Results;
 
-[echotimes, alphas, boldsignals] = getboldplotargs(R,opts);
-for idx = 1:numel(boldsignals)
-    [~,~,fig(idx)] = plotBOLDSignal(R,echotimes,alphas,boldsignals{idx},opts);
+[echotimes, alphas, deoxysignals, deoxysignalsIntra, deoxysignalsExtra, deoxysignalsVRS, ...
+                  oxysignals, oxysignalsIntra, oxysignalsExtra, oxysignalsVRS] = getboldplotargs(R,opts);
+for idx = 1:numel(oxysignalsIntra)
+    [~,~,fig(idx)] = plotBOLDSignal(R,echotimes,alphas,oxysignalsIntra{idx},opts);
 end
 
 switch nargout
     case 1
         varargout{1} = fig;
     case 3
-        [varargout{1:3}] = deal(echotimes, alphas, boldsignals);
+        [varargout{1:3}] = deal(echotimes, alphas, oxysignalsIntra);
 end
 
 end
 
-function [hbold,leg,fig] = plotBOLDSignal(R,echotimes,alphas,boldsignals,opts)
+function [hbold,leg,fig] = plotBOLDSignal(R,echotimes,alphas,oxysignalsIntra,opts)
 
 switch upper(opts.scalefactor)
     case 'NORMALIZE'
-        opts.scalefactor = 1/max(boldsignals(:));
+        opts.scalefactor = 1/max(oxysignalsIntra(:));
     case 'RELATIVE'
         opts.scalefactor = 1/prod(R.MetaData.SimSettings.VoxelSize);
 end
-boldsignals = opts.scalefactor * boldsignals;
+oxysignalsIntra = opts.scalefactor * oxysignalsIntra;
 
 cmap = jet(numel(alphas));
 
@@ -37,27 +38,30 @@ switch upper(opts.fig)
 end
 
 hold on
-hx = plot(gca, echotimes, boldsignals, 'x', 'markersize', 8);
+hx = plot(gca, echotimes, oxysignalsIntra, 'x', 'markersize', 8);
 
 if opts.interp
     switch upper(opts.interptype)
         case 'SPLINE'
-            coeffs = spline(echotimes.',boldsignals.');
+            coeffs = spline(echotimes.',oxysignalsIntra.');
             %[TEinterps,boldinterps] = fplot(@(t)ppval(coeffs,t(:).').',[echotimes(1),echotimes(end)]);
             TEinterps = linspace(echotimes(1),echotimes(end),200);
             boldinterps = ppval(coeffs,TEinterps);
             figure(fig), hbold = plot(TEinterps, boldinterps);
-            ymax = max( max(boldsignals(:)), max(boldinterps(:)) );
+            ymax = max( max(oxysignalsIntra(:)), max(boldinterps(:)) );
+            ymin = min( min(oxysignalsIntra(:)), min(boldinterps(:)) );
         case 'CHEBFUN'
-            boldinterps = chebfun(boldsignals,[echotimes(1),echotimes(end)],'equi');
+            boldinterps = chebfun(oxysignalsIntra,[echotimes(1),echotimes(end)],'equi');
             figure(fig), hbold = plot(boldinterps);
-            ymax = max( max(boldsignals(:)), max(max(boldinterps)) );
+            ymax = max( max(oxysignalsIntra(:)), max(max(boldinterps)) );
+            ymin = min( min(oxysignalsIntra(:)), min(min(boldinterps)) );
     end
 else
-    figure(fig), hbold = plot(echotimes, boldsignals);
-    ymax = max(boldsignals(:));
+    figure(fig), hbold = plot(echotimes, oxysignalsIntra);
+    ymax = max(oxysignalsIntra(:));
+    ymin = min(oxysignalsIntra(:));
 end
-ylim([0,ymax]);
+ylim([ymin,ymax]);
 
 for ii = 1:numel(alphas)
     set(hx(ii),'color',cmap(ii,:));
@@ -85,14 +89,18 @@ xlim([xmin,xmax]);
 
 end
 
-function [echotimes, alphas, boldsignals] = getboldplotargs(R,opts)
+function [echotimes, alphas, deoxysignals, deoxysignalsIntra, deoxysignalsExtra, deoxysignalsVRS, ...
+                  oxysignals, oxysignalsIntra, oxysignalsExtra, oxysignalsVRS] = getboldplotargs(R,opts)
 
 % Convert to standard for BOLDResults
 echotimes = convertEchotimes(opts.echotimes,opts.timeunits,'s');
 alphas = convertAlphas(opts.alphas,opts.angleunits,'rad');
 
 boldargs = {echotimes,alphas};
-[echotimes, alphas, boldsignals] = getBOLDSignals(R,boldargs{:});
+[echotimes, alphas, ...
+ boldsignals, boldsignalsIntra, boldsignalsExtra, boldsignalsVRS, ...
+ deoxysignals, deoxysignalsIntra, deoxysignalsExtra, deoxysignalsVRS, ...
+ oxysignals, oxysignalsIntra, oxysignalsExtra, oxysignalsVRS] = getBOLDSignals(R,boldargs{:});
 
 % Convert to desired units for plotting
 echotimes = convertEchotimes(echotimes,'s',opts.timeunits);
@@ -104,8 +112,8 @@ if any(~isinf([opts.minTE,opts.maxTE,opts.minAlpha,opts.maxAlpha]))
     alphaidx = opts.minAlpha <= alphas & alphas <= opts.maxAlpha;
     echotimes = echotimes(TEidx);
     alphas = alphas(alphaidx);
-    for idx = 1:numel(boldsignals)
-        boldsignals{idx} = boldsignals{idx}(TEidx, alphaidx);
+    for idx = 1:numel(oxysignalsIntra)
+        oxysignalsIntra{idx} = oxysignalsIntra{idx}(TEidx, alphaidx);
     end
 end
 

@@ -21,6 +21,11 @@ BVF_Fun = @(x) sum(vec(sum(x,1)))/numel(x); % faster than sum(x(:)) for logical 
 % Calculate initial vasc. map and blood volumes
 [ G ] = CalculateVasculatureMap( G );
 
+% Check if need to add minor vessels
+if G.Targets.iBVF == 0
+    return
+end
+
 % We now have an initial guess; next we create more cylinders until there
 % are at least as many as are required to reach the target iBVF
 BVF_RelErr = 0.05 * (1.0 - G.Targets.BVF); % 5 percent relative to gap between G.Targets.BVF and 1.0
