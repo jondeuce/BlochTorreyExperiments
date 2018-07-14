@@ -47,8 +47,8 @@ alpha_range = 17.5:10.0:87.5;
 
 % ---- SE w/ Diffusion Initial Guess ---- %
 %       CA        iBVF          aBVF
-lb  = [ 3.0000,   1.5000/100,   1.2000/100 ];
-ub  = [ 5.0000,   2.1000/100,   1.8000/100 ];
+lb  = [ 3.0000,   1.7000/100,   1.5000/100 ];
+ub  = [ 4.5000,   2.1000/100,   2.0000/100 ];
 
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize] = get_SE_data(alpha_range);
 
@@ -106,7 +106,8 @@ FigTypes = {'png'}; % outputs a lot of figures, so just 'png' is probably best
 CloseFigs = true;
 SaveResults = true;
 StallTime_Days = 100; % max time without seeing an improvement in objective
-MaxTime_Days = 5; % max time for full simulation
+MaxStallIters = 100; % maximum number of iterations without improvement in objective
+MaxTime_Days = 4; % max time for full simulation
 
 % Initial Swarm
 linspace_fun = @linspacePeriodic; % lb < initial_param < ub
@@ -128,9 +129,9 @@ PSOpts = optimoptions(@particleswarm, ...
     'Display', 'iter', ...
     'SwarmSize', SwarmSize, ...
     'InitialSwarm', InitSwarm, ...
-    'StallTimeLimit', StallTime_Days*24*60*60, ... % StallTime_Days days [secs]
-    'MaxStallIterations', 100, ... % Max number of stall iterations
-    'MaxTime', MaxTime_Days*24*60*60, ... % MaxTime_Days days [secs]
+    'StallTimeLimit', StallTime_Days*24*60*60, ... % Max stall time [secs]
+    'MaxStallIterations', MaxStallIters, ... % Max number of stall iterations
+    'MaxTime', MaxTime_Days*24*60*60, ... % Max optimization time [secs]
     'OutputFcn', {@pswplotranges, @pswplotvalues} ...
     );
 
