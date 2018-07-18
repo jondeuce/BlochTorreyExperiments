@@ -47,8 +47,8 @@ alpha_range = 17.5:10.0:87.5;
 
 % ---- SE w/ Diffusion Initial Guess ---- %
 %       CA        iBVF          aBVF
-lb  = [ 3.0000,   1.7000/100,   1.5000/100 ];
-ub  = [ 4.5000,   2.1000/100,   2.0000/100 ];
+lb  = [ 3.0000,   0.8000/100,   0.8000/100 ];
+ub  = [ 6.0000,   2.0000/100,   2.0000/100 ];
 
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize] = get_SE_data(alpha_range);
 
@@ -77,7 +77,8 @@ D_Tissue = 2000; %[um^2/s]
 D_Blood = 3037; %[um^2/s]
 D_VRS = 3037; %[um^2/s]
 % VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless]
-VRSRelativeRad = sqrt(5/2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(5/2) => 1.5X
+% VRSRelativeRad = sqrt(5/2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(5/2) => 1.5X
+VRSRelativeRad = sqrt(3); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(3) => 2X
 
 % Nsteps = 10;
 % StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
@@ -107,7 +108,7 @@ CloseFigs = true;
 SaveResults = true;
 StallTime_Days = 100; % max time without seeing an improvement in objective
 MaxStallIters = 100; % maximum number of iterations without improvement in objective
-MaxTime_Days = 4; % max time for full simulation
+MaxTime_Days = 6; % max time for full simulation
 
 % Initial Swarm
 linspace_fun = @linspacePeriodic; % lb < initial_param < ub
