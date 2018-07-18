@@ -5,8 +5,8 @@
 # ---------------------------------------------------------------------------- #
 # square_mesh_with_circles
 # ---------------------------------------------------------------------------- #
-function square_mesh_with_circles(r::Rectangle{2,T},
-                                  cs::Vector{Circle{2,T}},
+function square_mesh_with_circles(rect::Rectangle{2,T},
+                                  circles::Vector{Circle{2,T}},
                                   h0::T,
                                   eta::T;
                                   isunion::Bool = true) where T
@@ -15,10 +15,10 @@ function square_mesh_with_circles(r::Rectangle{2,T},
     const nfaces = 3 # per triangle
     const nnodes = 3 # per triangle
 
-    bbox = [xmin(r) ymin(r);
-            xmax(r) ymax(r)]
-    centers = reinterpret(T, origin.(cs), (dim,length(cs)))'
-    radii = radius.(cs)
+    bbox = [xmin(rect) ymin(rect);
+            xmax(rect) ymax(rect)]
+    centers = reinterpret(T, origin.(circles), (dim,length(circles)))'
+    radii = radius.(circles)
 
     const nargout = 2
     p, t = mxcall(:squaremeshwithcircles, nargout, bbox, centers, radii, h0, eta, isunion);
@@ -28,11 +28,11 @@ function square_mesh_with_circles(r::Rectangle{2,T},
     fullgrid = Grid(cells, nodes);
 
     # Manually add boundary sets for the four square edges and circle boundaries
-    addfaceset!(fullgrid, "left",   x -> x[1] ≈ xmin(r), all=true)
-    addfaceset!(fullgrid, "right",  x -> x[1] ≈ xmax(r), all=true)
-    addfaceset!(fullgrid, "top",    x -> x[2] ≈ ymax(r), all=true)
-    addfaceset!(fullgrid, "bottom", x -> x[2] ≈ ymin(r), all=true)
-    addfaceset!(fullgrid, "circles", x -> is_on_any_circle(x, cs), all=true)
+    addfaceset!(fullgrid, "left",   x -> x[1] ≈ xmin(rect), all=true)
+    addfaceset!(fullgrid, "right",  x -> x[1] ≈ xmax(rect), all=true)
+    addfaceset!(fullgrid, "top",    x -> x[2] ≈ ymax(rect), all=true)
+    addfaceset!(fullgrid, "bottom", x -> x[2] ≈ ymin(rect), all=true)
+    addfaceset!(fullgrid, "circles", x -> is_on_any_circle(x, circles), all=true)
 
     # Boundary matrix and boundary face set
     all_boundaries = union(values.(getfacesets(fullgrid))...)
@@ -40,10 +40,10 @@ function square_mesh_with_circles(r::Rectangle{2,T},
     addfaceset!(fullgrid, "boundary", all_boundaries)
 
     # Generate face sets
-    addcellset!(fullgrid, "exterior", x -> !is_in_any_circle(x, cs); all=false)
-    addcellset!(fullgrid, "circles",  x ->  is_in_any_circle(x, cs); all=true)
-    addnodeset!(fullgrid, "exterior", x -> !is_in_any_circle(x, cs) || is_on_any_circle(x, cs))
-    addnodeset!(fullgrid, "circles",  x ->  is_in_any_circle(x, cs) || is_on_any_circle(x, cs))
+    addcellset!(fullgrid, "exterior", x -> !is_in_any_circle(x, circles); all=false)
+    addcellset!(fullgrid, "circles",  x ->  is_in_any_circle(x, circles); all=true)
+    addnodeset!(fullgrid, "exterior", x -> !is_in_any_circle(x, circles) || is_on_any_circle(x, circles))
+    addnodeset!(fullgrid, "circles",  x ->  is_in_any_circle(x, circles) || is_on_any_circle(x, circles))
 
     # Generate exterior grid
     subgrids = Grid[]
@@ -52,9 +52,11 @@ function square_mesh_with_circles(r::Rectangle{2,T},
     push!(subgrids, form_subgrid(fullgrid, cellset, nodeset, all_boundaries))
 
     # Generate circle grids
-    for c in cs
-        nodeset = filter(node->is_in_circle(getcoordinates(getnodes(fullgrid, node)), c), getnodeset(fullgrid, "circles"))
-        cellset = filter(cell->all(node -> node ∈ nodeset, getcells(fullgrid, cell).nodes), getcellset(fullgrid, "circles"))
+    nodefilter = (nodenum, circle)  -> is_in_circle(getcoordinates(getnodes(fullgrid, nodenum)), circle)
+    cellfilter = (cellnum, nodeset) -> all(nodenum -> nodenum ∈ nodeset, vertices(getcells(fullgrid, cellnum)))
+    for circle in circles
+        nodeset = filter(nodenum -> nodefilter(nodenum, circle), getnodeset(fullgrid, "circles"))
+        cellset = filter(cellnum -> cellfilter(cellnum, nodeset), getcellset(fullgrid, "circles"))
         push!(subgrids, form_subgrid(fullgrid, cellset, nodeset, all_boundaries))
     end
 
@@ -70,22 +72,22 @@ function form_subgrid(parent_grid::Grid{dim,N,T,M},
     sizehint!(cells, length(cellset))
     sizehint!(nodes, length(nodeset))
 
-    nodemap = spzeros(T,Int,getnnodes(parent_grid))
-    for (i,node) in zip(1:length(nodeset), nodeset)
-        push!(nodes, getnodes(parent_grid, node))
-        nodemap[node] = i
+    nodemap = spzeros(Int, Int, getnnodes(parent_grid))
+    for (i,nodenum) in zip(1:length(nodeset), nodeset)
+        push!(nodes, getnodes(parent_grid, nodenum))
+        nodemap[nodenum] = i
     end
 
-    cellmap = spzeros(T,Int,getncells(parent_grid))
-    for (i,cell) in zip(1:length(cellset), cellset)
-        parentcellnodes = getcells(parent_grid, cell).nodes
-        push!(cells, Triangle(map(n->nodemap[n], parentcellnodes)))
-        cellmap[cell] = i
+    cellmap = spzeros(Int, Int, getncells(parent_grid))
+    for (i,cellnum) in zip(1:length(cellset), cellset)
+        parent_cellnodeset = vertices(getcells(parent_grid, cellnum))
+        push!(cells, Triangle(map(n->nodemap[n], parent_cellnodeset)))
+        cellmap[cellnum] = i
     end
 
     boundary = Set{Tuple{Int,Int}}()
-    for (cell, face) in boundaryset
-        newcell = cellmap[cell]
+    for (cellnum, face) in boundaryset
+        newcell = cellmap[cellnum]
         if newcell ≠ 0
             push!(boundary, (newcell, face))
         end
@@ -102,60 +104,60 @@ end
 # is_on_circle/is_on_any_circle
 # ---------------------------------------------------------------------------- #
 @inline function is_on_circle(x::Vec{dim,T},
-                              c::Circle{dim,T},
+                              circle::Circle{dim,T},
                               thresh::T=sqrt(eps(T))) where {dim,T}
-    dx = x - c.center
-    return abs(dx⋅dx - c.r^2) <= thresh
+    dx = x - origin(circle)
+    return abs(dx⋅dx - radius(circle)^2) <= thresh
 end
 function is_on_any_circle(x::Vec{dim,T},
-                          cs::Vector{Circle{dim,T}},
+                          circles::Vector{Circle{dim,T}},
                           thresh::T=sqrt(eps(T))) where {dim,T}
-    return any(c->is_on_circle(x, c, thresh), cs)
+    return any(circle->is_on_circle(x, circle, thresh), circles)
 end
 
 # ---------------------------------------------------------------------------- #
 # is_in_circle/is_in_any_circle
 # ---------------------------------------------------------------------------- #
 @inline function is_in_circle(x::Vec{dim,T},
-                              c::Circle{dim,T},
+                              circle::Circle{dim,T},
                               thresh::T=sqrt(eps(T))) where {dim,T}
-    dx = x - c.center
-    return dx⋅dx <= (c.r + thresh)^2
+    dx = x - origin(circle)
+    return dx⋅dx <= (radius(circle) + thresh)^2
 end
 function is_in_any_circle(x::Vec{dim,T},
-                          cs::Vector{Circle{dim,T}},
+                          circles::Vector{Circle{dim,T}},
                           thresh::T=sqrt(eps(T))) where {dim,T}
-    return any(c->is_in_circle(x, c, thresh), cs)
+    return any(circle->is_in_circle(x, circle, thresh), circles)
 end
 
 # ---------------------------------------------------------------------------- #
 # project_circle
 # ---------------------------------------------------------------------------- #
-function project_circle!(grid::Grid, c::Circle{dim,T}, thresh::T) where {dim,T}
+function project_circle!(grid::Grid, circle::Circle{dim,T}, thresh::T) where {dim,T}
     for i in eachindex(grid.nodes)
         x = getcoordinates(grid.nodes[i])
-        dx = x - c.center
+        dx = x - origin(circle)
         normdx = norm(dx)
-        if abs(normdx - c.r) <= thresh
-            x = c.center + (c.r/normdx) * dx
+        if abs(normdx - radius(circle)) <= thresh
+            x = origin(circle) + (radius(circle)/normdx) * dx
             grid.nodes[i] = Node(x)
         end
     end
 end
-function project_circle(grid::Grid, c::Circle, thresh)
+function project_circle(grid::Grid, circle::Circle, thresh)
     g = deepcopy(grid)
-    project_circle!(g, c, thresh)
+    project_circle!(g, circle, thresh)
     return g
 end
 
-function project_circles!(grid::Grid, cs::Vector{Circle}, thresh)
-    for c in cs
-        project_circle!(grid, c, thresh)
+function project_circles!(grid::Grid, circles::Vector{Circle}, thresh)
+    for circle in circles
+        project_circle!(grid, circle, thresh)
     end
 end
-function project_circles(grid::Grid, cs::Vector{Circle}, thresh)
+function project_circles(grid::Grid, circles::Vector{Circle}, thresh)
     g = deepcopy(grid)
-    project_circles!(g, cs, thresh)
+    project_circles!(g, circles, thresh)
     return g
 end
 

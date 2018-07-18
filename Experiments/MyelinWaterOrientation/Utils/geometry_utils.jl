@@ -43,9 +43,12 @@ rand(::Type{Rectangle{dim,T}}) where {dim,T} = Circle(-rand(Vec{dim,T}), rand(Ve
 # as computing the third component of the cross product if the vectors `a` and
 # `b` were extended to three dimensions
 @inline function skewprod(a::Vec{2,T}, b::Vec{2,T}) where T
-    #@inbounds v = (a × b)[3] # believe it or not, this is just as fast...
-    @inbounds v = a[1]*b[2] - b[1]*a[2]
+    @inbounds v = (a × b)[3] # believe it or not, this emits the same llvm code...
+    #@inbounds v = a[1]*b[2] - b[1]*a[2]
     return v
 end
+
+# Denote the skewproduct using `\boxtimes`
+const ⊠ = skewprod
 
 nothing
