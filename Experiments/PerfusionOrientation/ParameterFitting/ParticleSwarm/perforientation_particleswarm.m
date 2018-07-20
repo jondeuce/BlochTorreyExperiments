@@ -47,8 +47,8 @@ alpha_range = 17.5:10.0:87.5;
 
 % ---- SE w/ Diffusion Initial Guess ---- %
 %       CA        iBVF          aBVF
-lb  = [ 3.0000,   0.8000/100,   0.8000/100 ];
-ub  = [ 6.0000,   2.0000/100,   2.0000/100 ];
+lb  = [ 3.0000,   1.1000/100,   1.1000/100 ];
+ub  = [ 6.0000,   2.2000/100,   2.2000/100 ];
 
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize] = get_SE_data(alpha_range);
 
