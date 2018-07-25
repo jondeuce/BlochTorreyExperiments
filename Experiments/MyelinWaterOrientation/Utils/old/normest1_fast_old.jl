@@ -1,3 +1,7 @@
+module Normest1Fast
+
+export normest1
+
 function normest1(A, t=2, X=[], varargin=())
 #NORMEST1 Estimate of 1-norm of matrix by block 1-norm power method.
 #   C = NORMEST1(A) returns an estimate C of norm(A,1), where A is N-by-N.
@@ -385,5 +389,21 @@ function mass_and_stifness_afun(flag,x,K,Mfact)
       error("Unknown flag: $flag")
    end
 end
+
+function profile_normest1(;Asize::Int = 5000, Nloops::Int = 100, prnt::Bool = false)
+   A = randn(Asize,Asize)
+   normest1(A) # dry run to precompile
+
+   Profile.clear()
+   Profile.init(;n=10_000_000)
+   @profile for i = 1:Nloops
+      normest1(A)[1]
+   end
+   prnt && Profile.print()
+
+   return nothing
+end
+
+end # module Normest1Fast
 
 nothing

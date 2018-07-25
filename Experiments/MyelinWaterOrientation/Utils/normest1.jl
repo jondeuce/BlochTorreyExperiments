@@ -4,11 +4,25 @@
 
 module Normest1
 
+using LinearMaps
+import Base.LinAlg: A_mul_B!, At_mul_B!, Ac_mul_B!
+
 export normest1 #, test_afun, mass_and_stifness_afun
 
-function normest1(A::AbstractMatrix{Te};
+# Define multiplication of LinearMap on matrices (taken from v0.7 branch of LinearMaps.jl)
+for f in (:A_mul_B!, :At_mul_B!, :Ac_mul_B!)
+   @eval function LinAlg.$f(Y::AbstractMatrix, A::LinearMap{Te}, X::AbstractMatrix) where {Te}
+      (size(Y, 1) == size(A, 1) && size(X, 1) == size(A, 2) && size(Y, 2) == size(X, 2)) || throw(DimensionMismatch(string($f)))
+      @inbounds @views for i = 1:size(X, 2)
+         $f(Y[:, i], A, X[:, i])
+      end
+      return Y
+   end
+end
+
+function normest1(A,
                   t::Int = 2,
-                  X::AbstractMatrix{Te} = Array{Te}[]) where Te
+                  X = initialize_X(A,t))
 #NORMEST1 Estimate of 1-norm of matrix by block 1-norm power method.
 #   C = NORMEST1(A) returns an estimate C of norm(A,1), where A is N-by-N.
 #   A can be an explicit matrix or a function AFUN such that
@@ -59,16 +73,19 @@ function normest1(A::AbstractMatrix{Te};
 #   Copyright 1984-2012 The MathWorks, Inc.
 
    @assert size(A,1) == size(A,2) "AbstractMatrix A must be square"
-   n = size(A,2)
+
    A_is_real = isreal(A)
+   Te = eltype(A)
+   n = size(A,2)::Int #TODO why can't the compiler infer this?
 
    prnt = (t < 0)
-   t = abs(t)
-   if t < 1 || t > max(n,2)
-      #error(message("MATLAB:normest1:TOutOfRange"))
-      error("t must be a non-zero integer with magnitude <= size(A,2)")
-   end
-   rpt_S = 0; rpt_e = 0
+   t = abs(t)::Int #TODO why can't the compiler infer this?
+
+   #error(message("MATLAB:normest1:TOutOfRange"))
+   (t < 1 || t > max(n,2)) && error("t must be a non-zero integer with magnitude <= size(A,2)")
+
+   rpt_S = 0
+   rpt_e = 0
 
    if t == n || n <= 4
       # Get full matrix
@@ -87,23 +104,14 @@ function normest1(A::AbstractMatrix{Te};
       w = Y[:,m[n]]
 
       iter = [0 1]
-      if prnt
-         #fprintf(getString(message("MATLAB:normest1:NoIterationNormComputedExactly")))
-      end
+      #fprintf(getString(message("MATLAB:normest1:NoIterationNormComputedExactly")))
+      prnt && println("No iterations: norm computed exactly")
+
       return est, v, w, iter
    end
 
-   if isempty(X)
-      X = ones(Te, n, t)
-      #X[:,2:t] = mysign.(2*rand(n,t-1) - ones(n,t-1))
-      @views X[:,2:t] = rand(Te.(-1:2:1), n, t-1)
-      X, r = undupli(X, Array{Te}[], prnt)
-      X ./= n
-   end
-
-   if size(X,2) != t
-     #error(message("MATLAB:normest1:WrongColNum", int2str( t )))
-   end
+   #error(message("MATLAB:normest1:WrongColNum", int2str( t )))
+   (size(X,2) != t) && error("normest1: wrong number of columns; size(X,2) = $(size(X,2)), not $t")
 
    itmax = 5  # Maximum number of iterations.
    it = 0
@@ -115,132 +123,145 @@ function normest1(A::AbstractMatrix{Te};
 
    # S_type = A_is_real ? Int : Te
    S = zeros(Te, n, t)
-   S_old = similar(S)
-   Y = similar(X)
-   Z = similar(X)
+   SS = zeros(Te, t, t)
+
+   Y = similar(S, Te)
+   Z = similar(S, Te)
+   S_old = similar(S, Te)
 
    while true
-       it += 1
+      it += 1
 
-       A_mul_B!(Y, A, X)
-       nmv += 1
+      # prnt && @show typeof(Y), typeof(A), typeof(X)
+      A_mul_B!(Y, A, X)
+      nmv += 1
 
-       vals = sum(abs, Y, 1)
-       m = sortperm(vals[:])
-       m = m[t:-1:1]
-       vals = vals[:,m]
-       vals_ind = ind[m]
-       est = vals[1]
+      vals = sum(abs, Y, 1)
+      m = sortperm(vals[:])
+      m = m[t:-1:1]
+      vals = vals[:,m]
+      vals_ind = ind[m]
+      est = vals[1]
 
-       if est > est_old || it == 2
-          est_j = vals_ind[1]
-          w = Y[:,m[1]]
-       end
+      if est > est_old || it == 2
+         est_j = vals_ind[1]
+         w = Y[:,m[1]]
+      end
 
-       if prnt
-          fprintf("%g: ", it)
-          for i = 1:t
-             fprintf(" (%g, %6.2e)", vals_ind[i], vals[i])
-          end
-          fprintf("\n")
-       end
+      if prnt
+      @printf("%g: ", it)
+         for i = 1:t
+            @printf(" (%g, %6.2e)", vals_ind[i], vals[i])
+         end
+      @printf("\n")
+      end
 
-       if it >= 2 && est <= est_old
-          est = est_old
-          info = 2; break
-       end
-       est_old = est
+      if it >= 2 && est <= est_old
+         est = est_old
+         info = 2
+         break
+      end
+      est_old = est
 
-       if it > itmax
-          it = itmax
-          info = 1
+      if it > itmax
+         it = itmax
+         info = 1
+         break
+      end
+
+      S_old .= S
+      S .= mysign.(Y)
+      if A_is_real
+         # SS = S_old'*S
+         Ac_mul_B!(SS, S_old, S)
+
+         np = sum(x->x==Te(n), maximum(abs, SS, 1))
+         if np == t
+            info = 3
+            break
+         end
+
+         # Now check/fix cols of S parallel to cols of S or S_old.
+         S, r = undupli(S, S_old, prnt)
+         rpt_S = rpt_S + r
+      end
+
+      # prnt && @show typeof(Z), typeof(A), typeof(X)
+      Ac_mul_B!(Z, A, S)
+      nmv = nmv + 1
+
+      # Faster version of `for i=1:n, Zvals[i] = norm(Z[i,:], inf); end`:
+      Zvals = maximum(abs, Z, 2)
+
+      if it >= 2
+         if maximum(Zvals) == Zvals[est_j]
+            info = 4
+            break
+         end
+      end
+
+      # m = sortperm(Zvals[:])
+      # m = m[n:-1:1]
+      m = sortperm(Zvals[:]; rev=true)
+      imax = t; # Number of new unit vectors; may be reduced below (if it > 1).
+      if it == 1
+         ind = m[1:t]
+         ind_hist = ind
+      else
+      #`in.(A,[B])` is equivalent to MATLAB's `ismember(A,B)`
+      rep = sum(in.(m[1:t], [ind_hist])) # ismember(m[1:t], [ind_hist])
+      rpt_e = rpt_e + rep
+      if rep > 0 && prnt
+          @printf("     rep e_j = %g\n",rep)
+      end
+      if rep == t
+          info = 5
           break
-       end
+      end
+      j = 1
+      for i = 1:t
+         if j > n
+            imax = i-1
+            break
+         end
+         while any( ind_hist .== m[j] )
+            j = j+1
+            if j > n
+               imax = i-1
+               break
+            end
+         end
+         if j > n
+            break
+         end
+            ind[i] = m[j]
+            j = j+1
+         end
+         ind_hist = [ind_hist; ind[1:imax]]
+      end
 
-       S_old .= S
-       S .= mysign.(Y)
-       if A_is_real
-           SS = S_old'*S
-           np = sum(x->x==n, maximum(abs, SS, 1))
-           if np == t
-             info = 3
-             break
-          end
-          # Now check/fix cols of S parallel to cols of S or S_old.
-          S, r = undupli(S, S_old, prnt)
-          rpt_S = rpt_S + r
-       end
-
-       Ac_mul_B!(Z, A, X)
-       nmv = nmv + 1
-
-       # Faster version of `for i=1:n, Zvals[i] = norm(Z[i,:], inf); end`:
-       Zvals = maximum(abs, Z, 2)
-
-       if it >= 2
-          if maximum(Zvals) == Zvals[est_j]
-             info = 4
-             break
-          end
-       end
-
-       # m = sortperm(Zvals[:])
-       # m = m[n:-1:1]
-       m = sortperm(Zvals[:]; rev=true)
-       imax = t; # Number of new unit vectors; may be reduced below (if it > 1).
-       if it == 1
-          ind = m[1:t]
-          ind_hist = ind
-       else
-          #`in.(A,[B])` is equivalent to MATLAB's `ismember(A,B)`
-          rep = sum(in.(m[1:t], [ind_hist])) # ismember(m[1:t], [ind_hist])
-          rpt_e = rpt_e + rep
-          if rep > 0 && prnt
-             fprintf("     rep e_j = %g\n",rep)
-          end
-          if rep == t
-             info = 5
-             break
-          end
-          j = 1
-          for i = 1:t
-              if j > n
-                 imax = i-1
-                 break
-              end
-              while any( ind_hist .== m[j] )
-                 j = j+1
-                 if j > n
-                    imax = i-1
-                    break
-                 end
-              end
-              if j > n
-                 break
-              end
-              ind[i] = m[j]
-              j = j+1
-          end
-          ind_hist = [ind_hist; ind[1:imax]]
-       end
-
-       X = zeros(Te, n, t)
-       for j=1:imax
-          X[ind[j],j] = one(Te)
-       end
+      fill!(X, zero(Te)) #X = zeros(Te, n, t)
+      for j=1:imax
+         X[ind[j],j] = one(Te)
+      end
    end
 
    if prnt
       if info == 1
          #fprintf(getString(message("MATLAB:normest1:TerminateIterationLimitReachedn")))
+         println("normest1: terminate; iteration limit reached")
       elseif info == 2
          #fprintf(getString(message("MATLAB:normest1:TerminateEstimateNotIncreased")))
+         println("normest1: terminate; estimate not increased")
       elseif info == 3
          #fprintf(getString(message("MATLAB:normest1:TerminateRepeatedSignMatrix")))
+         println("normest1: terminate; repeated sign matrix")
       elseif info == 4
          #fprintf(getString(message("MATLAB:normest1:TerminatePowerMethodConvergenceTest")))
+         println("normest1: terminate; power method convergence test")
       elseif info == 5
          #fprintf(getString(message("MATLAB:normest1:TerminateRepeatedUnitVectors")))
+         println("normest1: terminate; repeated unit vectors")
       end
    end
 
@@ -264,15 +285,32 @@ end
 # Subfunctions.
 
 #MYSIGN True sign function with MYSIGN(0) = 1.
-mysign(x::T) where {T<:AbstractFloat} = ifelse(x < zero(T), -one(T), one(T))
-mysign(x::Complex{T}) where {T<:AbstractFloat} = ifelse(x == zero(x), one(x), x/abs(x))
+@inline @fastmath mysign(x) = x == zero(x) ? one(x) : sign(x)
+
+#INITIALIZE_x
+function initialize_X(A, t::Int)
+   Te = eltype(A)
+   prnt = (t<0)
+   t = abs(t)
+   n = size(A,2)
+
+   X = ones(Te, n, t)
+   @views X[:,2:t] = rand(Te.(-1:2:1), n, t-1)
+   X, r = undupli(X, Matrix{Te}(0,0), false)
+   X ./= n
+
+   return X::Matrix{Te}
+end
 
 #UNDUPLI   Look for and replace columns of S parallel to other columns of S or
 #          to columns of Sold.
 function undupli(S::AbstractMatrix{Te},
                  S_old::AbstractMatrix{Te},
-                 prnt::Bool) where Te
-   n, t = size(S)
+                 prnt::Bool) where {Te}
+   #TODO why can't the type be inferred here?
+   n = size(S,1)::Int
+   t = size(S,2)::Int
+
    r = 0
    if t == 1
       return S, r
@@ -293,46 +331,41 @@ function undupli(S::AbstractMatrix{Te},
       last_col = t
    end
 
-   sgn = zeros(Te,n)
    for j=jstart:t
-       rpt = 0
-       while maximum(abs, @views S[:,j]'*W[:,1:last_col] ) == n
-             rpt = rpt + 1
-             sgn .= rand(Te.(-1:2:1), n)
-             @views S[:,j] = sgn
-             if rpt > n/t
-                break
-             end
-       end
-       if prnt && rpt > 0
-          #fprintf(getString(message("MATLAB:normest1:UnduplicateRpt", sprintf("#g",rpt))))
-       end
-       r = r + sign(rpt)
-       if j < t
-          last_col = last_col + 1
-          @views W[:,last_col] = S[:,j]
-       end
+      rpt = 0
+      while maximum(abs, @views S[:,j]'*W[:,1:last_col] ) == Te(n)
+         rpt = rpt + 1
+         @views S[:,j] = rand(Te.(-1:2:1), n)
+         if rpt > n/t
+            break
+         end
+      end
+      #fprintf(getString(message("MATLAB:normest1:UnduplicateRpt", sprintf("#g",rpt))))
+      (prnt && rpt > 0) && print("normest1: unduplicate rpt: $rpt")
+
+      r = r + sign(rpt)
+      if j < t
+         last_col = last_col + 1
+         @views W[:,last_col] = S[:,j]
+      end
    end
 
    return S, r
-
 end
 
-# # test `afun` where a matrix `A` is wrapped and given as a varargin parameter
-# test_afun(flag::Notransp,x,A) = A*x
-# test_afun(flag::Transp,x,A) = A'*x
-# test_afun(flag::Dim,x,A) = size(A,1)
-# test_afun(flag::Real,x,A) = isreal(A)
-#
-# # test `afun` where stiffness matrix `K` and factored mass matrix `Mfact` are
-# # wrapped and given as a varargin parameters
-# mass_and_stifness_afun(flag::Notransp,x,K,Mfact) = (tmp = similar(x); A_mul_B!(tmp, K, x); return Mfact\tmp)
-# mass_and_stifness_afun(flag::Transp,x,K,Mfact) = (tmp = Mfact\x; return Ac_mul_B(K, tmp)) # (inv(M)*K)'*x == K'*inv(M)*x (M is symmetric)
-# mass_and_stifness_afun(flag::Dim,x,K,Mfact) = size(K,1)
-# mass_and_stifness_afun(flag::Real,x,K,Mfact) = isreal(K) && isreal(M)
+end # module Normest1
 
+
+module Normest1Test
+
+using Normest1
+using LinearMaps
 using Base.Test
-using ProfileView
+using BenchmarkTools
+
+# test `normest1` using a matrix wrapped in a `LinearMap`
+get_wrapped_map(A) = LinearMaps.WrappedMap(A)
+
 function test()
    RealAndCplx(n) = (randn(n,n), Complex.(randn(n,n), randn(n,n)))
 
@@ -347,43 +380,50 @@ function test()
       A, Ac = RealAndCplx(n)
       @test normest1(A)[1] ≈ norm(A,1)
       @test normest1(Ac)[1] ≈ norm(Ac,1)
-      # @test normest1(test_afun; varargin=(A,))[1] ≈ norm(A,1)
-      # @test normest1(test_afun; varargin=(Ac,))[1] ≈ norm(Ac,1)
+      @test normest1(get_wrapped_map(A))[1] ≈ norm(A,1)
+      @test normest1(get_wrapped_map(Ac))[1] ≈ norm(Ac,1)
    end
 
    # Larger matrices: should be exact when t = size(A,1)
    for n = [100]
       A, Ac = RealAndCplx(n)
-      @test normest1(A; t=n)[1] ≈ norm(A,1)
-      @test normest1(Ac; t=n)[1] ≈ norm(Ac,1)
-      # @test normest1(test_afun; t=n, varargin=(A,))[1] ≈ norm(A,1)
-      # @test normest1(test_afun; t=n, varargin=(Ac,))[1] ≈ norm(Ac,1)
+      @test normest1(A, n)[1] ≈ norm(A,1)
+      @test normest1(Ac, n)[1] ≈ norm(Ac,1)
+      @test normest1(get_wrapped_map(A), n)[1] ≈ norm(A,1)
+      @test normest1(get_wrapped_map(Ac), n)[1] ≈ norm(Ac,1)
    end
 
    # Larger matrices: should almost always be exact when t = size(A,1)/2
    for n = [100]
       A, Ac = RealAndCplx(n)
-      @test normest1(A; t=div(n,2))[1] ≈ norm(A,1)
-      @test normest1(Ac; t=div(n,2))[1] ≈ norm(Ac,1)
-      # @test normest1(test_afun; t=div(n,2), varargin=(A,))[1] ≈ norm(A,1)
-      # @test normest1(test_afun; t=div(n,2), varargin=(Ac,))[1] ≈ norm(Ac,1)
+      @test normest1(A, div(n,2))[1] ≈ norm(A,1)
+      @test normest1(Ac, div(n,2))[1] ≈ norm(Ac,1)
+      @test normest1(get_wrapped_map(A), div(n,2))[1] ≈ norm(A,1)
+      @test normest1(get_wrapped_map(Ac), div(n,2))[1] ≈ norm(Ac,1)
    end
 
 end
 
-function profile_normest1(Asize::Int = 5000, Nloops::Int = 100)
+function profile_normest1(;Asize::Int = 5000, Nloops::Int = 100, prnt::Bool = false)
    A = randn(Asize,Asize)
-   normest1(A) # precompile
+   normest1(A) # dry run to precompile
 
    Profile.clear()
    Profile.init(;n=10_000_000)
-   @profile (for i = 1:Nloops; normest1(A); end)
-   ProfileView.view()
-   Profile.print()
+   @profile for i = 1:Nloops
+      normest1(A)[1]
+   end
+   prnt && Profile.print()
 
    return nothing
 end
 
+function benchmark_normest1(;Asize::Int = 5000, Nloops::Int = 1, prnt::Bool = false)
+   A = randn(Asize,Asize)
+   normest1(A) # dry run to precompile
+   @benchmark (for i = 1:$Nloops; normest1($A)[1]; end)
 end
+
+end # module Normest1
 
 nothing

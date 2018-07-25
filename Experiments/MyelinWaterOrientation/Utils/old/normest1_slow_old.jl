@@ -204,7 +204,7 @@ function normest1(A;
        #    # Z = normapp(A,"transp",S,varargin)
        #    Z = normapp(A,Transp(),S,varargin)
        # end
-       A_apply!(Z, A, Transp(), X, varargin)
+       A_apply!(Z, A, Transp(), S, varargin)
        nmv = nmv + 1
 
        # Faster version of `for i=1:n, Zvals[i] = norm(Z[i,:], inf); end`:
