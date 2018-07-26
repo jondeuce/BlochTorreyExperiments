@@ -14,6 +14,9 @@ function Circle(center::Vec{dim,T1}, r::T2) where {dim,T1,T2}
     T = promote_type(T1, T2)
     return Circle(Vec{dim,T}(center), T(r))
 end
+Circle(::Type{T}, center::Vec{dim}, r::Number) where {dim,T} = Circle(Vec{dim,T}(center), T(r))
+Circle(::Type{T}, center::NTuple{dim}, r::Number) where {dim,T} = Circle(Vec{dim,T}(center), T(r))
+
 Circle(center::NTuple{dim,T}, r::T) where {dim,T} = Circle(Vec{dim,T}(center), r)
 dimension(c::Circle) = dimension(typeof(c))
 floattype(c::Circle) = floattype(typeof(c))
@@ -48,9 +51,16 @@ end
 
 # check if c1 is in c2: distance between origins is less than radius(c2) and
 # radius(c1) <= radius(c2)
-function is_inside(c1::Circle, c2::Circle, lt = ≤)
+@inline function is_inside(c1::Circle, c2::Circle, lt = ≤)
     o1, o2, r1, r2 = origin(c1), origin(c2), radius(c1), radius(c2)
     return lt(r1, r2) && lt(norm(o1 - o2) + r1, r2)
+end
+
+# check if c1 and c2 are overlapping
+@inline function is_overlapping(c1::Circle, c2::Circle, lt = ≤)
+    dx = origin(c1) - origin(c2)
+    d_min = radius(c1) + radius(c2)
+    return lt(dx⋅dx, d_min^2)
 end
 
 # bounding circle of a collection of circles. not optimal, but very simple
