@@ -196,7 +196,7 @@ end
     return false
 end
 
-@inline function circle_region_area(c::Circle{2,T}, X0::T, Y0::T, X1::T, Y1::T) where {T}
+@inline function intersect_area(c::Circle{2}, X0, Y0, X1, Y1)
     # Integration of the intersection of area between the circle `c` and the
     # rectangular region defined by X0 ≤ x ≤ X1, Y0 ≤ y ≤ Y1. It is assumed that
     # X0 ≤ X1 and Y0 ≤ Y1.
@@ -205,23 +205,29 @@ end
     # `the swine` at the following link:
     #   https://stackoverflow.com/questions/622287/area-of-intersection-between-circle-and-rectangle
 
-    @inline area_section(x, h) = (x*sqrt(1-x^2) + asin(x))/2 - x*h
-    @inline area_above(x0, x1, h) = (x = sqrt(1-h^2); area_section(clamp(x1,-x,x), h) - area_section(clamp(x0,-x,x), h))
+    ZERO, ONE, EPS = zero(X0), one(X0), 5eps(typeof(X0))
+
+    @inline safe_sqrt(x) = x <= EPS ? EPS : √x
+    @inline area_section(x, h) = (x*safe_sqrt(1-x^2) + asin(x))/2 - x*h
+    @inline area_above(x0, x1, h) = (x = safe_sqrt(1-h^2); area_section(clamp(x1,-x,x), h) - area_section(clamp(x0,-x,x), h))
     @inline area_region(x0, x1, y0, y1) = area_above(x0, x1, y0) - area_above(x0, x1, y1)
 
     # Get normalized positions
     r, o = radius(c), origin(c)
     x0, x1, y0, y1 = (X0-o[1])/r, (X1-o[1])/r, (Y0-o[2])/r, (Y1-o[2])/r
-    x0, x1 = clamp(x0,-one(T),one(T)), clamp(x1,-one(T),one(T))
-    y0, y1 = clamp(y0,-one(T),one(T)), clamp(y1,-one(T),one(T))
+
+    x0, x1 = clamp(x0,-ONE,ONE), clamp(x1,-ONE,ONE)
+    y0, y1 = clamp(y0,-ONE,ONE), clamp(y1,-ONE,ONE)
 
     # Formulas above only work assuming 0 ≤ y0 ≤ y1. If this is not the case,
     # the integral needs to be split up
-    if y0 < zero(T)
-        if y1 < zero(T)
-            area = area_region(x0, x1, -y1, -y0) # flip domain about x-axis
+    if y0 < ZERO
+        if y1 < ZERO
+            # both negative; simply flip about x-axis
+            area = area_region(x0, x1, -y1, -y0)
         else
-            area = area_region(x0, x1, zero(T), y1) + area_region(x0, x1, zero(T), -y0) # integrate from [0,y1] and [0,-y0] separately
+            # integrate from [y0,0] and [0,y1] separately
+            area = area_region(x0, x1, ZERO, -y0) + area_region(x0, x1, ZERO, y1)
         end
     else
         area = area_region(x0, x1, y0, y1)
@@ -233,12 +239,10 @@ end
     return area
 end
 
-@inline function circle_region_area(c::Circle{2}, Xmin::Vec{2}, Xmax::Vec{2})
-    @inbounds area = circle_region_area(c, Xmin[1], Xmin[2], Xmax[1], Xmax[2])
-    return area
-end
+@inline intersect_area(c::Circle{2}, Xmin::Vec{2}, Xmax::Vec{2}) = intersect_area(c, Xmin[1], Xmin[2], Xmax[1], Xmax[2])
+@inline intersect_area(c::Circle{2}, r::Rectangle{2}) = intersect_area(c, xmin(r), ymin(r), xmax(r), ymax(r))
 
-function circle_region_area_test(c::Circle{2,T}) where {T}
+function intersect_area_test(c::Circle{2,T}) where {T}
     # allow for points to be inside or slightly outside of circle
     rect = scale_shape(bounding_box([c]), T(1.5))
 
@@ -251,22 +255,22 @@ function circle_region_area_test(c::Circle{2,T}) where {T}
     R = radius(c)
     h = R - (min(y1,ymax(c)) - origin(c)[2])
 
-    A_top_test = (circle_region_area(c, -Inf,   y1,  x0, Inf) + # 1: top left
-                  circle_region_area(c,   x0,   y1,  x1, Inf) + # 2: top middle
-                  circle_region_area(c,   x1,   y1, Inf, Inf))  # 3: top right
+    A_top_test = (intersect_area(c, -Inf,   y1,  x0, Inf) + # 1: top left
+                  intersect_area(c,   x0,   y1,  x1, Inf) + # 2: top middle
+                  intersect_area(c,   x1,   y1, Inf, Inf))  # 3: top right
 
     A_top = R^2 * acos((R-h)/R) - (R-h)*√(2*R*h-h^2)
     @assert isapprox(A_top, A_top_test; atol=1e-12)
 
-    A_test = (circle_region_area(c, -Inf,   y1,  x0, Inf) + # 1: top left
-              circle_region_area(c,   x0,   y1,  x1, Inf) + # 2: top middle
-              circle_region_area(c,   x1,   y1, Inf, Inf) + # 3: top right
-              circle_region_area(c, -Inf,   y0,  x0,  y1) + # 4: middle left
-              circle_region_area(c,   x0,   y0,  x1,  y1) + # 5: middle middle
-              circle_region_area(c,   x1,   y0, Inf,  y1) + # 6: middle right
-              circle_region_area(c, -Inf, -Inf,  x0,  y0) + # 7: bottom left
-              circle_region_area(c,   x0, -Inf,  x1,  y0) + # 8: bottom middle
-              circle_region_area(c,   x1, -Inf, Inf,  y0))  # 9: bottom right
+    A_test = (intersect_area(c, -Inf,   y1,  x0, Inf) + # 1: top left
+              intersect_area(c,   x0,   y1,  x1, Inf) + # 2: top middle
+              intersect_area(c,   x1,   y1, Inf, Inf) + # 3: top right
+              intersect_area(c, -Inf,   y0,  x0,  y1) + # 4: middle left
+              intersect_area(c,   x0,   y0,  x1,  y1) + # 5: middle middle
+              intersect_area(c,   x1,   y0, Inf,  y1) + # 6: middle right
+              intersect_area(c, -Inf, -Inf,  x0,  y0) + # 7: bottom left
+              intersect_area(c,   x0, -Inf,  x1,  y0) + # 8: bottom middle
+              intersect_area(c,   x1, -Inf, Inf,  y0))  # 9: bottom right
 
     A_exact = pi*radius(c)^2
     @assert A_test ≈ A_exact

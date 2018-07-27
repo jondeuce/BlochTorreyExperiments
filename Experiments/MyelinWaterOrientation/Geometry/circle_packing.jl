@@ -101,7 +101,7 @@ function estimate_density(circles::Vector{Circle{dim,T}}, α = T(0.75)) where {d
         if is_inside(c, domain)
             Σ += π*radius(c)^2
         elseif !is_outside(c, domain)
-            Σ += circle_region_area(c, minimum(domain), maximum(domain))
+            Σ += intersect_area(c, domain)
         end
     end
 
@@ -147,15 +147,17 @@ end
 function Cuba_integrator(method = :cuhre; kwargs...)
     const ndim = 2 # number of dimensions of domain
     const ncomp = 1 # number of components of f
-    unwrap = I -> (I.integral[1], I.error[1], I.probability[1])
+    unwrap(I) = (I.integral[1], I.error[1], I.probability[1])
+    integrator(method,f,lb,ub) = unwrap(method((x,F)->Cuba_integrand!(x,F,f,lb,ub), ndim, ncomp; kwargs...))
+
     if method == :cuhre
-        integrator = (f,lb,ub) -> unwrap(Cuba.cuhre((x,F)->Cuba_integrand!(x,F,f,lb,ub), ndim, ncomp; kwargs...))
+        integrator = (f,lb,ub) -> integrator(Cuba.cuhre,f,lb,ub) #unwrap(Cuba.cuhre((x,F)->Cuba_integrand!(x,F,f,lb,ub), ndim, ncomp; kwargs...))
     elseif method == :vegas
-        integrator = (f,lb,ub) -> unwrap(Cuba.vegas((x,F)->Cuba_integrand!(x,F,f,lb,ub), ndim, ncomp; kwargs...))
+        integrator = (f,lb,ub) -> integrator(Cuba.vegas,f,lb,ub) #unwrap(Cuba.vegas((x,F)->Cuba_integrand!(x,F,f,lb,ub), ndim, ncomp; kwargs...))
     elseif method == :divonne
-        integrator = (f,lb,ub) -> unwrap(Cuba.divonne((x,F)->Cuba_integrand!(x,F,f,lb,ub), ndim, ncomp; kwargs...))
+        integrator = (f,lb,ub) -> integrator(Cuba.divonne,f,lb,ub) #unwrap(Cuba.divonne((x,F)->Cuba_integrand!(x,F,f,lb,ub), ndim, ncomp; kwargs...))
     elseif method == :suave
-        integrator = (f,lb,ub) -> unwrap(Cuba.suave((x,F)->Cuba_integrand!(x,F,f,lb,ub), ndim, ncomp; kwargs...))
+        integrator = (f,lb,ub) -> integrator(Cuba.suave,f,lb,ub) #unwrap(Cuba.suave((x,F)->Cuba_integrand!(x,F,f,lb,ub), ndim, ncomp; kwargs...))
     else
         error("Invalid method `$method`")
     end
@@ -187,8 +189,9 @@ function packing_energy(c_0::Circle,
     E_total = (alpha*E_mutual + lambda*E_overlap)/distancescale^2
 
     # Penalize by density?
-    # T = eltype(origins)
-    # circles = Circle{DIM,T}[c_0, Circle.(reinterpret(Vec{DIM,T}, origins), radii)...]
+    T = eltype(origins)
+    origins = reinterpret(Vec{DIM,T}, origins)
+    circles = Circle{DIM,T}[c_0, Circle.(origins, radii)...]
     # E_total += (0.75 - estimate_density(circles))^2
 
     return E_total
