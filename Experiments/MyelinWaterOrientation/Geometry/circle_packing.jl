@@ -81,6 +81,87 @@ function wrap_gradient(f, x, ::Type{Val{N}} = Val{10}) where {N}
 end
 
 # ---------------------------------------------------------------------------- #
+# Estimate packing density
+# ---------------------------------------------------------------------------- #
+
+function estimate_density(circles::Vector{Circle{dim,T}}, α = T(0.75)) where {dim,T}
+    # For this estimate, we compute the inscribed square of the bounding circle
+    # which bounds all of the `circles`. Then, the square is scaled down a small
+    # amount with the hope that this square contains a relatively large and
+    # representative region of circles for which to integrate over to obtain the
+    # packing density, but not so large that there is much empty space remaining
+    boundary_circle = crude_bounding_circle(circles)
+    inner_square = inscribed_square(boundary_circle)
+    domain = scale_shape(inner_square, α)
+    lb, ub = minimum(domain), maximum(domain) # domain bounds
+    A = prod(ub - lb) # domain area
+
+    Σ = zero(T)
+    for c in circles
+        if is_inside(c, domain)
+            Σ += π*radius(c)^2
+        elseif !is_outside(c, domain)
+            Σ += circle_region_area(c, minimum(domain), maximum(domain))
+        end
+    end
+
+    return T(Σ/A)
+end
+
+function estimate_density_monte_carlo(
+        circles::Vector{Circle{dim,T}},
+        α = T(0.75);
+        integrator = Cuba_integrator()
+        ) where {dim,T}
+    # For this estimate, we compute the inscribed square of the bounding circle
+    # which bounds all of the `circles`. Then, the square is scaled down a small
+    # amount with the hope that this square contains a relatively large and
+    # representative region of circles for which to integrate over to obtain the
+    # packing density
+    boundary_circle = crude_bounding_circle(circles)
+    inner_square = inscribed_square(boundary_circle)
+    domain = scale_shape(inner_square, α)
+
+    # Integrand is simply boolean true if inside circle, and false otherwise
+    lb, ub = minimum(domain), maximum(domain) # domain bounds
+    A = prod(ub - lb) # domain area
+
+    f = x -> convert(T, any(c -> is_inside(x,c), circles)::Bool)
+    I, E, P = integrator(f, lb, ub)
+
+    return I/A, E/A, P
+end
+
+function HCubature_integrator(;norm = Base.norm, rtol = sqrt(eps()), atol = 0.0, maxevals = typemax(Int))
+    return (f, lb, ub) -> HCubature.hcubature(x->f(Vec{2}(x)), lb, ub; norm=norm, rtol=rtol, atol=atol, maxevals=maxevals)
+end
+
+function Cuba_integrand!(x,F,f,lb,ub)
+    y = lb + (ub - lb) .* x # shift x ∈ [0,1]^2 -> y ∈ [lb,ub]
+    J = prod(ub - lb) # Jacobian of linear transformation
+    X = Vec{2}((y[1], y[2]))
+    F[1] = f(X) * J
+    return nothing
+end
+
+function Cuba_integrator(method = :cuhre; kwargs...)
+    const ndim = 2 # number of dimensions of domain
+    const ncomp = 1 # number of components of f
+    unwrap = I -> (I.integral[1], I.error[1], I.probability[1])
+    if method == :cuhre
+        integrator = (f,lb,ub) -> unwrap(Cuba.cuhre((x,F)->Cuba_integrand!(x,F,f,lb,ub), ndim, ncomp; kwargs...))
+    elseif method == :vegas
+        integrator = (f,lb,ub) -> unwrap(Cuba.vegas((x,F)->Cuba_integrand!(x,F,f,lb,ub), ndim, ncomp; kwargs...))
+    elseif method == :divonne
+        integrator = (f,lb,ub) -> unwrap(Cuba.divonne((x,F)->Cuba_integrand!(x,F,f,lb,ub), ndim, ncomp; kwargs...))
+    elseif method == :suave
+        integrator = (f,lb,ub) -> unwrap(Cuba.suave((x,F)->Cuba_integrand!(x,F,f,lb,ub), ndim, ncomp; kwargs...))
+    else
+        error("Invalid method `$method`")
+    end
+end
+
+# ---------------------------------------------------------------------------- #
 # Energies on circles
 # ---------------------------------------------------------------------------- #
 
@@ -99,14 +180,16 @@ function packing_energy(c_0::Circle,
     E_overlap = energy_sum_overlap_squared_distances(c_0,origins,radii,epsilon,Val{DIM})
     E_mutual = energy_sum_squared_distances(c_0,origins,radii,Val{DIM})
 
-    # @show (minimum(ForwardDiff.value.(origins)), maximum(ForwardDiff.value.(origins)))
-    # @show (ForwardDiff.value(E_overlap), ForwardDiff.value(E_mutual))
-
     # We could also interpret the "packing energy" instead as the Lagrangian
     # for the constrained problem where lambda is a Lagrange multiplier and the
     # overlap energy is constrained to be exactly zero (which occurs whenever
     # there are no overlapping circles)
     E_total = (alpha*E_mutual + lambda*E_overlap)/distancescale^2
+
+    # Penalize by density?
+    # T = eltype(origins)
+    # circles = Circle{DIM,T}[c_0, Circle.(reinterpret(Vec{DIM,T}, origins), radii)...]
+    # E_total += (0.75 - estimate_density(circles))^2
 
     return E_total
 end
@@ -227,3 +310,5 @@ function energy_sum_overlap_squared_distances(c_0::Circle,
     return E
 
 end
+
+nothing

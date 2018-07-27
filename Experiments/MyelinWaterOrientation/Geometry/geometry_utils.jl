@@ -1,7 +1,14 @@
 # ============================================================================ #
 # Generic geometry utilities for use within the JuAFEM.jl/Tensors.jl framework
 # ============================================================================ #
-import Base: maximum, minimum, rand
+import Base: maximum, minimum, rand, convert
+
+# ---------------------------------------------------------------------------- #
+# Misc. utilities for Vec type from Tensors.jl
+# ---------------------------------------------------------------------------- #
+norm2(x::Vec) = dot(x,x)
+convert(::Type{Vec{dim,T1}}, x::SVector{dim,T2}) where {dim,T1,T2} = Vec{dim,promote_type(T1,T2)}(Tuple(x))
+convert(::Type{SVector{dim,T1}}, x::Vec{dim,T2}) where {dim,T1,T2} = SVector{dim,promote_type(T1,T2)}(Tuple(x))
 
 # ---------------------------------------------------------------------------- #
 # Circle based on Vec type from Tensors.jl (code based on GeometryTypes.jl)
@@ -13,6 +20,10 @@ end
 function Circle(center::Vec{dim,T1}, r::T2) where {dim,T1,T2}
     T = promote_type(T1, T2)
     return Circle(Vec{dim,T}(center), T(r))
+end
+function convert(::Type{Circle{dim,T1}}, c::Circle{dim,T2}) where {dim,T1,T2}
+    T = promote_type(T1,T2)
+    return Circle{dim,T}(Vec{dim,T}(origin(c)), T(radius(c)))
 end
 Circle(::Type{T}, center::Vec{dim}, r::Number) where {dim,T} = Circle(Vec{dim,T}(center), T(r))
 Circle(::Type{T}, center::NTuple{dim}, r::Number) where {dim,T} = Circle(Vec{dim,T}(center), T(r))
@@ -35,6 +46,15 @@ maximum(c::Circle{dim,T}) where {dim,T} = origin(c) + radii(c)
 @inline xmax(c::Circle{2}) = maximum(c)[1]
 @inline ymax(c::Circle{2}) = maximum(c)[2]
 
+# Scale circle by factor `α` relative to it's origin
+scale_shape(c::Circle, α::Number) = Circle(origin(c), α * radius(c))
+
+# compute maximal square inscribed inside circle
+function inscribed_square(c::Circle{dim,T}) where {dim,T}
+    half_widths = radii(c)/T(√dim)
+    return Rectangle{dim,T}(origin(c) - half_widths, origin(c) + half_widths)
+end
+
 # Random circles
 rand(::Type{Circle{dim,T}}) where {dim,T} = Circle(2rand(Vec{dim,T})-ones(Vec{dim,T}), rand(T))
 rand(::Type{Circle{dim,T}}, N::Int) where {dim,T} = [rand(Circle{dim,T}) for i in 1:N]
@@ -45,15 +65,17 @@ rand(::Type{Circle{dim,T}}, N::Int) where {dim,T} = [rand(Circle{dim,T}) for i i
     return norm(dx) - radius(c1) - radius(c2) # zero is when circles are tangent, not overlapping
 end
 @inline function signed_edge_distance(o1::Vec, r1, o2::Vec, r2)
-    dx = o1 - o2
-    return norm(dx) - r1 - r2 # zero is when circles are tangent, not overlapping
+    return norm(o1 - o2) - r1 - r2 # zero is when circles are tangent, not overlapping
 end
 
-# check if c1 is in c2: distance between origins is less than radius(c2) and
-# radius(c1) <= radius(c2)
+# check if c1 is in c2: r1 < r2 and ||o1 - o2|| < r2 - r1
 @inline function is_inside(c1::Circle, c2::Circle, lt = ≤)
     o1, o2, r1, r2 = origin(c1), origin(c2), radius(c1), radius(c2)
-    return lt(r1, r2) && lt(norm(o1 - o2) + r1, r2)
+    return lt(r1, r2) && lt(norm2(o1 - o2), (r2-r1)^2)
+end
+
+@inline function is_inside(x::Vec{dim}, c::Circle{dim}, lt = ≤) where {dim}
+    return lt(norm2(x - origin(c)), radius(c)^2)
 end
 
 # check if c1 and c2 are overlapping
@@ -74,38 +96,36 @@ function bounding_circle(circles::Vector{C}) where {C<:Circle}
 
     circle = circles[1]
     for i in 2:N
-        # next circle to consider
-        c = circles[i]
-
-        # don't need to do anything if c ∈ circle already
-        if !is_inside(c, circle)
-            if is_inside(circle, c)
-                # if circle ∈ c, set c to be the new circle
-                circle = c
-            else
-                # compute bounding circle
-                circle = bounding_circle(circle, c)
-            end
-        end
+        circle = bounding_circle(circle, circles[i])
     end
 
     return circle
 end
-function bounding_circle(c1::Circle, c2::Circle)
-    T = promote_type(floattype(c1), floattype(c2))
 
+function bounding_circle(c1::Circle, c2::Circle)
+
+    # Check if one circle already contains the other
+    is_inside(c1, c2) && return c2
+    is_inside(c2, c1) && return c1
+
+    # If not, compute bounding circle for the pair
+    T = promote_type(floattype(c1), floattype(c2))
     o1, o2, r1, r2 = origin(c1), origin(c2), radius(c1), radius(c2)
 
+    # Check if circle origins are overlapping
     r12 = norm(o1-o2)
-    if r12 ≈ zero(T)
-        return Circle(o1, max(r1,r2))
-    end
+    r12 ≈ zero(T) && return Circle(o1, max(r1,r2)) # arbitarily take o1 for speed. could take average?
 
+    # Otherwise, compute the general case
+    rad = T(0.5)*(r1 + r2 + r12)
+
+    # This version seems more numerically unstable...
     α1 = (r12 + r1 - r2)/(2r12)
     α2 = (r12 - r1 + r2)/(2r12)
-
-    rad = T(0.5)*(r1 + r2 + r12)
     center = α1*o1 + α2*o2
+
+    # Compute center
+    # center = T(0.5)*(o1+o2) + ((r1-r2)/r12)*(o1-o2)
 
     return Circle(center, rad)
 end
@@ -141,6 +161,14 @@ widths(r::Rectangle) = maximum(r) - minimum(r)
 rand(::Type{Rectangle{dim,T}}) where {dim,T} = Circle(-rand(Vec{dim,T}), rand(Vec{dim,T}))
 rand(::Type{Rectangle{dim,T}}, N::Int) where {dim,T} = [rand(Rectangle{dim,T}) for i in 1:N]
 
+# Scale rectangle by factor `α` relative to it's origin
+function scale_shape(r::Rectangle, α::Number)
+    o = origin(r)
+    new_mins = α * (minimum(r) - o) + o
+    new_maxs = α * (maximum(r) - o) + o
+    return Rectangle(new_mins, new_maxs)
+end
+
 # Bounding box of vector of circles
 function bounding_box(circles::Vector{Circle{dim,T}}) where {dim,T}
     min_x = minimum(c->xmin(c), circles)
@@ -148,6 +176,102 @@ function bounding_box(circles::Vector{Circle{dim,T}}) where {dim,T}
     max_x = maximum(c->xmax(c), circles)
     max_y = maximum(c->ymax(c), circles)
     return Rectangle((min_x, min_y), (max_x, max_y))
+end
+
+# Check if circle is inside rectangle
+@inline function is_inside(c::Circle{dim}, r::Rectangle{dim}, lt = ≤) where {dim}
+    cmin, cmax, rmin, rmax = minimum(c), maximum(c), minimum(r), maximum(r)
+    @inbounds for i in 1:dim
+        !(lt(rmin[i], cmin[i]) && lt(cmax[i], rmax[i])) && return false
+    end
+    return true
+end
+
+# Check if circle is outside rectangle
+@inline function is_outside(c::Circle{dim}, r::Rectangle{dim}, lt = <) where {dim}
+    cmin, cmax, rmin, rmax = minimum(c), maximum(c), minimum(r), maximum(r)
+    @inbounds for i in 1:dim
+        (lt(cmax[i], rmin[i]) || lt(rmax[i], cmin[i])) && return true
+    end
+    return false
+end
+
+@inline function circle_region_area(c::Circle{2,T}, X0::T, Y0::T, X1::T, Y1::T) where {T}
+    # Integration of the intersection of area between the circle `c` and the
+    # rectangular region defined by X0 ≤ x ≤ X1, Y0 ≤ y ≤ Y1. It is assumed that
+    # X0 ≤ X1 and Y0 ≤ Y1.
+    #
+    # This code is heavily influenced by the stackoverflow response by user
+    # `the swine` at the following link:
+    #   https://stackoverflow.com/questions/622287/area-of-intersection-between-circle-and-rectangle
+
+    @inline area_section(x, h) = (x*sqrt(1-x^2) + asin(x))/2 - x*h
+    @inline area_above(x0, x1, h) = (x = sqrt(1-h^2); area_section(clamp(x1,-x,x), h) - area_section(clamp(x0,-x,x), h))
+    @inline area_region(x0, x1, y0, y1) = area_above(x0, x1, y0) - area_above(x0, x1, y1)
+
+    # Get normalized positions
+    r, o = radius(c), origin(c)
+    x0, x1, y0, y1 = (X0-o[1])/r, (X1-o[1])/r, (Y0-o[2])/r, (Y1-o[2])/r
+    x0, x1 = clamp(x0,-one(T),one(T)), clamp(x1,-one(T),one(T))
+    y0, y1 = clamp(y0,-one(T),one(T)), clamp(y1,-one(T),one(T))
+
+    # Formulas above only work assuming 0 ≤ y0 ≤ y1. If this is not the case,
+    # the integral needs to be split up
+    if y0 < zero(T)
+        if y1 < zero(T)
+            area = area_region(x0, x1, -y1, -y0) # flip domain about x-axis
+        else
+            area = area_region(x0, x1, zero(T), y1) + area_region(x0, x1, zero(T), -y0) # integrate from [0,y1] and [0,-y0] separately
+        end
+    else
+        area = area_region(x0, x1, y0, y1)
+    end
+
+    # Integration is over the unit circle, so scale result by r^2
+    area *= r^2
+
+    return area
+end
+
+@inline function circle_region_area(c::Circle{2}, Xmin::Vec{2}, Xmax::Vec{2})
+    @inbounds area = circle_region_area(c, Xmin[1], Xmin[2], Xmax[1], Xmax[2])
+    return area
+end
+
+function circle_region_area_test(c::Circle{2,T}) where {T}
+    # allow for points to be inside or slightly outside of circle
+    rect = scale_shape(bounding_box([c]), T(1.5))
+
+    x0 = origin(rect)[1] - (xmax(rect)-xmin(rect))/2 * rand(T)
+    x1 = origin(rect)[1] + (xmax(rect)-xmin(rect))/2 * rand(T)
+    y0 = origin(rect)[2] - (ymax(rect)-ymin(rect))/2 * rand(T)
+    y1 = origin(rect)[2] + (ymax(rect)-ymin(rect))/2 * rand(T)
+    @assert (x0 <= x1 && y0 <= y1)
+
+    R = radius(c)
+    h = R - (min(y1,ymax(c)) - origin(c)[2])
+
+    A_top_test = (circle_region_area(c, -Inf,   y1,  x0, Inf) + # 1: top left
+                  circle_region_area(c,   x0,   y1,  x1, Inf) + # 2: top middle
+                  circle_region_area(c,   x1,   y1, Inf, Inf))  # 3: top right
+
+    A_top = R^2 * acos((R-h)/R) - (R-h)*√(2*R*h-h^2)
+    @assert isapprox(A_top, A_top_test; atol=1e-12)
+
+    A_test = (circle_region_area(c, -Inf,   y1,  x0, Inf) + # 1: top left
+              circle_region_area(c,   x0,   y1,  x1, Inf) + # 2: top middle
+              circle_region_area(c,   x1,   y1, Inf, Inf) + # 3: top right
+              circle_region_area(c, -Inf,   y0,  x0,  y1) + # 4: middle left
+              circle_region_area(c,   x0,   y0,  x1,  y1) + # 5: middle middle
+              circle_region_area(c,   x1,   y0, Inf,  y1) + # 6: middle right
+              circle_region_area(c, -Inf, -Inf,  x0,  y0) + # 7: bottom left
+              circle_region_area(c,   x0, -Inf,  x1,  y0) + # 8: bottom middle
+              circle_region_area(c,   x1, -Inf, Inf,  y0))  # 9: bottom right
+
+    A_exact = pi*radius(c)^2
+    @assert A_test ≈ A_exact
+
+    return (A_test, A_exact)
 end
 
 # ---------------------------------------------------------------------------- #

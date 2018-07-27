@@ -15,20 +15,20 @@ function BlochTorreyParameters(::Type{T} = Float64; kwargs...) where {T}
     default_params = Dict{Symbol,T}(
         :B0             =>    3.0,          # External magnetic field [T]
         :gamma          =>    2.67515255e8, # Gyromagnetic ratio [rad/(T*s)]
-        :theta_rad      =>    π/2,          # Main magnetic field angle w.r.t B0 [rad/(T*s)]
+        :theta          =>    π/2,          # Main magnetic field angle w.r.t B0 [rad/(T*s)]
         :g_ratio        =>    0.8370,       # g-ratio (original 0.71) ,0.84658 for healthy, 0.8595 for MS.
         :R2_sp          =>    1.0/15e-3,    # Relaxation rate of small pool [s^-1] (Myelin) (Xu et al. 2017) (15e-3s)
         :R2_lp          =>    1.0/63e-3,    # 1st attempt was 63E-3. 2nd attempt 76 ms
         :R2_Tissue      =>    14.5,         # Relaxation rate of tissue [s^-1]
         :R2_water       =>    1.0/2.2,      # Relaxation rate of pure water
-        :D_Tissue       =>    2000.0,       # Diffusion coefficient [um^2/s]
-        :D_Sheath       =>    2000.0,       # Diffusion coefficient [um^2/s]
-        :D_Axon         =>    2000.0,       # Diffusion coefficient [um^2/s]
-        :D_Blood        =>    3037.0,       # Diffusion coefficient [um^2/s]
-        :D_VRS          =>    3037.0,       # Diffusion coefficient [um^2/s]
-        :D_Water        =>    3037.0,       # Diffusion coefficient [um^2/s]
+        :D_Tissue       =>    2000.0,       # Diffusion coefficient in tissue [um^2/s]
+        :D_Sheath       =>    2000.0,       # Diffusion coefficient in myelin sheath [um^2/s]
+        :D_Axon         =>    2000.0,       # Diffusion coefficient in axon interior [um^2/s]
+        :D_Blood        =>    3037.0,       # Diffusion coefficient in blood [um^2/s]
+        :D_Water        =>    3037.0,       # Diffusion coefficient in water [um^2/s]
         :R_mu           =>    0.46,         # Axon mean radius [um] ; this is taken to be outer radius.
         :R_shape        =>    5.7,          # Axon shape parameter for Gamma distribution (Xu et al. 2017)
+        :R_scale        =>    0.46/5.7,     # Axon scale parameter for Gamma distribution (Xu et al. 2017)
         :AxonPDensity   =>    0.83,         # Axon packing density based region in white matter. (Xu et al. 2017) (originally 0.83)
         :AxonPDActual   =>    0.64,         # The actual axon packing density you're aiming for.
         :PD_sp          =>    0.5,          # Relative proton density (Myelin)
@@ -39,12 +39,12 @@ function BlochTorreyParameters(::Type{T} = Float64; kwargs...) where {T}
         :E              =>    10e-9,        # Exchange component to resonance freqeuency [ppb] (Wharton and Bowtell 2012)
         :R2_Fe          =>    1.0/1e-6,     # Relaxation rate of iron in ferritin. Assumed to be really high.
         :R2_WM          =>    1.0/70e-3,    # Relaxation rate of frontal WM. This is empirical;taken from literature. (original 58.403e-3) (patient 58.4717281111171e-3)
-        :R_Ferritin     =>    4e-3,         # Ferritin mean radius [um].
+        :R_Ferritin     =>    4.0e-3,       # Ferritin mean radius [um].
         :R_conc         =>    0.0,          # Conntration of iron in the frontal white matter. [mg/g] (0.0424 in frontal WM) (0.2130 in globus pallidus; deep grey matter)
         :Rho_tissue     =>    1.073,        # White matter tissue density [g/ml]
         :ChiTissue      =>   -9.05e-6,      # Isotropic susceptibility of tissue
         :ChiFeUnit      =>    1.4e-9,       # Susceptibility of iron per ppm/ (ug/g) weight fraction of iron.
-        :ChiFeFull      =>    520e-6,       # Susceptibility of iron for ferritin particle FULLY loaded with 4500 iron atoms. (use volume of FULL spheres) (from Contributions to magnetic susceptibility)
+        :ChiFeFull      =>    520.0e-6,     # Susceptibility of iron for ferritin particle FULLY loaded with 4500 iron atoms. (use volume of FULL spheres) (from Contributions to magnetic susceptibility)
         :Rho_Iron       =>    7.874         # Iron density [g/cm^3]
         )
 
@@ -169,3 +169,5 @@ function expmv_norm(A, p::Real=1, t::Int=10)
         error("Only p=1 or p=Inf supported")
     end
 end
+
+nothing
