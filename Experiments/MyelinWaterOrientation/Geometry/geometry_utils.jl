@@ -1,7 +1,7 @@
 # ============================================================================ #
 # Generic geometry utilities for use within the JuAFEM.jl/Tensors.jl framework
 # ============================================================================ #
-import Base: maximum, minimum, rand, convert
+import Base: maximum, minimum, rand, convert, isapprox
 
 # ---------------------------------------------------------------------------- #
 # Misc. utilities for Vec type from Tensors.jl
@@ -17,6 +17,9 @@ struct Circle{dim,T}
     center::Vec{dim,T}
     r::T
 end
+Circle(::Type{T}, center::Vec{dim}, r::Number) where {dim,T} = Circle(Vec{dim,T}(center), T(r))
+Circle(::Type{T}, center::NTuple{dim}, r::Number) where {dim,T} = Circle(Vec{dim,T}(center), T(r))
+
 function Circle(center::Vec{dim,T1}, r::T2) where {dim,T1,T2}
     T = promote_type(T1, T2)
     return Circle(Vec{dim,T}(center), T(r))
@@ -25,8 +28,9 @@ function convert(::Type{Circle{dim,T1}}, c::Circle{dim,T2}) where {dim,T1,T2}
     T = promote_type(T1,T2)
     return Circle{dim,T}(Vec{dim,T}(origin(c)), T(radius(c)))
 end
-Circle(::Type{T}, center::Vec{dim}, r::Number) where {dim,T} = Circle(Vec{dim,T}(center), T(r))
-Circle(::Type{T}, center::NTuple{dim}, r::Number) where {dim,T} = Circle(Vec{dim,T}(center), T(r))
+function isapprox(c1::Circle, c2::Circle; kwargs...)
+    return isapprox(radius(c1), radius(c2); kwargs...) && isapprox(origin(c1), origin(c2); kwargs...)
+end
 
 Circle(center::NTuple{dim,T}, r::T) where {dim,T} = Circle(Vec{dim,T}(center), r)
 dimension(c::Circle) = dimension(typeof(c))
@@ -56,7 +60,7 @@ function inscribed_square(c::Circle{dim,T}) where {dim,T}
 end
 
 # Random circles
-rand(::Type{Circle{dim,T}}) where {dim,T} = Circle(2rand(Vec{dim,T})-ones(Vec{dim,T}), rand(T))
+rand(::Type{Circle{dim,T}}) where {dim,T} = Circle{dim,T}(2rand(Vec{dim,T})-ones(Vec{dim,T}), rand(T))
 rand(::Type{Circle{dim,T}}, N::Int) where {dim,T} = [rand(Circle{dim,T}) for i in 1:N]
 
 # Signed edge distance
@@ -108,24 +112,24 @@ function bounding_circle(c1::Circle, c2::Circle)
     is_inside(c1, c2) && return c2
     is_inside(c2, c1) && return c1
 
-    # If not, compute bounding circle for the pair
+    # If not, check if the circle origins are overlapping
     T = promote_type(floattype(c1), floattype(c2))
+    EPS = √eps(T)
     o1, o2, r1, r2 = origin(c1), origin(c2), radius(c1), radius(c2)
 
-    # Check if circle origins are overlapping
     r12 = norm(o1-o2)
-    r12 ≈ zero(T) && return Circle(o1, max(r1,r2)) # arbitarily take o1 for speed. could take average?
+    r12 ≤ EPS && return Circle(T(0.5)*(o1+o2), max(r1,r2)+EPS) # arbitarily take o1 for speed. could take average?
 
     # Otherwise, compute the general case
     rad = T(0.5)*(r1 + r2 + r12)
 
-    # This version seems more numerically unstable...
-    α1 = (r12 + r1 - r2)/(2r12)
-    α2 = (r12 - r1 + r2)/(2r12)
-    center = α1*o1 + α2*o2
+    # This version is more numerically unstable; lots of cancellation of large +/- numbers
+    # α1 = (r12 + r1 - r2)/(2r12)
+    # α2 = (r12 - r1 + r2)/(2r12)
+    # center = α1*o1 + α2*o2
 
-    # Compute center
-    # center = T(0.5)*(o1+o2) + ((r1-r2)/r12)*(o1-o2)
+    # Compute center (note that r12 > EPS)
+    center = T(0.5)*(o1+o2) + ((r1-r2)/r12)*(o1-o2)
 
     return Circle(center, rad)
 end
@@ -147,6 +151,10 @@ Rectangle(mins::NTuple{dim,T}, maxs::Vec{dim,T}) where {dim,T} = Rectangle(Vec{d
 Rectangle(mins::Vec{dim,T}, maxs::NTuple{dim,T}) where {dim,T} = Rectangle(mins, Vec{dim,T}(maxs))
 Rectangle(mins::NTuple{dim,T}, maxs::NTuple{dim,T}) where {dim,T} = Rectangle(Vec{dim,T}(mins), Vec{dim,T}(maxs))
 
+function isapprox(r1::Rectangle, r2::Rectangle; kwargs...)
+    return isapprox(minimum(r1), minimum(r2); kwargs...) && isapprox(maximum(r1), maximum(r2); kwargs...)
+end
+
 maximum(r::Rectangle) = r.maxs
 minimum(r::Rectangle) = r.mins
 origin(r::Rectangle) = 0.5(minimum(r) + maximum(r))
@@ -158,7 +166,7 @@ widths(r::Rectangle) = maximum(r) - minimum(r)
 @inline ymax(r::Rectangle{2}) = maximum(r)[2]
 
 # Random rectangles
-rand(::Type{Rectangle{dim,T}}) where {dim,T} = Circle(-rand(Vec{dim,T}), rand(Vec{dim,T}))
+rand(::Type{Rectangle{dim,T}}) where {dim,T} = Rectangle{dim,T}(-rand(Vec{dim,T}), rand(Vec{dim,T}))
 rand(::Type{Rectangle{dim,T}}, N::Int) where {dim,T} = [rand(Rectangle{dim,T}) for i in 1:N]
 
 # Scale rectangle by factor `α` relative to it's origin
@@ -207,7 +215,7 @@ end
 
     ZERO, ONE, EPS = zero(X0), one(X0), 5eps(typeof(X0))
 
-    @inline safe_sqrt(x) = x <= EPS ? EPS : √x
+    @inline safe_sqrt(x) = √x
     @inline area_section(x, h) = (x*safe_sqrt(1-x^2) + asin(x))/2 - x*h
     @inline area_above(x0, x1, h) = (x = safe_sqrt(1-h^2); area_section(clamp(x1,-x,x), h) - area_section(clamp(x0,-x,x), h))
     @inline area_region(x0, x1, y0, y1) = area_above(x0, x1, y0) - area_above(x0, x1, y1)
@@ -216,8 +224,9 @@ end
     r, o = radius(c), origin(c)
     x0, x1, y0, y1 = (X0-o[1])/r, (X1-o[1])/r, (Y0-o[2])/r, (Y1-o[2])/r
 
-    x0, x1 = clamp(x0,-ONE,ONE), clamp(x1,-ONE,ONE)
-    y0, y1 = clamp(y0,-ONE,ONE), clamp(y1,-ONE,ONE)
+    # Clamp just inside ±1 to avoid numerical difficulties with derivatives
+    x0, x1 = clamp(x0, -ONE+EPS, ONE-EPS), clamp(x1, -ONE+EPS, ONE-EPS)
+    y0, y1 = clamp(y0, -ONE+EPS, ONE-EPS), clamp(y1, -ONE+EPS, ONE-EPS)
 
     # Formulas above only work assuming 0 ≤ y0 ≤ y1. If this is not the case,
     # the integral needs to be split up

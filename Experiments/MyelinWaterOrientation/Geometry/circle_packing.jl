@@ -7,15 +7,18 @@
 # ---------------------------------------------------------------------------- #
 function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
                       initial_origins::AbstractVector{<:Vec{DIM}} = initialize_origins(radii, Val{DIM}),
-                      alpha::Real = convert(eltype(radii), 1e-4),
-                      epsilon::Real = convert(eltype(radii), 0.05minimum(radii)),
+                      goaldensity = 0.8,
                       distancescale = mean(radii),
+                      weights::AbstractVector = [1.0, 1e-6, 1.0],
+                      epsilon::Real = 0.1*distancescale,
                       autodiff::Bool = true,
                       secondorder::Bool = false,
-                      constrained::Bool = false,
+                      constrained::Bool = false, # autodiff && secondorder,
+                      reversemode::Bool = false, # autodiff && !secondorder,
                       Alg = secondorder ? Newton(linesearch = LineSearches.BackTracking(order=3))
                                         : LBFGS(linesearch = LineSearches.BackTracking(order=3)),
                       Opts = Optim.Options(iterations = 100_000,
+                                           x_tol = 1e-6*distancescale,
                                            g_tol = 1e-12,
                                            allow_f_increases = true)
                       ) where {DIM}
@@ -33,12 +36,11 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
     if constrained
         # Constrained problem using Lagrange multipliers
         push!(x0, one(T)) # push initial Lagrange multiplier
-        g = x -> packing_energy(c_fixed, x, radius.(c_variable), distancescale, alpha, x[end], epsilon, Val{DIM})
+        g = x -> packing_energy(c_fixed, x, radius.(c_variable), goaldensity, distancescale, cat(1, weights[1:2], x[end]), epsilon, Val{DIM})
         f = x -> sum(abs2, ForwardDiff.gradient(g, x))
     else
         # Unconstrained problem with penalty on overlap
-        const lambda = one(T) # lagrange multipliers not used
-        f = x -> packing_energy(c_fixed, x, radius.(c_variable), distancescale, alpha, lambda, epsilon, Val{DIM})
+        f = x -> packing_energy(c_fixed, x, radius.(c_variable), goaldensity, distancescale, weights, epsilon, Val{DIM})
     end
 
     # Optimize and get results
@@ -46,7 +48,14 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
         if secondorder
             opt_obj = TwiceDifferentiable(f, x0; autodiff = :forward)
         else
-            opt_obj = OnceDifferentiable(f, x0; autodiff = :forward)
+            if reversemode
+                # Reverse mode automatic differentiation
+                g!, fg! = wrap_gradient(f, x0, isforward = false, isdynamic = true)
+                opt_obj = OnceDifferentiable(f, g!, fg!, x0)
+            else
+                # Forward mode automatic differentiation
+                opt_obj = OnceDifferentiable(f, x0; autodiff = :forward)
+            end
         end
     else
         opt_obj = f
@@ -74,10 +83,36 @@ function initialize_origins(radii::AbstractVector{T},
     return initial_origins
 end
 
-function wrap_gradient(f, x, ::Type{Val{N}} = Val{10}) where {N}
-    cfg = ForwardDiff.GradientConfig(f, x, ForwardDiff.Chunk{N}())
-    g! = (out, x) -> ForwardDiff.gradient!(out, f, x, cfg)
-    return g!
+function wrap_gradient(f, x0,
+        ::Type{Val{N}} = Val{min(10,length(x0))};
+        isforward = false,
+        isdynamic = !isforward) where {N}
+
+    if isforward
+        # ForwardDiff gradient (pre-recorded config)
+        const cfg = ForwardDiff.GradientConfig(f, x0, ForwardDiff.Chunk{N}())
+        g! = (out, x) -> ForwardDiff.gradient!(out, f, x, cfg)
+    else
+        if isdynamic
+            # ReverseDiff gradient (pre-recorded config; slower, but dynamic call graph)
+            const cfg = ReverseDiff.GradientConfig(x0)
+            g! = (out, x) -> ReverseDiff.gradient!(out, f, x, cfg)
+        else
+            # ReverseDiff gradient (pre-recorded tape; faster, but static call graph)
+            const f_tape = ReverseDiff.GradientTape(f, x0)
+            const compiled_f_tape = ReverseDiff.compile(f_tape)
+            g! = (out, x) -> ReverseDiff.gradient!(out, compiled_f_tape, x)
+        end
+    end
+
+    const all_results = DiffResults.GradientResult(similar(x0))
+    fg! = (G, x) -> begin
+        g!(all_results, x)
+        copy!(G, DiffResults.gradient(all_results))
+        return DiffResults.value(all_results)
+    end
+
+    return g!, fg!
 end
 
 # ---------------------------------------------------------------------------- #
@@ -171,28 +206,29 @@ end
 function packing_energy(c_0::Circle,
                         origins::AbstractVector,
                         radii::AbstractVector,
-                        distancescale = mean(radii),
-                        alpha::Real = convert(eltype(radii), 1e-4),
-                        lambda::Real = one(eltype(radii)),
-                        epsilon::Real = zero(eltype(radii)),
+                        goaldensity::Real = 0.8,
+                        distancescale::Real = mean(radii),
+                        weights::AbstractVector = [1.0, 1e-6, 1.0],
+                        epsilon::Real = 0.1*distancescale,
                         ::Type{Val{DIM}} = Val{dimension(c_0)}) where {DIM}
     # Using the overlap as the only metric clearly will not work, as any
     # isolated set of circles will have zero energy. Therefore, we penalize by
     # the total squared distances to encourage the circles to stay close
-    E_overlap = energy_sum_overlap_squared_distances(c_0,origins,radii,epsilon,Val{DIM})
-    E_mutual = energy_sum_squared_distances(c_0,origins,radii,Val{DIM})
+    E_overlap = energy_sum_overlap_squared_distances(c_0,origins,radii,epsilon,Val{DIM})/distancescale^2
+    E_mutual = energy_sum_squared_distances(c_0,origins,radii,Val{DIM})/distancescale^2
+
+    # Penalize by goaldensity
+    T = eltype(origins)
+    # origins = reinterpret(Vec{DIM,T}, origins)
+    origins = [Vec{DIM,T}((origins[i], origins[i+1])) for i in 1:div(length(origins),2)]
+    circles = Vector{Circle{DIM,T}}(cat(1, c_0, Circle.(origins, radii)))
+    E_density = (goaldensity - estimate_density(circles))^2
 
     # We could also interpret the "packing energy" instead as the Lagrangian
     # for the constrained problem where lambda is a Lagrange multiplier and the
     # overlap energy is constrained to be exactly zero (which occurs whenever
     # there are no overlapping circles)
-    E_total = (alpha*E_mutual + lambda*E_overlap)/distancescale^2
-
-    # Penalize by density?
-    T = eltype(origins)
-    origins = reinterpret(Vec{DIM,T}, origins)
-    circles = Circle{DIM,T}[c_0, Circle.(origins, radii)...]
-    # E_total += (0.75 - estimate_density(circles))^2
+    E_total = weights[1]*E_density + weights[2]*E_mutual + weights[3]*E_overlap
 
     return E_total
 end
@@ -208,7 +244,8 @@ function energy_sum_squared_distances(c_0::Circle,
     E = zero(T)
 
     @assert length(origins) >= N*DIM # allow for extra variables to be at the end of origins
-    origins = reinterpret(Vec{DIM,T}, origins)
+    # origins = reinterpret(Vec{DIM,T}, origins)
+    origins = [Vec{DIM,T}((origins[i], origins[i+1])) for i in 1:div(length(origins),2)]
 
     # One circle must be fixed, otherwise problem is ill-posed (translation invariant)
     @inbounds for j in 1:N
@@ -240,7 +277,8 @@ function energy_sum_inv_squared_distances(c_0::Circle,
     E = zero(T)
 
     @assert length(origins) >= N*DIM # allow for extra variables to be at the end of origins
-    origins = reinterpret(Vec{DIM,T}, origins)
+    # origins = reinterpret(Vec{DIM,T}, origins)
+    origins = [Vec{DIM,T}((origins[i], origins[i+1])) for i in 1:div(length(origins),2)]
 
     # One circle must be fixed, otherwise problem is ill-posed (translation invariant)
     @inbounds for j in 1:N
@@ -283,7 +321,8 @@ function energy_sum_overlap_squared_distances(c_0::Circle,
     ϵ = T(epsilon)
 
     @assert length(origins) >= N*DIM # allow for extra variables to be at the end of origins
-    origins = reinterpret(Vec{DIM,T}, origins)
+    # origins = reinterpret(Vec{DIM,T}, origins)
+    origins = [Vec{DIM,T}((origins[i], origins[i+1])) for i in 1:div(length(origins),2)]
 
     # One circle must be fixed, otherwise problem is ill-posed (translation invariant)
     d²_overlap = zero(T)
