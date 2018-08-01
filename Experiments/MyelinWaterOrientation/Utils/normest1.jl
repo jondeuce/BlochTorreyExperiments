@@ -5,14 +5,12 @@
 module Normest1
 
 using LinearMaps
-import Base.LinAlg: A_mul_B!, At_mul_B!, Ac_mul_B!
 
-export normest1 #, test_afun, mass_and_stifness_afun
+export normest1
 
 # Define multiplication of LinearMap on matrices (taken from v0.7 branch of LinearMaps.jl)
 for f in (:A_mul_B!, :At_mul_B!, :Ac_mul_B!)
-   @eval function LinAlg.$f(Y::AbstractMatrix, A::LinearMap{Te}, X::AbstractMatrix) where {Te}
-      (size(Y, 1) == size(A, 1) && size(X, 1) == size(A, 2) && size(Y, 2) == size(X, 2)) || throw(DimensionMismatch(string($f)))
+   @eval function Base.LinAlg.$f(Y::AbstractMatrix, A::LinearMap{Te}, X::AbstractMatrix) where {Te}
       @inbounds @views for i = 1:size(X, 2)
          $f(Y[:, i], A, X[:, i])
       end

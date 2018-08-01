@@ -1,14 +1,13 @@
 # ---------------------------------------------------------------------------- #
-# Tissue parameters type
+# Bloch-Torrey parameters type
 # ---------------------------------------------------------------------------- #
 struct BlochTorreyParameters{T}
     params::Dict{Symbol,T}
 end
 
-import Base: getindex, setindex!, display
-getindex(p::BlochTorreyParameters, s::Symbol) = p.params[s]
-setindex!(p::BlochTorreyParameters, v, s::Symbol) = error("Parameters are immutable")
-display(p::BlochTorreyParameters) = (println("$(typeof(p)) with parameters:\n"); display(p.params))
+Base.getindex(p::BlochTorreyParameters, s::Symbol) = p.params[s]
+Base.setindex!(p::BlochTorreyParameters, v, s::Symbol) = error("Parameters are immutable")
+Base.display(p::BlochTorreyParameters) = (println("$(typeof(p)) with parameters:\n"); display(p.params))
 
 function BlochTorreyParameters(::Type{T} = Float64; kwargs...) where {T}
     # default parameters
@@ -85,41 +84,41 @@ function FreqMapBuffer(p::BlochTorreyParameters, x::Vec{2})
 end
 
 @inline function omega_isotropic_tissue(p::BlochTorreyParameters,
-                                                  b::FreqMapBuffer,
-                                                  c_inner::Circle{2},
-                                                  c_outer::Circle{2})
+                                        b::FreqMapBuffer,
+                                        c_inner::Circle{2},
+                                        c_outer::Circle{2})
     χI, ri², ro² = p[:ChiI], radius(c_inner)^2, radius(c_outer)^2
     return b.ω₀ * χI * b.s²/2 * b.cos2ϕ * (ro² - ri²)/b.r²
 end
 
 @inline function omega_anisotropic_tissue(p::BlochTorreyParameters,
-                                                    b::FreqMapBuffer,
-                                                    c_inner::Circle{2},
-                                                    c_outer::Circle{2})
+                                          b::FreqMapBuffer,
+                                          c_inner::Circle{2},
+                                          c_outer::Circle{2})
     χA, ri², ro² = p[:ChiA], radius(c_inner)^2, radius(c_outer)^2
     return b.ω₀ * χA * b.s²/8 * b.cos2ϕ * (ro² - ri²)/b.r²
 end
 
 @inline function omega_isotropic_sheath(p::BlochTorreyParameters,
-                                                  b::FreqMapBuffer,
-                                                  c_inner::Circle{2},
-                                                  c_outer::Circle{2})
+                                        b::FreqMapBuffer,
+                                        c_inner::Circle{2},
+                                        c_outer::Circle{2})
     χI, ri² = p[:ChiI], radius(c_inner)^2
     return b.ω₀ * χI * ( b.c² - 1/3 - b.s² * b.cos2ϕ * ri² / b.r² )/2
 end
 
 @inline function omega_anisotropic_sheath(p::BlochTorreyParameters,
-                                                    b::FreqMapBuffer,
-                                                    c_inner::Circle{2},
-                                                    c_outer::Circle{2})
+                                          b::FreqMapBuffer,
+                                          c_inner::Circle{2},
+                                          c_outer::Circle{2})
     χA, ri², ro = p[:ChiA], radius(c_inner)^2, radius(c_outer)
     return b.ω₀ * χA * ( b.s² * (-5/12 - b.cos2ϕ/8 * (1 + ri²/b.r²) + 3/4 * log(ro/b.r)) - b.c²/6 )
 end
 
 @inline function omega_anisotropic_axon(p::BlochTorreyParameters,
-                                                  b::FreqMapBuffer,
-                                                  c_inner::Circle{2},
-                                                  c_outer::Circle{2})
+                                        b::FreqMapBuffer,
+                                        c_inner::Circle{2},
+                                        c_outer::Circle{2})
     χA, ri, ro = p[:ChiA], radius(c_inner), radius(c_outer)
     return b.ω₀ * χA * 3b.s²/4 * log(ro/ri)
 end

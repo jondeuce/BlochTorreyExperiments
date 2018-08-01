@@ -18,7 +18,7 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
                       Alg = secondorder ? Newton(linesearch = LineSearches.BackTracking(order=3))
                                         : LBFGS(linesearch = LineSearches.BackTracking(order=3)),
                       Opts = Optim.Options(iterations = 100_000,
-                                           x_tol = 1e-6*distancescale,
+                                           #x_tol = 1e-6*distancescale,
                                            g_tol = 1e-12,
                                            allow_f_increases = true)
                       ) where {DIM}
@@ -40,10 +40,11 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
         f = x -> sum(abs2, ForwardDiff.gradient(g, x))
     else
         # Unconstrained problem with penalty on overlap
-        f = x -> packing_energy(c_fixed, x, radius.(c_variable), goaldensity, distancescale, weights, epsilon, Val{DIM})
+        r_variable = radius.(c_variable)
+        f = x -> packing_energy(c_fixed, x, r_variable, goaldensity, distancescale, weights, epsilon, Val{DIM})
     end
 
-    # Optimize and get results
+    # Form *Differentiable object
     if autodiff
         if secondorder
             opt_obj = TwiceDifferentiable(f, x0; autodiff = :forward)
@@ -53,6 +54,10 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
                 g!, fg! = wrap_gradient(f, x0, isforward = false, isdynamic = true)
                 opt_obj = OnceDifferentiable(f, g!, fg!, x0)
             else
+                # # Forward mode automatic differentiation
+                # g!, fg! = wrap_gradient(f, x0, isforward = true)
+                # opt_obj = OnceDifferentiable(f, g!, fg!, x0)
+
                 # Forward mode automatic differentiation
                 opt_obj = OnceDifferentiable(f, x0; autodiff = :forward)
             end
@@ -60,6 +65,8 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
     else
         opt_obj = f
     end
+
+    # Optimize and get results
     result = optimize(opt_obj, x0, Alg, Opts)
 
     # Extract results
@@ -68,6 +75,27 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
     # Reconstruct resulting circles
     packed_origins = [origin(c_fixed), copy(reinterpret(Vec{DIM,T}, x))...]
     packed_circles = Circle.(packed_origins, radii)
+
+    # Set origin to be the mean of the circles
+    P = mean(origin.(packed_circles))
+    packed_circles = translate_shape.(packed_circles, [-P]) # shift mean to origin
+
+    # Check that desired desired packing density can be attained
+    expand_circles = (α) -> translate_shape.(packed_circles, α)
+    density = (α) -> estimate_density(expand_circles(α))
+
+    α_min = find_zero(α -> is_any_overlapping(expand_circles(α)) - 0.5, (0.01, 100.0), Bisection())
+    ϵ = 100*eps(α_min)
+    if density(α_min + ϵ) ≤ goaldensity
+        warn("Density cannot be reached without overlapping circles; can " *
+             "only reach $(density(α_min + ϵ)) < $goaldensity. Decrease " *
+             "density goal, or adjust mutual distance penalty weight.")
+        packed_circles = expand_circles(α_min + ϵ)
+    else
+        # Find α which results in the desired packing density
+        α_best = find_zero(α -> density(α) - goaldensity, (α_min + ϵ, 100.0), Bisection())
+        packed_circles = expand_circles(α_best)
+    end
 
     return packed_circles, result
 end
@@ -83,15 +111,18 @@ function initialize_origins(radii::AbstractVector{T},
     return initial_origins
 end
 
-function wrap_gradient(f, x0,
+function wrap_gradient(f, x0::AbstractArray{T},
         ::Type{Val{N}} = Val{min(10,length(x0))};
         isforward = false,
-        isdynamic = !isforward) where {N}
+        isdynamic = !isforward) where {T,N}
 
     if isforward
-        # ForwardDiff gradient (pre-recorded config)
+        # ForwardDiff gradient (pre-recorded config; faster, type stable, but static)
         const cfg = ForwardDiff.GradientConfig(f, x0, ForwardDiff.Chunk{N}())
         g! = (out, x) -> ForwardDiff.gradient!(out, f, x, cfg)
+
+        # # ForwardDiff gradient (dynamic config; slower, type unstable, but dynamic chunk sizing)
+        # g! = (out, x) -> ForwardDiff.gradient!(out, f, x)
     else
         if isdynamic
             # ReverseDiff gradient (pre-recorded config; slower, but dynamic call graph)
@@ -105,11 +136,11 @@ function wrap_gradient(f, x0,
         end
     end
 
-    const all_results = DiffResults.GradientResult(similar(x0))
     fg! = (G, x) -> begin
-        g!(all_results, x)
-        copy!(G, DiffResults.gradient(all_results))
-        return DiffResults.value(all_results)
+        # `DiffResult` is both a light wrapper around `G` and storage for the forward pass
+        all_results = DiffBase.DiffResult(zero(T), G)
+        g!(all_results, x) # update G(x) == ∇f(x)
+        return DiffBase.value(all_results) # return f(x)
     end
 
     return g!, fg!
@@ -128,19 +159,28 @@ function estimate_density(circles::Vector{Circle{dim,T}}, α = T(0.75)) where {d
     boundary_circle = crude_bounding_circle(circles)
     inner_square = inscribed_square(boundary_circle)
     domain = scale_shape(inner_square, α)
-    lb, ub = minimum(domain), maximum(domain) # domain bounds
-    A = prod(ub - lb) # domain area
-
-    Σ = zero(T)
-    for c in circles
-        if is_inside(c, domain)
-            Σ += π*radius(c)^2
-        elseif !is_outside(c, domain)
-            Σ += intersect_area(c, domain)
-        end
-    end
-
+    A = prod(maximum(domain) - minimum(domain)) # domain area
+    Σ = intersect_area(circles, domain) # total circle areas
     return T(Σ/A)
+end
+
+function estimate_density(c_0::Circle{2},
+                          origins::AbstractVector,
+                          radii::AbstractVector,
+                          α = eltype(radii)(0.75))
+    # For this estimate, we compute the inscribed square of the bounding circle
+    # which bounds all of the `circles`. Then, the square is scaled down a small
+    # amount with the hope that this square contains a relatively large and
+    # representative region of circles for which to integrate over to obtain the
+    # packing density, but not so large that there is much empty space remaining
+    boundary_circle = crude_bounding_circle(c_0, origins, radii)
+    inner_square = inscribed_square(boundary_circle)
+    domain = scale_shape(inner_square, α)
+    A = prod(maximum(domain) - minimum(domain)) # domain area
+    Σ = intersect_area_check_inside(c_0, domain) # add fixed circle area
+    Σ += intersect_area(origins, radii, domain) # total (variable) circle areas
+
+    return Σ/A
 end
 
 function estimate_density_monte_carlo(
@@ -211,18 +251,24 @@ function packing_energy(c_0::Circle,
                         weights::AbstractVector = [1.0, 1e-6, 1.0],
                         epsilon::Real = 0.1*distancescale,
                         ::Type{Val{DIM}} = Val{dimension(c_0)}) where {DIM}
+    # Float type of fixed radii
+    T = eltype(radii)
+    E_density, E_mutual, E_overlap = zero(T), zero(T), zero(T)
+
+    # Penalize by goaldensity
+    if !(weights[1] ≈ zero(T))
+        E_density = (goaldensity - estimate_density(c_0,origins,radii))^2
+    end
+
     # Using the overlap as the only metric clearly will not work, as any
     # isolated set of circles will have zero energy. Therefore, we penalize by
     # the total squared distances to encourage the circles to stay close
-    E_overlap = energy_sum_overlap_squared_distances(c_0,origins,radii,epsilon,Val{DIM})/distancescale^2
-    E_mutual = energy_sum_squared_distances(c_0,origins,radii,Val{DIM})/distancescale^2
-
-    # Penalize by goaldensity
-    T = eltype(origins)
-    # origins = reinterpret(Vec{DIM,T}, origins)
-    origins = [Vec{DIM,T}((origins[i], origins[i+1])) for i in 1:div(length(origins),2)]
-    circles = Vector{Circle{DIM,T}}(cat(1, c_0, Circle.(origins, radii)))
-    E_density = (goaldensity - estimate_density(circles))^2
+    if !(weights[2] ≈ zero(T))
+        E_mutual = energy_sum_squared_distances(c_0,origins,radii,Val{DIM})/distancescale^2
+    end
+    if !(weights[3] ≈ zero(T))
+        E_overlap = energy_sum_overlap_squared_distances(c_0,origins,radii,epsilon,Val{DIM})/distancescale^2
+    end
 
     # We could also interpret the "packing energy" instead as the Lagrangian
     # for the constrained problem where lambda is a Lagrange multiplier and the
@@ -231,6 +277,7 @@ function packing_energy(c_0::Circle,
     E_total = weights[1]*E_density + weights[2]*E_mutual + weights[3]*E_overlap
 
     return E_total
+
 end
 
 # Sum squared circle distances
@@ -239,63 +286,33 @@ function energy_sum_squared_distances(c_0::Circle,
                                       radii::AbstractVector,
                                       ::Type{Val{DIM}} = Val{2}) where {DIM}
 
-    T = promote_type(eltype(origins), eltype(radii)) # need this for ForwardDiff
+    T = promote_type(eltype(origins), eltype(radii)) # need this for autodiff
     N = length(radii)
     E = zero(T)
 
     @assert length(origins) >= N*DIM # allow for extra variables to be at the end of origins
-    # origins = reinterpret(Vec{DIM,T}, origins)
-    origins = [Vec{DIM,T}((origins[i], origins[i+1])) for i in 1:div(length(origins),2)]
+    origins = reinterpret(Vec{DIM,T}, origins)
+    # origins = [Vec{DIM,T}((origins[i], origins[i+1])) for i in 1:2:2N]
 
     # One circle must be fixed, otherwise problem is ill-posed (translation invariant)
     @inbounds for j in 1:N
+        # origin_j = Vec{2}((origins[2j-1], origins[2j]))
+        # radius_j = radii[j]
+        # d_ij = signed_edge_distance(origin(c_0), radius(c_0), origin_j, radius_j)
         d_ij = signed_edge_distance(origin(c_0), radius(c_0), origins[j], radii[j])
         E += d_ij^2
     end
 
     @inbounds for i in 1:N-1
+        # origin_i = Vec{2}((origins[2i-1], origins[2i]))
         origin_i = origins[i]
         radius_i = radii[i]
         @inbounds for j in i+1:N
+            # origin_j = Vec{2}((origins[2j-1], origins[2j]))
+            # radius_j = radii[j]
+            # d_ij = signed_edge_distance(origin_i, radius_i, origin_j, radius_j)
             d_ij = signed_edge_distance(origin_i, radius_i, origins[j], radii[j])
             E += d_ij^2
-        end
-    end
-
-    return E
-
-end
-
-# Sum inverse squared circle distances
-function energy_sum_inv_squared_distances(c_0::Circle,
-                                          origins::AbstractVector,
-                                          radii::AbstractVector,
-                                          ::Type{Val{DIM}} = Val{2}) where {DIM}
-
-    T = promote_type(eltype(origins), eltype(radii)) # need this for ForwardDiff
-    N = length(radii)
-    E = zero(T)
-
-    @assert length(origins) >= N*DIM # allow for extra variables to be at the end of origins
-    # origins = reinterpret(Vec{DIM,T}, origins)
-    origins = [Vec{DIM,T}((origins[i], origins[i+1])) for i in 1:div(length(origins),2)]
-
-    # One circle must be fixed, otherwise problem is ill-posed (translation invariant)
-    @inbounds for j in 1:N
-        dx = origin(c_0) - origins[j]
-        a² = min(radius(c_0), radii[j])^2
-        r² = max(dx⋅dx, a²)
-        E += inv(r²)
-    end
-
-    @inbounds for i in 1:N-1
-        origin_i = origins[i]
-        radius_i = radii[i]
-        @inbounds for j in i+1:N
-            dx = origin_i - origins[j]
-            a² = min(radius_i, radii[j])^2
-            r² = max(dx⋅dx, a²)
-            E += inv(r²)
         end
     end
 
@@ -321,30 +338,45 @@ function energy_sum_overlap_squared_distances(c_0::Circle,
     ϵ = T(epsilon)
 
     @assert length(origins) >= N*DIM # allow for extra variables to be at the end of origins
-    # origins = reinterpret(Vec{DIM,T}, origins)
-    origins = [Vec{DIM,T}((origins[i], origins[i+1])) for i in 1:div(length(origins),2)]
+    origins = reinterpret(Vec{DIM,T}, origins)
+    # origins = [Vec{DIM,T}((origins[i], origins[i+1])) for i in 1:2:2N]
 
     # One circle must be fixed, otherwise problem is ill-posed (translation invariant)
     d²_overlap = zero(T)
     @inbounds for j in 1:N
+        # origin_j = Vec{2}((origins[2j-1], origins[2j]))
+        # radius_j = radii[j]
+        # d_ij = signed_edge_distance(origin(c_0), radius(c_0), origin_j, radius_j)
         d_ij = signed_edge_distance(origin(c_0), radius(c_0), origins[j], radii[j])
+
         if d_ij < ϵ
             d_ij² = (d_ij-ϵ)^2
             d²_overlap += d_ij²
         end
+
+        # # same as above, but branch-free
+        # d²_overlap += (d_ij < ϵ) * (d_ij-ϵ)^2
     end
     E += d²_overlap
 
     @inbounds for i in 1:N-1
+        # origin_i = Vec{2}((origins[2i-1], origins[2i]))
         origin_i = origins[i]
         radius_i = radii[i]
         d²_overlap = zero(T)
         @inbounds for j in i+1:N
+            # origin_j = Vec{2}((origins[2j-1], origins[2j]))
+            # radius_j = radii[j]
+            # d_ij = signed_edge_distance(origin_i, radius_i, origin_j, radius_j)
             d_ij = signed_edge_distance(origin_i, radius_i, origins[j], radii[j])
+
             if d_ij < ϵ
                 d_ij² = (d_ij-ϵ)^2
                 d²_overlap += d_ij²
             end
+
+            # same as above, but branch-free
+            # d²_overlap += (d_ij < ϵ) * (d_ij-ϵ)^2
         end
         E += d²_overlap
     end
