@@ -5,9 +5,10 @@
 # ---------------------------------------------------------------------------- #
 # Misc. utilities for Vec type from Tensors.jl
 # ---------------------------------------------------------------------------- #
-norm2(x::Vec) = dot(x,x)
 Base.convert(::Type{Vec{dim,T1}}, x::SVector{dim,T2}) where {dim,T1,T2} = Vec{dim,promote_type(T1,T2)}(Tuple(x))
 Base.convert(::Type{SVector{dim,T1}}, x::Vec{dim,T2}) where {dim,T1,T2} = SVector{dim,promote_type(T1,T2)}(Tuple(x))
+@inline norm2(x::Vec) = dot(x,x)
+@inline Base.Tuple(v::Vec) = Tensors.get_data(v)
 
 # ---------------------------------------------------------------------------- #
 # Circle based on Vec type from Tensors.jl (code based on GeometryTypes.jl)
@@ -24,7 +25,7 @@ function Circle(center::Vec{dim,T1}, r::T2) where {dim,T1,T2}
     return Circle(Vec{dim,T}(center), T(r))
 end
 function Base.convert(::Type{Circle{dim,T1}}, c::Circle{dim,T2}) where {dim,T1,T2}
-    T = promote_type(T1,T2)
+    T = promote_type(T1, T2)
     return Circle{dim,T}(Vec{dim,T}(origin(c)), T(radius(c)))
 end
 function Base.isapprox(c1::Circle, c2::Circle; kwargs...)
@@ -48,6 +49,9 @@ Base.maximum(c::Circle{dim,T}) where {dim,T} = origin(c) + radii(c)
 @inline ymin(c::Circle{2}) = minimum(c)[2]
 @inline xmax(c::Circle{2}) = maximum(c)[1]
 @inline ymax(c::Circle{2}) = maximum(c)[2]
+
+@inline area(c::Circle{2}) = pi*radius(c)^2
+@inline volume(c::Circle{3}) = 4/3*pi*radius(c)^3
 
 # Scale circle by factor `α` relative to the point `P` (default to it's own origin)
 scale_shape(c::Circle{dim}, P::Vec{dim}, α::Number) where {dim} = Circle(α * (origin(c) - P) + P, α * radius(c))
@@ -207,6 +211,9 @@ widths(r::Rectangle) = maximum(r) - minimum(r)
 @inline ymin(r::Rectangle{2}) = minimum(r)[2]
 @inline xmax(r::Rectangle{2}) = maximum(r)[1]
 @inline ymax(r::Rectangle{2}) = maximum(r)[2]
+
+@inline volume(r::Rectangle{dim}) where {dim} = prod(maximum(r) - minimum(r))
+@inline area(r::Rectangle{2}) = volume(r)
 
 # Random rectangles
 Base.rand(::Type{Rectangle{dim,T}}) where {dim,T} = Rectangle{dim,T}(-rand(Vec{dim,T}), rand(Vec{dim,T}))

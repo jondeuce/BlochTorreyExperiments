@@ -280,6 +280,10 @@ function packing_energy(c_0::Circle,
 
 end
 
+# ---------------------------------------------------------------------------- #
+# Energies on circles: ForwardDiff friendly
+# ---------------------------------------------------------------------------- #
+
 # Sum squared circle distances
 function energy_sum_squared_distances(c_0::Circle,
                                       origins::AbstractVector,
@@ -292,25 +296,17 @@ function energy_sum_squared_distances(c_0::Circle,
 
     @assert length(origins) >= N*DIM # allow for extra variables to be at the end of origins
     origins = reinterpret(Vec{DIM,T}, origins)
-    # origins = [Vec{DIM,T}((origins[i], origins[i+1])) for i in 1:2:2N]
 
     # One circle must be fixed, otherwise problem is ill-posed (translation invariant)
     @inbounds for j in 1:N
-        # origin_j = Vec{2}((origins[2j-1], origins[2j]))
-        # radius_j = radii[j]
-        # d_ij = signed_edge_distance(origin(c_0), radius(c_0), origin_j, radius_j)
         d_ij = signed_edge_distance(origin(c_0), radius(c_0), origins[j], radii[j])
         E += d_ij^2
     end
 
     @inbounds for i in 1:N-1
-        # origin_i = Vec{2}((origins[2i-1], origins[2i]))
         origin_i = origins[i]
         radius_i = radii[i]
         @inbounds for j in i+1:N
-            # origin_j = Vec{2}((origins[2j-1], origins[2j]))
-            # radius_j = radii[j]
-            # d_ij = signed_edge_distance(origin_i, radius_i, origin_j, radius_j)
             d_ij = signed_edge_distance(origin_i, radius_i, origins[j], radii[j])
             E += d_ij^2
         end
@@ -339,44 +335,22 @@ function energy_sum_overlap_squared_distances(c_0::Circle,
 
     @assert length(origins) >= N*DIM # allow for extra variables to be at the end of origins
     origins = reinterpret(Vec{DIM,T}, origins)
-    # origins = [Vec{DIM,T}((origins[i], origins[i+1])) for i in 1:2:2N]
 
     # One circle must be fixed, otherwise problem is ill-posed (translation invariant)
     d²_overlap = zero(T)
     @inbounds for j in 1:N
-        # origin_j = Vec{2}((origins[2j-1], origins[2j]))
-        # radius_j = radii[j]
-        # d_ij = signed_edge_distance(origin(c_0), radius(c_0), origin_j, radius_j)
         d_ij = signed_edge_distance(origin(c_0), radius(c_0), origins[j], radii[j])
-
-        if d_ij < ϵ
-            d_ij² = (d_ij-ϵ)^2
-            d²_overlap += d_ij²
-        end
-
-        # # same as above, but branch-free
-        # d²_overlap += (d_ij < ϵ) * (d_ij-ϵ)^2
+        d_ij < ϵ && (d²_overlap += (d_ij-ϵ)^2)
     end
     E += d²_overlap
 
     @inbounds for i in 1:N-1
-        # origin_i = Vec{2}((origins[2i-1], origins[2i]))
         origin_i = origins[i]
         radius_i = radii[i]
         d²_overlap = zero(T)
         @inbounds for j in i+1:N
-            # origin_j = Vec{2}((origins[2j-1], origins[2j]))
-            # radius_j = radii[j]
-            # d_ij = signed_edge_distance(origin_i, radius_i, origin_j, radius_j)
             d_ij = signed_edge_distance(origin_i, radius_i, origins[j], radii[j])
-
-            if d_ij < ϵ
-                d_ij² = (d_ij-ϵ)^2
-                d²_overlap += d_ij²
-            end
-
-            # same as above, but branch-free
-            # d²_overlap += (d_ij < ϵ) * (d_ij-ϵ)^2
+            d_ij < ϵ && (d²_overlap += (d_ij-ϵ)^2)
         end
         E += d²_overlap
     end
@@ -384,5 +358,98 @@ function energy_sum_overlap_squared_distances(c_0::Circle,
     return E
 
 end
+
+# ---------------------------------------------------------------------------- #
+# Energies on circles: ReverseDiff friendly
+# ---------------------------------------------------------------------------- #
+
+# Sum squared circle distances
+function energy_sum_squared_distances_reversediff(
+        c_0::Circle,
+        origins::AbstractVector,
+        radii::AbstractVector,
+        ::Type{Val{DIM}} = Val{2}) where {DIM}
+
+    T = promote_type(eltype(origins), eltype(radii)) # need this for autodiff
+    N = length(radii)
+    E = zero(T)
+
+    @assert length(origins) >= N*DIM # allow for extra variables to be at the end of origins
+
+    @inline compute_dij²(c1::Circle, c2::Circle) = ReverseDiff.@forward(signed_edge_distance)(c1, c2)^2
+    # cs = Circle{DIM,T}[Circle{DIM,T}(Vec{2}((origins[2i-1], origins[2i])), radii[i]) for i in 1:N]
+
+    # One circle must be fixed, otherwise problem is ill-posed (translation invariant)
+    @inbounds for j in 1:N
+        # c_j = cs[j]
+        c_j = Circle{DIM,T}(Vec{2}((origins[2j-1], origins[2j])), radii[j])
+        E += compute_dij²(c_i, c_j)
+    end
+
+    @inbounds for i in 1:N-1
+        # c_i = cs[i]
+        c_i = Circle{DIM,T}(Vec{2}((origins[2i-1], origins[2i])), radii[i])
+        @inbounds for j in i+1:N
+            # c_j = cs[j]
+            c_j = Circle{DIM,T}(Vec{2}((origins[2j-1], origins[2j])), radii[j])
+            E += compute_dij²(c_i, c_j)
+        end
+    end
+
+    return E
+
+end
+
+# Sum squared distances only from overlapping circles. The parameter `epsilon`,
+# which defaults to zero, allows for a overlapping threshold. If epsilon > 0,
+# then the overlapping energy will be counted if the circles are closer than
+# `epsilon` distance apart. Similarly, if epsilon < 0, then the overlapping
+# energy will only be counted only if the circles are overlapping by more than a
+# distance of abs(epsilon)
+function energy_sum_overlap_squared_distances_reversediff(
+        c_0::Circle,
+        origins::AbstractVector,
+        radii::AbstractVector,
+        epsilon::Real = zero(eltype(radii)),
+        ::Type{Val{DIM}} = Val{2}) where {DIM}
+
+    T = promote_type(eltype(origins), eltype(radii)) # need this for ForwardDiff
+    N = length(radii)
+    E = zero(T)
+    ϵ = T(epsilon)
+
+    @assert length(origins) >= N*DIM # allow for extra variables to be at the end of origins
+    # cs = Circle{DIM,T}[Circle{DIM,T}(Vec{2}((origins[2i-1], origins[2i])), radii[i]) for i in 1:N]
+
+    # @inline _thresh_d_ij²(d_ij, ϵ) = d_ij < ϵ ? (d_ij-ϵ)^2 : zero(d_ij)
+    # @inline thresh_d_ij²(d_ij, ϵ) = ReverseDiff.@forward(_thresh_d_ij²)(d_ij, ϵ)
+    # @inline signed_edge_dij(c1::Circle, c2::Circle) = ReverseDiff.@forward(signed_edge_distance)(c1, c2)
+
+    @inline thresh_d_ij²(d_ij, ϵ) = d_ij < ϵ ? (d_ij-ϵ)^2 : zero(d_ij)
+    @inline function compute_overlap_dij²(c1::Circle, c2::Circle)
+        d_ij = ReverseDiff.@forward(signed_edge_distance)(c1, c2)
+        return ReverseDiff.@forward(thresh_d_ij²)(d_ij, ϵ)
+    end
+
+    # One circle must be fixed, otherwise problem is ill-posed (translation invariant)
+    @inbounds for j in 1:N
+        c_j = Circle{DIM,T}(Vec{2}((origins[2j-1], origins[2j])), radii[j])
+        E += compute_overlap_dij²(c_0, c_j)
+        # E += thresh_d_ij²(signed_edge_dij(c_0, c_j), ϵ)
+    end
+
+    @inbounds for i in 1:N-1
+        c_i = Circle{DIM,T}(Vec{2}((origins[2i-1], origins[2i])), radii[i])
+        @inbounds for j in i+1:N
+            c_j = Circle{DIM,T}(Vec{2}((origins[2j-1], origins[2j])), radii[j])
+            E += compute_overlap_dij²(c_i, c_j)
+            # E += thresh_d_ij²(signed_edge_dij(c_i, c_j), ϵ)
+        end
+    end
+
+    return E
+
+end
+
 
 nothing
