@@ -7,8 +7,15 @@
 # ---------------------------------------------------------------------------- #
 Base.convert(::Type{Vec{dim,T1}}, x::SVector{dim,T2}) where {dim,T1,T2} = Vec{dim,promote_type(T1,T2)}(Tuple(x))
 Base.convert(::Type{SVector{dim,T1}}, x::Vec{dim,T2}) where {dim,T1,T2} = SVector{dim,promote_type(T1,T2)}(Tuple(x))
-@inline norm2(x::Vec) = dot(x,x)
 @inline Base.Tuple(v::Vec) = Tensors.get_data(v)
+
+@inline norm2(x::Vec) = dot(x,x)
+@inline function hadamardproduct(S1::Vec{dim}, S2::Vec{dim}) where {dim}
+    return Vec{dim}(@inline function(i) Tensors.@inboundsret S1[i] * S2[i]; end)
+end
+# @inline hadamardproduct2(S1::Vec{2}, S2::Vec{2}) = Vec{2}((S1[1]*S2[1], S1[2]*S2[2]))
+# @inline hadamardproduct3(S1::Vec{3}, S2::Vec{3}) = Vec{3}((S1[1]*S2[1], S1[2]*S2[2], S1[3]*S2[3]))
+const ⊙ = hadamardproduct
 
 # ---------------------------------------------------------------------------- #
 # Circle based on Vec type from Tensors.jl (code based on GeometryTypes.jl)
@@ -130,6 +137,7 @@ function bounding_circle(c1::Circle, c2::Circle)
     # Check if one circle already contains the other
     is_inside(c1, c2) && return c2
     is_inside(c2, c1) && return c1
+    c1 ≈ c2 && return c1
 
     # If not, check if the circle origins are overlapping
     T = promote_type(floattype(c1), floattype(c2))
@@ -137,7 +145,7 @@ function bounding_circle(c1::Circle, c2::Circle)
     o1, o2, r1, r2 = origin(c1), origin(c2), radius(c1), radius(c2)
 
     r12 = norm(o1-o2)
-    r12 ≤ EPS && return Circle(T(0.5)*(o1+o2), max(r1,r2)+EPS) # arbitarily take o1 for speed. could take average?
+    r12 ≤ EPS*max(r1,r2) && return Circle(T(0.5)*(o1+o2), max(r1,r2)*T(1+EPS))
 
     # Otherwise, compute the general case
     rad = T(0.5)*(r1 + r2 + r12)

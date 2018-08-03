@@ -39,25 +39,29 @@ function square_mesh_with_circles(rect_bdry::Rectangle{2,T},
     fullgrid.boundary_matrix = JuAFEM.boundaries_to_sparse(collect(Tuple{Int,Int}, all_boundaries))
     addfaceset!(fullgrid, "boundary", all_boundaries)
 
-    # Generate face sets
-    addcellset!(fullgrid, "exterior", x -> !is_in_any_circle(x, circles); all=false)
-    addcellset!(fullgrid, "circles",  x ->  is_in_any_circle(x, circles); all=true)
-    addnodeset!(fullgrid, "exterior", x -> !is_in_any_circle(x, circles) || is_on_any_circle(x, circles))
-    addnodeset!(fullgrid, "circles",  x ->  is_in_any_circle(x, circles) || is_on_any_circle(x, circles))
+    if isunion
+        # Generate cell and node sets
+        addcellset!(fullgrid, "exterior", x -> !is_in_any_circle(x, circles); all=false)
+        addnodeset!(fullgrid, "exterior", x -> !is_in_any_circle(x, circles) || is_on_any_circle(x, circles))
+        addcellset!(fullgrid, "circles",  x ->  is_in_any_circle(x, circles); all=true)
+        addnodeset!(fullgrid, "circles",  x ->  is_in_any_circle(x, circles) || is_on_any_circle(x, circles))
 
-    # Generate exterior grid
-    subgrids = typeof(fullgrid)[]
-    cellset = getcellset(fullgrid, "exterior")
-    nodeset = getnodeset(fullgrid, "exterior")
-    push!(subgrids, form_subgrid(fullgrid, cellset, nodeset, all_boundaries))
-
-    # Generate circle grids
-    nodefilter = (nodenum, circle)  -> is_in_circle(getcoordinates(getnodes(fullgrid, nodenum)), circle)
-    cellfilter = (cellnum, nodeset) -> all(nodenum -> nodenum ∈ nodeset, vertices(getcells(fullgrid, cellnum)))
-    for circle in circles
-        nodeset = filter(nodenum -> nodefilter(nodenum, circle), getnodeset(fullgrid, "circles"))
-        cellset = filter(cellnum -> cellfilter(cellnum, nodeset), getcellset(fullgrid, "circles"))
+        # Generate exterior grid
+        subgrids = typeof(fullgrid)[]
+        cellset = getcellset(fullgrid, "exterior")
+        nodeset = getnodeset(fullgrid, "exterior")
         push!(subgrids, form_subgrid(fullgrid, cellset, nodeset, all_boundaries))
+
+        # Generate circle grids
+        nodefilter = (nodenum, circle)  -> is_in_circle(getcoordinates(getnodes(fullgrid, nodenum)), circle)
+        cellfilter = (cellnum, nodeset) -> all(nodenum -> nodenum ∈ nodeset, vertices(getcells(fullgrid, cellnum)))
+        for circle in circles
+            nodeset = filter(nodenum -> nodefilter(nodenum, circle), getnodeset(fullgrid, "circles"))
+            cellset = filter(cellnum -> cellfilter(cellnum, nodeset), getcellset(fullgrid, "circles"))
+            push!(subgrids, form_subgrid(fullgrid, cellset, nodeset, all_boundaries))
+        end
+    else
+        subgrids = typeof(fullgrid)[]
     end
 
     return fullgrid, subgrids
