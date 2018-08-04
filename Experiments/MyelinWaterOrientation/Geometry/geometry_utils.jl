@@ -88,6 +88,18 @@ end
     return norm(o1 - o2) - r1 - r2 # zero is when circles are tangent, not overlapping
 end
 
+function minimum_signed_edge_distance(circles::Vector{C}) where {C<:Circle{dim,T}} where {dim,T}
+    min_dist = T(Inf)
+    @inbounds for i in 1:length(circles)-1
+        c_i = circles[i]
+        @inbounds for j in i+1:length(circles)
+            c_j = circles[j]
+            min_dist = min(min_dist, signed_edge_distance(c_i, c_j))
+        end
+    end
+    min_dist
+end
+
 # check if c1 is in c2: r1 < r2 and ||o1 - o2|| < r2 - r1
 @inline function is_inside(c1::Circle, c2::Circle, lt = ≤)
     o1, o2, r1, r2 = origin(c1), origin(c2), radius(c1), radius(c2)
@@ -99,18 +111,18 @@ end
 end
 
 # check if c1 and c2 are overlapping
-@inline function is_overlapping(c1::Circle, c2::Circle, lt = ≤)
+@inline function is_overlapping(c1::Circle{dim,T}, c2::Circle{dim,T}, lt = ≤, thresh = zero(T)) where {dim,T}
     dx = origin(c1) - origin(c2)
     d_min = radius(c1) + radius(c2)
-    return lt(dx⋅dx, d_min^2)
+    return lt(dx⋅dx, (d_min + thresh)^2)
 end
 
 # check if any circles in `cs` are overlapping
-function is_any_overlapping(cs::Vector{C}, lt = ≤) where {C<:Circle}
+function is_any_overlapping(cs::AbstractVector{C}, lt = ≤, thresh = zero(T)) where {C<:Circle{dim,T}} where {dim,T}
     @inbounds for i in 1:length(cs)-1
         ci = cs[i]
         @inbounds for j in i+1:length(cs)
-            is_overlapping(ci, cs[j], lt) && return true
+            is_overlapping(ci, cs[j], lt, thresh) && return true
         end
     end
     return false
@@ -227,6 +239,16 @@ widths(r::Rectangle) = maximum(r) - minimum(r)
 Base.rand(::Type{Rectangle{dim,T}}) where {dim,T} = Rectangle{dim,T}(-rand(Vec{dim,T}), rand(Vec{dim,T}))
 Base.rand(::Type{Rectangle{dim,T}}, N::Int) where {dim,T} = [rand(Rectangle{dim,T}) for i in 1:N]
 
+# Rectangle intersection
+function Base.intersect(r1::Rectangle, r2::Rectangle)
+    min1, min2, max1, max2 = minimum(r1), minimum(r2), maximum(r1), maximum(r2)
+    V = promote_type(typeof(min1), typeof(min2))
+    mins = max.(Tuple(min1), Tuple(min2))
+    maxs = min.(Tuple(max1), Tuple(max2))
+    maxs = broadcast((mi,mx) -> mx <= mi ? mi : mx, mins, maxs) # in case of null intersection
+    return Rectangle(mins, maxs)
+end
+
 # Scale rectangle by factor `α` relative to the point `P` (default to it's own origin)
 function scale_shape(r::Rectangle{dim}, P::Vec{dim}, α::Number) where {dim}
     new_mins = α * (minimum(r) - P) + P
@@ -251,7 +273,9 @@ end
 translate_shape(r::Rectangle{dim}, X::Vec{dim}) where {dim} = Rectangle(minimum(r) + X, maximum(r) + X)
 
 # Bounding box of vector of circles
-function bounding_box(circles::Vector{Circle{dim,T}}) where {dim,T}
+bounding_box(c::Circle) = Rectangle((xmin(c), ymin(c)), (xmax(c), ymax(c)))
+
+function bounding_box(circles::Vector{C}) where {C <: Circle}
     min_x = minimum(c->xmin(c), circles)
     min_y = minimum(c->ymin(c), circles)
     max_x = maximum(c->xmax(c), circles)
@@ -380,7 +404,7 @@ end
 
 function intersect_area_test(c::Circle{2,T}) where {T}
     # allow for points to be inside or slightly outside of circle
-    rect = scale_shape(bounding_box([c]), T(1.5))
+    rect = scale_shape(bounding_box(c), T(1.5))
 
     x0 = origin(rect)[1] - (xmax(rect)-xmin(rect))/2 * rand(T)
     x1 = origin(rect)[1] + (xmax(rect)-xmin(rect))/2 * rand(T)
