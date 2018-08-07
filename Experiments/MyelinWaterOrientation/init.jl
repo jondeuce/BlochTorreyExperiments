@@ -1,5 +1,15 @@
-# Packages
+# My files and modules
+ENV["MATLAB_HOME"] = "C:\\Users\\Jonathan\\Downloads\\Mathworks Matlab R2016a\\R2016a"
 
+HOME = "C:\\Users\\Jonathan\\Documents\\MATLAB\\"
+# HOME = "/home/jon/Documents/UBCMRI/"
+# HOME = "/home/coopar7/Documents/code/"
+BTMASTER = HOME * "BlochTorreyExperiments-master/"
+MWOPATH = BTMASTER * "Experiments/MyelinWaterOrientation/"
+
+cd(BTMASTER)
+
+# Packages
 using Traceur
 using BenchmarkTools
 using StaticArrays
@@ -18,14 +28,6 @@ using ForwardDiff
 using ReverseDiff
 using IterTools
 
-# My files and modules
-
-#HOME = "/home/jon/Documents/UBCMRI/"
-HOME = "/home/coopar7/Documents/code/"
-BTMASTER = HOME * "BlochTorreyExperiments-master/"
-MWOPATH = BTMASTER * "Experiments/MyelinWaterOrientation/"
-
-cd(BTMASTER)
 include(MWOPATH * "Geometry/geometry_utils.jl")
 include(MWOPATH * "Geometry/circle_packing.jl")
 include(MWOPATH * "Utils/mesh_utils.jl")
