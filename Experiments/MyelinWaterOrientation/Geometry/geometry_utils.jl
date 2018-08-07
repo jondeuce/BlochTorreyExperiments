@@ -17,6 +17,58 @@ end
 # @inline hadamardproduct3(S1::Vec{3}, S2::Vec{3}) = Vec{3}((S1[1]*S2[1], S1[2]*S2[2], S1[3]*S2[3]))
 const ⊙ = hadamardproduct
 
+# Compute the `skew product` between two 2-dimensional vectors. This is the same
+# as computing the third component of the cross product if the vectors `a` and
+# `b` were extended to three dimensions
+@inline function skewprod(a::Vec{2,T}, b::Vec{2,T}) where T
+    # @inbounds v = (a × b)[3] # believe it or not, this emits the same llvm code...
+    @inbounds v = a[1]*b[2] - b[1]*a[2]
+    return v
+end
+const ⊠ = skewprod # Denote the skewproduct using `\boxtimes`
+
+struct Ellipse{dim,T}
+    F1::Vec{dim,T} # focus #1
+    F2::Vec{dim,T} # focus #2
+    b::T # semi-minor axis
+end
+
+getF1(e::Ellipse) = e.F1
+getF2(e::Ellipse) = e.F2
+geta(e::Ellipse{dim,T}) where {dim,T} = sqrt(e.b^2 + T(0.25)*norm2(e.F1 - e.F2)) # a = √(b² + c²)
+getb(e::Ellipse) = e.b
+getc(e::Ellipse{dim,T}) where {dim,T} = T(0.5)*norm(e.F1 - e.F2)
+
+area(e::Ellipse) = pi * e.a * e.b
+origin(e::Ellipse) = T(0.5)*(e.F1 + e.F2)
+
+function signed_edge_distance(X::Vec{2}, e::Ellipse{2})
+
+    v = getF2(e) - getF1(e) # axis vector
+    r = norm(v)
+    cosθ, sinθ = v[1]/r, v[2]/r # (co)sine of angle w.r.t. x-axis
+
+    dX = X - origin(e) # distance vector to origin
+    x0, y0 = dX[1] * cosθ + dX[2] * sinθ, -dX[1] * sinθ + dX[2] * cosθ # rotate to x-axis
+
+    t1, t2, t4, t6 = a*a, b*b, y0*y0, x0*x0
+    t8, t9, t11 = t1*t1, t2*t1, t2*t2
+    t15, t16 = t8*t2, t11*t1
+    rts = PolynomialRoots.roots( [ 1.0,
+                                   2.0*t1 + 2.0*t2,
+                                  -t2*t4 - t1*t6 + t8 + 4.0*t9 + t11,
+                                  -2.0*t9*t6 - 2.0*t9*t4 + 2.0*t15 + 2.0*t16,
+                                  -t16*t6 + t8*t11 - t15*t4 ] )
+    t = maximum(r->real(r), rts)
+
+    a², b² = a^2, b^2
+    x = a² * x0 / (t + a²)
+    y = b² * y0 / (t + b²)
+    d = t * sqrt((x/a²)^2+(y/b²)^2)
+
+    return d
+end
+
 # ---------------------------------------------------------------------------- #
 # Circle based on Vec type from Tensors.jl (code based on GeometryTypes.jl)
 # ---------------------------------------------------------------------------- #
@@ -438,16 +490,5 @@ function intersect_area_test(c::Circle{2,T}) where {T}
     return (A_test, A_exact)
 end
 
-# ---------------------------------------------------------------------------- #
-# Compute the `skew product` between two 2-dimensional vectors. This is the same
-# as computing the third component of the cross product if the vectors `a` and
-# `b` were extended to three dimensions
-# ---------------------------------------------------------------------------- #
-@inline function skewprod(a::Vec{2,T}, b::Vec{2,T}) where T
-    @inbounds v = (a × b)[3] # believe it or not, this emits the same llvm code...
-    #@inbounds v = a[1]*b[2] - b[1]*a[2]
-    return v
-end
-const ⊠ = skewprod # Denote the skewproduct using `\boxtimes`
 
 nothing

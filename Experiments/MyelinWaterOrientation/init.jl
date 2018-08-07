@@ -17,6 +17,7 @@ using ApproxFun
 using ForwardDiff
 using ReverseDiff
 using IterTools
+using PolynomialRoots
 
 # My files and modules
 
