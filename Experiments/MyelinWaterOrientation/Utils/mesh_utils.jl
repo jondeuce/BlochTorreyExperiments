@@ -266,6 +266,110 @@ function form_tori_subgrids(fullgrid::Grid{dim,N,T,M},
 end
 
 # ---------------------------------------------------------------------------- #
+# circle_mesh_with_tori
+# ---------------------------------------------------------------------------- #
+function circle_mesh_with_tori( circle_bdry::Circle{2,T},
+                                inner_circles::Vector{Circle{2,T}},
+                                outer_circles::Vector{Circle{2,T}},
+                                h0::T,
+                                eta::T ) where {T}
+    # Ensure that outer circles strictly contain inner circles, and that outer
+    # circles are strictly non-overlapping
+    @assert all(c -> is_inside(c[1], c[2], <), zip(inner_circles, outer_circles))
+    @assert !is_any_overlapping(outer_circles, <)
+
+    const dim = 2
+    const nfaces = 3 # per triangle
+    const nnodes = 3 # per triangle
+
+    # TODO: add minimum angle threshold?
+    const nargout = 2
+    const isunion = true
+    const regiontype = 0 # union type
+    bcircle = [origin(circle_bdry)..., radius(circle_bdry)]
+    outer_centers = reinterpret(T, origin.(outer_circles), (dim, length(outer_circles)))'
+    inner_centers = reinterpret(T, origin.(inner_circles), (dim, length(inner_circles)))'
+    p, t = mxcall(:circularmeshwithtori, nargout,
+        bcircle, outer_centers, radius.(outer_circles), inner_centers, radius.(inner_circles),
+        h0, eta, isunion, regiontype )
+
+    cells = [Triangle((t[i,1], t[i,2], t[i,3])) for i in 1:size(t,1)]
+    nodes = [Node((p[i,1], p[i,2])) for i in 1:size(p,1)]
+    fullgrid = Grid(cells, nodes)
+
+    # Ensure points near circles are exactly on circles
+    project_circles!(fullgrid, inner_circles, 1e-6*h0)
+    project_circles!(fullgrid, outer_circles, 1e-6*h0)
+
+    # Manually add boundary sets for the four square edges and circle boundaries
+    addfaceset!(fullgrid, "boundary_circle", x -> is_on_circle(x, circle_bdry), all=true)
+    addfaceset!(fullgrid, "inner_circles",   x -> is_on_any_circle(x, inner_circles), all=true)
+    addfaceset!(fullgrid, "outer_circles",   x -> is_on_any_circle(x, outer_circles), all=true)
+
+    # Boundary matrix (including inner boundaries) and boundary face set
+    all_boundaries = union(values.(getfacesets(fullgrid))...)
+    fullgrid.boundary_matrix = JuAFEM.boundaries_to_sparse(collect(Tuple{Int,Int}, all_boundaries))
+    addfaceset!(fullgrid, "boundary", all_boundaries)
+
+    return fullgrid
+end
+
+function form_tori_subgrids(fullgrid::Grid{dim,N,T,M},
+                            circle_bdry::Circle{2,T},
+                            inner_circles::Vector{Circle{2,T}},
+                            outer_circles::Vector{Circle{2,T}}) where {dim,N,T,M}
+    # Helper functions
+    is_in_outer_circles = x -> is_in_any_circle(x, outer_circles)
+    is_in_inner_circles = x -> is_in_any_circle(x, inner_circles)
+    is_on_outer_circles = x -> is_on_any_circle(x, outer_circles)
+    is_on_inner_circles = x -> is_on_any_circle(x, inner_circles)
+    is_on_boundary      = x -> is_on_circle(x, circle_bdry)
+
+    is_in_exterior  = x -> !is_in_outer_circles(x) || is_on_outer_circles(x)
+    is_in_tori      = x ->  is_in_outer_circles(x) && (!is_in_inner_circles(x) || is_on_inner_circles(x))
+    is_in_interior  = x ->  is_in_inner_circles(x)
+    is_on_exterior  = x -> (is_on_outer_circles(x) || is_on_boundary(x)) && (!is_in_outer_circles(x) || is_on_outer_circles(x))
+    is_on_tori      = x ->  is_on_outer_circles(x) || is_on_inner_circles(x)
+    is_on_interior  = x ->  is_on_inner_circles(x)
+
+    # Generate face sets and node sets
+    delete!(fullgrid.cellsets, "exterior"); addcellcenterset!(fullgrid, "exterior", x -> !is_in_outer_circles(x))#; all=false)
+    delete!(fullgrid.cellsets, "tori");     addcellcenterset!(fullgrid, "tori",     x -> !is_in_inner_circles(x) && is_in_outer_circles(x))#; all=false)
+    delete!(fullgrid.cellsets, "interior"); addcellcenterset!(fullgrid, "interior", x ->  is_in_inner_circles(x))#; all=false)
+    delete!(fullgrid.nodesets, "exterior"); addnodeset!(fullgrid, "exterior", cellset_to_nodeset(fullgrid, "exterior"))
+    delete!(fullgrid.nodesets, "tori");     addnodeset!(fullgrid, "tori",     cellset_to_nodeset(fullgrid, "tori"))
+    delete!(fullgrid.nodesets, "interior"); addnodeset!(fullgrid, "interior", cellset_to_nodeset(fullgrid, "interior"))
+
+    # Generate exterior grid
+    cellset = getcellset(fullgrid, "exterior")
+    nodeset = getnodeset(fullgrid, "exterior")
+    exteriorgrid = form_subgrid(fullgrid, cellset, nodeset, getfaceset(fullgrid, "boundary"))
+
+    # Generate tori and interior grids
+    get_x = (nodenum) -> getcoordinates(getnodes(fullgrid, nodenum))
+    get_c = (cellnum) -> getcells(fullgrid, cellnum)
+    cellfilter = (cellnum, circle) -> is_inside(cellcenter(fullgrid, cellnum), circle)
+
+    # Create individual tori grids by filtering on the entire "tori" set
+    torigrids = Grid{dim,N,T,M}[]
+    for circle in outer_circles
+        cellset = filter(cellnum -> cellfilter(cellnum, circle), getcellset(fullgrid, "tori"))
+        nodeset = cellset_to_nodeset(fullgrid, cellset)
+        push!(torigrids, form_subgrid(fullgrid, cellset, nodeset, getfaceset(fullgrid, "boundary")))
+    end
+
+    # Create individual interior grids by filtering on the entire "interior" set
+    interiorgrids = Grid{dim,N,T,M}[]
+    for circle in inner_circles
+        cellset = filter(cellnum -> cellfilter(cellnum, circle), getcellset(fullgrid, "interior"))
+        nodeset = cellset_to_nodeset(fullgrid, cellset)
+        push!(interiorgrids, form_subgrid(fullgrid, cellset, nodeset, getfaceset(fullgrid, "boundary")))
+    end
+
+    return exteriorgrid, torigrids, interiorgrids
+end
+
+# ---------------------------------------------------------------------------- #
 # form_subgrid
 # ---------------------------------------------------------------------------- #
 function form_subgrid(parent_grid::Grid{dim,N,T,M},

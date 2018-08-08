@@ -3,6 +3,26 @@
 # ============================================================================ #
 
 # ---------------------------------------------------------------------------- #
+# Types
+# ---------------------------------------------------------------------------- #
+struct Ellipse{dim,T}
+    F1::Vec{dim,T} # focus #1
+    F2::Vec{dim,T} # focus #2
+    b::T # semi-minor axis
+    Ellipse{dim,T}(F1, F2, b) where {dim,T} = new(F1, F2, abs(b))
+end
+
+struct Circle{dim,T}
+    center::Vec{dim,T}
+    r::T
+end
+
+struct Rectangle{dim,T}
+    mins::Vec{dim,T}
+    maxs::Vec{dim,T}
+end
+
+# ---------------------------------------------------------------------------- #
 # Misc. utilities for Vec type from Tensors.jl
 # ---------------------------------------------------------------------------- #
 Base.convert(::Type{Vec{dim,T1}}, x::SVector{dim,T2}) where {dim,T1,T2} = Vec{dim,promote_type(T1,T2)}(Tuple(x))
@@ -27,38 +47,69 @@ const ⊙ = hadamardproduct
 end
 const ⊠ = skewprod # Denote the skewproduct using `\boxtimes`
 
-struct Ellipse{dim,T}
-    F1::Vec{dim,T} # focus #1
-    F2::Vec{dim,T} # focus #2
-    b::T # semi-minor axis
+# ---------------------------------------------------------------------------- #
+# Ellipse based on Vec type from Tensors.jl (code based on GeometryTypes.jl)
+# ---------------------------------------------------------------------------- #
+@inline getF1(e::Ellipse) = e.F1
+@inline getF2(e::Ellipse) = e.F2
+@inline geta(e::Ellipse{2,T}) where {T} = sqrt(e.b^2 + T(0.25)*norm2(e.F1 - e.F2)) # a = √(b² + c²)
+@inline getb(e::Ellipse) = e.b
+@inline getc(e::Ellipse{dim,T}) where {dim,T} = T(0.5)*norm(e.F1 - e.F2)
+
+@inline area(e::Ellipse{2}) = pi * geta(e) * getb(e)
+@inline origin(e::Ellipse{dim,T}) where {dim,T} = T(0.5)*(getF1(e) + getF2(e))
+@inline eccentricity(e::Ellipse{2}) = getc(e)/geta(e)
+
+scale_shape(e::Ellipse{dim}, P::Vec{dim}, α::Number) where {dim} = Ellipse(α * (getF1(e) - P) + P, α * (getF2(e) - P) + P, α * getb(e))
+scale_shape(e::Ellipse, α::Number) = scale_shape(e, origin(e), α)
+
+@inline function getsincos(e::Ellipse{2})
+    v = getF2(e) - getF1(e)
+    r = norm(v)
+    sinθ, cosθ = v[2]/r, v[1]/r
+    return sinθ, cosθ
 end
 
-getF1(e::Ellipse) = e.F1
-getF2(e::Ellipse) = e.F2
-geta(e::Ellipse{dim,T}) where {dim,T} = sqrt(e.b^2 + T(0.25)*norm2(e.F1 - e.F2)) # a = √(b² + c²)
-getb(e::Ellipse) = e.b
-getc(e::Ellipse{dim,T}) where {dim,T} = T(0.5)*norm(e.F1 - e.F2)
+@inline function getrotmat(e::Ellipse{2,T}) where {T}
+    sinθ, cosθ = getsincos(e)
+    return Tensor{2,2,T}((cosθ, sinθ, -sinθ, cosθ))
+end
 
-area(e::Ellipse) = pi * e.a * e.b
-origin(e::Ellipse) = T(0.5)*(e.F1 + e.F2)
+function Base.rand(::Type{Ellipse{dim,T}}) where {dim,T}
+    F1 = 2*rand(Vec{dim,T}) - ones(Vec{dim,T})
+    F2 = 2*rand(Vec{dim,T}) - ones(Vec{dim,T})
+    return Ellipse(F1, F2, rand(T))
+end
+Base.rand(::Type{E}, N::Int) where {E <: Ellipse} = [rand(E) for i in 1:N]
 
 function signed_edge_distance(X::Vec{2}, e::Ellipse{2})
 
-    v = getF2(e) - getF1(e) # axis vector
+    # Check for simple cases to skip root finding below
+    const EPS = 5eps(getb(e))
+    isapprox(X, origin(e); rtol = EPS) && return -getb(e) # origin is a pathological case for rootfinding
+    isapprox(X, getF1(e); rtol = EPS) && return getc(e) - geta(e)
+    isapprox(X, getF2(e); rtol = EPS) && return getc(e) - geta(e)
+
+    # Vector defining axis direction and therefore orientation
+    v = getF2(e) - getF1(e)
     r = norm(v)
-    cosθ, sinθ = v[1]/r, v[2]/r # (co)sine of angle w.r.t. x-axis
+    r ≤ EPS && return signed_edge_distance(X, Circle(origin(e), geta(e))) # F1 ≈ F2; return the circle distance
 
+    # Rotate points to standard reference frame where axis vector is parallel to x-axis
     dX = X - origin(e) # distance vector to origin
-    x0, y0 = dX[1] * cosθ + dX[2] * sinθ, -dX[1] * sinθ + dX[2] * cosθ # rotate to x-axis
+    sinθ, cosθ = v[2]/r, v[1]/r # (co)sine of angle w.r.t. x-axis
+    x0, y0 = dX[1] * cosθ + dX[2] * sinθ, -dX[1] * sinθ + dX[2] * cosθ
 
+    # Solve 4th order polynomial equation
+    a, b = geta(e), getb(e)
     t1, t2, t4, t6 = a*a, b*b, y0*y0, x0*x0
     t8, t9, t11 = t1*t1, t2*t1, t2*t2
     t15, t16 = t8*t2, t11*t1
-    rts = PolynomialRoots.roots( [ 1.0,
-                                   2.0*t1 + 2.0*t2,
-                                  -t2*t4 - t1*t6 + t8 + 4.0*t9 + t11,
-                                  -2.0*t9*t6 - 2.0*t9*t4 + 2.0*t15 + 2.0*t16,
-                                  -t16*t6 + t8*t11 - t15*t4 ] )
+    rts = PolynomialRoots.roots([-t16*t6 + t8*t11 - t15*t4,
+                                 -2.0*t9*t6 - 2.0*t9*t4 + 2.0*t15 + 2.0*t16,
+                                 -t2*t4 - t1*t6 + t8 + 4.0*t9 + t11,
+                                  2.0*t1 + 2.0*t2,
+                                  1.0])
     t = maximum(r->real(r), rts)
 
     a², b² = a^2, b^2
@@ -68,14 +119,63 @@ function signed_edge_distance(X::Vec{2}, e::Ellipse{2})
 
     return d
 end
+@inline signed_edge_distance(c::Circle{2}, e::Ellipse{2}) = signed_edge_distance(origin(c), e) - radius(c)
+
+@inline function is_inside(c::Circle{2}, e::Ellipse{2}, lt = ≤)
+    !lt(radius(c), getb(e)) && return false # can't be inside if radius is larger than minor axis
+    d = signed_edge_distance(origin(c), e)
+    return lt(radius(c), -d)
+end
+
+# bounding circle of a collection of circles through numerical optimization
+function opt_bounding_ellipse(circles::Vector{Circle{dim,T}};
+                              epsilon = zero(T),
+                              maxiter = 3) where {dim,T}
+    # Penalize if inner circle isn't at least a distance ϵ inside the outer ellipse
+    function overlap_dist(c_in::Circle, e_bnd::Ellipse, ϵ)
+        d12 = signed_edge_distance(origin(c_in), e_bnd) + radius(c_in)
+        return d12 > -ϵ ? (d12 + ϵ)^2 : zero(d12)
+    end
+
+    function optfun(x::Vector{Tx}, lambda = 1e-3) where {Tx}
+        @inbounds ebound = Ellipse{dim,Tx}(Vec{dim,Tx}((x[1], x[2])), Vec{dim,Tx}((x[3], x[4])), x[5]) # bounding ellipse
+        overlap_penalty = sum(c -> overlap_dist(c, ebound, epsilon), circles)
+        area_penalty = area(ebound)/length(circles)
+        return (overlap_penalty + lambda * area_penalty)/radius(c_initial)^2
+    end
+
+    c_initial = crude_bounding_circle(circles)
+    O, dX = origin(c_initial), 0.1*radius(c_initial) * ones(Vec{dim,T})
+    e_initial = Ellipse(O + dX, O - dX, radius(c_initial)) # need to initialize non-degenerate ellipse
+    e_final = e_initial
+    e_check = e_opt -> minimum(c -> -signed_edge_distance(origin(c), e_opt) - radius(c), circles) > epsilon/2
+
+    lambda = 1e-3
+    x0 = [getF1(e_initial)..., getF2(e_initial)..., getb(e_initial)]
+    for i in 1:maxiter
+        # Can't use autodiff as generic eigenvalue solvers used in signed_edge_distance are too slow
+        opt_obj = OnceDifferentiable(x->optfun(x,lambda), x0)
+        result = optimize(opt_obj, x0, LBFGS(linesearch = LineSearches.BackTracking(order=3)))
+
+        x = copy(Optim.minimizer(result))
+        e_final = Ellipse{dim,T}(Vec{dim,T}((x[1], x[2])), Vec{dim,T}((x[3], x[4])), x[5]) # bounding ellipse
+        e_check(e_final) && break
+
+        lambda /= 10
+    end
+
+    if !e_check(e_final)
+        f = α -> e_check(scale_shape(e_final, α)) - 0.5
+        α_min = find_zero(f, (0.01, 100.0), Bisection())
+        return scale_shape(e_final, α_min + 100*eps(α_min))
+    else
+        return e_final
+    end
+end
 
 # ---------------------------------------------------------------------------- #
 # Circle based on Vec type from Tensors.jl (code based on GeometryTypes.jl)
 # ---------------------------------------------------------------------------- #
-struct Circle{dim,T}
-    center::Vec{dim,T}
-    r::T
-end
 Circle(::Type{T}, center::Vec{dim}, r::Number) where {dim,T} = Circle(Vec{dim,T}(center), T(r))
 Circle(::Type{T}, center::NTuple{dim}, r::Number) where {dim,T} = Circle(Vec{dim,T}(center), T(r))
 
@@ -129,16 +229,14 @@ end
 
 # Random circles
 Base.rand(::Type{Circle{dim,T}}) where {dim,T} = Circle{dim,T}(2*rand(Vec{dim,T})-ones(Vec{dim,T}), rand(T))
-Base.rand(::Type{Circle{dim,T}}, N::Int) where {dim,T} = [rand(Circle{dim,T}) for i in 1:N]
+Base.rand(::Type{C}, N::Int) where {C <: Circle} = [rand(C) for i in 1:N]
 
-# Signed edge distance
-@inline function signed_edge_distance(c1::Circle, c2::Circle)
-    dx = origin(c1) - origin(c2)
-    return norm(dx) - radius(c1) - radius(c2) # zero is when circles are tangent, not overlapping
-end
-@inline function signed_edge_distance(o1::Vec, r1, o2::Vec, r2)
-    return norm(o1 - o2) - r1 - r2 # zero is when circles are tangent, not overlapping
-end
+# Signed distance from X to circle edge distance
+@inline signed_edge_distance(X::Vec, c::Circle) = norm(X - origin(c)) - radius(c)
+
+# Signed distance between circle edges (zero is when circles are tangent, negative when overlapping)
+@inline signed_edge_distance(c1::Circle, c2::Circle) = norm(origin(c1) - origin(c2)) - radius(c1) - radius(c2)
+@inline signed_edge_distance(o1::Vec, r1, o2::Vec, r2) = norm(o1 - o2) - r1 - r2
 
 function minimum_signed_edge_distance(circles::Vector{C}) where {C<:Circle{dim,T}} where {dim,T}
     min_dist = T(Inf)
@@ -178,6 +276,49 @@ function is_any_overlapping(cs::AbstractVector{C}, lt = ≤, thresh = zero(T)) w
         end
     end
     return false
+end
+
+# bounding circle of a collection of circles through numerical optimization
+function opt_bounding_circle(circles::Vector{Circle{dim,T}};
+                             epsilon = zero(T),
+                             maxiter = 10) where {dim,T}
+    # Penalize if inner circle isn't at least a distance ϵ inside the outer circle
+    function overlap_dist(c_in::Circle, c_out::Circle, ϵ)
+        d12 = signed_edge_distance(origin(c_in), c_out) + radius(c_in)
+        return d12 > -ϵ ? (d12 + ϵ)^2 : zero(d12)
+    end
+
+    function optfun(x::Vector{Tx}, lambda = 1e-3) where {Tx}
+        @inbounds cbound = Circle{dim,Tx}(Vec{dim,Tx}((x[1], x[2])), x[3]) # bounding circle
+        overlap_penalty = sum(c -> overlap_dist(c, cbound, epsilon), circles)
+        area_penalty = area(cbound)/length(circles)
+        return (overlap_penalty + lambda * area_penalty)/radius(c_initial)^2
+    end
+
+    c_initial = crude_bounding_circle(circles)
+    c_final = c_initial
+    c_check = c_opt -> minimum(c -> -signed_edge_distance(origin(c), c_opt) - radius(c), circles) > epsilon/2
+
+    lambda = 1e-3
+    x0 = [origin(c_initial)..., radius(c_initial)]
+    for i in 1:maxiter
+        opt_obj = OnceDifferentiable(x->optfun(x,lambda), x0; autodiff = :forward)
+        result = optimize(opt_obj, x0, LBFGS(linesearch = LineSearches.BackTracking(order=3)))
+
+        x = copy(Optim.minimizer(result))
+        c_final = Circle{dim,T}(Vec{dim,T}((x[1], x[2])), x[3])
+        c_check(c_final) && break
+
+        lambda /= 2
+    end
+
+    if !c_check(c_final)
+        f = r -> c_check(Circle(origin(c_final), r)) - 0.5
+        r_min = find_zero(f, (0.01, 100.0).*radius(c_final), Bisection())
+        return Circle(origin(c_final), r_min + 100*eps(r_min))
+    else
+        return c_final
+    end
 end
 
 # bounding circle of a collection of circles. not optimal, but very simple
@@ -225,10 +366,10 @@ function bounding_circle(c1::Circle, c2::Circle)
     return Circle(center, rad)
 end
 
-function crude_bounding_circle(circles::Vector{<:Circle})
+function crude_bounding_circle(circles::Vector{C}) where {C<:Circle}
     center = mean(c->origin(c), circles)
     rad = maximum(c->norm(origin(c)-center)+radius(c), circles)
-    return Circle(center, rad)
+    return Circle(center, rad + 5*eps(rad))
 end
 
 function crude_bounding_circle(origins::AbstractVector{T},
@@ -262,10 +403,6 @@ end
 # ---------------------------------------------------------------------------- #
 # Rectangle based on Vec type from Tensors.jl (code based on GeometryTypes.jl)
 # ---------------------------------------------------------------------------- #
-struct Rectangle{dim,T}
-    mins::Vec{dim,T}
-    maxs::Vec{dim,T}
-end
 Rectangle(mins::NTuple{dim,T}, maxs::Vec{dim,T}) where {dim,T} = Rectangle(Vec{dim,T}(mins), maxs)
 Rectangle(mins::Vec{dim,T}, maxs::NTuple{dim,T}) where {dim,T} = Rectangle(mins, Vec{dim,T}(maxs))
 Rectangle(mins::NTuple{dim,T}, maxs::NTuple{dim,T}) where {dim,T} = Rectangle(Vec{dim,T}(mins), Vec{dim,T}(maxs))

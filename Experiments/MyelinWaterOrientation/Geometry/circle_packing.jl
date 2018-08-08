@@ -247,10 +247,15 @@ function packing_energy(x::AbstractVector{Tx},
     x_coord_fixed = (length(x) == 2*numcircles(data)-3)
     circles = getcircles(x, data; x_coord_fixed = x_coord_fixed)
 
-    # Penalize by goaldensity
+    # # Penalize by goaldensity
+    # if !(weights[1] ≈ zero(Tf))
+    #     # E_density = (goaldensity - estimate_density(c_0,origins,radii))^2
+    #     E_density = (goaldensity - estimate_density(circles))^2
+    # end
+
+    # Penalize by non-circularness of distribution
     if !(weights[1] ≈ zero(Tf))
-        # E_density = (goaldensity - estimate_density(c_0,origins,radii))^2
-        E_density = (goaldensity - estimate_density(circles))^2
+        E_density = energy_covariance(circles)/distancescale^2
     end
 
     # Using the overlap as the only metric clearly will not work, as any
@@ -279,6 +284,15 @@ end
 # ---------------------------------------------------------------------------- #
 # Energies on circles: ForwardDiff friendly with circles vector
 # ---------------------------------------------------------------------------- #
+
+# Sum squared circle distances
+function energy_covariance(circles::Vector{Circle{DIM,T}}) where {DIM,T}
+    circlepoints = reinterpret(T, circles, (DIM+1, length(circles))) # reinterp as DIM+1 x Ncircles array
+    @views origins = circlepoints[1:2, :] # DIM x Ncircles view of origin points
+    Σ = cov(origins, 2) # covariance matrix of origin locations
+    σ² = T(trace(Σ)/DIM) # mean variance
+    return sum(abs2, Σ - σ²*I) # penalize non-diagonal covariance matrices
+end
 
 # Sum squared circle distances
 function energy_sum_squared_distances(circles::Vector{Circle{DIM,T}},
