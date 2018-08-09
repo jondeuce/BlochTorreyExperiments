@@ -20,13 +20,13 @@ using JuAFEM
 using JuAFEM: vertices, faces, edges
 using MATLAB
 using LinearMaps
-#using DifferentialEquations
+using DifferentialEquations
 using Expokit
 using Optim
 using Roots
 using Distributions
 using ApproxFun
-#using Plots
+# using Plots
 using ForwardDiff
 using ReverseDiff
 using PolynomialRoots

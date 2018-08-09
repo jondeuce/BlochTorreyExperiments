@@ -10,16 +10,18 @@ struct FixedOptData{dim,T}
     first_origin::Vec{dim,T}
     second_x_coord::T
     radii::AbstractVector{T}
+    x_coord_fixed::Bool
 end
 numcircles(data::FixedOptData) = length(data.radii)
 
 function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
-                      initial_origins::AbstractVector{<:Vec{DIM}} = initialize_origins(radii, Val{DIM}),
+                      initial_origins::AbstractVector{<:Vec{DIM}} = initialize_origins(radii),
                       goaldensity = 0.8,
                       distancescale = mean(radii),
                       weights::AbstractVector = [1.0, 1e-6, 1.0],
                       epsilon::Real = 0.1*distancescale,
                       autodiff::Bool = true,
+                      chunksize::Int = 10,
                       secondorder::Bool = false,
                       constrained::Bool = false, # autodiff && secondorder,
                       reversemode::Bool = false, # autodiff && !secondorder,
@@ -41,8 +43,9 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
     c_fixed = initial_circles[1]
     c_variable = initial_circles[2:end]
 
-    data = FixedOptData(origin(c_fixed), origin(c_variable[1])[1], radii)
-    x0 = copy(reinterpret(T, origin.(c_variable)))[2:end]
+    # x0 = copy(reinterpret(T, origin.(c_variable)))[2:end]; x_coord_fixed = true
+    x0 = copy(reinterpret(T, origin.(c_variable))); x_coord_fixed = false
+    data = FixedOptData(origin(c_fixed), origin(c_variable[1])[1], radii, x_coord_fixed)
 
     if constrained
         # Constrained problem using Lagrange multipliers
@@ -61,11 +64,37 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
         else
             if reversemode
                 # Reverse mode automatic differentiation
-                g!, fg! = wrap_gradient(f, x0, isforward = false, isdynamic = true)
+                g!, fg! = wrap_gradient(f, x0; isforward = false, isdynamic = true)
                 opt_obj = OnceDifferentiable(f, g!, fg!, x0)
             else
                 # Forward mode automatic differentiation
-                opt_obj = OnceDifferentiable(f, x0; autodiff = :forward)
+
+                # ---- Use buffer of circles to avoid allocations ---- #
+                chunksize = min(chunksize, length(x0))
+                const dualcircles = Vector{Circle{2,ForwardDiff.Dual{Void,T,chunksize}}}(numcircles(data))
+                const realcircles = Vector{Circle{2,T}}(numcircles(data))
+
+                function f_buffered(x::Vector{T}) where {T<:AbstractFloat}
+                    getcircles!(realcircles, x, data)
+                    return packing_energy(realcircles, goaldensity, distancescale, weights, epsilon)
+                end
+
+                function f_buffered(x::Vector{D}) where {D<:ForwardDiff.Dual}
+                    dualcircles = reinterpret(Circle{DIM,D}, dualcircles)
+                    getcircles!(dualcircles, x, data)
+                    return packing_energy(dualcircles, goaldensity, distancescale, weights, epsilon)
+                end
+
+                const checktag = true
+                g!, fg!, cfg = wrap_gradient(f_buffered, x0, Val{chunksize}, Val{checktag}; isforward = true)
+                opt_obj = OnceDifferentiable(f_buffered, g!, fg!, x0)
+
+                # ---- Simple precompiled gradient ---- #
+                # g!, fg! = wrap_gradient(f, x0, Val{chunksize}; isforward = true)
+                # opt_obj = OnceDifferentiable(f, g!, fg!, x0)
+
+                # ---- Simple precompiled gradient, but can't configure chunk ---- #
+                # opt_obj = OnceDifferentiable(f, x0; autodiff = :forward)
             end
         end
     else
@@ -87,7 +116,7 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
     x = constrained ? copy(Optim.minimizer(result)[1:end-1]) : copy(Optim.minimizer(result))
 
     # Reconstruct resulting circles
-    packed_circles = getcircles(x, data; x_coord_fixed = length(x) == 2*numcircles(data)-3)
+    packed_circles = getcircles(x, data)
 
     # Set origin to be the mean of the circles
     P = mean(origin.(packed_circles))
@@ -113,29 +142,55 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
     return packed_circles, result
 end
 
-function initialize_origins(radii::AbstractVector{T},
-                            ::Type{Val{DIM}} = Val{2}) where {DIM,T}
+function initialize_origins(radii::AbstractVector{T};
+                            distribution = :uniformsquare) where {T}
     # Initialize with random origins
     Ncircles = length(radii)
-    mesh_scale = T(2.0)*maximum(radii)*sqrt(Ncircles)
-    initial_origins = mesh_scale .* (T(2.0).*rand(T,DIM*Ncircles).-one(T))
-    initial_origins = reinterpret(Vec{DIM,T}, initial_origins)
-    initial_origins .-= [initial_origins[1]] # shift such that initial_origins[1] is at the origin
+    Rmax = maximum(radii)
+    mesh_scale = T(2Rmax*sqrt(Ncircles))
+
+    if distribution == :random
+        # Randomly distributed origins
+        initial_origins = mesh_scale .* (T(2.0).*rand(T,2*Ncircles).-one(T))
+        initial_origins = reinterpret(Vec{2,T}, initial_origins)
+        initial_origins .-= [initial_origins[1]] # shift such that initial_origins[1] is at the origin
+        R = getrotmat(initial_origins[2]) # rotation matrix for initial_origins[2]
+        broadcast!(o -> R' ⋅ o, initial_origins, initial_origins) # rotate such that initial_origins[2] is on the x-axis
+    elseif distribution == :uniformsquare
+        # Uniformly distributed, non-overlapping circles
+        Nx, Ny = ceil(Int, √Ncircles), floor(Int, √Ncircles)
+        initial_origins = zeros(Vec{2,T}, Ncircles)
+        ix = 0;
+        for j in 0:Ny-1, i in 0:Nx-1
+            (ix += 1) > Ncircles && break
+            initial_origins[ix] = Vec{2,T}((2Rmax*i, 2Rmax*j))
+        end
+    else
+        error("Unknown initial origins distribution: $distribution.")
+    end
     return initial_origins
 end
 
 function wrap_gradient(f, x0::AbstractArray{T},
-        ::Type{Val{N}} = Val{min(10,length(x0))};
-        isforward = false,
-        isdynamic = !isforward) where {T,N}
+        ::Type{Val{N}} = Val{min(10,length(x0))},
+        ::Type{Val{TF}} = Val{true};
+        isforward = true,
+        isdynamic = !isforward) where {T,N,TF}
 
     if isforward
         # ForwardDiff gradient (pre-recorded config; faster, type stable, but static)
-        const cfg = ForwardDiff.GradientConfig(f, x0, ForwardDiff.Chunk{N}())
+        const cfg = ForwardDiff.GradientConfig(f, x0, ForwardDiff.Chunk{min(N,length(x0))}())
         g! = (out, x) -> ForwardDiff.gradient!(out, f, x, cfg)
 
         # # ForwardDiff gradient (dynamic config; slower, type unstable, but dynamic chunk sizing)
         # g! = (out, x) -> ForwardDiff.gradient!(out, f, x)
+
+        fg! = (out, x) -> begin
+            # `DiffResult` is both a light wrapper around gradient `out` and storage for the forward pass
+            all_results = DiffBase.DiffResult(zero(T), out)
+            ForwardDiff.gradient!(all_results, f, x, cfg, Val{TF}()) # update out == ∇f(x)
+            return DiffBase.value(all_results) # return f(x)
+        end
     else
         if isdynamic
             # ReverseDiff gradient (pre-recorded config; slower, but dynamic call graph)
@@ -145,18 +200,20 @@ function wrap_gradient(f, x0::AbstractArray{T},
             # ReverseDiff gradient (pre-recorded tape; faster, but static call graph)
             const f_tape = ReverseDiff.GradientTape(f, x0)
             const compiled_f_tape = ReverseDiff.compile(f_tape)
+            const cfg = compiled_f_tape # for returning
             g! = (out, x) -> ReverseDiff.gradient!(out, compiled_f_tape, x)
+        end
+
+        fg! = (out, x) -> begin
+            # `DiffResult` is both a light wrapper around gradient `out` and storage for the forward pass
+            all_results = DiffBase.DiffResult(zero(T), out)
+            g!(all_results, x) # update out == ∇f(x)
+            return DiffBase.value(all_results) # return f(x)
         end
     end
 
-    fg! = (G, x) -> begin
-        # `DiffResult` is both a light wrapper around `G` and storage for the forward pass
-        all_results = DiffBase.DiffResult(zero(T), G)
-        g!(all_results, x) # update G(x) == ∇f(x)
-        return DiffBase.value(all_results) # return f(x)
-    end
 
-    return g!, fg!
+    return g!, fg!, cfg
 end
 
 # ---------------------------------------------------------------------------- #
@@ -206,46 +263,47 @@ end
 # Energies on circles
 # ---------------------------------------------------------------------------- #
 
-function getcircles(x::AbstractVector{Tx},
-                    data::FixedOptData{DIM,Tf};
-                    x_coord_fixed = true) where {DIM,Tx,Tf}
+function getcircles!(circles::Vector{Circle{DIM,Tx}},
+                     x::AbstractVector{Tx},
+                     data::FixedOptData{DIM,Tf}) where {DIM,Tx,Tf}
     # There are two sets of a fixed data:
     #   -> The fixed circle c_0, the first circle == circles[1]
     #   -> The x-coordinate of the second circle == 0.0 to fix the rotation of the system
     # Therefore, x is a vector where x[1] is the y-coordinate of the second circle, and
     # then alternating x/y coordinates. I.e., x == [y2,x3,y3,x4,y4,...,xN,yN]
-
     N = numcircles(data)
-    circles = Vector{Circle{DIM,Tx}}(N)
-    circles[1] = Circle{DIM,Tx}(Vec{DIM,Tx}(data.first_origin), Tx(data.radii[1]))
+    @assert length(circles) == N
 
-    if x_coord_fixed
-        circles[2] = Circle{DIM,Tx}(Vec{DIM,Tx}((Tx(data.second_x_coord), x[1])), Tx(data.radii[2]))
-        @inbounds for i in 3:N
-            circles[i] = Circle{DIM,Tx}(Vec{DIM,Tx}((x[2i-4], x[2i-3])), Tx(data.radii[i]))
+    @inbounds circles[1] = Circle{DIM,Tx}(Vec{DIM,Tx}(data.first_origin), Tx(data.radii[1]))
+    if data.x_coord_fixed
+        @inbounds circles[2] = Circle{DIM,Tx}(Vec{DIM,Tx}((Tx(data.second_x_coord), x[1])), Tx(data.radii[2]))
+        @inbounds for (j,i) in enumerate(3:N)
+            circles[i] = Circle{DIM,Tx}(Vec{DIM,Tx}((x[2j], x[2j+1])), Tx(data.radii[i]))
         end
     else
-        @inbounds for i in 2:N
-            circles[i] = Circle{DIM,Tx}(Vec{DIM,Tx}((x[2i-3], x[2i-2])), Tx(data.radii[i]))
+        @inbounds for (j,i) in enumerate(2:N)
+            circles[i] = Circle{DIM,Tx}(Vec{DIM,Tx}((x[2j-1], x[2j])), Tx(data.radii[i]))
         end
     end
 
     return circles
+ end
+
+function getcircles(x::AbstractVector{Tx},
+                    data::FixedOptData{DIM,Tf}) where {DIM,Tx,Tf}
+    circles = Vector{Circle{DIM,Tx}}(numcircles(data))
+    getcircles!(circles, x, data)
+    return circles
 end
 
 # Packing energy (unconstrained problem)
-function packing_energy(x::AbstractVector{Tx},
-                        data::FixedOptData{DIM,Tf},
+function packing_energy(circles::Vector{Circle{DIM,Tx}},
                         goaldensity::Real = 0.8,
                         distancescale::Real = mean(radii),
                         weights::AbstractVector = Tx[1.0, 1e-6, 1.0],
-                        epsilon::Real = 0.1*distancescale) where {DIM,Tx,Tf}
+                        epsilon::Real = 0.1*distancescale) where {DIM,Tx}
     # Initialize energies
     E_density, E_mutual, E_overlap = zero(Tx), zero(Tx), zero(Tx)
-
-    # Initialize circles
-    x_coord_fixed = (length(x) == 2*numcircles(data)-3)
-    circles = getcircles(x, data; x_coord_fixed = x_coord_fixed)
 
     # # Penalize by goaldensity
     # if !(weights[1] ≈ zero(Tf))
@@ -254,18 +312,18 @@ function packing_energy(x::AbstractVector{Tx},
     # end
 
     # Penalize by non-circularness of distribution
-    if !(weights[1] ≈ zero(Tf))
+    if !(weights[1] ≈ zero(Tx))
         E_density = energy_covariance(circles)/distancescale^2
     end
 
     # Using the overlap as the only metric clearly will not work, as any
     # isolated set of circles will have zero energy. Therefore, we penalize by
     # the total squared distances to encourage the circles to stay close
-    if !(weights[2] ≈ zero(Tf))
+    if !(weights[2] ≈ zero(Tx))
         # E_mutual = energy_sum_squared_distances(c_0,origins,radii,Val{DIM})/distancescale^2
         E_mutual = energy_sum_squared_distances(circles,Val{DIM})/distancescale^2
     end
-    if !(weights[3] ≈ zero(Tf))
+    if !(weights[3] ≈ zero(Tx))
         # E_overlap = energy_sum_overlap_squared_distances(c_0,origins,radii,epsilon,Val{DIM})/distancescale^2
         E_overlap = energy_sum_overlap_squared_distances(circles,epsilon,Val{DIM})/distancescale^2
     end
@@ -278,6 +336,18 @@ function packing_energy(x::AbstractVector{Tx},
 
     return E_total
 
+end
+
+# Packing energy (unconstrained problem)
+function packing_energy(x::AbstractVector{Tx},
+                        data::FixedOptData{DIM,Tf},
+                        goaldensity::Real = 0.8,
+                        distancescale::Real = mean(radii),
+                        weights::AbstractVector = Tx[1.0, 1e-6, 1.0],
+                        epsilon::Real = 0.1*distancescale) where {DIM,Tx,Tf}
+    # Initialize circles
+    circles = getcircles(x, data)
+    return packing_energy(circles, goaldensity, distancescale, weights, epsilon)
 end
 
 

@@ -134,14 +134,24 @@ factorize!(d::ParabolicDomain) = (d.Minv = cholfact(getmass(d)); return d)
 # These interpolation methods seem overly constrictive:
 #   TODO: How to do this without assuming nodal values only?
 function interpolate!(u::Vector{T}, u0::Vec{dim,T}, domain::ParabolicDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
-    _check_is_nodal(u, domain)
-    u = reinterpret(Vec{dim,T}, u)
-    fill!(u, u0)
-    return reinterpret(T, u)
+    # _check_is_nodal(u, domain)
+    # u = reinterpret(Vec{dim,T}, u)
+    # fill!(u, u0)
+    # return reinterpret(T, u)
+    return interpolate!(u, x->u0, domain)
 end
 
 function interpolate!(u::Vector{T}, func::Function, domain::ParabolicDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
-    _check_is_nodal(u, domain)
+    ch = ConstraintHandler(getdofhandler(domain))
+    ∂Ω = getfaces(getgrid(domain))
+    dbc = JuAFEM.Dirichlet(:u, ∂Ω, (x,t) -> func(x), collect(1:dim))
+    add!(ch, dbc)
+    close!(ch)
+    update!(ch, 0.0)
+    apply!(u, ch)
+    return u
+
+    # _check_is_nodal(u, domain)
 
     # u = reinterpret(Vec{dim,T}, u)
     # @inbounds for i in 1:getnnodes(getgrid(domain))
@@ -150,26 +160,26 @@ function interpolate!(u::Vector{T}, func::Function, domain::ParabolicDomain{dim,
     # end
     # return reinterpret(T, u)
 
-    for f in 1:JuAFEM.nfields(getdofhandler(domain))
-        field_dim = getdofhandler(domain).field_dims[f]
-        # space_dim = field_dim == 2 ? 3 : field_dim
-        # data = fill(0.0, dim, getnnodes(getdofhandler(domain).grid))
-        offset = JuAFEM.field_offset(getdofhandler(domain), getdofhandler(domain).field_names[f])
-        for cell in CellIterator(getdofhandler(domain))
-            _celldofs = celldofs(cell)
-            counter = 1
-            for node in getnodes(cell)
-                x = getcoordinates(getnodes(getgrid(domain), node))
-                fval = func(x)
-                for d in 1:getdofhandler(domain).field_dims[f]
-                    # data[d, node] = u[_celldofs[counter + offset]]
-                    u[_celldofs[counter + offset]] = fval[d]
-                    counter += 1
-                end
-            end
-        end
-    end
-    return u
+    # for f in 1:JuAFEM.nfields(getdofhandler(domain))
+    #     field_dim = getdofhandler(domain).field_dims[f]
+    #     # space_dim = field_dim == 2 ? 3 : field_dim
+    #     # data = fill(0.0, dim, getnnodes(getdofhandler(domain).grid))
+    #     offset = JuAFEM.field_offset(getdofhandler(domain), getdofhandler(domain).field_names[f])
+    #     for cell in CellIterator(getdofhandler(domain))
+    #         _celldofs = celldofs(cell)
+    #         counter = 1
+    #         for node in getnodes(cell)
+    #             x = getcoordinates(getnodes(getgrid(domain), node))
+    #             fval = func(x)
+    #             for d in 1:getdofhandler(domain).field_dims[f]
+    #                 # data[d, node] = u[_celldofs[counter + offset]]
+    #                 u[_celldofs[counter + offset]] = fval[d]
+    #                 counter += 1
+    #             end
+    #         end
+    #     end
+    # end
+    # return u
 
     # fill!(u,0)
     # n_basefuncs = getnbasefunctions(cellvalues(domain))
@@ -198,7 +208,7 @@ function interpolate!(u::Vector{T}, func::Function, domain::ParabolicDomain{dim,
 end
 
 function integrate(u::Vector{T}, domain::ParabolicDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
-    _check_is_nodal(u, domain)
+    # _check_is_nodal(u, domain)
     u = reinterpret(Vec{dim,T}, u)
     w = reinterpret(Vec{dim,T}, getquadweights(domain))
 
@@ -222,7 +232,7 @@ mutable struct MyelinDomain{dim,Nd,T,Nf} <: AbstractDomain{dim,Nd,T,Nf}
     fullgrid::Grid{dim,Nd,T,Nf}
     outercircles::Vector{Circle{dim,T}}
     innercircles::Vector{Circle{dim,T}}
-    domainboundary::Rectangle{dim,T}
+    domainboundary::Union{Circle{dim,T}, Rectangle{dim,T}}
     tissuedomain::ParabolicDomain{dim,Nd,T,Nf}
     myelindomains::Vector{ParabolicDomain{dim,Nd,T,Nf}}
     axondomains::Vector{ParabolicDomain{dim,Nd,T,Nf}}

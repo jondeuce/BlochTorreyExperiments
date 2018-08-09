@@ -30,6 +30,12 @@ Base.convert(::Type{SVector{dim,T1}}, x::Vec{dim,T2}) where {dim,T1,T2} = SVecto
 @inline Base.Tuple(v::Vec) = Tensors.get_data(v)
 
 @inline norm2(x::Vec) = dot(x,x)
+@inline getsincos(x::Vec{2}) = (r = norm(x); sinθ = x[2]/r; cosθ = x[1]/r; return (sinθ, cosθ))
+@inline function getrotmat(x::Vec{2,T}) where {T}
+    sinθ, cosθ = getsincos(x)
+    return Tensor{2,2,T}((cosθ, sinθ, -sinθ, cosθ))
+end
+
 @inline function hadamardproduct(S1::Vec{dim}, S2::Vec{dim}) where {dim}
     return Vec{dim}(@inline function(i) Tensors.@inboundsret S1[i] * S2[i]; end)
 end
@@ -63,17 +69,8 @@ const ⊠ = skewprod # Denote the skewproduct using `\boxtimes`
 scale_shape(e::Ellipse{dim}, P::Vec{dim}, α::Number) where {dim} = Ellipse(α * (getF1(e) - P) + P, α * (getF2(e) - P) + P, α * getb(e))
 scale_shape(e::Ellipse, α::Number) = scale_shape(e, origin(e), α)
 
-@inline function getsincos(e::Ellipse{2})
-    v = getF2(e) - getF1(e)
-    r = norm(v)
-    sinθ, cosθ = v[2]/r, v[1]/r
-    return sinθ, cosθ
-end
-
-@inline function getrotmat(e::Ellipse{2,T}) where {T}
-    sinθ, cosθ = getsincos(e)
-    return Tensor{2,2,T}((cosθ, sinθ, -sinθ, cosθ))
-end
+@inline getsincos(e::Ellipse{2}) = getsincos(getF2(e) - getF1(e))
+@inline getrotmat(e::Ellipse{2}) = getrotmat(getF2(e) - getF1(e))
 
 function Base.rand(::Type{Ellipse{dim,T}}) where {dim,T}
     F1 = 2*rand(Vec{dim,T}) - ones(Vec{dim,T})

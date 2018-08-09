@@ -3,6 +3,22 @@
 # ============================================================================ #
 
 # ---------------------------------------------------------------------------- #
+# Misc grid utils
+# ---------------------------------------------------------------------------- #
+function getfaces(grid::Grid{2})
+    # faces will be approx. double counted, and Euler characteristic says #faces (edges) ~ #nodes + #cells in 2D
+    faceset = Set{Tuple{Int,Int}}()
+    sizehint!(faceset, 2*(getnnodes(grid) + getncells(grid)))
+    for (cell_idx, cell) in enumerate(getcells(grid))
+        for (face_idx, face) in enumerate(faces(cell))
+            push!(faceset, (cell_idx, face_idx))
+        end
+    end
+    JuAFEM._warn_emptyset(faceset)
+    return faceset
+end
+
+# ---------------------------------------------------------------------------- #
 # rect_mesh_with_circles
 # ---------------------------------------------------------------------------- #
 function rect_mesh_with_circles(rect_bdry::Rectangle{2,T},
