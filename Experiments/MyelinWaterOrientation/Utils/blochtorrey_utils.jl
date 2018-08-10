@@ -2,15 +2,11 @@
 # Bloch-Torrey parameters type
 # ---------------------------------------------------------------------------- #
 
-# Struct of BlochTorreyParameters. T is the float type
+# Struct of BlochTorreyParameters. T is the float type.
+#TODO: rewrite to use inner constructor
 struct BlochTorreyParameters{T}
     params::Dict{Symbol,T}
 end
-
-Base.getindex(p::BlochTorreyParameters, s::Symbol) = p.params[s]
-Base.setindex!(p::BlochTorreyParameters, v, s::Symbol) = error("Parameters are immutable")
-Base.display(p::BlochTorreyParameters) = (println("$(typeof(p)) with parameters:\n"); display(p.params))
-
 function BlochTorreyParameters(::Type{T} = Float64; kwargs...) where {T}
     # default parameters
     default_params = Dict{Symbol,T}(
@@ -63,13 +59,72 @@ function BlochTorreyParameters(::Type{T} = Float64; kwargs...) where {T}
     return BlochTorreyParameters{T}(merge(default_params, input_params))
 end
 
+Base.getindex(p::BlochTorreyParameters, s::Symbol) = p.params[s]
+Base.setindex!(p::BlochTorreyParameters, v, s::Symbol) = error("Parameters are immutable")
+Base.display(p::BlochTorreyParameters) = (println("$(typeof(p)) with parameters:\n"); display(p.params))
+
+radiidistribution(p::BlochTorreyParameters) = Distributions.Gamma(p[:R_shape], p[:R_mu]/p[:R_shape])
+
+# ---------------------------------------------------------------------------- #
+# BlochTorreyProblem type
+# ---------------------------------------------------------------------------- #
+
+abstract type AbstractParabolicProblem{T} end
+
+struct MyelinProblem{T} <: AbstractParabolicProblem{T}
+    params::BlochTorreyParameters{T}
+end
+
+struct BlochTorreyProblem{T,D,R,W} <: AbstractParabolicProblem{T}
+    Dcoeff::D
+    Rdecay::R
+    Omega::W
+    BlochTorreyProblem{T}(d::D,r::R,w::W) where {T,D,R,W} = new{T,D,R,W}(d,r,w)
+end
+
 # ---------------------------------------------------------------------------- #
 # Myelin grid type
 # ---------------------------------------------------------------------------- #
 
-# Abstract domain type. The spatial dimension is `dim`, the nodes per element is
-# `Nd`, the float type is `T`, and the number of faces per element is `Nf`.
+# Abstract domain type. The type parameters are:
+#   `dim`:  Spatial dimension of domain
+#   `Nd`:   Number of nodes per finite element
+#   `T`:    Float type used
+#   `Nf`:   Number of faces per finite element
 abstract type AbstractDomain{dim,Nd,T,Nf} end
+
+# Interpolation is done by simply creating a `Dirichlet` constraint on every
+# face of the domain and applying it to the vector `u`. This is really quite
+# slow and wasteful, and there is almost definitely a better way to implement
+# this, but it just isn't a bottleneck and this is easy.
+function interpolate!(u::Vector{T}, f::Function, domain::AbstractDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
+    ch = ConstraintHandler(getdofhandler(domain))
+    ∂Ω = getfaces(getgrid(domain))
+    dbc = JuAFEM.Dirichlet(:u, ∂Ω, (x,t) -> f(x), collect(1:dim))
+    add!(ch, dbc)
+    close!(ch)
+    update!(ch, 0.0) # time zero
+    apply!(u, ch)
+    return u
+end
+
+function interpolate(f::Function, domain::AbstractDomain{dim}) where {dim}
+    u = zeros(ndofs(getdofhandler(domain)))
+    return interpolate!(u, f, domain)
+end
+
+function integrate(u::Vector{T}, domain::AbstractDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
+    u = reinterpret(Vec{dim,T}, u)
+    w = reinterpret(Vec{dim,T}, getquadweights(domain))
+
+    # Integrate. ⊙ == hadamardproduct is the Hadamard product of the Vec's.
+    S = zero(Vec{dim,T})
+    @inbounds for i in 1:length(u)
+        S += u[i] ⊙ w[i]
+    end
+
+    return S
+end
 
 # ---------------------------------------------------------------------------- #
 # Generic parabolic domain grid type
@@ -81,25 +136,21 @@ mutable struct ParabolicDomain{dim,Nd,T,Nf} <: AbstractDomain{dim,Nd,T,Nf}
     cellvalues::CellValues{dim,T}
     facevalues::FaceValues{dim,T}
     M::SparseMatrixCSC{T}
-    Minv::Union{Factorization{T},Void}
+    Mfact::Union{Factorization{T},Void}
     K::SparseMatrixCSC{T}
     w::Vector{T}
 end
 
-@inline function _check_is_nodal(u::Vector, d::AbstractDomain{dim}) where {dim}
-    @assert (length(u) == ndofs(getdofhandler(d)) == dim*getnnodes(getgrid(d)))
-end
-
 function ParabolicDomain(grid::Grid{dim,Nd,T,Nf};
-                         shape = RefTetrahedron,
-                         quadorder = 1,
-                         funcinterporder = 1,
-                         geominterporder = 1) where {dim,Nd,T,Nf}
+    refshape = RefTetrahedron,
+    quadorder = 1,
+    funcinterporder = 1,
+    geominterporder = 1) where {dim,Nd,T,Nf}
     # Quadrature and interpolation rules and corresponding cellvalues/facevalues
-    func_interp = Lagrange{dim, shape, funcinterporder}()
-    geom_interp = Lagrange{dim, shape, geominterporder}()
-    quadrule = QuadratureRule{dim, shape}(quadorder)
-    quadrule_face = QuadratureRule{dim-1, shape}(quadorder)
+    func_interp = Lagrange{dim, refshape, funcinterporder}()
+    geom_interp = Lagrange{dim, refshape, geominterporder}()
+    quadrule = QuadratureRule{dim, refshape}(quadorder)
+    quadrule_face = QuadratureRule{dim-1, refshape}(quadorder)
     cellvalues = CellVectorValues(T, quadrule, func_interp, geom_interp)
     facevalues = FaceVectorValues(T, quadrule_face, func_interp, geom_interp)
 
@@ -110,116 +161,53 @@ function ParabolicDomain(grid::Grid{dim,Nd,T,Nf};
 
     # Mass matrix, inverse mass matrix, stiffness matrix, and weights vector
     M = create_sparsity_pattern(dh)
-    Minv = nothing
+    Mfact = nothing
     K = copy(M)
     w = zeros(T, ndofs(dh))
 
-    ParabolicDomain{dim,Nd,T,Nf}(grid, dh, cellvalues, facevalues, M, Minv, K, w)
+    ParabolicDomain{dim,Nd,T,Nf}(grid, dh, cellvalues, facevalues, M, Mfact, K, w)
 end
 
 @inline numsubdomains(d::ParabolicDomain) = 1
 @inline getsubdomain(d::ParabolicDomain, i::Int) = i == 1 ? d : error("i=$i, but ParabolicDomain has only 1 subdomain.")
 @inline getgrid(d::ParabolicDomain) = d.grid
 @inline getdofhandler(d::ParabolicDomain) = d.dh
-@inline cellvalues(d::ParabolicDomain) = d.cellvalues
-@inline facevalues(d::ParabolicDomain) = d.facevalues
+@inline getcellvalues(d::ParabolicDomain) = d.cellvalues
+@inline getfacevalues(d::ParabolicDomain) = d.facevalues
 @inline getmass(d::ParabolicDomain) = d.M
-@inline getmassinv(d::ParabolicDomain) = d.Minv
+@inline getmassfact(d::ParabolicDomain) = d.Mfact
 @inline getstiffness(d::ParabolicDomain) = d.K
 @inline getquadweights(d::ParabolicDomain) = d.w
 @inline JuAFEM.ndofs(d::ParabolicDomain) = JuAFEM.ndofs(getdofhandler(d))
 
-factorize!(d::ParabolicDomain) = (d.Minv = cholfact(getmass(d)); return d)
+factorize!(d::ParabolicDomain) = (d.Mfact = cholfact(getmass(d)); return d)
 
-# These interpolation methods seem overly constrictive:
-#   TODO: How to do this without assuming nodal values only?
-function interpolate!(u::Vector{T}, u0::Vec{dim,T}, domain::ParabolicDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
-    # _check_is_nodal(u, domain)
-    # u = reinterpret(Vec{dim,T}, u)
-    # fill!(u, u0)
-    # return reinterpret(T, u)
-    return interpolate!(u, x->u0, domain)
-end
+# Assembly quadrature weights for the parabolic domain `domain`.
+function addquadweights!(domain::ParabolicDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
+    # This assembly function is only for CellVectorValues
+    @assert typeof(getcellvalues(domain)) <: CellVectorValues
 
-function interpolate!(u::Vector{T}, func::Function, domain::ParabolicDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
-    ch = ConstraintHandler(getdofhandler(domain))
-    ∂Ω = getfaces(getgrid(domain))
-    dbc = JuAFEM.Dirichlet(:u, ∂Ω, (x,t) -> func(x), collect(1:dim))
-    add!(ch, dbc)
-    close!(ch)
-    update!(ch, 0.0)
-    apply!(u, ch)
-    return u
+    n_basefuncs = getnbasefunctions(getcellvalues(domain))
+    we = zeros(n_basefuncs)
+    fill!(getquadweights(domain), 0)
 
-    # _check_is_nodal(u, domain)
-
-    # u = reinterpret(Vec{dim,T}, u)
-    # @inbounds for i in 1:getnnodes(getgrid(domain))
-    #     x = getcoordinates(getnodes(getgrid(domain), i))
-    #     u[i] = func(x)
-    # end
-    # return reinterpret(T, u)
-
-    # for f in 1:JuAFEM.nfields(getdofhandler(domain))
-    #     field_dim = getdofhandler(domain).field_dims[f]
-    #     # space_dim = field_dim == 2 ? 3 : field_dim
-    #     # data = fill(0.0, dim, getnnodes(getdofhandler(domain).grid))
-    #     offset = JuAFEM.field_offset(getdofhandler(domain), getdofhandler(domain).field_names[f])
-    #     for cell in CellIterator(getdofhandler(domain))
-    #         _celldofs = celldofs(cell)
-    #         counter = 1
-    #         for node in getnodes(cell)
-    #             x = getcoordinates(getnodes(getgrid(domain), node))
-    #             fval = func(x)
-    #             for d in 1:getdofhandler(domain).field_dims[f]
-    #                 # data[d, node] = u[_celldofs[counter + offset]]
-    #                 u[_celldofs[counter + offset]] = fval[d]
-    #                 counter += 1
-    #             end
-    #         end
-    #     end
-    # end
-    # return u
-
-    # fill!(u,0)
-    # n_basefuncs = getnbasefunctions(cellvalues(domain))
-    # ue = zeros(n_basefuncs)
-    # @inbounds for cell in CellIterator(getdofhandler(domain))
-    #     fill!(ue, 0)
-    #     coords = getcoordinates(cell)
-    #     JuAFEM.reinit!(cellvalues(domain), cell)
-    #     for q_point in 1:getnquadpoints(cellvalues(domain))
-    #         # dΩ = getdetJdV(cellvalues(domain), q_point)
-    #         coords_qp = spatial_coordinate(cellvalues(domain), q_point, coords)
-    #         for i in 1:n_basefuncs
-    #             v = shape_value(cellvalues(domain), q_point, i)
-    #             # @show (q_point, i, dΩ, coords_qp, v)
-    #             ue[i] += func(coords_qp) ⋅ v# * dΩ
-    #         end
-    #     end
-    #     # _celldofs = celldofs(cell)
-    #     # error("exiting...")
-    #     # for i in 1:length(_celldofs)
-    #     #     u[_celldofs[i]] += ue[i]
-    #     # end
-    #     assemble!(u, celldofs(cell), ue)
-    # end
-    # return u
-end
-
-function integrate(u::Vector{T}, domain::ParabolicDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
-    # _check_is_nodal(u, domain)
-    u = reinterpret(Vec{dim,T}, u)
-    w = reinterpret(Vec{dim,T}, getquadweights(domain))
-
-    # Integrate. ⊙ === hadamardproduct is the Hadamard product of the vectors.
-    S = zero(Vec{dim,T})
-    @inbounds for i in 1:length(u)
-        S += u[i] ⊙ w[i]
+    @inbounds for cell in CellIterator(getdofhandler(domain))
+        # Reset element residual and reinit cellvalues
+        fill!(we, 0)
+        JuAFEM.reinit!(getcellvalues(domain), cell)
+        # Integrate all components of shape function `v` and add to weights vector
+        for q_point in 1:getnquadpoints(getcellvalues(domain))
+            dΩ = getdetJdV(getcellvalues(domain), q_point)
+            for i in 1:n_basefuncs
+                v  = shape_value(getcellvalues(domain), q_point, i)
+                we[i] += sum(v) * dΩ # sum(v) is short for adding v[1] ... v[dim] contributions
+            end
+        end
+        # Assemble the element residual `we` into the global residual vector `w`
+        assemble!(getquadweights(domain), celldofs(cell), we)
     end
-    # S = sum(u .⊙ w) # Equivalent, but slower due to allocation of temporary
 
-    return S
+    return domain
 end
 
 Base.norm(u, domain::ParabolicDomain) = √dot(u, getmass(domain) * u)
@@ -228,11 +216,13 @@ Base.norm(u, domain::ParabolicDomain) = √dot(u, getmass(domain) * u)
 # Myelin grid type
 # ---------------------------------------------------------------------------- #
 
+const MyelinBoundary{dim,T} = Union{<:Circle{dim,T}, <:Rectangle{dim,T}, <:Ellipse{dim,T}}
+
 mutable struct MyelinDomain{dim,Nd,T,Nf} <: AbstractDomain{dim,Nd,T,Nf}
     fullgrid::Grid{dim,Nd,T,Nf}
     outercircles::Vector{Circle{dim,T}}
     innercircles::Vector{Circle{dim,T}}
-    domainboundary::Union{Circle{dim,T}, Rectangle{dim,T}}
+    domainboundary::MyelinBoundary{dim,T}
     tissuedomain::ParabolicDomain{dim,Nd,T,Nf}
     myelindomains::Vector{ParabolicDomain{dim,Nd,T,Nf}}
     axondomains::Vector{ParabolicDomain{dim,Nd,T,Nf}}
@@ -242,7 +232,7 @@ function MyelinDomain(
         fullgrid::Grid{dim,Nd,T,Nf},
         outercircles::Vector{Circle{dim,T}},
         innercircles::Vector{Circle{dim,T}},
-        domainboundary::Rectangle{dim,T},
+        domainboundary::MyelinBoundary{dim,T},
         tissuegrid::Grid{dim,Nd,T,Nf},
         myelingrids::Vector{Grid{dim,Nd,T,Nf}},
         axongrids::Vector{Grid{dim,Nd,T,Nf}};
@@ -261,7 +251,7 @@ end
     1 <= i-1 <= nummyelindomains(m) ? m.myelindomains[i-1] :
     1 <= i-1-nummyelindomains(m) <= numaxondomains(m) ? m.axondomains[i-1-nummyelindomains(m)] :
     error("i=$i, but this MyelinDomain has only $(numsubdomains(m)) subdomains."))
-@inline getsubdomains(m::MyelinDomain) = getsubdomain.(m, 1:numsubdomains(m))
+@inline getsubdomains(m::MyelinDomain) = vcat(m.tissuedomain, m.myelindomains, m.axondomains)
 
 @inline getgrid(m::MyelinDomain) = m.fullgrid
 @inline tissuegrid(m::MyelinDomain) = getgrid(m.tissuedomain)
@@ -278,9 +268,9 @@ end
 @inline numfibres(m::MyelinDomain) = length(getoutercircles(m))
 
 packingdensity(m::MyelinDomain) = estimate_density(getoutercircles(m))
-factorize!(m::MyelinDomain) = map(i->factorize!(getsubdomain(m,i)), 1:numsubdomains(m))
+factorize!(m::MyelinDomain) = (map(factorize!, getsubdomains(m)); return m)
 
-function integrate(U::Vector{Vector{T}}, domain::MyelinDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
+function integrate(U::AbstractVector, domain::MyelinDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
     @assert length(U) == numsubdomains(domain)
     Σ = zero(Vec{dim,T})
     @inbounds for i in 1:numsubdomains(domain)
@@ -291,28 +281,20 @@ function integrate(U::Vector{Vector{T}}, domain::MyelinDomain{dim,Nd,T,Nf}) wher
     return Σ
 end
 
-function interpolate!(U::Vector{Vector{T}}, u0::Vec{dim,T}, domain::MyelinDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
+function interpolate!(U::Vector{Vector{T}},
+                      f::Function,
+                      domain::MyelinDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
     @assert length(U) == numsubdomains(domain)
     @inbounds for i in 1:length(U)
-        interpolate!(U[i], u0, getsubdomain(domain, i))
+        subdomain = getsubdomain(domain, i)
+        @assert length(U[i]) == ndofs(getdofhandler(subdomain))
+        interpolate!(U[i], f, subdomain)
     end
     return U
 end
-function interpolate(u0::Vec{dim,T}, domain::MyelinDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
+function interpolate(f::Function, domain::MyelinDomain{dim}) where {dim}
     U = [zeros(ndofs(getsubdomain(domain, i))) for i in 1:numsubdomains(domain)]
-    return interpolate!(U, u0, domain)
-end
-
-function interpolate!(U::Vector{Vector{T}}, func::Function, domain::MyelinDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
-    @assert length(U) == numsubdomains(domain)
-    @inbounds for i in 1:length(U)
-        interpolate!(U[i], func, getsubdomain(domain, i))
-    end
-    return U
-end
-function interpolate(func::Function, domain::MyelinDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
-    U = [zeros(ndofs(getsubdomain(domain, i))) for i in 1:numsubdomains(domain)]
-    return interpolate!(U, func, domain)
+    return interpolate!(U, f, domain)
 end
 
 function Base.norm(U::Vector{Vector{T}}, domain::MyelinDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
@@ -321,51 +303,45 @@ function Base.norm(U::Vector{Vector{T}}, domain::MyelinDomain{dim,Nd,T,Nf}) wher
 end
 
 # ---------------------------------------------------------------------------- #
-# Assmeble mass and stiffness matrices
+# Assmeble mass and stiffness matrices for MyelinProblem and BlochTorreyProblem
 # ---------------------------------------------------------------------------- #
 
-function doassemble!(domain::MyelinDomain{dim,Nd,T,Nf},
-                     btparams::BlochTorreyParameters{T}) where {dim,Nd,T,Nf}
+function doassemble!(prob::MyelinProblem{T},
+                     domain::MyelinDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
     # Exterior region
-    Rdecay = (x) -> btparams[:R2_lp]
-    Dcoeff = (x) -> btparams[:D_Tissue]
-    Omega = (x) -> omega_tissue(x, domain, btparams)
-    doassemble!(domain.tissuedomain, Rdecay, Dcoeff, Omega)
+    Rdecay = (x) -> prob.params[:R2_lp]
+    Dcoeff = (x) -> prob.params[:D_Tissue]
+    Omega = (x) -> omega_tissue(x, domain, prob.params)
+    doassemble!(BlochTorreyProblem{T}(Dcoeff, Rdecay, Omega), domain.tissuedomain)
 
     # Myelin sheath region
-    Rdecay = (x) -> btparams[:R2_sp]
-    Dcoeff = (x) -> btparams[:D_Sheath]
+    Rdecay = (x) -> prob.params[:R2_sp]
+    Dcoeff = (x) -> prob.params[:D_Sheath]
     for i in 1:numfibres(domain)
-        Omega = (x) -> omega_myelin(x, domain, btparams, i)
-        doassemble!(domain.myelindomains[i], Rdecay, Dcoeff, Omega)
+        Omega = (x) -> omega_myelin(x, domain, prob.params, i)
+        doassemble!(BlochTorreyProblem{T}(Dcoeff, Rdecay, Omega), domain.myelindomains[i])
     end
 
     # Axon region
-    Rdecay = (x) -> btparams[:R2_lp]
-    Dcoeff = (x) -> btparams[:D_Axon]
+    Rdecay = (x) -> prob.params[:R2_lp]
+    Dcoeff = (x) -> prob.params[:D_Axon]
     for i in 1:numfibres(domain)
-        Omega = (x) -> omega_axon(x, domain, btparams, i)
-        doassemble!(domain.axondomains[i], Rdecay, Dcoeff, Omega)
+        Omega = (x) -> omega_axon(x, domain, prob.params, i)
+        doassemble!(BlochTorreyProblem{T}(Dcoeff, Rdecay, Omega), domain.axondomains[i])
     end
 
     return domain
 end
 
-### Assembling the linear system
-# Assemble the linear system, $K u = f$. `doassemble` takes `cellvalues`, the
-# sparse matrices, a `DofHandler`, and functions Rdecay, Dcoeff, and Omega
-# as input arguments. The assembled mass and stiffness matrices are returned.
-function doassemble!(domain::ParabolicDomain{dim,Nd,T,Nf},
-                     Rdecay::Function,
-                     Dcoeff::Function,
-                     Omega::Function) where {dim,Nd,T,Nf}
+# Assemble the `BlochTorreyProblem` system $M u_t = K u$ on the domain `domain`.
+function doassemble!(prob::BlochTorreyProblem, domain::ParabolicDomain)
     # This assembly function is only for CellVectorValues
-    @assert typeof(cellvalues(domain)) <: CellVectorValues
+    @assert typeof(getcellvalues(domain)) <: CellVectorValues
 
     # We allocate the element stiffness matrix and element force vector
     # just once before looping over all the cells instead of allocating
     # them every time in the loop.
-    n_basefuncs = getnbasefunctions(cellvalues(domain))
+    n_basefuncs = getnbasefunctions(getcellvalues(domain))
     Ke = zeros(n_basefuncs, n_basefuncs)
     Me = zeros(n_basefuncs, n_basefuncs)
     we = zeros(n_basefuncs)
@@ -373,8 +349,8 @@ function doassemble!(domain::ParabolicDomain{dim,Nd,T,Nf},
     # Next we create assemblers for the stiffness matrix `K` and the mass
     # matrix `M`. The assemblers are just thin wrappers around `K` and `M`
     # and some extra storage to make the assembling faster.
-    assembler_K = start_assemble(domain.K, domain.w)
-    assembler_M = start_assemble(domain.M)
+    assembler_K = start_assemble(getstiffness(domain), getquadweights(domain))
+    assembler_M = start_assemble(getmass(domain))
 
     # It is now time to loop over all the cells in our grid. We do this by iterating
     # over a `CellIterator`. The iterator caches some useful things for us, for example
@@ -390,31 +366,31 @@ function doassemble!(domain::ParabolicDomain{dim,Nd,T,Nf},
         coords = getcoordinates(cell)
 
         # For each cell we also need to reinitialize the cached values in `cellvalues`.
-        JuAFEM.reinit!(cellvalues(domain), cell)
+        JuAFEM.reinit!(getcellvalues(domain), cell)
 
         # It is now time to loop over all the quadrature points in the cell and
         # assemble the contribution to `Ke` and `Me`. The integration weight
         # can be queried from `cellvalues` by `getdetJdV`, and the quadrature
         # coordinate can be queried from `cellvalues` by `spatial_coordinate`
-        for q_point in 1:getnquadpoints(cellvalues(domain))
-            dΩ = getdetJdV(cellvalues(domain), q_point)
-            coords_qp = spatial_coordinate(cellvalues(domain), q_point, coords)
+        for q_point in 1:getnquadpoints(getcellvalues(domain))
+            dΩ = getdetJdV(getcellvalues(domain), q_point)
+            coords_qp = spatial_coordinate(getcellvalues(domain), q_point, coords)
 
             # calculate the heat conductivity and heat source at point `coords_qp`
-            R = Rdecay(coords_qp)
-            D = Dcoeff(coords_qp)
-            ω = Omega(coords_qp)
+            R = prob.Rdecay(coords_qp)
+            D = prob.Dcoeff(coords_qp)
+            ω = prob.Omega(coords_qp)
 
             # For each quadrature point we loop over all the (local) shape functions.
             # We need the value and gradient of the testfunction `v` and also the gradient
             # of the trial function `u`. We get all of these from `cellvalues`.
             for i in 1:n_basefuncs
-                v  = shape_value(cellvalues(domain), q_point, i)
-                ∇v = shape_gradient(cellvalues(domain), q_point, i)
+                v  = shape_value(getcellvalues(domain), q_point, i)
+                ∇v = shape_gradient(getcellvalues(domain), q_point, i)
                 we[i] += sum(v) * dΩ # v[1] and v[2] are never non-zero together
                 for j in 1:n_basefuncs
-                    u = shape_value(cellvalues(domain), q_point, j)
-                    ∇u = shape_gradient(cellvalues(domain), q_point, j)
+                    u = shape_value(getcellvalues(domain), q_point, j)
+                    ∇u = shape_gradient(getcellvalues(domain), q_point, j)
                     Ke[i, j] -= (D * ∇v ⊡ ∇u + R * v ⋅ u - ω * v ⊠ u) * dΩ
                     Me[i, j] += (v ⋅ u) * dΩ
                 end
@@ -465,148 +441,6 @@ function surface_integral!(Ke, facevalues::FaceVectorValues{dim}, cell, q_point,
 end
 
 # ---------------------------------------------------------------------------- #
-# Freqeuency perturbation map functions
-# ---------------------------------------------------------------------------- #
-struct FreqMapParams{T}
-    ω₀::T
-    s²::T
-    c²::T
-end
-
-function FreqMapParams(p::BlochTorreyParameters{T}) where {T}
-    γ, B₀, θ = p[:gamma], p[:B0], p[:theta]
-    ω₀ = γ * B₀
-    s², c² = sin(θ)^2, cos(θ)^2
-    return FreqMapParams{T}(ω₀, s², c²)
-end
-
-# Calculate ω(x) inside region number `region`, which is assumed to be myelin
-function omega_myelin(
-        x::Vec{2,T},
-        domain::MyelinDomain{dim,Nd,T,Nf},
-        btparams::BlochTorreyParameters{T},
-        region::Int) where {dim,Nd,T,Nf}
-    freqparams = FreqMapParams(btparams)
-    ω = omega_myelin(x, freqparams, btparams, getinnercircle(domain, region), getoutercircle(domain, region))
-    @inbounds for i in IterTools.chain(1:region-1, region+1:numfibres(domain))
-        ω += omega_tissue(x, freqparams, btparams, getinnercircle(domain, i), getoutercircle(domain, i))
-    end
-    return ω
-end
-
-# Calculate ω(x) inside region number `region`, which is assumed to be axon
-function omega_axon(
-        x::Vec{2,T},
-        domain::MyelinDomain{dim,Nd,T,Nf},
-        btparams::BlochTorreyParameters{T},
-        region::Int) where {dim,Nd,T,Nf}
-    freqparams = FreqMapParams(btparams)
-    ω = omega_axon(x, freqparams, btparams, getinnercircle(domain, region), getoutercircle(domain, region))
-    @inbounds for i in IterTools.chain(1:region-1, region+1:numfibres(domain))
-        ω += omega_tissue(x, freqparams, btparams, getinnercircle(domain, i), getoutercircle(domain, i))
-    end
-    return ω
-end
-
-# Calculate ω(x) inside region number `region`, which is assumed to be tissue
-function omega_tissue(
-        x::Vec{2,T},
-        domain::MyelinDomain{dim,Nd,T,Nf},
-        btparams::BlochTorreyParameters{T}) where {dim,Nd,T,Nf}
-    freqparams = FreqMapParams(btparams)
-    ω = zero(T)
-    @inbounds for i in 1:numfibres(domain)
-        ω += omega_tissue(x, freqparams, btparams, getinnercircle(domain, i), getoutercircle(domain, i))
-    end
-    return ω
-end
-
-@inline function omega_isotropic_tissue(x::Vec{2},
-                                        b::FreqMapParams,
-                                        p::BlochTorreyParameters,
-                                        c_inner::Circle{2},
-                                        c_outer::Circle{2})
-    χI, ri², ro² = p[:ChiI], radius(c_inner)^2, radius(c_outer)^2
-    dx = x - origin(c_inner)
-    r² = dx⋅dx
-    cos2ϕ = ((dx[1]-dx[2])*(dx[1]+dx[2]))/r²
-    return b.ω₀ * χI * b.s²/2 * cos2ϕ * (ro² - ri²)/r²
-end
-
-@inline function omega_anisotropic_tissue(x::Vec{2},
-                                          b::FreqMapParams,
-                                          p::BlochTorreyParameters,
-                                          c_inner::Circle{2},
-                                          c_outer::Circle{2})
-    χA, ri², ro² = p[:ChiA], radius(c_inner)^2, radius(c_outer)^2
-    dx = x - origin(c_inner)
-    r² = dx⋅dx
-    cos2ϕ = ((dx[1]-dx[2])*(dx[1]+dx[2]))/r²
-    return b.ω₀ * χA * b.s²/8 * cos2ϕ * (ro² - ri²)/r²
-end
-
-@inline function omega_isotropic_myelin(x::Vec{2},
-                                        b::FreqMapParams,
-                                        p::BlochTorreyParameters,
-                                        c_inner::Circle{2},
-                                        c_outer::Circle{2})
-    χI, ri² = p[:ChiI], radius(c_inner)^2
-    dx = x - origin(c_inner)
-    r² = dx⋅dx
-    cos2ϕ = ((dx[1]-dx[2])*(dx[1]+dx[2]))/r²
-    return b.ω₀ * χI * ( b.c² - 1/3 - b.s² * cos2ϕ * ri² / r² )/2
-end
-
-@inline function omega_anisotropic_myelin(x::Vec{2},
-                                          b::FreqMapParams,
-                                          p::BlochTorreyParameters,
-                                          c_inner::Circle{2},
-                                          c_outer::Circle{2})
-    χA, ri², ro = p[:ChiA], radius(c_inner)^2, radius(c_outer)
-    dx = x - origin(c_inner)
-    r² = dx⋅dx
-    r = √r²
-    cos2ϕ = ((dx[1]-dx[2])*(dx[1]+dx[2]))/r²
-    return b.ω₀ * χA * ( b.s² * (-5/12 - cos2ϕ/8 * (1 + ri²/r²) + 3/4 * log(ro/r)) - b.c²/6 )
-end
-
-@inline function omega_anisotropic_axon(x::Vec{2},
-                                        b::FreqMapParams,
-                                        p::BlochTorreyParameters,
-                                        c_inner::Circle{2},
-                                        c_outer::Circle{2})
-    χA, ri, ro = p[:ChiA], radius(c_inner), radius(c_outer)
-    return b.ω₀ * χA * 3b.s²/4 * log(ro/ri)
-end
-
-# Sum components to omega in the tissue region
-@inline function omega_tissue(x::Vec{2},
-                              b::FreqMapParams,
-                              p::BlochTorreyParameters,
-                              c_inner::Circle{2},
-                              c_outer::Circle{2})
-        return omega_isotropic_tissue(x,b,p,c_inner,c_outer) + omega_anisotropic_tissue(x,b,p,c_inner,c_outer)
-end
-
-# Sum components to omega in the myelin sheath region
-@inline function omega_myelin(x::Vec{2},
-                              b::FreqMapParams,
-                              p::BlochTorreyParameters,
-                              c_inner::Circle{2},
-                              c_outer::Circle{2})
-    return omega_isotropic_myelin(x,b,p,c_inner,c_outer) + omega_anisotropic_myelin(x,b,p,c_inner,c_outer)
-end
-
-# Sum components to omega in the axonal region
-@inline function omega_axon(x::Vec{2},
-                            b::FreqMapParams,
-                            p::BlochTorreyParameters,
-                            c_inner::Circle{2},
-                            c_outer::Circle{2})
-    return omega_anisotropic_axon(x,b,p,c_inner,c_outer)
-end
-
-# ---------------------------------------------------------------------------- #
 # Creating LinearMap's for M*du/dt = K*u ODE systems
 # ---------------------------------------------------------------------------- #
 
@@ -629,30 +463,297 @@ function paraboliclinearmap(K, Mfact)
    return LinearMap(fwd_mul!, trans_mul!, size(K)...;
       ismutating=true, issymmetric=false, ishermitian=false, isposdef=false)
 end
-paraboliclinearmap(d::ParabolicDomain) = paraboliclinearmap(getstiffness(d), getmassinv(d))
+paraboliclinearmap(d::ParabolicDomain) = paraboliclinearmap(getstiffness(d), getmassfact(d))
 
-#TODO: Probably don't need to define these; would only be used for normest1
-# which is definitely not a bottleneck, and this clearly could come back to bite
-# me at some unknown time...
+#TODO: Probably shouldn't define these; would only be used for normest1 which is
+# definitely not a bottleneck, and could silently break something?
+#TODO: Could define own LinearMap subtype however? Worth it?
 # import Base.LinAlg: A_mul_B!, At_mul_B!, Ac_mul_B!
 # A_mul_B!(Y::AbstractMatrix, A::FunctionMap, X::AbstractMatrix) = A.f!(Y,X);
 # At_mul_B!(Y::AbstractMatrix, A::FunctionMap, X::AbstractMatrix) = A.fc!(Y,X);
 # Ac_mul_B!(Y::AbstractMatrix, A::FunctionMap, X::AbstractMatrix) = A.fc!(Y,X);
+
+struct ParabolicLinearMap{T} <: LinearMap{T}
+    M::AbstractMatrix{T}
+    Mfact::Factorization{T}
+    K::AbstractMatrix{T}
+    function ParabolicLinearMap(M::AbstractMatrix{T}, Mfact::Factorization{T}, K::AbstractMatrix{T}) where {T}
+        @assert (size(M) == size(Mfact) == size(K)) && (size(M,1) == size(M,2))
+        new{T}(M, Mfact, K)
+    end
+end
+
+# properties
+Base.size(A::ParabolicLinearMap) = size(A.K)
+Base.issymmetric(A::ParabolicLinearMap) = false
+Base.ishermitian(A::ParabolicLinearMap) = false
+Base.isposdef(A::ParabolicLinearMap) = false
+
+# multiplication with Vector
+Base.LinAlg.A_mul_B!(y::AbstractVector, A::ParabolicLinearMap, x::AbstractVector) = Minv_K_mul_u!(y, x, A.K, A.Mfact)
+Base.LinAlg.At_mul_B!(y::AbstractVector, A::ParabolicLinearMap, x::AbstractVector) = Kt_Minv_mul_u!(y, x, A.K, A.Mfact)
+Base.LinAlg.Ac_mul_B!(y::AbstractVector, A::ParabolicLinearMap, x::AbstractVector) = Kt_Minv_mul_u!(y, x, A.K, A.Mfact)
+Base.:(*)(A::ParabolicLinearMap, x::AbstractVector) = A_mul_B!(similar(x), A, x)
+
+# multiplication with Matrix
+Base.LinAlg.A_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = Minv_K_mul_u!(Y, X, A.K, A.Mfact)
+Base.LinAlg.At_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = Kt_Minv_mul_u!(Y, X, A.K, A.Mfact)
+Base.LinAlg.Ac_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = Kt_Minv_mul_u!(Y, X, A.K, A.Mfact)
+Base.:(*)(A::ParabolicLinearMap, X::AbstractMatrix) = A_mul_B!(similar(X), A, X)
+
+function Base.LinAlg.trace(A::ParabolicLinearMap{T}, t::Int = 10) where {T}
+    # Approximate trace, given by the trace corresponding to the lumped mass matrix M[i,i] = Σ_j M[i,j]
+    # return sum(diag(A.K)./sum(A.M,2))
+
+    # Approximate trace using mat-vec's with basis vectors
+    N = size(A,2)
+    t = min(t, N)
+    x = zeros(T, N)
+    tr = zero(T)
+    for ix in StatsBase.sample(1:N, t; replace = false)
+        x[ix] = one(T)
+        tr += (A*x)[ix]
+        x[ix] = zero(T)
+    end
+
+    return tr * (N/t)
+end
+
+# normAm
+import Expmv: normAm
+Expmv.normAm(A::LinearMap, m::Int, t::Int = 10) = (est = normest1(A^m, t)[1]; return (est, 0))
+Base.norm(A::ParabolicLinearMap, args...) = expmv_norm(A, args...)
 
 # ---------------------------------------------------------------------------- #
 # expmv and related functions
 # ---------------------------------------------------------------------------- #
 
 # Custom norm for calling expmv
-expmv_norm(x::AbstractVector, p::Real=2, args...) = Base.norm(x, p, args...) #fallback
 function expmv_norm(A, p::Real=1, t::Int=10)
-    if p == 1
-        return normest1(A, t)[1]
-    elseif p == Inf
-        return normest1(A', t)[1]
-    else
-        error("Only p=1 or p=Inf supported")
-    end
+    !(p == 1 || p == Inf) && error("Only p=1 or p=Inf supported")
+    p == Inf && (A = A')
+    return normest1(A, t)[1]
 end
+# Default fallback for vectors
+expmv_norm(x::AbstractVector, p::Real=2, args...) = Base.norm(x, p, args...)
 
 nothing
+
+# ---------------------------------------------------------------------------- #
+# Local frequency perturbation map functions
+# ---------------------------------------------------------------------------- #
+
+struct OmegaDerivedConstants{T}
+    ω₀::T
+    s²::T
+    c²::T
+end
+function OmegaDerivedConstants(p::BlochTorreyParameters{T}) where {T}
+    γ, B₀, θ = p[:gamma], p[:B0], p[:theta]
+    ω₀ = γ * B₀
+    s², c² = sin(θ)^2, cos(θ)^2
+    return OmegaDerivedConstants{T}(ω₀, s², c²)
+end
+
+@inline function omega_tissue(x::Vec{2}, p::BlochTorreyParameters, b::OmegaDerivedConstants, c_in::Circle{2}, c_out::Circle{2})
+    χI, χA, ri², ro² = p[:ChiI], p[:ChiA], radius(c_in)^2, radius(c_out)^2
+    dx = x - origin(c_in)
+    r² = dx⋅dx
+    cos2ϕ = (dx[1]^2-dx[2]^2)/r²
+
+    tmp = b.s² * cos2ϕ * ((ro² - ri²)/r²) # Common calculation
+    I = χI/2 * tmp # isotropic component
+    A = χA/8 * tmp # anisotropic component
+    return b.ω₀ * (I + A)
+end
+
+@inline function omega_myelin(x::Vec{2}, p::BlochTorreyParameters, b::OmegaDerivedConstants, c_in::Circle{2}, c_out::Circle{2})
+    χI, χA, ri², ro = p[:ChiI], p[:ChiA], radius(c_in)^2, radius(c_out)
+    dx = x - origin(c_in)
+    r² = dx⋅dx
+    r = √r²
+    cos2ϕ = (dx[1]^2-dx[2]^2)/r²
+
+    I = χI/2 * (b.c² - 1/3 - b.s² * cos2ϕ * ri² / r²) # isotropic component
+    A = χA * (b.s² * (-5/12 - cos2ϕ/8 * (1 + ri²/r²) + 3/4 * log(ro/r)) - b.c²/6) # anisotropic component
+    return b.ω₀ * (I + A)
+end
+
+@inline function omega_axon(x::Vec{2}, p::BlochTorreyParameters, b::OmegaDerivedConstants, c_in::Circle{2}, c_out::Circle{2})
+    χA, ri, ro = p[:ChiA], radius(c_in), radius(c_out)
+    A = 3/4 * χA * b.s² * log(ro/ri) # anisotropic (and only) component
+    return b.ω₀ * A
+end
+
+# ---------------------------------------------------------------------------- #
+# Global frequency perturbation functions: calculate ω(x) due to entire domain
+# ---------------------------------------------------------------------------- #
+
+# Calculate ω(x) inside region number `domain`, which is assumed to be tissue
+function omega_tissue(x::Vec{2}, domain::MyelinDomain, params::BlochTorreyParameters)
+    constants = OmegaDerivedConstants(params)
+    ω = zero(eltype(x))
+    @inbounds for i in 1:numfibres(domain)
+        ω += omega_tissue(x, params, constants, getinnercircle(domain, i), getoutercircle(domain, i))
+    end
+    return ω
+end
+
+# Calculate ω(x) inside region number `domain`, which is assumed to be myelin
+function omega_myelin(x::Vec{2}, domain::MyelinDomain, params::BlochTorreyParameters, region::Int)
+    constants = OmegaDerivedConstants(params)
+    ω = omega_myelin(x, params, constants, getinnercircle(domain, region), getoutercircle(domain, region))
+    @inbounds for i in IterTools.chain(1:region-1, region+1:numfibres(domain))
+        ω += omega_tissue(x, params, constants, getinnercircle(domain, i), getoutercircle(domain, i))
+    end
+    return ω
+end
+
+# Calculate ω(x) inside region number `domain`, which is assumed to be axonal
+function omega_axon(x::Vec{2}, domain::MyelinDomain, params::BlochTorreyParameters, region::Int)
+    constants = OmegaDerivedConstants(params)
+    ω = omega_axon(x, params, constants, getinnercircle(domain, region), getoutercircle(domain, region))
+    @inbounds for i in IterTools.chain(1:region-1, region+1:numfibres(domain))
+        ω += omega_tissue(x, params, constants, getinnercircle(domain, i), getoutercircle(domain, i))
+    end
+    return ω
+end
+
+# struct FreqMapParams{T}
+#     ω₀::T
+#     s²::T
+#     c²::T
+# end
+#
+# function FreqMapParams(p::BlochTorreyParameters{T}) where {T}
+#     γ, B₀, θ = p[:gamma], p[:B0], p[:theta]
+#     ω₀ = γ * B₀
+#     s², c² = sin(θ)^2, cos(θ)^2
+#     return FreqMapParams{T}(ω₀, s², c²)
+# end
+#
+# # Calculate ω(x) inside region number `region`, which is assumed to be myelin
+# function omega_myelin(
+#     x::Vec{2,T},
+#     domain::MyelinDomain{dim,Nd,T,Nf},
+#     btparams::BlochTorreyParameters{T},
+#     region::Int) where {dim,Nd,T,Nf}
+#     freqparams = FreqMapParams(btparams)
+#     ω = omega_myelin(x, freqparams, btparams, getinnercircle(domain, region), getoutercircle(domain, region))
+#     @inbounds for i in IterTools.chain(1:region-1, region+1:numfibres(domain))
+#         ω += omega_tissue(x, freqparams, btparams, getinnercircle(domain, i), getoutercircle(domain, i))
+#     end
+#     return ω
+# end
+#
+# # Calculate ω(x) inside region number `region`, which is assumed to be axon
+# function omega_axon(
+#     x::Vec{2,T},
+#     domain::MyelinDomain{dim,Nd,T,Nf},
+#     btparams::BlochTorreyParameters{T},
+#     region::Int) where {dim,Nd,T,Nf}
+#     freqparams = FreqMapParams(btparams)
+#     ω = omega_axon(x, freqparams, btparams, getinnercircle(domain, region), getoutercircle(domain, region))
+#     @inbounds for i in IterTools.chain(1:region-1, region+1:numfibres(domain))
+#         ω += omega_tissue(x, freqparams, btparams, getinnercircle(domain, i), getoutercircle(domain, i))
+#     end
+#     return ω
+# end
+#
+# # Calculate ω(x) inside region number `region`, which is assumed to be tissue
+# function omega_tissue(
+#     x::Vec{2,T},
+#     domain::MyelinDomain{dim,Nd,T,Nf},
+#     btparams::BlochTorreyParameters{T}) where {dim,Nd,T,Nf}
+#     freqparams = FreqMapParams(btparams)
+#     ω = zero(T)
+#     @inbounds for i in 1:numfibres(domain)
+#         ω += omega_tissue(x, freqparams, btparams, getinnercircle(domain, i), getoutercircle(domain, i))
+#     end
+#     return ω
+# end
+#
+# @inline function omega_isotropic_tissue(x::Vec{2},
+#     b::FreqMapParams,
+#     p::BlochTorreyParameters,
+#     c_inner::Circle{2},
+#     c_outer::Circle{2})
+#     χI, ri², ro² = p[:ChiI], radius(c_inner)^2, radius(c_outer)^2
+#     dx = x - origin(c_inner)
+#     r² = dx⋅dx
+#     cos2ϕ = ((dx[1]-dx[2])*(dx[1]+dx[2]))/r²
+#     return b.ω₀ * χI * b.s²/2 * cos2ϕ * (ro² - ri²)/r²
+# end
+#
+# @inline function omega_anisotropic_tissue(x::Vec{2},
+#     b::FreqMapParams,
+#     p::BlochTorreyParameters,
+#     c_inner::Circle{2},
+#     c_outer::Circle{2})
+#     χA, ri², ro² = p[:ChiA], radius(c_inner)^2, radius(c_outer)^2
+#     dx = x - origin(c_inner)
+#     r² = dx⋅dx
+#     cos2ϕ = ((dx[1]-dx[2])*(dx[1]+dx[2]))/r²
+#     return b.ω₀ * χA * b.s²/8 * cos2ϕ * (ro² - ri²)/r²
+# end
+#
+# @inline function omega_isotropic_myelin(x::Vec{2},
+#     b::FreqMapParams,
+#     p::BlochTorreyParameters,
+#     c_inner::Circle{2},
+#     c_outer::Circle{2})
+#     χI, ri² = p[:ChiI], radius(c_inner)^2
+#     dx = x - origin(c_inner)
+#     r² = dx⋅dx
+#     cos2ϕ = ((dx[1]-dx[2])*(dx[1]+dx[2]))/r²
+#     return b.ω₀ * χI * ( b.c² - 1/3 - b.s² * cos2ϕ * ri² / r² )/2
+# end
+#
+# @inline function omega_anisotropic_myelin(x::Vec{2},
+#     b::FreqMapParams,
+#     p::BlochTorreyParameters,
+#     c_inner::Circle{2},
+#     c_outer::Circle{2})
+#     χA, ri², ro = p[:ChiA], radius(c_inner)^2, radius(c_outer)
+#     dx = x - origin(c_inner)
+#     r² = dx⋅dx
+#     r = √r²
+#     cos2ϕ = ((dx[1]-dx[2])*(dx[1]+dx[2]))/r²
+#     return b.ω₀ * χA * ( b.s² * (-5/12 - cos2ϕ/8 * (1 + ri²/r²) + 3/4 * log(ro/r)) - b.c²/6 )
+# end
+#
+# @inline function omega_anisotropic_axon(x::Vec{2},
+#     b::FreqMapParams,
+#     p::BlochTorreyParameters,
+#     c_inner::Circle{2},
+#     c_outer::Circle{2})
+#     χA, ri, ro = p[:ChiA], radius(c_inner), radius(c_outer)
+#     return b.ω₀ * χA * 3b.s²/4 * log(ro/ri)
+# end
+#
+# # Sum components to omega in the tissue region
+# @inline function omega_tissue(x::Vec{2},
+#     b::FreqMapParams,
+#     p::BlochTorreyParameters,
+#     c_inner::Circle{2},
+#     c_outer::Circle{2})
+#     return omega_isotropic_tissue(x,b,p,c_inner,c_outer) + omega_anisotropic_tissue(x,b,p,c_inner,c_outer)
+# end
+#
+# # Sum components to omega in the myelin sheath region
+# @inline function omega_myelin(x::Vec{2},
+#     b::FreqMapParams,
+#     p::BlochTorreyParameters,
+#     c_inner::Circle{2},
+#     c_outer::Circle{2})
+#     return omega_isotropic_myelin(x,b,p,c_inner,c_outer) + omega_anisotropic_myelin(x,b,p,c_inner,c_outer)
+# end
+#
+# # Sum components to omega in the axonal region
+# @inline function omega_axon(x::Vec{2},
+#     b::FreqMapParams,
+#     p::BlochTorreyParameters,
+#     c_inner::Circle{2},
+#     c_outer::Circle{2})
+#     return omega_anisotropic_axon(x,b,p,c_inner,c_outer)
+# end

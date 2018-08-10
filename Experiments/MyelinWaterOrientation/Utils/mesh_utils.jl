@@ -314,6 +314,7 @@ function circle_mesh_with_tori( circle_bdry::Circle{2,T},
     fullgrid = Grid(cells, nodes)
 
     # Ensure points near circles are exactly on circles
+    project_circle!(fullgrid, circle_bdry, 1e-6*h0)
     project_circles!(fullgrid, inner_circles, 1e-6*h0)
     project_circles!(fullgrid, outer_circles, 1e-6*h0)
 

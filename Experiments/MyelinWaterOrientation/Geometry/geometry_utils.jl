@@ -9,8 +9,9 @@ struct Ellipse{dim,T}
     F1::Vec{dim,T} # focus #1
     F2::Vec{dim,T} # focus #2
     b::T # semi-minor axis
-    Ellipse{dim,T}(F1, F2, b) where {dim,T} = new(F1, F2, abs(b))
+    # Ellipse{dim,T}(F1, F2, b) = new(F1, F2, abs(b))
 end
+# Ellipse(F1::Vec{dim,T}, F2::Vec{dim,T}, b::T) where {dim,T} = Ellipse{dim,T}(F1,F2,b)
 
 struct Circle{dim,T}
     center::Vec{dim,T}

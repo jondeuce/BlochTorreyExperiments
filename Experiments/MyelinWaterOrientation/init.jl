@@ -31,15 +31,19 @@ using ForwardDiff
 using ReverseDiff
 using PolynomialRoots
 
+include(MWOPATH * "Utils/normest1.jl")
+include(MWOPATH * "Expmv/src/Expmv.jl")
+Revise.track(MWOPATH * "Utils/mesh_utils.jl")
+Revise.track(MWOPATH * "Expmv/src/Expmv.jl")
+
+using Normest1
+using Expmv
+
 include(MWOPATH * "Geometry/geometry_utils.jl")
 include(MWOPATH * "Geometry/circle_packing.jl")
 include(MWOPATH * "Utils/mesh_utils.jl")
-include(MWOPATH * "Utils/normest1.jl")
 include(MWOPATH * "Utils/blochtorrey_utils.jl")
 Revise.track(MWOPATH * "Geometry/geometry_utils.jl")
 Revise.track(MWOPATH * "Geometry/circle_packing.jl")
-Revise.track(MWOPATH * "Utils/mesh_utils.jl")
 Revise.track(MWOPATH * "Utils/normest1.jl")
 Revise.track(MWOPATH * "Utils/blochtorrey_utils.jl")
-
-using Normest1
