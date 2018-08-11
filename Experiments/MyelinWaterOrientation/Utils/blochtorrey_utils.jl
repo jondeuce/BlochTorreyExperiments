@@ -142,10 +142,12 @@ mutable struct ParabolicDomain{dim,Nd,T,Nf} <: AbstractDomain{dim,Nd,T,Nf}
 end
 
 function ParabolicDomain(grid::Grid{dim,Nd,T,Nf};
+    udim = 2,
     refshape = RefTetrahedron,
     quadorder = 1,
     funcinterporder = 1,
     geominterporder = 1) where {dim,Nd,T,Nf}
+
     # Quadrature and interpolation rules and corresponding cellvalues/facevalues
     func_interp = Lagrange{dim, refshape, funcinterporder}()
     geom_interp = Lagrange{dim, refshape, geominterporder}()
@@ -153,10 +155,13 @@ function ParabolicDomain(grid::Grid{dim,Nd,T,Nf};
     quadrule_face = QuadratureRule{dim-1, refshape}(quadorder)
     cellvalues = CellVectorValues(T, quadrule, func_interp, geom_interp)
     facevalues = FaceVectorValues(T, quadrule_face, func_interp, geom_interp)
+    # cellvalues = CellScalarValues(T, quadrule, func_interp, geom_interp)
+    # facevalues = FaceScalarValues(T, quadrule_face, func_interp, geom_interp)
 
     # Degree of freedom handler
+    @assert udim == 2 #TODO: where is this assumption? likely, assume dim(u) == dim(grid)
     dh = DofHandler(grid)
-    push!(dh, :u, dim, func_interp)
+    push!(dh, :u, udim, func_interp)
     close!(dh)
 
     # Mass matrix, inverse mass matrix, stiffness matrix, and weights vector
@@ -181,6 +186,7 @@ end
 @inline JuAFEM.ndofs(d::ParabolicDomain) = JuAFEM.ndofs(getdofhandler(d))
 
 factorize!(d::ParabolicDomain) = (d.Mfact = cholfact(getmass(d)); return d)
+Base.norm(u, domain::ParabolicDomain) = √dot(u, getmass(domain) * u)
 
 # Assembly quadrature weights for the parabolic domain `domain`.
 function addquadweights!(domain::ParabolicDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
@@ -200,7 +206,7 @@ function addquadweights!(domain::ParabolicDomain{dim,Nd,T,Nf}) where {dim,Nd,T,N
             dΩ = getdetJdV(getcellvalues(domain), q_point)
             for i in 1:n_basefuncs
                 v  = shape_value(getcellvalues(domain), q_point, i)
-                we[i] += sum(v) * dΩ # sum(v) is short for adding v[1] ... v[dim] contributions
+                we[i] += sum(v) * dΩ # sum(v) is short for adding v[1] ... v[vdim] contributions
             end
         end
         # Assemble the element residual `we` into the global residual vector `w`
@@ -210,7 +216,145 @@ function addquadweights!(domain::ParabolicDomain{dim,Nd,T,Nf}) where {dim,Nd,T,N
     return domain
 end
 
-Base.norm(u, domain::ParabolicDomain) = √dot(u, getmass(domain) * u)
+
+# # Assemble the standard mass and stiffness matrices on the ParabolicDomain
+# # `domain`. The resulting system is $M u_t = K u$ and is equivalent to the weak
+# # form of the heat equation $u_t = k Δu$ with k = 1. `M` is positive definite,
+# # and `K` is negative definite.
+# function doassemble!(domain::ParabolicDomain)
+#     # This assembly function is only for CellScalarValues
+#     @assert typeof(getcellvalues(domain)) <: CellScalarValues
+#
+#     # We allocate the element stiffness matrix and element force vector
+#     # just once before looping over all the cells instead of allocating
+#     # them every time in the loop.
+#     n_basefuncs = getnbasefunctions(getcellvalues(domain))
+#     Ke = zeros(n_basefuncs, n_basefuncs)
+#     Me = zeros(n_basefuncs, n_basefuncs)
+#     we = zeros(n_basefuncs)
+#
+#     # Next we create assemblers for the stiffness matrix `K` and the mass
+#     # matrix `M`. The assemblers are just thin wrappers around `K` and `M`
+#     # and some extra storage to make the assembling faster.
+#     assembler_K = start_assemble(getstiffness(domain), getquadweights(domain))
+#     assembler_M = start_assemble(getmass(domain))
+#
+#     # It is now time to loop over all the cells in our grid. We do this by iterating
+#     # over a `CellIterator`. The iterator caches some useful things for us, for example
+#     # the nodal coordinates for the cell, and the local degrees of freedom.
+#     @inbounds for cell in CellIterator(getdofhandler(domain))
+#         # Always remember to reset the element stiffness matrix and
+#         # element mass matrix since we reuse them for all elements.
+#         fill!(Ke, 0)
+#         fill!(Me, 0)
+#         fill!(we, 0)
+#
+#         # For each cell we also need to reinitialize the cached values in `cellvalues`.
+#         JuAFEM.reinit!(getcellvalues(domain), cell)
+#
+#         # It is now time to loop over all the quadrature points in the cell and
+#         # assemble the contribution to `Ke` and `Me`. The integration weight
+#         # can be queried from `cellvalues` by `getdetJdV`, and the quadrature
+#         # coordinate can be queried from `cellvalues` by `spatial_coordinate`
+#         for q_point in 1:getnquadpoints(getcellvalues(domain))
+#             dΩ = getdetJdV(getcellvalues(domain), q_point)
+#
+#             # For each quadrature point we loop over all the (local) shape functions.
+#             # We need the value and gradient of the testfunction `v` and also the gradient
+#             # of the trial function `u`. We get all of these from `cellvalues`.
+#             for i in 1:n_basefuncs
+#                 v  = shape_value(getcellvalues(domain), q_point, i)
+#                 ∇v = shape_gradient(getcellvalues(domain), q_point, i)
+#                 we[i] += sum(v) * dΩ # v[1] and v[2] are never non-zero together
+#                 for j in 1:n_basefuncs
+#                     u = shape_value(getcellvalues(domain), q_point, j)
+#                     ∇u = shape_gradient(getcellvalues(domain), q_point, j)
+#                     Ke[i, j] -= (∇v ⋅ ∇u) * dΩ
+#                     Me[i, j] += (v * u) * dΩ
+#                 end
+#             end
+#         end
+#
+#         # The last step in the element loop is to assemble `Ke` and `Me`
+#         # into the global `K` and `M` with `assemble!`.
+#         # assemble!(assembler_K, celldofs(cell), Ke, we)
+#         # assemble!(assembler_M, celldofs(cell), Me)
+#         for d in 1:2
+#             assemble!(assembler_K, celldofs(cell)[d:2:end], Ke, we)
+#             assemble!(assembler_M, celldofs(cell)[d:2:end], Me)
+#         end
+#     end
+#
+#     return domain
+# end
+
+# Assemble the standard mass and stiffness matrices on the ParabolicDomain
+# `domain`. The resulting system is $M u_t = K u$ and is equivalent to the weak
+# form of the heat equation $u_t = k Δu$ with k = 1. `M` is positive definite,
+# and `K` is negative definite.
+function doassemble!(domain::ParabolicDomain)
+    # This assembly function is only for CellVectorValues
+    @assert typeof(getcellvalues(domain)) <: CellVectorValues
+
+    # We allocate the element stiffness matrix and element force vector
+    # just once before looping over all the cells instead of allocating
+    # them every time in the loop.
+    n_basefuncs = getnbasefunctions(getcellvalues(domain))
+    Ke = zeros(n_basefuncs, n_basefuncs)
+    Me = zeros(n_basefuncs, n_basefuncs)
+    we = zeros(n_basefuncs)
+
+    # Next we create assemblers for the stiffness matrix `K` and the mass
+    # matrix `M`. The assemblers are just thin wrappers around `K` and `M`
+    # and some extra storage to make the assembling faster.
+    assembler_K = start_assemble(getstiffness(domain), getquadweights(domain))
+    assembler_M = start_assemble(getmass(domain))
+
+    # It is now time to loop over all the cells in our grid. We do this by iterating
+    # over a `CellIterator`. The iterator caches some useful things for us, for example
+    # the nodal coordinates for the cell, and the local degrees of freedom.
+    @inbounds for cell in CellIterator(getdofhandler(domain))
+        # Always remember to reset the element stiffness matrix and
+        # element mass matrix since we reuse them for all elements.
+        fill!(Ke, 0)
+        fill!(Me, 0)
+        fill!(we, 0)
+
+        # For each cell we also need to reinitialize the cached values in `cellvalues`.
+        JuAFEM.reinit!(getcellvalues(domain), cell)
+
+        # It is now time to loop over all the quadrature points in the cell and
+        # assemble the contribution to `Ke` and `Me`. The integration weight
+        # can be queried from `cellvalues` by `getdetJdV`, and the quadrature
+        # coordinate can be queried from `cellvalues` by `spatial_coordinate`
+        for q_point in 1:getnquadpoints(getcellvalues(domain))
+            dΩ = getdetJdV(getcellvalues(domain), q_point)
+
+            # For each quadrature point we loop over all the (local) shape functions.
+            # We need the value and gradient of the testfunction `v` and also the gradient
+            # of the trial function `u`. We get all of these from `cellvalues`.
+            for i in 1:n_basefuncs
+                v  = shape_value(getcellvalues(domain), q_point, i)
+                ∇v = shape_gradient(getcellvalues(domain), q_point, i)
+                we[i] += (ones(v) ⋅ v) * dΩ # v[1] and v[2] are never non-zero together
+                for j in 1:n_basefuncs
+                    u = shape_value(getcellvalues(domain), q_point, j)
+                    ∇u = shape_gradient(getcellvalues(domain), q_point, j)
+                    Ke[i, j] -= (∇v ⊡ ∇u) * dΩ
+                    Me[i, j] += (v ⋅ u) * dΩ
+                end
+            end
+        end
+
+        # The last step in the element loop is to assemble `Ke` and `Me`
+        # into the global `K` and `M` with `assemble!`.
+        assemble!(assembler_M, celldofs(cell), Me)
+        assemble!(assembler_K, celldofs(cell), Ke, we)
+    end
+
+    return domain
+end
+
 
 # ---------------------------------------------------------------------------- #
 # Myelin grid type
@@ -520,7 +664,6 @@ function Base.LinAlg.trace(A::ParabolicLinearMap{T}, t::Int = 10) where {T}
 end
 
 # normAm
-import Expmv: normAm
 Expmv.normAm(A::LinearMap, m::Int, t::Int = 10) = (est = normest1(A^m, t)[1]; return (est, 0))
 Base.norm(A::ParabolicLinearMap, args...) = expmv_norm(A, args...)
 

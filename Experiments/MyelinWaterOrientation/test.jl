@@ -72,6 +72,15 @@ end
         return I
     end
 
+    function getL2norm(f; cellshape = Triangle, refshape = RefTetrahedron, qorder = 1, forder = 1, gorder = 1, N = 20)
+        grid = generate_grid(cellshape, (N, N))
+        domain = ParabolicDomain(grid; refshape = refshape, quadorder = qorder, funcinterporder = forder, geominterporder = gorder)
+        doassemble!(domain)
+        u = interpolate(f, domain)
+        L² = norm(u, domain)
+        return L²
+    end
+
     # ---- All integration methods should return exact area ---- #
     Agrid = 4.0 # [-1,1]² grid
     for (q,f) in IterTools.product(1:2, 1:2)
@@ -95,6 +104,14 @@ end
         @test_broken getintegral(func; qorder = q, forder = f, gorder = 2) ≈ Iexact
     end
 
+    # ---- L²-norm of linear function should be exact for quadratic quad rules ---- #
+    func = x -> Vec{dim,T}((2x[1]+x[2]+1, 3x[2]-x[1]+1))
+    L²exact = √28.0
+    for (q,f) in IterTools.product(2:2, 1:2)
+        @test getL2norm(func; qorder = q, forder = f, gorder = 1) ≈ L²exact
+        @test_broken getL2norm(func; qorder = q, forder = f, gorder = 2) ≈ L²exact
+    end
+
     # ---- Integrate more complicated smooth functions, expecting errors ---- #
     func = x -> Vec{dim,T}((cos(2x[1]+x[2]), cos(x[1]+x[2])*exp(x[1]^2)))
     Iexact = Vec{dim,T}((2*sin(1)*sin(2), 3.9236263410199394))
@@ -103,6 +120,40 @@ end
         @test getintegral(func; N = N, qorder = q, forder = f, gorder = 1) ≈ Iexact rtol = C*h^p
         @test_broken getintegral(func; N = N, qorder = q, forder = f, gorder = 2) ≈ Iexact rtol = C*h^p
     end
+end
+
+function expmv_tests(;N = 4, h = √2*(2/N), grid = generate_grid(Triangle, (N, N)))
+    # Assemble mass and Neumann stiffness matrix
+    domain = ParabolicDomain(grid; quadorder = 1, funcinterporder = 1)
+    doassemble!(domain)
+    factorize!(domain)
+    M, Mfact, K = getmass(domain), getmassfact(domain), getstiffness(domain)
+
+    # Smallest 2 eigenvalues should be zero (one for each dimension of u), and the rest negative
+    λ, ϕ = eigs(-K; nev=3, which=:SR) # smallest real
+    λmin = max(abs(λ[1]), abs(λ[2])) # largest null eigenvalue
+    ispossemidef_K = isapprox(λmin, 0.0; atol=1e-12) && (λ[3] > h^2)
+
+    # @test isposdef(M) && ispossemidef_K
+
+    A = ParabolicLinearMap(M, Mfact, K)
+    Af = full(A)
+
+    # @show eigs(M; nev=5, which=:SM)[1]
+
+    t = 0.1
+    x0 = randn(size(A,2))
+    Ef = expm(t*Af) # dense exponential matrix
+
+    y1 = Ef * x0
+    y2 = Expmv.expmv(t, A, x0)
+    @test norm(y1 - y2, Inf) ≈ 0.0 rtol = 1e-6
+
+    # x = Expmv.expmv(1e-6, A, x0; prnt = true)
+end
+
+@testset "Expmv Methods" begin
+    expmv_tests()
 end
 
 # ---- Single axon geometry testing ---- #

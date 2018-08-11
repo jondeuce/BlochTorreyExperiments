@@ -1,4 +1,18 @@
-function expmv!(t, A, f; M = [], prec = "double", shift = false, full_term = false, prnt = false)
+
+expmv(t, A, b; kwargs...) = (f = similar(b); return expmv!(f, t, A, b; kwargs...))
+
+function expmv!(f, t, A, b; kwargs...)
+    f, _b, Ab = copy!(f, b), copy(b), similar(b)
+    _expmv!(f, t, A, _b, Ab; kwargs...) # `f`, `_b`, and `Ab` all modified in place
+    return f
+end
+
+#NOTE: Assumes the following about the three input vectors, all three of which
+# will be modified in place:
+#   b is the initial vector, and f is initialized such that all f[i] == b[i]
+#   Ab is a buffer to be overwritten
+function _expmv!(f, t, A, b, Ab = similar(b);
+                 M = [], prec = "double", shift = false, full_term = false, prnt = false)
                # bal = false,
 
     #EXPMV   Matrix exponential times vector or matrix.
@@ -45,7 +59,7 @@ function expmv!(t, A, f; M = [], prec = "double", shift = false, full_term = fal
 
     if isempty(M)
         tt = 1
-        (M,mvd,alpha,unA) = select_taylor_degree(t*A, f)
+        (M,mvd,alpha,unA) = select_taylor_degree(t*A, b)
         mv = mvd
     else
         tt = t
@@ -91,8 +105,6 @@ function expmv!(t, A, f; M = [], prec = "double", shift = false, full_term = fal
         eta = exp(t*mu/s)
     end
 
-    b = copy(f) # initialize b = f
-    Ab = similar(b) # initialize temp. for storing A*b
     c1 = c2 = eltype(b)(Inf)
     for i = 1:s
         !full_term && (c1 = norm(b,Inf)) # only need to update if !full_term
@@ -116,20 +128,10 @@ function expmv!(t, A, f; M = [], prec = "double", shift = false, full_term = fal
         copy!(b, f)
     end
 
-    # if prnt
-    #     fprintf("\n")
-    # end
-
     #if bal
     #    f = D*f
     #end
 
     #return (f,s,m,mv,mvd,unA)
-    return f
-end
-
-function expmv(t, A, b; M = [], prec = "double", shift = false, full_term = false, prnt = false)
-    f = copy(b)
-    expmv!(t, A, f; M = M, prec = prec, shift = shift, full_term = full_term, prnt = prnt)
     return f
 end
