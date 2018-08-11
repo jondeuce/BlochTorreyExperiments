@@ -122,24 +122,25 @@ end
     end
 end
 
-function expmv_tests(;N = 4, h = √2*(2/N), grid = generate_grid(Triangle, (N, N)))
-    # Assemble mass and Neumann stiffness matrix
-    domain = ParabolicDomain(grid; quadorder = 1, funcinterporder = 1)
+function expmv_tests(;N = 10, h = √2*(2/N), grid = generate_grid(Triangle, (N, N)))
+    # Assemble mass and (Neumann BC) stiffness matrix. `quadorder` must be at
+    # least one larger than `funcinterporder` to create exact (and
+    # non-singular!) mass matrix
+    domain = ParabolicDomain(grid; quadorder = 2, funcinterporder = 1)
     doassemble!(domain)
     factorize!(domain)
     M, Mfact, K = getmass(domain), getmassfact(domain), getstiffness(domain)
 
-    # Smallest 2 eigenvalues should be zero (one for each dimension of u), and the rest negative
-    λ, ϕ = eigs(-K; nev=3, which=:SR) # smallest real
-    λmin = max(abs(λ[1]), abs(λ[2])) # largest null eigenvalue
-    ispossemidef_K = isapprox(λmin, 0.0; atol=1e-12) && (λ[3] > h^2)
+    # Smallest 2 eigenvalues should be zero (one for each dimension of u),
+    # and the rest negative
+    d, v = eigs(-K; nev=3, which=:SR) # smallest real
+    dmin = max(abs(d[1]), abs(d[2])) # largest null eigenvalue
+    ispossemidef_K = isapprox(dmin, 0.0; atol=1e-12) && (d[3] > 1e-3*h^2) # minimum non-zero eigenvalue should be positive and least O(h^2)
 
-    # @test isposdef(M) && ispossemidef_K
+    @test isposdef(M) && ispossemidef_K
 
     A = ParabolicLinearMap(M, Mfact, K)
     Af = full(A)
-
-    # @show eigs(M; nev=5, which=:SM)[1]
 
     t = 0.1
     x0 = randn(size(A,2))
@@ -147,7 +148,9 @@ function expmv_tests(;N = 4, h = √2*(2/N), grid = generate_grid(Triangle, (N, 
 
     y1 = Ef * x0
     y2 = Expmv.expmv(t, A, x0)
-    @test norm(y1 - y2, Inf) ≈ 0.0 rtol = 1e-6
+    y3 = Expokit.expmv(t, A, x0; tol=1e-14, norm=expmv_norm, m=30)
+    @test norm(y1 - y2, Inf) ≈ 0.0 rtol = 1e-12 atol = 1e-12
+    @test norm(y2 - y3, Inf) ≈ 0.0 rtol = 1e-12 atol = 1e-12
 
     # x = Expmv.expmv(1e-6, A, x0; prnt = true)
 end
@@ -183,7 +186,7 @@ prob = MyelinProblem(p)
 doassemble!(prob, domain)
 factorize!(domain)
 
-tspan = (0.0, 1e-3) # 40ms simulation
+tspan = (0.0, 40e-3) # 40ms simulation
 u0 = Vec{2}((0.0, 1.0)) # Initial π/2-pulse
 U0 = interpolate(x->u0, domain) # vector of vectors of degrees of freedom with `u0` at each node
 U = deepcopy(U0)

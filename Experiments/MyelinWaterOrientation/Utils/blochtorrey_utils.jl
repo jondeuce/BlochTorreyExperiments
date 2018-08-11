@@ -141,12 +141,15 @@ mutable struct ParabolicDomain{dim,Nd,T,Nf} <: AbstractDomain{dim,Nd,T,Nf}
     w::Vector{T}
 end
 
+#TODO inner constructor?
 function ParabolicDomain(grid::Grid{dim,Nd,T,Nf};
     udim = 2,
     refshape = RefTetrahedron,
-    quadorder = 1,
+    quadorder = 2,
     funcinterporder = 1,
     geominterporder = 1) where {dim,Nd,T,Nf}
+
+    @assert udim == 2 #TODO: where is this assumption? likely, assume dim(u) == dim(grid) somewhere
 
     # Quadrature and interpolation rules and corresponding cellvalues/facevalues
     func_interp = Lagrange{dim, refshape, funcinterporder}()
@@ -159,7 +162,6 @@ function ParabolicDomain(grid::Grid{dim,Nd,T,Nf};
     # facevalues = FaceScalarValues(T, quadrule_face, func_interp, geom_interp)
 
     # Degree of freedom handler
-    @assert udim == 2 #TODO: where is this assumption? likely, assume dim(u) == dim(grid)
     dh = DofHandler(grid)
     push!(dh, :u, udim, func_interp)
     close!(dh)
@@ -664,7 +666,7 @@ function Base.LinAlg.trace(A::ParabolicLinearMap{T}, t::Int = 10) where {T}
 end
 
 # normAm
-Expmv.normAm(A::LinearMap, m::Int, t::Int = 10) = (est = normest1(A^m, t)[1]; return (est, 0))
+Expmv.normAm(A::LinearMap, m::Int, t::Int = 10) = (normest1(A^m, t)[1], 0)
 Base.norm(A::ParabolicLinearMap, args...) = expmv_norm(A, args...)
 
 # ---------------------------------------------------------------------------- #
@@ -673,8 +675,10 @@ Base.norm(A::ParabolicLinearMap, args...) = expmv_norm(A, args...)
 
 # Custom norm for calling expmv
 function expmv_norm(A, p::Real=1, t::Int=10)
+    !(size(A,1) == size(A,2)) && error("Matrix A must be square")
     !(p == 1 || p == Inf) && error("Only p=1 or p=Inf supported")
     p == Inf && (A = A')
+    t = min(t, size(A,2))
     return normest1(A, t)[1]
 end
 # Default fallback for vectors
