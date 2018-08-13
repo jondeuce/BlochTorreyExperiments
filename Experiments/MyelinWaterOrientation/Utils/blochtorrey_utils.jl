@@ -340,16 +340,16 @@ function doassemble!(domain::ParabolicDomain)
                 for j in 1:n_basefuncs
                     u = shape_value(getcellvalues(domain), q_point, j)
                     ∇u = shape_gradient(getcellvalues(domain), q_point, j)
-                    Ke[i, j] -= (∇v ⊡ ∇u) * dΩ
-                    Me[i, j] += (v ⋅ u) * dΩ
+                    Ke[i,j] -= (∇v ⊡ ∇u) * dΩ
+                    Me[i,j] += (v ⋅ u) * dΩ
                 end
             end
         end
 
         # The last step in the element loop is to assemble `Ke` and `Me`
         # into the global `K` and `M` with `assemble!`.
-        assemble!(assembler_M, celldofs(cell), Me)
         assemble!(assembler_K, celldofs(cell), Ke, we)
+        assemble!(assembler_M, celldofs(cell), Me)
     end
 
     return domain
