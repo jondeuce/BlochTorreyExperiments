@@ -160,14 +160,14 @@ end
 end
 
 # ---- Single axon geometry testing ---- #
-const p = BlochTorreyParameters()
-rs = [p[:R_mu]] # one radius of average size
+p = BlochTorreyParameters{Float64}()
+rs = [p.R_mu] # one radius of average size
 os = zeros(Vec{2}, 1) # one origin at the origin
 outer_circles = Circle.(os, rs)
-inner_circles = scale_shape.(outer_circles, p[:g_ratio])
+inner_circles = scale_shape.(outer_circles, p.g_ratio)
 bcircle = scale_shape(outer_circles[1], 1.5)
 
-h0 = 0.3 * p[:R_mu] * (1 - p[:g_ratio]) # fraction of size of average torus width
+h0 = 0.3 * p.R_mu * (1.0 - p.g_ratio) # fraction of size of average torus width
 eta = 5.0 # approx ratio between largest/smallest edges
 @time grid = circle_mesh_with_tori(bcircle, inner_circles, outer_circles, h0, eta)
 @time exteriorgrid, torigrids, interiorgrids = form_tori_subgrids(grid, bcircle, inner_circles, outer_circles)
