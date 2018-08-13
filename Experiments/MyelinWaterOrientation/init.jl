@@ -1,9 +1,9 @@
 # My files and modules
 
-# ENV["MATLAB_HOME"] = "C:\\Users\\Jonathan\\Downloads\\Mathworks Matlab R2016a\\R2016a"
-# HOME = "C:\\Users\\Jonathan\\Documents\\MATLAB\\"
+ENV["MATLAB_HOME"] = "C:\\Users\\Jonathan\\Downloads\\Mathworks Matlab R2016a\\R2016a"
+HOME = "C:\\Users\\Jonathan\\Documents\\MATLAB\\"
 # HOME = "/home/jon/Documents/UBCMRI/"
-HOME = "/home/coopar7/Documents/code/"
+# HOME = "/home/coopar7/Documents/code/"
 BTMASTER = HOME * "BlochTorreyExperiments-master/"
 MWOPATH = BTMASTER * "Experiments/MyelinWaterOrientation/"
 
@@ -14,6 +14,7 @@ using Revise
 using Traceur
 using BenchmarkTools
 using IterTools
+using Parameters
 #using Flatten
 using StaticArrays
 using JuAFEM

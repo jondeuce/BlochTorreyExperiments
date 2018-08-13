@@ -3,67 +3,43 @@
 # ---------------------------------------------------------------------------- #
 
 # Struct of BlochTorreyParameters. T is the float type.
-#TODO: rewrite to use inner constructor
-struct BlochTorreyParameters{T}
-    params::Dict{Symbol,T}
-end
-function BlochTorreyParameters(::Type{T} = Float64; kwargs...) where {T}
-    # default parameters
-    default_params = Dict{Symbol,T}(
-        :B0             =>    3.0,          # External magnetic field [T]
-        :gamma          =>    2.67515255e8, # Gyromagnetic ratio [rad/(T*s)]
-        :theta          =>    π/2,          # Main magnetic field angle w.r.t B0 [rad/(T*s)]
-        :g_ratio        =>    0.8370,       # g-ratio (original 0.71) ,0.84658 for healthy, 0.8595 for MS.
-        :R2_sp          =>    1.0/15e-3,    # #TODO play with these? Relaxation rate of small pool [s^-1] (Myelin) (Xu et al. 2017) (15e-3s)
-        :R2_lp          =>    1.0/63e-3,    # #TODO play with these? 1st attempt was 63E-3. 2nd attempt 76 ms
-        :R2_Tissue      =>    14.5,         # Relaxation rate of tissue [s^-1]
-        :R2_water       =>    1.0/2.2,      # Relaxation rate of pure water
-        :D_Tissue       =>    2000.0,       # #TODO reference? Diffusion coefficient in tissue [um^2/s]
-        :D_Sheath       =>    1000.0,       # #TODO reference? Diffusion coefficient in myelin sheath [um^2/s]
-        :D_Axon         =>    2500.0,       # #TODO reference? Diffusion coefficient in axon interior [um^2/s]
-        :D_Blood        =>    3037.0,       # Diffusion coefficient in blood [um^2/s]
-        :D_Water        =>    3037.0,       # Diffusion coefficient in water [um^2/s]
-        :R_mu           =>    0.46,         # Axon mean radius [um] ; this is taken to be outer radius.
-        :R_shape        =>    5.7,          # Axon shape parameter for Gamma distribution (Xu et al. 2017)
-        :R_scale        =>    0.46/5.7,     # Axon scale parameter for Gamma distribution (Xu et al. 2017)
-        :AxonPDensity   =>    0.83,         # Axon packing density based region in white matter. (Xu et al. 2017) (originally 0.83)
-        :AxonPDActual   =>    0.64,         # The actual axon packing density you're aiming for.
-        :PD_sp          =>    0.5,          # Relative proton density (Myelin)
-        :PD_lp          =>    1.0,          # Relative proton density (Intra Extra)
-        :PD_Fe          =>    1.0,          # Relative proton density (Ferritin)
-        :ChiI           =>   -60e-9,        # Isotropic susceptibility of myelin [ppb] (check how to get it) (Xu et al. 2017)
-        :ChiA           =>   -120e-9,       # Anisotropic Susceptibility of myelin [ppb] (Xu et al. 2017)
-        :E              =>    10e-9,        # Exchange component to resonance freqeuency [ppb] (Wharton and Bowtell 2012)
-        :R2_Fe          =>    1.0/1e-6,     # Relaxation rate of iron in ferritin. Assumed to be really high.
-        :R2_WM          =>    1.0/70e-3,    # Relaxation rate of frontal WM. This is empirical;taken from literature. (original 58.403e-3) (patient 58.4717281111171e-3)
-        :R_Ferritin     =>    4.0e-3,       # Ferritin mean radius [um].
-        :R_conc         =>    0.0,          # Conntration of iron in the frontal white matter. [mg/g] (0.0424 in frontal WM) (0.2130 in globus pallidus; deep grey matter)
-        :Rho_tissue     =>    1.073,        # White matter tissue density [g/ml]
-        :ChiTissue      =>   -9.05e-6,      # Isotropic susceptibility of tissue
-        :ChiFeUnit      =>    1.4e-9,       # Susceptibility of iron per ppm/ (ug/g) weight fraction of iron.
-        :ChiFeFull      =>    520.0e-6,     # Susceptibility of iron for ferritin particle FULLY loaded with 4500 iron atoms. (use volume of FULL spheres) (from Contributions to magnetic susceptibility)
-        :Rho_Iron       =>    7.874         # Iron density [g/cm^3]
-        )
-
-    # Get input paramaters and collect as a dictionary
-    input_params = Dict{Symbol,T}(kwargs)
-
-    # Check that input params are valid
-    @assert all(keys(input_params)) do k
-        iskey = k ∈ keys(default_params)
-        ~iskey && warn("$k is not a valid key")
-        return iskey
-    end
-
-    # Merge input params into defaults and return
-    return BlochTorreyParameters{T}(merge(default_params, input_params))
+@with_kw struct BlochTorreyParameters{T}
+    B0::T             =    T(3.0)           # External magnetic field [T]
+    gamma::T          =    T(2.67515255e8)  # Gyromagnetic ratio [rad/(T*s)]
+    theta::T          =    T(π/2)           # Main magnetic field angle w.r.t B0 [rad/(T*s)]
+    g_ratio::T        =    T(0.8370)        # g-ratio (original 0.71), 0.84658 for healthy, 0.8595 for MS.
+    R2_sp::T          =    T(1.0/15e-3)     # #TODO play with these? Relaxation rate of small pool [s^-1] (Myelin) (Xu et al. 2017) (15e-3s)
+    R2_lp::T          =    T(1.0/63e-3)     # #TODO play with these? 1st attempt was 63E-3. 2nd attempt 76 ms
+    R2_Tissue::T      =    T(14.5)          # Relaxation rate of tissue [s^-1]
+    R2_water::T       =    T(1.0/2.2)       # Relaxation rate of pure water
+    D_Tissue::T       =    T(2000.0)        # #TODO reference? Diffusion coefficient in tissue [um^2/s]
+    D_Sheath::T       =    T(1000.0)        # #TODO reference? Diffusion coefficient in myelin sheath [um^2/s]
+    D_Axon::T         =    T(2500.0)        # #TODO reference? Diffusion coefficient in axon interior [um^2/s]
+    D_Blood::T        =    T(3037.0)        # Diffusion coefficient in blood [um^2/s]
+    D_Water::T        =    T(3037.0)        # Diffusion coefficient in water [um^2/s]
+    R_mu::T           =    T(0.46)          # Axon mean radius [um] ; this is taken to be outer radius.
+    R_shape::T        =    T(5.7)           # Axon shape parameter for Gamma distribution (Xu et al. 2017)
+    R_scale::T        =    T(0.46/5.7)      # Axon scale parameter for Gamma distribution (Xu et al. 2017)
+    AxonPDensity::T   =    T(0.83)          # Axon packing density based region in white matter. (Xu et al. 2017) (originally 0.83)
+    AxonPDActual::T   =    T(0.64)          # The actual axon packing density you're aiming for.
+    PD_sp::T          =    T(0.5)           # Relative proton density (Myelin)
+    PD_lp::T          =    T(1.0)           # Relative proton density (Intra Extra)
+    PD_Fe::T          =    T(1.0)           # Relative proton density (Ferritin)
+    ChiI::T           =    T(-60e-9)        # Isotropic susceptibility of myelin [ppb] (check how to get it) (Xu et al. 2017)
+    ChiA::T           =    T(-120e-9)       # Anisotropic Susceptibility of myelin [ppb] (Xu et al. 2017)
+    E::T              =    T(10e-9)         # Exchange component to resonance freqeuency [ppb] (Wharton and Bowtell 2012)
+    R2_Fe::T          =    T(1.0/1e-6)      # Relaxation rate of iron in ferritin. Assumed to be really high.
+    R2_WM::T          =    T(1.0/70e-3)     # Relaxation rate of frontal WM. This is empirical;taken from literature. (original 58.403e-3) (patient 58.4717281111171e-3)
+    R_Ferritin::T     =    T(4.0e-3)        # Ferritin mean radius [um].
+    R_conc::T         =    T(0.0)           # Conntration of iron in the frontal white matter. [mg/g] (0.0424 in frontal WM) (0.2130 in globus pallidus; deep grey matter)
+    Rho_tissue::T     =    T(1.073)         # White matter tissue density [g/ml]
+    ChiTissue::T      =    T(-9.05e-6)      # Isotropic susceptibility of tissue
+    ChiFeUnit::T      =    T(1.4e-9)        # Susceptibility of iron per ppm/ (ug/g) weight fraction of iron.
+    ChiFeFull::T      =    T(520.0e-6)      # Susceptibility of iron for ferritin particle FULLY loaded with 4500 iron atoms. (use volume of FULL spheres) (from Contributions to magnetic susceptibility)
+    Rho_Iron::T       =    T(7.874)         # Iron density [g/cm^3]
 end
 
-Base.getindex(p::BlochTorreyParameters, s::Symbol) = p.params[s]
-Base.setindex!(p::BlochTorreyParameters, v, s::Symbol) = error("Parameters are immutable")
-Base.display(p::BlochTorreyParameters) = (println("$(typeof(p)) with parameters:\n"); display(p.params))
-
-radiidistribution(p::BlochTorreyParameters) = Distributions.Gamma(p[:R_shape], p[:R_mu]/p[:R_shape])
+radiidistribution(p::BlochTorreyParameters) = Distributions.Gamma(p.R_shape, p.R_mu/p.R_shape)
 
 # ---------------------------------------------------------------------------- #
 # BlochTorreyProblem type
@@ -141,12 +117,15 @@ mutable struct ParabolicDomain{dim,Nd,T,Nf} <: AbstractDomain{dim,Nd,T,Nf}
     w::Vector{T}
 end
 
+#TODO inner constructor?
 function ParabolicDomain(grid::Grid{dim,Nd,T,Nf};
     udim = 2,
     refshape = RefTetrahedron,
-    quadorder = 1,
+    quadorder = 2,
     funcinterporder = 1,
     geominterporder = 1) where {dim,Nd,T,Nf}
+
+    @assert udim == 2 #TODO: where is this assumption? likely, assume dim(u) == dim(grid) somewhere
 
     # Quadrature and interpolation rules and corresponding cellvalues/facevalues
     func_interp = Lagrange{dim, refshape, funcinterporder}()
@@ -159,7 +138,6 @@ function ParabolicDomain(grid::Grid{dim,Nd,T,Nf};
     # facevalues = FaceScalarValues(T, quadrule_face, func_interp, geom_interp)
 
     # Degree of freedom handler
-    @assert udim == 2 #TODO: where is this assumption? likely, assume dim(u) == dim(grid)
     dh = DofHandler(grid)
     push!(dh, :u, udim, func_interp)
     close!(dh)
@@ -664,7 +642,7 @@ function Base.LinAlg.trace(A::ParabolicLinearMap{T}, t::Int = 10) where {T}
 end
 
 # normAm
-Expmv.normAm(A::LinearMap, m::Int, t::Int = 10) = (est = normest1(A^m, t)[1]; return (est, 0))
+Expmv.normAm(A::LinearMap, m::Int, t::Int = 10) = (normest1(A^m, t)[1], 0)
 Base.norm(A::ParabolicLinearMap, args...) = expmv_norm(A, args...)
 
 # ---------------------------------------------------------------------------- #
@@ -673,8 +651,10 @@ Base.norm(A::ParabolicLinearMap, args...) = expmv_norm(A, args...)
 
 # Custom norm for calling expmv
 function expmv_norm(A, p::Real=1, t::Int=10)
+    !(size(A,1) == size(A,2)) && error("Matrix A must be square")
     !(p == 1 || p == Inf) && error("Only p=1 or p=Inf supported")
     p == Inf && (A = A')
+    t = min(t, size(A,2))
     return normest1(A, t)[1]
 end
 # Default fallback for vectors
@@ -692,14 +672,14 @@ struct OmegaDerivedConstants{T}
     c²::T
 end
 function OmegaDerivedConstants(p::BlochTorreyParameters{T}) where {T}
-    γ, B₀, θ = p[:gamma], p[:B0], p[:theta]
+    γ, B₀, θ = p.gamma, p.B0, p.theta
     ω₀ = γ * B₀
     s², c² = sin(θ)^2, cos(θ)^2
     return OmegaDerivedConstants{T}(ω₀, s², c²)
 end
 
 @inline function omega_tissue(x::Vec{2}, p::BlochTorreyParameters, b::OmegaDerivedConstants, c_in::Circle{2}, c_out::Circle{2})
-    χI, χA, ri², ro² = p[:ChiI], p[:ChiA], radius(c_in)^2, radius(c_out)^2
+    χI, χA, ri², ro² = p.ChiI, p.ChiA, radius(c_in)^2, radius(c_out)^2
     dx = x - origin(c_in)
     r² = dx⋅dx
     cos2ϕ = (dx[1]^2-dx[2]^2)/r²
@@ -711,7 +691,7 @@ end
 end
 
 @inline function omega_myelin(x::Vec{2}, p::BlochTorreyParameters, b::OmegaDerivedConstants, c_in::Circle{2}, c_out::Circle{2})
-    χI, χA, ri², ro = p[:ChiI], p[:ChiA], radius(c_in)^2, radius(c_out)
+    χI, χA, ri², ro = p.ChiI, p.ChiA, radius(c_in)^2, radius(c_out)
     dx = x - origin(c_in)
     r² = dx⋅dx
     r = √r²
@@ -723,7 +703,7 @@ end
 end
 
 @inline function omega_axon(x::Vec{2}, p::BlochTorreyParameters, b::OmegaDerivedConstants, c_in::Circle{2}, c_out::Circle{2})
-    χA, ri, ro = p[:ChiA], radius(c_in), radius(c_out)
+    χA, ri, ro = p.ChiA, radius(c_in), radius(c_out)
     A = 3/4 * χA * b.s² * log(ro/ri) # anisotropic (and only) component
     return b.ω₀ * A
 end
@@ -769,7 +749,7 @@ end
 # end
 #
 # function FreqMapParams(p::BlochTorreyParameters{T}) where {T}
-#     γ, B₀, θ = p[:gamma], p[:B0], p[:theta]
+#     γ, B₀, θ = p.gamma, p.B0, p.theta
 #     ω₀ = γ * B₀
 #     s², c² = sin(θ)^2, cos(θ)^2
 #     return FreqMapParams{T}(ω₀, s², c²)
@@ -821,7 +801,7 @@ end
 #     p::BlochTorreyParameters,
 #     c_inner::Circle{2},
 #     c_outer::Circle{2})
-#     χI, ri², ro² = p[:ChiI], radius(c_inner)^2, radius(c_outer)^2
+#     χI, ri², ro² = p.ChiI, radius(c_inner)^2, radius(c_outer)^2
 #     dx = x - origin(c_inner)
 #     r² = dx⋅dx
 #     cos2ϕ = ((dx[1]-dx[2])*(dx[1]+dx[2]))/r²
@@ -833,7 +813,7 @@ end
 #     p::BlochTorreyParameters,
 #     c_inner::Circle{2},
 #     c_outer::Circle{2})
-#     χA, ri², ro² = p[:ChiA], radius(c_inner)^2, radius(c_outer)^2
+#     χA, ri², ro² = p.ChiA, radius(c_inner)^2, radius(c_outer)^2
 #     dx = x - origin(c_inner)
 #     r² = dx⋅dx
 #     cos2ϕ = ((dx[1]-dx[2])*(dx[1]+dx[2]))/r²
@@ -845,7 +825,7 @@ end
 #     p::BlochTorreyParameters,
 #     c_inner::Circle{2},
 #     c_outer::Circle{2})
-#     χI, ri² = p[:ChiI], radius(c_inner)^2
+#     χI, ri² = p.ChiI, radius(c_inner)^2
 #     dx = x - origin(c_inner)
 #     r² = dx⋅dx
 #     cos2ϕ = ((dx[1]-dx[2])*(dx[1]+dx[2]))/r²
@@ -857,7 +837,7 @@ end
 #     p::BlochTorreyParameters,
 #     c_inner::Circle{2},
 #     c_outer::Circle{2})
-#     χA, ri², ro = p[:ChiA], radius(c_inner)^2, radius(c_outer)
+#     χA, ri², ro = p.ChiA, radius(c_inner)^2, radius(c_outer)
 #     dx = x - origin(c_inner)
 #     r² = dx⋅dx
 #     r = √r²
@@ -870,7 +850,7 @@ end
 #     p::BlochTorreyParameters,
 #     c_inner::Circle{2},
 #     c_outer::Circle{2})
-#     χA, ri, ro = p[:ChiA], radius(c_inner), radius(c_outer)
+#     χA, ri, ro = p.ChiA, radius(c_inner), radius(c_outer)
 #     return b.ω₀ * χA * 3b.s²/4 * log(ro/ri)
 # end
 #
