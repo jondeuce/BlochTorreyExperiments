@@ -2,21 +2,32 @@
 # Semi-direct translation of the MATLAB `normest1` code
 # ============================================================================ #
 
+# __precompile__(true)
 module Normest1
 
 using LinearMaps
+using LinearAlgebra
+using Printf
 
 export normest1
 
-# Define multiplication of LinearMap on matrices (taken from v0.7 branch of LinearMaps.jl)
-for f in (:A_mul_B!, :At_mul_B!, :Ac_mul_B!)
-   @eval function Base.LinAlg.$f(Y::AbstractMatrix, A::LinearMap{Te}, X::AbstractMatrix) where {Te}
-      @inbounds @views for i = 1:size(X, 2)
-         $f(Y[:, i], A, X[:, i])
-      end
-      return Y
-   end
-end
+# @static if VERSION >= v"0.7.0"
+#    A_mul_B!(y, A, x)  = mul!(y, A, x)
+#    At_mul_B!(y, A, x) = mul!(y, transpose(A), x)
+#    Ac_mul_B!(y, A, x) = mul!(y, adjoint(A), x)
+# end
+
+# @static if VERSION < v"0.7.0"
+#    # Define multiplication of LinearMap on matrices (taken from v0.7 branch of LinearMaps.jl)
+#    for f in (:A_mul_B!, :At_mul_B!, :Ac_mul_B!)
+#       @eval function LinearAlgebra.$f(Y::AbstractMatrix, A::LinearMap{Te}, X::AbstractMatrix) where {Te}
+#          @inbounds @views for i = 1:size(X, 2)
+#             $f(Y[:, i], A, X[:, i])
+#          end
+#          return Y
+#       end
+#    end
+# end
 
 function normest1(A,
                   t::Int = 2,
@@ -74,10 +85,10 @@ function normest1(A,
 
    A_is_real = isreal(A)
    Te = eltype(A)
-   n = size(A,2)::Int #TODO why can't the compiler infer this?
+   n = size(A,2)#::Int #TODO why can't the compiler infer this?
 
    prnt = (t < 0)
-   t = abs(t)::Int #TODO why can't the compiler infer this?
+   t = abs(t)#::Int #TODO why can't the compiler infer this?
 
    #error(message("MATLAB:normest1:TOutOfRange"))
    (t < 1 || t > max(n,2)) && error("t must be a non-zero integer with magnitude <= size(A,2)")
@@ -89,10 +100,10 @@ function normest1(A,
       # Get full matrix
       Y = zeros(Te, n, n)
       X = eye(Te, n)
-      A_mul_B!(Y, A, X)
+      mul!(Y, A, X) # A_mul_B!(Y, A, X)
 
       # equivalent to `temp, m = sort( sum(abs(Y)) )` in MATLAB
-      temp = sum(abs, Y, 1)
+      temp = sum(abs, Y, dims=1)
       m = sortperm(temp[:])
       temp = temp[:,m]
 
@@ -117,6 +128,7 @@ function normest1(A,
 
    ind = zeros(Int, t)
    est_old = 0
+   ind_hist = ind #TODO make sure this is a good initialization
    est_j = 0 #TODO make sure this is a good initialization
 
    # S_type = A_is_real ? Int : Te
@@ -131,10 +143,10 @@ function normest1(A,
       it += 1
 
       # prnt && @show typeof(Y), typeof(A), typeof(X)
-      A_mul_B!(Y, A, X)
+      mul!(Y, A, X) # A_mul_B!(Y, A, X)
       nmv += 1
 
-      vals = sum(abs, Y, 1)
+      vals = sum(abs, Y, dims=1)
       m = sortperm(vals[:])
       m = m[t:-1:1]
       vals = vals[:,m]
@@ -171,9 +183,9 @@ function normest1(A,
       S .= mysign.(Y)
       if A_is_real
          # SS = S_old'*S
-         Ac_mul_B!(SS, S_old, S)
+         mul!(SS, adjoint(S_old), S) # Ac_mul_B!(SS, S_old, S)
 
-         np = sum(x->x==Te(n), maximum(abs, SS, 1))
+         np = sum(x->x==Te(n), maximum(abs, SS, dims=1))
          if np == t
             info = 3
             break
@@ -185,11 +197,11 @@ function normest1(A,
       end
 
       # prnt && @show typeof(Z), typeof(A), typeof(X)
-      Ac_mul_B!(Z, A, S)
+      mul!(Z, adjoint(A), S) # Ac_mul_B!(Z, A, S)
       nmv = nmv + 1
 
       # Faster version of `for i=1:n, Zvals[i] = norm(Z[i,:], inf); end`:
-      Zvals = maximum(abs, Z, 2)
+      Zvals = maximum(abs, Z, dims=2)
 
       if it >= 2
          if maximum(Zvals) == Zvals[est_j]
@@ -294,7 +306,7 @@ function initialize_X(A, t::Int)
 
    X = ones(Te, n, t)
    @views X[:,2:t] = rand(Te.(-1:2:1), n, t-1)
-   X, r = undupli(X, Matrix{Te}(0,0), false)
+   X, r = undupli(X, Matrix{Te}(undef,0,0), false)
    X ./= n
 
    return X::Matrix{Te}
@@ -331,7 +343,7 @@ function undupli(S::AbstractMatrix{Te},
 
    for j=jstart:t
       rpt = 0
-      while maximum(abs, @views S[:,j]'*W[:,1:last_col] ) == Te(n)
+      while maximum(abs, @views S[:,j]'*W[:,1:last_col]) == Te(n)
          rpt = rpt + 1
          @views S[:,j] = rand(Te.(-1:2:1), n)
          if rpt > n/t
@@ -356,9 +368,10 @@ end # module Normest1
 
 module Normest1Test
 
-using Normest1
+using Main.Normest1
 using LinearMaps
-using Base.Test
+using Test
+using Profile
 using BenchmarkTools
 
 # test `normest1` using a matrix wrapped in a `LinearMap`

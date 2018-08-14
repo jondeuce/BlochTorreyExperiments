@@ -27,16 +27,16 @@ function rect_mesh_with_circles(rect_bdry::Rectangle{2,T},
                                 eta::T;
                                 isunion::Bool = true) where T
     # TODO: add minimum angle threshold
-    const dim = 2
-    const nfaces = 3 # per triangle
-    const nnodes = 3 # per triangle
+    dim = 2
+    nfaces = 3 # per triangle
+    nnodes = 3 # per triangle
 
     bbox = [xmin(rect_bdry) ymin(rect_bdry);
             xmax(rect_bdry) ymax(rect_bdry)]
     centers = reinterpret(T, origin.(circles), (dim,length(circles)))'
     radii = radius.(circles)
 
-    const nargout = 2
+    nargout = 2
     p, t = mxcall(:squaremeshwithcircles, nargout, bbox, centers, radii, h0, eta, isunion)
 
     cells = [Triangle((t[i,1], t[i,2], t[i,3])) for i in 1:size(t,1)]
@@ -133,9 +133,9 @@ function form_disjoint_grid(rect_bdry::Rectangle{2,T},
                             eta::T,
                             regiontype::Symbol) where {T}
 
-    const dim = 2
-    const nargout = 2
-    const isunion = false
+    dim = 2
+    nargout = 2
+    isunion = false
     outer_centers = reinterpret(T, origin.(outer_circles), (dim, length(outer_circles)))'
     inner_centers = reinterpret(T, origin.(inner_circles), (dim, length(inner_circles)))'
     outer_radii   = radius.(outer_circles)
@@ -188,12 +188,12 @@ function rect_mesh_with_tori(rect_bdry::Rectangle{2,T},
     @assert all(c -> is_inside(c[1], c[2], <), zip(inner_circles, outer_circles))
     @assert !is_any_overlapping(outer_circles, <)
 
-    const dim = 2
-    const nfaces = 3 # per triangle
-    const nnodes = 3 # per triangle
+    dim = 2
+    nfaces = 3 # per triangle
+    nnodes = 3 # per triangle
 
     # TODO: add minimum angle threshold?
-    const nargout = 2
+    nargout = 2
     all_circles = vcat(outer_circles, inner_circles)
     all_centers = reinterpret(T, origin.(all_circles), (dim, length(all_circles)))'
     all_radii   = radius.(all_circles)
@@ -294,17 +294,17 @@ function circle_mesh_with_tori( circle_bdry::Circle{2,T},
     @assert all(c -> is_inside(c[1], c[2], <), zip(inner_circles, outer_circles))
     @assert !is_any_overlapping(outer_circles, <)
 
-    const dim = 2
-    const nfaces = 3 # per triangle
-    const nnodes = 3 # per triangle
+    dim = 2 # grid dimension
+    nfaces = 3 # per triangle
+    nnodes = 3 # per triangle
 
     # TODO: add minimum angle threshold?
-    const nargout = 2
-    const isunion = true
-    const regiontype = 0 # union type
+    nargout = 2
+    isunion = true
+    regiontype = 0 # union type
     bcircle = [origin(circle_bdry)..., radius(circle_bdry)]
-    outer_centers = reinterpret(T, origin.(outer_circles), (dim, length(outer_circles)))'
-    inner_centers = reinterpret(T, origin.(inner_circles), (dim, length(inner_circles)))'
+    outer_centers = copy(transpose(reshape(reinterpret(T, origin.(outer_circles)), (dim, length(outer_circles)))))
+    inner_centers = copy(transpose(reshape(reinterpret(T, origin.(inner_circles)), (dim, length(inner_circles)))))
     p, t = mxcall(:circularmeshwithtori, nargout,
         bcircle, outer_centers, radius.(outer_circles), inner_centers, radius.(inner_circles),
         h0, eta, isunion, regiontype )

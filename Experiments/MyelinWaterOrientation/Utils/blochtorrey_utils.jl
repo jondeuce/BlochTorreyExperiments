@@ -111,8 +111,8 @@ mutable struct ParabolicDomain{dim,Nd,T,Nf} <: AbstractDomain{dim,Nd,T,Nf}
     dh::DofHandler{dim,Nd,T,Nf}
     cellvalues::CellValues{dim,T}
     facevalues::FaceValues{dim,T}
-    M::SparseMatrixCSC{T}
-    Mfact::Union{Factorization{T},Void}
+    M::Symmetric{T,<:SparseMatrixCSC{T}}
+    Mfact::Union{Factorization{T},Nothing}
     K::SparseMatrixCSC{T}
     w::Vector{T}
 end
@@ -121,7 +121,7 @@ end
 function ParabolicDomain(grid::Grid{dim,Nd,T,Nf};
     udim = 2,
     refshape = RefTetrahedron,
-    quadorder = 2,
+    quadorder = 3,
     funcinterporder = 1,
     geominterporder = 1) where {dim,Nd,T,Nf}
 
@@ -143,10 +143,10 @@ function ParabolicDomain(grid::Grid{dim,Nd,T,Nf};
     close!(dh)
 
     # Mass matrix, inverse mass matrix, stiffness matrix, and weights vector
-    M = create_sparsity_pattern(dh)
-    Mfact = nothing
-    K = copy(M)
+    M = create_symmetric_sparsity_pattern(dh)
+    K = create_sparsity_pattern(dh)
     w = zeros(T, ndofs(dh))
+    Mfact = nothing
 
     ParabolicDomain{dim,Nd,T,Nf}(grid, dh, cellvalues, facevalues, M, Mfact, K, w)
 end
@@ -163,8 +163,8 @@ end
 @inline getquadweights(d::ParabolicDomain) = d.w
 @inline JuAFEM.ndofs(d::ParabolicDomain) = JuAFEM.ndofs(getdofhandler(d))
 
-factorize!(d::ParabolicDomain) = (d.Mfact = cholfact(getmass(d)); return d)
-Base.norm(u, domain::ParabolicDomain) = √dot(u, getmass(domain) * u)
+factorize!(d::ParabolicDomain) = (d.Mfact = cholesky(getmass(d)); return d)
+LinearAlgebra.norm(u, domain::ParabolicDomain) = √dot(u, getmass(domain) * u)
 
 # Assembly quadrature weights for the parabolic domain `domain`.
 function addquadweights!(domain::ParabolicDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
@@ -419,7 +419,7 @@ function interpolate(f::Function, domain::MyelinDomain{dim}) where {dim}
     return interpolate!(U, f, domain)
 end
 
-function Base.norm(U::Vector{Vector{T}}, domain::MyelinDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
+function LinearAlgebra.norm(U::Vector{Vector{T}}, domain::MyelinDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
     @assert length(U) == numsubdomains(domain)
     return √sum(i->norm(U[i], getsubdomain(domain,i))^2, 1:numsubdomains(domain))
 end
@@ -431,22 +431,22 @@ end
 function doassemble!(prob::MyelinProblem{T},
                      domain::MyelinDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
     # Exterior region
-    Rdecay = (x) -> prob.params[:R2_lp]
-    Dcoeff = (x) -> prob.params[:D_Tissue]
+    Rdecay = (x) -> prob.params.R2_lp
+    Dcoeff = (x) -> prob.params.D_Tissue
     Omega = (x) -> omega_tissue(x, domain, prob.params)
     doassemble!(BlochTorreyProblem{T}(Dcoeff, Rdecay, Omega), domain.tissuedomain)
 
     # Myelin sheath region
-    Rdecay = (x) -> prob.params[:R2_sp]
-    Dcoeff = (x) -> prob.params[:D_Sheath]
+    Rdecay = (x) -> prob.params.R2_sp
+    Dcoeff = (x) -> prob.params.D_Sheath
     for i in 1:numfibres(domain)
         Omega = (x) -> omega_myelin(x, domain, prob.params, i)
         doassemble!(BlochTorreyProblem{T}(Dcoeff, Rdecay, Omega), domain.myelindomains[i])
     end
 
     # Axon region
-    Rdecay = (x) -> prob.params[:R2_lp]
-    Dcoeff = (x) -> prob.params[:D_Axon]
+    Rdecay = (x) -> prob.params.R2_lp
+    Dcoeff = (x) -> prob.params.D_Axon
     for i in 1:numfibres(domain)
         Omega = (x) -> omega_axon(x, domain, prob.params, i)
         doassemble!(BlochTorreyProblem{T}(Dcoeff, Rdecay, Omega), domain.axondomains[i])
@@ -567,34 +567,6 @@ end
 # ---------------------------------------------------------------------------- #
 
 # Wrap the action of Mfact\K in a LinearMap
-function Minv_K_mul_u!(Y, X, K, Mfact)
-   A_mul_B!(Y, K, X)
-   copy!(Y, Mfact\Y)
-   return Y
-end
-
-function Kt_Minv_mul_u!(Y, X, K, Mfact)
-   At_mul_B!(Y, K, Mfact\X)
-   return Y
-end
-
-function paraboliclinearmap(K, Mfact)
-   @assert (size(K) == size(Mfact)) && (size(K,1) == size(K,2))
-   fwd_mul! = (Y, X) -> Minv_K_mul_u!(Y, X, K, Mfact);
-   trans_mul! = (Y, X) -> Kt_Minv_mul_u!(Y, X, K, Mfact);
-   return LinearMap(fwd_mul!, trans_mul!, size(K)...;
-      ismutating=true, issymmetric=false, ishermitian=false, isposdef=false)
-end
-paraboliclinearmap(d::ParabolicDomain) = paraboliclinearmap(getstiffness(d), getmassfact(d))
-
-#TODO: Probably shouldn't define these; would only be used for normest1 which is
-# definitely not a bottleneck, and could silently break something?
-#TODO: Could define own LinearMap subtype however? Worth it?
-# import Base.LinAlg: A_mul_B!, At_mul_B!, Ac_mul_B!
-# A_mul_B!(Y::AbstractMatrix, A::FunctionMap, X::AbstractMatrix) = A.f!(Y,X);
-# At_mul_B!(Y::AbstractMatrix, A::FunctionMap, X::AbstractMatrix) = A.fc!(Y,X);
-# Ac_mul_B!(Y::AbstractMatrix, A::FunctionMap, X::AbstractMatrix) = A.fc!(Y,X);
-
 struct ParabolicLinearMap{T} <: LinearMap{T}
     M::AbstractMatrix{T}
     Mfact::Factorization{T}
@@ -604,31 +576,70 @@ struct ParabolicLinearMap{T} <: LinearMap{T}
         new{T}(M, Mfact, K)
     end
 end
+ParabolicLinearMap(d::ParabolicDomain) = ParabolicLinearMap(getmass(d), getmassfact(d), getstiffness(d))
+# function ParabolicLinearMap(K, Mfact)
+#     (size(K) == size(Mfact)) && (size(K,1) == size(K,2)) || throw(DimensionMismatch("ParabolicLinearMap"))
+#     fwd_mul! = (Y, X) -> Minv_K_mul_u!(Y, X, K, Mfact)
+#     trans_mul! = (isreal(K) ? (Y, X) -> Kt_Minv_mul_u!(Y, X, K, Mfact)
+#                             : (Y, X) -> Kc_Minv_mul_u!(Y, X, K, Mfact))
+#     return LinearMap(fwd_mul!, trans_mul!, size(K)...;
+#     ismutating=true, issymmetric=false, ishermitian=false, isposdef=false)
+# end
 
-# properties
+# Properties
 Base.size(A::ParabolicLinearMap) = size(A.K)
-Base.issymmetric(A::ParabolicLinearMap) = false
-Base.ishermitian(A::ParabolicLinearMap) = false
-Base.isposdef(A::ParabolicLinearMap) = false
+LinearAlgebra.issymmetric(A::ParabolicLinearMap) = false
+LinearAlgebra.ishermitian(A::ParabolicLinearMap) = false
+LinearAlgebra.isposdef(A::ParabolicLinearMap) = false
 
-# multiplication with Vector
-Base.LinAlg.A_mul_B!(y::AbstractVector, A::ParabolicLinearMap, x::AbstractVector) = Minv_K_mul_u!(y, x, A.K, A.Mfact)
-Base.LinAlg.At_mul_B!(y::AbstractVector, A::ParabolicLinearMap, x::AbstractVector) = Kt_Minv_mul_u!(y, x, A.K, A.Mfact)
-Base.LinAlg.Ac_mul_B!(y::AbstractVector, A::ParabolicLinearMap, x::AbstractVector) = Kt_Minv_mul_u!(y, x, A.K, A.Mfact)
-Base.:(*)(A::ParabolicLinearMap, x::AbstractVector) = A_mul_B!(similar(x), A, x)
+@static if VERSION < v"0.7.0"
+    # Multiplication action
+    Minv_K_mul_u!(Y, X, K, Mfact) = (A_mul_B!(Y, K, X); copy!(Y, Mfact\Y); return Y)
+    Kt_Minv_mul_u!(Y, X, K, Mfact) = (At_mul_B!(Y, K, Mfact\X); return Y)
+    Kc_Minv_mul_u!(Y, X, K, Mfact) = (Ac_mul_B!(Y, K, Mfact\X); return Y)
 
-# multiplication with Matrix
-Base.LinAlg.A_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = Minv_K_mul_u!(Y, X, A.K, A.Mfact)
-Base.LinAlg.At_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = Kt_Minv_mul_u!(Y, X, A.K, A.Mfact)
-Base.LinAlg.Ac_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = Kt_Minv_mul_u!(Y, X, A.K, A.Mfact)
-Base.:(*)(A::ParabolicLinearMap, X::AbstractMatrix) = A_mul_B!(similar(X), A, X)
+    # Multiplication with Vector or Matrix
+    Base.A_mul_B!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = Minv_K_mul_u!(Y, X, A.K, A.Mfact)
+    Base.At_mul_B!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = Kt_Minv_mul_u!(Y, X, A.K, A.Mfact)
+    Base.Ac_mul_B!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = Kc_Minv_mul_u!(Y, X, A.K, A.Mfact)
+    Base.A_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = Minv_K_mul_u!(Y, X, A.K, A.Mfact)
+    Base.At_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = Kt_Minv_mul_u!(Y, X, A.K, A.Mfact)
+    Base.Ac_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = Kc_Minv_mul_u!(Y, X, A.K, A.Mfact)
+    Base.:(*)(A::ParabolicLinearMap, X::AbstractVector) = A_mul_B!(similar(X, promote_type(eltype(A), eltype(X)), size(A, 1)), A, X)
+    Base.:(*)(A::ParabolicLinearMap, X::AbstractMatrix) = A_mul_B!(similar(X, promote_type(eltype(A), eltype(X)), size(A, 1)), A, X)
+else
+    #TODO Check that this actually needs to be defined, and isn't a bug in LinearMaps
+    LinearMaps.A_mul_B!( Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = mul!(Y, A, X)
+    LinearMaps.At_mul_B!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = mul!(Y, transpose(A), X)
+    LinearMaps.Ac_mul_B!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = mul!(Y, adjoint(A), X)
+    LinearMaps.A_mul_B!( Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = mul!(Y, A, X)
+    LinearMaps.At_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = mul!(Y, transpose(A), X)
+    LinearMaps.Ac_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = mul!(Y, adjoint(A), X)
+    LinearAlgebra.A_mul_B!( Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = mul!(Y, A, X)
+    LinearAlgebra.At_mul_B!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = mul!(Y, transpose(A), X)
+    LinearAlgebra.Ac_mul_B!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = mul!(Y, adjoint(A), X)
+    LinearAlgebra.A_mul_B!( Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = mul!(Y, A, X)
+    LinearAlgebra.At_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = mul!(Y, transpose(A), X)
+    LinearAlgebra.Ac_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = mul!(Y, adjoint(A), X)
+    Base.to_power_type(A::Union{<:LinearMaps.AdjointMap, <:LinearMaps.TransposeMap, <:LinearMap}) = A
 
-function Base.LinAlg.trace(A::ParabolicLinearMap{T}, t::Int = 10) where {T}
-    # Approximate trace, given by the trace corresponding to the lumped mass matrix M[i,i] = Σ_j M[i,j]
-    # return sum(diag(A.K)./sum(A.M,2))
+    # Multiplication action
+    Minv_K_mul_u!(Y, X, K, Mfact) = (mul!(Y, K, X); copy!(Y, Mfact\Y); return Y)
+    Kt_Minv_mul_u!(Y, X, K, Mfact) = (mul!(Y, transpose(K), Mfact\X); return Y)
+    Kc_Minv_mul_u!(Y, X, K, Mfact) = (mul!(Y, adjoint(K), Mfact\X); return Y)
 
+    # Multiplication with Vector or Matrix
+    LinearAlgebra.mul!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = Minv_K_mul_u!(Y, X, A.K, A.Mfact)
+    LinearAlgebra.mul!(Y::AbstractVector, A::LinearMaps.TransposeMap{T, ParabolicLinearMap{T}}, X::AbstractVector) where {T} = Kt_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
+    LinearAlgebra.mul!(Y::AbstractVector, A::LinearMaps.AdjointMap{T, ParabolicLinearMap{T}}, X::AbstractVector) where {T} = Kc_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
+    LinearAlgebra.mul!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = Minv_K_mul_u!(Y, X, A.K, A.Mfact)
+    LinearAlgebra.mul!(Y::AbstractMatrix, A::LinearMaps.TransposeMap{T, ParabolicLinearMap{T}}, X::AbstractMatrix) where {T} = Kt_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
+    LinearAlgebra.mul!(Y::AbstractMatrix, A::LinearMaps.AdjointMap{T, ParabolicLinearMap{T}}, X::AbstractMatrix) where {T} = Kc_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
+end # if VERSION < v"0.7.0"
+
+function LinearAlgebra.tr(A::LinearMap{T}, t::Int = 10) where {T}
     # Approximate trace using mat-vec's with basis vectors
-    N = size(A,2)
+    N = size(A, 2)
     t = min(t, N)
     x = zeros(T, N)
     tr = zero(T)
@@ -637,13 +648,12 @@ function Base.LinAlg.trace(A::ParabolicLinearMap{T}, t::Int = 10) where {T}
         tr += (A*x)[ix]
         x[ix] = zero(T)
     end
-
     return tr * (N/t)
 end
 
 # normAm
-Expmv.normAm(A::LinearMap, m::Int, t::Int = 10) = (normest1(A^m, t)[1], 0)
-Base.norm(A::ParabolicLinearMap, args...) = expmv_norm(A, args...)
+Expmv.normAm(A::LinearMap, p::Real, t::Int = 10) = (Normest1.normest1(A^p, t)[1], 0)
+LinearAlgebra.norm(A::ParabolicLinearMap, p::Real, t::Int = 10) = expmv_norm(A, p, t)
 
 # ---------------------------------------------------------------------------- #
 # expmv and related functions
@@ -655,10 +665,10 @@ function expmv_norm(A, p::Real=1, t::Int=10)
     !(p == 1 || p == Inf) && error("Only p=1 or p=Inf supported")
     p == Inf && (A = A')
     t = min(t, size(A,2))
-    return normest1(A, t)[1]
+    return Normest1.normest1(A, t)[1]
 end
 # Default fallback for vectors
-expmv_norm(x::AbstractVector, p::Real=2, args...) = Base.norm(x, p, args...)
+expmv_norm(x::AbstractVector, p::Real=2, t::Int=10) = LinearAlgebra.norm(x, p)
 
 nothing
 
@@ -682,7 +692,7 @@ end
     χI, χA, ri², ro² = p.ChiI, p.ChiA, radius(c_in)^2, radius(c_out)^2
     dx = x - origin(c_in)
     r² = dx⋅dx
-    cos2ϕ = (dx[1]^2-dx[2]^2)/r²
+    cos2ϕ = (dx[1]-dx[2])*(dx[1]+dx[2])/r² # cos2ϕ == (x²-y²)/r² == (x-y)(x+y)/r²
 
     tmp = b.s² * cos2ϕ * ((ro² - ri²)/r²) # Common calculation
     I = χI/2 * tmp # isotropic component
@@ -694,8 +704,8 @@ end
     χI, χA, ri², ro = p.ChiI, p.ChiA, radius(c_in)^2, radius(c_out)
     dx = x - origin(c_in)
     r² = dx⋅dx
+    cos2ϕ = (dx[1]-dx[2])*(dx[1]+dx[2])/r² # cos2ϕ == (x²-y²)/r² == (x-y)(x+y)/r²
     r = √r²
-    cos2ϕ = (dx[1]^2-dx[2]^2)/r²
 
     I = χI/2 * (b.c² - 1/3 - b.s² * cos2ϕ * ri² / r²) # isotropic component
     A = χA * (b.s² * (-5/12 - cos2ϕ/8 * (1 + ri²/r²) + 3/4 * log(ro/r)) - b.c²/6) # anisotropic component
@@ -726,7 +736,7 @@ end
 function omega_myelin(x::Vec{2}, domain::MyelinDomain, params::BlochTorreyParameters, region::Int)
     constants = OmegaDerivedConstants(params)
     ω = omega_myelin(x, params, constants, getinnercircle(domain, region), getoutercircle(domain, region))
-    @inbounds for i in IterTools.chain(1:region-1, region+1:numfibres(domain))
+    @inbounds for i in Iterators.flatten((1:region-1, region+1:numfibres(domain)))
         ω += omega_tissue(x, params, constants, getinnercircle(domain, i), getoutercircle(domain, i))
     end
     return ω
@@ -736,7 +746,7 @@ end
 function omega_axon(x::Vec{2}, domain::MyelinDomain, params::BlochTorreyParameters, region::Int)
     constants = OmegaDerivedConstants(params)
     ω = omega_axon(x, params, constants, getinnercircle(domain, region), getoutercircle(domain, region))
-    @inbounds for i in IterTools.chain(1:region-1, region+1:numfibres(domain))
+    @inbounds for i in Iterators.flatten((1:region-1, region+1:numfibres(domain)))
         ω += omega_tissue(x, params, constants, getinnercircle(domain, i), getoutercircle(domain, i))
     end
     return ω
@@ -880,3 +890,5 @@ end
 #     c_outer::Circle{2})
 #     return omega_anisotropic_axon(x,b,p,c_inner,c_outer)
 # end
+
+nothing

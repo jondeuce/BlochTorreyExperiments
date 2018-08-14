@@ -38,7 +38,7 @@ Base.convert(::Type{SVector{dim,T1}}, x::Vec{dim,T2}) where {dim,T1,T2} = SVecto
 end
 
 @inline function hadamardproduct(S1::Vec{dim}, S2::Vec{dim}) where {dim}
-    return Vec{dim}(@inline function(i) Tensors.@inboundsret S1[i] * S2[i]; end)
+    return Vec{dim}(@inline function(i) v = S1[i] * S2[i]; return v; end)
 end
 # @inline hadamardproduct2(S1::Vec{2}, S2::Vec{2}) = Vec{2}((S1[1]*S2[1], S1[2]*S2[2]))
 # @inline hadamardproduct3(S1::Vec{3}, S2::Vec{3}) = Vec{3}((S1[1]*S2[1], S1[2]*S2[2], S1[3]*S2[3]))
@@ -83,7 +83,7 @@ Base.rand(::Type{E}, N::Int) where {E <: Ellipse} = [rand(E) for i in 1:N]
 function signed_edge_distance(X::Vec{2}, e::Ellipse{2})
 
     # Check for simple cases to skip root finding below
-    const EPS = 5eps(getb(e))
+    EPS = 5eps(getb(e))
     isapprox(X, origin(e); rtol = EPS) && return -getb(e) # origin is a pathological case for rootfinding
     isapprox(X, getF1(e); rtol = EPS) && return getc(e) - geta(e)
     isapprox(X, getF2(e); rtol = EPS) && return getc(e) - geta(e)
@@ -174,22 +174,22 @@ end
 # ---------------------------------------------------------------------------- #
 # Circle based on Vec type from Tensors.jl (code based on GeometryTypes.jl)
 # ---------------------------------------------------------------------------- #
-Circle(::Type{T}, center::Vec{dim}, r::Number) where {dim,T} = Circle(Vec{dim,T}(center), T(r))
+Circle(center::NTuple{dim,T}, r::T) where {dim,T} = Circle(Vec{dim,T}(center), r)
+Circle(::Type{T}, center::Vec{dim}, r::Number) where {dim,T} = Circle(Vec{dim,T}(Tuple(center)), T(r))
 Circle(::Type{T}, center::NTuple{dim}, r::Number) where {dim,T} = Circle(Vec{dim,T}(center), T(r))
 
 function Circle(center::Vec{dim,T1}, r::T2) where {dim,T1,T2}
     T = promote_type(T1, T2)
-    return Circle(Vec{dim,T}(center), T(r))
+    return Circle(Vec{dim,T}(Tuple(center)), T(r))
 end
 function Base.convert(::Type{Circle{dim,T1}}, c::Circle{dim,T2}) where {dim,T1,T2}
     T = promote_type(T1, T2)
-    return Circle{dim,T}(Vec{dim,T}(origin(c)), T(radius(c)))
+    return Circle{dim,T}(Vec{dim,T}(Tuple(origin(c))), T(radius(c)))
 end
 function Base.isapprox(c1::Circle, c2::Circle; kwargs...)
     return isapprox(radius(c1), radius(c2); kwargs...) && isapprox(origin(c1), origin(c2); kwargs...)
 end
 
-Circle(center::NTuple{dim,T}, r::T) where {dim,T} = Circle(Vec{dim,T}(center), r)
 dimension(c::Circle) = dimension(typeof(c))
 floattype(c::Circle) = floattype(typeof(c))
 dimension(::Type{Circle{dim,T}}) where {dim,T} = dim

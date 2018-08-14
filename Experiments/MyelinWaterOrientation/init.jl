@@ -1,21 +1,32 @@
 # My files and modules
 
-ENV["MATLAB_HOME"] = "C:\\Users\\Jonathan\\Downloads\\Mathworks Matlab R2016a\\R2016a"
-HOME = "C:\\Users\\Jonathan\\Documents\\MATLAB\\"
+# ENV["MATLAB_HOME"] = "C:\\Users\\Jonathan\\Downloads\\Mathworks Matlab R2016a\\R2016a"
+# HOME = "C:\\Users\\Jonathan\\Documents\\MATLAB\\"
 # HOME = "/home/jon/Documents/UBCMRI/"
-# HOME = "/home/coopar7/Documents/code/"
+HOME = "/home/coopar7/Documents/code/"
 BTMASTER = HOME * "BlochTorreyExperiments-master/"
 MWOPATH = BTMASTER * "Experiments/MyelinWaterOrientation/"
 
 cd(BTMASTER)
 
+@static if VERSION >= v"0.7.0"
+    # Packages moved out of base for v0.7.0
+    using Statistics
+    using StatsBase
+    using Printf
+    using SparseArrays
+    using LinearAlgebra
+    using Profile
+
+    # Flatten caused Pkg errors on v0.6.4 for some reason...?
+    # using Flatten
+end
+
 # Packages
 using Revise
-using Traceur
 using BenchmarkTools
 using IterTools
 using Parameters
-#using Flatten
 using StaticArrays
 using JuAFEM
 using JuAFEM: vertices, faces, edges
@@ -26,19 +37,29 @@ using Expokit
 using Optim
 using Roots
 using Distributions
-using ApproxFun
-# using Plots
 using ForwardDiff
-using ReverseDiff
 using PolynomialRoots
+# using Plots
+
+# Packages currently not working on v0.7.0:
+@static if VERSION < v"0.7.0"
+    using Traceur
+    using ApproxFun
+    using ReverseDiff
+end
 
 include(MWOPATH * "Utils/normest1.jl")
 include(MWOPATH * "Expmv/src/Expmv.jl")
-Revise.track(MWOPATH * "Utils/mesh_utils.jl")
+Revise.track(MWOPATH * "Utils/normest1.jl")
 Revise.track(MWOPATH * "Expmv/src/Expmv.jl")
 
-using Normest1
-using Expmv
+@static if VERSION < v"0.7.0"
+    using Normest1
+    using Expmv
+else
+    # using Main.Normest1
+    # using Main.Expmv
+end
 
 include(MWOPATH * "Geometry/geometry_utils.jl")
 include(MWOPATH * "Geometry/circle_packing.jl")
@@ -46,5 +67,5 @@ include(MWOPATH * "Utils/mesh_utils.jl")
 include(MWOPATH * "Utils/blochtorrey_utils.jl")
 Revise.track(MWOPATH * "Geometry/geometry_utils.jl")
 Revise.track(MWOPATH * "Geometry/circle_packing.jl")
-Revise.track(MWOPATH * "Utils/normest1.jl")
+Revise.track(MWOPATH * "Utils/mesh_utils.jl")
 Revise.track(MWOPATH * "Utils/blochtorrey_utils.jl")

@@ -2,7 +2,7 @@
 expmv(t, A, b; kwargs...) = (f = similar(b); return expmv!(f, t, A, b; kwargs...))
 
 function expmv!(f, t, A, b; kwargs...)
-    f, _b, Ab = copy!(f, b), copy(b), similar(b)
+    f, _b, Ab = copyto!(f, b), copy(b), similar(b)
     _expmv!(f, t, A, _b, Ab; kwargs...) # `f`, `_b`, and `Ab` all modified in place
     return f
 end
@@ -12,7 +12,12 @@ end
 #   b is the initial vector, and f is initialized such that all f[i] == b[i]
 #   Ab is a buffer to be overwritten
 function _expmv!(f, t, A, b, Ab = similar(b);
-                 M = [], prec = "double", shift = false, full_term = false, prnt = false)
+                 M = [],
+                 prec = "double",
+                 shift = true,
+                 full_term = false,
+                 prnt = false,
+                 norm = LinearAlgebra.norm)
                # bal = false,
 
     #EXPMV   Matrix exponential times vector or matrix.
@@ -51,15 +56,16 @@ function _expmv!(f, t, A, b, Ab = similar(b);
     # end
 
     n = size(A,1)
+    T = promote_type(eltype(f), eltype(A), eltype(b))
 
     if shift
-        mu = trace(A)/n
+        mu = tr(A)/n
         A = A - mu*I
     end
 
     if isempty(M)
-        tt = 1
-        (M,mvd,alpha,unA) = select_taylor_degree(t*A, b)
+        tt = one(T)
+        (M,mvd,alpha,unA) = select_taylor_degree(t*A, b; norm = norm)
         mv = mvd
     else
         tt = t
@@ -69,11 +75,11 @@ function _expmv!(f, t, A, b, Ab = similar(b);
 
     tol =
       if prec == "double"
-          2.0^(-53)
+          T(2.0^(-53))
       elseif prec == "single"
-          2.0^(-24)
+          T(2.0^(-24))
       elseif prec == "half"
-          2.0^(-10)
+          T(2.0^(-10))
       end
 
     s = 1
@@ -82,16 +88,16 @@ function _expmv!(f, t, A, b, Ab = similar(b);
         m = 0
     else
         (m_max,p) = size(M)
-        U = diagm(1:m_max)
-        C = ((ceil.(abs(tt)*M))' * U)
-        zero_els = find(x->x==0, C)
+        U = diagm(0 => 1:m_max)
+        C = (ceil.(abs(tt)*M))' * U
+        zero_els = (LinearIndices(C))[findall(x->x==0, C)] #TODO (?)
         for el in zero_els
             C[el] = Inf
         end
         if p > 1
-            cost,m = findmin(minimum(C,1)) # cost is the overall cost.
+            cost, m = findmin(minimum(C, dims=1)[:]) # cost is the overall cost.
         else
-            cost,m = findmin(C)  # when C is one column. Happens if p_max = 2.
+            cost, m = findmin(C)  # when C is one column. Happens if p_max = 2.
         end
         if cost == Inf
             cost = 0
@@ -99,11 +105,8 @@ function _expmv!(f, t, A, b, Ab = similar(b);
         s = max(cost/m,1)
     end
 
-    eta = 1
-
-    if shift
-        eta = exp(t*mu/s)
-    end
+    eta = one(T)
+    shift && (eta = exp(t*mu/s)::T)
 
     c1 = c2 = eltype(b)(Inf)
     for i = 1:s
@@ -111,7 +114,7 @@ function _expmv!(f, t, A, b, Ab = similar(b);
         for k = 1:m
             prnt && println("$i/$s, $k/$m")
             # Next two lines replace `b = (t/(s*k))*(A*b)`
-            A_mul_B!(Ab, A, b)
+            mul!(Ab, A, b)
             b .= (t/(s*k)) .* Ab
             f .=  f .+ b
             mv = mv + 1
@@ -122,10 +125,9 @@ function _expmv!(f, t, A, b, Ab = similar(b);
                 end
                 c1 = c2
             end
-
         end
-        f .= eta .* f
-        copy!(b, f)
+        shift && (f .= eta .* f)
+        copyto!(b, f)
     end
 
     #if bal

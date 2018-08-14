@@ -1,9 +1,10 @@
 include("init.jl")
-using Base.Test
+using Test
+using Arpack
 
 @testset "Geometry Utils" begin
-    const dim = 2
-    const T = Float64
+    dim = 2
+    T = Float64
 
     # ---- Ellipse misc. ---- #
     e = rand(Ellipse{dim,T})
@@ -135,24 +136,34 @@ function expmv_tests(;N = 10, h = √2*(2/N), grid = generate_grid(Triangle, (N,
     # and the rest negative
     d, v = eigs(-K; nev=3, which=:SR) # smallest real
     dmin = max(abs(d[1]), abs(d[2])) # largest null eigenvalue
-    ispossemidef_K = isapprox(dmin, 0.0; atol=1e-12) && (d[3] > 1e-3*h^2) # minimum non-zero eigenvalue should be positive and least O(h^2)
+    ispossemidef_K = isapprox(dmin, 0.0; atol=1e-12) && (d[3] > 1e-2*h^2) # minimum non-zero eigenvalue should be positive and least O(h^2)
 
     @test isposdef(M) && ispossemidef_K
 
     A = ParabolicLinearMap(M, Mfact, K)
-    Af = full(A)
+    Af = Matrix(A)
+    n = size(A,2)
 
-    t = 0.1
-    x0 = randn(size(A,2))
-    Ef = expm(t*Af) # dense exponential matrix
+    t = 1.0
+    x0 = randn(n); #x0 = zeros(n); @views x0[2:2:n] .= 1.0;
+    Ef = exp(t*Af) # dense exponential matrix
 
-    y1 = Ef * x0
-    y2 = Expmv.expmv(t, A, x0)
-    y3 = Expokit.expmv(t, A, x0; tol=1e-14, norm=expmv_norm, m=30)
-    @test norm(y1 - y2, Inf) ≈ 0.0 rtol = 1e-12 atol = 1e-12
-    @test norm(y2 - y3, Inf) ≈ 0.0 rtol = 1e-12 atol = 1e-12
+    μ = tr(A)/n
+    Ashift = A - μ*I
+    M = Expmv.select_taylor_degree(A, x0; norm = expmv_norm)[1]
+    Mshift = Expmv.select_taylor_degree(Ashift, x0; norm = expmv_norm)[1]
 
-    # x = Expmv.expmv(1e-6, A, x0; prnt = true)
+    Ys = [zeros(n) for i in 1:5]
+    @btime $(Ys[1]) .= $Ef * $x0 evals = 1
+    @btime Expokit.expmv!($(Ys[2]), $t, $A, $x0; tol=1e-14, norm = expmv_norm, m=30) evals = 1
+    @btime Expmv.expmv!($(Ys[3]), $t, $A, $x0; norm = expmv_norm) evals = 1
+    @btime Expmv.expmv!($(Ys[4]), $t, $A, $x0; M = $M, norm = expmv_norm) evals = 1
+    @btime $(Ys[5]) .= exp($μ*$t) .* Expmv.expmv!($(Ys[5]), $t, $Ashift, $x0; M = $M, shift = false, norm = expmv_norm) evals = 1
+
+    @test norm(Ys[1] - Ys[2], Inf) ≈ 0.0 rtol = 1e-12 atol = 1e-12
+    @test norm(Ys[2] - Ys[3], Inf) ≈ 0.0 rtol = 1e-12 atol = 1e-12
+    @test norm(Ys[3] - Ys[4], Inf) ≈ 0.0 rtol = 1e-12 atol = 1e-12
+    @test norm(Ys[4] - Ys[5], Inf) ≈ 0.0 rtol = 1e-12 atol = 1e-12
 end
 
 @testset "Expmv Methods" begin
@@ -160,58 +171,81 @@ end
 end
 
 # ---- Single axon geometry testing ---- #
-p = BlochTorreyParameters{Float64}()
-rs = [p.R_mu] # one radius of average size
-os = zeros(Vec{2}, 1) # one origin at the origin
-outer_circles = Circle.(os, rs)
-inner_circles = scale_shape.(outer_circles, p.g_ratio)
-bcircle = scale_shape(outer_circles[1], 1.5)
+function setup()
+    params = BlochTorreyParameters{Float64}()
+    rs = [params.R_mu] # one radius of average size
+    os = zeros(Vec{2}, 1) # one origin at the origin
+    outer_circles = Circle.(os, rs)
+    inner_circles = scale_shape.(outer_circles, params.g_ratio)
+    bcircle = scale_shape(outer_circles[1], 1.5)
 
-h0 = 0.3 * p.R_mu * (1.0 - p.g_ratio) # fraction of size of average torus width
-eta = 5.0 # approx ratio between largest/smallest edges
-@time grid = circle_mesh_with_tori(bcircle, inner_circles, outer_circles, h0, eta)
-@time exteriorgrid, torigrids, interiorgrids = form_tori_subgrids(grid, bcircle, inner_circles, outer_circles)
+    h0 = 0.3 * params.R_mu * (1.0 - params.g_ratio) # fraction of size of average torus width
+    eta = 5.0 # approx ratio between largest/smallest edges
 
-all_tori = form_subgrid(grid, getcellset(grid, "tori"), getnodeset(grid, "tori"), getfaceset(grid, "boundary"))
-all_int = form_subgrid(grid, getcellset(grid, "interior"), getnodeset(grid, "interior"), getfaceset(grid, "boundary"))
-mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(exteriorgrid)
-mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(all_tori)
-mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(all_int)
+    mxcall(:figure,0); mxcall(:hold,0,"on")
+    @time grid = circle_mesh_with_tori(bcircle, inner_circles, outer_circles, h0, eta)
+    @time exteriorgrid, torigrids, interiorgrids = form_tori_subgrids(grid, bcircle, inner_circles, outer_circles)
 
-domain = MyelinDomain(grid, outer_circles, inner_circles, bcircle,
-    exteriorgrid, torigrids, interiorgrids;
-    quadorder = 1, funcinterporder = 1)
+    all_tori = form_subgrid(grid, getcellset(grid, "tori"), getnodeset(grid, "tori"), getfaceset(grid, "boundary"))
+    all_int = form_subgrid(grid, getcellset(grid, "interior"), getnodeset(grid, "interior"), getfaceset(grid, "boundary"))
+    mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(exteriorgrid)
+    mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(all_tori)
+    mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(all_int)
 
-prob = MyelinProblem(p)
-doassemble!(prob, domain)
-factorize!(domain)
+    prob = MyelinProblem(params)
+    domain = MyelinDomain(grid, outer_circles, inner_circles, bcircle,
+        exteriorgrid, torigrids, interiorgrids;
+        quadorder = 3, funcinterporder = 1)
 
-tspan = (0.0, 40e-3) # 40ms simulation
-u0 = Vec{2}((0.0, 1.0)) # Initial π/2-pulse
-U0 = interpolate(x->u0, domain) # vector of vectors of degrees of freedom with `u0` at each node
-U = deepcopy(U0)
-
-for i in 1:numsubdomains(domain)
-    print("i = $i: ")
-
-    subdomain = getsubdomain(domain, i)
-    A = paraboliclinearmap(subdomain)
-    U[i] = copy(U0[i])
-
-    # Method 1: expmv! from Expokit.jl
-    @time Expokit.expmv!(U[i], tspan[end], A, U0[i]; tol=1e-4, norm=expmv_norm, m=30);
-
-    # Method 2: direct ODE solution using DifferentialEquations.jl
-    # prob = ODEProblem((du,u,p,t)->A_mul_B!(du,p[1],u), U0[i], tspan, (A,));
-    # @time sol = solve(prob, CVODE_BDF(linear_solver=:GMRES); saveat=tspan, reltol=1e-4, alg_hints=:stiff)
-    # U[i] = sol.u[end]
-
-    flush(STDOUT)
+    return prob, domain
 end
 
-subdomain = getsubdomain(domain, 2)
-A = ParabolicLinearMap(getmass(subdomain), getmassfact(subdomain), getstiffness(subdomain))
-Af = full(A)
+function DiffEqBase.solve(prob::MyelinProblem,
+                          domain::MyelinDomain;
+                          tspan = (0.0, 40e-3))
+    doassemble!(prob, domain)
+    factorize!(domain)
 
-x0 = randn(size(A,2))
-x = Expmv.expmv(1e-6, A, x0; prnt = true)
+    u0 = Vec{2}((0.0, 1.0)) # Initial π/2-pulse
+    U0 = interpolate(x->u0, domain) # vector of vectors of degrees of freedom with `u0` at each node
+    U = deepcopy(U0)
+
+    for i in 1:numsubdomains(domain)
+        print("i = $i: ")
+
+        subdomain = getsubdomain(domain, i)
+        A = ParabolicLinearMap(subdomain)
+        U[i] = copy(U0[i])
+
+        # Method 1: expmv! from Higham's `Expmv`
+        M = Expmv.select_taylor_degree(A, U0[i]; norm = expmv_norm)[1]
+        @time Expmv.expmv!(U[i], tspan[end], A, U0[i]; prec = "single", M = M, norm = expmv_norm)
+        Uexpmv = copy(U[i])
+
+        # Method 2: expmv! from Expokit.jl
+        @time Expokit.expmv!(U[i], tspan[end], A, U0[i]; tol=1e-6, norm=expmv_norm, m=30)
+        Uexpokit = copy(U[i])
+
+        # Method 3: direct ODE solution using DifferentialEquations.jl
+        prob = ODEProblem((du,u,p,t)->mul!(du,p[1],u), U0[i], tspan, (A,));
+        @time sol = solve(prob, CVODE_BDF(linear_solver=:GMRES); saveat=tspan, reltol=1e-6, alg_hints=:stiff)
+        U[i] = sol.u[end]
+        Udiffeq = copy(U[i])
+
+        # Compare simulation results
+        @test norm(Uexpmv - Uexpokit, Inf) ≈ 0.0 rtol = 1e-4 atol = 1e-4
+        @test norm(Udiffeq - Uexpokit, Inf) ≈ 0.0 rtol = 1e-4 atol = 1e-4
+
+        flush(stdout)
+    end
+
+    return U
+end
+
+@testset "Myelin Problem Solutions" begin
+    prob, domain = setup()
+    U = solve(prob, domain)
+end
+
+prob, domain = setup()
+U = solve(prob, domain)

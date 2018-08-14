@@ -1,4 +1,4 @@
-function normAm(A, m; norm = Base.norm)
+function normAm(A, m; norm = LinearAlgebra.norm)
     #NORMAM   Estimate of 1-norm of power of matrix.
     #   NORMAM(A,m) estimates norm(A^m,1).
     #   If A has nonnegative elements the estimate is exact.

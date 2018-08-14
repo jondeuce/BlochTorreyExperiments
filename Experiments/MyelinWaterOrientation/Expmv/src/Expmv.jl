@@ -1,12 +1,14 @@
 module Expmv
 
-  # package code goes here
-  include("normAm.jl")
+using LinearAlgebra
 
-  include("select_taylor_degree.jl")
+# package code goes here
+include("normAm.jl")
 
-  include("expmv_fun.jl")
+include("select_taylor_degree.jl")
 
-  export expmv, expmv!, normAm
+include("expmv_fun.jl")
+
+export expmv, expmv!
 
 end # module

@@ -71,8 +71,8 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
 
                 # ---- Use buffer of circles to avoid allocations ---- #
                 chunksize = min(chunksize, length(x0))
-                const dualcircles = Vector{Circle{2,ForwardDiff.Dual{Void,T,chunksize}}}(numcircles(data))
-                const realcircles = Vector{Circle{2,T}}(numcircles(data))
+                dualcircles = Vector{Circle{2,ForwardDiff.Dual{Void,T,chunksize}}}(numcircles(data))
+                realcircles = Vector{Circle{2,T}}(numcircles(data))
 
                 function f_buffered(x::Vector{T}) where {T<:AbstractFloat}
                     getcircles!(realcircles, x, data)
@@ -85,7 +85,7 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
                     return packing_energy(dualcircles, goaldensity, distancescale, weights, epsilon)
                 end
 
-                const checktag = true
+                checktag = true
                 g!, fg!, cfg = wrap_gradient(f_buffered, x0, Val{chunksize}, Val{checktag}; isforward = true)
                 opt_obj = OnceDifferentiable(f_buffered, g!, fg!, x0)
 
@@ -179,7 +179,7 @@ function wrap_gradient(f, x0::AbstractArray{T},
 
     if isforward
         # ForwardDiff gradient (pre-recorded config; faster, type stable, but static)
-        const cfg = ForwardDiff.GradientConfig(f, x0, ForwardDiff.Chunk{min(N,length(x0))}())
+        cfg = ForwardDiff.GradientConfig(f, x0, ForwardDiff.Chunk{min(N,length(x0))}())
         g! = (out, x) -> ForwardDiff.gradient!(out, f, x, cfg)
 
         # # ForwardDiff gradient (dynamic config; slower, type unstable, but dynamic chunk sizing)
@@ -192,24 +192,25 @@ function wrap_gradient(f, x0::AbstractArray{T},
             return DiffBase.value(all_results) # return f(x)
         end
     else
-        if isdynamic
-            # ReverseDiff gradient (pre-recorded config; slower, but dynamic call graph)
-            const cfg = ReverseDiff.GradientConfig(x0)
-            g! = (out, x) -> ReverseDiff.gradient!(out, f, x, cfg)
-        else
-            # ReverseDiff gradient (pre-recorded tape; faster, but static call graph)
-            const f_tape = ReverseDiff.GradientTape(f, x0)
-            const compiled_f_tape = ReverseDiff.compile(f_tape)
-            const cfg = compiled_f_tape # for returning
-            g! = (out, x) -> ReverseDiff.gradient!(out, compiled_f_tape, x)
-        end
-
-        fg! = (out, x) -> begin
-            # `DiffResult` is both a light wrapper around gradient `out` and storage for the forward pass
-            all_results = DiffBase.DiffResult(zero(T), out)
-            g!(all_results, x) # update out == ∇f(x)
-            return DiffBase.value(all_results) # return f(x)
-        end
+        error("ReverseDiff not implemented") #TODO
+        # if isdynamic
+        #     # ReverseDiff gradient (pre-recorded config; slower, but dynamic call graph)
+        #     cfg = ReverseDiff.GradientConfig(x0)
+        #     g! = (out, x) -> ReverseDiff.gradient!(out, f, x, cfg)
+        # else
+        #     # ReverseDiff gradient (pre-recorded tape; faster, but static call graph)
+        #     f_tape = ReverseDiff.GradientTape(f, x0)
+        #     compiled_f_tape = ReverseDiff.compile(f_tape)
+        #     cfg = compiled_f_tape # for returning
+        #     g! = (out, x) -> ReverseDiff.gradient!(out, compiled_f_tape, x)
+        # end
+        #
+        # fg! = (out, x) -> begin
+        #     # `DiffResult` is both a light wrapper around gradient `out` and storage for the forward pass
+        #     all_results = DiffBase.DiffResult(zero(T), out)
+        #     g!(all_results, x) # update out == ∇f(x)
+        #     return DiffBase.value(all_results) # return f(x)
+        # end
     end
 
 
@@ -492,6 +493,9 @@ end
 # Energies on circles: ReverseDiff friendly
 # ---------------------------------------------------------------------------- #
 
+# ReverseDiff is currently not working on v0.7.0
+@static if VERSION < v"0.7.0"
+
 # Sum squared circle distances
 function energy_sum_squared_distances_reversediff(
         c_0::Circle,
@@ -580,6 +584,8 @@ function energy_sum_overlap_squared_distances_reversediff(
 
 end
 
+end # @static if VERSION < v"0.7.0"
+
 # ---------------------------------------------------------------------------- #
 # Estimate density using Monte Carlo integration
 # ---------------------------------------------------------------------------- #
@@ -621,8 +627,8 @@ function Cuba_integrand!(x,F,f,lb,ub)
 end
 
 function Cuba_integrator(method = :cuhre; kwargs...)
-    const ndim = 2 # number of dimensions of domain
-    const ncomp = 1 # number of components of f
+    ndim = 2 # number of dimensions of domain
+    ncomp = 1 # number of components of f
     unwrap(I) = (I.integral[1], I.error[1], I.probability[1])
     integrator(method,f,lb,ub) = unwrap(method((x,F)->Cuba_integrand!(x,F,f,lb,ub), ndim, ncomp; kwargs...))
 
