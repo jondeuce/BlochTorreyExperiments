@@ -1,4 +1,6 @@
-function normAm(A, m; norm = LinearAlgebra.norm)
+function normAm(A, m;
+                norm = LinearAlgebra.norm,
+                opnorm = LinearAlgebra.opnorm)
     #NORMAM   Estimate of 1-norm of power of matrix.
     #   NORMAM(A,m) estimates norm(A^m,1).
     #   If A has nonnegative elements the estimate is exact.
@@ -60,7 +62,7 @@ function normAm(A, m; norm = LinearAlgebra.norm)
     else
         #(c,_,_,it) = normest1(@afun_power,t)
         #mv = it[2]*t*m
-        c = norm(A^m,1)
+        c = opnorm(A^m,1)
         mv = 6*t*m
     end
 

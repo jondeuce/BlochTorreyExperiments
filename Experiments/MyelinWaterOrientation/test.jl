@@ -1,6 +1,11 @@
 include("init.jl")
 using Test
+using TimerOutputs
 using Arpack
+
+# ---------------------------------------------------------------------------- #
+# Geometry Testing
+# ---------------------------------------------------------------------------- #
 
 @testset "Geometry Utils" begin
     dim = 2
@@ -59,7 +64,11 @@ using Arpack
     @test !is_inside(c1, e) # should be false, as ρ1 > a > b
 end
 
-@testset "Parabolic Integration" begin
+# ---------------------------------------------------------------------------- #
+# ParabolicDomain integration testing
+# ---------------------------------------------------------------------------- #
+
+@testset "ParabolicDomain Integration" begin
     dim, T = 2, Float64
     Zero, One = zeros(Vec{dim,T}), ones(Vec{dim,T})
     e1, e2 = basevec(Vec{dim,T}, 1), basevec(Vec{dim,T}, 2)
@@ -123,6 +132,10 @@ end
     end
 end
 
+# ---------------------------------------------------------------------------- #
+# Expmv methods testing for consistency
+# ---------------------------------------------------------------------------- #
+
 function expmv_tests(;N = 10, h = √2*(2/N), grid = generate_grid(Triangle, (N, N)))
     # Assemble mass and (Neumann BC) stiffness matrix. `quadorder` must be at
     # least one larger than `funcinterporder` to create exact (and
@@ -150,15 +163,15 @@ function expmv_tests(;N = 10, h = √2*(2/N), grid = generate_grid(Triangle, (N,
 
     μ = tr(A)/n
     Ashift = A - μ*I
-    M = Expmv.select_taylor_degree(A, x0; norm = expmv_norm)[1]
-    Mshift = Expmv.select_taylor_degree(Ashift, x0; norm = expmv_norm)[1]
+    M = Expmv.select_taylor_degree(A, x0; opnorm = expmv_norm)[1]
+    Mshift = Expmv.select_taylor_degree(Ashift, x0; opnorm = expmv_norm)[1]
 
     Ys = [zeros(n) for i in 1:5]
-    @btime $(Ys[1]) .= $Ef * $x0 evals = 1
-    @btime Expokit.expmv!($(Ys[2]), $t, $A, $x0; tol=1e-14, norm = expmv_norm, m=30) evals = 1
-    @btime Expmv.expmv!($(Ys[3]), $t, $A, $x0; norm = expmv_norm) evals = 1
-    @btime Expmv.expmv!($(Ys[4]), $t, $A, $x0; M = $M, norm = expmv_norm) evals = 1
-    @btime $(Ys[5]) .= exp($μ*$t) .* Expmv.expmv!($(Ys[5]), $t, $Ashift, $x0; M = $M, shift = false, norm = expmv_norm) evals = 1
+    @btime $(Ys[1]) .= $Ef * $x0  evals = 1
+    @btime Expokit.expmv!($(Ys[2]), $t, $A, $x0; tol=1e-14, anorm = expmv_norm($A,Inf), m=30)  evals = 1
+    @btime Expmv.expmv!($(Ys[3]), $t, $A, $x0; opnorm = expmv_norm)  evals = 1
+    @btime Expmv.expmv!($(Ys[4]), $t, $A, $x0; M = $M, opnorm = expmv_norm)  evals = 1
+    @btime $(Ys[5]) .= exp($μ*$t) .* Expmv.expmv!($(Ys[5]), $t, $Ashift, $x0; M = $M, shift = false, opnorm = expmv_norm)  evals = 1
 
     @test norm(Ys[1] - Ys[2], Inf) ≈ 0.0 rtol = 1e-12 atol = 1e-12
     @test norm(Ys[2] - Ys[3], Inf) ≈ 0.0 rtol = 1e-12 atol = 1e-12
@@ -170,16 +183,18 @@ end
     expmv_tests()
 end
 
-# ---- Single axon geometry testing ---- #
-function setup()
-    params = BlochTorreyParameters{Float64}()
+# ---------------------------------------------------------------------------- #
+# Single axon geometry testing
+# ---------------------------------------------------------------------------- #
+
+function setup(;params = BlochTorreyParameters{Float64}())
     rs = [params.R_mu] # one radius of average size
     os = zeros(Vec{2}, 1) # one origin at the origin
     outer_circles = Circle.(os, rs)
     inner_circles = scale_shape.(outer_circles, params.g_ratio)
     bcircle = scale_shape(outer_circles[1], 1.5)
 
-    h0 = 0.3 * params.R_mu * (1.0 - params.g_ratio) # fraction of size of average torus width
+    h0 = 0.2 * params.R_mu * (1.0 - params.g_ratio) # fraction of size of average torus width
     eta = 5.0 # approx ratio between largest/smallest edges
 
     mxcall(:figure,0); mxcall(:hold,0,"on")
@@ -197,12 +212,68 @@ function setup()
         exteriorgrid, torigrids, interiorgrids;
         quadorder = 3, funcinterporder = 1)
 
+    doassemble!(prob, domain)
+    factorize!(domain)
+
     return prob, domain
 end
 
-function DiffEqBase.solve(prob::MyelinProblem,
-                          domain::MyelinDomain;
-                          tspan = (0.0, 40e-3))
+function testcomparemethods(prob::MyelinProblem,
+                            domain::MyelinDomain;
+                            tspan = (0.0, 40e-3),
+                            rtol = 1e-6,
+                            atol = 1e-6)
+    doassemble!(prob, domain)
+    factorize!(domain)
+
+    u0 = Vec{2}((0.0, 1.0)) # Initial π/2-pulse
+    U0 = interpolate(x->u0, domain) # vector of vectors of degrees of freedom with `u0` at each node
+    U, Uexpmv, Uexpokit, Udiffeq = deepcopy(U0), deepcopy(U0), deepcopy(U0), deepcopy(U0)
+
+    for (i, subdomain) in enumerate(getsubdomains(domain))
+        println("i = $i/$(numsubdomains(domain)):")
+
+        A = ParabolicLinearMap(subdomain)
+        copyto!(U[i], U0[i])
+
+        # Method 1: expmv! from Higham's `Expmv`
+        solver! = expmv_solver(subdomain)
+        solver!(U[i], A, tspan, U0[i])
+        copyto!(Uexpmv[i], U[i])
+
+        # Method 2: expmv! from Expokit.jl
+        solver! = expokit_solver(subdomain)
+        solver!(U[i], A, tspan, U0[i])
+        copyto!(Uexpokit[i], U[i])
+
+        # Method 3: direct ODE solution using DifferentialEquations.jl
+        solver! = diffeq_solver(subdomain)
+        solver!(U[i], A, tspan, U0[i])
+        copyto!(Udiffeq[i], U[i])
+
+        # Compare simulation results
+        @test norm(Uexpmv - Uexpokit, Inf) ≈ 0.0 rtol = rtol atol = atol
+        @test norm(Udiffeq - Uexpokit, Inf) ≈ 0.0 rtol = rtol atol = atol
+
+        flush(stdout)
+    end
+
+    return Uexpmv, Uexpokit, Udiffeq
+end
+
+@testset "Myelin Problem Solutions" begin
+    params = BlochTorreyParameters{Float64}()
+    prob, domain = setup(;params = params)
+    Uexpmv, Uexpokit, Udiffeq = testcomparemethods(prob, domain)
+end
+
+# ---------------------------------------------------------------------------- #
+# Benchmark different expmv methods on a single axon geometry
+# ---------------------------------------------------------------------------- #
+
+function benchmark_method(prob, domain;
+                          solvertype = :diffeq,
+                          tspan = (0.0,1e-3))
     doassemble!(prob, domain)
     factorize!(domain)
 
@@ -210,42 +281,157 @@ function DiffEqBase.solve(prob::MyelinProblem,
     U0 = interpolate(x->u0, domain) # vector of vectors of degrees of freedom with `u0` at each node
     U = deepcopy(U0)
 
-    for i in 1:numsubdomains(domain)
-        print("i = $i: ")
+    for (i, subdomain) in enumerate(getsubdomains(domain))
+        solver! = if solvertype == :diffeq
+            diffeq_solver(subdomain)
+        elseif solvertype == :expokit
+            expokit_solver(subdomain)
+        elseif solvertype == :expmv
+            expmv_solver(subdomain)
+        end
 
-        subdomain = getsubdomain(domain, i)
+        print("subdomain $i/$(numsubdomains(domain)) ($solvertype): ")
+
         A = ParabolicLinearMap(subdomain)
-        U[i] = copy(U0[i])
+        @btime $solver!($(U[i]), $A, $tspan, $(U0[i])) evals = 2
 
-        # Method 1: expmv! from Higham's `Expmv`
-        M = Expmv.select_taylor_degree(A, U0[i]; norm = expmv_norm)[1]
-        @time Expmv.expmv!(U[i], tspan[end], A, U0[i]; prec = "single", M = M, norm = expmv_norm)
-        Uexpmv = copy(U[i])
+        flush(stdout)
+    end
+end
 
-        # Method 2: expmv! from Expokit.jl
-        @time Expokit.expmv!(U[i], tspan[end], A, U0[i]; tol=1e-6, norm=expmv_norm, m=30)
-        Uexpokit = copy(U[i])
+function run_benchmarks(prob, domain; tspan = (0.0, 1e-4))
+    benchmark_method(prob, domain; tspan = tspan, solvertype = :diffeq)
+    benchmark_method(prob, domain; tspan = tspan, solvertype = :expokit)
+    benchmark_method(prob, domain; tspan = tspan, solvertype = :expmv)
+end
 
-        # Method 3: direct ODE solution using DifferentialEquations.jl
+params = BlochTorreyParameters{Float64}()
+prob, domain = setup(;params = params)
+doassemble!(prob, domain)
+factorize!(domain)
+run_benchmarks(prob, domain; tspan = (0.0, 1e-6))
+
+# ---------------------------------------------------------------------------- #
+# Benchmark different expmv methods on a single axon geometry
+# ---------------------------------------------------------------------------- #
+
+function benchmark_views(;n = 1000)
+    m = sprandn(n, n, 3/n) # approx 3 elements per row
+    m = m + m' # approx 6 elements per row
+    m = m + 2*opnorm(m,1)*I # approx 7 elements per row
+
+    M = spzeros(2n, 2n)
+    M[1:2:end, 1:2:end] .= m
+    M[2:2:end, 2:2:end] .= m
+
+    mfact = cholesky(m)
+    Mfact = cholesky(M)
+
+    benchmark_views(Mfact, mfact)
+
+    return nothing
+end
+
+function benchmark_views(domain::ParabolicDomain)
+    m = Symmetric(copy(getmass(domain)[1:2:end,1:2:end]))
+    mfact = cholesky(m)
+    Mfact = cholesky(getmass(domain))
+    benchmark_views(Mfact, mfact)
+end
+
+function benchmark_views(Mfact::Factorization, mfact::Factorization)
+    U = randn(size(Mfact,2))
+    ux, uy = copy(U[1:2:end]), copy(U[2:2:end])
+    uxview, uyview = view(U, 1:2:lastindex(U)), view(U, 2:2:lastindex(U))
+
+    function reassemble!(U,ux,uy)
+        @assert length(ux) == length(uy)
+        @assert length(U) == 2*length(ux)
+        @inbounds for (i,iU) in enumerate(1:2:2*length(ux))
+            U[iU  ] = ux[i]
+            U[iU+1] = uy[i]
+        end
+        return U
+    end
+
+    tmp = similar(U)
+    @assert Mfact\U ≈ reassemble!(tmp, mfact\ux, mfact\uy)
+
+    @btime $Mfact \ $U
+    @btime $reassemble!($tmp, $mfact\$ux, $mfact\$uy)
+    @btime $reassemble!($tmp, $mfact\$uxview, $mfact\$uyview)
+
+    return nothing
+end
+
+# ---------------------------------------------------------------------------- #
+# Solving using DifferentialEquations.jl
+# ---------------------------------------------------------------------------- #
+
+function DiffEqBase.solve(prob, domain, tspan = (0.0,1e-3);
+                          abstol = 1e-8,
+                          reltol = 1e-8,
+                          linear_solver = :GMRES)
+    # Time execution
+    to = TimerOutput()
+
+    @timeit to "Assembly" doassemble!(prob, domain)
+    @timeit to "Factorization" factorize!(domain)
+    @timeit to "Interpolation" U0 = interpolate(Vec{2}((0.0, 1.0)), domain) # π/2-pulse at each node
+
+    sols = ODESolution[]
+    signals = SignalIntegrator[]
+
+    @timeit to "Solving on subdomains" for (i, subdomain) in enumerate(getsubdomains(domain))
+
+        A = ParabolicLinearMap(subdomain)
+        signal, callbackfun = IntegrationCallback(U0[i], tspan[1], subdomain)
         prob = ODEProblem((du,u,p,t)->mul!(du,p[1],u), U0[i], tspan, (A,));
-        @time sol = solve(prob, CVODE_BDF(linear_solver=:GMRES); saveat=tspan, reltol=1e-6, alg_hints=:stiff)
-        U[i] = sol.u[end]
-        Udiffeq = copy(U[i])
 
-        # Compare simulation results
-        @test norm(Uexpmv - Uexpokit, Inf) ≈ 0.0 rtol = 1e-4 atol = 1e-4
-        @test norm(Udiffeq - Uexpokit, Inf) ≈ 0.0 rtol = 1e-4 atol = 1e-4
+        print("Subdomain $i/$(numsubdomains(domain)): ")
+        @time begin # time so that can see each iteration
+            @timeit to "Subdomain $i/$(numsubdomains(domain))" begin
+                sol = solve(prob, CVODE_BDF(linear_solver = linear_solver);
+                            abstol = abstol,
+                            reltol = reltol,
+                            saveat = tspan,
+                            alg_hints = :stiff,
+                            callback = callbackfun)
+            end
+        end
+        push!(sols, sol)
+        push!(signals, signal)
 
         flush(stdout)
     end
 
-    return U
+    print_timer(to)
+    return sols, signals
 end
 
-@testset "Myelin Problem Solutions" begin
-    prob, domain = setup()
-    U = solve(prob, domain)
+params = BlochTorreyParameters{Float64}()
+prob, domain = setup(;params = params)
+doassemble!(prob, domain)
+factorize!(domain)
+sols, signals = solve(prob, domain, (0.0,40e-3))
+
+function plotsignal(signals::Vector{SignalIntegrator};
+                    softmaxpts = 200)
+    N = length(signals)
+    if N > 2*softmaxpts
+        idx = 1:div(N,softmaxpts):N
+        (idx[end] < N) && (idx = vcat(idx, N)) # ensure endpoint is included
+    else
+        idx = 1:N
+    end
+
+    Plots.plot()
+    for (i,signal) in enumerate(signals)
+        t, S = gettime(signal)[idx], relativesignal(signal)[idx]
+        Plots.plot!(t, S, title = "Signal vs. Time", label = "S vs. t: subdomain $i")
+    end
 end
 
-prob, domain = setup()
-U = solve(prob, domain)
+using Plots
+gr()
+plotsignal(signals)

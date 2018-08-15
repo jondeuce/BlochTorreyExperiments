@@ -17,7 +17,8 @@ function _expmv!(f, t, A, b, Ab = similar(b);
                  shift = true,
                  full_term = false,
                  prnt = false,
-                 norm = LinearAlgebra.norm)
+                 norm = LinearAlgebra.norm,
+                 opnorm = LinearAlgebra.opnorm)
                # bal = false,
 
     #EXPMV   Matrix exponential times vector or matrix.
@@ -65,7 +66,7 @@ function _expmv!(f, t, A, b, Ab = similar(b);
 
     if isempty(M)
         tt = one(T)
-        (M,mvd,alpha,unA) = select_taylor_degree(t*A, b; norm = norm)
+        (M,mvd,alpha,unA) = select_taylor_degree(t*A, b; opnorm = opnorm)
         mv = mvd
     else
         tt = t
@@ -106,7 +107,7 @@ function _expmv!(f, t, A, b, Ab = similar(b);
     end
 
     eta = one(T)
-    shift && (eta = exp(t*mu/s)::T)
+    shift && (eta = exp(t*mu/s))
 
     c1 = c2 = eltype(b)(Inf)
     for i = 1:s
@@ -115,14 +116,12 @@ function _expmv!(f, t, A, b, Ab = similar(b);
             prnt && println("$i/$s, $k/$m")
             # Next two lines replace `b = (t/(s*k))*(A*b)`
             mul!(Ab, A, b)
-            b .= (t/(s*k)) .* Ab
-            f .=  f .+ b
             mv = mv + 1
+            b .= (t/(s*k)) .* Ab
+            f .= f .+ b
             if !full_term
                 c2 = norm(b,Inf) # only need to update if !full_term
-                if c1 + c2 <= tol*norm(f,Inf)
-                    break
-                end
+                (c1 + c2 <= tol*norm(f,Inf)) && break
                 c1 = c2
             end
         end

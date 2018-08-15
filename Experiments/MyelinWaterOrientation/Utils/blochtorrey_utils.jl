@@ -83,11 +83,33 @@ function interpolate!(u::Vector{T}, f::Function, domain::AbstractDomain{dim,Nd,T
     apply!(u, ch)
     return u
 end
-
 function interpolate(f::Function, domain::AbstractDomain{dim}) where {dim}
     u = zeros(ndofs(getdofhandler(domain)))
     return interpolate!(u, f, domain)
 end
+
+function interpolate!(u::Vector{T}, u0::Vec{dim,T}, domain::AbstractDomain) where {dim,T}
+    # Check that `u` has the correct length
+    @assert length(u) == ndofs(getdofhandler(domain))
+
+    if length(u) == dim*getnnodes(getgrid(domain))
+        # degrees of freedom are nodal; can efficiently assign directly
+        u = reinterpret(Vec{dim,T}, u)
+        @inbounds for i in 1:length(u)
+            u[i] = u0
+        end
+        u = reinterpret(T, u)
+    else
+        # degrees of freedom are not nodal; call general projection
+        interpolate!(u, x->u0, domain)
+    end
+    return u
+end
+function interpolate!(u0::Vec{dim,T}, domain::AbstractDomain) where {dim,T}
+    u = zeros(ndofs(getdofhandler(domain)))
+    return interpolate!(u, f, domain)
+end
+
 
 function integrate(u::Vector{T}, domain::AbstractDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
     u = reinterpret(Vec{dim,T}, u)
@@ -164,7 +186,44 @@ end
 @inline JuAFEM.ndofs(d::ParabolicDomain) = JuAFEM.ndofs(getdofhandler(d))
 
 factorize!(d::ParabolicDomain) = (d.Mfact = cholesky(getmass(d)); return d)
+# function factorize!(d::ParabolicDomain)
+#     M = getmass(d)
+#     m = M[1:2:end, 1:2:end]
+#     @assert m ≈ M[2:2:end, 2:2:end]
+#     d.Mfact = cholesky(m)
+#     return d
+# end
 LinearAlgebra.norm(u, domain::ParabolicDomain) = √dot(u, getmass(domain) * u)
+
+function _compact_show_sparse(io, S::SparseMatrixCSC)
+    print(io, S.m, "×", S.n, " ", typeof(S), " with ", nnz(S), " stored ", nnz(S) == 1 ? "entry" : "entries")
+end
+function _compact_show_sparse(io, A::Symmetric{T,<:SparseMatrixCSC{T}}) where {T}
+    S = A.data; xnnz = nnz(S)
+    print(io, S.m, "×", S.n, " ", typeof(A), " with ", xnnz, " stored ", xnnz == 1 ? "entry" : "entries")
+end
+function _compact_show_factorization(io, F::Union{<:Factorization, Nothing})
+    F == nothing && (show(io, F); return)
+    m, n = size(F)
+    print(io, m, "×", n, " ", typeof(F), " with ", nnz(F), " stored ", nnz(F) == 1 ? "entry" : "entries")
+end
+function Base.show(io::IO, d::ParabolicDomain)
+    compact = get(io, :compact, false)
+    if compact
+        print(io, "$(typeof(d)) with $(ndofs(d.dh)) degrees of freedom")
+    else
+        print(io, "$(typeof(d)) with:")
+        print(io, "\n  grid: "); show(io, d.grid)
+        print(io, "\n     M: "); _compact_show_sparse(io, d.M)
+        print(io, "\n Mfact: "); _compact_show_factorization(io, d.Mfact)
+        print(io, "\n     K: "); _compact_show_sparse(io, d.K)
+        print(io, "\n     w: ", length(d.w), "-element ", typeof(d.w))
+    end
+end
+
+# ---------------------------------------------------------------------------- #
+# Assembly on ParabolicDomain
+# ---------------------------------------------------------------------------- #
 
 # Assembly quadrature weights for the parabolic domain `domain`.
 function addquadweights!(domain::ParabolicDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
@@ -193,7 +252,6 @@ function addquadweights!(domain::ParabolicDomain{dim,Nd,T,Nf}) where {dim,Nd,T,N
 
     return domain
 end
-
 
 # # Assemble the standard mass and stiffness matrices on the ParabolicDomain
 # # `domain`. The resulting system is $M u_t = K u$ and is equivalent to the weak
@@ -419,9 +477,41 @@ function interpolate(f::Function, domain::MyelinDomain{dim}) where {dim}
     return interpolate!(U, f, domain)
 end
 
+function interpolate!(U::Vector{Vector{T}},
+                      u0::Vec{dim,T},
+                      domain::MyelinDomain) where {dim,T}
+    @assert length(U) == numsubdomains(domain)
+    @inbounds for i in 1:length(U)
+        subdomain = getsubdomain(domain, i)
+        @assert length(U[i]) == ndofs(getdofhandler(subdomain))
+        interpolate!(U[i], u0, subdomain)
+    end
+    return U
+end
+function interpolate(u0::Vec{dim,T}, domain::MyelinDomain) where {dim,T}
+    U = [zeros(ndofs(getsubdomain(domain, i))) for i in 1:numsubdomains(domain)]
+    return interpolate!(U, u0, domain)
+end
+
 function LinearAlgebra.norm(U::Vector{Vector{T}}, domain::MyelinDomain{dim,Nd,T,Nf}) where {dim,Nd,T,Nf}
     @assert length(U) == numsubdomains(domain)
     return √sum(i->norm(U[i], getsubdomain(domain,i))^2, 1:numsubdomains(domain))
+end
+
+function Base.show(io::IO, m::MyelinDomain)
+    compact = get(io, :compact, false)
+    len = length(m.outercircles)
+    subs = getsubdomains(m)
+    ndof = sum(ndofs.(getdofhandler.(subs)))
+    plural_s = len == 1 ? "" : "s"
+    print(io, "$(typeof(m)) with $(len) fibre", plural_s, ", ",
+              "$ndof total degrees of freedom, and $(length(subs)) subdomains")
+    if !compact
+        showdomain = (d) -> (print(io, "\n  "); show(IOContext(io, :compact => true), d))
+        print(io, ":\n1 tissue domain:"); showdomain(m.tissuedomain)
+        print(io, "\n$len myelin domain", plural_s, ":"); showdomain.(m.myelindomains)
+        print(io, "\n$len axon domain", plural_s, ":"); showdomain.(m.axondomains)
+    end
 end
 
 # ---------------------------------------------------------------------------- #
@@ -572,19 +662,12 @@ struct ParabolicLinearMap{T} <: LinearMap{T}
     Mfact::Factorization{T}
     K::AbstractMatrix{T}
     function ParabolicLinearMap(M::AbstractMatrix{T}, Mfact::Factorization{T}, K::AbstractMatrix{T}) where {T}
-        @assert (size(M) == size(Mfact) == size(K)) && (size(M,1) == size(M,2))
+        @assert (size(M) == size(K)) && (size(M,1) == size(M,2))
+        @assert (size(M) == size(Mfact) || size(M) == 2 .* size(Mfact))
         new{T}(M, Mfact, K)
     end
 end
 ParabolicLinearMap(d::ParabolicDomain) = ParabolicLinearMap(getmass(d), getmassfact(d), getstiffness(d))
-# function ParabolicLinearMap(K, Mfact)
-#     (size(K) == size(Mfact)) && (size(K,1) == size(K,2)) || throw(DimensionMismatch("ParabolicLinearMap"))
-#     fwd_mul! = (Y, X) -> Minv_K_mul_u!(Y, X, K, Mfact)
-#     trans_mul! = (isreal(K) ? (Y, X) -> Kt_Minv_mul_u!(Y, X, K, Mfact)
-#                             : (Y, X) -> Kc_Minv_mul_u!(Y, X, K, Mfact))
-#     return LinearMap(fwd_mul!, trans_mul!, size(K)...;
-#     ismutating=true, issymmetric=false, ishermitian=false, isposdef=false)
-# end
 
 # Properties
 Base.size(A::ParabolicLinearMap) = size(A.K)
@@ -621,12 +704,38 @@ else
     LinearAlgebra.A_mul_B!( Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = mul!(Y, A, X)
     LinearAlgebra.At_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = mul!(Y, transpose(A), X)
     LinearAlgebra.Ac_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = mul!(Y, adjoint(A), X)
+
+    # For taking powers of LinearMaps, e.g. A^2
     Base.to_power_type(A::Union{<:LinearMaps.AdjointMap, <:LinearMaps.TransposeMap, <:LinearMap}) = A
 
+    function reassemble!(U,ux,uy)
+        @assert size(ux,1) == size(uy,1)
+        @assert size(U,1) == 2*size(ux,1)
+        @inbounds for (i,iU) in enumerate(1:2:2*size(ux,1))
+            @views U[iU  , :] = ux[i,:]
+            @views U[iU+1, :] = uy[i,:]
+        end
+        return U
+    end
+
+    function Minv_u(Mfact, X)
+        if size(Mfact,2) == size(X,1)
+            Y = Mfact\X
+            return Y
+        elseif 2*size(Mfact,2) == size(X,1)
+            Y = similar(X)
+            x, y = X[1:2:end,:], X[2:2:end,:]
+            reassemble!(Y, Mfact\x, Mfact\y)
+            return Y
+        else
+            throw(DimensionMismatch("Minv_u"))
+        end
+    end
+
     # Multiplication action
-    Minv_K_mul_u!(Y, X, K, Mfact) = (mul!(Y, K, X); copy!(Y, Mfact\Y); return Y)
-    Kt_Minv_mul_u!(Y, X, K, Mfact) = (mul!(Y, transpose(K), Mfact\X); return Y)
-    Kc_Minv_mul_u!(Y, X, K, Mfact) = (mul!(Y, adjoint(K), Mfact\X); return Y)
+    Minv_K_mul_u!(Y, X, K, Mfact) = (mul!(Y, K, X); copyto!(Y, Minv_u(Mfact, Y)); return Y)
+    Kt_Minv_mul_u!(Y, X, K, Mfact) = (mul!(Y, transpose(K), Minv_u(Mfact, X)); return Y)
+    Kc_Minv_mul_u!(Y, X, K, Mfact) = (mul!(Y, adjoint(K), Minv_u(Mfact, X)); return Y)
 
     # Multiplication with Vector or Matrix
     LinearAlgebra.mul!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = Minv_K_mul_u!(Y, X, A.K, A.Mfact)
@@ -651,9 +760,10 @@ function LinearAlgebra.tr(A::LinearMap{T}, t::Int = 10) where {T}
     return tr * (N/t)
 end
 
-# normAm
+# `norm`, `opnorm`, and `normAm`
 Expmv.normAm(A::LinearMap, p::Real, t::Int = 10) = (Normest1.normest1(A^p, t)[1], 0)
-LinearAlgebra.norm(A::ParabolicLinearMap, p::Real, t::Int = 10) = expmv_norm(A, p, t)
+LinearAlgebra.norm(A::LinearMap, p::Real, t::Int = 10) = expmv_norm(A, p, t)
+LinearAlgebra.opnorm(A::LinearMap, p::Real, t::Int = 10) = expmv_norm(A, p, t)
 
 # ---------------------------------------------------------------------------- #
 # expmv and related functions
@@ -670,7 +780,86 @@ end
 # Default fallback for vectors
 expmv_norm(x::AbstractVector, p::Real=2, t::Int=10) = LinearAlgebra.norm(x, p)
 
-nothing
+function diffeq_solver(domain; abstol = 1e-8, reltol = 1e-8, linear_solver = :GMRES)
+    function solver!(U, A, tspan, U0)
+        signal, callbackfun = IntegrationCallback(U0, tspan[1], domain)
+        prob = ODEProblem((du,u,p,t)->mul!(du,p[1],u), U0, tspan, (A,));
+        sol = solve(prob, CVODE_BDF(linear_solver = linear_solver);
+                    abstol = abstol,
+                    reltol = reltol,
+                    saveat = tspan,
+                    alg_hints = :stiff,
+                    callback = callbackfun)
+        copyto!(U, sol.u[end])
+        return U
+    end
+    return solver!
+end
+
+function expokit_solver(domain; tol = 1e-8, m = 30, opnorm = expmv_norm)
+    function solver!(U, A, tspan, U0)
+        anorm = opnorm(A, Inf)
+        Expokit.expmv!(U, tspan[end], A, U0;
+            anorm = anorm,
+            tol = tol,
+            m = m)
+        return U
+    end
+    return solver!
+end
+
+function expmv_solver(domain; prec = "single", opnorm = expmv_norm)
+    function solver!(U, A, tspan, U0)
+        M = Expmv.select_taylor_degree(A, U0; opnorm = opnorm)[1]
+        Expmv.expmv!(U, tspan[end], A, U0;
+            prec = prec,
+            M = M,
+            opnorm = opnorm)
+        return U
+    end
+    return solver!
+end
+
+# ---------------------------------------------------------------------------- #
+# DiscreteCallback for integrating system using DifferentialEquations.jl
+# ---------------------------------------------------------------------------- #
+struct SignalIntegrator{uDim,gDim,Nd,T,Nf}
+    time::Vector{T}
+    signal::Vector{Vec{uDim,T}}
+    domain::ParabolicDomain{gDim,Nd,T,Nf}
+end
+function (p::SignalIntegrator)(int)
+    push!(p.signal, integrate(int.u, p.domain))
+    push!(p.time, int.t)
+    u_modified!(int, false)
+end
+function IntegrationCallback(u0, t0, domain)
+    intial_signal = integrate(u0, domain)
+    signalintegrator! = SignalIntegrator([t0], [intial_signal], domain)
+    discretecallback = DiscreteCallback((u,t,int) -> true, signalintegrator!, save_positions = (false, false))
+    return signalintegrator!, discretecallback
+end
+
+gettime(p::SignalIntegrator) = p.time
+getsignal(p::SignalIntegrator) = p.signal
+signalnorm(p::SignalIntegrator) = norm.(p.signal)
+relativesignalnorm(p::SignalIntegrator) = signalnorm(p)./norm(getsignal(p)[1])
+relativesignal(p::SignalIntegrator) = (S = getsignal(p); return S./norm(S[1]))
+
+function Base.show(io::IO, p::SignalIntegrator)
+    compact = get(io, :compact, false)
+    nsignals = length(p.signal)
+    ntimes = length(p.time)
+    plural_s = nsignals == 1 ? "" : "s"
+    print(io, "$(typeof(p))")
+    if compact || !compact
+        print(io, " with $nsignals stored signal", plural_s)
+    else
+        print(io, "\n    time: $ntimes-element ", typeof(p.time))
+        print(io, "\n  signal: $nsignals-element ", typeof(p.signal))
+        print(io, "\n  domain: "); show(IOContext(io, :compact => true), p.domain)
+    end
+end
 
 # ---------------------------------------------------------------------------- #
 # Local frequency perturbation map functions

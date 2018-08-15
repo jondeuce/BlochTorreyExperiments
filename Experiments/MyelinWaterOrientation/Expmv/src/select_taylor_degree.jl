@@ -9,7 +9,7 @@ function select_taylor_degree(A,
                               shift = false,
                               # bal,
                               force_estm = false,
-                              norm = LinearAlgebra.norm)
+                              opnorm = LinearAlgebra.opnorm)
 
 
     #SELECT_TAYLOR_DEGREE   Select degree of Taylor approximation.
@@ -32,7 +32,7 @@ function select_taylor_degree(A,
 
     # if bal
     #     [D B] = balance(A)
-    #     if norm(B,1) < norm(A,1), A = B; end
+    #     if opnorm(B,1) < opnorm(A,1), A = B; end
     # end
 
     theta =
@@ -52,7 +52,7 @@ function select_taylor_degree(A,
     mv = 0
 
     if !force_estm
-        normA = norm(A,1)
+        normA = opnorm(A,1)
     end
 
     if !force_estm && normA <= 4*theta[m_max]*p_max*(p_max + 3)/(m_max*size(b,2))
@@ -64,8 +64,9 @@ function select_taylor_degree(A,
         eta = zeros(p_max,1)
         alpha = zeros(p_max-1,1)
         for p = 1:p_max
-            # (c,k) = normAm(A,p+1; norm = norm)
-            c, k = norm(Base.power_by_squaring(A,p+1),1), p+1
+            # (c,k) = normAm(A,p+1; opnorm = opnorm)
+            c = opnorm(Base.power_by_squaring(A,p+1),1)
+            k = p+1
             c = c^(1/(p+1))
             mv = mv + k
             eta[p] = c
