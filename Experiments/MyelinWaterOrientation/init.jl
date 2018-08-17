@@ -39,12 +39,14 @@ using Roots
 using Distributions
 using ForwardDiff
 using PolynomialRoots
+using ApproxFun
+using Interpolations
+using LsqFit
 # using Plots
 
 # Packages currently not working on v0.7.0:
 @static if VERSION < v"0.7.0"
     using Traceur
-    using ApproxFun
     using ReverseDiff
 end
 
@@ -69,3 +71,6 @@ Revise.track(MWOPATH * "Geometry/geometry_utils.jl")
 Revise.track(MWOPATH * "Geometry/circle_packing.jl")
 Revise.track(MWOPATH * "Utils/mesh_utils.jl")
 Revise.track(MWOPATH * "Utils/blochtorrey_utils.jl")
+
+# add Arpack Atom BenchmarkTools BlockArrays DifferentialEquations Distributions Expokit Flatten ForwardDiff GR IJulia Interpolations IterTools JuAFEM Juno LinearMaps MATLAB Optim Parameters Plots PolynomialRoots Revise Roots StaticArrays StatsBase Tensors TimerOutputs
+# add https://github.com/KristofferC/JuAFEM.jl

@@ -93,7 +93,7 @@ end
 
     # ---- All integration methods should return exact area ---- #
     Agrid = 4.0 # [-1,1]² grid
-    for (q,f) in IterTools.product(1:2, 1:2)
+    for (q,f) in Iterators.product(1:2, 1:2)
         @test getintegral(x->One; qorder = q, forder = f, gorder = 1) ≈ Agrid*One
         @test_broken getintegral(x->One; qorder = q, forder = f, gorder = 2) ≈ Agrid*One
     end
@@ -101,7 +101,7 @@ end
     # ---- All integration methods should integrate linear functions exactly ---- #
     func = x -> Vec{dim,T}((2x[1]+x[2]+1, 3x[2]-x[1]+1))
     Iexact = Agrid * One # linear terms cancel over [-1,1]^2
-    for (q,f) in IterTools.product(1:2, 1:2)
+    for (q,f) in Iterators.product(1:2, 1:2)
         @test getintegral(func; qorder = q, forder = f, gorder = 1) ≈ Iexact
         @test_broken getintegral(func; qorder = q, forder = f, gorder = 2) ≈ Iexact
     end
@@ -109,7 +109,7 @@ end
     # ---- Quadratic integration of quadratic interpolated function integrates quadratics exactly ---- #
     func = x -> Vec{dim,T}((x[1]^2-x[1]*x[2]+1, 2x[1]*x[2] + x[2]^2))
     Iexact = Vec{dim,T}((16/3, 4/3))
-    for (q,f) in IterTools.product(2:2, 2:2)
+    for (q,f) in Iterators.product(2:2, 2:2)
         @test getintegral(func; qorder = q, forder = f, gorder = 1) ≈ Iexact
         @test_broken getintegral(func; qorder = q, forder = f, gorder = 2) ≈ Iexact
     end
@@ -117,7 +117,7 @@ end
     # ---- L²-norm of linear function should be exact for quadratic quad rules ---- #
     func = x -> Vec{dim,T}((2x[1]+x[2]+1, 3x[2]-x[1]+1))
     L²exact = √28.0
-    for (q,f) in IterTools.product(2:2, 1:2)
+    for (q,f) in Iterators.product(2:2, 1:2)
         @test getL2norm(func; qorder = q, forder = f, gorder = 1) ≈ L²exact
         @test_broken getL2norm(func; qorder = q, forder = f, gorder = 2) ≈ L²exact
     end
@@ -203,35 +203,35 @@ function setup(;params = BlochTorreyParameters{Float64}())
 
     all_tori = form_subgrid(grid, getcellset(grid, "tori"), getnodeset(grid, "tori"), getfaceset(grid, "boundary"))
     all_int = form_subgrid(grid, getcellset(grid, "interior"), getnodeset(grid, "interior"), getfaceset(grid, "boundary"))
-    mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(exteriorgrid)
-    mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(all_tori)
+    mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(exteriorgrid); sleep(0.5)
+    mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(all_tori); sleep(0.5)
     mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(all_int)
 
     prob = MyelinProblem(params)
-    domain = MyelinDomain(grid, outer_circles, inner_circles, bcircle,
+    domains = MyelinDomain(grid, outer_circles, inner_circles, bcircle,
         exteriorgrid, torigrids, interiorgrids;
         quadorder = 3, funcinterporder = 1)
 
-    doassemble!(prob, domain)
-    factorize!(domain)
+    doassemble!(prob, domains)
+    factorize!(domains)
 
-    return prob, domain
+    return prob, domains
 end
 
 function testcomparemethods(prob::MyelinProblem,
-                            domain::MyelinDomain;
-                            tspan = (0.0, 40e-3),
+                            domains::MyelinDomain;
+                            tspan = (0.0, 1e-3),
                             rtol = 1e-6,
                             atol = 1e-6)
-    doassemble!(prob, domain)
-    factorize!(domain)
+    doassemble!(prob, domains)
+    factorize!(domains)
 
     u0 = Vec{2}((0.0, 1.0)) # Initial π/2-pulse
-    U0 = interpolate(x->u0, domain) # vector of vectors of degrees of freedom with `u0` at each node
+    U0 = interpolate(x->u0, domains) # vector of vectors of degrees of freedom with `u0` at each node
     U, Uexpmv, Uexpokit, Udiffeq = deepcopy(U0), deepcopy(U0), deepcopy(U0), deepcopy(U0)
 
-    for (i, subdomain) in enumerate(getsubdomains(domain))
-        println("i = $i/$(numsubdomains(domain)):")
+    for (i, subdomain) in enumerate(getsubdomains(domains))
+        println("i = $i/$(numsubdomains(domains)):")
 
         A = ParabolicLinearMap(subdomain)
         copyto!(U[i], U0[i])
@@ -261,27 +261,27 @@ function testcomparemethods(prob::MyelinProblem,
     return Uexpmv, Uexpokit, Udiffeq
 end
 
+params = BlochTorreyParameters{Float64}()
+prob, domains = setup(;params = params)
 @testset "Myelin Problem Solutions" begin
-    params = BlochTorreyParameters{Float64}()
-    prob, domain = setup(;params = params)
-    Uexpmv, Uexpokit, Udiffeq = testcomparemethods(prob, domain)
+    testcomparemethods(prob, domains)
 end
 
 # ---------------------------------------------------------------------------- #
 # Benchmark different expmv methods on a single axon geometry
 # ---------------------------------------------------------------------------- #
 
-function benchmark_method(prob, domain;
+function benchmark_method(prob, domains;
                           solvertype = :diffeq,
                           tspan = (0.0,1e-3))
-    doassemble!(prob, domain)
-    factorize!(domain)
+    doassemble!(prob, domains)
+    factorize!(domains)
 
     u0 = Vec{2}((0.0, 1.0)) # Initial π/2-pulse
-    U0 = interpolate(x->u0, domain) # vector of vectors of degrees of freedom with `u0` at each node
+    U0 = interpolate(x->u0, domains) # vector of vectors of degrees of freedom with `u0` at each node
     U = deepcopy(U0)
 
-    for (i, subdomain) in enumerate(getsubdomains(domain))
+    for (i, subdomain) in enumerate(getsubdomains(domains))
         solver! = if solvertype == :diffeq
             diffeq_solver(subdomain)
         elseif solvertype == :expokit
@@ -290,7 +290,7 @@ function benchmark_method(prob, domain;
             expmv_solver(subdomain)
         end
 
-        print("subdomain $i/$(numsubdomains(domain)) ($solvertype): ")
+        print("subdomain $i/$(numsubdomains(domains)) ($solvertype): ")
 
         A = ParabolicLinearMap(subdomain)
         @btime $solver!($(U[i]), $A, $tspan, $(U0[i])) evals = 2
@@ -299,17 +299,17 @@ function benchmark_method(prob, domain;
     end
 end
 
-function run_benchmarks(prob, domain; tspan = (0.0, 1e-4))
-    benchmark_method(prob, domain; tspan = tspan, solvertype = :diffeq)
-    benchmark_method(prob, domain; tspan = tspan, solvertype = :expokit)
-    benchmark_method(prob, domain; tspan = tspan, solvertype = :expmv)
+function run_benchmarks(prob, domains; tspan = (0.0, 1e-4))
+    benchmark_method(prob, domains; tspan = tspan, solvertype = :diffeq)
+    benchmark_method(prob, domains; tspan = tspan, solvertype = :expokit)
+    benchmark_method(prob, domains; tspan = tspan, solvertype = :expmv)
 end
 
 params = BlochTorreyParameters{Float64}()
-prob, domain = setup(;params = params)
-doassemble!(prob, domain)
-factorize!(domain)
-run_benchmarks(prob, domain; tspan = (0.0, 1e-6))
+prob, domains = setup(;params = params)
+doassemble!(prob, domains)
+factorize!(domains)
+run_benchmarks(prob, domains; tspan = (0.0, 1e-6))
 
 # ---------------------------------------------------------------------------- #
 # Benchmark different expmv methods on a single axon geometry
@@ -368,29 +368,28 @@ end
 # Solving using DifferentialEquations.jl
 # ---------------------------------------------------------------------------- #
 
-function DiffEqBase.solve(prob, domain, tspan = (0.0,1e-3);
+function DiffEqBase.solve(prob, domains, tspan = (0.0,1e-3);
                           abstol = 1e-8,
                           reltol = 1e-8,
                           linear_solver = :GMRES)
-    # Time execution
     to = TimerOutput()
-
-    @timeit to "Assembly" doassemble!(prob, domain)
-    @timeit to "Factorization" factorize!(domain)
-    @timeit to "Interpolation" U0 = interpolate(Vec{2}((0.0, 1.0)), domain) # π/2-pulse at each node
-
+    u0 = Vec{2}((0.0, 1.0))
     sols = ODESolution[]
     signals = SignalIntegrator[]
 
-    @timeit to "Solving on subdomains" for (i, subdomain) in enumerate(getsubdomains(domain))
+    @timeit to "Assembly" doassemble!(prob, domains)
+    @timeit to "Factorization" factorize!(domains)
+    @timeit to "Interpolation" U0 = interpolate(u0, domains) # π/2-pulse at each node
+
+    @timeit to "Solving on subdomains" for (i, subdomain) in enumerate(getsubdomains(domains))
 
         A = ParabolicLinearMap(subdomain)
         signal, callbackfun = IntegrationCallback(U0[i], tspan[1], subdomain)
         prob = ODEProblem((du,u,p,t)->mul!(du,p[1],u), U0[i], tspan, (A,));
 
-        print("Subdomain $i/$(numsubdomains(domain)): ")
-        @time begin # time so that can see each iteration
-            @timeit to "Subdomain $i/$(numsubdomains(domain))" begin
+        print("Subdomain $i/$(numsubdomains(domains)): ")
+        @time begin # time twice so that can see each iteration
+            @timeit to "Subdomain $i/$(numsubdomains(domains))" begin
                 sol = solve(prob, CVODE_BDF(linear_solver = linear_solver);
                             abstol = abstol,
                             reltol = reltol,
@@ -410,10 +409,10 @@ function DiffEqBase.solve(prob, domain, tspan = (0.0,1e-3);
 end
 
 params = BlochTorreyParameters{Float64}()
-prob, domain = setup(;params = params)
-doassemble!(prob, domain)
-factorize!(domain)
-sols, signals = solve(prob, domain, (0.0,40e-3))
+prob, domains = setup(;params = params)
+doassemble!(prob, domains)
+factorize!(domains)
+sols, signals = solve(prob, domains, (0.0,40e-3))
 
 function plotsignal(signals::Vector{SignalIntegrator};
                     softmaxpts = 200)
@@ -427,7 +426,7 @@ function plotsignal(signals::Vector{SignalIntegrator};
 
     Plots.plot()
     for (i,signal) in enumerate(signals)
-        t, S = gettime(signal)[idx], relativesignal(signal)[idx]
+        t, S = gettime(signal)[idx], relativesignalnorm(signal)[idx]
         Plots.plot!(t, S, title = "Signal vs. Time", label = "S vs. t: subdomain $i")
     end
 end

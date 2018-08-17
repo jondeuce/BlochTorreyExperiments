@@ -625,5 +625,4 @@ function intersect_area_test(c::Circle{2,T}) where {T}
     return (A_test, A_exact)
 end
 
-
 nothing
