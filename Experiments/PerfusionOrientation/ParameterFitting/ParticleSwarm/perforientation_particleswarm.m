@@ -47,12 +47,12 @@ alpha_range = 17.5:10.0:87.5;
 
 % ---- SE w/ Diffusion Initial Guess ---- %
 %       CA        iBVF          aBVF
-lb  = [ 3.0000,   1.1000/100,   1.1000/100 ];
-ub  = [ 6.0000,   2.2000/100,   2.2000/100 ];
+lb  = [ 4.0000,   1.1000/100,   1.1000/100 ];
+ub  = [ 7.0000,   1.6000/100,   1.6000/100 ];
 
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize] = get_SE_data(alpha_range);
 
-Nmajor = 4;
+Nmajor = 5;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
@@ -73,17 +73,17 @@ TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512
 % input('Press enter to continue...');
 
 %with diffusion
-D_Tissue = 2000; %[um^2/s]
+D_Tissue = 3037; %[um^2/s]
 D_Blood = 3037; %[um^2/s]
 D_VRS = 3037; %[um^2/s]
-% VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless]
+VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless] => 3X volume (see below)
 % VRSRelativeRad = sqrt(5/2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(5/2) => 1.5X
-VRSRelativeRad = sqrt(3); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(3) => 2X
+% VRSRelativeRad = sqrt(3); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(3) => 2X
 
-% Nsteps = 10;
-% StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
-Nsteps = 2;
-StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
+Nsteps = 8;
+StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
+% Nsteps = 2;
+% StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
 NparticlesPerParam = 2;
 
 %diffusionless
