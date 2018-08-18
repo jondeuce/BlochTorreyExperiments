@@ -1,7 +1,6 @@
 include("init.jl")
 using Test
 using TimerOutputs
-using Arpack
 
 # ---------------------------------------------------------------------------- #
 # Geometry Testing
@@ -77,8 +76,8 @@ end
         grid = generate_grid(cellshape, (N, N))
         domain = ParabolicDomain(grid; refshape = refshape, quadorder = qorder, funcinterporder = forder, geominterporder = gorder)
         addquadweights!(domain)
-        u = interpolate(f, domain)
-        I = integrate(u, domain)
+        u = BlochTorreyUtils.interpolate(f, domain)
+        I = BlochTorreyUtils.integrate(u, domain)
         return I
     end
 
@@ -86,7 +85,7 @@ end
         grid = generate_grid(cellshape, (N, N))
         domain = ParabolicDomain(grid; refshape = refshape, quadorder = qorder, funcinterporder = forder, geominterporder = gorder)
         doassemble!(domain)
-        u = interpolate(f, domain)
+        u = BlochTorreyUtils.interpolate(f, domain)
         L² = norm(u, domain)
         return L²
     end
@@ -157,21 +156,21 @@ function expmv_tests(;N = 10, h = √2*(2/N), grid = generate_grid(Triangle, (N,
     Af = Matrix(A)
     n = size(A,2)
 
-    t = 1.0
+    t = 1e-3
     x0 = randn(n); #x0 = zeros(n); @views x0[2:2:n] .= 1.0;
     Ef = exp(t*Af) # dense exponential matrix
 
     μ = tr(A)/n
     Ashift = A - μ*I
-    M = Expmv.select_taylor_degree(A, x0; opnorm = expmv_norm)[1]
-    Mshift = Expmv.select_taylor_degree(Ashift, x0; opnorm = expmv_norm)[1]
+    M = Expmv.select_taylor_degree(A, x0; opnorm = normest1_norm)[1]
+    Mshift = Expmv.select_taylor_degree(Ashift, x0; opnorm = normest1_norm)[1]
 
     Ys = [zeros(n) for i in 1:5]
     @btime $(Ys[1]) .= $Ef * $x0  evals = 1
-    @btime Expokit.expmv!($(Ys[2]), $t, $A, $x0; tol=1e-14, anorm = expmv_norm($A,Inf), m=30)  evals = 1
-    @btime Expmv.expmv!($(Ys[3]), $t, $A, $x0; opnorm = expmv_norm)  evals = 1
-    @btime Expmv.expmv!($(Ys[4]), $t, $A, $x0; M = $M, opnorm = expmv_norm)  evals = 1
-    @btime $(Ys[5]) .= exp($μ*$t) .* Expmv.expmv!($(Ys[5]), $t, $Ashift, $x0; M = $M, shift = false, opnorm = expmv_norm)  evals = 1
+    @btime Expokit.expmv!($(Ys[2]), $t, $A, $x0; tol=1e-14, anorm = normest1_norm($A,Inf), m=30)  evals = 1
+    @btime Expmv.expmv!($(Ys[3]), $t, $A, $x0; opnorm = normest1_norm)  evals = 1
+    @btime Expmv.expmv!($(Ys[4]), $t, $A, $x0; M = $M, opnorm = normest1_norm)  evals = 1
+    @btime $(Ys[5]) .= exp($μ*$t) .* Expmv.expmv!($(Ys[5]), $t, $Ashift, $x0; M = $M, shift = false, opnorm = normest1_norm)  evals = 1
 
     @test norm(Ys[1] - Ys[2], Inf) ≈ 0.0 rtol = 1e-12 atol = 1e-12
     @test norm(Ys[2] - Ys[3], Inf) ≈ 0.0 rtol = 1e-12 atol = 1e-12
@@ -190,7 +189,7 @@ end
 function setup(;params = BlochTorreyParameters{Float64}())
     rs = [params.R_mu] # one radius of average size
     os = zeros(Vec{2}, 1) # one origin at the origin
-    outer_circles = Circle.(os, rs)
+    outer_circles = GeometryUtils.Circle.(os, rs)
     inner_circles = scale_shape.(outer_circles, params.g_ratio)
     bcircle = scale_shape(outer_circles[1], 1.5)
 
@@ -227,7 +226,7 @@ function testcomparemethods(prob::MyelinProblem,
     factorize!(domains)
 
     u0 = Vec{2}((0.0, 1.0)) # Initial π/2-pulse
-    U0 = interpolate(x->u0, domains) # vector of vectors of degrees of freedom with `u0` at each node
+    U0 = BlochTorreyUtils.interpolate(x->u0, domains) # vector of vectors of degrees of freedom with `u0` at each node
     U, Uexpmv, Uexpokit, Udiffeq = deepcopy(U0), deepcopy(U0), deepcopy(U0), deepcopy(U0)
 
     for (i, subdomain) in enumerate(getsubdomains(domains))
@@ -278,7 +277,7 @@ function benchmark_method(prob, domains;
     factorize!(domains)
 
     u0 = Vec{2}((0.0, 1.0)) # Initial π/2-pulse
-    U0 = interpolate(x->u0, domains) # vector of vectors of degrees of freedom with `u0` at each node
+    U0 = BlochTorreyUtils.interpolate(x->u0, domains) # vector of vectors of degrees of freedom with `u0` at each node
     U = deepcopy(U0)
 
     for (i, subdomain) in enumerate(getsubdomains(domains))
@@ -367,46 +366,6 @@ end
 # ---------------------------------------------------------------------------- #
 # Solving using DifferentialEquations.jl
 # ---------------------------------------------------------------------------- #
-
-function DiffEqBase.solve(prob, domains, tspan = (0.0,1e-3);
-                          abstol = 1e-8,
-                          reltol = 1e-8,
-                          linear_solver = :GMRES)
-    to = TimerOutput()
-    u0 = Vec{2}((0.0, 1.0))
-    sols = ODESolution[]
-    signals = SignalIntegrator[]
-
-    @timeit to "Assembly" doassemble!(prob, domains)
-    @timeit to "Factorization" factorize!(domains)
-    @timeit to "Interpolation" U0 = interpolate(u0, domains) # π/2-pulse at each node
-
-    @timeit to "Solving on subdomains" for (i, subdomain) in enumerate(getsubdomains(domains))
-
-        A = ParabolicLinearMap(subdomain)
-        signal, callbackfun = IntegrationCallback(U0[i], tspan[1], subdomain)
-        prob = ODEProblem((du,u,p,t)->mul!(du,p[1],u), U0[i], tspan, (A,));
-
-        print("Subdomain $i/$(numsubdomains(domains)): ")
-        @time begin # time twice so that can see each iteration
-            @timeit to "Subdomain $i/$(numsubdomains(domains))" begin
-                sol = solve(prob, CVODE_BDF(linear_solver = linear_solver);
-                            abstol = abstol,
-                            reltol = reltol,
-                            saveat = tspan,
-                            alg_hints = :stiff,
-                            callback = callbackfun)
-            end
-        end
-        push!(sols, sol)
-        push!(signals, signal)
-
-        flush(stdout)
-    end
-
-    print_timer(to)
-    return sols, signals
-end
 
 params = BlochTorreyParameters{Float64}()
 prob, domains = setup(;params = params)

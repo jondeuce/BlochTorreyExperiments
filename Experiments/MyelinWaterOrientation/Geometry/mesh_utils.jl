@@ -2,6 +2,21 @@
 # Tools for working with circles within JuAFEM.jl Grid's
 # ============================================================================ #
 
+module MeshUtils
+
+# ---------------------------------------------------------------------------- #
+# Dependencies
+# ---------------------------------------------------------------------------- #
+using ..GeometryUtils
+using JuAFEM
+using JuAFEM: vertices, faces, edges
+using MATLAB, SparseArrays, Statistics
+
+export getfaces, mxplot,
+       circle_mesh_with_tori,
+       rect_mesh_with_circles, disjoint_rect_mesh_with_tori, rect_mesh_with_tori,
+       form_tori_subgrids, form_disjoint_grid, form_subgrid
+
 # ---------------------------------------------------------------------------- #
 # Misc grid utils
 # ---------------------------------------------------------------------------- #
@@ -478,35 +493,6 @@ function mxplot(g::Grid)
 end
 
 # ---------------------------------------------------------------------------- #
-# is_on_circle/is_on_any_circle
-# ---------------------------------------------------------------------------- #
-@inline function is_on_circle(x::Vec{dim,T},
-                              circle::Circle{dim,T},
-                              thresh::T=sqrt(eps(T))) where {dim,T}
-    return abs(norm(x - origin(circle)) - radius(circle)) <= thresh
-end
-function is_on_any_circle(x::Vec{dim,T},
-                          circles::Vector{Circle{dim,T}},
-                          thresh::T=sqrt(eps(T))) where {dim,T}
-    return any(circle->is_on_circle(x, circle, thresh), circles)
-end
-
-# ---------------------------------------------------------------------------- #
-# is_in_circle/is_in_any_circle
-# ---------------------------------------------------------------------------- #
-@inline function is_in_circle(x::Vec{dim,T},
-                              circle::Circle{dim,T},
-                              thresh::T=sqrt(eps(T))) where {dim,T}
-    dx = x - origin(circle)
-    return dx⋅dx <= (radius(circle) + thresh)^2
-end
-function is_in_any_circle(x::Vec{dim,T},
-                          circles::Vector{Circle{dim,T}},
-                          thresh::T=sqrt(eps(T))) where {dim,T}
-    return any(circle->is_in_circle(x, circle, thresh), circles)
-end
-
-# ---------------------------------------------------------------------------- #
 # project_circle
 # ---------------------------------------------------------------------------- #
 function project_circle!(grid::Grid, circle::Circle{dim,T}, thresh::T) where {dim,T}
@@ -519,22 +505,18 @@ function project_circle!(grid::Grid, circle::Circle{dim,T}, thresh::T) where {di
             grid.nodes[i] = Node(x)
         end
     end
+    return grid
 end
-function project_circle(grid::Grid, circle::Circle, thresh)
-    g = deepcopy(grid)
-    project_circle!(g, circle, thresh)
-    return g
-end
-
 function project_circles!(grid::Grid, circles::Vector{C}, thresh) where {C <: Circle}
     for circle in circles
         project_circle!(grid, circle, thresh)
     end
+    return grid
 end
-function project_circles(grid::Grid, circles::Vector{C}, thresh) where {C <: Circle}
-    g = deepcopy(grid)
-    project_circles!(g, circles, thresh)
-    return g
-end
+
+project_circle(grid::Grid, circle::Circle, thresh) = project_circle!(deepcopy(grid), circle, thresh)
+project_circles(grid::Grid, circles::Vector{C}, thresh) where {C <: Circle} = project_circles!(deepcopy(grid), circles, thresh)
+
+end # module MeshUtils
 
 nothing

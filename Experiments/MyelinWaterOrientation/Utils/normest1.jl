@@ -2,7 +2,6 @@
 # Semi-direct translation of the MATLAB `normest1` code
 # ============================================================================ #
 
-# __precompile__(true)
 module Normest1
 
 using LinearMaps
@@ -280,14 +279,14 @@ function normest1(A,
 
    v = zeros(Te, n)
    v[est_j] = one(Te)
-   if !prnt
-      return est, v, w, iter
-   end
+   # if !prnt
+   return est, v, w, iter
+   # end
 
-   if A_is_real
-      #fprintf(getString(message("MATLAB:normest1:ParallelCols", sprintf("#g",red[1]))))
-   end
-   #fprintf(getString(message("MATLAB:normest1:RepeatedUnitVectors", sprintf("#g",red[2]))))
+   # if A_is_real
+   #    fprintf(getString(message("MATLAB:normest1:ParallelCols", sprintf("#g",red[1]))))
+   # end
+   # fprintf(getString(message("MATLAB:normest1:RepeatedUnitVectors", sprintf("#g",red[2]))))
 
 end
 
@@ -368,7 +367,7 @@ end # module Normest1
 
 module Normest1Test
 
-using Main.Normest1
+using ..Normest1
 using LinearMaps
 using Test
 using Profile

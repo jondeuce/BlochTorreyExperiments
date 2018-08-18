@@ -2,6 +2,28 @@
 # Generic geometry utilities for use within the JuAFEM.jl/Tensors.jl framework
 # ============================================================================ #
 
+module GeometryUtils
+
+# ---------------------------------------------------------------------------- #
+# Dependencies
+# ---------------------------------------------------------------------------- #
+
+using Tensors
+using StaticArrays: SVector
+using LinearAlgebra
+using PolynomialRoots
+using Optim
+using LineSearches
+
+export Ellipse, Circle, Rectangle
+export norm2, hadamardproduct, ⊙, skewprod, ⊠
+export origin, radius, radii, widths, geta, getb, getc, getF1, getF2, getrotmat, getsincos, getrotmat
+export dimension, floattype, xmin, ymin, xmax, ymax, area, volume
+export scale_shape, translate_shape, inscribed_square
+export signed_edge_distance, minimum_signed_edge_distance
+export bounding_box, bounding_circle, crude_bounding_circle, opt_bounding_ellipse, opt_bounding_circle, intersect_area
+export is_inside, is_overlapping, is_any_overlapping, is_on_circle, is_on_any_circle, is_in_circle, is_in_any_circle, is_inside, is_outside
+
 # ---------------------------------------------------------------------------- #
 # Types
 # ---------------------------------------------------------------------------- #
@@ -9,9 +31,7 @@ struct Ellipse{dim,T}
     F1::Vec{dim,T} # focus #1
     F2::Vec{dim,T} # focus #2
     b::T # semi-minor axis
-    # Ellipse{dim,T}(F1, F2, b) = new(F1, F2, abs(b))
 end
-# Ellipse(F1::Vec{dim,T}, F2::Vec{dim,T}, b::T) where {dim,T} = Ellipse{dim,T}(F1,F2,b)
 
 struct Circle{dim,T}
     center::Vec{dim,T}
@@ -256,6 +276,31 @@ end
 
 @inline function is_inside(x::Vec{dim}, c::Circle{dim}, lt = ≤) where {dim}
     return lt(norm2(x - origin(c)), radius(c)^2)
+end
+
+# is_on_circle/is_on_any_circle
+@inline function is_on_circle(x::Vec{dim,T},
+                              circle::Circle{dim,T},
+                              thresh::T=sqrt(eps(T))) where {dim,T}
+    return abs(norm(x - origin(circle)) - radius(circle)) <= thresh
+end
+function is_on_any_circle(x::Vec{dim,T},
+                          circles::Vector{Circle{dim,T}},
+                          thresh::T=sqrt(eps(T))) where {dim,T}
+    return any(circle->is_on_circle(x, circle, thresh), circles)
+end
+
+# is_in_circle/is_in_any_circle
+@inline function is_in_circle(x::Vec{dim,T},
+                              circle::Circle{dim,T},
+                              thresh::T=sqrt(eps(T))) where {dim,T}
+    dx = x - origin(circle)
+    return dx⋅dx <= (radius(circle) + thresh)^2
+end
+function is_in_any_circle(x::Vec{dim,T},
+                          circles::Vector{Circle{dim,T}},
+                          thresh::T=sqrt(eps(T))) where {dim,T}
+    return any(circle->is_in_circle(x, circle, thresh), circles)
 end
 
 # check if c1 and c2 are overlapping
@@ -624,5 +669,7 @@ function intersect_area_test(c::Circle{2,T}) where {T}
 
     return (A_test, A_exact)
 end
+
+end # module GeometryUtils
 
 nothing
