@@ -12,3 +12,5 @@ include("expmv_fun.jl")
 export expmv, expmv!
 
 end # module
+
+nothing

@@ -2,16 +2,39 @@
 # Tools for creating a set of packed circles
 # ============================================================================ #
 
+module CirclePackingUtils
+
 # ---------------------------------------------------------------------------- #
-# Create circle packing from set of radii
+# Dependencies
 # ---------------------------------------------------------------------------- #
 
+using ..GeometryUtils
+using LinearAlgebra, Statistics
+using JuAFEM
+using ForwardDiff
+using Optim
+using LineSearches
+using Roots
+using DiffBase
+
+export pack_circles, initialize_origins, estimate_density, energy_covariance
+
+# ---------------------------------------------------------------------------- #
+# Types
+# ---------------------------------------------------------------------------- #
+
+# Struct for holding parameters which are fixed w.r.t. the minimization
 struct FixedOptData{dim,T}
     first_origin::Vec{dim,T}
     second_x_coord::T
     radii::AbstractVector{T}
     x_coord_fixed::Bool
 end
+
+# ---------------------------------------------------------------------------- #
+# Create circle packing from set of radii
+# ---------------------------------------------------------------------------- #
+
 numcircles(data::FixedOptData) = length(data.radii)
 
 function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
@@ -43,8 +66,8 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
     c_fixed = initial_circles[1]
     c_variable = initial_circles[2:end]
 
-    # x0 = copy(reinterpret(T, origin.(c_variable)))[2:end]; x_coord_fixed = true
-    x0 = copy(reinterpret(T, origin.(c_variable))); x_coord_fixed = false
+    x0 = copy(reinterpret(T, origin.(c_variable)))[2:end]; x_coord_fixed = true
+    # x0 = copy(reinterpret(T, origin.(c_variable))); x_coord_fixed = false
     data = FixedOptData(origin(c_fixed), origin(c_variable[1])[1], radii, x_coord_fixed)
 
     if constrained
@@ -70,31 +93,31 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
                 # Forward mode automatic differentiation
 
                 # ---- Use buffer of circles to avoid allocations ---- #
-                chunksize = min(chunksize, length(x0))
-                dualcircles = Vector{Circle{2,ForwardDiff.Dual{Void,T,chunksize}}}(numcircles(data))
-                realcircles = Vector{Circle{2,T}}(numcircles(data))
-
-                function f_buffered(x::Vector{T}) where {T<:AbstractFloat}
-                    getcircles!(realcircles, x, data)
-                    return packing_energy(realcircles, goaldensity, distancescale, weights, epsilon)
-                end
-
-                function f_buffered(x::Vector{D}) where {D<:ForwardDiff.Dual}
-                    dualcircles = reinterpret(Circle{DIM,D}, dualcircles)
-                    getcircles!(dualcircles, x, data)
-                    return packing_energy(dualcircles, goaldensity, distancescale, weights, epsilon)
-                end
-
-                checktag = true
-                g!, fg!, cfg = wrap_gradient(f_buffered, x0, Val{chunksize}, Val{checktag}; isforward = true)
-                opt_obj = OnceDifferentiable(f_buffered, g!, fg!, x0)
+                # chunksize = min(chunksize, length(x0))
+                # dualcircles = Vector{Circle{2,ForwardDiff.Dual{Nothing,T,chunksize}}}(undef, numcircles(data))
+                # realcircles = Vector{Circle{2,T}}(undef, numcircles(data))
+                #
+                # function f_buffered(x::Vector{T}) where {T<:AbstractFloat}
+                #     getcircles!(realcircles, x, data)
+                #     return packing_energy(realcircles, goaldensity, distancescale, weights, epsilon)
+                # end
+                #
+                # function f_buffered(x::Vector{D}) where {D<:ForwardDiff.Dual}
+                #     dualcircles = reinterpret(Circle{DIM,D}, dualcircles)
+                #     getcircles!(dualcircles, x, data)
+                #     return packing_energy(dualcircles, goaldensity, distancescale, weights, epsilon)
+                # end
+                #
+                # checktag = true
+                # g!, fg!, cfg = wrap_gradient(f_buffered, x0, Val{chunksize}, Val{checktag}; isforward = true)
+                # opt_obj = OnceDifferentiable(f_buffered, g!, fg!, x0)
 
                 # ---- Simple precompiled gradient ---- #
                 # g!, fg! = wrap_gradient(f, x0, Val{chunksize}; isforward = true)
                 # opt_obj = OnceDifferentiable(f, g!, fg!, x0)
 
                 # ---- Simple precompiled gradient, but can't configure chunk ---- #
-                # opt_obj = OnceDifferentiable(f, x0; autodiff = :forward)
+                opt_obj = OnceDifferentiable(f, x0; autodiff = :forward)
             end
         end
     else
@@ -103,8 +126,8 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
 
     # Optimize and get results
     if setcallback
-        optfields = fieldnames(Opts)
-        optvalues = getfield.(Opts, optfields)
+        optfields = fieldnames(typeof(Opts))
+        optvalues = getfield.(Ref(Opts), optfields)
         optdict = Dict(zip(optfields, optvalues))
         Opts = Optim.Options(; optdict...,
             callback = state -> check_density_callback(state, data, T(goaldensity), T(epsilon/2)),
@@ -275,7 +298,7 @@ function getcircles!(circles::Vector{Circle{DIM,Tx}},
     N = numcircles(data)
     @assert length(circles) == N
 
-    @inbounds circles[1] = Circle{DIM,Tx}(Vec{DIM,Tx}(data.first_origin), Tx(data.radii[1]))
+    @inbounds circles[1] = Circle{DIM,Tx}(Vec{DIM,Tx}(Tuple(data.first_origin)), Tx(data.radii[1]))
     if data.x_coord_fixed
         @inbounds circles[2] = Circle{DIM,Tx}(Vec{DIM,Tx}((Tx(data.second_x_coord), x[1])), Tx(data.radii[2]))
         @inbounds for (j,i) in enumerate(3:N)
@@ -292,7 +315,7 @@ function getcircles!(circles::Vector{Circle{DIM,Tx}},
 
 function getcircles(x::AbstractVector{Tx},
                     data::FixedOptData{DIM,Tf}) where {DIM,Tx,Tf}
-    circles = Vector{Circle{DIM,Tx}}(numcircles(data))
+    circles = Vector{Circle{DIM,Tx}}(undef, numcircles(data))
     getcircles!(circles, x, data)
     return circles
 end
@@ -358,10 +381,10 @@ end
 
 # Sum squared circle distances
 function energy_covariance(circles::Vector{Circle{DIM,T}}) where {DIM,T}
-    circlepoints = reinterpret(T, circles, (DIM+1, length(circles))) # reinterp as DIM+1 x Ncircles array
+    circlepoints = reshape(reinterpret(T, circles), (DIM+1, length(circles))) # reinterp as DIM+1 x Ncircles array
     @views origins = circlepoints[1:2, :] # DIM x Ncircles view of origin points
-    Σ = cov(origins, 2) # covariance matrix of origin locations
-    σ² = T(trace(Σ)/DIM) # mean variance
+    Σ = cov(origins; dims = 2) # covariance matrix of origin locations
+    σ² = T(tr(Σ)/DIM) # mean variance
     return sum(abs2, Σ - σ²*I) # penalize non-diagonal covariance matrices
 end
 
@@ -644,5 +667,7 @@ function Cuba_integrator(method = :cuhre; kwargs...)
         error("Invalid method `$method`")
     end
 end
+
+end # module CirclePackingUtils
 
 nothing
