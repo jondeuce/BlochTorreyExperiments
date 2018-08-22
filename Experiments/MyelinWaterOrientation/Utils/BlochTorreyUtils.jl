@@ -8,10 +8,9 @@ module BlochTorreyUtils
 # Dependencies
 # ---------------------------------------------------------------------------- #
 
-include("normest1.jl")
-using .Normest1: normest1
-using ..GeometryUtils
-using ..MeshUtils
+using Normest1: normest1
+using GeometryUtils
+using MeshUtils
 using Parameters: @with_kw
 using JuAFEM
 using LinearAlgebra

@@ -7,7 +7,7 @@ module MeshUtils
 # ---------------------------------------------------------------------------- #
 # Dependencies
 # ---------------------------------------------------------------------------- #
-using ..GeometryUtils
+using GeometryUtils
 using JuAFEM
 using JuAFEM: vertices, faces, edges
 using MATLAB, SparseArrays, Statistics

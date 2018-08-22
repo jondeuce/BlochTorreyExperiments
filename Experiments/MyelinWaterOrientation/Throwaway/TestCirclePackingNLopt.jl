@@ -1,11 +1,11 @@
 using NLopt
 using Tensors
+
+import DiffResults, ForwardDiff
 using DiffResults: DiffResult, JacobianResult, GradientResult, value
-using ForwardDiff
 using ForwardDiff: Chunk, GradientConfig, JacobianConfig, jacobian!, gradient!
 
-include("../Geometry/geometry_utils.jl")
-using .GeometryUtils
+using GeometryUtils
 
 function obj(x::Vector, r::Vector)
     T = eltype(x)
@@ -45,14 +45,17 @@ end
 
 # Initialize
 T = Float64
-N = 10
+Nx, Ny = 10, 10
+N = Nx*Ny
 Ndof = 2N
 Ncon = N*(N-1)÷2
 
 # Initial circles
 r = ones(T, N) # radii
-t = 1e-3 # min. distance
-x0 = 100N .* (2.0 .* rand(T, Ndof) .- 1.0) # initial origins
+t = 1e-2 # minimum allowed distance
+xp, yp = 2.5*maximum(r) .* (0:Nx-1), 2.5*maximum(r) .* (0:Ny-1)
+x0 = collect(reinterpret(T, collect(Iterators.product(xp, yp))[:]))
+# x0 = 100N .* (2.0 .* rand(T, Ndof) .- 1.0) # initial origins
 c0 = zeros(T, Ncon)
 jac = zeros(T, Ncon, Ndof)
 grad = zeros(T, Ndof)
@@ -70,8 +73,8 @@ function objfun!(x::Vector, grad::Vector)
     # return length(grad) > 0 ? gradient!(grad, objfun, x) : objfun(x)
     if length(grad) > 0
         res = DiffResult(zero(eltype(x)), grad)
-        # gradient!(res, objfun, x, gcfg)
-        gradient!(res, objfun, x)
+        gradient!(res, objfun, x, gcfg)
+        # gradient!(res, objfun, x)
         return value(res)
     else
         return objfun(x)
@@ -85,8 +88,8 @@ function ∇confun!(c::Vector, x::Vector, jac::Matrix)
     # return length(jac) > 0 ? jacobian!(jac, confun!, c, x, jcfg) : confun!(c, x)
     if length(jac) > 0
         res = DiffResult(c, jac)
-        # jacobian!(res, confun!, c, x, jcfg)
-        jacobian!(res, confun!, c, x)
+        jacobian!(res, confun!, c, x, jcfg)
+        # jacobian!(res, confun!, c, x)
         return value(res)
     else
         confun!(c, x)
@@ -97,27 +100,33 @@ end
 
 # Optimizaiton initialization
 opt = Opt(:LD_MMA, Ndof)
-xtol_rel!(opt, 1e-8)
+ATOL = 1e-2 * t
+xtol_abs!(opt, ATOL)
+inequality_constraint!(opt, ∇confun!, ATOL*ones(Ncon))
 min_objective!(opt, objfun!)
-inequality_constraint!(opt, ∇confun!, 1e-4*ones(Ncon))
 
 (minf, minx, ret) = optimize(opt, x0)
-nevals = opt.numevals # the number of function evaluations
-println("got $minf at $minx after $nevals iterations (returned $ret)")
+println("optfun(minx) = $minf < $(objfun(x0)) after $(opt.numevals) iterations (returned $ret)")
 
 copt = confun!(similar(c0), minx)
 @show minimum(t .- copt)
 
-circles = [Circle{2,Float64}(Vec{2,Float64}((minx[2i-1],minx[2i])), r[i]) for i in 1:length(r)]
-@show minimum_signed_edge_distance(circles)
-
-function minimum_distances(circles::Vector{C}) where {C<:Circle{dim,T}} where {dim,T}
-    out = []
-    for i in 1:length(circles)
-        push!(out, minimum(j->signed_edge_distance(circles[i],circles[j]), Iterators.flatten((1:i-1,i+1:length(circles)))))
+function minimum_distances(cs::Vector{C}) where {C<:Circle{dim,T}} where {dim,T}
+    out = T[]
+    for i in 1:length(cs)
+        min_dist = T(Inf)
+        for j in Iterators.flatten((1:i-1, i+1:length(cs)))
+            min_dist = min(min_dist, signed_edge_distance(cs[i], cs[j]))
+        end
+        @show min_dist
+        push!(out, min_dist)
     end
     out
 end
+
+cs = [Circle{2,Float64}(Vec{2,Float64}((minx[2i-1],minx[2i])), r[i]) for i in 1:length(r)]
+@show minimum_signed_edge_distance(cs)
+minimum_distances(cs)
 
 # ---------------------------------------------------------------------------- #
 # Tutorial

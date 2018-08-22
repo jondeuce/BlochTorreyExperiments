@@ -4,9 +4,9 @@
 
 module BlochTorreySolvers
 
-using ..GeometryUtils
-using ..BlochTorreyUtils
-using ..Expmv
+using GeometryUtils
+using BlochTorreyUtils
+using Expmv
 using LinearAlgebra
 using LinearMaps, DifferentialEquations, ForwardDiff, Interpolations
 using Tensors

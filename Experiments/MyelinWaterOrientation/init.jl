@@ -1,13 +1,12 @@
-# My files and modules
-
 # ENV["MATLAB_HOME"] = "C:\\Users\\Jonathan\\Downloads\\Mathworks Matlab R2016a\\R2016a"
 # HOME = "C:\\Users\\Jonathan\\Documents\\MATLAB\\"
 # HOME = "/home/jon/Documents/UBCMRI/"
 HOME = "/home/coopar7/Documents/code/"
-BTMASTER = HOME * "BlochTorreyExperiments-master/"
-MWOPATH = BTMASTER * "Experiments/MyelinWaterOrientation/"
+BTMASTERPATH = HOME * "BlochTorreyExperiments-master/"
+MWOPATH = BTMASTERPATH * "Experiments/MyelinWaterOrientation/"
 
-# cd(BTMASTER)
+using Revise
+push!(LOAD_PATH, MWOPATH .* ("", "Geometry/", "Utils/", "Expmv/")...)
 
 @static if VERSION >= v"0.7.0"
     # Packages moved out of base for v0.7.0
@@ -20,32 +19,15 @@ MWOPATH = BTMASTER * "Experiments/MyelinWaterOrientation/"
     using Profile
 end
 
-using Revise
+# My files and modules to load
+using Expmv
+using GeometryUtils
+using CirclePackingUtils
+using MeshUtils
+using BlochTorreyUtils
+using BlochTorreySolvers
 
-# include(MWOPATH * "Utils/normest1.jl")
-# Revise.track(MWOPATH * "Utils/normest1.jl")
-
-include(MWOPATH * "Expmv/src/Expmv.jl")
-include(MWOPATH * "Geometry/geometry_utils.jl")
-include(MWOPATH * "Geometry/circle_packing.jl")
-include(MWOPATH * "Geometry/mesh_utils.jl")
-include(MWOPATH * "Utils/blochtorrey_utils.jl")
-include(MWOPATH * "Utils/blochtorrey_solvers.jl")
-Revise.track(MWOPATH * "Expmv/src/Expmv.jl")
-Revise.track(MWOPATH * "Geometry/geometry_utils.jl")
-# Revise.track(MWOPATH * "Geometry/circle_packing.jl")
-Revise.track(MWOPATH * "Geometry/mesh_utils.jl")
-Revise.track(MWOPATH * "Utils/blochtorrey_utils.jl")
-Revise.track(MWOPATH * "Utils/blochtorrey_solvers.jl")
-
-using .Expmv
-using .GeometryUtils
-using .CirclePackingUtils
-using .MeshUtils
-using .BlochTorreyUtils
-using .BlochTorreySolvers
-
-# Packages
+# Packages to load
 using BenchmarkTools
 # using IterTools
 # using Parameters
