@@ -11,8 +11,14 @@ currentoptfun = which('perforientation_fun');
 copyfile(currentoptfun,backupoptfun);
 
 %Save diary of workspace
-DiaryFilename = [datestr(now,30), '__', 'diary.txt'];
-diary(DiaryFilename);
+% DiaryFilename = [datestr(now,30), '__', 'diary.txt'];
+DiaryFilename = '';
+if ~isempty(DiaryFilename)
+    diary(DiaryFilename);
+else
+    display_text('WARNING: Not recording prompt output to diary', 75, '=', true, [true,true]);
+    input('[Press enter to continue...]\n\n')
+end
 
 %Save current directory and go to save path
 % currentpath = cd;
@@ -43,9 +49,9 @@ alpha_range = 17.5:10.0:87.5;
 % [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize, BinCounts] = get_GRE_data(alpha_range);
 
 % ---- SE w/ Diffusion Initial Guess ---- %
-lb  = [ 3.0000,          0.8000/100,         0.8000/100 ];
-CA0 =   4.3351;  iBVF0 = 1.3815/100; aBVF0 = 1.3725/100;
-ub  = [ 6.0000,          2.0000/100,         2.0000/100 ];
+lb  = [ 1.0000,          0.5000/100,         0.5000/100 ];
+CA0 =   3.9925;  iBVF0 = 1.5294/100; aBVF0 = 1.1471/100;
+ub  = [ 8.0000,          2.5000/100,         2.5000/100 ];
 
 x0  = [CA0, iBVF0, aBVF0];
 
@@ -56,7 +62,7 @@ type = 'SE';
 % TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512,512,512];
 % TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
 
-Nmajor = 5;
+Nmajor = 6;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
@@ -112,7 +118,7 @@ LsqOpts = optimoptions('lsqcurvefit', ...
     );
 
 % Call diary before the minimization starts
-diary(DiaryFilename);
+if ~isempty(DiaryFilename); diary(DiaryFilename); end
 
 optfun = @(x,xdata) perforientation_fun(x, xdata, dR2_Data, ...
     TE, Nsteps, type, B0, D_Tissue, D_Blood, D_VRS, ...
@@ -144,6 +150,20 @@ save([datestr(now,30),'__','LsqcurvefitResults'], '-v7');
 %Go back to original directory
 % cd(currentpath);
 
-diary(DiaryFilename);
-diary off
+if ~isempty(DiaryFilename); diary(DiaryFilename); diary('off'); end
+
+%Generate text file of best simulation results
+fout = fopen([datestr(now,30),'__','LsqfitIterationsOutput.txt'], 'w');
+iter = 1;
+f_best = Inf;
+fprintf(fout, '%s', 'Timestamp       f-count            f(x)       Best f(x)');
+for s = dir('*.mat')'
+    Results = load(s.name);
+    Results = Results.Results;
+    f = perforientation_objfun(Results.params, Results.alpha_range, Results.dR2_Data, Results.dR2, Results.args.Weights);
+    f_best = min(f, f_best);
+    fprintf(fout, '\n%s%8d%16.8f%16.8f', s.name(1:15), iter, f, f_best);
+    iter = iter + 1;
+end
+fclose(fout);
 

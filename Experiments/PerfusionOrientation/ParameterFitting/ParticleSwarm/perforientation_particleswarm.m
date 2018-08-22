@@ -11,8 +11,14 @@ currentoptfun = which('perforientation_fun');
 copyfile(currentoptfun,backupoptfun);
 
 %Save diary of workspace
-DiaryFilename = [datestr(now,30), '__', 'diary.txt'];
-diary(DiaryFilename);
+% DiaryFilename = [datestr(now,30), '__', 'diary.txt'];
+DiaryFilename = '';
+if ~isempty(DiaryFilename)
+    diary(DiaryFilename);
+else
+    display_text('WARNING: Not recording prompt output to diary', 75, '=', true, [true,true]);
+    input('[Press enter to continue...]\n\n')
+end
 
 %Save current directory and go to save path
 % currentpath = cd;
@@ -137,7 +143,7 @@ PSOpts = optimoptions(@particleswarm, ...
     );
 
 % Call diary before the minimization starts
-diary(DiaryFilename);
+if ~isempty(DiaryFilename); diary(DiaryFilename); end
 
 % Objective function
 normfun = 'default';
@@ -172,8 +178,7 @@ save([datestr(now,30),'__','ParticleSwarmFitResults'], '-v7');
 %Go back to original directory
 % cd(currentpath);
 
-diary(DiaryFilename);
-diary off
+if ~isempty(DiaryFilename); diary(DiaryFilename); diary('off'); end
 
 %Parse for particle swarm printed
 fin = fopen(DiaryFilename, 'r');

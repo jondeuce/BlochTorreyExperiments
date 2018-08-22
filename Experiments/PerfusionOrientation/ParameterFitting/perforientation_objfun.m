@@ -7,7 +7,9 @@ function [ objval, dR2, ResultsStruct ] = perforientation_objfun( params, xdata,
 %    weights:  [1xN] row vector of data weights
 %    normfun:  [fun] fcn. handle with arguments: @(dR2,dR2_data,weights)
 
-if isempty(normfun); normfun = 'default'; end
+if nargin < 6 || isempty(normfun); normfun = 'default'; end
+if nargin < 5 || isempty(weights); weights = 'uniform'; end
+
 if ischar(normfun)
     switch upper(normfun)
         case 'R2'
@@ -20,7 +22,6 @@ if ischar(normfun)
     end
 end
 
-if isempty(weights); weights = 'uniform'; end
 if ischar(weights)
     switch upper(weights)
         case 'UNIT' % unit weighting (dependent on number of datapoints)
