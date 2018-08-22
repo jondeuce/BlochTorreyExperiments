@@ -8,7 +8,7 @@ module CirclePackingUtils
 # Dependencies
 # ---------------------------------------------------------------------------- #
 
-using ..GeometryUtils
+using GeometryUtils
 using LinearAlgebra, Statistics
 using JuAFEM
 using ForwardDiff
