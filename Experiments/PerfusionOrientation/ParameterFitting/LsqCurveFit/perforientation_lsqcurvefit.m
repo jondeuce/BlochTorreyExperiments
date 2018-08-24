@@ -50,7 +50,7 @@ alpha_range = 17.5:10.0:87.5;
 
 % ---- SE w/ Diffusion Initial Guess ---- %
 lb  = [ 1.0000,          0.5000/100,         0.5000/100 ];
-CA0 =   3.9925;  iBVF0 = 1.5294/100; aBVF0 = 1.1471/100;
+CA0 =   3.7152;  iBVF0 = 1.6334/100; aBVF0 = 1.0546/100;
 ub  = [ 8.0000,          2.5000/100,         2.5000/100 ];
 
 x0  = [CA0, iBVF0, aBVF0];
@@ -62,7 +62,7 @@ type = 'SE';
 % TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512,512,512];
 % TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
 
-Nmajor = 6;
+Nmajor = 8;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
@@ -145,25 +145,30 @@ BVF = iBVF + aBVF;
 iRBVF = iBVF/BVF;
 aRBVF = aBVF/BVF;
 
-save([datestr(now,30),'__','LsqcurvefitResults'], '-v7');
-
-%Go back to original directory
+% Go back to original directory
 % cd(currentpath);
 
 if ~isempty(DiaryFilename); diary(DiaryFilename); diary('off'); end
 
-%Generate text file of best simulation results
+% Generate text file of best simulation results
 fout = fopen([datestr(now,30),'__','LsqfitIterationsOutput.txt'], 'w');
 iter = 1;
-f_best = Inf;
+L2w_best = Inf;
 fprintf(fout, '%s', 'Timestamp       f-count            f(x)       Best f(x)');
 for s = dir('*.mat')'
-    Results = load(s.name);
-    Results = Results.Results;
-    f = perforientation_objfun(Results.params, Results.alpha_range, Results.dR2_Data, Results.dR2, Results.args.Weights);
-    f_best = min(f, f_best);
-    fprintf(fout, '\n%s%8d%16.8f%16.8f', s.name(1:15), iter, f, f_best);
-    iter = iter + 1;
+    try
+        Results = load(s.name);
+        Results = Results.Results;
+        f = perforientation_objfun(Results.params, Results.alpha_range, Results.dR2_Data, Results.dR2, Results.args.Weights);
+        L2w_best = min(f, L2w_best);
+        fprintf(fout, '\n%s%8d%16.8f%16.8f', s.name(1:15), iter, f, L2w_best);
+        iter = iter + 1;
+    catch me
+        warning(me.message);
+    end
 end
 fclose(fout);
+clear fout iter Results f
 
+% Save resulting workspace
+save([datestr(now,30),'__','LsqcurvefitResults'], '-v7');
