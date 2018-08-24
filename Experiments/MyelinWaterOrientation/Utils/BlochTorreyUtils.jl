@@ -118,8 +118,8 @@ mutable struct ParabolicDomain{uDim,gDim,T,Nd,Nf} <: AbstractDomain{uDim,gDim,T,
     dh::DofHandler{gDim,Nd,T,Nf}
     cellvalues::CellValues{gDim,T}
     facevalues::FaceValues{gDim,T}
-    M::Symmetric{T,<:SparseMatrixCSC{T}}
-    Mfact::Union{Factorization{T},Nothing}
+    M::Union{<:SparseMatrixCSC{T}, Symmetric{T,<:SparseMatrixCSC{T}}}
+    Mfact::Union{Nothing, Factorization{T}}
     K::SparseMatrixCSC{T}
     w::Vector{T}
     function ParabolicDomain(
@@ -127,7 +127,8 @@ mutable struct ParabolicDomain{uDim,gDim,T,Nd,Nf} <: AbstractDomain{uDim,gDim,T,
         refshape = RefTetrahedron,
         quadorder = 3,
         funcinterporder = 1,
-        geominterporder = 1) where {uDim,gDim,Nd,T,Nf}
+        geominterporder = 1
+        ) where {uDim,gDim,Nd,T,Nf}
 
         @assert uDim == 2 #TODO: where is this assumption? likely, assume dim(u) == dim(grid) somewhere
 
@@ -147,7 +148,8 @@ mutable struct ParabolicDomain{uDim,gDim,T,Nd,Nf} <: AbstractDomain{uDim,gDim,T,
         close!(dh)
 
         # Mass matrix, inverse mass matrix, stiffness matrix, and weights vector
-        M = create_symmetric_sparsity_pattern(dh)
+        M = create_sparsity_pattern(dh)
+        # M = create_symmetric_sparsity_pattern(dh)
         K = create_sparsity_pattern(dh)
         w = zeros(T, ndofs(dh))
         Mfact = nothing

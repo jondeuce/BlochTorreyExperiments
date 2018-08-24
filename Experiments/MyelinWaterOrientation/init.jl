@@ -5,7 +5,6 @@ HOME = "/home/coopar7/Documents/code/"
 BTMASTERPATH = HOME * "BlochTorreyExperiments-master/"
 MWOPATH = BTMASTERPATH * "Experiments/MyelinWaterOrientation/"
 
-using Revise
 push!(LOAD_PATH, MWOPATH .* ("", "Geometry/", "Utils/", "Expmv/")...)
 
 @static if VERSION >= v"0.7.0"

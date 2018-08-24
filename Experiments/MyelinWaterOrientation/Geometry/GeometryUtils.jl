@@ -8,6 +8,7 @@ module GeometryUtils
 # Dependencies
 # ---------------------------------------------------------------------------- #
 
+using Statistics
 using Tensors
 using StaticArrays: SVector
 using LinearAlgebra

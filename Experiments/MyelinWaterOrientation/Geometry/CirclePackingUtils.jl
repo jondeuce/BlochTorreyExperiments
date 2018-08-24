@@ -10,12 +10,10 @@ module CirclePackingUtils
 
 using GeometryUtils
 using LinearAlgebra, Statistics
-using JuAFEM
-using ForwardDiff
-using Optim
-using LineSearches
-using Roots
-using DiffBase
+using DiffBase, Optim, LineSearches, ForwardDiff, Roots
+using Tensors
+# using Parameters: @with_kw
+# using JuAFEM
 
 export pack_circles, initialize_origins, estimate_density, energy_covariance
 
@@ -24,18 +22,17 @@ export pack_circles, initialize_origins, estimate_density, energy_covariance
 # ---------------------------------------------------------------------------- #
 
 # Struct for holding parameters which are fixed w.r.t. the minimization
-struct FixedOptData{dim,T}
-    first_origin::Vec{dim,T}
-    second_x_coord::T
+struct OptData{dim,T}
     radii::AbstractVector{T}
-    x_coord_fixed::Bool
+    first_origin::Vec{dim,T}
+    is_first_origin_fixed::Bool
+    is_x_coord_fixed::Bool
 end
+numcircles(data::OptData) = length(data.radii)
 
 # ---------------------------------------------------------------------------- #
 # Create circle packing from set of radii
 # ---------------------------------------------------------------------------- #
-
-numcircles(data::FixedOptData) = length(data.radii)
 
 function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
                       initial_origins::AbstractVector{<:Vec{DIM}} = initialize_origins(radii),
@@ -66,9 +63,10 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
     c_fixed = initial_circles[1]
     c_variable = initial_circles[2:end]
 
-    x0 = copy(reinterpret(T, origin.(c_variable)))[2:end]; x_coord_fixed = true
-    # x0 = copy(reinterpret(T, origin.(c_variable))); x_coord_fixed = false
-    data = FixedOptData(origin(c_fixed), origin(c_variable[1])[1], radii, x_coord_fixed)
+    # x0 = copy(reinterpret(T, origin.(c_variable)))[2:end]; o_fixed = true; x_fixed = true
+    # x0 = copy(reinterpret(T, origin.(c_variable))); o_fixed = true; x_fixed = false
+    x0 = copy(reinterpret(T, origin.(initial_circles))); o_fixed = false; x_fixed = false
+    data = OptData(radii, origin(c_fixed), o_fixed, x_fixed)
 
     if constrained
         # Constrained problem using Lagrange multipliers
@@ -236,7 +234,6 @@ function wrap_gradient(f, x0::AbstractArray{T},
         # end
     end
 
-
     return g!, fg!, cfg
 end
 
@@ -244,9 +241,15 @@ end
 # Estimate packing density
 # ---------------------------------------------------------------------------- #
 
-function check_density_callback(state, data::FixedOptData, goaldensity, epsilon)
-    isa(state, AbstractArray) && (state = state[end])
-    circles = getcircles(state.metadata["x"], data)
+function check_density_callback(state, data::OptData, goaldensity, epsilon)
+    if isa(state, AbstractArray) && !isempty(state)
+        currstate = state[end]
+        resize!(state, 1) # only store last state
+        state[end] = currstate
+    else
+        currstate = state
+    end
+    circles = getcircles(currstate.metadata["x"], data)
     return !is_any_overlapping(circles, <, epsilon) && (estimate_density(circles) > goaldensity)
 end
 
@@ -289,7 +292,7 @@ end
 
 function getcircles!(circles::Vector{Circle{DIM,Tx}},
                      x::AbstractVector{Tx},
-                     data::FixedOptData{DIM,Tf}) where {DIM,Tx,Tf}
+                     data::OptData{DIM,Tf}) where {DIM,Tx,Tf}
     # There are two sets of a fixed data:
     #   -> The fixed circle c_0, the first circle == circles[1]
     #   -> The x-coordinate of the second circle == 0.0 to fix the rotation of the system
@@ -298,15 +301,21 @@ function getcircles!(circles::Vector{Circle{DIM,Tx}},
     N = numcircles(data)
     @assert length(circles) == N
 
-    @inbounds circles[1] = Circle{DIM,Tx}(Vec{DIM,Tx}(Tuple(data.first_origin)), Tx(data.radii[1]))
-    if data.x_coord_fixed
-        @inbounds circles[2] = Circle{DIM,Tx}(Vec{DIM,Tx}((Tx(data.second_x_coord), x[1])), Tx(data.radii[2]))
-        @inbounds for (j,i) in enumerate(3:N)
-            circles[i] = Circle{DIM,Tx}(Vec{DIM,Tx}((x[2j], x[2j+1])), Tx(data.radii[i]))
+    if data.is_first_origin_fixed
+        @inbounds circles[1] = Circle{DIM,Tx}(Vec{DIM,Tx}(Tuple(data.first_origin)), Tx(data.radii[1]))
+        if data.is_x_coord_fixed
+            @inbounds circles[2] = Circle{DIM,Tx}(Vec{DIM,Tx}((Tx(data.first_origin[1]), x[1])), Tx(data.radii[2]))
+            @inbounds for (j,i) in enumerate(3:N)
+                circles[i] = Circle{DIM,Tx}(Vec{DIM,Tx}((x[2j], x[2j+1])), Tx(data.radii[i]))
+            end
+        else
+            @inbounds for (j,i) in enumerate(2:N)
+                circles[i] = Circle{DIM,Tx}(Vec{DIM,Tx}((x[2j-1], x[2j])), Tx(data.radii[i]))
+            end
         end
     else
-        @inbounds for (j,i) in enumerate(2:N)
-            circles[i] = Circle{DIM,Tx}(Vec{DIM,Tx}((x[2j-1], x[2j])), Tx(data.radii[i]))
+        @inbounds for i in 1:N
+            circles[i] = Circle{DIM,Tx}(Vec{DIM,Tx}((x[2i-1], x[2i])), Tx(data.radii[i]))
         end
     end
 
@@ -314,7 +323,7 @@ function getcircles!(circles::Vector{Circle{DIM,Tx}},
  end
 
 function getcircles(x::AbstractVector{Tx},
-                    data::FixedOptData{DIM,Tf}) where {DIM,Tx,Tf}
+                    data::OptData{DIM,Tf}) where {DIM,Tx,Tf}
     circles = Vector{Circle{DIM,Tx}}(undef, numcircles(data))
     getcircles!(circles, x, data)
     return circles
@@ -364,7 +373,7 @@ end
 
 # Packing energy (unconstrained problem)
 function packing_energy(x::AbstractVector{Tx},
-                        data::FixedOptData{DIM,Tf},
+                        data::OptData{DIM,Tf},
                         goaldensity::Real = 0.8,
                         distancescale::Real = mean(radii),
                         weights::AbstractVector = Tx[1.0, 1e-6, 1.0],

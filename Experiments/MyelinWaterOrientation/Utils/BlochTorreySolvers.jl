@@ -15,7 +15,7 @@ using MATLAB
 using TimerOutputs
 # using ApproxFun # really kills compile time
 
-export SignalIntegrator, AbstractMWIFittingModel, NNLSRegression, ThreePoolMagnToMagn, ThreePoolCplxToMagn, ThreePoolCplxToCplx
+export SignalIntegrator, AbstractMWIFittingModel, NNLSRegression, TwoPoolMagnToMagn, ThreePoolMagnToMagn, ThreePoolCplxToMagn, ThreePoolCplxToCplx
 
 export diffeq_solver, expokit_solver, expmv_solver
 export getmwf, fitmwfmodel, mwimodel, initialparams
@@ -71,24 +71,26 @@ function DiffEqBase.solve(prob, domains, tspan = (0.0,1e-3);
                           reltol = 1e-8,
                           linear_solver = :GMRES)
     to = TimerOutput()
+    N = numsubdomains(domains)
     u0 = Vec{2}((0.0, 1.0))
-    sols = ODESolution[]
-    signals = SignalIntegrator[]
+    sols = Vector{ODESolution}(undef, N)
+    signals = Vector{SignalIntegrator}(undef, N)
 
-    @timeit to "Assembly" doassemble!(prob, domains)
-    @timeit to "Factorization" factorize!(domains)
+    # @timeit to "Assembly" doassemble!(prob, domains)
+    # @timeit to "Factorization" factorize!(domains)
     @timeit to "Interpolation" U0 = BlochTorreyUtils.interpolate(u0, domains) # π/2-pulse at each node
 
-    @timeit to "Solving on subdomains" for (i, subdomain) in enumerate(getsubdomains(domains))
-        print("Subdomain $i/$(numsubdomains(domains)): ")
-        @time @timeit to "Subdomain $i/$(numsubdomains(domains))" begin
-            A = ParabolicLinearMap(subdomain)
-            solver! = diffeq_solver(subdomain; abstol = abstol, reltol = reltol, linear_solver = linear_solver)
-            sol, signal = solver!(nothing, A, tspan, U0[i])
+    @timeit to "Solving on subdomains" begin
+        Threads.@threads for i = 1:N
+            subdomain = getsubdomain(domains, i)
+            # print("Subdomain $i/$(numsubdomains(domains)): ")
+            @time @timeit to "Subdomain $i/$(numsubdomains(domains))" begin
+                A = ParabolicLinearMap(subdomain)
+                solver! = diffeq_solver(subdomain; abstol = abstol, reltol = reltol, linear_solver = linear_solver)
+                sols[i], signals[i] = solver!(nothing, A, tspan, U0[i])
+            end
+            flush(stdout)
         end
-        push!(sols, sol)
-        push!(signals, signal)
-        flush(stdout)
     end
 
     print_timer(to)
@@ -173,9 +175,12 @@ end
 
 abstract type AbstractMWIFittingModel end
 struct NNLSRegression <: AbstractMWIFittingModel end
+struct TwoPoolMagnToMagn <: AbstractMWIFittingModel end
 struct ThreePoolMagnToMagn <: AbstractMWIFittingModel end
 struct ThreePoolCplxToMagn <: AbstractMWIFittingModel end
 struct ThreePoolCplxToCplx <: AbstractMWIFittingModel end
+const TwoPoolMagnData = TwoPoolMagnToMagn
+const TwoPoolModel = TwoPoolMagnToMagn
 const ThreePoolMagnData = Union{ThreePoolMagnToMagn, ThreePoolCplxToMagn}
 const ThreePoolModel = Union{ThreePoolMagnToMagn, ThreePoolCplxToMagn, ThreePoolCplxToCplx}
 
@@ -202,6 +207,7 @@ function mwimodeldata(modeltype::ThreePoolCplxToCplx, t, Scplx::Function)
     return ydata
 end
 mwimodeldata(modeltype::ThreePoolMagnData, t, Scplx::Function) = abs.(Scplx.(t))
+mwimodeldata(modeltype::TwoPoolMagnData, t, Scplx::Function) = abs.(Scplx.(t))
 
 # NNLSRegression model
 function fitmwfmodel(
@@ -209,11 +215,11 @@ function fitmwfmodel(
         modeltype::NNLSRegression;
         TE0 = 1e-3, # First time point
         nTE = 32, # Number of echos
-        T2Range = [15e-3,2.000], # Min and Max T2 values
+        T2Range = [15e-3,0.5], # Min and Max T2 values
         nT2 = 120, # Number of T2 times to use in fitting process
         Threshold = 0.0, # First echo intensity cutoff for empty voxels
         spwin = [14e-3, 40e-3], # small pool window
-        plotdist = true # plot resulting T2-distribution
+        plotdist = false # plot resulting T2-distribution
         ) where {S <: SignalIntegrator}
     # t = linspace(2.1e-3,61.93e-3,32);
 
@@ -335,6 +341,31 @@ function mwimodel(modeltype::ThreePoolMagnToMagn, t, p)
     return S
 end
 
+# TwoPoolMagnToMagn model
+function initialparams(modeltype::TwoPoolMagnToMagn, tspan, Scplx::Function)
+    A1 = abs(Scplx(tspan[1])) # initial magnitude
+
+    A_my, A_ex = 0.33*A1, 0.67*A1 # Relative magnitude initial guesses
+    T2_my, T2_ex = 10e-3, 48e-3 # T2* initial guesses
+
+    p  = [A_my, A_ex, T2_my,  T2_ex]
+    lb = [0.0,  0.0,   3e-3,  25e-3]
+    ub = [2*A1, 2*A1, 25e-3, 150e-3]
+
+    p[3:4] = inv.(p[3:4]) # fit for R2 instead of T2
+    lb[3:4], ub[3:4] = inv.(ub[3:4]), inv.(lb[3:4]) # swap bounds
+
+    return p, lb, ub
+end
+
+function mwimodel(modeltype::TwoPoolMagnToMagn, t, p)
+    # A_my, A_ax, A_ex, T2_my, T2_ax, T2_ex = p
+    # Γ_my, Γ_ax, Γ_ex = 1/T2_my, 1/T2_ax, 1/T2_ex
+    A_my, A_ex, Γ_my, Γ_ex = p
+    S = @. A_my * exp(-Γ_my * t) + A_ex * exp(-Γ_ex * t)
+    return S
+end
+
 # Fitting of general AbstractMWIFittingModel
 function fitmwfmodel(
         signals::Vector{S},
@@ -370,6 +401,11 @@ end
 function getmwf(modeltype::ThreePoolModel, modelfit, errors)
     A_my, A_ax, A_ex = modelfit.param[1:3]
     return A_my/(A_my + A_ax + A_ex)
+end
+
+function getmwf(modeltype::TwoPoolModel, modelfit, errors)
+    A_my, A_ex = modelfit.param[1:2]
+    return A_my/(A_my + A_ex)
 end
 
 end # module BlochTorreySolvers
