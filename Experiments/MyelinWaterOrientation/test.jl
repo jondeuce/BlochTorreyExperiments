@@ -121,41 +121,6 @@ end
     expmv_tests()
 end
 
-# ---------------------------------------------------------------------------- #
-# Single axon geometry testing
-# ---------------------------------------------------------------------------- #
-
-function setup(;btparams = BlochTorreyParameters{Float64}())
-    rs = [btparams.R_mu] # one radius of average size
-    os = zeros(Vec{2}, 1) # one origin at the origin
-    outer_circles = GeometryUtils.Circle.(os, rs)
-    inner_circles = scale_shape.(outer_circles, btparams.g_ratio)
-    bcircle = scale_shape(outer_circles[1], 1.5)
-
-    h0 = 0.2 * btparams.R_mu * (1.0 - btparams.g_ratio) # fraction of size of average torus width
-    eta = 5.0 # approx ratio between largest/smallest edges
-
-    mxcall(:figure,0); mxcall(:hold,0,"on")
-    @time grid = circle_mesh_with_tori(bcircle, inner_circles, outer_circles, h0, eta)
-    @time exteriorgrid, torigrids, interiorgrids = form_tori_subgrids(grid, bcircle, inner_circles, outer_circles)
-
-    all_tori = form_subgrid(grid, getcellset(grid, "tori"), getnodeset(grid, "tori"), getfaceset(grid, "boundary"))
-    all_int = form_subgrid(grid, getcellset(grid, "interior"), getnodeset(grid, "interior"), getfaceset(grid, "boundary"))
-    mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(exteriorgrid); sleep(0.5)
-    mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(all_tori); sleep(0.5)
-    mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(all_int)
-
-    prob = MyelinProblem(btparams)
-    domains = MyelinDomain(grid, outer_circles, inner_circles, bcircle,
-        exteriorgrid, torigrids, interiorgrids;
-        quadorder = 3, funcinterporder = 1)
-
-    doassemble!(prob, domains)
-    factorize!(domains)
-
-    return prob, domains
-end
-
 function testcomparemethods(prob::MyelinProblem,
                             domains::MyelinDomain;
                             tspan = (0.0, 1e-3),
@@ -200,7 +165,7 @@ function testcomparemethods(prob::MyelinProblem,
 end
 
 btparams = BlochTorreyParameters{Float64}()
-prob, domains = setup(;btparams = btparams)
+prob, domains = testproblem(SingleAxonSetup(), btparams)
 @testset "Myelin Problem Solutions" begin
     testcomparemethods(prob, domains)
 end
@@ -244,7 +209,7 @@ function run_benchmarks(prob, domains; tspan = (0.0, 1e-4))
 end
 
 btparams = BlochTorreyParameters{Float64}()
-prob, domains = setup(;btparams = btparams)
+prob, domains = testproblem(SingleAxonSetup(), btparams)
 doassemble!(prob, domains)
 factorize!(domains)
 run_benchmarks(prob, domains; tspan = (0.0, 1e-6))
@@ -307,7 +272,7 @@ end
 # ---------------------------------------------------------------------------- #
 
 btparams = BlochTorreyParameters{Float64}()
-prob, domains = setup(;btparams = btparams)
+prob, domains = testproblem(SingleAxonSetup(), btparams)
 doassemble!(prob, domains)
 factorize!(domains)
 sols, signals = solve(prob, domains, (0.0,40e-3); abstol = 1e-6; reltol = 1e-4)

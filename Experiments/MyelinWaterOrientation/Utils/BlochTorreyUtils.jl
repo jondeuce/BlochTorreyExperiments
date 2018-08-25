@@ -8,7 +8,7 @@ module BlochTorreyUtils
 # Dependencies
 # ---------------------------------------------------------------------------- #
 
-using Normest1: normest1
+using Normest1
 using GeometryUtils
 using MeshUtils
 using Parameters: @with_kw
@@ -31,6 +31,7 @@ export getdofhandler, getcellvalues, getfacevalues,
        getmass, getmassfact, getstiffness, getquadweights,
        getsubdomain, getsubdomains, getboundary,
        getoutercircles, getinnercircles, getoutercircle, getinnercircle, getouterradius, getinnerradius
+export testproblem
 
 # ---------------------------------------------------------------------------- #
 # Exported Types
@@ -43,7 +44,8 @@ export BlochTorreyParameters,
        AbstractDomain,
        ParabolicDomain,
        MyelinDomain,
-       ParabolicLinearMap
+       ParabolicLinearMap,
+       DiffEqParabolicLinearMapWrapper
 
 # Convenience definitions
 const MyelinBoundary{gDim,T} = Union{<:Circle{gDim,T}, <:Rectangle{gDim,T}, <:Ellipse{gDim,T}}
@@ -187,6 +189,13 @@ mutable struct MyelinDomain{uDim,gDim,T,Nd,Nf} <: AbstractDomain{uDim,gDim,T,Nd,
             ParabolicDomain.(axongrids, Val(uDim); kwargs...))
     end
 end
+function MyelinDomain(m::MyelinDomain; kwargs...)
+    return MyelinDomain(
+        m.fullgrid, m.outercircles, m.innercircles, m.domainboundary,
+        getgrid(m.tissuedomain), getgrid.(m.myelindomains), getgrid.(m.axondomains);
+        kwargs...)
+end
+
 
 # ParabolicLinearMap: create a LinearMaps subtype which wrap the action of
 # Mfact\K in a LinearMap object
@@ -574,7 +583,7 @@ function doassemble!(prob::BlochTorreyProblem, domain::ParabolicDomain{uDim,gDim
                 for j in 1:n_basefuncs
                     u = shape_value(getcellvalues(domain), q_point, j)
                     ∇u = shape_gradient(getcellvalues(domain), q_point, j)
-                    Ke[i, j] -= (D * ∇v ⊡ ∇u + R * v ⋅ u - ω * v ⊠ u) * dΩ
+                    Ke[i, j] -= (D * (∇v ⊡ ∇u) + R * (v ⋅ u) - ω * (v ⊠ u)) * dΩ
                     Me[i, j] += (v ⋅ u) * dΩ
                 end
             end
@@ -694,10 +703,10 @@ else
 
     # Multiplication with Vector or Matrix
     LinearAlgebra.mul!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = Minv_K_mul_u!(Y, X, A.K, A.Mfact)
-    LinearAlgebra.mul!(Y::AbstractVector, A::LinearMaps.TransposeMap{T, ParabolicLinearMap{T}}, X::AbstractVector) where {T} = Kt_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
-    LinearAlgebra.mul!(Y::AbstractVector, A::LinearMaps.AdjointMap{T, ParabolicLinearMap{T}}, X::AbstractVector) where {T} = Kc_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
     LinearAlgebra.mul!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = Minv_K_mul_u!(Y, X, A.K, A.Mfact)
+    LinearAlgebra.mul!(Y::AbstractVector, A::LinearMaps.TransposeMap{T, ParabolicLinearMap{T}}, X::AbstractVector) where {T} = Kt_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
     LinearAlgebra.mul!(Y::AbstractMatrix, A::LinearMaps.TransposeMap{T, ParabolicLinearMap{T}}, X::AbstractMatrix) where {T} = Kt_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
+    LinearAlgebra.mul!(Y::AbstractVector, A::LinearMaps.AdjointMap{T, ParabolicLinearMap{T}}, X::AbstractVector) where {T} = Kc_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
     LinearAlgebra.mul!(Y::AbstractMatrix, A::LinearMaps.AdjointMap{T, ParabolicLinearMap{T}}, X::AbstractMatrix) where {T} = Kc_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
 end # if VERSION < v"0.7.0"
 
@@ -716,15 +725,49 @@ function LinearAlgebra.tr(A::LinearMap{T}, t::Int = 10) where {T}
 end
 
 # `norm`, `opnorm`, and `normAm`
-function normest1_norm(A::LinearMap, p::Real=1, t::Int=10)
+function normest1_norm(A, p::Real=1, t::Int=10)
     !(size(A,1) == size(A,2)) && error("Matrix A must be square")
     !(p == 1 || p == Inf) && error("Only p=1 or p=Inf supported")
     p == Inf && (A = A')
     t = min(t, size(A,2))
-    return Normest1.normest1(A, t)[1]
+    return normest1(A, t)[1]
 end
 LinearAlgebra.norm(A::LinearMap, p::Real, t::Int = 10) = normest1_norm(A, p, t)
 LinearAlgebra.opnorm(A::LinearMap, p::Real, t::Int = 10) = normest1_norm(A, p, t)
+
+function Base.show(io::IO, d::ParabolicLinearMap)
+    compact = get(io, :compact, false)
+    if compact
+        print(io, size(d,1), "×", size(d,2), " ", typeof(d))
+    else
+        print(io, "$(typeof(d)) with:")
+        print(io, "\n     M: "); _compact_show_sparse(io, d.M)
+        print(io, "\n Mfact: "); _compact_show_factorization(io, d.Mfact)
+        print(io, "\n     K: "); _compact_show_sparse(io, d.K)
+    end
+end
+
+struct DiffEqParabolicLinearMapWrapper{T,Atype} <: AbstractMatrix{T}
+    A::Atype
+    DiffEqParabolicLinearMapWrapper(A::Atype) where {Atype} = new{eltype(A), Atype}(A)
+end
+
+Base.size(A::DiffEqParabolicLinearMapWrapper, args...) = size(A.A, args...)
+LinearAlgebra.issymmetric(A::DiffEqParabolicLinearMapWrapper) = false
+LinearAlgebra.ishermitian(A::DiffEqParabolicLinearMapWrapper) = false
+LinearAlgebra.isposdef(A::DiffEqParabolicLinearMapWrapper) = false
+Base.show(io::IO, A::DiffEqParabolicLinearMapWrapper) = print(io, "$(typeof(A))")
+Base.show(io::IO, ::MIME"text/plain", A::DiffEqParabolicLinearMapWrapper) = print(io, "$(size(A,1)) × $(size(A,2)) $(typeof(A))")
+Base.display(io::IO, A::DiffEqParabolicLinearMapWrapper) = show(io, A)
+Base.display(io::IO, ::MIME"text/plain", A::DiffEqParabolicLinearMapWrapper) = show(io, A)
+
+LinearAlgebra.adjoint(A::DiffEqParabolicLinearMapWrapper) = DiffEqParabolicLinearMapWrapper(A.A')
+LinearAlgebra.transpose(A::DiffEqParabolicLinearMapWrapper) = DiffEqParabolicLinearMapWrapper(transpose(A.A))
+LinearAlgebra.mul!(Y::AbstractVector, A::DiffEqParabolicLinearMapWrapper, X::AbstractVector) = mul!(Y, A.A, X)
+LinearAlgebra.mul!(Y::AbstractMatrix, A::DiffEqParabolicLinearMapWrapper, X::AbstractMatrix) = mul!(Y, A.A, X)
+
+LinearAlgebra.norm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A, p, t)
+LinearAlgebra.opnorm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A, p, t)
 
 # ---------------------------------------------------------------------------- #
 # Local frequency perturbation map functions

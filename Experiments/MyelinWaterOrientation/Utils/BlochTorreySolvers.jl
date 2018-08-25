@@ -6,36 +6,60 @@ module BlochTorreySolvers
 
 using GeometryUtils
 using BlochTorreyUtils
+using MeshUtils
 using Expmv
+using Expokit
+
 using LinearAlgebra
-using LinearMaps, DifferentialEquations, ForwardDiff, Interpolations
+using JuAFEM
+using LinearMaps, ForwardDiff, Interpolations
+# using DifferentialEquations # really kills compile time
+using OrdinaryDiffEq, DiffEqOperators, Sundials
+# using ApproxFun # really kills compile time
 using Tensors
 using LsqFit
 using MATLAB
 using TimerOutputs
-# using ApproxFun # really kills compile time
 
-export SignalIntegrator, AbstractMWIFittingModel, NNLSRegression, TwoPoolMagnToMagn, ThreePoolMagnToMagn, ThreePoolCplxToMagn, ThreePoolCplxToCplx
+export SignalIntegrator
+export AbstractMWIFittingModel, NNLSRegression, TwoPoolMagnToMagn, ThreePoolMagnToMagn, ThreePoolCplxToMagn, ThreePoolCplxToCplx
+export AbstractTestProblem, SingleAxonTestProblem
 
 export diffeq_solver, expokit_solver, expmv_solver
 export getmwf, fitmwfmodel, mwimodel, initialparams
 export gettime, getsignal, numsignals, signalnorm, complexsignal, relativesignalnorm, relativesignal
+export testproblem
 
 # ---------------------------------------------------------------------------- #
 # expmv and related functions
 # ---------------------------------------------------------------------------- #
 
-function diffeq_solver(domain; abstol = 1e-8, reltol = 1e-8, linear_solver = :GMRES)
+function diffeq_solver(domain;
+                       alg = CVODE_BDF(linear_solver = :GMRES),
+                       abstol = 1e-8,
+                       reltol = 1e-8,
+                       solverargs...)
+    #solve(odeprob, ETDRK4(krylov=true); dt = 1e-3);
+
     function solver!(U, A, tspan, U0)
         signal, callbackfun = IntegrationCallback(U0, tspan[1], domain)
-        prob = ODEProblem((du,u,p,t)->mul!(du,p[1],u), U0, tspan, (A,));
-        sol = solve(prob, CVODE_BDF(linear_solver = linear_solver);
+
+        A_wrap = DiffEqParabolicLinearMapWrapper(A);
+        A_op = DiffEqArrayOperator(A_wrap);
+        f! = ODEFunction{true,true}(A_op; jac_prototype = A_op);
+        odeprob = ODEProblem(f!, U0, tspan);
+
+        # odeprob = ODEProblem((du,u,p,t)->mul!(du,p[1],u), U0, tspan, (A,));
+        sol = solve(odeprob, alg;
+                    saveat = tspan,
                     abstol = abstol,
                     reltol = reltol,
-                    saveat = tspan,
                     alg_hints = :stiff,
-                    callback = callbackfun)
+                    callback = callbackfun,
+                    solverargs...)
+
         !(U == nothing) && copyto!(U, sol.u[end])
+
         return sol, signal
     end
     return solver!
@@ -98,6 +122,43 @@ function DiffEqBase.solve(prob, domains, tspan = (0.0,1e-3);
 end
 
 # ---------------------------------------------------------------------------- #
+# Setup up problem and domains for a single axon for testing
+# ---------------------------------------------------------------------------- #
+abstract type AbstractTestProblem end
+struct SingleAxonTestProblem <: AbstractTestProblem end
+
+function testproblem(::SingleAxonTestProblem, btparams = BlochTorreyParameters{Float64}())
+    rs = [btparams.R_mu] # one radius of average size
+    os = zeros(Vec{2}, 1) # one origin at the origin
+    outer_circles = GeometryUtils.Circle.(os, rs)
+    inner_circles = scale_shape.(outer_circles, btparams.g_ratio)
+    bcircle = scale_shape(outer_circles[1], 1.5)
+
+    h0 = 0.2 * btparams.R_mu * (1.0 - btparams.g_ratio) # fraction of size of average torus width
+    eta = 5.0 # approx ratio between largest/smallest edges
+
+    mxcall(:figure,0); mxcall(:hold,0,"on")
+    @time grid = circle_mesh_with_tori(bcircle, inner_circles, outer_circles, h0, eta)
+    @time exteriorgrid, torigrids, interiorgrids = form_tori_subgrids(grid, bcircle, inner_circles, outer_circles)
+
+    all_tori = form_subgrid(grid, getcellset(grid, "tori"), getnodeset(grid, "tori"), getfaceset(grid, "boundary"))
+    all_int = form_subgrid(grid, getcellset(grid, "interior"), getnodeset(grid, "interior"), getfaceset(grid, "boundary"))
+    mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(exteriorgrid); sleep(0.5)
+    mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(all_tori); sleep(0.5)
+    mxcall(:figure,0); mxcall(:hold,0,"on"); mxplot(all_int)
+
+    prob = MyelinProblem(btparams)
+    domains = MyelinDomain(grid, outer_circles, inner_circles, bcircle,
+        exteriorgrid, torigrids, interiorgrids;
+        quadorder = 3, funcinterporder = 1)
+
+    doassemble!(prob, domains)
+    factorize!(domains)
+
+    return prob, domains
+end
+
+# ---------------------------------------------------------------------------- #
 # DiscreteCallback for integrating magnetization at each step
 # ---------------------------------------------------------------------------- #
 struct SignalIntegrator{Tt,Tu,uDim,gDim,T,Nd,Nf} #TODO
@@ -124,6 +185,11 @@ signalnorm(p::SignalIntegrator) = norm.(p.signal)
 complexsignal(p::SignalIntegrator{Tt,Tu,2}) where {Tt,Tu} = reinterpret(Complex{Tu}, p.signal)
 relativesignalnorm(p::SignalIntegrator) = signalnorm(p)./norm(getsignal(p)[1])
 relativesignal(p::SignalIntegrator) = (S = getsignal(p); return S./norm(S[1]))
+function reset!(p::SignalIntegrator)
+    !isempty(p.time) && (resize!(p.time, 1))
+    !isempty(p.signal) && (resize!(p.signal, 1))
+    return p
+end
 
 # function ApproxFun.Fun(p::SignalIntegrator)
 #     t = gettime(p) # grid of time points
