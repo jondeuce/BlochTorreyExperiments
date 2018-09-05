@@ -20,7 +20,7 @@ catch
 end
 
 @static if VERSION >= v"0.7.0"
-    # Packages moved out of base for v0.7.0
+    # Packages moved out of base for v0.7.0+
     using Statistics
     using StatsBase
     using Printf

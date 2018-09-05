@@ -175,7 +175,7 @@ function initialize_origins(radii::AbstractVector{T};
         initial_origins = mesh_scale .* (T(2.0).*rand(T,2*Ncircles).-one(T))
         initial_origins = reinterpret(Vec{2,T}, initial_origins)
         initial_origins .-= [initial_origins[1]] # shift such that initial_origins[1] is at the origin
-        R = getrotmat(initial_origins[2]) # rotation matrix for initial_origins[2]
+        R = rotmat(initial_origins[2]) # rotation matrix for initial_origins[2]
         broadcast!(o -> R' ⋅ o, initial_origins, initial_origins) # rotate such that initial_origins[2] is on the x-axis
     elseif distribution == :uniformsquare
         # Uniformly distributed, non-overlapping circles

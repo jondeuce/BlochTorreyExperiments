@@ -36,7 +36,7 @@ function runtests()
         Ub = Vec{dim,T}((-Ua[2], Ua[1])) # unit vector for minor
         A, B = O + a*Ua, O + b*Ub # point at major/minor axis boundary
 
-        R = getrotmat(e)
+        R = rotmat(e)
         ϕ = 2π*rand()
         P = O + R ⋅ Vec{dim,T}((a*cos(ϕ), b*sin(ϕ))) # rand point on ellipse
         N = R ⋅ Vec{dim,T}((cos(ϕ)/a, sin(ϕ)/b)) # normal vector at P

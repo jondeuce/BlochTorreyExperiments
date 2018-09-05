@@ -18,7 +18,7 @@ using LineSearches
 
 export Ellipse, Circle, Rectangle
 export norm2, hadamardproduct, ⊙, skewprod, ⊠
-export origin, radius, radii, widths, geta, getb, getc, getF1, getF2, getrotmat, getsincos, getrotmat
+export origin, radius, radii, widths, geta, getb, getc, getF1, getF2, rotmat
 export dimension, floattype, xmin, ymin, xmax, ymax, area, volume
 export scale_shape, translate_shape, inscribed_square
 export signed_edge_distance, minimum_signed_edge_distance
@@ -52,9 +52,9 @@ Base.convert(::Type{SVector{dim,T1}}, x::Vec{dim,T2}) where {dim,T1,T2} = SVecto
 @inline Base.Tuple(v::Vec) = Tensors.get_data(v)
 
 @inline norm2(x::Vec) = dot(x,x)
-@inline getsincos(x::Vec{2}) = (r = norm(x); sinθ = x[2]/r; cosθ = x[1]/r; return (sinθ, cosθ))
-@inline function getrotmat(x::Vec{2,T}) where {T}
-    sinθ, cosθ = getsincos(x)
+@inline Base.sincos(x::Vec{2}) = (r = norm(x); sinθ = x[2]/r; cosθ = x[1]/r; return (sinθ, cosθ))
+@inline function rotmat(x::Vec{2,T}) where {T}
+    sinθ, cosθ = sincos(x)
     return Tensor{2,2,T}((cosθ, sinθ, -sinθ, cosθ))
 end
 
@@ -91,8 +91,8 @@ const ⊠ = skewprod # Denote the skewproduct using `\boxtimes`
 scale_shape(e::Ellipse{dim}, P::Vec{dim}, α::Number) where {dim} = Ellipse(α * (getF1(e) - P) + P, α * (getF2(e) - P) + P, α * getb(e))
 scale_shape(e::Ellipse, α::Number) = scale_shape(e, origin(e), α)
 
-@inline getsincos(e::Ellipse{2}) = getsincos(getF2(e) - getF1(e))
-@inline getrotmat(e::Ellipse{2}) = getrotmat(getF2(e) - getF1(e))
+@inline Base.sincos(e::Ellipse{2}) = sincos(getF2(e) - getF1(e))
+@inline rotmat(e::Ellipse{2}) = rotmat(getF2(e) - getF1(e))
 
 function Base.rand(::Type{Ellipse{dim,T}}) where {dim,T}
     F1 = 2*rand(Vec{dim,T}) - ones(Vec{dim,T})
