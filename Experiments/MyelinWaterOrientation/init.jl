@@ -28,6 +28,7 @@ end
     using LinearAlgebra
     using Arpack
     using Profile
+    using Random
 end
 
 # # Packages currently not working on v0.7.0:

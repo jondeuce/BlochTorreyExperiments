@@ -1,11 +1,16 @@
 module ManifoldCirclePackingTest
 
+using Test
+using BenchmarkTools
+
 using GeometryUtils
 using ManifoldCirclePacking
+using ManifoldCirclePacking: d, ∇d, pairwise_sum, pairwise_grad!
 
-using Test
 using LinearAlgebra
+using ForwardDiff
 using Tensors: Vec
+using Optim
 
 # ---------------------------------------------------------------------------- #
 # Geometry Testing
@@ -15,31 +20,32 @@ function runtests()
     @testset "Manifold Circle Packing" begin
         dim = 2
         T = Float64
-        d = signed_edge_distance
+        N = 10 # num circles
 
-        # Degenerate case and simple cases
-        r = T[]
-        @test pack(r) == Vector{Circle{dim,T}}[]
-        r = rand(T, 1)
-        @test pack(r) == [Circle{dim,T}(Vec{dim,T}((zero(T), zero(T))), r[1])]
-        r = rand(T, 2)
-        @test pack(r) == [Circle{dim,T}(Vec{dim,T}((zero(T), zero(T))), r[1]),
-                          Circle{dim,T}(Vec{dim,T}((r[1]+r[2], zero(T))), r[2])]
+        init(N) = (zeros(2N), randn(2N), rand(N) .+ one(T))
+        x0, r = randn(2N), rand(N) .+ one(T)
+        g = similar(x0)
 
-        # 3 circles
-        r = rand(T, 3)
-        c = pack(r)
-        for i in 1:2, j in i+1:3
-            @test d(c[i], c[j]) ≈ zero(T) atol = 10*eps(T)
-        end
+        # Test gradient
+        f = x -> pairwise_sum(d, x, r)
+        gfwd = ForwardDiff.gradient(f, x0)
+        gpair = copy(pairwise_grad!(g, ∇d, x0, r))
+        @test gfwd ≈ gpair
 
-        # Tangent circles testing
-        c = pack(rand(T, 2)) # random tangent circles
-        c = translate_shape.(c, [rand(Vec{dim,T})]) # random translation
-        ts = ManifoldCirclePacking.tangent_circles(c[1], c[2], rand())
-        for t in ts, i in 1:2
-            @test d(c[i], t) ≈ zero(T) atol = 10*eps(T)
-        end
+        # Benchmark
+        # cfg = ForwardDiff.GradientConfig(f, x0, ForwardDiff.Chunk{min(20,N)}())
+        # display(@benchmark ForwardDiff.gradient!($g, $f, $x0, $cfg))
+        # display(@benchmark pairwise_grad!($g, ∇d, $x0, $r))
+
+        # Test `retract!`
+        x = copy(x0)
+        ϵ = T(0.001 * (2*rand() - 1.0)) # should work for negative ϵ as well
+        m = ManifoldCirclePacking.MinimallyTangent(ϵ, r)
+        x = Optim.retract!(m, x)
+        os = reinterpret(Vec{2,T}, x)
+        cs = [Circle(os[i],r[i]) for i in 1:length(os)]
+        @test minimum_signed_edge_distance(cs) ≈ ϵ
+
     end
     nothing
 end

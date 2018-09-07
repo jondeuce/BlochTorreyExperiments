@@ -261,8 +261,8 @@ function benchmark_views(Mfact::Factorization, mfact::Factorization)
     @assert Mfact\U ≈ reassemble!(tmp, mfact\ux, mfact\uy)
 
     @btime $Mfact \ $U
-    @btime $reassemble!($tmp, $mfact\$ux, $mfact\$uy)
-    @btime $reassemble!($tmp, $mfact\$uxview, $mfact\$uyview)
+    @btime reassemble!($tmp, $mfact\$ux, $mfact\$uy)
+    @btime reassemble!($tmp, $mfact\$uxview, $mfact\$uyview)
 
     return nothing
 end
