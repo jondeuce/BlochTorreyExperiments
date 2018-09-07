@@ -11,6 +11,9 @@ export pack
 # ---------------------------------------------------------------------------- #
 
 using GeometryUtils
+using CirclePackingUtils
+
+using Random
 using Tensors
 # using VoronoiDelaunay
 # using Statistics
@@ -22,10 +25,28 @@ using Tensors
 
 const d = signed_edge_distance
 
-function pack(r::Vector{T}) where {T}
+function pack(r::AbstractVector{T}; iters::Int = 1, goaldensity = one(T)) where {T}
+    c = _pack(r)
+
+    if iters > 1
+        rshuf = copy(r)
+        η_best = estimate_density(c)
+        for i = 2:iters
+            shuffle!(rshuf)
+            cshuf = _pack(rshuf)
+            η = estimate_density(cshuf)
+            (η > η_best) && (η_best = η; copyto!(c, cshuf))
+            (η_best >= goaldensity) && break
+        end
+    end
+
+    return c
+end
+
+function _pack(r::AbstractVector{T}) where {T}
     # Initialize and handle degenerate case
     N = length(r)
-    c = Vector{Circle{2,T}}(undef, length(r))
+    c = Vector{Circle{2,T}}(undef, N)
     N == 0 && return c
 
     # One circle
@@ -42,11 +63,11 @@ function pack(r::Vector{T}) where {T}
     N == 3 && return c
 
     # Four or more circles
-    ATOL = 1e-12 * minimum(r)
+    ATOL = 1e-14 * minimum(r)
     @inbounds for i = 4:N
         Σd²_best = T(Inf)
         # for t in Iterators.flatten(tangent_circles(c[j],c[k],r[i],ATOL) for j in 1:i-1 for k in 1:j-1)
-        for jj in 1:i-1 for ii in 1:jj-1 for t in tangent_circles(c[jj], c[ii], r[i], 2*ATOL)
+        for jj in 1:i-1 for ii in 1:jj-1 for t in tangent_circles(c[jj], c[ii], r[i], 0.1*ATOL)
             overlap = false
             Σd² = zero(T)
             for j = 1:i-1
@@ -98,29 +119,31 @@ end
 # close enough, the two circles tangent to c1 and c2 are returned. Otherwise,
 # the circles tangent only one of c1 or c3 along the line between c1 and c3
 # are returned.
-function tangent_circles(c1::Circle{2,T}, c2::Circle{2,T}, r3::T, ATOL::T = 1e-14*r3) where {T}
+# NOTE: Circles are not checked whether or not they overlap. As long as one is
+# not strictly contained in the other, however, the correct tangent pair will
+# still be produced.
+function tangent_circles(c1::Circle{2,T}, c2::Circle{2,T}, r3::T, ATOL::T = 1e-15*r3) where {T}
     D = d(c1, c2)
-    D <= -ATOL && error("Circles must be non-overlapping")
-
     dx = origin(c2) - origin(c1)
     r1, r2 = radius(c1), radius(c2)
+    C, V = promote_type(typeof(c1), typeof(c2)), typeof(dx)
 
-    if D >= 2*r3
+    if D >= 2*r3 # circles are at least 2*r3 away
         dx /= norm(dx)
         o3A = origin(c1) + (r1+r3) * dx
         o3B = origin(c2) - (r2+r3) * dx
     else
-        if D < ATOL # -ATOL < D < ATOL
+        if abs(D) <= ATOL # circles are tangent
             cosα, sinα = cos_alpha(r1,r2,r3), sin_alpha(r1,r2,r3)
-        else # ATOL <= D < 2*r3
+        else # ATOL < D < 2*r3, or D < -ATOL
             cosα, sinα = cos_alpha(c1,c2,r3), sin_alpha(c1,c2,r3)
         end
         R = rotmat(dx)
-        o3A = origin(c1) + (r1+r3) * (R' ⋅ Vec{2,T}((cosα,  sinα)))
-        o3B = origin(c1) + (r1+r3) * (R' ⋅ Vec{2,T}((cosα, -sinα)))
+        o3A = origin(c1) + (r1+r3) * (R' ⋅ V((cosα,  sinα)))
+        o3B = origin(c1) + (r1+r3) * (R' ⋅ V((cosα, -sinα)))
     end
 
-    return (Circle{2,T}(o3A, r3), Circle{2,T}(o3B, r3))
+    return (C(o3A, r3), C(o3B, r3))
 end
 
 end # module GreedyCirclePacking

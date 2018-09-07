@@ -70,12 +70,12 @@ using BenchmarkTools
 # ============================================================================ #
 # Moved to ~/.julia/config/startup.jl
 # ============================================================================ #
-#
+# 
 # # ENV["MATLAB_HOME"] = "C:\\Users\\Jonathan\\Downloads\\Mathworks Matlab R2016a\\R2016a"
 # # HOME = "C:\\Users\\Jonathan\\Documents\\MATLAB\\"
 # # HOME = "/home/jon/Documents/UBCMRI/"
 # HOME = "/home/coopar7/Documents/code/"
 # BTMASTERPATH = HOME * "BlochTorreyExperiments-master/"
 # MWOPATH = BTMASTERPATH * "Experiments/MyelinWaterOrientation/"
-#
-# push!(LOAD_PATH, MWOPATH .* ("", "Geometry/", "Utils/", "Expmv/")...)
+# MWOFOLDERS = ["BlochTorrey/", "CirclePacking/", "Expmv/", "Geometry/", "Utils/"]
+# push!(LOAD_PATH, MWOPATH .* ("", MWOFOLDERS...)...)

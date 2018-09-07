@@ -2,7 +2,7 @@
 # Tools for creating a set of packed circles
 # ============================================================================ #
 
-module CirclePackingUtils
+module OldCirclePackingUtils
 
 # ---------------------------------------------------------------------------- #
 # Dependencies
@@ -150,9 +150,9 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
     α_min = find_zero(α -> is_any_overlapping(expand_circles(α)) - 0.5, (0.01, 100.0), Bisection())
     ϵ = 100*eps(α_min)
     if density(α_min + ϵ) ≤ goaldensity
-        warn("Density cannot be reached without overlapping circles; can " *
-             "only reach $(density(α_min + ϵ)) < $goaldensity. Decrease " *
-             "density goal, or adjust mutual distance penalty weight.")
+        @warn ("Density cannot be reached without overlapping circles; can " *
+               "only reach $(density(α_min + ϵ)) < $goaldensity. Decrease " *
+               "density goal, or adjust mutual distance penalty weight.")
         packed_circles = expand_circles(α_min + ϵ)
     else
         # Find α which results in the desired packing density
@@ -162,13 +162,23 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
 
     return packed_circles, result
 end
+function pack_circles(c::AbstractVector{Circle{DIM,T}},
+                      ::Type{Val{DIM}} = Val{2};
+                      kwargs...) where {DIM,T}
+    N = length(c)
+    r, x0 = zeros(N), zeros(Vec{DIM,T}, N)
+    for (i, ci) in enumerate(c)
+        r[i], x0[i] = radius(ci), origin(ci)
+    end
+    return pack_circles(r, Val{DIM}; initial_origins = x0, kwargs...)
+end
 
 function initialize_origins(radii::AbstractVector{T};
                             distribution = :uniformsquare) where {T}
     # Initialize with random origins
     Ncircles = length(radii)
     Rmax = maximum(radii)
-    mesh_scale = T(2Rmax*sqrt(Ncircles))
+    mesh_scale = T(2*Rmax*sqrt(Ncircles))
 
     if distribution == :random
         # Randomly distributed origins
@@ -213,7 +223,7 @@ function wrap_gradient(f, x0::AbstractArray{T},
             return DiffBase.value(all_results) # return f(x)
         end
     else
-        error("ReverseDiff not implemented") #TODO
+        error("ReverseDiff not implemented") #TODO?
         # if isdynamic
         #     # ReverseDiff gradient (pre-recorded config; slower, but dynamic call graph)
         #     cfg = ReverseDiff.GradientConfig(x0)
@@ -405,7 +415,7 @@ function energy_sum_squared_distances(circles::Vector{Circle{DIM,T}},
 
     @inbounds for i in 1:N-1
         c_i = circles[i]
-        @inbounds for j in i+1:N
+        for j in i+1:N
             c_j = circles[j]
             d_ij = signed_edge_distance(c_i, c_j)
             E += d_ij^2
@@ -431,7 +441,7 @@ function energy_sum_overlap_squared_distances(circles::Vector{Circle{DIM,T}},
     @inbounds for i in 1:N-1
         c_i = circles[i]
         d²_overlap = zero(T)
-        @inbounds for j in i+1:N
+        for j in i+1:N
             c_j = circles[j]
             d_ij = signed_edge_distance(c_i, c_j)
             d_ij < ϵ && (d²_overlap += (d_ij-ϵ)^2)
@@ -468,7 +478,7 @@ function energy_sum_squared_distances(c_0::Circle,
     @inbounds for i in 1:N-1
         origin_i = origins[i]
         radius_i = radii[i]
-        @inbounds for j in i+1:N
+        for j in i+1:N
             d_ij = signed_edge_distance(origin_i, radius_i, origins[j], radii[j])
             E += d_ij^2
         end
@@ -510,7 +520,7 @@ function energy_sum_overlap_squared_distances(c_0::Circle,
         origin_i = origins[i]
         radius_i = radii[i]
         d²_overlap = zero(T)
-        @inbounds for j in i+1:N
+        for j in i+1:N
             d_ij = signed_edge_distance(origin_i, radius_i, origins[j], radii[j])
             d_ij < ϵ && (d²_overlap += (d_ij-ϵ)^2)
         end
@@ -554,7 +564,7 @@ function energy_sum_squared_distances_reversediff(
     @inbounds for i in 1:N-1
         # c_i = cs[i]
         c_i = Circle{DIM,T}(Vec{2}((origins[2i-1], origins[2i])), radii[i])
-        @inbounds for j in i+1:N
+        for j in i+1:N
             # c_j = cs[j]
             c_j = Circle{DIM,T}(Vec{2}((origins[2j-1], origins[2j])), radii[j])
             E += compute_dij²(c_i, c_j)
@@ -605,7 +615,7 @@ function energy_sum_overlap_squared_distances_reversediff(
 
     @inbounds for i in 1:N-1
         c_i = Circle{DIM,T}(Vec{2}((origins[2i-1], origins[2i])), radii[i])
-        @inbounds for j in i+1:N
+        for j in i+1:N
             c_j = Circle{DIM,T}(Vec{2}((origins[2j-1], origins[2j])), radii[j])
             E += compute_overlap_dij²(c_i, c_j)
             # E += thresh_d_ij²(signed_edge_dij(c_i, c_j), ϵ)
@@ -677,6 +687,6 @@ function Cuba_integrator(method = :cuhre; kwargs...)
     end
 end
 
-end # module CirclePackingUtils
+end # module OldCirclePackingUtils
 
 nothing

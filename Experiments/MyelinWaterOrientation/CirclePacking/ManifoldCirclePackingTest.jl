@@ -4,13 +4,19 @@ using Test
 using BenchmarkTools
 
 using GeometryUtils
+using CirclePackingUtils
+using GreedyCirclePacking
 using ManifoldCirclePacking
 using ManifoldCirclePacking: d, ∇d, pairwise_sum, pairwise_grad!
 
+using Distributions
 using LinearAlgebra
 using ForwardDiff
 using Tensors: Vec
 using Optim
+
+const greedypack = GreedyCirclePacking.pack
+const manifoldpack = ManifoldCirclePacking.pack
 
 # ---------------------------------------------------------------------------- #
 # Geometry Testing
@@ -46,7 +52,17 @@ function runtests()
         cs = [Circle(os[i],r[i]) for i in 1:length(os)]
         @test minimum_signed_edge_distance(cs) ≈ ϵ
 
+        # Use greedy result as initialization for manifold packing
+        N = 200
+        r = rand(Distributions.Gamma(5.7, 0.46/5.7), N)
+        c0 = greedypack(r; iters = 5)
+        @show estimate_density(c0)
+        c1 = manifoldpack(c0)
+        @show estimate_density(c1)
+        c2, result = CirclePackingUtils.pack_circles(c1; goaldensity = 0.83)
+        @show estimate_density(c2)
     end
+
     nothing
 end
 
