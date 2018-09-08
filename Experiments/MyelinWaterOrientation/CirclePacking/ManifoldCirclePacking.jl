@@ -11,6 +11,7 @@ export pack
 # ---------------------------------------------------------------------------- #
 
 using GeometryUtils
+using CirclePackingUtils
 using Tensors
 # using VoronoiDelaunay
 # using Statistics
@@ -61,10 +62,12 @@ function pack(
     c = [Circle{2,T}(Vec{2,T}((x[2i-1],x[2i])), r[i]) for i in 1:length(r)]
     return c
 end
+
 function pack(
         c::AbstractVector{Circle{2,T}},
         ϵ = zero(T);
         kwargs...) where {T}
+    # Unpack input vector of circles to radius and x0 vectors
     N = length(c)
     r, x0 = zeros(N), zeros(Vec{2,T}, N)
     for (i, ci) in enumerate(c)
@@ -142,51 +145,6 @@ end
 
 # Gradient of squared distance function is scale invariant, so just return g
 Optim.project_tangent!(m::MinimallyTangent, g, x) = g
-
-# Symmetric pairwise sum of the four argument function `f` where the first two
-# arguments are Vec{2,T}'s and the second two are scalars. The output is the sum
-# over i<j of f(o[i], o[j], r[i], r[j]) where o[i] is the Vec{2,T} formed from
-# x[2i-1:2i].
-# `f` is symmetric in both the first two arguments and the second two, i.e.
-# f(o1,o2,r1,r2) == f(o2,o1,r1,r2) and f(o1,o2,r1,r2) == f(o1,o2,r2,r1).
-function pairwise_sum(f,
-                      x::AbstractVector{T},
-                      r::AbstractVector) where {T}
-    @assert length(x) == 2*length(r) >= 4
-    o = reinterpret(Vec{2,T}, x)
-
-    # Pull first iteration outside of the loop for easy initialization
-    Σ = f(o[1], o[2], r[1], r[2])
-    @inbounds for j = 3:length(o)
-        for i in 1:j-1
-            Σ += f(o[i], o[j], r[i], r[j])
-        end
-    end
-
-    return Σ
-end
-
-# Gradient of the pairwise_sum function w.r.t. `x`. Result is stored in `g`.
-function pairwise_grad!(g::AbstractVector{T},
-                        ∇f,
-                        x::AbstractVector{T},
-                        r::AbstractVector) where {T}
-    @assert length(g) == length(x) == 2*length(r) >= 4
-    fill!(g, zero(T))
-    G = reinterpret(Vec{2,T}, g)
-    o = reinterpret(Vec{2,T}, x)
-
-    @inbounds for i in 1:length(o)
-        for j in 1:i-1
-            G[i] += ∇f(o[i], o[j], r[i], r[j])
-        end
-        for j in i+1:length(o)
-            G[i] += ∇f(o[i], o[j], r[i], r[j])
-        end
-    end
-
-    return g
-end
 
 end # module ManifoldCirclePacking
 

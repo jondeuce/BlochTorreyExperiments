@@ -6,8 +6,10 @@ using BenchmarkTools
 using GeometryUtils
 using CirclePackingUtils
 using GreedyCirclePacking
+using EnergyCirclePacking
+
 using ManifoldCirclePacking
-using ManifoldCirclePacking: d, ∇d, pairwise_sum, pairwise_grad!
+using ManifoldCirclePacking: d, ∇d
 
 using Distributions
 using LinearAlgebra
@@ -17,6 +19,7 @@ using Optim
 
 const greedypack = GreedyCirclePacking.pack
 const manifoldpack = ManifoldCirclePacking.pack
+const energypack = EnergyCirclePacking.pack
 
 # ---------------------------------------------------------------------------- #
 # Geometry Testing
@@ -53,13 +56,13 @@ function runtests()
         @test minimum_signed_edge_distance(cs) ≈ ϵ
 
         # Use greedy result as initialization for manifold packing
-        N = 200
+        N = 20
         r = rand(Distributions.Gamma(5.7, 0.46/5.7), N)
         c0 = greedypack(r; iters = 5)
         @show estimate_density(c0)
         c1 = manifoldpack(c0)
         @show estimate_density(c1)
-        c2, result = CirclePackingUtils.pack_circles(c1; goaldensity = 0.83)
+        c2 = energypack(c1; goaldensity = 0.8)
         @show estimate_density(c2)
     end
 
