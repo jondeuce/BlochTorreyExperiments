@@ -7,16 +7,14 @@ using GeometryUtils
 using CirclePackingUtils
 using GreedyCirclePacking
 using EnergyCirclePacking
-
 using ManifoldCirclePacking
-using ManifoldCirclePacking: d, ∇d
 
 using Distributions
 using LinearAlgebra
-using ForwardDiff
 using Tensors: Vec
 using Optim
 
+using CirclePackingUtils: d, ∇d, ∇²d
 const greedypack = GreedyCirclePacking.pack
 const manifoldpack = ManifoldCirclePacking.pack
 const energypack = EnergyCirclePacking.pack
@@ -33,18 +31,6 @@ function runtests()
 
         init(N) = (zeros(2N), randn(2N), rand(N) .+ one(T))
         x0, r = randn(2N), rand(N) .+ one(T)
-        g = similar(x0)
-
-        # Test gradient
-        f = x -> pairwise_sum(d, x, r)
-        gfwd = ForwardDiff.gradient(f, x0)
-        gpair = copy(pairwise_grad!(g, ∇d, x0, r))
-        @test gfwd ≈ gpair
-
-        # Benchmark
-        # cfg = ForwardDiff.GradientConfig(f, x0, ForwardDiff.Chunk{min(20,N)}())
-        # display(@benchmark ForwardDiff.gradient!($g, $f, $x0, $cfg))
-        # display(@benchmark pairwise_grad!($g, ∇d, $x0, $r))
 
         # Test `retract!`
         x = copy(x0)

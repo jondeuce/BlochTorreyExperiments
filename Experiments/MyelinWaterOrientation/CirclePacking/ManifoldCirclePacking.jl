@@ -12,6 +12,7 @@ export pack
 
 using GeometryUtils
 using CirclePackingUtils
+using CirclePackingUtils: d, ∇d, ∇²d
 using Tensors
 # using VoronoiDelaunay
 # using Statistics
@@ -21,8 +22,6 @@ using Tensors
 using Optim
 using LineSearches
 
-@inline d(o1::Vec, o2::Vec, r1, r2, ϵ = zero(typeof(r1))) = norm(o1 - o2) - r1 - r2 - ϵ
-@inline ∇d(o1::Vec, o2::Vec, r1, r2, ϵ = zero(typeof(r1))) = (o1 - o2)/norm(o1 - o2) # ∇ w.r.t `o1`
 @inline α(o1::Vec, o2::Vec, r1, r2, ϵ = zero(typeof(r1))) = (r1 + r2 + ϵ)/norm(o1 - o2)
 
 function pack(
