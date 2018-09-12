@@ -27,7 +27,7 @@ function runtests()
     @testset "Manifold Circle Packing" begin
         dim = 2
         T = Float64
-        N = 10 # num circles
+        N = 5 # num circles
 
         init(N) = (zeros(2N), randn(2N), rand(N) .+ one(T))
         x0, r = randn(2N), rand(N) .+ one(T)
@@ -41,18 +41,30 @@ function runtests()
         cs = [Circle(os[i],r[i]) for i in 1:length(os)]
         @test minimum_signed_edge_distance(cs) ≈ ϵ
 
-        # Use greedy result as initialization for manifold packing
-        N = 20
-        r = rand(Distributions.Gamma(5.7, 0.46/5.7), N)
-        c0 = greedypack(r; iters = 5)
-        @show estimate_density(c0)
-        c1 = manifoldpack(c0)
-        @show estimate_density(c1)
-        c2 = energypack(c1; goaldensity = 0.8)
-        @show estimate_density(c2)
     end
 
     nothing
+end
+
+function testpacking(;N = 5, eta = 0.6)
+    # Use greedy result as initialization for manifold/energy/etc. packing
+    r = rand(Distributions.Gamma(5.7, 0.46/5.7), N)
+
+    @time c0 = greedypack(r; iters = 5)
+    @show estimate_density(c0)
+
+    @time c1 = manifoldpack(c0)
+    @show estimate_density(c1)
+
+    @time c2 = energypack(c1; goaldensity = eta,
+        autodiff = false, setcallback = true, secondorder = false)
+    @show estimate_density(c2)
+
+    @time c3 = energypack(c1; goaldensity = eta,
+        autodiff = false, setcallback = true, secondorder = true)
+    @show estimate_density(c3)
+
+    return c3
 end
 
 end # module ManifoldCirclePackingTest

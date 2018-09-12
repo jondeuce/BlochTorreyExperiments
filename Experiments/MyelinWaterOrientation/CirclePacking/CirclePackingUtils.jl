@@ -13,7 +13,7 @@ using LinearAlgebra, Statistics
 using DiffBase, Optim, LineSearches, ForwardDiff, Roots
 using Tensors
 
-export estimate_density, scale_to_density
+export estimate_density, scale_to_density, covariance_energy
 export tocircles, tocircles!, tovectors, tovectors!, initialize_origins
 export pairwise_sum, pairwise_grad!, pairwise_hess!
 export wrap_gradient, check_density_callback
@@ -57,6 +57,14 @@ function scale_to_density(input_circles, goaldensity)
     end
 
     return packed_circles
+end
+
+function covariance_energy(circles::Vector{Circle{DIM,T}}) where {DIM,T}
+    circlepoints = reshape(reinterpret(T, circles), (DIM+1, length(circles))) # reinterp as DIM+1 x Ncircles array
+    @views origins = circlepoints[1:2, :] # DIM x Ncircles view of origin points
+    Σ = cov(origins; dims = 2) # covariance matrix of origin locations
+    σ² = T(tr(Σ)/DIM) # mean variance
+    return sum(abs2, Σ - σ²*I) # penalize non-diagonal covariance matrices
 end
 
 # ---------------------------------------------------------------------------- #
@@ -156,9 +164,10 @@ function pairwise_sum(f,
 
     # Pull first iteration outside of the loop for easy initialization
     @inbounds Σ = f(o[1], o[2], r[1], r[2])
-    @inbounds for j = 3:N
-        for i in 1:j-1
-            Σ += f(o[i], o[j], r[i], r[j])
+    @inbounds for i = 3:N
+        oᵢ, rᵢ = o[i], r[i]
+        for j in 1:i-1
+            Σ += f(oᵢ, o[j], rᵢ, r[j])
         end
     end
 
@@ -177,11 +186,12 @@ function pairwise_grad!(g::AbstractVector{T},
     N = length(o)
 
     @inbounds for i in 1:N
+        oᵢ, rᵢ = o[i], r[i]
         for j in 1:i-1
-            G[i] += ∇f(o[i], o[j], r[i], r[j])
+            G[i] += ∇f(oᵢ, o[j], rᵢ, r[j])
         end
         for j in i+1:N
-            G[i] += ∇f(o[i], o[j], r[i], r[j])
+            G[i] += ∇f(oᵢ, o[j], rᵢ, r[j])
         end
     end
 
@@ -199,34 +209,44 @@ function pairwise_hess!(H::AbstractMatrix{T},
     N = length(o)
 
     # Hoist l=k=1 outside of main loop to get htype for free
-    @inbounds h = ∇²f(o[2], o[1], r[2], r[1])
+    oₖ, rₖ = o[1], r[1]
+    @inbounds h = ∇²f(oₖ, o[2], rₖ, r[2])
     @inbounds for j in 3:N
-        h += ∇²f(o[j], o[1], r[j], r[1])
+        h += ∇²f(oₖ, o[j], rₖ, r[j])
     end
     unsafe_assignat!(H, h, 1, 1)
     htype = typeof(h)
 
     @inbounds for k in 2:N
+        oₖ, rₖ, K = o[k], r[k], 2k-1
+
         # lower off-diagonal terms (l<k)
         for l in 1:k-1
-            h = -∇²f(o[k], o[l], r[k], r[l]) # off-diags have minus sign
-            unsafe_assignat!(H, h, 2k-1, 2l-1)
+            h = -∇²f(oₖ, o[l], rₖ, r[l]) # off-diags have minus sign
+            unsafe_assignat!(H, h, K, 2l-1)
         end
 
         # diagonal terms (l==k): sum over j ≠ k
         h = zero(htype)
         for j in 1:k-1
-            h += ∇²f(o[j], o[k], r[j], r[k])
+            h += ∇²f(oₖ, o[j], rₖ, r[j])
         end
         for j in k+1:N
-            h += ∇²f(o[j], o[k], r[j], r[k])
+            h += ∇²f(oₖ, o[j], rₖ, r[j])
         end
-        unsafe_assignat!(H, h, 2k-1, 2k-1)
+        unsafe_assignat!(H, h, K, K)
     end
 
-    # upper off-diagonal l>k terms
+    # upper off-diagonal (l>k) terms
     unsafe_symmetrize_upper!(H)
 
+    return H
+end
+
+function unsafe_symmetrize_upper!(H)
+    @inbounds for j in 2:size(H,1), i in 1:j-1
+        H[i,j] = H[j,i]
+    end
     return H
 end
 
@@ -258,13 +278,6 @@ end
     return H
 end
 
-function unsafe_symmetrize_upper!(H)
-    @inbounds for j in 2:size(H,1), i in 1:j-1
-        H[i,j] = H[j,i]
-    end
-    return H
-end
-
 function unsafe_assignall!(H, h::MaybeSymTensor2D{T}) where {T}
     @inbounds for j in 1:2:size(H,2), i in 1:2:size(H,1)
         unsafe_assignat!(H,h,i,j)
@@ -277,7 +290,7 @@ end
 # ---------------------------------------------------------------------------- #
 function Base.:-(J::UniformScaling{Bool}, A::SymmetricTensor{2,2})
     T, d = typeof(A), Tensors.get_data(A)
-    @inbounds B = T((J.λ - d[1], -d[2], J.λ - d[3]))
+    @inbounds B = T((J - d[1], -d[2], J - d[3]))
     return B
 end
 
@@ -317,17 +330,17 @@ end
 # Symmetric squared circle distance function on the circles (o1,r1) and (o2,r2)
 @inline function d²_overlap(o1::Vec{2,T}, o2::Vec, r1, r2, ϵ = zero(typeof(r1))) where {T}
     _d = d(o1,o2,r1,r2,ϵ)
-    return _d < zero(T) ? zero(T) : _d^2
+    return _d >= zero(T) ? zero(T) : _d^2
 end
 @inline function ∇d²_overlap(o1::Vec{2,T}, o2::Vec, r1, r2, ϵ = zero(typeof(r1))) where {T}
     # Gradient w.r.t `o1`
     _d = d(o1,o2,r1,r2,ϵ)
-    return _d < zero(T) ? zero(Vec{2,T}) : 2 * _d * ∇d(o1,o2,r1,r2,ϵ)
+    return _d >= zero(T) ? zero(Vec{2,T}) : 2 * _d * ∇d(o1,o2,r1,r2,ϵ)
 end
 @inline function ∇²d²_overlap(o1::Vec{dim,T}, o2::Vec, r1, r2, ϵ = zero(typeof(r1))) where {dim,T}
     # Hessian w.r.t `o1`, i.e. ∂²d/∂o1²
     _d = d(o1,o2,r1,r2,ϵ)
-    return _d < zero(T) ? zero(SymmetricTensor{2,dim,T}) : 2 * _d * ∇²d(o1,o2,r1,r2,ϵ) + 2 * otimes(∇d(o1,o2,r1,r2,ϵ))
+    return _d >= zero(T) ? zero(SymmetricTensor{2,dim,T}) : 2 * _d * ∇²d(o1,o2,r1,r2,ϵ) + 2 * otimes(∇d(o1,o2,r1,r2,ϵ))
 end
 
 # ---------------------------------------------------------------------------- #

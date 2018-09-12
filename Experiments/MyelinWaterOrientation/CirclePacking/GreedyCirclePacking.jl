@@ -112,7 +112,7 @@ end
 function sin_alpha(c1::Circle, c2::Circle, r3)
     #TODO @assert (valid conditions...)
     a, b, c = radius(c1) + r3, norm(origin(c2) - origin(c1)), radius(c2) + r3
-    return sqrt((c-a+b)*(a+b-c)*(a-b+c)*(a+b+c))/(2a*b)
+    return sqrt(abs((c-a+b)*(a+b-c)*(a-b+c)*(a+b+c)))/(2a*b) #TODO abs?
 end
 
 # Return the pair of circles nearest c1 and c2 with radius r3. If c1 and c2 are
