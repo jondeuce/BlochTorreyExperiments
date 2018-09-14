@@ -36,12 +36,15 @@ end
 # ---------------------------------------------------------------------------- #
 # rect_mesh_with_circles
 # ---------------------------------------------------------------------------- #
-function rect_mesh_with_circles(rect_bdry::Rectangle{2,T},
-                                circles::Vector{Circle{2,T}},
-                                h0::T,
-                                eta::T;
-                                isunion::Bool = true) where T
-    # TODO: add minimum angle threshold
+function rect_mesh_with_circles(
+        rect_bdry::Rectangle{2,T},
+        circles::Vector{Circle{2,T}},
+        h0::T,
+        eta::T;
+        isunion::Bool = true
+    ) where {T}
+
+    # TODO: add minimum angle threshold?
     dim = 2
     nfaces = 3 # per triangle
     nnodes = 3 # per triangle
@@ -99,13 +102,18 @@ function rect_mesh_with_circles(rect_bdry::Rectangle{2,T},
 end
 
 # ---------------------------------------------------------------------------- #
-# rect_mesh_with_tori
+# disjoint_rect_mesh_with_tori
 # ---------------------------------------------------------------------------- #
-function disjoint_rect_mesh_with_tori(rect_bdry::Rectangle{2,T},
-                                      inner_circles::Vector{Circle{2,T}},
-                                      outer_circles::Vector{Circle{2,T}},
-                                      h0::T,
-                                      eta::T) where {T}
+function disjoint_rect_mesh_with_tori(
+        rect_bdry::Rectangle{2,T},
+        inner_circles::Vector{Circle{2,T}},
+        outer_circles::Vector{Circle{2,T}},
+        h0::T,
+        eta::T;
+        fixcorners::Bool = true,
+        fixcirclepoints::Bool = true
+    ) where {T}
+
     # Ensure that outer circles strictly contain inner circles, and that outer
     # circles are strictly non-overlapping
     @assert length(inner_circles) == length(outer_circles)
@@ -113,7 +121,7 @@ function disjoint_rect_mesh_with_tori(rect_bdry::Rectangle{2,T},
     @assert !is_any_overlapping(outer_circles, <)
 
     println("0/$(length(outer_circles)): Exterior")
-    exteriorgrid = form_disjoint_grid(rect_bdry, inner_circles, outer_circles, h0, eta, :exterior)
+    exteriorgrid = form_disjoint_grid(rect_bdry, inner_circles, outer_circles, h0, eta, :exterior, fixcorners, fixcirclepoints)
     # exteriorgrid = Grid[]
 
     # interiorgrids = Grid[]
@@ -124,7 +132,7 @@ function disjoint_rect_mesh_with_tori(rect_bdry::Rectangle{2,T},
         println("$i/$(length(outer_circles)): Interior")
         new_bdry = intersect(rect_bdry, bounding_box(inner_circles[i]))
         if !(area(new_bdry) ≈ zero(T))
-            push!(interiorgrids, form_disjoint_grid(new_bdry, [inner_circles[i]], [outer_circles[i]], h0, eta, :interior))
+            push!(interiorgrids, form_disjoint_grid(new_bdry, [inner_circles[i]], [outer_circles[i]], h0, eta, :interior, fixcorners, fixcirclepoints))
         else
             push!(interiorgrids, Grid(Triangle[], Node{2,T}[]))
         end
@@ -132,7 +140,7 @@ function disjoint_rect_mesh_with_tori(rect_bdry::Rectangle{2,T},
         println("$i/$(length(outer_circles)): Annular")
         new_bdry = intersect(rect_bdry, bounding_box(outer_circles[i]))
         if !(area(new_bdry) ≈ zero(T))
-            push!(torigrids, form_disjoint_grid(new_bdry, [inner_circles[i]], [outer_circles[i]], h0, eta, :tori))
+            push!(torigrids, form_disjoint_grid(new_bdry, [inner_circles[i]], [outer_circles[i]], h0, eta, :tori, fixcorners, fixcirclepoints))
         else
             push!(torigrids, Grid(Triangle[], Node{2,T}[]))
         end
@@ -141,18 +149,23 @@ function disjoint_rect_mesh_with_tori(rect_bdry::Rectangle{2,T},
     return exteriorgrid, torigrids, interiorgrids
 end
 
-function form_disjoint_grid(rect_bdry::Rectangle{2,T},
-                            inner_circles::Vector{Circle{2,T}},
-                            outer_circles::Vector{Circle{2,T}},
-                            h0::T,
-                            eta::T,
-                            regiontype::Symbol) where {T}
+function form_disjoint_grid(
+        rect_bdry::Rectangle{2,T},
+        inner_circles::Vector{Circle{2,T}},
+        outer_circles::Vector{Circle{2,T}},
+        h0::T,
+        eta::T,
+        regiontype::Symbol,
+        fixcorners::Bool = true,
+        fixcirclepoints::Bool = true
+    ) where {T}
 
     dim = 2
     nargout = 2
     isunion = false
-    outer_centers = reinterpret(T, origin.(outer_circles), (dim, length(outer_circles)))'
-    inner_centers = reinterpret(T, origin.(inner_circles), (dim, length(inner_circles)))'
+    to_array(cs) = reinterpret(T, origin.(cs), (dim, length(cs))) |> transpose |> Matrix
+    outer_centers = to_array(outer_circles)
+    inner_centers = to_array(inner_circles)
     outer_radii   = radius.(outer_circles)
     inner_radii   = radius.(inner_circles)
 
@@ -163,10 +176,10 @@ function form_disjoint_grid(rect_bdry::Rectangle{2,T},
         p, t = mxcall(:squaremeshwithcircles, nargout, bbox, outer_centers, outer_radii, h0, eta, isunion, regnumber)
     elseif regiontype == :tori
         regnumber = 2.0
-        p, t = mxcall(:squaremeshwithcircles, nargout, bbox, outer_centers, outer_radii, h0, eta, isunion, regnumber, inner_centers, inner_radii)
+        p, t = mxcall(:squaremeshwithcircles, nargout, bbox, outer_centers, outer_radii, h0, eta, isunion, regnumber, inner_centers, inner_radii, fixcorners, fixcirclepoints)
     elseif regiontype == :interior
         regnumber = 3.0
-        p, t = mxcall(:squaremeshwithcircles, nargout, bbox, outer_centers, outer_radii, h0, eta, isunion, regnumber, inner_centers, inner_radii)
+        p, t = mxcall(:squaremeshwithcircles, nargout, bbox, outer_centers, outer_radii, h0, eta, isunion, regnumber, inner_centers, inner_radii, fixcorners, fixcirclepoints)
     else
         error("Invalid regiontype == $regiontype.")
     end
@@ -193,11 +206,14 @@ function form_disjoint_grid(rect_bdry::Rectangle{2,T},
     return grid
 end
 
-function rect_mesh_with_tori(rect_bdry::Rectangle{2,T},
-                             inner_circles::Vector{Circle{2,T}},
-                             outer_circles::Vector{Circle{2,T}},
-                             h0::T,
-                             eta::T) where {T}
+function rect_mesh_with_tori(
+        rect_bdry::Rectangle{2,T},
+        inner_circles::Vector{Circle{2,T}},
+        outer_circles::Vector{Circle{2,T}},
+        h0::T,
+        eta::T
+    ) where {T}
+
     # Ensure that outer circles strictly contain inner circles, and that outer
     # circles are strictly non-overlapping
     @assert all(c -> is_inside(c[1], c[2], <), zip(inner_circles, outer_circles))
@@ -240,10 +256,13 @@ function rect_mesh_with_tori(rect_bdry::Rectangle{2,T},
     return fullgrid
 end
 
-function form_tori_subgrids(fullgrid::Grid{dim,N,T,M},
-                            rect_bdry::Rectangle{2,T},
-                            inner_circles::Vector{Circle{2,T}},
-                            outer_circles::Vector{Circle{2,T}}) where {dim,N,T,M}
+function form_tori_subgrids(
+        fullgrid::Grid{dim,N,T,M},
+        rect_bdry::Rectangle{2,T},
+        inner_circles::Vector{Circle{2,T}},
+        outer_circles::Vector{Circle{2,T}}
+    ) where {dim,N,T,M}
+
     # Helper functions
     is_in_outer_circles = x -> is_in_any_circle(x, outer_circles)
     is_in_inner_circles = x -> is_in_any_circle(x, inner_circles)
@@ -299,11 +318,14 @@ end
 # ---------------------------------------------------------------------------- #
 # circle_mesh_with_tori
 # ---------------------------------------------------------------------------- #
-function circle_mesh_with_tori( circle_bdry::Circle{2,T},
-                                inner_circles::Vector{Circle{2,T}},
-                                outer_circles::Vector{Circle{2,T}},
-                                h0::T,
-                                eta::T ) where {T}
+function circle_mesh_with_tori(
+        circle_bdry::Circle{2,T},
+        inner_circles::Vector{Circle{2,T}},
+        outer_circles::Vector{Circle{2,T}},
+        h0::T,
+        eta::T
+    ) where {T}
+
     # Ensure that outer circles strictly contain inner circles, and that outer
     # circles are strictly non-overlapping
     @assert all(c -> is_inside(c[1], c[2], <), zip(inner_circles, outer_circles))
@@ -346,10 +368,13 @@ function circle_mesh_with_tori( circle_bdry::Circle{2,T},
     return fullgrid
 end
 
-function form_tori_subgrids(fullgrid::Grid{dim,N,T,M},
-                            circle_bdry::Circle{2,T},
-                            inner_circles::Vector{Circle{2,T}},
-                            outer_circles::Vector{Circle{2,T}}) where {dim,N,T,M}
+function form_tori_subgrids(
+        fullgrid::Grid{dim,N,T,M},
+        circle_bdry::Circle{2,T},
+        inner_circles::Vector{Circle{2,T}},
+        outer_circles::Vector{Circle{2,T}}
+    ) where {dim,N,T,M}
+
     # Helper functions
     is_in_outer_circles = x -> is_in_any_circle(x, outer_circles)
     is_in_inner_circles = x -> is_in_any_circle(x, inner_circles)
@@ -404,10 +429,13 @@ end
 # ---------------------------------------------------------------------------- #
 # form_subgrid
 # ---------------------------------------------------------------------------- #
-function form_subgrid(parent_grid::Grid{dim,N,T,M},
-                      cellset::Set{Int},
-                      nodeset::Set{Int},
-                      boundaryset::Set{Tuple{Int,Int}}) where {dim,N,T,M}
+function form_subgrid(
+        parent_grid::Grid{dim,N,T,M},
+        cellset::Set{Int},
+        nodeset::Set{Int},
+        boundaryset::Set{Tuple{Int,Int}}
+    ) where {dim,N,T,M}
+
     cells = Triangle[]
     nodes = Node{dim,T}[]
     sizehint!(cells, length(cellset))
@@ -507,14 +535,14 @@ function project_circle!(grid::Grid, circle::Circle{dim,T}, thresh::T) where {di
     end
     return grid
 end
+project_circle(grid::Grid, circle::Circle, thresh) = project_circle!(deepcopy(grid), circle, thresh)
+
 function project_circles!(grid::Grid, circles::Vector{C}, thresh) where {C <: Circle}
     for circle in circles
         project_circle!(grid, circle, thresh)
     end
     return grid
 end
-
-project_circle(grid::Grid, circle::Circle, thresh) = project_circle!(deepcopy(grid), circle, thresh)
 project_circles(grid::Grid, circles::Vector{C}, thresh) where {C <: Circle} = project_circles!(deepcopy(grid), circles, thresh)
 
 end # module MeshUtils

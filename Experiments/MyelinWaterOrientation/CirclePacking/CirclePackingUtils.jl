@@ -61,7 +61,7 @@ end
 
 function covariance_energy(circles::Vector{Circle{DIM,T}}) where {DIM,T}
     circlepoints = reshape(reinterpret(T, circles), (DIM+1, length(circles))) # reinterp as DIM+1 x Ncircles array
-    @views origins = circlepoints[1:2, :] # DIM x Ncircles view of origin points
+    @views origins = circlepoints[1:DIM, :] # DIM x Ncircles view of origin points
     Σ = cov(origins; dims = 2) # covariance matrix of origin locations
     σ² = T(tr(Σ)/DIM) # mean variance
     return sum(abs2, Σ - σ²*I) # penalize non-diagonal covariance matrices
@@ -328,14 +328,14 @@ end
 end
 
 # Symmetric squared circle distance function on the circles (o1,r1) and (o2,r2)
-@inline function d²_overlap(o1::Vec{2,T}, o2::Vec, r1, r2, ϵ = zero(typeof(r1))) where {T}
+@inline function d²_overlap(o1::Vec{dim,T}, o2::Vec, r1, r2, ϵ = zero(typeof(r1))) where {dim,T}
     _d = d(o1,o2,r1,r2,ϵ)
     return _d >= zero(T) ? zero(T) : _d^2
 end
-@inline function ∇d²_overlap(o1::Vec{2,T}, o2::Vec, r1, r2, ϵ = zero(typeof(r1))) where {T}
+@inline function ∇d²_overlap(o1::Vec{dim,T}, o2::Vec, r1, r2, ϵ = zero(typeof(r1))) where {dim,T}
     # Gradient w.r.t `o1`
     _d = d(o1,o2,r1,r2,ϵ)
-    return _d >= zero(T) ? zero(Vec{2,T}) : 2 * _d * ∇d(o1,o2,r1,r2,ϵ)
+    return _d >= zero(T) ? zero(Vec{dim,T}) : 2 * _d * ∇d(o1,o2,r1,r2,ϵ)
 end
 @inline function ∇²d²_overlap(o1::Vec{dim,T}, o2::Vec, r1, r2, ϵ = zero(typeof(r1))) where {dim,T}
     # Hessian w.r.t `o1`, i.e. ∂²d/∂o1²

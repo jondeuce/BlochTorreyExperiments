@@ -80,5 +80,5 @@ using BenchmarkTools
 # HOME = "/home/coopar7/Documents/code/"
 # BTMASTERPATH = HOME * "BlochTorreyExperiments-master/"
 # MWOPATH = BTMASTERPATH * "Experiments/MyelinWaterOrientation/"
-# MWOFOLDERS = ["BlochTorrey/", "CirclePacking/", "Expmv/", "Geometry/", "Utils/"]
+# MWOFOLDERS = ["BlochTorrey/", "CirclePacking/", "DistMesh/", "Expmv/", "Geometry/", "Utils/"]
 # push!(LOAD_PATH, MWOPATH .* ("", MWOFOLDERS...)...)
