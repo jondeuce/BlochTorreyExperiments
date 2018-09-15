@@ -1,43 +1,24 @@
 # ============================================================================ #
-# Tools for circle packing
+# DistMesh
 # ============================================================================ #
 
 module DistMesh
 
-# ---------------------------------------------------------------------------- #
-# Dependencies
-# ---------------------------------------------------------------------------- #
-
-using GeometryUtils
-using LinearAlgebra
+# using LinearAlgebra
 # using Statistics
-using Random
-using DiffBase, ForwardDiff
-# using Optim, LineSearches, Roots
-using JuAFEM # for gradients of tensor functions, and Vec type
-using MATLAB
+# using Random
+using Tensors # for gradients of tensor functions, and Vec type
+using MATLAB # for plotting
+using VoronoiDelaunay # for Delaunay triangulation
 
-using VoronoiDelaunay, GeometricalPredicates
+export distmesh2d, delaunay2, delaunay2!
+export huniform, fixmesh, simpplot
+export dblock, drectangle, drectangle0, dsphere, dcircle
+export ddiff, dintersect, dunion
 
-export delaunay2, distmesh2d, scaleto, scaleto!
-
-include("distmesh2d.jl")
-
-# Simple function for scaling vector of Vec's to range [a,b]
-function scaleto!(p::AbstractVector{Vec{2,Float64}}, a, b)
-    N = length(p)
-    P = reinterpret(Float64, p) # must be Float64
-    Pmin, Pmax = minimum(P), maximum(P)
-    P .= ((b - a)/(Pmax - Pmin)) .* (P .- Pmin) .+ a
-    clamp!(P, a, b) # to be safe
-    return p, Pmin, Pmax
-end
-scaleto(p::AbstractVector{Vec{2,Float64}}, a, b) = scaleto!(copy(p), a, b)
-
-function scaleto(p::AbstractVector{Vec{2,T}}, a, b) where {T}
-    x, Xmin, Xmax = scaleto(Vector{Vec{2,Float64}}(p), Float64(a), Float64(b))
-    return Vector{Vec{2,T}}(x), T(Xmin), T(Xmax)
-end
+include("src/utils.jl")
+include("src/distances.jl")
+include("src/distmesh2d.jl")
 
 end # module DistMesh
 

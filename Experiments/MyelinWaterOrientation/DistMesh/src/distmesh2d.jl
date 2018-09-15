@@ -1,4 +1,5 @@
-#DISTMESH2D 2-D Mesh Generator using Distance Functions.
+# ---------------------------------------------------------------------------- #
+# DISTMESH2D 2-D Mesh Generator using Distance Functions.
 #   [P,T] = DISTMESH2D(FD,FH,H0,BBOX,PFIX,FPARAMS)
 #
 #      P:         Node positions (Nx2)
@@ -54,11 +55,19 @@
 #
 #   distmesh2d.m v1.1
 #   Copyright (C) 2004-2012 Per-Olof Persson. See COPYRIGHT.TXT for details.
+# ---------------------------------------------------------------------------- #
+
 function distmesh2d(
-        fd, fh, h0::T, bbox, pfix = Vector{Vec{2,T}}();
+        fd, # distance function
+        fh, # edge length function
+        h0::T, # nominal edge length
+        bbox::Matrix{T}, # bounding box (2x2 matrix [xmin ymin; xmax ymax])
+        pfix = Vector{Vec{2,T}}(), # fixed points
+        ∇fd = x -> gradient(fd, x); # Gradient of distance function `fd`
         PLOT::Bool = false, # plot all triangulations during evolution
         PLOTLAST::Bool = false, # plot resulting triangulation
-        MAXSTALLITERS::Int = 500, # max iterations of stalled progress
+        DETERMINISTIC::Bool = false, # use deterministic pseudo-random
+        MAXSTALLITERS::Int = typemax(Int), # max iterations of stalled progress
         DENSITYCTRLFREQ::Int = 30, # density check frequency
         DPTOL::T = T(0.001), # equilibrium step size threshold
         TTOL::T = T(0.1), # large movement tolerance for retriangulation
@@ -68,12 +77,12 @@ function distmesh2d(
         DEPS::T = sqrt(eps(T))*h0 # finite difference step-length
     ) where {T}
 
-    # Useful constants
+    # 0. Useful defines
     V = Vec{2,T}
     InfV = V((Inf,Inf))
 
     # 1. Create initial distribution in bounding box (equilateral triangles)
-    xrange, yrange = bbox[1,1]:h0:bbox[2,1], bbox[1,2]:h0*sqrt(3)/2:bbox[2,2]
+    xrange, yrange = bbox[1,1]:h0:bbox[2,1], bbox[1,2]:h0*T(sqrt(3)/2):bbox[2,2]
     p = zeros(V, length(yrange), length(xrange))
     for (i,y) in enumerate(yrange), (j,x) in enumerate(xrange)
         iseven(i) && (x += h0/2)            # Shift even rows
@@ -84,9 +93,8 @@ function distmesh2d(
     # 2. Remove points outside the region, apply the rejection method
     p = filter!(x -> fd(x) < GEPS, p)       # Keep only d<0 points
     r0 = inv.(fh.(p)).^2                    # Probability to keep point
-    p = p[maximum(r0) .* rand(length(p)) .< r0]            # Rejection method
-    # randlist = abs.(sin.(T.(1:length(p))))
-    # p = p[maximum(r0) .* randlist .< r0];                # Rejection method
+    randlist = DETERMINISTIC ? mod.(T.(1:length(p)), T(2pi))./T(2pi) : rand(T, length(p))
+    p = p[maximum(r0) .* randlist .< r0]                   # Rejection method
     !isempty(pfix) && (p = setdiff!(p, pfix))              # Remove duplicated nodes
     pfix = unique!(pfix)
     nfix = length(pfix)
@@ -96,9 +104,6 @@ function distmesh2d(
     count = 0;
     stallcount = 0;
     dtermbest = T(Inf);
-
-    # Create gradient function for distance function `fd`
-    ∇fd = x -> JuAFEM.gradient(fd, x)
 
     t = delaunay2(p)
     if PLOT
@@ -115,20 +120,20 @@ function distmesh2d(
         # 3. Retriangulation by the Delaunay algorithm
         if count == 1 || (√maximum(norm2.(p.-pold)) > h0 * TTOL)               # Any large movement?
             pold = copy(p)                                                     # Save current positions
-            t = delaunay2(p)                                                   # List of triangles
+            t = delaunay2!(t, p)                                               # List of triangles
+
             pmid = V[(p[tt[1]] + p[tt[2]] + p[tt[3]])/3 for tt in t]           # Compute centroids
             t = t[fd.(pmid) .< -GEPS]                                          # Keep interior triangles
 
             # 4. Describe each bar by a unique pair of nodes
             resize!(bars, 3*length(t))
             @inbounds for (i,tt) in enumerate(t)
-                bars[3i-2] = (tt[1], tt[2])
-                bars[3i-1] = (tt[1], tt[3])
-                bars[3i  ] = (tt[2], tt[3])                                    # Interior bars duplicated
+                a, b, c = sorttuple(tt)
+                bars[3i-2] = (a, b)
+                bars[3i-1] = (a, c)
+                bars[3i  ] = (b, c)                                            # Interior bars duplicated
             end
-            bars .= sorttuple.(bars)
-            sort!(bars; by = x -> x[1])
-            unique!(bars)                                                      # Bars as node pairs
+            unique!(sort!(bars; by = first))                                   # Bars as node pairs
 
             # 5. Graphical output of the current mesh
             if PLOT
@@ -173,7 +178,7 @@ function distmesh2d(
         end
 
         # 8. Termination criterion: All interior nodes move less than DPTOL (scaled)
-        d_int = sqrt(DELTAT) .* Ftot[d .< -GEPS]
+        d_int = DELTAT .* Ftot[d .< -GEPS] #TODO sqrt(DELTAT)?
         dterm = isempty(d_int) ? T(Inf) : sqrt(maximum(norm2, d_int))/h0
 
         if dterm >= dtermbest
@@ -195,106 +200,70 @@ function distmesh2d(
     return p, t
 end
 
-function delaunay2(p::AbstractVector{Vec{2,T}}) where {T}
-    a, b = VoronoiDelaunay.min_coord, VoronoiDelaunay.max_coord
-    P, pmin, pmax = scaleto(p, a, b)
+# ---------------------------------------------------------------------------- #
+# Delaunay triangulation
+# ---------------------------------------------------------------------------- #
 
-    points = IndexedPoint2D[IndexedPoint2D(P[i]..., i) for i in 1:length(P)]
-    unique!(points)
-    tess = DelaunayTessellation2D{IndexedPoint2D}(length(points))
-    push!(tess, points)
+function delaunay2!(
+        t::Vector{NTuple{3,Int}},
+        p::AbstractVector{Vec{2,T}}
+    ) where {T}
 
-    t = Vector{NTuple{3,Int}}()
-    sizehint!(t, length(tess._trigs))
-    i = 0
-    for tt in tess
-        i += 1
-        push!(t, (getidx(GeometricalPredicates.geta(tt)),
-                  getidx(GeometricalPredicates.getb(tt)),
-                  getidx(GeometricalPredicates.getc(tt))) )
-    end
+    p, pmin, pmax = scaleto(p, min_coord, max_coord)
+    P = IndexedPoint2D[IndexedPoint2D(pp[1], pp[2], i) for (i,pp) in enumerate(p)]
+    unique!(sort!(P; by = getx))
+
+    tess = DelaunayTessellation2D{IndexedPoint2D}(length(P))
+    push!(tess, P)
+
+    assign_triangles!(t, tess)
 
     return t
 end
+delaunay2(p) = delaunay2!(Vector{NTuple{3,Int}}(), p)
 
-#FIXMESH  Remove duplicated/unused nodes and fix element orientation.
-#   [P,T,PIX]=FIXMESH(P,T)
-#
-#   Copyright (C) 2004-2012 Per-Olof Persson. See COPYRIGHT.TXT for details.
-function fixmesh(
-        p::AbstractVector{Vec{2,T}},
-        t::AbstractVector{NTuple{3,Int}} = Vector{NTuple{3,Int}}(),
-        ptol = 1024*eps(T)
-    ) where {T}
+# ---------------------------------------------------------------------------- #
+# Assign triangle indicies from Delaunay triangulation
+# ---------------------------------------------------------------------------- #
 
-    if isempty(p) || isempty(t)
-        pix = 1:length(p)
-        return p, t, pix
+function assign_triangles_slow!(t, tess)
+    resize!(t, length(tess._trigs))
+    i = 0
+    @inbounds for tt in tess
+        i += 1
+        t[i] = (getidx(geta(tt)), getidx(getb(tt)), getidx(getc(tt)))
     end
+    resize!(t, i)
+    return t
+end
 
-    p_matrix(p) = reshape(reinterpret(T, p), (2, length(p))) |> transpose |> copy
-    p_vector(p) = vec(reinterpret(Vec{2,T}, transpose(p))) |> copy
-    t_matrix(t) = reshape(reinterpret(Int, t), (3, length(t))) |> transpose |> copy
-    t_vector(t) = vec(reinterpret(NTuple{3,Int}, transpose(t))) |> copy
-
-    p = p_matrix(p)
-    snap = maximum(maximum(p, dims=1) - minimum(p, dims=1)) * ptol
-    _, ix, jx = findunique(p_vector(round.(p./snap).*snap))
-    p = p_vector(p)
-    p = p[ix]
-
-    if !isempty(t)
-        t = t_matrix(t)
-        t = reshape(jx[t], size(t))
-
-        pix, ix1, jx1 = findunique(vec(t))
-        t = reshape(jx1, size(t))
-        p = p[pix]
-        pix = ix[pix]
-
-        t = t_vector(t)
-        for (i,tt) in enumerate(t)
-            d12 = p[tt[2]] - p[tt[1]]
-            d13 = p[tt[3]] - p[tt[1]]
-            v = (d12[1] * d13[2] - d12[2] * d13[1])/2 # simplex volume
-            v < 0 && (t[i] = (tt[2], tt[1], tt[3])) # flip if volume is negative
-        end
+function assign_triangles!(t, tess)
+    resize!(t, length(tess._trigs))
+    i = 0
+    ix = mystart(tess)
+    flag, ix = mydone(tess, ix)
+    @inbounds while !flag
+        tt, ix = mynext(tess, ix)
+        flag, ix = mydone(tess, ix)
+        i += 1
+        t[i] = (getidx(geta(tt)), getidx(getb(tt)), getidx(getc(tt)))
     end
-
-    return p, t, pix
+    resize!(t, i)
+    return t
 end
 
-function findunique(A)
-    C = unique(A)
-    iA = findfirst.(isequal.(C), (A,))
-    iC = findfirst.(isequal.(A), (C,))
-    return C, iA, iC
+# Default iteration protocal is way too slow, reimplemented and inlined below:
+@inline mystart(tess::DelaunayTessellation2D) = 2
+
+@inline function mydone(tess::DelaunayTessellation2D, ix)
+    while isexternal(tess._trigs[ix]) && ix <= tess._last_trig_index
+        ix += 1
+    end
+    return ix > tess._last_trig_index, ix
 end
 
-# Type to keep track of index of initial point. From hack at issue:
-#   https://github.com/JuliaGeometry/VoronoiDelaunay.jl/issues/6
-struct IndexedPoint2D <: AbstractPoint2D
-    _x::Float64
-    _y::Float64
-    _idx::Int64
-    IndexedPoint2D(x, y, idx) = new(x, y, idx)
-    IndexedPoint2D(x, y) = new(x, y, 0)
-end
-GeometricalPredicates.getx(p::IndexedPoint2D) = p._x
-GeometricalPredicates.gety(p::IndexedPoint2D) = p._y
-getidx(p::IndexedPoint2D) = p._idx
-
-# Simple sorting of 2-tuples
-sorttuple(t::Tuple{Int64,Int64}) = t[1] > t[2] ? (t[2], t[1]) : t
-
-# Plotting
-function simpplot(
-        p::AbstractVector{Vec{2,T}},
-        t::AbstractVector{NTuple{3,Int}}
-    ) where {T}
-
-    pp = reshape(reinterpret(T, p), (2, length(p))) |> transpose |> Matrix{Float64}
-    tt = reshape(reinterpret(Int, t), (3, length(t))) |> transpose |> Matrix{Float64}
-
-    mxcall(:simpplot, 0, pp, tt)
+@inline function mynext(tess::DelaunayTessellation2D, ix)
+    @inbounds trig = tess._trigs[ix]
+    ix += 1
+    return trig, ix
 end
