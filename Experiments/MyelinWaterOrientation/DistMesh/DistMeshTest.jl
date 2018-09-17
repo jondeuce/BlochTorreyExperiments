@@ -13,7 +13,7 @@ using BenchmarkTools
 
 function runtests()
     @testset "DistMesh" begin
-        N = 10
+        N = 1000
         T = Float64
         V = Vec{2,T}
         d1, d2 = randn(N), randn(N)
@@ -37,7 +37,7 @@ function runbenchmarks()
     h0 = 0.2
     bbox = [-1.0 -1.0; 1.0 1.0]
 
-    p, t = distmesh2d(fd, fh, h0, bbox; PLOT = true)
+    p, t = distmesh2d(fd, fh, h0, bbox; PLOT = false)
     b = @benchmark distmesh2d($fd, $fh, $h0, $bbox; DETERMINISTIC = true)
     display(b)
 

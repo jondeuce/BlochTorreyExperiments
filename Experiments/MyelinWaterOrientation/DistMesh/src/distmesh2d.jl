@@ -63,7 +63,7 @@ function distmesh2d(
         h0::T, # nominal edge length
         bbox::Matrix{T}, # bounding box (2x2 matrix [xmin ymin; xmax ymax])
         pfix = Vector{Vec{2,T}}(), # fixed points
-        ∇fd = x -> gradient(fd, x); # Gradient of distance function `fd`
+        ∇fd = x -> Tensors.gradient(fd, x); # Gradient of distance function `fd`
         PLOT::Bool = false, # plot all triangulations during evolution
         PLOTLAST::Bool = false, # plot resulting triangulation
         DETERMINISTIC::Bool = false, # use deterministic pseudo-random
@@ -107,7 +107,6 @@ function distmesh2d(
 
     t = delaunay2(p)
     if PLOT
-        # clf,view(2),axis equal,axis off
         simpplot(p,t)
     end
 
@@ -216,7 +215,10 @@ function delaunay2!(
     tess = DelaunayTessellation2D{IndexedPoint2D}(length(P))
     push!(tess, P)
 
-    assign_triangles!(t, tess)
+    resize!(t, length(tess))
+    @inbounds for (i,tt) in enumerate(tess)
+        t[i] = (getidx(geta(tt)), getidx(getb(tt)), getidx(getc(tt)))
+    end
 
     return t
 end
@@ -226,44 +228,84 @@ delaunay2(p) = delaunay2!(Vector{NTuple{3,Int}}(), p)
 # Assign triangle indicies from Delaunay triangulation
 # ---------------------------------------------------------------------------- #
 
-function assign_triangles_slow!(t, tess)
-    resize!(t, length(tess._trigs))
-    i = 0
-    @inbounds for tt in tess
-        i += 1
-        t[i] = (getidx(geta(tt)), getidx(getb(tt)), getidx(getc(tt)))
-    end
-    resize!(t, i)
-    return t
-end
-
 function assign_triangles!(t, tess)
-    resize!(t, length(tess._trigs))
-    i = 0
-    ix = mystart(tess)
-    flag, ix = mydone(tess, ix)
-    @inbounds while !flag
-        tt, ix = mynext(tess, ix)
-        flag, ix = mydone(tess, ix)
-        i += 1
+    resize!(t, length(tess))
+    @inbounds for (i,tt) in enumerate(tess)
         t[i] = (getidx(geta(tt)), getidx(getb(tt)), getidx(getc(tt)))
     end
-    resize!(t, i)
     return t
 end
 
-# Default iteration protocal is way too slow, reimplemented and inlined below:
-@inline mystart(tess::DelaunayTessellation2D) = 2
+# ---------------------------------------------------------------------------- #
+# DelaunayTessellation2D iteration protocol
+# ---------------------------------------------------------------------------- #
 
-@inline function mydone(tess::DelaunayTessellation2D, ix)
-    while isexternal(tess._trigs[ix]) && ix <= tess._last_trig_index
+function Base.iterate(tess::DelaunayTessellation2D, ix = 2)
+    @inbounds while isexternal(tess._trigs[ix]) && ix <= tess._last_trig_index
         ix += 1
     end
-    return ix > tess._last_trig_index, ix
+
+    @inbounds if ix > tess._last_trig_index
+        return nothing
+    else
+        return (tess._trigs[ix], ix + 1)
+    end
 end
 
-@inline function mynext(tess::DelaunayTessellation2D, ix)
-    @inbounds trig = tess._trigs[ix]
-    ix += 1
-    return trig, ix
+function Base.length(tess::DelaunayTessellation2D)
+    len = 0
+    for t in tess
+        len += 1
+    end
+    return len
 end
+
+Base.eltype(tess::DelaunayTessellation2D{P}) where {P} = VoronoiDelaunay.DelaunayTriangle{P}
+
+# ---------------------------------------------------------------------------- #
+# Testing new iteration protocol
+# ---------------------------------------------------------------------------- #
+
+# using VoronoiDelaunay
+# using BenchmarkTools
+#
+# function collect_triangles(tess::DelaunayTessellation2D)
+#     tris = VoronoiDelaunay.DelaunayTriangle{Point2D}[]
+#     for t in tess
+#         push!(tris, t)
+#     end
+#     return tris
+# end
+#
+# function testfun(tess::DelaunayTessellation2D)
+#     s = Point2D(0.0, 0.0)
+#     for t in tess
+#         s = geta(t)
+#     end
+#     return s
+# end
+#
+# tess = DelaunayTessellation()
+# width = max_coord - min_coord
+# a = Point2D[Point(min_coord+rand()*width, min_coord+rand()*width) for i in 1:100]
+# push!(tess, a)
+#
+# display(@benchmark testfun($tess))
+# tris_old = collect_triangles(tess)
+#
+# function Base.iterate(tess::DelaunayTessellation2D, ix = 2)
+#     @inbounds while isexternal(tess._trigs[ix]) && ix <= tess._last_trig_index
+#         ix += 1
+#     end
+#
+#     @inbounds if ix > tess._last_trig_index
+#         return nothing
+#     else
+#         return (tess._trigs[ix], ix + 1)
+#     end
+# end
+#
+# display(@benchmark testfun($tess))
+# tris_new = collect_triangles(tess)
+#
+# @show tris_old == tris_new

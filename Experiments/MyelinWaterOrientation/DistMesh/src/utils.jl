@@ -106,7 +106,7 @@ function fixmesh(
         pix = ix[pix]
 
         t = t_vector(t)
-        for (i,tt) in enumerate(t)
+        @inbounds for (i,tt) in enumerate(t)
             d12 = p[tt[2]] - p[tt[1]]
             d13 = p[tt[3]] - p[tt[1]]
             v = (d12[1] * d13[2] - d12[2] * d13[1])/2 # simplex volume
