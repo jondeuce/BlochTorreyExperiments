@@ -144,7 +144,7 @@ function distmesh2d(
         barvec = V[p[b[1]] - p[b[2]] for b in bars]           # List of bar vectors
         L = norm.(barvec)                                     # L  =  Bar lengths
         hbars = fh.(V[(p[b[1]] + p[b[2]])/2 for b in bars])
-        L0 = hbars * (FSCALE * sqrt(sum(L.^2)/sum(hbars.^2))) # L0  =  Desired lengths
+        L0 = hbars * (FSCALE * norm(L)/norm(hbars))           # L0  =  Desired lengths
 
         # Density control - remove points that are too close
         if mod(count, DENSITYCTRLFREQ) == 0 && any(L0 .> 2.0 .* L)
@@ -155,10 +155,10 @@ function distmesh2d(
             continue
         end
 
-        F = max.(L0.-L, 0.0)                                 # Bar forces (scalars)
+        F = max.(L0 .- L, zero(T))                           # Bar forces (scalars)
         Fvec = F./L .* barvec                                # Bar forces (x,y components)
         Ftot = zeros(V, N)
-        for (i, b) in enumerate(bars)
+        @inbounds for (i, b) in enumerate(bars)
             Ftot[b[1]] += Fvec[i]
             Ftot[b[2]] -= Fvec[i]
         end
@@ -214,11 +214,7 @@ function delaunay2!(
 
     tess = DelaunayTessellation2D{IndexedPoint2D}(length(P))
     push!(tess, P)
-
-    resize!(t, length(tess))
-    @inbounds for (i,tt) in enumerate(tess)
-        t[i] = (getidx(geta(tt)), getidx(getb(tt)), getidx(getc(tt)))
-    end
+    t = assign_triangles!(t, tess)
 
     return t
 end
@@ -244,7 +240,6 @@ function Base.iterate(tess::DelaunayTessellation2D, ix = 2)
     @inbounds while isexternal(tess._trigs[ix]) && ix <= tess._last_trig_index
         ix += 1
     end
-
     @inbounds if ix > tess._last_trig_index
         return nothing
     else

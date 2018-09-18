@@ -6,27 +6,21 @@
 
 # Distance field for a block with bounds [x1, x2] x [y1, y2] x [z1, z2]
 @inline function dblock(p::Vec{3}, x1, x2, y1, y2, z1, z2)
-    @inbounds d = -min(min(min(min(min(-z1 + p[3], z2 - p[3]), -y1 + p[2]), y2 - p[2]), -x1 + p[1]), x2 - p[1])
+    @inbounds d = -min(-z1 + p[3], z2 - p[3], -y1 + p[2], y2 - p[2], -x1 + p[1], x2 - p[1])
     return d
 end
 
 # Distance field for a block with lower bounds p1/upper bounds p2
-@inline function dblock(p::Vec{3}, p1::Vec{3}, p2::Vec{3})
-    @inbounds d = -min(min(min(min(min(-p1[3] + p[3], p2[3] - p[3]), -p1[2] + p[2]), p2[2] - p[2]), -p1[1] + p[1]), p2[1] - p[1])
-    return d
-end
+@inline dblock(p::Vec{3}, p1::Vec{3}, p2::Vec{3}) = dblock(p, p1[1], p2[1], p1[2], p2[2], p1[3], p2[3])
 
 # Distance field for a rectangle with bounds [x1, x2] x [y1, y2]
 @inline function drectangle(p::Vec{2}, x1, x2, y1, y2)
-    @inbounds d = -min(min(min(-y1 + p[2], y2 - p[2]), -x1 + p[1]), x2 - p[1])
+    @inbounds d = -min(-y1 + p[2], y2 - p[2], -x1 + p[1], x2 - p[1])
     return d
 end
 
 # Distance field for a rectangle with lower bounds p1/upper bounds p2
-@inline function drectangle(p::Vec{2}, p1::Vec{2}, p2::Vec{2})
-    @inbounds d = -min(min(min(-p1[2] + p[2], p2[2] - p[2]), -p1[1] + p[1]), p2[1] - p[1])
-    return d
-end
+@inline drectangle(p::Vec{2}, p1::Vec{2}, p2::Vec{2}) = drectangle(p, p1[1], p2[1], p1[2], p2[2])
 
 # Distance field for a rectangle with bounds [x1, x2] x [y1, y2]; more accurate
 # version which accounts for corners
@@ -45,15 +39,16 @@ end
     elseif d2 > zero(d2) && d4 > zero(d4)
         sqrt(d2^2 + d4^2)
     else
-        -min(min(min(-d1, -d2), -d3), -d4)
+        -min(-d1, -d2, -d3, -d4)
     end
 
     return d
 end
-@inline drectangle0(p::Vec{2}, p1::Vec{2}, p2::Vec{2}) = drectangle0(p, p1[1], p2[2], p1[1], p2[2])
+@inline drectangle0(p::Vec{2}, p1::Vec{2}, p2::Vec{2}) = drectangle0(p, p1[1], p2[1], p1[2], p2[2])
 
 # Distance field for circle/sphere centered at p0 with radius r
 @inline dsphere(p::Vec, p0::Vec, r) = norm(p - p0) - r
+@inline dsphere(p::Vec{3}, xc, yc, zc, r) = dsphere(p, Vec{3}((xc, yc, zc)), r)
 @inline dcircle(p::Vec, p0::Vec, r) = dsphere(p, p0, r)
 @inline dcircle(p::Vec{2}, xc, yc, r) = dsphere(p, Vec{2}((xc, yc)), r)
 

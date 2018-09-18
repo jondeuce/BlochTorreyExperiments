@@ -5,6 +5,25 @@
 huniform(x::Vec) = one(eltype(x))
 norm2(x::Vec) = x⋅x
 
+function to_vec(p::AbstractMatrix{T}) where {T}
+    N = size(p, 2)
+    P = reinterpret(Vec{N, T}, transpose(p)) |> vec |> copy
+    return P
+end
+
+function to_tuple(p::AbstractMatrix{T}) where {T}
+    N = size(p, 2)
+    P = reinterpret(NTuple{N, T}, transpose(p)) |> vec |> copy
+    return P
+end
+
+function to_mat(P::AbstractVector{NTuple{N,T}}) where {N,T}
+    M = length(P)
+    p = reshape(reinterpret(T, P), (N, M)) |> transpose |> copy
+    return p
+end
+to_mat(P::AbstractVector{Vec{N,T}}) where {N,T} = to_mat(reinterpret(NTuple{N,T}, P))
+
 # ---------------------------------------------------------------------------- #
 # Simple function for scaling vector of Vec's to range [a,b]
 # ---------------------------------------------------------------------------- #
@@ -37,6 +56,8 @@ end
 
 # Simple sorting of 2-tuples
 sorttuple(t::NTuple{2}) = t[1] > t[2] ? (t[2], t[1]) : t
+
+# Simple sorting of 3-tuples
 function sorttuple(t::NTuple{3})
     a, b, c = t
     if a > b
@@ -49,6 +70,18 @@ function sorttuple(t::NTuple{3})
         end
     end
     return (a, b, c)
+end
+
+# edges of triangle vector
+function getedges(t::AbstractVector{NTuple{3,Int}})
+    bars = Vector{NTuple{2,Int}}(undef, 3*length(t))
+    @inbounds for (i,tt) in enumerate(t)
+        a, b, c = tt
+        bars[3i-2] = (a, b)
+        bars[3i-1] = (a, c)
+        bars[3i  ] = (b, c)
+    end
+    return bars
 end
 
 # ---------------------------------------------------------------------------- #
@@ -69,9 +102,7 @@ getidx(p::IndexedPoint2D) = p._idx
 
 # ---------------------------------------------------------------------------- #
 # FIXMESH  Remove duplicated/unused nodes and fix element orientation.
-#   [P,T,PIX]=FIXMESH(P,T)
-#
-#   Copyright (C) 2004-2012 Per-Olof Persson. See COPYRIGHT.TXT for details.
+#   P, T, PIX = FIXMESH(P,T)
 # ---------------------------------------------------------------------------- #
 
 function fixmesh(
@@ -118,7 +149,39 @@ function fixmesh(
 end
 
 # ---------------------------------------------------------------------------- #
-# Plotting
+# BOUNDEDGES Find boundary edges from triangular mesh
+#   E = BOUNDEDGES(P,T)
+# ---------------------------------------------------------------------------- #
+
+function boundedges(
+        p::AbstractVector{Vec{2,T}},
+        t::AbstractVector{NTuple{3,Int}}
+    ) where {T}
+
+    # Form all edges, non-duplicates are boundary edges
+    p, t = to_mat(p), to_mat(t)
+    edges = [t[:,[1,2]]; t[:,[1,3]]; t[:,[2,3]]]
+    node3 = [t[:,3]; t[:,2]; t[:,1]]
+    edges = sort(edges; dims = 2)
+    _, ix, jx = findunique(to_tuple(edges))
+
+    h = fit(Histogram, jx, 1:maximum(jx); closed = :left)
+    qx = findall(w -> w==1, h.weights)
+    e = edges[ix[qx], :]
+    node3 = node3[ix[qx]]
+
+    # Orientation
+    v1 = p[e[:,2],:] - p[e[:,1],:]
+    v2 = p[node3,:] - p[e[:,1],:]
+    ix = findall(v1[:,1] .* v2[:,2] .- v1[:,2] .* v2[:,1] .> zero(T));
+    e[ix, [1,2]] = e[ix, [2,1]]
+    e = sort!(to_tuple(e); by = first)
+
+    return e
+end
+
+# ---------------------------------------------------------------------------- #
+# simpplot
 # ---------------------------------------------------------------------------- #
 
 function simpplot(
