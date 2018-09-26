@@ -186,11 +186,10 @@ end
 
 function simpplot(
         p::AbstractVector{Vec{2,T}},
-        t::AbstractVector{NTuple{3,Int}}
+        t::AbstractVector{NTuple{3,Int}};
+        newfigure = false
     ) where {T}
-
-    pp = reshape(reinterpret(T, p), (2, length(p))) |> transpose |> Matrix{Float64}
-    tt = reshape(reinterpret(Int, t), (3, length(t))) |> transpose |> Matrix{Float64}
-
-    mxcall(:simpplot, 0, pp, tt)
+    
+    newfigure && mxcall(:figure, 0)
+    mxcall(:simpplot, 0, to_mat(p), to_mat(t))
 end

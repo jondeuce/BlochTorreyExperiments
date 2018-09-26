@@ -13,7 +13,7 @@ using VoronoiDelaunay # for Delaunay triangulation
 
 export distmesh2d, delaunay2, delaunay2!
 export huniform, fixmesh, boundedges, simpplot
-export dblock, drectangle, drectangle0, dsphere, dcircle
+export dblock, drectangle, drectangle0, dsphere, dcircle, dshell
 export ddiff, dintersect, dunion
 
 include("src/utils.jl")

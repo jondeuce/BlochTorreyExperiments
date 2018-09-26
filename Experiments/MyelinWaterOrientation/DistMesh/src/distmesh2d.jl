@@ -62,7 +62,7 @@ function distmesh2d(
         fh, # edge length function
         h0::T, # nominal edge length
         bbox::Matrix{T}, # bounding box (2x2 matrix [xmin ymin; xmax ymax])
-        pfix = Vector{Vec{2,T}}(), # fixed points
+        pfix = Vec{2,T}[], # fixed points
         ∇fd = x -> Tensors.gradient(fd, x); # Gradient of distance function `fd`
         PLOT::Bool = false, # plot all triangulations during evolution
         PLOTLAST::Bool = false, # plot resulting triangulation

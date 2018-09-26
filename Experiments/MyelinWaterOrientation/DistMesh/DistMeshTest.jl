@@ -11,15 +11,13 @@ using BenchmarkTools
 # Geometry Testing
 # ---------------------------------------------------------------------------- #
 
-function runtests()
+function runtests(;N = 1000)
     @testset "Distances" begin
-        N = 1000
         d1, d2 = randn(N), randn(N)
         @test ddiff.(d1, d2) ≈ mxcall(:ddiff, 1, d1, d2)
         @test dintersect.(d1, d2) ≈ mxcall(:dintersect, 1, d1, d2)
         @test dunion.(d1, d2) ≈ mxcall(:dunion, 1, d1, d2)
 
-        N = 1000
         T = Float64
         dim = 2
         V = Vec{dim,T}
@@ -37,7 +35,6 @@ function runtests()
         @test dcircle.(p,[p1],[r]) ≈ mxcall(:dcircle,1,P,x1,y1,r)
         @test dcircle.(p,[x1],[y1],[r]) ≈ mxcall(:dcircle,1,P,x1,y1,r)
 
-        N = 1000
         T = Float64
         dim = 3
         V = Vec{dim,T}

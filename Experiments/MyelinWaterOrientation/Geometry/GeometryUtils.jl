@@ -18,7 +18,7 @@ using LineSearches
 
 export Ellipse, Circle, Rectangle
 export norm2, hadamardproduct, ⊙, skewprod, ⊠
-export origin, radius, radii, widths, geta, getb, getc, getF1, getF2, rotmat
+export origin, radius, radii, widths, corners, geta, getb, getc, getF1, getF2, rotmat
 export dimension, floattype, xmin, ymin, xmax, ymax, area, volume
 export scale_shape, translate_shape, inscribed_square
 export signed_edge_distance, minimum_signed_edge_distance
@@ -252,6 +252,7 @@ Base.rand(::Type{C}, N::Int) where {C <: Circle} = [rand(C) for i in 1:N]
 
 # Signed distance from X to circle edge distance
 @inline signed_edge_distance(X::Vec, c::Circle) = norm(X - origin(c)) - radius(c)
+@inline signed_edge_distance(c::Circle, X::Vec) = signed_edge_distance(X, c)
 
 # Signed distance between circle edges (zero is when circles are tangent, negative when overlapping)
 @inline signed_edge_distance(c1::Circle, c2::Circle) = norm(origin(c1) - origin(c2)) - radius(c1) - radius(c2)
@@ -467,6 +468,14 @@ widths(r::Rectangle) = maximum(r) - minimum(r)
 
 @inline volume(r::Rectangle{dim}) where {dim} = prod(maximum(r) - minimum(r))
 @inline area(r::Rectangle{2}) = volume(r)
+
+# Corners of rectangle, in counterclockwise order, beginning from bottom left
+function corners(r::Rectangle{2,T}) where {T}
+    c1, c3, w = minimum(r), maximum(r), widths(r)
+    c2 = c1 + Vec{2,T}((w[1], zero(T)))
+    c4 = c1 + Vec{2,T}((zero(T), w[2]))
+    return (c1, c2, c3, c4)
+end
 
 # Random rectangles
 Base.rand(::Type{Rectangle{dim,T}}) where {dim,T} = Rectangle{dim,T}(-rand(Vec{dim,T}), rand(Vec{dim,T}))

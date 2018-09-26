@@ -11,6 +11,7 @@ using GeometryUtils
 using JuAFEM
 using JuAFEM: vertices, faces, edges
 using MATLAB, SparseArrays, Statistics
+using DistMesh
 
 export getfaces, mxplot,
        circle_mesh_with_tori,
@@ -104,7 +105,160 @@ end
 # ---------------------------------------------------------------------------- #
 # disjoint_rect_mesh_with_tori
 # ---------------------------------------------------------------------------- #
+
+# Helper functions
+@inline bbox(r::Rectangle) = [xmin(r) ymin(r); xmax(r) ymax(r)]
+@inline sqrtclamp(d, h0, eta, gamma) = clamp(eta*sqrt(h0*d/gamma), h0, eta * h0) # h ∈ [h0, h0 * eta]
+@inline linearclamp(d, h0, eta, gamma) = clamp(eta*(d/gamma), h0, eta * h0) # h ∈ [h0, h0 * eta]
+@inline quadclamp(d, h0, eta, gamma) = clamp((eta/h0)*(d/gamma)^2, h0, eta * h0) # h ∈ [h0, h0 * eta]
+@inline powerclamp(d, h0, eta, gamma, alpha) = clamp(eta*h0*((d/gamma)/h0)^alpha, h0, eta * h0) # h ∈ [h0, h0 * eta]
+
+# Signed distance functions for rectangle, circle, and shell
+@inline DistMesh.drectangle0(x::Vec, r::Rectangle) = drectangle0(x, xmin(r), xmax(r), ymin(r), ymax(r))
+@inline DistMesh.dcircle(x::Vec, c::Circle) = dcircle(x, origin(c), radius(c))
+@inline DistMesh.dshell(x::Vec, c_in::Circle, c_out::Circle) = dshell(x, origin(c_in), radius(c_in), radius(c_out))
+
+# Signed distance function for many circles
+function dcircles(x::Vec, cs::Vector{Circle{2,T}}) where {T}
+    d = T(dunion()) # initial value s.g. dunion(d, x) == x for all x
+    @inbounds for i in eachindex(cs)
+        d = dunion(d, dcircle(x, cs[i])) # union of all circle distances
+    end
+    return d
+end
+
+# @inline softmax(x, y) = (M = max(x,y); m = min(x,y); return M + log(one(x) + exp(m-M)))
+# @inline softmax(x, y) = (M = max(x,y); m = min(x,y); alpha = m/M; delta = exp(m-M); return M * (1 + alpha*delta)/(1+delta))
+# function softmax(x, y, ϵ = 0.001)
+#     M = max(x, y)
+#     return if abs(x) < ϵ && abs(y) < ϵ
+#         sign(M) * sqrt(x^2 + y^2)
+#     else
+#         M
+#     end
+# end
+@inline softmax(x, y, ϵ = 0.01) = max(x, y)
+@inline sddiff(x, y, ϵ = 0.001) = softmax(x, -y, ϵ)
+@inline sdintersect(x, y, ϵ = 0.001) = softmax(x, y, ϵ)
+
+# Signed distance function for region exterior to `cs`, but inside of `cs`
+@inline function dexterior(x::Vec, r::Rectangle{2,T}, cs::Vector{Circle{2,T}}) where {T}
+    return sddiff(drectangle0(x, r), dcircles(x, cs))
+end
+
+# Edge length functions
+@inline function hcircles(x::Vec, h0, eta, gamma, alpha, cs::Vector{C}) where {C <: Circle}
+    return powerclamp(abs(dcircles(x, cs)), h0, eta, gamma, alpha)
+end
+@inline function hcircle(x::Vec, h0, eta, gamma, alpha, c::Circle)
+    return powerclamp(abs(dcircle(x, c)), h0, eta, gamma, alpha)
+end
+@inline function hshell(x::Vec, h0, eta, gamma, alpha, c_in::Circle, c_out::Circle)
+    return powerclamp(abs(dshell(x, c_in, c_out)), h0, eta, gamma, alpha)
+end
+
 function disjoint_rect_mesh_with_tori(
+        rect_bdry::Rectangle{2,T},
+        inner_circles::Vector{Circle{2,T}},
+        outer_circles::Vector{Circle{2,T}},
+        h0::T,
+        eta::T = T(1.0),
+        gamma::T = T(5.0),
+        alpha::T = T(0.7);
+        fixcorners::Bool = true,
+        fixcirclepoints::Bool = true,
+        plotgrids = false
+    ) where {T}
+
+    PLOTALL = false
+
+    # Ensure that:
+    # -there are the same number of outer/inner circles, and at least 1 of each
+    # -outer circles strictly contain inner circles
+    # -outer/inner circles have the same origins
+    # -outer circles are strictly non-overlapping
+    @assert length(inner_circles) == length(outer_circles) >= 1
+    @assert all(c -> is_inside(c[1], c[2], <), zip(inner_circles, outer_circles))
+    @assert all(c -> origin(c[1]) ≈ origin(c[2]), zip(inner_circles, outer_circles))
+    @assert !is_any_overlapping(outer_circles, <)
+
+    # Initialize Grids and fixed points (for exteriorgrid)
+    G = Grid{2,3,T,3}
+    interiorgrids, torigrids = G[], G[]
+    pfix = Vec{2,T}[]
+
+    @inbounds for i = 1:length(outer_circles)
+        c_in, c_out = inner_circles[i], outer_circles[i]
+
+        println("$i/$(length(outer_circles)): Interior")
+        new_bdry = intersect(rect_bdry, bounding_box(c_in))
+        if !(√area(new_bdry) ≈ zero(T))
+            fd = x -> sdintersect(drectangle0(x, new_bdry), dcircle(x, c_in))
+            fh = x -> hcircle(x, h0, eta, gamma, alpha, c_in) #huniform
+            p, t = distmesh2d(fd, fh, h0, bbox(new_bdry); PLOT = PLOTALL, MAXSTALLITERS = 500)
+
+            plotgrids && simpplot(p, t; newfigure = true)
+            push!(interiorgrids, Grid(p, t))
+        else
+            push!(interiorgrids, Grid(Triangle[], Node{2,T}[]))
+        end
+
+        println("$i/$(length(outer_circles)): Annular")
+        new_bdry = intersect(rect_bdry, bounding_box(c_out))
+        if !(√area(new_bdry) ≈ zero(T))
+            fd = x -> sdintersect(drectangle0(x, new_bdry), dshell(x, c_in, c_out))
+            fh = x -> hshell(x, h0, eta, gamma, alpha, c_in, c_out) #huniform
+            p, t = distmesh2d(fd, fh, h0, bbox(new_bdry); PLOT = PLOTALL, MAXSTALLITERS = 500)
+
+            e = boundedges(p, t)
+            fixcirclepoints && (pfix = vcat(pfix, p[reinterpret(Int, e)]))
+
+            plotgrids && simpplot(p, t; newfigure = true)
+            push!(torigrids, Grid(p, t, e))
+        else
+            push!(torigrids, Grid(Triangle[], Node{2,T}[]))
+        end
+    end
+
+    # Add rectangle corners and keep unique points
+    fixcorners && push!(pfix, corners(rect_bdry)...)
+    !isempty(pfix) && unique!(sort!(pfix; by = first))
+
+    # Form exterior grid
+    println("0/$(length(outer_circles)): Exterior")
+    fd = x -> dexterior(x, rect_bdry, outer_circles)
+    fh = x -> hcircles(x, h0, eta, gamma, alpha, outer_circles) #huniform
+    p, t = distmesh2d(fd, fh, h0, bbox(rect_bdry), pfix; PLOT = PLOTALL, MAXSTALLITERS = 500)
+
+    exteriorgrid = Grid(p, t)
+    plotgrids && simpplot(p, t; newfigure = true)
+
+    return exteriorgrid, torigrids, interiorgrids
+end
+
+# Form a `JuAFEM.Grid` from a vector of points and tuple of triangle vertices.
+#NOTE: assumes triangles are properly oriented
+function JuAFEM.Grid(
+        p::AbstractVector{Vec{2,T}},
+        t::AbstractVector{NTuple{3,Int}},
+        e::AbstractVector{NTuple{2,Int}} = boundedges(p, t)
+    ) where {T}
+
+    # Create initial grid
+    grid = Grid(Triangle.(t), Node.(Tuple.(p)))
+
+    # Add boundary set and boundary matrix, including inner boundaries
+    addfaceset!(grid, "boundary", Set{NTuple{2,Int}}(e))
+    grid.boundary_matrix = JuAFEM.boundaries_to_sparse(e)
+
+    return grid
+end
+
+
+# ---------------------------------------------------------------------------- #
+# old_disjoint_rect_mesh_with_tori
+# ---------------------------------------------------------------------------- #
+function old_disjoint_rect_mesh_with_tori(
         rect_bdry::Rectangle{2,T},
         inner_circles::Vector{Circle{2,T}},
         outer_circles::Vector{Circle{2,T}},
