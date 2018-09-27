@@ -22,7 +22,7 @@ export origin, radius, radii, widths, corners, geta, getb, getc, getF1, getF2, r
 export dimension, floattype, xmin, ymin, xmax, ymax, area, volume
 export scale_shape, translate_shape, inscribed_square
 export signed_edge_distance, minimum_signed_edge_distance
-export bounding_box, bounding_circle, crude_bounding_circle, opt_bounding_ellipse, opt_bounding_circle, intersect_area
+export bounding_box, bounding_circle, crude_bounding_circle, opt_bounding_ellipse, opt_bounding_circle, intersect_area, intersection_points
 export is_inside, is_overlapping, is_any_overlapping, is_on_circle, is_on_any_circle, is_in_circle, is_in_any_circle, is_inside, is_outside
 
 # ---------------------------------------------------------------------------- #
@@ -104,7 +104,7 @@ Base.rand(::Type{E}, N::Int) where {E <: Ellipse} = [rand(E) for i in 1:N]
 function signed_edge_distance(X::Vec{2}, e::Ellipse{2})
 
     # Check for simple cases to skip root finding below
-    EPS = 5eps(getb(e))
+    EPS = 5*eps(getb(e))
     isapprox(X, origin(e); rtol = EPS) && return -getb(e) # origin is a pathological case for rootfinding
     isapprox(X, getF1(e); rtol = EPS) && return getc(e) - geta(e)
     isapprox(X, getF2(e); rtol = EPS) && return getc(e) - geta(e)
@@ -124,12 +124,14 @@ function signed_edge_distance(X::Vec{2}, e::Ellipse{2})
     t1, t2, t4, t6 = a*a, b*b, y0*y0, x0*x0
     t8, t9, t11 = t1*t1, t2*t1, t2*t2
     t15, t16 = t8*t2, t11*t1
-    rts = PolynomialRoots.roots([-t16*t6 + t8*t11 - t15*t4,
-                                 -2.0*t9*t6 - 2.0*t9*t4 + 2.0*t15 + 2.0*t16,
-                                 -t2*t4 - t1*t6 + t8 + 4.0*t9 + t11,
-                                  2.0*t1 + 2.0*t2,
-                                  1.0])
-    t = maximum(r->real(r), rts)
+    rts = PolynomialRoots.roots(BigFloat.([
+        -t16*t6 + t8*t11 - t15*t4,
+        -2*t9*t6 - 2*t9*t4 + 2*t15 + 2*t16,
+        -t2*t4 - t1*t6 + t8 + 4*t9 + t11,
+        2*t1 + 2*t2,
+        1
+    ]))
+    t = typeof(a)(maximum(r->real(r), rts))
 
     a², b² = a^2, b^2
     x = a² * x0 / (t + a²)
@@ -156,7 +158,7 @@ function opt_bounding_ellipse(circles::Vector{Circle{dim,T}};
         return d12 > -ϵ ? (d12 + ϵ)^2 : zero(d12)
     end
 
-    function optfun(x::Vector{Tx}, lambda = 1e-3) where {Tx}
+    function optfun(x::Vector{Tx}, lambda = Tx(1e-3)) where {Tx}
         @inbounds ebound = Ellipse{dim,Tx}(Vec{dim,Tx}((x[1], x[2])), Vec{dim,Tx}((x[3], x[4])), x[5]) # bounding ellipse
         overlap_penalty = sum(c -> overlap_dist(c, ebound, epsilon), circles)
         area_penalty = area(ebound)/length(circles)
@@ -169,7 +171,7 @@ function opt_bounding_ellipse(circles::Vector{Circle{dim,T}};
     e_final = e_initial
     e_check = e_opt -> minimum(c -> -signed_edge_distance(origin(c), e_opt) - radius(c), circles) > epsilon/2
 
-    lambda = 1e-3
+    lambda = T(1e-3)
     x0 = [getF1(e_initial)..., getF2(e_initial)..., getb(e_initial)]
     for i in 1:maxiter
         # Can't use autodiff as generic eigenvalue solvers used in signed_edge_distance are too slow
@@ -184,8 +186,8 @@ function opt_bounding_ellipse(circles::Vector{Circle{dim,T}};
     end
 
     if !e_check(e_final)
-        f = α -> e_check(scale_shape(e_final, α)) - 0.5
-        α_min = find_zero(f, (0.01, 100.0), Bisection())
+        f = α -> e_check(scale_shape(e_final, α)) - T(0.5)
+        α_min = find_zero(f, T.((0.01, 100.0)), Bisection())
         return scale_shape(e_final, α_min + 100*eps(α_min))
     else
         return e_final
@@ -229,7 +231,7 @@ Base.maximum(c::Circle{dim,T}) where {dim,T} = origin(c) + radii(c)
 @inline ymax(c::Circle{2}) = maximum(c)[2]
 
 @inline area(c::Circle{2}) = pi*radius(c)^2
-@inline volume(c::Circle{3}) = 4/3*pi*radius(c)^3
+@inline volume(c::Circle{3}) = 4pi*radius(c)^3/3
 
 # Scale circle by factor `α` relative to the point `P` (default to it's own origin)
 scale_shape(c::Circle{dim}, P::Vec{dim}, α::Number) where {dim} = Circle(α * (origin(c) - P) + P, α * radius(c))
@@ -333,7 +335,7 @@ function opt_bounding_circle(circles::Vector{Circle{dim,T}};
         return d12 > -ϵ ? (d12 + ϵ)^2 : zero(d12)
     end
 
-    function optfun(x::Vector{Tx}, lambda = 1e-3) where {Tx}
+    function optfun(x::Vector{Tx}, lambda = Tx(1e-3)) where {Tx}
         @inbounds cbound = Circle{dim,Tx}(Vec{dim,Tx}((x[1], x[2])), x[3]) # bounding circle
         overlap_penalty = sum(c -> overlap_dist(c, cbound, epsilon), circles)
         area_penalty = area(cbound)/length(circles)
@@ -344,7 +346,7 @@ function opt_bounding_circle(circles::Vector{Circle{dim,T}};
     c_final = c_initial
     c_check = c_opt -> minimum(c -> -signed_edge_distance(origin(c), c_opt) - radius(c), circles) > epsilon/2
 
-    lambda = 1e-3
+    lambda = T(1e-3)
     x0 = [origin(c_initial)..., radius(c_initial)]
     for i in 1:maxiter
         opt_obj = OnceDifferentiable(x->optfun(x,lambda), x0; autodiff = :forward)
@@ -358,8 +360,8 @@ function opt_bounding_circle(circles::Vector{Circle{dim,T}};
     end
 
     if !c_check(c_final)
-        f = r -> c_check(Circle(origin(c_final), r)) - 0.5
-        r_min = find_zero(f, (0.01, 100.0).*radius(c_final), Bisection())
+        f = r -> c_check(Circle(origin(c_final), r)) - T(0.5)
+        r_min = find_zero(f, T.((0.01, 100.0)).*radius(c_final), Bisection())
         return Circle(origin(c_final), r_min + 100*eps(r_min))
     else
         return c_final
@@ -458,7 +460,7 @@ end
 
 Base.maximum(r::Rectangle) = r.maxs
 Base.minimum(r::Rectangle) = r.mins
-origin(r::Rectangle) = 0.5*(minimum(r) + maximum(r))
+origin(r::Rectangle) = (minimum(r) + maximum(r))/2
 widths(r::Rectangle) = maximum(r) - minimum(r)
 
 @inline xmin(r::Rectangle{2}) = minimum(r)[1]
@@ -502,14 +504,14 @@ scale_shape(r::Rectangle, α::Number) = scale_shape(r, origin(r), α)
 # Translate rectangle by factor `α` relative to the point `P` (defaults to zero vector), or by fixed vector X
 function translate_shape(r::Rectangle{dim}, P::Vec{dim}, α::Number) where {dim}
     new_O = α * (origin(r) - P) + P
-    new_mins = new_O - 0.5*widths(r)
-    new_maxs = new_O + 0.5*widths(r)
+    new_mins = new_O - widths(r)/2
+    new_maxs = new_O + widths(r)/2
     return Rectangle(new_mins, new_maxs)
 end
 function translate_shape(r::Rectangle, α::Number)
     new_O = α * origin(r)
-    new_mins = new_O - 0.5*widths(r)
-    new_maxs = new_O + 0.5*widths(r)
+    new_mins = new_O - widths(r)/2
+    new_maxs = new_O + widths(r)/2
     return Rectangle(new_mins, new_maxs)
 end
 translate_shape(r::Rectangle{dim}, X::Vec{dim}) where {dim} = Rectangle(minimum(r) + X, maximum(r) + X)
@@ -542,6 +544,10 @@ end
     end
     return false
 end
+
+# ---------------------------------------------------------------------------- #
+# Area of intersections between shapes (2D)
+# ---------------------------------------------------------------------------- #
 
 # Integration of the intersection of area between the circle `c` and the
 # rectangular region defined by X0 ≤ x ≤ X1, Y0 ≤ y ≤ Y1. It is assumed that
@@ -605,15 +611,20 @@ end
 
 # Sums `intersect_area` over a vector of circles on a rectangular domain.
 #   NOTE: assumes circles are disjoint
-function intersect_area(circles::Vector{Circle{2,T1}},
-                        domain::Rectangle{2,T2}) where {T1,T2}
+function intersect_area(
+        circles::Vector{Circle{2,T1}},
+        domain::Rectangle{2,T2}
+    ) where {T1,T2}
     T = promote_type(T1,T2)
     return sum(c -> T(intersect_area_check_inside(c, domain)), circles)
 end
 
-function intersect_area(origins::AbstractVector,
-                        radii::AbstractVector,
-                        domain::Rectangle{2})
+function intersect_area(
+        origins::AbstractVector,
+        radii::AbstractVector,
+        domain::Rectangle{2}
+    )
+
     N = length(radii)
     @assert length(origins) >= 2N
 
@@ -627,8 +638,11 @@ function intersect_area(origins::AbstractVector,
     return Σ
 end
 
-@inline function intersect_area_check_inside(c::Circle{2,T1},
-                                             domain::Rectangle{2,T2}) where {T1,T2}
+@inline function intersect_area_check_inside(
+        c::Circle{2,T1},
+        domain::Rectangle{2,T2}
+    ) where {T1,T2}
+
     T = promote_type(T1,T2)
     if is_inside(c, domain)
         return π*radius(c)^2
@@ -644,41 +658,65 @@ end
     # return INSIDE * (π*radius(c)^2) + !(INSIDE || OUTSIDE) * intersect_area(c, domain)
 end
 
-function intersect_area_test(c::Circle{2,T}) where {T}
-    # allow for points to be inside or slightly outside of circle
-    rect = scale_shape(bounding_box(c), T(1.5))
 
-    x0 = origin(rect)[1] - (xmax(rect)-xmin(rect))/2 * rand(T)
-    x1 = origin(rect)[1] + (xmax(rect)-xmin(rect))/2 * rand(T)
-    y0 = origin(rect)[2] - (ymax(rect)-ymin(rect))/2 * rand(T)
-    y1 = origin(rect)[2] + (ymax(rect)-ymin(rect))/2 * rand(T)
-    @assert (x0 <= x1 && y0 <= y1)
+# ---------------------------------------------------------------------------- #
+# Intersection points between shape boundaries (2D)
+# ---------------------------------------------------------------------------- #
 
-    R = radius(c)
-    h = R - (min(y1,ymax(c)) - origin(c)[2])
+function intersection_points(
+        circ::Circle{2,T1},
+        rect::Rectangle{2,T2},
+        ϵ = sqrt(eps(promote_type(T1, T2)))
+    ) where {T1, T2}
 
-    A_top_test = (intersect_area(c, -Inf,   y1,  x0, Inf) + # 1: top left
-                  intersect_area(c,   x0,   y1,  x1, Inf) + # 2: top middle
-                  intersect_area(c,   x1,   y1, Inf, Inf))  # 3: top right
+    @inline fcircle(x, x0, r) = sqrt(r^2 - (x-x0)^2)
 
-    A_top = R^2 * acos((R-h)/R) - (R-h)*√(2*R*h-h^2)
-    @assert isapprox(A_top, A_top_test; atol=1e-12)
+    @inline function xpoints!(points::Vector{Vec{2,T}}, x, y0, y1, a, b, r) where {T}
+        if a-r <= x && x <= a+r
+            d = fcircle(x, a, r)
+            (y0 <= b + d <= y1) && push!(points, Vec{2,T}((x, b + d)))
+            (y0 <= b - d <= y1) && push!(points, Vec{2,T}((x, b - d)))
+        end
+        return points
+    end
 
-    A_test = (intersect_area(c, -Inf,   y1,  x0, Inf) + # 1: top left
-              intersect_area(c,   x0,   y1,  x1, Inf) + # 2: top middle
-              intersect_area(c,   x1,   y1, Inf, Inf) + # 3: top right
-              intersect_area(c, -Inf,   y0,  x0,  y1) + # 4: middle left
-              intersect_area(c,   x0,   y0,  x1,  y1) + # 5: middle middle
-              intersect_area(c,   x1,   y0, Inf,  y1) + # 6: middle right
-              intersect_area(c, -Inf, -Inf,  x0,  y0) + # 7: bottom left
-              intersect_area(c,   x0, -Inf,  x1,  y0) + # 8: bottom middle
-              intersect_area(c,   x1, -Inf, Inf,  y0))  # 9: bottom right
+    @inline function ypoints!(points::Vector{Vec{2,T}}, y, x0, x1, a, b, r) where {T}
+        if b-r <= y && y <= b+r
+            d = fcircle(y, b, r)
+            (x0 <= a + d <= x1) && push!(points, Vec{2,T}((a + d, y)))
+            (x0 <= a - d <= x1) && push!(points, Vec{2,T}((a - d, y)))
+        end
+        return points
+    end
 
-    A_exact = pi*radius(c)^2
-    @assert A_test ≈ A_exact
+    T = promote_type(T1, T2)
+    x0, x1, y0, y1 = xmin(rect), xmax(rect), ymin(rect), ymax(rect)
+    a, b, r = origin(circ)[1], origin(circ)[2], radius(circ)
 
-    return (A_test, A_exact)
+    # Create initial set of intersection points
+    points = Vec{2,T}[]
+    xpoints!(points, x0, y0, y1, a, b, r)
+    xpoints!(points, x1, y0, y1, a, b, r)
+    ypoints!(points, y0, x0, x1, a, b, r)
+    ypoints!(points, y1, x0, x1, a, b, r)
+
+    # Remove any duplicates
+    if !isempty(points)
+        b = fill(true, length(points))
+        @inbounds for i in 2:length(points)
+            pi = points[i]
+            for j in 1:i-1
+                pj = points[j]
+                (norm(pi - pj) < ϵ * max(norm(pi), norm(pj))) && (b[i] = false; break)
+            end
+        end
+        points = points[b]
+    end
+
+    return points
 end
+
+@inline intersection_points(r::Rectangle{2}, c::Circle{2}) = intersection_points(c, r)
 
 end # module GeometryUtils
 

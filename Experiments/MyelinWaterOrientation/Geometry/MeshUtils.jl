@@ -165,9 +165,9 @@ function disjoint_rect_mesh_with_tori(
         eta::T = T(1.0),
         gamma::T = T(5.0),
         alpha::T = T(0.7);
-        fixcorners::Bool = true,
+        plotgrids = false,
         fixcirclepoints::Bool = true,
-        plotgrids = false
+        fixintersectionpoints::Bool = true
     ) where {T}
 
     PLOTALL = false
@@ -183,19 +183,20 @@ function disjoint_rect_mesh_with_tori(
     @assert !is_any_overlapping(outer_circles, <)
 
     # Initialize Grids and fixed points (for exteriorgrid)
-    G = Grid{2,3,T,3}
+    V, G = Vec{2,T}, Grid{2,3,T,3}
     interiorgrids, torigrids = G[], G[]
-    pfix = Vec{2,T}[]
+    # pfix_int, pfix_out, pfix_ext = V[]
 
     @inbounds for i = 1:length(outer_circles)
         c_in, c_out = inner_circles[i], outer_circles[i]
 
         println("$i/$(length(outer_circles)): Interior")
-        new_bdry = intersect(rect_bdry, bounding_box(c_in))
-        if !(√area(new_bdry) ≈ zero(T))
-            fd = x -> sdintersect(drectangle0(x, new_bdry), dcircle(x, c_in))
-            fh = x -> hcircle(x, h0, eta, gamma, alpha, c_in) #huniform
-            p, t = distmesh2d(fd, fh, h0, bbox(new_bdry); PLOT = PLOTALL, MAXSTALLITERS = 500)
+        int_bdry = intersect(rect_bdry, bounding_box(c_in))
+        if !(√area(int_bdry) ≈ zero(T))
+            fd = x -> sdintersect(drectangle0(x, int_bdry), dcircle(x, c_in))
+            fh = x -> hcircle(x, h0, eta, gamma, alpha, c_in)
+            pfix = fixintersectionpoints ? intersection_points(rect_bdry, c_in) : V[] # only fix w.r.t rect_bdry to avoid tangent points being fixed
+            p, t = distmesh2d(fd, fh, h0, bbox(int_bdry), pfix; PLOT = PLOTALL, MAXSTALLITERS = 500)
 
             plotgrids && simpplot(p, t; newfigure = true)
             push!(interiorgrids, Grid(p, t))
@@ -204,14 +205,19 @@ function disjoint_rect_mesh_with_tori(
         end
 
         println("$i/$(length(outer_circles)): Annular")
-        new_bdry = intersect(rect_bdry, bounding_box(c_out))
-        if !(√area(new_bdry) ≈ zero(T))
-            fd = x -> sdintersect(drectangle0(x, new_bdry), dshell(x, c_in, c_out))
+        out_bdry = intersect(rect_bdry, bounding_box(c_out))
+        if !(√area(out_bdry) ≈ zero(T))
+            fd = x -> sdintersect(drectangle0(x, out_bdry), dshell(x, c_in, c_out))
             fh = x -> hshell(x, h0, eta, gamma, alpha, c_in, c_out) #huniform
-            p, t = distmesh2d(fd, fh, h0, bbox(new_bdry); PLOT = PLOTALL, MAXSTALLITERS = 500)
+            pfix = fixintersectionpoints ? vcat(intersection_points(rect_bdry, c_in), intersection_points(rect_bdry, c_out)) : V[]
+            p, t = distmesh2d(fd, fh, h0, bbox(out_bdry), pfix; PLOT = PLOTALL, MAXSTALLITERS = 500)
 
             e = boundedges(p, t)
-            fixcirclepoints && (pfix = vcat(pfix, p[reinterpret(Int, e)]))
+            if fixcirclepoints
+                e_unique = unique!(sort!(copy(reinterpret(Int, e)))) # unique indices of boundary points
+                pfix_outer = filter(x -> is_on_circle(x, c_out, T(0.01)*h0), p[e_unique]) # keep points which are on the outer circle
+                pfix_ext = vcat(pfix_ext, pfix_outer)
+            end
 
             plotgrids && simpplot(p, t; newfigure = true)
             push!(torigrids, Grid(p, t, e))
@@ -221,14 +227,14 @@ function disjoint_rect_mesh_with_tori(
     end
 
     # Add rectangle corners and keep unique points
-    fixcorners && push!(pfix, corners(rect_bdry)...)
-    !isempty(pfix) && unique!(sort!(pfix; by = first))
+    !isempty(pfix_ext) && unique!(sort!(pfix_ext; by = first))
 
     # Form exterior grid
     println("0/$(length(outer_circles)): Exterior")
     fd = x -> dexterior(x, rect_bdry, outer_circles)
     fh = x -> hcircles(x, h0, eta, gamma, alpha, outer_circles) #huniform
-    p, t = distmesh2d(fd, fh, h0, bbox(rect_bdry), pfix; PLOT = PLOTALL, MAXSTALLITERS = 500)
+    @show pfix_ext
+    p, t = distmesh2d(fd, fh, h0, bbox(rect_bdry), pfix_ext; PLOT = PLOTALL, MAXSTALLITERS = 500)
 
     exteriorgrid = Grid(p, t)
     plotgrids && simpplot(p, t; newfigure = true)
