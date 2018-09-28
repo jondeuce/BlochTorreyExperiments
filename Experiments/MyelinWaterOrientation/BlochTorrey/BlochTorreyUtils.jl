@@ -53,9 +53,9 @@ const VectorOfVectors{T} = Vector{Vector{T}}
 
 # Struct of BlochTorreyParameters. T is the float type.
 @with_kw struct BlochTorreyParameters{T}
-    B0::T             =    T(3.0)           # External magnetic field [T]
-    gamma::T          =    T(2.67515255e8)  # Gyromagnetic ratio [rad/(T*s)]
-    theta::T          =    T(π/2)           # Main magnetic field angle w.r.t B0 [rad/(T*s)]
+    B0::T             =    T(-3.0)          # External magnetic field (z-direction) [T]
+    gamma::T          =    T(2.67515255e8)  # Gyromagnetic ratio [rad/s/T]
+    theta::T          =    T(π/2)           # Main magnetic field angle w.r.t B0 [rad]
     g_ratio::T        =    T(0.8370)        # g-ratio (original 0.71), 0.84658 for healthy, 0.8595 for MS.
     R2_sp::T          =    T(1.0/15e-3)     # #TODO play with these? Relaxation rate of small pool [s^-1] (Myelin) (Xu et al. 2017) (15e-3s)
     R2_lp::T          =    T(1.0/63e-3)     # #TODO play with these? 1st attempt was 63E-3. 2nd attempt 76 ms
@@ -189,6 +189,7 @@ mutable struct MyelinDomain{uDim,gDim,T,Nd,Nf} <: AbstractDomain{uDim,gDim,T,Nd,
             ParabolicDomain.(axongrids, Val(uDim); kwargs...))
     end
 end
+
 function MyelinDomain(m::MyelinDomain; kwargs...)
     return MyelinDomain(
         m.fullgrid, m.outercircles, m.innercircles, m.domainboundary,

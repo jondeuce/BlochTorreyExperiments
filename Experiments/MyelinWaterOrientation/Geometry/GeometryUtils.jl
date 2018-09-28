@@ -580,7 +580,7 @@ end
 #   https://stackoverflow.com/questions/622287/area-of-intersection-between-circle-and-rectangle
 function intersect_area(c::Circle{2}, X0, Y0, X1, Y1)
 
-    ZERO, ONE, EPS = zero(X0), one(X0), 5eps(typeof(X0))
+    ZERO, ONE, EPS = zero(X0), one(X0), 5*eps(typeof(X0))
 
     # @inline safe_sqrt(x) = √max(x,EPS)
     # @inline safe_asin(x) = asin(clamp(x,-ONE+EPS,ONE-EPS))
@@ -638,7 +638,9 @@ function intersect_area(
         domain::Rectangle{2,T2}
     ) where {T1,T2}
     T = promote_type(T1,T2)
-    return sum(c -> T(intersect_area_check_inside(c, domain)), circles)
+    return sum(circles) do c
+        T(intersect_area_check_inside(c, domain))
+    end
 end
 
 function intersect_area(
@@ -650,10 +652,9 @@ function intersect_area(
     N = length(radii)
     @assert length(origins) >= 2N
 
-    Σ = sum(zip(1:2:2N, 1:N)) do i
-        io, ir = i
-        o = Vec{2}((origins[io], origins[io+1]))
-        r = radii[ir]
+    Σ = sum(1:N) do i
+        @inbounds r = radii[i]
+        @inbounds o = Vec{2}((origins[2i-1], origins[2i]))
         intersect_area_check_inside(Circle(o,r), domain)
     end
 
@@ -667,9 +668,9 @@ end
 
     T = promote_type(T1,T2)
     if is_inside(c, domain)
-        return π*radius(c)^2
+        return T(π*radius(c)^2)
     elseif !is_outside(c, domain)
-        return intersect_area(c, domain)
+        return T(intersect_area(c, domain))
     else
         return zero(T)
     end

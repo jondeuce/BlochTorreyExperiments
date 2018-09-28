@@ -223,7 +223,10 @@ function simpplot(p::AbstractMatrix, t::AbstractMatrix;
 
     newfigure && mxcall(:figure, 0)
     hold && mxcall(:hold, 0, "on")
-    mxcall(:simpplot, 0, Matrix{Float64}(p), Matrix{Float64}(t))
+
+    if !(isempty(p) || isempty(t))
+        mxcall(:simpplot, 0, Matrix{Float64}(p), Matrix{Float64}(t))
+    end
 
     !(xlim == nothing) && mxcall(:xlim, 0, xlim)
     !(ylim == nothing) && mxcall(:ylim, 0, ylim)

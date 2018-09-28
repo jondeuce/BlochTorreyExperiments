@@ -77,7 +77,7 @@ function estimate_density(
         α = nothing
     ) where {T}
 
-    domain = if α == nothing
+    domain = if (α == nothing)
         opt_subdomain(circles)[1]
     else
         scale_shape(inscribed_square(crude_bounding_circle(circles)), α)
