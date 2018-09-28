@@ -67,7 +67,7 @@ function distmesh2d(
         PLOT::Bool = false, # plot all triangulations during evolution
         PLOTLAST::Bool = false, # plot resulting triangulation
         DETERMINISTIC::Bool = false, # use deterministic pseudo-random
-        MAXSTALLITERS::Int = typemax(Int), # max iterations of stalled progress
+        MAXSTALLITERS::Int = 500, # max iterations of stalled progress
         DENSITYCTRLFREQ::Int = 30, # density check frequency
         DPTOL::T = T(0.001), # equilibrium step size threshold
         TTOL::T = T(0.1), # large movement tolerance for retriangulation
@@ -76,6 +76,24 @@ function distmesh2d(
         GEPS::T = T(0.001)*h0, # boundary distance threshold
         DEPS::T = sqrt(eps(T))*h0 # finite difference step-length
     ) where {T}
+
+    # Function for restarting if h0 is large enough that all points get removed
+    function restart()
+        @warn "No points remaining! Shrinking h0 -> h0/2 and retrying..."
+        return distmesh2d(fd, fh, h0/2, bbox, pfix, ∇fd;
+            PLOT = PLOT,
+            PLOTLAST = PLOTLAST,
+            DETERMINISTIC = DETERMINISTIC,
+            MAXSTALLITERS = MAXSTALLITERS,
+            DENSITYCTRLFREQ = DENSITYCTRLFREQ,
+            DPTOL = DPTOL,
+            TTOL = TTOL,
+            FSCALE = FSCALE,
+            DELTAT = DELTAT,
+            GEPS = GEPS/2, # scales with h0
+            DEPS = DEPS/2 # scales with h0
+        )
+    end
 
     # 0. Useful defines
     V = Vec{2,T}
@@ -93,17 +111,21 @@ function distmesh2d(
     # 2. Remove points outside the region, apply the rejection method
     p = filter!(x -> fd(x) < GEPS, p)       # Keep only d<0 points
     r0 = inv.(fh.(p)).^2                    # Probability to keep point
+    isempty(r0) && (return restart())
+
     randlist = DETERMINISTIC ? mod.(T.(1:length(p)), T(2pi))./T(2pi) : rand(T, length(p))
     p = p[maximum(r0) .* randlist .< r0]                   # Rejection method
+    isempty(p) && (return restart())
+
     !isempty(pfix) && (p = setdiff!(p, pfix))              # Remove duplicated nodes
-    pfix = unique!(pfix)
+    pfix = sort!(copy(pfix); by = first)
+    pfix = threshunique(pfix; rtol = √eps(T), atol = eps(T))
     nfix = length(pfix)
     p = vcat(pfix, p)                                      # Prepend fix points
-    N = length(p)                                          # Number of points N
 
-    count = 0;
-    stallcount = 0;
-    dtermbest = T(Inf);
+    count = 0
+    stallcount = 0
+    dtermbest = T(Inf)
 
     t = delaunay2(p)
     if PLOT
@@ -117,10 +139,13 @@ function distmesh2d(
         count += 1
 
         # 3. Retriangulation by the Delaunay algorithm
+        # try
         if count == 1 || (√maximum(norm2.(p.-pold)) > h0 * TTOL)               # Any large movement?
+            p = threshunique(p; rtol = √eps(T), atol = eps(T))
+            isempty(p) && (return restart())
+
             pold = copy(p)                                                     # Save current positions
             t = delaunay2!(t, p)                                               # List of triangles
-
             pmid = V[(p[tt[1]] + p[tt[2]] + p[tt[3]])/3 for tt in t]           # Compute centroids
             t = t[fd.(pmid) .< -GEPS]                                          # Keep interior triangles
 
@@ -140,6 +165,9 @@ function distmesh2d(
             end
         end
 
+        # Check that there are any points remaining
+        (isempty(bars) || isempty(t) || length(p) == length(pfix)) && (return restart())
+
         # 6. Move mesh points based on bar lengths L and forces F
         barvec = V[p[b[1]] - p[b[2]] for b in bars]           # List of bar vectors
         L = norm.(barvec)                                     # L  =  Bar lengths
@@ -147,23 +175,25 @@ function distmesh2d(
         L0 = hbars * (FSCALE * norm(L)/norm(hbars))           # L0  =  Desired lengths
 
         # Density control - remove points that are too close
-        if mod(count, DENSITYCTRLFREQ) == 0 && any(L0 .> 2.0 .* L)
-            ix = setdiff(reinterpret(Int, bars[L0 .> 2.0 .* L]), 1:nfix)
-            deleteat!(p, unique!(sort!(ix)))
-            N = size(p,1)
-            pold = V[InfV]
-            continue
+        if mod(count, DENSITYCTRLFREQ) == 0
+            b = L0 .> 2 .* L
+            if any(b)
+                ix = setdiff(reinterpret(Int, bars[b]), 1:nfix)
+                deleteat!(p, unique!(sort!(ix)))
+                pold = V[InfV]
+                continue
+            end
         end
 
         F = max.(L0 .- L, zero(T))                           # Bar forces (scalars)
         Fvec = F./L .* barvec                                # Bar forces (x,y components)
-        Ftot = zeros(V, N)
+        Ftot = zeros(V, length(p))
         @inbounds for (i, b) in enumerate(bars)
             Ftot[b[1]] += Fvec[i]
             Ftot[b[2]] -= Fvec[i]
         end
-        for i in 1:length(pfix)
-            Ftot[i] = zero(V)                                # Force  =  0 at fixed points
+        @inbounds for i in 1:length(pfix)
+            Ftot[i] = zero(V)                                # Force = 0 at fixed points
         end
         p .+= DELTAT .* Ftot                                 # Update node positions
 
@@ -181,9 +211,9 @@ function distmesh2d(
         dterm = isempty(d_int) ? T(Inf) : sqrt(maximum(norm2, d_int))/h0
 
         if dterm >= dtermbest
-            stallcount = stallcount + 1;
+            stallcount = stallcount + 1
         end
-        dtermbest = min(dtermbest, dterm);
+        dtermbest = min(dtermbest, dterm)
 
         if dterm < DPTOL || stallcount >= MAXSTALLITERS
             break
@@ -208,7 +238,7 @@ function delaunay2!(
         p::AbstractVector{Vec{2,T}}
     ) where {T}
 
-    p, pmin, pmax = scaleto(p, min_coord, max_coord)
+    p, pmin, pmax = scaleto(p, min_coord + T(0.1), max_coord - T(0.1))
     P = IndexedPoint2D[IndexedPoint2D(pp[1], pp[2], i) for (i,pp) in enumerate(p)]
     unique!(sort!(P; by = getx))
 

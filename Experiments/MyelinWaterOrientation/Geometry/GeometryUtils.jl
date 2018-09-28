@@ -23,7 +23,7 @@ export dimension, floattype, xmin, ymin, xmax, ymax, area, volume
 export scale_shape, translate_shape, inscribed_square
 export signed_edge_distance, minimum_signed_edge_distance
 export bounding_box, bounding_circle, crude_bounding_circle, opt_bounding_ellipse, opt_bounding_circle, intersect_area, intersection_points
-export is_inside, is_overlapping, is_any_overlapping, is_on_circle, is_on_any_circle, is_in_circle, is_in_any_circle, is_inside, is_outside
+export is_inside, is_overlapping, is_any_overlapping, is_on_circle, is_on_any_circle, is_in_circle, is_in_any_circle, is_inside, is_outside, is_on_boundary
 
 # ---------------------------------------------------------------------------- #
 # Types
@@ -527,7 +527,20 @@ function bounding_box(circles::Vector{C}) where {C <: Circle}
     return Rectangle((min_x, min_y), (max_x, max_y))
 end
 
+# Check if point is inside rectangle
+# NOTE: defaults to lt = ≤, i.e. returns true if `x` is strictly inside `r`, or
+#       is directly on the boundary of `r`
+@inline function is_inside(x::Vec{dim}, r::Rectangle{dim}, lt = ≤) where {dim}
+    rmin, rmax = minimum(r), maximum(r)
+    @inbounds for i in 1:dim
+        !(lt(rmin[i], x[i]) && lt(x[i], rmax[i])) && return false
+    end
+    return true
+end
+
 # Check if circle is inside rectangle
+# NOTE: defaults to lt = ≤, i.e. returns true if `c` is strictly inside `r`, or
+#       is tangent to r from the inside
 @inline function is_inside(c::Circle{dim}, r::Rectangle{dim}, lt = ≤) where {dim}
     cmin, cmax, rmin, rmax = minimum(c), maximum(c), minimum(r), maximum(r)
     @inbounds for i in 1:dim
@@ -537,6 +550,7 @@ end
 end
 
 # Check if circle is outside rectangle
+# NOTE: defaults to lt = <, i.e. only returns true if `c` is strictly outside `r`
 @inline function is_outside(c::Circle{dim}, r::Rectangle{dim}, lt = <) where {dim}
     cmin, cmax, rmin, rmax = minimum(c), maximum(c), minimum(r), maximum(r)
     @inbounds for i in 1:dim
@@ -544,6 +558,14 @@ end
     end
     return false
 end
+
+# Check if circle is on rectangle boundary
+# NOTE: defaults to lt = <, i.e. returns true if `c` is neither strictly outside
+#       of `r` nor strictly inside of `r`
+@inline function is_on_boundary(c::Circle{dim}, r::Rectangle{dim}, lt = <) where {dim}
+    return !(is_inside(c, r, lt) || is_outside(c, r, lt))
+end
+
 
 # ---------------------------------------------------------------------------- #
 # Area of intersections between shapes (2D)
@@ -669,22 +691,22 @@ function intersection_points(
         ϵ = sqrt(eps(promote_type(T1, T2)))
     ) where {T1, T2}
 
-    @inline fcircle(x, x0, r) = sqrt(r^2 - (x-x0)^2)
+    @inline fcircle(x, x0, r) = sqrt(max(r^2 - (x-x0)^2, zero(x)))
 
     @inline function xpoints!(points::Vector{Vec{2,T}}, x, y0, y1, a, b, r) where {T}
-        if a-r <= x && x <= a+r
+        if a-r-ϵ <= x <= a+r+ϵ
             d = fcircle(x, a, r)
-            (y0 <= b + d <= y1) && push!(points, Vec{2,T}((x, b + d)))
-            (y0 <= b - d <= y1) && push!(points, Vec{2,T}((x, b - d)))
+            (y0-ϵ <= b + d <= y1+ϵ) && push!(points, Vec{2,T}((x, b + d)))
+            (y0-ϵ <= b - d <= y1+ϵ) && push!(points, Vec{2,T}((x, b - d)))
         end
         return points
     end
 
     @inline function ypoints!(points::Vector{Vec{2,T}}, y, x0, x1, a, b, r) where {T}
-        if b-r <= y && y <= b+r
+        if b-r-ϵ <= y <= b+r+ϵ
             d = fcircle(y, b, r)
-            (x0 <= a + d <= x1) && push!(points, Vec{2,T}((a + d, y)))
-            (x0 <= a - d <= x1) && push!(points, Vec{2,T}((a - d, y)))
+            (x0-ϵ <= a + d <= x1+ϵ) && push!(points, Vec{2,T}((a + d, y)))
+            (x0-ϵ <= a - d <= x1+ϵ) && push!(points, Vec{2,T}((a - d, y)))
         end
         return points
     end

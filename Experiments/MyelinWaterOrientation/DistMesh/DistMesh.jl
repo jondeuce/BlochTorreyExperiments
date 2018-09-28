@@ -4,7 +4,7 @@
 
 module DistMesh
 
-# using LinearAlgebra
+using LinearAlgebra
 using StatsBase
 # using Random
 using Tensors # for gradients of tensor functions, and Vec type

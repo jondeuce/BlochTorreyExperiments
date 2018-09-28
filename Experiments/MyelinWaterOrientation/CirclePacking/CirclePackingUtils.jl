@@ -13,7 +13,7 @@ using LinearAlgebra, Statistics
 using DiffBase, Optim, LineSearches, ForwardDiff, Roots
 using Tensors
 
-export estimate_density, scale_to_density, covariance_energy
+export estimate_density, opt_subdomain, scale_to_density, covariance_energy
 export tocircles, tocircles!, tovectors, tovectors!, initialize_origins
 export pairwise_sum, pairwise_grad!, pairwise_hess!
 export wrap_gradient, check_density_callback
@@ -22,25 +22,78 @@ export wrap_gradient, check_density_callback
 # Circle packing density tools
 # ---------------------------------------------------------------------------- #
 
-function estimate_density(circles::AbstractVector{Circle{2,T}},
-                          α = T(0.75)) where {T}
-    # For this estimate, we compute the inscribed square of the bounding circle
-    # which bounds all of the `circles`. Then, the square is scaled down a small
-    # amount with the hope that this square contains a relatively large and
-    # representative region of circles for which to integrate over to obtain the
-    # packing density, but not so large that there is much empty space remaining
-    boundary_circle = crude_bounding_circle(circles)
-    inner_square = inscribed_square(boundary_circle)
-    domain = scale_shape(inner_square, α)
+function opt_subdomain(
+        circles::AbstractVector{Circle{2,T}},
+        alpha_lb = T(0.1),
+        alpha_ub = T(1.0)
+    ) where {T}
+
+    # starting_rectangle = bounding_box(circles)
+    # mean_radius = mean(radius, circles)
+    # N_total = length(circles)
+    #
+    # function energy(α)
+    #     inner = scale_shape(starting_rectangle, α)
+    #     c1, c2, c3, c4 = corners(inner)
+    #     x0, x1, y0, y1 = xmin(inner), xmax(inner), ymin(inner), ymax(inner)
+    #
+    #     d = fill(T(Inf), 8)
+    #     N_inside = 0
+    #     for c in circles
+    #         o = origin(c)
+    #         d[1] = min(d[1], norm(c1 - o)) # corner distances
+    #         d[2] = min(d[2], norm(c2 - o))
+    #         d[3] = min(d[3], norm(c3 - o))
+    #         d[4] = min(d[4], norm(c4 - o))
+    #         d[5] = min(d[5], abs(x0 - o[1])) # edge distances
+    #         d[6] = min(d[6], abs(x1 - o[1]))
+    #         d[7] = min(d[7], abs(y0 - o[2]))
+    #         d[8] = min(d[8], abs(y1 - o[2]))
+    #         is_inside(o, inner) && (N_inside += 1)
+    #     end
+    #
+    #     return sum(d)/mean_radius - N_inside/N_total
+    # end
+    #
+    # # Find the optimal α using a Bisection method
+    # α = Optim.minimizer(optimize(energy, alpha_lb, alpha_ub, Brent()))
+    # opt_rectangle = scale_shape(starting_rectangle, α)
+
+    α = 0.75
+    opt_rectangle = scale_shape(inscribed_square(crude_bounding_circle(circles)), α)
+
+    return opt_rectangle, α
+end
+
+# For this estimate, we compute the inscribed square of the bounding circle
+# which bounds all of the `circles`. Then, the square is scaled down a small
+# amount with the hope that this square contains a relatively large and
+# representative region of circles for which to integrate over to obtain the
+# packing density, but not so large that there is much empty space remaining.
+# If α is given, simply use this square. Otherwise, compute the optimal
+# subdomain using the above helper function
+function estimate_density(
+        circles::AbstractVector{Circle{2,T}},
+        α = nothing
+    ) where {T}
+
+    domain = if α == nothing
+        opt_subdomain(circles)[1]
+    else
+        scale_shape(inscribed_square(crude_bounding_circle(circles)), α)
+    end
+
     A = prod(maximum(domain) - minimum(domain)) # domain area
     Σ = intersect_area(circles, domain) # total circle areas
+
     return T(Σ/A)
 end
 
 function scale_to_density(input_circles, goaldensity)
     # Check that desired desired packing density can be attained
+    # _, α_inner_domain = opt_subdomain(input_circles) # fix the opt_subdomain relative size
     expand_circles = (α) -> translate_shape.(input_circles, α)
-    density = (α) -> estimate_density(expand_circles(α))
+    density = (α) -> estimate_density(expand_circles(α))#, α_inner_domain)
 
     α_min = find_zero(α -> is_any_overlapping(expand_circles(α)) - 0.5, (1.0e-3, 1.0e3), Bisection())
     ϵ = 100 * eps(α_min)

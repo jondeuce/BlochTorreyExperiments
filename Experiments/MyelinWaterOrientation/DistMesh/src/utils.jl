@@ -47,6 +47,34 @@ end
 # Unique, sorting, etc.
 # ---------------------------------------------------------------------------- #
 
+function threshunique(
+        x::AbstractVector{T};
+        rtol = √eps(T),
+        atol = eps(T),
+        norm = LinearAlgebra.norm
+    ) where T
+
+    uniqueset = Vector{T}()
+    sizehint!(uniqueset, length(x))
+    ex = eachindex(x)
+    # idxs = Vector{eltype(ex)}()
+    for i in ex
+        xi = x[i]
+        norm_xi = norm(xi)
+        isunique = true
+        for xj in uniqueset
+            norm_xj = norm(xj)
+            if norm(xi - xj) < max(rtol*max(norm_xi, norm_xj), atol)
+                isunique = false
+                break
+            end
+        end
+        isunique && push!(uniqueset, xi) # push!(idxs, i)
+    end
+
+    return uniqueset
+end
+
 function findunique(A)
     C = unique(A)
     iA = findfirst.(isequal.(C), (A,))
@@ -184,12 +212,30 @@ end
 # simpplot
 # ---------------------------------------------------------------------------- #
 
-function simpplot(
-        p::AbstractVector{Vec{2,T}},
-        t::AbstractVector{NTuple{3,Int}};
-        newfigure = false
-    ) where {T}
-    
+function simpplot(p::AbstractMatrix, t::AbstractMatrix;
+        newfigure = false,
+        hold = false,
+        xlim = nothing,
+        ylim = nothing,
+        axis = nothing
+    )
+    @assert size(p,2) == 2 && size(t,2) == 3
+
     newfigure && mxcall(:figure, 0)
-    mxcall(:simpplot, 0, to_mat(p), to_mat(t))
+    hold && mxcall(:hold, 0, "on")
+    mxcall(:simpplot, 0, Matrix{Float64}(p), Matrix{Float64}(t))
+
+    !(xlim == nothing) && mxcall(:xlim, 0, xlim)
+    !(ylim == nothing) && mxcall(:ylim, 0, ylim)
+    !(axis == nothing) && mxcall(:axis, 0, axis)
+
+    return nothing
+end
+
+function simpplot(
+        p::AbstractVector{V},
+        t::AbstractVector{NTuple{3,Int}};
+        kwargs...
+    ) where {V<:Vec{2}}
+    simpplot(to_mat(p), to_mat(t); kwargs...)
 end

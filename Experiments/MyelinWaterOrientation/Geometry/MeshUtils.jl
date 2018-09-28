@@ -13,236 +13,15 @@ using JuAFEM: vertices, faces, edges
 using MATLAB, SparseArrays, Statistics
 using DistMesh
 
-export getfaces, mxplot,
-       circle_mesh_with_tori,
-       rect_mesh_with_circles, disjoint_rect_mesh_with_tori, rect_mesh_with_tori,
-       form_tori_subgrids, form_disjoint_grid, form_subgrid
+export getfaces, simpplot, disjoint_rect_mesh_with_tori
+export mxbbox, mxaxis
 
 # ---------------------------------------------------------------------------- #
 # Misc grid utils
 # ---------------------------------------------------------------------------- #
-function getfaces(grid::Grid{2})
-    # faces will be approx. double counted, and Euler characteristic says #faces (edges) ~ #nodes + #cells in 2D
-    faceset = Set{Tuple{Int,Int}}()
-    sizehint!(faceset, 2*(getnnodes(grid) + getncells(grid)))
-    for (cell_idx, cell) in enumerate(getcells(grid))
-        for (face_idx, face) in enumerate(faces(cell))
-            push!(faceset, (cell_idx, face_idx))
-        end
-    end
-    JuAFEM._warn_emptyset(faceset)
-    return faceset
-end
 
-# ---------------------------------------------------------------------------- #
-# rect_mesh_with_circles
-# ---------------------------------------------------------------------------- #
-function rect_mesh_with_circles(
-        rect_bdry::Rectangle{2,T},
-        circles::Vector{Circle{2,T}},
-        h0::T,
-        eta::T;
-        isunion::Bool = true
-    ) where {T}
-
-    # TODO: add minimum angle threshold?
-    dim = 2
-    nfaces = 3 # per triangle
-    nnodes = 3 # per triangle
-
-    bbox = [xmin(rect_bdry) ymin(rect_bdry);
-            xmax(rect_bdry) ymax(rect_bdry)]
-    centers = reinterpret(T, origin.(circles), (dim,length(circles)))'
-    radii = radius.(circles)
-
-    nargout = 2
-    p, t = mxcall(:squaremeshwithcircles, nargout, bbox, centers, radii, h0, eta, isunion)
-
-    cells = [Triangle((t[i,1], t[i,2], t[i,3])) for i in 1:size(t,1)]
-    nodes = [Node((p[i,1], p[i,2])) for i in 1:size(p,1)]
-    fullgrid = Grid(cells, nodes)
-
-    # Manually add boundary sets for the four square edges and circle boundaries
-    addfaceset!(fullgrid, "left",   x -> x[1] ≈ xmin(rect_bdry), all=true)
-    addfaceset!(fullgrid, "right",  x -> x[1] ≈ xmax(rect_bdry), all=true)
-    addfaceset!(fullgrid, "top",    x -> x[2] ≈ ymax(rect_bdry), all=true)
-    addfaceset!(fullgrid, "bottom", x -> x[2] ≈ ymin(rect_bdry), all=true)
-    addfaceset!(fullgrid, "circles", x -> is_on_any_circle(x, circles), all=true)
-
-    # Boundary matrix and boundary face set
-    all_boundaries = union(values.(getfacesets(fullgrid))...)
-    fullgrid.boundary_matrix = JuAFEM.boundaries_to_sparse(collect(Tuple{Int,Int}, all_boundaries))
-    addfaceset!(fullgrid, "boundary", all_boundaries)
-
-    if isunion
-        # Generate cell and node sets
-        addcellset!(fullgrid, "exterior", x -> !is_in_any_circle(x, circles); all=false)
-        addnodeset!(fullgrid, "exterior", x -> !is_in_any_circle(x, circles) || is_on_any_circle(x, circles))
-        addcellset!(fullgrid, "circles",  x ->  is_in_any_circle(x, circles); all=true)
-        addnodeset!(fullgrid, "circles",  x ->  is_in_any_circle(x, circles) || is_on_any_circle(x, circles))
-
-        # Generate exterior grid
-        subgrids = typeof(fullgrid)[]
-        cellset = getcellset(fullgrid, "exterior")
-        nodeset = getnodeset(fullgrid, "exterior")
-        push!(subgrids, form_subgrid(fullgrid, cellset, nodeset, all_boundaries))
-
-        # Generate circle grids
-        nodefilter = (nodenum, circle)  -> is_in_circle(getcoordinates(getnodes(fullgrid, nodenum)), circle)
-        cellfilter = (cellnum, nodeset) -> all(nodenum -> nodenum ∈ nodeset, vertices(getcells(fullgrid, cellnum)))
-        for circle in circles
-            nodeset = filter(nodenum -> nodefilter(nodenum, circle), getnodeset(fullgrid, "circles"))
-            cellset = filter(cellnum -> cellfilter(cellnum, nodeset), getcellset(fullgrid, "circles"))
-            push!(subgrids, form_subgrid(fullgrid, cellset, nodeset, all_boundaries))
-        end
-    else
-        subgrids = typeof(fullgrid)[]
-    end
-
-    return fullgrid, subgrids
-end
-
-# ---------------------------------------------------------------------------- #
-# disjoint_rect_mesh_with_tori
-# ---------------------------------------------------------------------------- #
-
-# Helper functions
-@inline bbox(r::Rectangle) = [xmin(r) ymin(r); xmax(r) ymax(r)]
-@inline sqrtclamp(d, h0, eta, gamma) = clamp(eta*sqrt(h0*d/gamma), h0, eta * h0) # h ∈ [h0, h0 * eta]
-@inline linearclamp(d, h0, eta, gamma) = clamp(eta*(d/gamma), h0, eta * h0) # h ∈ [h0, h0 * eta]
-@inline quadclamp(d, h0, eta, gamma) = clamp((eta/h0)*(d/gamma)^2, h0, eta * h0) # h ∈ [h0, h0 * eta]
-@inline powerclamp(d, h0, eta, gamma, alpha) = clamp(eta*h0*((d/gamma)/h0)^alpha, h0, eta * h0) # h ∈ [h0, h0 * eta]
-
-# Signed distance functions for rectangle, circle, and shell
-@inline DistMesh.drectangle0(x::Vec, r::Rectangle) = drectangle0(x, xmin(r), xmax(r), ymin(r), ymax(r))
-@inline DistMesh.dcircle(x::Vec, c::Circle) = dcircle(x, origin(c), radius(c))
-@inline DistMesh.dshell(x::Vec, c_in::Circle, c_out::Circle) = dshell(x, origin(c_in), radius(c_in), radius(c_out))
-
-# Signed distance function for many circles
-function dcircles(x::Vec, cs::Vector{Circle{2,T}}) where {T}
-    d = T(dunion()) # initial value s.g. dunion(d, x) == x for all x
-    @inbounds for i in eachindex(cs)
-        d = dunion(d, dcircle(x, cs[i])) # union of all circle distances
-    end
-    return d
-end
-
-# @inline softmax(x, y) = (M = max(x,y); m = min(x,y); return M + log(one(x) + exp(m-M)))
-# @inline softmax(x, y) = (M = max(x,y); m = min(x,y); alpha = m/M; delta = exp(m-M); return M * (1 + alpha*delta)/(1+delta))
-# function softmax(x, y, ϵ = 0.001)
-#     M = max(x, y)
-#     return if abs(x) < ϵ && abs(y) < ϵ
-#         sign(M) * sqrt(x^2 + y^2)
-#     else
-#         M
-#     end
-# end
-@inline softmax(x, y, ϵ = 0.01) = max(x, y)
-@inline sddiff(x, y, ϵ = 0.001) = softmax(x, -y, ϵ)
-@inline sdintersect(x, y, ϵ = 0.001) = softmax(x, y, ϵ)
-
-# Signed distance function for region exterior to `cs`, but inside of `cs`
-@inline function dexterior(x::Vec, r::Rectangle{2,T}, cs::Vector{Circle{2,T}}) where {T}
-    return sddiff(drectangle0(x, r), dcircles(x, cs))
-end
-
-# Edge length functions
-@inline function hcircles(x::Vec, h0, eta, gamma, alpha, cs::Vector{C}) where {C <: Circle}
-    return powerclamp(abs(dcircles(x, cs)), h0, eta, gamma, alpha)
-end
-@inline function hcircle(x::Vec, h0, eta, gamma, alpha, c::Circle)
-    return powerclamp(abs(dcircle(x, c)), h0, eta, gamma, alpha)
-end
-@inline function hshell(x::Vec, h0, eta, gamma, alpha, c_in::Circle, c_out::Circle)
-    return powerclamp(abs(dshell(x, c_in, c_out)), h0, eta, gamma, alpha)
-end
-
-function disjoint_rect_mesh_with_tori(
-        rect_bdry::Rectangle{2,T},
-        inner_circles::Vector{Circle{2,T}},
-        outer_circles::Vector{Circle{2,T}},
-        h0::T,
-        eta::T = T(1.0),
-        gamma::T = T(5.0),
-        alpha::T = T(0.7);
-        plotgrids = false,
-        fixcirclepoints::Bool = true,
-        fixintersectionpoints::Bool = true
-    ) where {T}
-
-    PLOTALL = false
-
-    # Ensure that:
-    # -there are the same number of outer/inner circles, and at least 1 of each
-    # -outer circles strictly contain inner circles
-    # -outer/inner circles have the same origins
-    # -outer circles are strictly non-overlapping
-    @assert length(inner_circles) == length(outer_circles) >= 1
-    @assert all(c -> is_inside(c[1], c[2], <), zip(inner_circles, outer_circles))
-    @assert all(c -> origin(c[1]) ≈ origin(c[2]), zip(inner_circles, outer_circles))
-    @assert !is_any_overlapping(outer_circles, <)
-
-    # Initialize Grids and fixed points (for exteriorgrid)
-    V, G = Vec{2,T}, Grid{2,3,T,3}
-    interiorgrids, torigrids = G[], G[]
-    # pfix_int, pfix_out, pfix_ext = V[]
-
-    @inbounds for i = 1:length(outer_circles)
-        c_in, c_out = inner_circles[i], outer_circles[i]
-
-        println("$i/$(length(outer_circles)): Interior")
-        int_bdry = intersect(rect_bdry, bounding_box(c_in))
-        if !(√area(int_bdry) ≈ zero(T))
-            fd = x -> sdintersect(drectangle0(x, int_bdry), dcircle(x, c_in))
-            fh = x -> hcircle(x, h0, eta, gamma, alpha, c_in)
-            pfix = fixintersectionpoints ? intersection_points(rect_bdry, c_in) : V[] # only fix w.r.t rect_bdry to avoid tangent points being fixed
-            p, t = distmesh2d(fd, fh, h0, bbox(int_bdry), pfix; PLOT = PLOTALL, MAXSTALLITERS = 500)
-
-            plotgrids && simpplot(p, t; newfigure = true)
-            push!(interiorgrids, Grid(p, t))
-        else
-            push!(interiorgrids, Grid(Triangle[], Node{2,T}[]))
-        end
-
-        println("$i/$(length(outer_circles)): Annular")
-        out_bdry = intersect(rect_bdry, bounding_box(c_out))
-        if !(√area(out_bdry) ≈ zero(T))
-            fd = x -> sdintersect(drectangle0(x, out_bdry), dshell(x, c_in, c_out))
-            fh = x -> hshell(x, h0, eta, gamma, alpha, c_in, c_out) #huniform
-            pfix = fixintersectionpoints ? vcat(intersection_points(rect_bdry, c_in), intersection_points(rect_bdry, c_out)) : V[]
-            p, t = distmesh2d(fd, fh, h0, bbox(out_bdry), pfix; PLOT = PLOTALL, MAXSTALLITERS = 500)
-
-            e = boundedges(p, t)
-            if fixcirclepoints
-                e_unique = unique!(sort!(copy(reinterpret(Int, e)))) # unique indices of boundary points
-                pfix_outer = filter(x -> is_on_circle(x, c_out, T(0.01)*h0), p[e_unique]) # keep points which are on the outer circle
-                pfix_ext = vcat(pfix_ext, pfix_outer)
-            end
-
-            plotgrids && simpplot(p, t; newfigure = true)
-            push!(torigrids, Grid(p, t, e))
-        else
-            push!(torigrids, Grid(Triangle[], Node{2,T}[]))
-        end
-    end
-
-    # Add rectangle corners and keep unique points
-    !isempty(pfix_ext) && unique!(sort!(pfix_ext; by = first))
-
-    # Form exterior grid
-    println("0/$(length(outer_circles)): Exterior")
-    fd = x -> dexterior(x, rect_bdry, outer_circles)
-    fh = x -> hcircles(x, h0, eta, gamma, alpha, outer_circles) #huniform
-    @show pfix_ext
-    p, t = distmesh2d(fd, fh, h0, bbox(rect_bdry), pfix_ext; PLOT = PLOTALL, MAXSTALLITERS = 500)
-
-    exteriorgrid = Grid(p, t)
-    plotgrids && simpplot(p, t; newfigure = true)
-
-    return exteriorgrid, torigrids, interiorgrids
-end
-
-# Form a `JuAFEM.Grid` from a vector of points and tuple of triangle vertices.
+# `JuAFEM.Grid` constructor given a vector of points and a vector of tuples of
+# triangle vertices.
 #NOTE: assumes triangles are properly oriented
 function JuAFEM.Grid(
         p::AbstractVector{Vec{2,T}},
@@ -260,162 +39,285 @@ function JuAFEM.Grid(
     return grid
 end
 
+# Get faceset for entire 2D grid
+function getfaces(grid::Grid{2})
+    # faces will be approx. double counted, and Euler characteristic says
+    # num. faces (edges) ~ num. nodes + num. cells (2D)
+    faceset = Set{Tuple{Int,Int}}()
+    sizehint!(faceset, 2*(getnnodes(grid) + getncells(grid)))
+    for (cell_idx, cell) in enumerate(getcells(grid))
+        for (face_idx, face) in enumerate(faces(cell))
+            push!(faceset, (cell_idx, face_idx))
+        end
+    end
+    JuAFEM._warn_emptyset(faceset)
+    return faceset
+end
+
+# Creating cellsets
+function cellset_to_nodeset(grid::Grid, cellset::Union{Set{Int},Vector{Int}})
+    nodeset = Set{Int}()
+    for c in cellset
+        cell = getcells(grid, c)
+        push!(nodeset, vertices(cell)...)
+    end
+    return nodeset
+end
+cellset_to_nodeset(grid::Grid, name::String) = cellset_to_nodeset(grid, getcellset(grid, name))
+
+# Creating cellcentersets
+@inline cellcenter(grid::Grid, cell::Cell) = mean(getcoordinates.(getindex.((getnodes(grid),), cell.nodes)))
+@inline cellcenter(grid::Grid, cellnum::Int) = cellcenter(grid, getcells(grid, cellnum))
+
+function cellcenterset(grid::Grid, f::Function)
+    cells = Set{Int}()
+    for (i, cell) in enumerate(getcells(grid))
+        x = cellcenter(grid, cell)
+        f(x) && push!(cells, i)
+    end
+    JuAFEM._warn_emptyset(cells)
+    return cells
+end
+
+function addcellcenterset!(grid::Grid, name::String, f::Function)
+    JuAFEM._check_setname(grid.cellsets, name)
+    grid.cellsets[name] = cellcenterset(grid, f)
+    return grid
+end
+
+# Project points nearly on circles to being exactly on them
+function project_circle!(grid::Grid, circle::Circle{dim,T}, thresh::T) where {dim,T}
+    for i in eachindex(grid.nodes)
+        x = getcoordinates(getnodes(grid)[i])
+        dx = x - origin(circle)
+        normdx = norm(dx)
+        if abs(normdx - radius(circle)) <= thresh
+            x = origin(circle) + (radius(circle)/normdx) * dx
+            grid.nodes[i] = Node(x)
+        end
+    end
+    return grid
+end
+project_circle(grid::Grid, circle::Circle, thresh) = project_circle!(deepcopy(grid), circle, thresh)
+
+function project_circles!(grid::Grid, circles::Vector{C}, thresh) where {C <: Circle}
+    for circle in circles
+        project_circle!(grid, circle, thresh)
+    end
+    return grid
+end
+project_circles(grid::Grid, circles::Vector{C}, thresh) where {C <: Circle} = project_circles!(deepcopy(grid), circles, thresh)
+
+# Form a subgrid from a cellset + nodeset + boundaryset of a parent grid
+function form_subgrid(
+        parent_grid::Grid{dim,N,T,M},
+        cellset::Set{Int},
+        nodeset::Set{Int},
+        boundaryset::Set{Tuple{Int,Int}}
+    ) where {dim,N,T,M}
+
+    cells = Triangle[]
+    nodes = Node{dim,T}[]
+    sizehint!(cells, length(cellset))
+    sizehint!(nodes, length(nodeset))
+
+    nodemap = spzeros(Int, Int, getnnodes(parent_grid))
+    for (i,nodenum) in zip(1:length(nodeset), nodeset)
+        push!(nodes, getnodes(parent_grid, nodenum))
+        nodemap[nodenum] = i
+    end
+
+    cellmap = spzeros(Int, Int, getncells(parent_grid))
+    for (i,cellnum) in zip(1:length(cellset), cellset)
+        parent_cellnodeset = vertices(getcells(parent_grid, cellnum))
+        push!(cells, Triangle(map(n->nodemap[n], parent_cellnodeset)))
+        cellmap[cellnum] = i
+    end
+
+    boundary = Set{Tuple{Int,Int}}()
+    for (cellnum, face) in boundaryset
+        newcell = cellmap[cellnum]
+        if newcell ≠ 0
+            push!(boundary, (newcell, face))
+        end
+    end
+    boundary_matrix = JuAFEM.boundaries_to_sparse(collect(Tuple{Int,Int}, boundary))
+
+    grid = Grid(cells, nodes, boundary_matrix=boundary_matrix)
+    addfaceset!(grid, "boundary", boundary)
+
+    return grid
+end
 
 # ---------------------------------------------------------------------------- #
-# old_disjoint_rect_mesh_with_tori
+# simpplot: call the DistMesh function `simpplot` to plot the grid
 # ---------------------------------------------------------------------------- #
-function old_disjoint_rect_mesh_with_tori(
+function DistMesh.simpplot(g::Grid{2,3,T}; kwargs...) where {T}
+    # Node positions matrix
+    p = zeros(T, getnnodes(g), 2)
+    @inbounds for i in 1:getnnodes(g)
+        p[i,1], p[i,2] = getcoordinates(getnodes(g)[i])
+    end
+
+    # Triangle indices matrix
+    t = zeros(Int, getncells(g), 3)
+    @inbounds for i in 1:getncells(g)
+        t[i,1], t[i,2], t[i,3] = vertices(getcells(g)[i])
+    end
+
+    # Plot grid
+    simpplot(p, t; kwargs...)
+
+    return nothing
+end
+
+# ---------------------------------------------------------------------------- #
+# Helper functions for DistMesh, etc.
+# ---------------------------------------------------------------------------- #
+
+@inline mxbbox(r::Rectangle{2}) = [xmin(r) ymin(r); xmax(r) ymax(r)]
+@inline mxaxis(r::Rectangle{2}) = [xmin(r) xmax(r) ymin(r) ymax(r)]
+
+# Clamping functions: η γ α
+# -Provides a continuous transition from h = h0 to h = η*h0 when d goes from
+#  abs(d) = h0 to abs(d) = γ*h0, with h clamped at h0 for abs(d) < h0 and
+#  η*h0 for abs(d) > γ*h0
+# -sqrt/linear/quad clamps are special cases of the power clamp with exponent α
+@inline sqrtclamp(d, h0, η, γ) = clamp(η * sqrt(h0 * abs(d) / γ), h0, η * h0)
+@inline linearclamp(d, h0, η, γ) = clamp(η * abs(d) / γ, h0, η * h0)
+@inline quadclamp(d, h0, η, γ) = clamp((η / h0) * (abs(d) / γ)^2, h0, η * h0)
+@inline powerclamp(d, h0, η, γ, α) = clamp(η * h0 * (abs(d) / (γ * h0))^α, h0, η * h0)
+
+# Signed distance functions for rectangle, circle, and shell
+@inline DistMesh.drectangle0(x::Vec, r::Rectangle) = drectangle0(x, xmin(r), xmax(r), ymin(r), ymax(r))
+@inline DistMesh.dcircle(x::Vec, c::Circle) = dcircle(x, origin(c), radius(c))
+@inline DistMesh.dshell(x::Vec, c_in::Circle, c_out::Circle) = dshell(x, origin(c_in), radius(c_in), radius(c_out))
+
+# Signed distance function for many circles
+function dcircles(x::Vec, cs::Vector{Circle{2,T}}) where {T}
+    d = T(dunion()) # initial value s.t. dunion(d, x) == x for all x
+    @inbounds for i in eachindex(cs)
+        d = dunion(d, dcircle(x, cs[i])) # union of all circle distances
+    end
+    return d
+end
+
+# Signed distance function for region exterior to `r`, but inside of `cs`
+@inline function dexterior(x::Vec, r::Rectangle{2}, cs::Vector{C}) where {C<:Circle{2}}
+    return ddiff(drectangle0(x, r), dcircles(x, cs))
+end
+
+# Edge length functions
+@inline function hcircles(x::Vec, h0, η, γ, α, cs::Vector{C}) where {C <: Circle}
+    return powerclamp(dcircles(x, cs), h0, η, γ, α)
+end
+@inline function hcircle(x::Vec, h0, η, γ, α, c::Circle)
+    return powerclamp(dcircle(x, c), h0, η, γ, α)
+end
+@inline function hshell(x::Vec, h0, η, γ, α, c_in::Circle, c_out::Circle)
+    return powerclamp(dshell(x, c_in, c_out), h0, η, γ, α)
+end
+
+# ---------------------------------------------------------------------------- #
+# disjoint_rect_mesh_with_tori
+# ---------------------------------------------------------------------------- #
+function disjoint_rect_mesh_with_tori(
         rect_bdry::Rectangle{2,T},
         inner_circles::Vector{Circle{2,T}},
         outer_circles::Vector{Circle{2,T}},
-        h0::T,
-        eta::T;
-        fixcorners::Bool = true,
-        fixcirclepoints::Bool = true
+        h0::T, # minimum edge length
+        eta::T = T(10.0), # approx ratio between largest/smallest edges, i.e. max ≈ eta * h0
+        gamma::T = T(10.0), # max edge length of `eta * h0` occurs approx. `gamma * h0` from circle edges
+        alpha::T = T(0.7); # power law for edge length
+        maxstalliters = typemax(Int), # default to no limit
+        plotgrids = false, # plot resulting grids
+        plotgridprogress = false # plot grids as they are created
     ) where {T}
 
-    # Ensure that outer circles strictly contain inner circles, and that outer
-    # circles are strictly non-overlapping
-    @assert length(inner_circles) == length(outer_circles)
+    # Ensure that:
+    # -there are the same number of outer/inner circles, and at least 1 of each
+    # -outer circles strictly contain inner circles
+    # -outer/inner circles have the same origins
+    # -outer circles are strictly non-overlapping
+    @assert length(inner_circles) == length(outer_circles) >= 1
     @assert all(c -> is_inside(c[1], c[2], <), zip(inner_circles, outer_circles))
+    @assert all(c -> origin(c[1]) ≈ origin(c[2]), zip(inner_circles, outer_circles))
     @assert !is_any_overlapping(outer_circles, <)
 
-    println("0/$(length(outer_circles)): Exterior")
-    exteriorgrid = form_disjoint_grid(rect_bdry, inner_circles, outer_circles, h0, eta, :exterior, fixcorners, fixcirclepoints)
-    # exteriorgrid = Grid[]
+    function circle_bdry_points(p, e, c, h0, thresh = h0/100)
+        e_unique = unique!(sort!(copy(reinterpret(Int, e)))) # unique indices of boundary points
+        p_bdry = filter(x -> is_on_circle(x, c, thresh), p[e_unique]) # keep points which are on `c`
+        return p_bdry
+    end
 
-    # interiorgrids = Grid[]
-    # torigrids = Grid[]
-    interiorgrids = typeof(exteriorgrid)[]
-    torigrids = typeof(exteriorgrid)[]
+    # Initialize Grids and fixed points (for exteriorgrid)
+    V, G = Vec{2,T}, Grid{2,3,T,3}
+    interiorgrids, torigrids = G[], G[]
+    pfix_ext = V[]
+
     @inbounds for i = 1:length(outer_circles)
+        c_in, c_out = inner_circles[i], outer_circles[i]
+        pfix_int, pfix_out, pfix_int_bdry, pfix_out_bdry = V[], V[], V[], V[]
+
         println("$i/$(length(outer_circles)): Interior")
-        new_bdry = intersect(rect_bdry, bounding_box(inner_circles[i]))
-        if !(area(new_bdry) ≈ zero(T))
-            push!(interiorgrids, form_disjoint_grid(new_bdry, [inner_circles[i]], [outer_circles[i]], h0, eta, :interior, fixcorners, fixcirclepoints))
+        int_bdry = intersect(rect_bdry, bounding_box(c_in))
+        if !(√area(int_bdry) ≈ zero(T))
+            fd = x -> dintersect(drectangle0(x, int_bdry), dcircle(x, c_in))
+            fh = x -> hcircle(x, h0, eta, gamma, alpha, c_in)
+            pfix_int = vcat(pfix_int, intersection_points(rect_bdry, c_in)) # only fix w.r.t rect_bdry to avoid tangent points being fixed
+            p, t = distmesh2d(fd, fh, h0, mxbbox(int_bdry), pfix_int;
+                PLOT = plotgridprogress, MAXSTALLITERS = maxstalliters)
+
+            e = boundedges(p, t)
+            pfix_int_bdry = vcat(pfix_int_bdry, circle_bdry_points(p, e, c_in, h0))
+
+            plotgrids && simpplot(p, t; newfigure = true)
+            push!(interiorgrids, Grid(p, t, e))
         else
             push!(interiorgrids, Grid(Triangle[], Node{2,T}[]))
         end
 
         println("$i/$(length(outer_circles)): Annular")
-        new_bdry = intersect(rect_bdry, bounding_box(outer_circles[i]))
-        if !(area(new_bdry) ≈ zero(T))
-            push!(torigrids, form_disjoint_grid(new_bdry, [inner_circles[i]], [outer_circles[i]], h0, eta, :tori, fixcorners, fixcirclepoints))
+        out_bdry = intersect(rect_bdry, bounding_box(c_out))
+        if !(√area(out_bdry) ≈ zero(T))
+            fd = x -> dintersect(drectangle0(x, out_bdry), dshell(x, c_in, c_out))
+            fh = x -> hshell(x, h0, eta, gamma, alpha, c_in, c_out)
+            pfix_out = vcat(pfix_out, pfix_int_bdry,
+                intersection_points(rect_bdry, c_in),
+                intersection_points(rect_bdry, c_out)) # only fix w.r.t rect_bdry to avoid tangent points being fixed
+            p, t = distmesh2d(fd, fh, h0, mxbbox(out_bdry), pfix_out;
+                PLOT = plotgridprogress, MAXSTALLITERS = maxstalliters)
+
+            e = boundedges(p, t)
+            pfix_out_bdry = vcat(pfix_out_bdry, circle_bdry_points(p, e, c_out, h0))
+            pfix_ext = vcat(pfix_ext, pfix_out_bdry)
+
+            plotgrids && simpplot(p, t; newfigure = true)
+            push!(torigrids, Grid(p, t, e))
         else
             push!(torigrids, Grid(Triangle[], Node{2,T}[]))
         end
     end
 
+    # Add rectangle corners and keep unique points
+    !isempty(pfix_ext) && unique!(sort!(pfix_ext; by = first))
+
+    # Form exterior grid
+    println("0/$(length(outer_circles)): Exterior")
+    fd = x -> dexterior(x, rect_bdry, outer_circles)
+    fh = x -> hcircles(x, h0, eta, gamma, alpha, outer_circles)
+    p, t = distmesh2d(fd, fh, h0, mxbbox(rect_bdry), pfix_ext;
+        PLOT = plotgridprogress, MAXSTALLITERS = maxstalliters)
+
+    exteriorgrid = Grid(p, t)
+    plotgrids && simpplot(p, t; newfigure = true)
+
     return exteriorgrid, torigrids, interiorgrids
 end
 
-function form_disjoint_grid(
-        rect_bdry::Rectangle{2,T},
-        inner_circles::Vector{Circle{2,T}},
-        outer_circles::Vector{Circle{2,T}},
-        h0::T,
-        eta::T,
-        regiontype::Symbol,
-        fixcorners::Bool = true,
-        fixcirclepoints::Bool = true
-    ) where {T}
-
-    dim = 2
-    nargout = 2
-    isunion = false
-    to_array(cs) = reinterpret(T, origin.(cs), (dim, length(cs))) |> transpose |> Matrix
-    outer_centers = to_array(outer_circles)
-    inner_centers = to_array(inner_circles)
-    outer_radii   = radius.(outer_circles)
-    inner_radii   = radius.(inner_circles)
-
-    bbox = [xmin(rect_bdry) ymin(rect_bdry);
-            xmax(rect_bdry) ymax(rect_bdry)]
-    if regiontype == :exterior
-        regnumber = 1.0
-        p, t = mxcall(:squaremeshwithcircles, nargout, bbox, outer_centers, outer_radii, h0, eta, isunion, regnumber)
-    elseif regiontype == :tori
-        regnumber = 2.0
-        p, t = mxcall(:squaremeshwithcircles, nargout, bbox, outer_centers, outer_radii, h0, eta, isunion, regnumber, inner_centers, inner_radii, fixcorners, fixcirclepoints)
-    elseif regiontype == :interior
-        regnumber = 3.0
-        p, t = mxcall(:squaremeshwithcircles, nargout, bbox, outer_centers, outer_radii, h0, eta, isunion, regnumber, inner_centers, inner_radii, fixcorners, fixcirclepoints)
-    else
-        error("Invalid regiontype == $regiontype.")
-    end
-
-    cells = [Triangle((t[i,1], t[i,2], t[i,3])) for i in 1:size(t,1)]
-    nodes = [Node((p[i,1], p[i,2])) for i in 1:size(p,1)]
-    grid = Grid(cells, nodes)
-
-    # Ensure points near circles are exactly on circles
-    project_circles!(grid, inner_circles, 1e-6*h0)
-    project_circles!(grid, outer_circles, 1e-6*h0)
-
-    # Manually add boundary sets for the four square edges and circle boundaries
-    is_on_outer_circles = x -> is_on_any_circle(x, outer_circles)
-    is_on_inner_circles = x -> is_on_any_circle(x, inner_circles)
-    is_on_rectangle     = x -> x[1] ≈ xmin(rect_bdry) || x[1] ≈ xmax(rect_bdry) ||
-                               x[2] ≈ ymax(rect_bdry) || x[2] ≈ ymin(rect_bdry)
-    is_boundary = x -> is_on_outer_circles(x) || is_on_inner_circles(x) || is_on_rectangle(x)
-
-    # Boundary matrix (including inner boundaries) and boundary face set
-    addfaceset!(grid, "boundary", is_boundary, all=true)
-    grid.boundary_matrix = JuAFEM.boundaries_to_sparse(collect(Tuple{Int,Int}, getfaceset(grid, "boundary")))
-
-    return grid
-end
-
-function rect_mesh_with_tori(
-        rect_bdry::Rectangle{2,T},
-        inner_circles::Vector{Circle{2,T}},
-        outer_circles::Vector{Circle{2,T}},
-        h0::T,
-        eta::T
-    ) where {T}
-
-    # Ensure that outer circles strictly contain inner circles, and that outer
-    # circles are strictly non-overlapping
-    @assert all(c -> is_inside(c[1], c[2], <), zip(inner_circles, outer_circles))
-    @assert !is_any_overlapping(outer_circles, <)
-
-    dim = 2
-    nfaces = 3 # per triangle
-    nnodes = 3 # per triangle
-
-    # TODO: add minimum angle threshold?
-    nargout = 2
-    all_circles = vcat(outer_circles, inner_circles)
-    all_centers = reinterpret(T, origin.(all_circles), (dim, length(all_circles)))'
-    all_radii   = radius.(all_circles)
-    bbox = [xmin(rect_bdry) ymin(rect_bdry);
-            xmax(rect_bdry) ymax(rect_bdry)]
-    p, t = mxcall(:squaremeshwithcircles, nargout, bbox, all_centers, all_radii, h0, eta, isunion)
-
-    cells = [Triangle((t[i,1], t[i,2], t[i,3])) for i in 1:size(t,1)]
-    nodes = [Node((p[i,1], p[i,2])) for i in 1:size(p,1)]
-    fullgrid = Grid(cells, nodes)
-
-    # Ensure points near circles are exactly on circles
-    project_circles!(fullgrid, inner_circles, 1e-6*h0)
-    project_circles!(fullgrid, outer_circles, 1e-6*h0)
-
-    # Manually add boundary sets for the four square edges and circle boundaries
-    addfaceset!(fullgrid, "left",   x -> x[1] ≈ xmin(rect_bdry), all=true)
-    addfaceset!(fullgrid, "right",  x -> x[1] ≈ xmax(rect_bdry), all=true)
-    addfaceset!(fullgrid, "top",    x -> x[2] ≈ ymax(rect_bdry), all=true)
-    addfaceset!(fullgrid, "bottom", x -> x[2] ≈ ymin(rect_bdry), all=true)
-    addfaceset!(fullgrid, "inner_circles", x -> is_on_any_circle(x, inner_circles), all=true)
-    addfaceset!(fullgrid, "outer_circles", x -> is_on_any_circle(x, outer_circles), all=true)
-
-    # Boundary matrix (including inner boundaries) and boundary face set
-    all_boundaries = union(values.(getfacesets(fullgrid))...)
-    fullgrid.boundary_matrix = JuAFEM.boundaries_to_sparse(collect(Tuple{Int,Int}, all_boundaries))
-    addfaceset!(fullgrid, "boundary", all_boundaries)
-
-    return fullgrid
-end
-
+# ---------------------------------------------------------------------------- #
+# Form tori subgrids with rectangular boundary
+# ---------------------------------------------------------------------------- #
 function form_tori_subgrids(
         fullgrid::Grid{dim,N,T,M},
         rect_bdry::Rectangle{2,T},
@@ -476,63 +378,13 @@ function form_tori_subgrids(
 end
 
 # ---------------------------------------------------------------------------- #
-# circle_mesh_with_tori
+# Form tori subgrids with circular boundary
 # ---------------------------------------------------------------------------- #
-function circle_mesh_with_tori(
-        circle_bdry::Circle{2,T},
-        inner_circles::Vector{Circle{2,T}},
-        outer_circles::Vector{Circle{2,T}},
-        h0::T,
-        eta::T
-    ) where {T}
-
-    # Ensure that outer circles strictly contain inner circles, and that outer
-    # circles are strictly non-overlapping
-    @assert all(c -> is_inside(c[1], c[2], <), zip(inner_circles, outer_circles))
-    @assert !is_any_overlapping(outer_circles, <)
-
-    dim = 2 # grid dimension
-    nfaces = 3 # per triangle
-    nnodes = 3 # per triangle
-
-    # TODO: add minimum angle threshold?
-    nargout = 2
-    isunion = true
-    regiontype = 0 # union type
-    bcircle = [origin(circle_bdry)..., radius(circle_bdry)]
-    outer_centers = copy(transpose(reshape(reinterpret(T, origin.(outer_circles)), (dim, length(outer_circles)))))
-    inner_centers = copy(transpose(reshape(reinterpret(T, origin.(inner_circles)), (dim, length(inner_circles)))))
-    p, t = mxcall(:circularmeshwithtori, nargout,
-        bcircle, outer_centers, radius.(outer_circles), inner_centers, radius.(inner_circles),
-        h0, eta, isunion, regiontype )
-
-    cells = [Triangle((t[i,1], t[i,2], t[i,3])) for i in 1:size(t,1)]
-    nodes = [Node((p[i,1], p[i,2])) for i in 1:size(p,1)]
-    fullgrid = Grid(cells, nodes)
-
-    # Ensure points near circles are exactly on circles
-    project_circle!(fullgrid, circle_bdry, 1e-6*h0)
-    project_circles!(fullgrid, inner_circles, 1e-6*h0)
-    project_circles!(fullgrid, outer_circles, 1e-6*h0)
-
-    # Manually add boundary sets for the four square edges and circle boundaries
-    addfaceset!(fullgrid, "boundary_circle", x -> is_on_circle(x, circle_bdry), all=true)
-    addfaceset!(fullgrid, "inner_circles",   x -> is_on_any_circle(x, inner_circles), all=true)
-    addfaceset!(fullgrid, "outer_circles",   x -> is_on_any_circle(x, outer_circles), all=true)
-
-    # Boundary matrix (including inner boundaries) and boundary face set
-    all_boundaries = union(values.(getfacesets(fullgrid))...)
-    fullgrid.boundary_matrix = JuAFEM.boundaries_to_sparse(collect(Tuple{Int,Int}, all_boundaries))
-    addfaceset!(fullgrid, "boundary", all_boundaries)
-
-    return fullgrid
-end
-
 function form_tori_subgrids(
-        fullgrid::Grid{dim,N,T,M},
-        circle_bdry::Circle{2,T},
-        inner_circles::Vector{Circle{2,T}},
-        outer_circles::Vector{Circle{2,T}}
+    fullgrid::Grid{dim,N,T,M},
+    circle_bdry::Circle{2,T},
+    inner_circles::Vector{Circle{2,T}},
+    outer_circles::Vector{Circle{2,T}}
     ) where {dim,N,T,M}
 
     # Helper functions
@@ -586,124 +438,294 @@ function form_tori_subgrids(
     return exteriorgrid, torigrids, interiorgrids
 end
 
-# ---------------------------------------------------------------------------- #
-# form_subgrid
-# ---------------------------------------------------------------------------- #
-function form_subgrid(
-        parent_grid::Grid{dim,N,T,M},
-        cellset::Set{Int},
-        nodeset::Set{Int},
-        boundaryset::Set{Tuple{Int,Int}}
-    ) where {dim,N,T,M}
 
-    cells = Triangle[]
-    nodes = Node{dim,T}[]
-    sizehint!(cells, length(cellset))
-    sizehint!(nodes, length(nodeset))
+# ============================================================================ #
+# ============================================================================ #
+#
+# MATLAB-based DistMesh grid generation; much slower and less tested
+#
+# ============================================================================ #
+# ============================================================================ #
 
-    nodemap = spzeros(Int, Int, getnnodes(parent_grid))
-    for (i,nodenum) in zip(1:length(nodeset), nodeset)
-        push!(nodes, getnodes(parent_grid, nodenum))
-        nodemap[nodenum] = i
+
+# ---------------------------------------------------------------------------- #
+# MAT_rect_mesh_with_circles
+# ---------------------------------------------------------------------------- #
+function MAT_rect_mesh_with_circles(
+        rect_bdry::Rectangle{2,T},
+        circles::Vector{Circle{2,T}},
+        h0::T,
+        eta::T;
+        isunion::Bool = true
+    ) where {T}
+
+    # TODO: add minimum angle threshold?
+    dim = 2
+    nfaces = 3 # per triangle
+    nnodes = 3 # per triangle
+
+    bbox = mxbbox(rect_bdry)
+    centers = reinterpret(T, origin.(circles), (dim,length(circles)))'
+    radii = radius.(circles)
+
+    nargout = 2
+    p, t = mxcall(:squaremeshwithcircles, nargout, bbox, centers, radii, h0, eta, isunion)
+
+    cells = [Triangle((t[i,1], t[i,2], t[i,3])) for i in 1:size(t,1)]
+    nodes = [Node((p[i,1], p[i,2])) for i in 1:size(p,1)]
+    fullgrid = Grid(cells, nodes)
+
+    # Manually add boundary sets for the four square edges and circle boundaries
+    addfaceset!(fullgrid, "left",   x -> x[1] ≈ xmin(rect_bdry), all=true)
+    addfaceset!(fullgrid, "right",  x -> x[1] ≈ xmax(rect_bdry), all=true)
+    addfaceset!(fullgrid, "top",    x -> x[2] ≈ ymax(rect_bdry), all=true)
+    addfaceset!(fullgrid, "bottom", x -> x[2] ≈ ymin(rect_bdry), all=true)
+    addfaceset!(fullgrid, "circles", x -> is_on_any_circle(x, circles), all=true)
+
+    # Boundary matrix and boundary face set
+    all_boundaries = union(values.(getfacesets(fullgrid))...)
+    fullgrid.boundary_matrix = JuAFEM.boundaries_to_sparse(collect(Tuple{Int,Int}, all_boundaries))
+    addfaceset!(fullgrid, "boundary", all_boundaries)
+
+    if isunion
+        # Generate cell and node sets
+        addcellset!(fullgrid, "exterior", x -> !is_in_any_circle(x, circles); all=false)
+        addnodeset!(fullgrid, "exterior", x -> !is_in_any_circle(x, circles) || is_on_any_circle(x, circles))
+        addcellset!(fullgrid, "circles",  x ->  is_in_any_circle(x, circles); all=true)
+        addnodeset!(fullgrid, "circles",  x ->  is_in_any_circle(x, circles) || is_on_any_circle(x, circles))
+
+        # Generate exterior grid
+        subgrids = typeof(fullgrid)[]
+        cellset = getcellset(fullgrid, "exterior")
+        nodeset = getnodeset(fullgrid, "exterior")
+        push!(subgrids, form_subgrid(fullgrid, cellset, nodeset, all_boundaries))
+
+        # Generate circle grids
+        nodefilter = (nodenum, circle)  -> is_in_circle(getcoordinates(getnodes(fullgrid, nodenum)), circle)
+        cellfilter = (cellnum, nodeset) -> all(nodenum -> nodenum ∈ nodeset, vertices(getcells(fullgrid, cellnum)))
+        for circle in circles
+            nodeset = filter(nodenum -> nodefilter(nodenum, circle), getnodeset(fullgrid, "circles"))
+            cellset = filter(cellnum -> cellfilter(cellnum, nodeset), getcellset(fullgrid, "circles"))
+            push!(subgrids, form_subgrid(fullgrid, cellset, nodeset, all_boundaries))
+        end
+    else
+        subgrids = typeof(fullgrid)[]
     end
 
-    cellmap = spzeros(Int, Int, getncells(parent_grid))
-    for (i,cellnum) in zip(1:length(cellset), cellset)
-        parent_cellnodeset = vertices(getcells(parent_grid, cellnum))
-        push!(cells, Triangle(map(n->nodemap[n], parent_cellnodeset)))
-        cellmap[cellnum] = i
-    end
+    return fullgrid, subgrids
+end
 
-    boundary = Set{Tuple{Int,Int}}()
-    for (cellnum, face) in boundaryset
-        newcell = cellmap[cellnum]
-        if newcell ≠ 0
-            push!(boundary, (newcell, face))
+# ---------------------------------------------------------------------------- #
+# MAT_disjoint_rect_mesh_with_tori
+# ---------------------------------------------------------------------------- #
+function MAT_disjoint_rect_mesh_with_tori(
+        rect_bdry::Rectangle{2,T},
+        inner_circles::Vector{Circle{2,T}},
+        outer_circles::Vector{Circle{2,T}},
+        h0::T,
+        eta::T;
+        fixcorners::Bool = true,
+        fixcirclepoints::Bool = true
+    ) where {T}
+
+    # Ensure that outer circles strictly contain inner circles, and that outer
+    # circles are strictly non-overlapping
+    @assert length(inner_circles) == length(outer_circles)
+    @assert all(c -> is_inside(c[1], c[2], <), zip(inner_circles, outer_circles))
+    @assert !is_any_overlapping(outer_circles, <)
+
+    println("0/$(length(outer_circles)): Exterior")
+    exteriorgrid = form_disjoint_grid(rect_bdry, inner_circles, outer_circles, h0, eta, :exterior, fixcorners, fixcirclepoints)
+    # exteriorgrid = Grid[]
+
+    # interiorgrids = Grid[]
+    # torigrids = Grid[]
+    interiorgrids = typeof(exteriorgrid)[]
+    torigrids = typeof(exteriorgrid)[]
+    @inbounds for i = 1:length(outer_circles)
+        println("$i/$(length(outer_circles)): Interior")
+        new_bdry = intersect(rect_bdry, bounding_box(inner_circles[i]))
+        if !(area(new_bdry) ≈ zero(T))
+            push!(interiorgrids, form_disjoint_grid(new_bdry, [inner_circles[i]], [outer_circles[i]], h0, eta, :interior, fixcorners, fixcirclepoints))
+        else
+            push!(interiorgrids, Grid(Triangle[], Node{2,T}[]))
+        end
+
+        println("$i/$(length(outer_circles)): Annular")
+        new_bdry = intersect(rect_bdry, bounding_box(outer_circles[i]))
+        if !(area(new_bdry) ≈ zero(T))
+            push!(torigrids, form_disjoint_grid(new_bdry, [inner_circles[i]], [outer_circles[i]], h0, eta, :tori, fixcorners, fixcirclepoints))
+        else
+            push!(torigrids, Grid(Triangle[], Node{2,T}[]))
         end
     end
-    boundary_matrix = JuAFEM.boundaries_to_sparse(collect(Tuple{Int,Int}, boundary))
 
-    grid = Grid(cells, nodes, boundary_matrix=boundary_matrix)
-    addfaceset!(grid, "boundary", boundary)
+    return exteriorgrid, torigrids, interiorgrids
+end
+
+# ---------------------------------------------------------------------------- #
+# MAT_form_disjoint_grid
+# ---------------------------------------------------------------------------- #
+function MAT_form_disjoint_grid(
+        rect_bdry::Rectangle{2,T},
+        inner_circles::Vector{Circle{2,T}},
+        outer_circles::Vector{Circle{2,T}},
+        h0::T,
+        eta::T,
+        regiontype::Symbol,
+        fixcorners::Bool = true,
+        fixcirclepoints::Bool = true
+    ) where {T}
+
+    dim = 2
+    nargout = 2
+    isunion = false
+    to_array(cs) = reinterpret(T, origin.(cs), (dim, length(cs))) |> transpose |> Matrix
+    outer_centers = to_array(outer_circles)
+    inner_centers = to_array(inner_circles)
+    outer_radii   = radius.(outer_circles)
+    inner_radii   = radius.(inner_circles)
+
+    bbox = mxbbox(rect_bdry)
+    if regiontype == :exterior
+        regnumber = 1.0
+        p, t = mxcall(:squaremeshwithcircles, nargout, bbox, outer_centers, outer_radii, h0, eta, isunion, regnumber)
+    elseif regiontype == :tori
+        regnumber = 2.0
+        p, t = mxcall(:squaremeshwithcircles, nargout, bbox, outer_centers, outer_radii, h0, eta, isunion, regnumber, inner_centers, inner_radii, fixcorners, fixcirclepoints)
+    elseif regiontype == :interior
+        regnumber = 3.0
+        p, t = mxcall(:squaremeshwithcircles, nargout, bbox, outer_centers, outer_radii, h0, eta, isunion, regnumber, inner_centers, inner_radii, fixcorners, fixcirclepoints)
+    else
+        error("Invalid regiontype == $regiontype.")
+    end
+
+    cells = [Triangle((t[i,1], t[i,2], t[i,3])) for i in 1:size(t,1)]
+    nodes = [Node((p[i,1], p[i,2])) for i in 1:size(p,1)]
+    grid = Grid(cells, nodes)
+
+    # Ensure points near circles are exactly on circles
+    project_circles!(grid, inner_circles, 1e-6*h0)
+    project_circles!(grid, outer_circles, 1e-6*h0)
+
+    # Manually add boundary sets for the four square edges and circle boundaries
+    is_on_outer_circles = x -> is_on_any_circle(x, outer_circles)
+    is_on_inner_circles = x -> is_on_any_circle(x, inner_circles)
+    is_on_rectangle     = x -> x[1] ≈ xmin(rect_bdry) || x[1] ≈ xmax(rect_bdry) ||
+                               x[2] ≈ ymax(rect_bdry) || x[2] ≈ ymin(rect_bdry)
+    is_boundary = x -> is_on_outer_circles(x) || is_on_inner_circles(x) || is_on_rectangle(x)
+
+    # Boundary matrix (including inner boundaries) and boundary face set
+    addfaceset!(grid, "boundary", is_boundary, all=true)
+    grid.boundary_matrix = JuAFEM.boundaries_to_sparse(collect(Tuple{Int,Int}, getfaceset(grid, "boundary")))
 
     return grid
 end
 
 # ---------------------------------------------------------------------------- #
-# creating cellsets
+# MAT_rect_mesh_with_tori
 # ---------------------------------------------------------------------------- #
-function cellset_to_nodeset(grid::Grid, cellset::Union{Set{Int},Vector{Int}})
-    nodeset = Set{Int}()
-    for c in cellset
-        cell = getcells(grid, c)
-        push!(nodeset, vertices(cell)...)
-    end
-    return nodeset
-end
-cellset_to_nodeset(grid::Grid, name::String) = cellset_to_nodeset(grid, getcellset(grid, name))
+function MAT_rect_mesh_with_tori(
+        rect_bdry::Rectangle{2,T},
+        inner_circles::Vector{Circle{2,T}},
+        outer_circles::Vector{Circle{2,T}},
+        h0::T,
+        eta::T
+    ) where {T}
 
-@inline cellcenter(grid::Grid, cell::Cell) = mean(getcoordinates.(getindex.((getnodes(grid),), cell.nodes)))
-@inline cellcenter(grid::Grid, cellnum::Int) = cellcenter(grid, getcells(grid, cellnum))
-function cellcenterset(grid::Grid, f::Function)
-    cells = Set{Int}()
-    for (i, cell) in enumerate(getcells(grid))
-        x = cellcenter(grid, cell)
-        f(x) && push!(cells, i)
-    end
-    JuAFEM._warn_emptyset(cells)
-    return cells
-end
-function addcellcenterset!(grid::Grid, name::String, f::Function)
-    JuAFEM._check_setname(grid.cellsets, name)
-    grid.cellsets[name] = cellcenterset(grid, f)
-    return grid
+    # Ensure that outer circles strictly contain inner circles, and that outer
+    # circles are strictly non-overlapping
+    @assert all(c -> is_inside(c[1], c[2], <), zip(inner_circles, outer_circles))
+    @assert !is_any_overlapping(outer_circles, <)
+
+    dim = 2
+    nfaces = 3 # per triangle
+    nnodes = 3 # per triangle
+
+    # TODO: add minimum angle threshold?
+    nargout = 2
+    all_circles = vcat(outer_circles, inner_circles)
+    all_centers = reinterpret(T, origin.(all_circles), (dim, length(all_circles)))'
+    all_radii   = radius.(all_circles)
+    bbox = mxbbox(rect_bdry)
+    p, t = mxcall(:squaremeshwithcircles, nargout, bbox, all_centers, all_radii, h0, eta, isunion)
+
+    cells = [Triangle((t[i,1], t[i,2], t[i,3])) for i in 1:size(t,1)]
+    nodes = [Node((p[i,1], p[i,2])) for i in 1:size(p,1)]
+    fullgrid = Grid(cells, nodes)
+
+    # Ensure points near circles are exactly on circles
+    project_circles!(fullgrid, inner_circles, 1e-6*h0)
+    project_circles!(fullgrid, outer_circles, 1e-6*h0)
+
+    # Manually add boundary sets for the four square edges and circle boundaries
+    addfaceset!(fullgrid, "left",   x -> x[1] ≈ xmin(rect_bdry), all=true)
+    addfaceset!(fullgrid, "right",  x -> x[1] ≈ xmax(rect_bdry), all=true)
+    addfaceset!(fullgrid, "top",    x -> x[2] ≈ ymax(rect_bdry), all=true)
+    addfaceset!(fullgrid, "bottom", x -> x[2] ≈ ymin(rect_bdry), all=true)
+    addfaceset!(fullgrid, "inner_circles", x -> is_on_any_circle(x, inner_circles), all=true)
+    addfaceset!(fullgrid, "outer_circles", x -> is_on_any_circle(x, outer_circles), all=true)
+
+    # Boundary matrix (including inner boundaries) and boundary face set
+    all_boundaries = union(values.(getfacesets(fullgrid))...)
+    fullgrid.boundary_matrix = JuAFEM.boundaries_to_sparse(collect(Tuple{Int,Int}, all_boundaries))
+    addfaceset!(fullgrid, "boundary", all_boundaries)
+
+    return fullgrid
 end
 
 # ---------------------------------------------------------------------------- #
-# mxplot: call the MATLAB function `simpplot` to plot the grid
+# MAT_circle_mesh_with_tori
 # ---------------------------------------------------------------------------- #
-function mxplot(g::Grid)
-    # Node positions matrix
-    p = zeros(Float64, getnnodes(g), 2)
-    @inbounds for i in 1:getnnodes(g)
-        p[i,1], p[i,2] = getcoordinates(getnodes(g)[i])
-    end
+function MAT_circle_mesh_with_tori(
+        circle_bdry::Circle{2,T},
+        inner_circles::Vector{Circle{2,T}},
+        outer_circles::Vector{Circle{2,T}},
+        h0::T,
+        eta::T
+    ) where {T}
 
-    # Triangle indices matrix
-    t = zeros(Float64, getncells(g), 3)
-    @inbounds for i in 1:getncells(g)
-        t[i,1], t[i,2], t[i,3] = vertices(getcells(g)[i])
-    end
+    # Ensure that outer circles strictly contain inner circles, and that outer
+    # circles are strictly non-overlapping
+    @assert all(c -> is_inside(c[1], c[2], <), zip(inner_circles, outer_circles))
+    @assert !is_any_overlapping(outer_circles, <)
 
-    # Call `simpplot(p,t)`
-    mxcall(:simpplot, 0, p, t)
-    return nothing
+    dim = 2 # grid dimension
+    nfaces = 3 # per triangle
+    nnodes = 3 # per triangle
+
+    # TODO: add minimum angle threshold?
+    nargout = 2
+    isunion = true
+    regiontype = 0 # union type
+    bcircle = [origin(circle_bdry)..., radius(circle_bdry)]
+    outer_centers = copy(transpose(reshape(reinterpret(T, origin.(outer_circles)), (dim, length(outer_circles)))))
+    inner_centers = copy(transpose(reshape(reinterpret(T, origin.(inner_circles)), (dim, length(inner_circles)))))
+    p, t = mxcall(:circularmeshwithtori, nargout,
+        bcircle, outer_centers, radius.(outer_circles), inner_centers, radius.(inner_circles),
+        h0, eta, isunion, regiontype )
+
+    cells = [Triangle((t[i,1], t[i,2], t[i,3])) for i in 1:size(t,1)]
+    nodes = [Node((p[i,1], p[i,2])) for i in 1:size(p,1)]
+    fullgrid = Grid(cells, nodes)
+
+    # Ensure points near circles are exactly on circles
+    project_circle!(fullgrid, circle_bdry, 1e-6*h0)
+    project_circles!(fullgrid, inner_circles, 1e-6*h0)
+    project_circles!(fullgrid, outer_circles, 1e-6*h0)
+
+    # Manually add boundary sets for the four square edges and circle boundaries
+    addfaceset!(fullgrid, "boundary_circle", x -> is_on_circle(x, circle_bdry), all=true)
+    addfaceset!(fullgrid, "inner_circles",   x -> is_on_any_circle(x, inner_circles), all=true)
+    addfaceset!(fullgrid, "outer_circles",   x -> is_on_any_circle(x, outer_circles), all=true)
+
+    # Boundary matrix (including inner boundaries) and boundary face set
+    all_boundaries = union(values.(getfacesets(fullgrid))...)
+    fullgrid.boundary_matrix = JuAFEM.boundaries_to_sparse(collect(Tuple{Int,Int}, all_boundaries))
+    addfaceset!(fullgrid, "boundary", all_boundaries)
+
+    return fullgrid
 end
-
-# ---------------------------------------------------------------------------- #
-# project_circle
-# ---------------------------------------------------------------------------- #
-function project_circle!(grid::Grid, circle::Circle{dim,T}, thresh::T) where {dim,T}
-    for i in eachindex(grid.nodes)
-        x = getcoordinates(getnodes(grid)[i])
-        dx = x - origin(circle)
-        normdx = norm(dx)
-        if abs(normdx - radius(circle)) <= thresh
-            x = origin(circle) + (radius(circle)/normdx) * dx
-            grid.nodes[i] = Node(x)
-        end
-    end
-    return grid
-end
-project_circle(grid::Grid, circle::Circle, thresh) = project_circle!(deepcopy(grid), circle, thresh)
-
-function project_circles!(grid::Grid, circles::Vector{C}, thresh) where {C <: Circle}
-    for circle in circles
-        project_circle!(grid, circle, thresh)
-    end
-    return grid
-end
-project_circles(grid::Grid, circles::Vector{C}, thresh) where {C <: Circle} = project_circles!(deepcopy(grid), circles, thresh)
 
 end # module MeshUtils
 

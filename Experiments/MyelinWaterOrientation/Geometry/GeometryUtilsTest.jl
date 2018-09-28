@@ -96,13 +96,20 @@ function runtests()
             rect = R(V((xmin(circ)-r, ymin(circ)-r)), V((o[1], ymax(circ) + r)))
             @test sorted_int_pts(circ, rect) ≈ V.([(o[1], o[2]-r), (o[1], o[2]+r)])
 
-            # circle and rectangle which splits it in half vertically
+            # rectangle inscribed in circle, which touches it at 4 points tangentially
             circ = rand(C)
             o, r = origin(circ), radius(circ)
             rect = scale_shape(bounding_box(circ), inv(sqrt(T(2))))
             pts = sorted_int_pts(circ, rect)
             @test length(pts) == 4
             @test pts ≈ [o] .+ (r/sqrt(T(2))) .* V.([(-1,-1), (-1,1), (1,-1), (1,1)])
+
+            # rectangle which is half in, half out of circle; should only have
+            # two intersection points
+            circ = rand(C)
+            o, r = origin(circ), radius(circ)
+            rect = R(V((xmin(circ)-r, o[2]-r/sqrt(T(2)))), V((o[1], o[2]+r/sqrt(T(2)))))
+            @test sorted_int_pts(circ, rect) ≈ [o] .+ r/sqrt(T(2)) .* V.([(-1,-1), (-1,1)])
 
             # circle and rectangle which overlap such that there are 8 equally
             # spaced intersection points around the circle
