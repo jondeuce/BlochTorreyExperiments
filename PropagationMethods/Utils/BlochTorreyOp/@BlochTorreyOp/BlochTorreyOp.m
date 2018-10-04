@@ -649,12 +649,17 @@ classdef BlochTorreyOp
         function disp(A)
             classtype = class(A.buffer);
             cplxstr = ''; if ~isreal(A.buffer); cplxstr = 'complex '; end
+            Dcplxstr = ''; if ~isreal(A.D); Dcplxstr = 'complex '; end
             fprintf('%dx%d BlochTorreyOp array with properties:\n\n',A.N,A.N);
             fprintf('   gsize: %s\n', mat2str(A.gsize));
             fprintf('   gdims: %s\n', mat2str(A.gdims));
             fprintf('       N: %d\n', A.N);
             fprintf('       h: %s\n', mat2str(A.h));
+            if isscalar(A.D)
             fprintf('       D: %s\n', num2str(A.D));
+            else
+            fprintf('       D: %s %s\n', mat2str(A.gsize), [Dcplxstr, classtype]);
+            end
             fprintf('    Diag: %s %s\n', mat2str(A.gsize), [cplxstr, classtype]);
             fprintf('   Gamma: %s %s\n', mat2str(A.gsize), [cplxstr, classtype]);
             fprintf('   R2map: %s %s\n', mat2str(A.gsize), classtype);
@@ -704,7 +709,7 @@ classdef BlochTorreyOp
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     methods (Static = true)
         % Testing script
-        test
+        all_tests_passed = test(Gsize)
         
         % Check if grid size is isotropic
         function b = is_isotropic(h)

@@ -14,10 +14,11 @@ switch state
         for i = 1:nplot % Set up axes for plot
             subplot(nplot,1,i);
             plot(0,optimValues.swarm(:,i).');
-            ylabel(sprintf('Particle %d',i));
+            ylabel(sprintf('Variable %d',i));
         end
         xlabel('Iteration','interp','none'); % Iteration number at the bottom
         subplot(nplot,1,1) % Title at the top
+        title('Particles values')
     case 'iter'
         figure(fig);
         for i = 1:nplot
@@ -29,11 +30,13 @@ switch state
             xdata = [plotHandles(1).XData(:); optimValues.iteration];
             ydata = [reshape([plotHandles.YData], optimValues.iteration, npart); idata];
             plot(xdata, ydata);
-            title('Particles values by component')
+            %title('Particles values')
             set(curAxes,'ylim',[min(ydata(:)),max(ydata(:))]); % adjust ylim
             set(curAxes,'xlim',[0,optimValues.iteration]); % adjust xlim
-            ylabel(sprintf('Particle %d',i));
+            ylabel(sprintf('Variable %d',i));
         end
+        subplot(nplot,1,1) % Title at the top
+        title('Particles values')
         drawnow % Show the plot
         savefig(gcf,sprintf('%s__pswplotvalue',DateString)); % save the figure
     case 'done'

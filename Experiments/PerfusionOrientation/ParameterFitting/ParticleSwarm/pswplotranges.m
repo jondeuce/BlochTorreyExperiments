@@ -13,11 +13,11 @@ switch state
             subplot(nplot,1,i);
             tag = sprintf('%s__pswplotrange_var_%g',DateString,i); % Set a tag for the subplot
             plot(optimValues.iteration,0,'-k','Tag',tag); % Log-scaled plot
-            ylabel(sprintf('Particle %d',i));
+            ylabel(sprintf('Variable %d',i));
         end
         xlabel('Iteration','interp','none'); % Iteration number at the bottom
         subplot(nplot,1,1) % Title at the top
-        title('Range of particles by component')
+        title('Particle values range')
     case 'iter'
         figure(fig);
         nplot = size(optimValues.swarm,2); % Number of dimensions

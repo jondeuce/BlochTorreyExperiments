@@ -11,12 +11,12 @@
 # Compiled MEX binaries (all platforms)
 *.mex*
 
-# Packaged app and toolbox files 
-*.mlappinstall 
-*.mltbx 
-  
-# Generated helpsearch folders 
-helpsearch*/ 
+# Packaged app and toolbox files
+*.mlappinstall
+*.mltbx
+
+# Generated helpsearch folders
+helpsearch*/
 
 # Simulink code generation folders
 slprj/
@@ -24,6 +24,16 @@ sccprj/
 
 # Simulink autosave extension
 *.autosave
+
+# Lock files
+*.nfs*
+
+#####################
+## JULIA GITIGNORE ##
+#####################
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
 
 #######################
 ## GENERAL GITIGNORE ##

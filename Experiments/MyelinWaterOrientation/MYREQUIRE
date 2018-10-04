@@ -1,0 +1,60 @@
+# Cbc
+# Clp
+# Flux
+# Gadfly
+# ImageMagick
+# Images
+# Ipopt
+# NLopt
+# PackageCompiler
+# ParallelAccelerator
+# RDatasets
+# RobotOS
+# TensorFlow
+# ImageView
+# Knet
+# CUDArt
+# CUDAapi
+# Meshes
+# GeometryTypes
+# ProfileView
+# HCubature
+# Cubature
+# Cuba
+# Polynomials
+ApproxFun
+Atom
+BenchmarkTools
+DifferentialEquations
+Distributions
+HDF5
+IJulia
+IterTools
+JLD
+LinearMaps
+ReverseDiff
+ForwardDiff
+Revise
+BlockArrays
+Literate
+Traceur
+Expokit
+ExpmV
+Optim
+PolynomialRoots
+StaticArrays
+Roots
+# ---- Plotting packages to add ---- #
+# GR
+# PyPlot
+# PlotRecipes
+# Plots
+# StatPlots
+# UnicodePlots
+# ---- Unregistered packages to add ---- #
+# JLD2
+# JuAFEM
+# MATLAB
+# MAT
+# LaTeXStrings
+# Flatten
