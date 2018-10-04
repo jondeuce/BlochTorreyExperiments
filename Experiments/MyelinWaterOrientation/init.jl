@@ -1,3 +1,12 @@
+# ENV["MATLAB_HOME"] = "C:\\Users\\Jonathan\\Downloads\\Mathworks Matlab R2016a\\R2016a"
+# HOME = "C:\\Users\\Jonathan\\Documents\\MATLAB\\"
+# HOME = "/home/jon/Documents/UBCMRI/"
+HOME = "/home/coopar7/Documents/code/"
+BTMASTERPATH = HOME * "BlochTorreyExperiments-master/"
+MWOPATH = BTMASTERPATH * "Experiments/MyelinWaterOrientation/"
+MWOFOLDERS = ["BlochTorrey/", "CirclePacking/", "DistMesh/", "Expmv/", "Geometry/", "Utils/"]
+push!(LOAD_PATH, MWOPATH .* ("", MWOFOLDERS...)...)
+
 # ============================================================================ #
 # Revise and Rebugger
 # ============================================================================ #
@@ -29,6 +38,7 @@ end
     using Arpack
     using Profile
     using Random
+    using Distributed
 end
 
 # # Packages currently not working on v0.7.0:

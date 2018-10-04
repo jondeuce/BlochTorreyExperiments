@@ -218,6 +218,22 @@ end
     return powerclamp(dshell(x, c_in, c_out), h0, η, γ, α)
 end
 
+function tile_rectangle(r::Rectangle{2}, tiling = (1,1))
+    (tiling == (1,1)) && return [r] # Trivial case
+
+    m, n = tiling
+    xs = range(xmin(r), stop = xmax(r), length = m+1)
+    ys = range(ymin(r), stop = ymax(r), length = n+1)
+
+    R = typeof(r)
+    rs = R[]
+    for i in 1:m, j in 1:n
+        push!(rs, R(Vec{2}((xs[i], ys[j])), Vec{2}((xs[i+1], ys[j+1]))))
+    end
+
+    return rs
+end
+
 # ---------------------------------------------------------------------------- #
 # disjoint_rect_mesh_with_tori
 # ---------------------------------------------------------------------------- #
@@ -225,14 +241,22 @@ function disjoint_rect_mesh_with_tori(
         rect_bdry::Rectangle{2,T},
         inner_circles::Vector{Circle{2,T}},
         outer_circles::Vector{Circle{2,T}},
-        h0::T, # minimum edge length
-        eta::T = T(10.0), # approx ratio between largest/smallest edges, i.e. max ≈ eta * h0
-        gamma::T = T(10.0), # max edge length of `eta * h0` occurs approx. `gamma * h0` from circle edges
-        alpha::T = T(0.7); # power law for edge length
-        maxstalliters = typemax(Int), # default to no limit
+        h_min::T, # minimum edge length
+        h_max::T = h_min, # maximum edge length (default to uniform)
+        h_range::T = T(10*h_min), # distance over which h increases from h_min to h_max
+        h_rate::T = T(0.7); # rate of increase of h from circle boundaries (power law)
+        exterior_tiling = (1,1), # tile exterior grid into (m,n) subgrids
+        maxstalliters = 500, # default to no limit
         plotgrids = false, # plot resulting grids
         plotgridprogress = false # plot grids as they are created
     ) where {T}
+
+    # Useful defines
+    V, G = Vec{2,T}, Grid{2,3,T,3}
+    h0 = h_min # typical h-value
+    eta = T(h_max/h0) # approx ratio between largest/smallest edges, i.e. max ≈ eta * h0
+    gamma = T(h_range/h0) # max edge length of `eta * h0` occurs approx. `gamma * h0` from circle edges
+    alpha = h_rate # power law for edge length
 
     # Ensure that:
     # -there are the same number of outer/inner circles, and at least 1 of each
@@ -250,14 +274,36 @@ function disjoint_rect_mesh_with_tori(
         return p_bdry
     end
 
-    # Initialize Grids and fixed points (for exteriorgrid)
-    V, G = Vec{2,T}, Grid{2,3,T,3}
-    interiorgrids, torigrids = G[], G[]
+    # Project points onto circles/boundaries if they are within a distance `thresh`
+    function fix_gridpoints!(p, thresh = h0/100)
+        @inbounds for i in eachindex(p)
+            for c in Iterators.flatten((inner_circles, outer_circles))
+                dx = p[i] - origin(c)
+                normdx = norm(dx)
+                if abs(normdx - radius(c)) <= thresh
+                    p[i] = origin(c) + (radius(c)/normdx) * dx
+                end
+            end
+            x = xmin(rect_bdry); (x-thresh <= p[i][1] <= x+thresh) && (p[i] = V((x, p[i][2])))
+            x = xmax(rect_bdry); (x-thresh <= p[i][1] <= x+thresh) && (p[i] = V((x, p[i][2])))
+            y = ymin(rect_bdry); (y-thresh <= p[i][2] <= y+thresh) && (p[i] = V((p[i][1], y)))
+            y = ymax(rect_bdry); (y-thresh <= p[i][2] <= y+thresh) && (p[i] = V((p[i][1], y)))
+        end
+        return p
+    end
+
+    # Initialize Grids
+    exteriorgrids, interiorgrids, torigrids = G[], G[], G[]
+    parent_circle_indices = Int[]
+
+    # Fixed points for exteriorgrid
     pfix_ext = V[]
 
     @inbounds for i = 1:length(outer_circles)
+        # Fixed points for inner/outer circles, as well as boundary points
         c_in, c_out = inner_circles[i], outer_circles[i]
         pfix_int, pfix_out, pfix_int_bdry, pfix_out_bdry = V[], V[], V[], V[]
+        push!(parent_circle_indices, i)
 
         println("$i/$(length(outer_circles)): Interior")
         int_bdry = intersect(rect_bdry, bounding_box(c_in))
@@ -265,8 +311,12 @@ function disjoint_rect_mesh_with_tori(
             fd = x -> dintersect(drectangle0(x, int_bdry), dcircle(x, c_in))
             fh = x -> hcircle(x, h0, eta, gamma, alpha, c_in)
             pfix_int = vcat(pfix_int, intersection_points(rect_bdry, c_in)) # only fix w.r.t rect_bdry to avoid tangent points being fixed
-            p, t = distmesh2d(fd, fh, h0, mxbbox(int_bdry), pfix_int;
-                PLOT = plotgridprogress, MAXSTALLITERS = maxstalliters)
+
+            p, t = distmesh2d(
+                fd, fh, h0, mxbbox(int_bdry), pfix_int;
+                PLOT = plotgridprogress, MAXSTALLITERS = maxstalliters
+            )
+            fix_gridpoints!(p)
 
             e = boundedges(p, t)
             pfix_int_bdry = vcat(pfix_int_bdry, circle_bdry_points(p, e, c_in, h0))
@@ -283,10 +333,14 @@ function disjoint_rect_mesh_with_tori(
             fd = x -> dintersect(drectangle0(x, out_bdry), dshell(x, c_in, c_out))
             fh = x -> hshell(x, h0, eta, gamma, alpha, c_in, c_out)
             pfix_out = vcat(pfix_out, pfix_int_bdry,
-                intersection_points(rect_bdry, c_in),
-                intersection_points(rect_bdry, c_out)) # only fix w.r.t rect_bdry to avoid tangent points being fixed
-            p, t = distmesh2d(fd, fh, h0, mxbbox(out_bdry), pfix_out;
-                PLOT = plotgridprogress, MAXSTALLITERS = maxstalliters)
+            intersection_points(rect_bdry, c_in),
+            intersection_points(rect_bdry, c_out)) # only fix w.r.t rect_bdry to avoid tangent points being fixed
+
+            p, t = distmesh2d(
+                fd, fh, h0, mxbbox(out_bdry), pfix_out;
+                PLOT = plotgridprogress, MAXSTALLITERS = maxstalliters
+            )
+            fix_gridpoints!(p)
 
             e = boundedges(p, t)
             pfix_out_bdry = vcat(pfix_out_bdry, circle_bdry_points(p, e, c_out, h0))
@@ -299,20 +353,35 @@ function disjoint_rect_mesh_with_tori(
         end
     end
 
-    # Add rectangle corners and keep unique points
-    !isempty(pfix_ext) && unique!(sort!(pfix_ext; by = first))
+    for (k, ext_bdry) in enumerate(tile_rectangle(rect_bdry, exterior_tiling))
+        # Add intersection points of circles with sub-exterior
+        pfix_sub_ext = copy(pfix_ext)
+        for c in Iterators.flatten((inner_circles, outer_circles))
+            pfix_sub_ext = vcat(pfix_sub_ext, intersection_points(ext_bdry, c))
+        end
 
-    # Form exterior grid
-    println("0/$(length(outer_circles)): Exterior")
-    fd = x -> dexterior(x, rect_bdry, outer_circles)
-    fh = x -> hcircles(x, h0, eta, gamma, alpha, outer_circles)
-    p, t = distmesh2d(fd, fh, h0, mxbbox(rect_bdry), pfix_ext;
-        PLOT = plotgridprogress, MAXSTALLITERS = maxstalliters)
+        # Keep unique points
+        pfix_sub_ext = filter!(pfix_sub_ext) do p
+            xmin(ext_bdry) <= p[1] <= xmax(ext_bdry) && ymin(ext_bdry) <= p[2] <= ymax(ext_bdry)
+        end
+        !isempty(pfix_sub_ext) && unique!(sort!(pfix_sub_ext; by = first))
 
-    exteriorgrid = Grid(p, t)
-    plotgrids && simpplot(p, t; newfigure = true)
+        # Form exterior grid
+        println("$k/$(prod(exterior_tiling)): Exterior")
+        fd = x -> dexterior(x, ext_bdry, outer_circles)
+        fh = x -> hcircles(x, h0, eta, gamma, alpha, outer_circles)
 
-    return exteriorgrid, torigrids, interiorgrids
+        p, t = distmesh2d(
+            fd, fh, h0, mxbbox(ext_bdry), pfix_sub_ext;
+            PLOT = plotgridprogress, MAXSTALLITERS = maxstalliters
+        )
+        fix_gridpoints!(p)
+
+        push!(exteriorgrids, Grid(p, t))
+        plotgrids && simpplot(p, t; newfigure = true)
+    end
+
+    return exteriorgrids, torigrids, interiorgrids, parent_circle_indices
 end
 
 # ---------------------------------------------------------------------------- #

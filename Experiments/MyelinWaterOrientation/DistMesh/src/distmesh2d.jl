@@ -68,36 +68,43 @@ function distmesh2d(
         PLOTLAST::Bool = false, # plot resulting triangulation
         DETERMINISTIC::Bool = false, # use deterministic pseudo-random
         MAXSTALLITERS::Int = 500, # max iterations of stalled progress
+        RESTARTEDGETHRESH::T = T(1e-4)*maximum(diff(bbox;dims=1)), # min. h0 s.t. restart is allowed
         DENSITYCTRLFREQ::Int = 30, # density check frequency
-        DPTOL::T = T(0.001), # equilibrium step size threshold
+        DPTOL::T = T(1e-3), # equilibrium step size threshold
         TTOL::T = T(0.1), # large movement tolerance for retriangulation
         FSCALE::T = T(1.2), # scale bar lengths
         DELTAT::T = T(0.2), # relative step size
-        GEPS::T = T(0.001)*h0, # boundary distance threshold
+        GEPS::T = T(1e-3)*h0, # boundary distance threshold
         DEPS::T = sqrt(eps(T))*h0 # finite difference step-length
     ) where {T}
-
-    # Function for restarting if h0 is large enough that all points get removed
-    function restart()
-        @warn "No points remaining! Shrinking h0 -> h0/2 and retrying..."
-        return distmesh2d(fd, fh, h0/2, bbox, pfix, ∇fd;
-            PLOT = PLOT,
-            PLOTLAST = PLOTLAST,
-            DETERMINISTIC = DETERMINISTIC,
-            MAXSTALLITERS = MAXSTALLITERS,
-            DENSITYCTRLFREQ = DENSITYCTRLFREQ,
-            DPTOL = DPTOL,
-            TTOL = TTOL,
-            FSCALE = FSCALE,
-            DELTAT = DELTAT,
-            GEPS = GEPS/2, # scales with h0
-            DEPS = DEPS/2 # scales with h0
-        )
-    end
 
     # 0. Useful defines
     V = Vec{2,T}
     InfV = V((Inf,Inf))
+
+    # Function for restarting if h0 is large enough that all points get removed
+    function restart()
+        if h0/2 < RESTARTEDGETHRESH
+            @warn "h0 too small to allow a restart; returning empty grid."
+            return pfix, NTuple{3,Int}[]
+        else
+            # @warn "No points remaining! Shrinking h0 -> h0/2 and retrying..."
+            return distmesh2d(fd, fh, h0/2, bbox, pfix, ∇fd;
+                PLOT = PLOT,
+                PLOTLAST = PLOTLAST,
+                DETERMINISTIC = DETERMINISTIC,
+                MAXSTALLITERS = MAXSTALLITERS,
+                RESTARTEDGETHRESH = RESTARTEDGETHRESH,
+                DENSITYCTRLFREQ = DENSITYCTRLFREQ,
+                DPTOL = DPTOL,
+                TTOL = TTOL,
+                FSCALE = FSCALE,
+                DELTAT = DELTAT,
+                GEPS = GEPS/2, # scales with h0
+                DEPS = DEPS/2 # scales with h0
+            )
+        end
+    end
 
     # 1. Create initial distribution in bounding box (equilateral triangles)
     xrange, yrange = bbox[1,1]:h0:bbox[2,1], bbox[1,2]:h0*T(sqrt(3)/2):bbox[2,2]
@@ -121,17 +128,19 @@ function distmesh2d(
     pfix = sort!(copy(pfix); by = first)
     pfix = threshunique(pfix; rtol = √eps(T), atol = eps(T))
     nfix = length(pfix)
+
     p = vcat(pfix, p)                                      # Prepend fix points
+    t = delaunay2(p)
+
+    # check that initial distribution is not empty
+    (isempty(t) || length(p) == length(pfix)) && (return restart())
+
+    # plot initial points
+    PLOT && simpplot(p,t)
 
     count = 0
     stallcount = 0
     dtermbest = T(Inf)
-
-    t = delaunay2(p)
-    if PLOT
-        simpplot(p,t)
-    end
-
     pold = V[InfV]                                                             # For first iteration
     bars = Vector{NTuple{2,Int}}()
 
@@ -160,9 +169,7 @@ function distmesh2d(
             unique!(sort!(bars; by = first))                                   # Bars as node pairs
 
             # 5. Graphical output of the current mesh
-            if PLOT
-                simpplot(p,t)
-            end
+            PLOT && simpplot(p,t)
         end
 
         # Check that there are any points remaining
@@ -222,9 +229,7 @@ function distmesh2d(
 
     # Clean up and plot final mesh
     p, t, _ = fixmesh(p,t)
-    if PLOT || PLOTLAST
-        simpplot(p,t)
-    end
+    (PLOT || PLOTLAST) && simpplot(p,t)
 
     return p, t
 end

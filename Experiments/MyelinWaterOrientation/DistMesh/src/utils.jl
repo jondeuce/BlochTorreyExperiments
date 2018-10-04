@@ -186,6 +186,9 @@ function boundedges(
         t::AbstractVector{NTuple{3,Int}}
     ) where {T}
 
+    # Check for empty inputs
+    (isempty(p) || isempty(t)) && return NTuple{2,Int}[]
+
     # Form all edges, non-duplicates are boundary edges
     p, t = to_mat(p), to_mat(t)
     edges = [t[:,[1,2]]; t[:,[1,3]]; t[:,[2,3]]]
@@ -217,7 +220,13 @@ function simpplot(p::AbstractMatrix, t::AbstractMatrix;
         hold = false,
         xlim = nothing,
         ylim = nothing,
-        axis = nothing
+        axis = nothing,
+        expr = Float64[],
+        bcol = [0.8, 0.9, 1.0],
+        icol = [0.0, 0.0, 0.0],
+        nodes = 0.0,
+        tris = 0.0,
+        facecol = Float64[]
     )
     @assert size(p,2) == 2 && size(t,2) == 3
 
@@ -225,7 +234,10 @@ function simpplot(p::AbstractMatrix, t::AbstractMatrix;
     hold && mxcall(:hold, 0, "on")
 
     if !(isempty(p) || isempty(t))
-        mxcall(:simpplot, 0, Matrix{Float64}(p), Matrix{Float64}(t))
+        mxcall(:simpplot, 0,
+            Matrix{Float64}(p), Matrix{Float64}(t),
+            expr, bcol, icol, nodes, tris, facecol
+        )
     end
 
     !(xlim == nothing) && mxcall(:xlim, 0, xlim)

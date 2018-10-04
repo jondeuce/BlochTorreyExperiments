@@ -9,8 +9,9 @@ end
 
 #NOTE: Assumes the following about the three input vectors, all three of which
 # will be modified in place:
-#   b is the initial vector, and f is initialized such that all f[i] == b[i]
-#   Ab is a buffer to be overwritten
+#   b is the initial vector (will be overwritten)
+#   f is initialized such that all f[i] == b[i] (will be overwritten with result)
+#   Ab is a buffer (will be overwritten)
 function _expmv!(f, t, A, b, Ab = similar(b);
                  M = [],
                  prec = "double",
@@ -74,14 +75,13 @@ function _expmv!(f, t, A, b, Ab = similar(b);
         mvd = 0
     end
 
-    tol =
-      if prec == "double"
-          T(2.0^(-53))
-      elseif prec == "single"
-          T(2.0^(-24))
-      elseif prec == "half"
-          T(2.0^(-10))
-      end
+    tol = if prec == "double"
+        T(2)^(-53)
+    elseif prec == "single"
+        T(2)^(-24)
+    elseif prec == "half"
+        T(2)^(-10)
+    end
 
     s = 1
 
