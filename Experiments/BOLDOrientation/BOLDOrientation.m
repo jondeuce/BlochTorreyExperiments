@@ -70,6 +70,33 @@ Rminor_mu = 7.0;
 Rminor_sig = 0.5;
 rng('default'); seed = rng; % for consistent geometries between sims.
 
+%% Mock Common/Geometry Settings (for testing)
+% % type = 'SE';
+% type = 'GRE';
+% EchoTimes = (0:5:60)/1000; % Echotimes in seconds to simulate [s]
+% % EchoTimes = [0:5:20, 30:30:60]/1000; % Echotimes in seconds to simulate [s]
+% dt = 5.0e-3;
+% alpha_range = [0, 45, 90];
+% 
+% % Results from SE perfusion orientation simulations
+% % NOTE: We use only 2/3 of the resulting values, as as only 2/3 of cerebral
+% %       vasculature is venous and therefore contributes to the BOLD effect
+% iBVF = (2/3) * 1.5/100;
+% aBVF = (2/3) * 1.5/100;
+% BVF  = iBVF + aBVF; iRBVF = iBVF/BVF; aRBVF = aBVF/BVF;
+% 
+% Nmajor = 3; % Number of major vessels (optimal number is from SE perf. orientation. sim)
+% Navgs = 2; % Number of geometries to simulate
+% VoxelSize = [2500,2500,2500]; % Typical isotropic voxel dimensions. [um]
+% GridSize = [128,128,128]; % Voxel size to ensure isotropic subvoxels
+% % GridSize = [256,256,256]; % Voxel size to ensure isotropic subvoxels
+% VoxelCenter = [0,0,0];
+% 
+% % Rminor_mu = 13.7;
+% % Rminor_sig = 2.1;
+% Rminor_mu = 25.0;
+% Rminor_sig = 0.5;
+
 %% Geometry generator
 NewGeometry = @() Geometry.CylindricalVesselFilledVoxel( ...
     'iBVF', iBVF, 'aBVF', aBVF, ...
