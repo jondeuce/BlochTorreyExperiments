@@ -31,27 +31,33 @@ Hct = 0.44; % Hematocrit = volume fraction of red blood cells
 type = 'SE';
 dt = 2.5e-3;
 % type = 'GRE';
-% dt = 5.0e-3;
+% dt = 2.5e-3;
 
-EchoTimes = (0:5:120)/1000; % Echotimes in seconds to simulate [s]
+% EchoTimes = 0:dt:120e-3; % Echotimes in seconds to simulate [s]
 % alpha_range = [0, 45, 90];
+EchoTimes = 0:5e-3:120e-3; % Echotimes in seconds to simulate [s]
 alpha_range = 0:5:90;
 
-B0 = -3.0; %[Tesla]
-Dcoeff = 3037; %[um^2/s]
-order = 2; %Order of time stepper (must be 2 or 4 currently)
+B0 = -7.0; %[Tesla]
+D_Tissue = 2000; %[um^2/s]
+D_Blood = []; %[um^2/s]
+D_VRS = 3037; %[um^2/s]
 
 %% Geometry Settings
 % Results from SE perfusion orientation simulations
 % NOTE: For calculating the BOLD curve, it is important to consider that
-%       approximately 1/3 of the vascular is arterial
+%       approximately 1/3 of the vasculature is arterial
 iBVF = 1.1803/100;
 aBVF = 1.3425/100;
+BVF = iBVF + aBVF;
+iRBVF = iBVF/BVF;
+aRBVF = aBVF/BVF;
+
 Nmajor = 4; % Number of major vessels (optimal number is from SE perf. orientation. sim)
+MajorAngle = 0.0; % Major vessel angles compared to B0 [degrees]
 NumMajorArteries = 1; % Number of major arteries
 MinorArterialFrac = 1/3; % Fraction of minor vessels which are arteries
-
-BVF = iBVF + aBVF; iRBVF = iBVF/BVF; aRBVF = aBVF/BVF;
+VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless]
 
 Navgs = 1; % Number of geometries to simulate
 VoxelSize = [2500,2500,2500]; % Typical isotropic voxel dimensions. [um]
@@ -95,13 +101,16 @@ rng('default'); seed = rng; % for consistent geometries between sims.
 NewGeometry = @() Geometry.CylindricalVesselFilledVoxel( ...
     'iBVF', iBVF, 'aBVF', aBVF, ...
     'VoxelSize', VoxelSize, 'GridSize', GridSize, 'VoxelCenter', VoxelCenter, ...
-    'Nmajor', Nmajor, 'NumMajorArteries', NumMajorArteries, 'MinorArterialFrac', MinorArterialFrac, ...
+    'Nmajor', Nmajor, 'MajorAngle', MajorAngle, ...
+    'NumMajorArteries', NumMajorArteries, 'MinorArterialFrac', MinorArterialFrac, ...
     'Rminor_mu', Rminor_mu, 'Rminor_sig', Rminor_sig, ...
-    'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', false, ...
+    'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', true, ...
+    'VRSRelativeRad', VRSRelativeRad, ...
     'PopulateIdx', true, 'seed', seed );
 
 %% Bloch-Torrey propagation stepper
-stepper = 'BTSplitStepper';
+% stepper = 'BTSplitStepper';
+stepper = 'ExpmvStepper';
 
 %% Update Diary
 diary(DiaryFilename);
@@ -112,7 +121,9 @@ diary(DiaryFilename);
 AllResults = BOLDResults( EchoTimes, deg2rad(alpha_range), Y0, Y, Hct, 1:Navgs );
 
 % Anon. func. for computing the BOLD Curve
-ComputeBOLDCurve = @(R,G) SplittingMethods.BOLDCurve(R, EchoTimes, dt, Y0, Y, Hct, Dcoeff, B0, alpha_range, G, type, stepper);
+ComputeBOLDCurve = @(R,G) SplittingMethods.BOLDCurve(R, EchoTimes, dt, Y0, Y, Hct, ...
+    CalculateDiffusionMap( G, D_Tissue, D_Blood, D_VRS ), ...
+    B0, alpha_range, G, type, stepper);
 
 Geometries = [];
 for ii = 1:Navgs
@@ -121,7 +132,7 @@ for ii = 1:Navgs
     Results = ComputeBOLDCurve(Results, Geom);
     
     Geom = Compress(Geom);
-    Geometries = [Geometries; Geom];
+    Geometries = [Geometries; Geom]; %#ok<AGROW>
     AllResults = push(AllResults, Results);
     
     try
