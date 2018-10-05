@@ -14,14 +14,14 @@ using LinearAlgebra
 using JuAFEM
 using LinearMaps, ForwardDiff, Interpolations
 # using DifferentialEquations # really kills compile time
-using DiffEqBase, OrdinaryDiffEq, DiffEqOperators, Sundials
+using DiffEqBase, OrdinaryDiffEq, DiffEqCallbacks # DiffEqOperators, Sundials
 # using ApproxFun # really kills compile time
 using Tensors
 using LsqFit
 using BlackBoxOptim
 using MATLAB
 using TimerOutputs
-using Parameters: @with_kw
+using Parameters: @with_kw, @pack, @unpack
 
 # export SignalIntegrator
 # export gettime, getsignal, numsignals, signalnorm, complexsignal, relativesignalnorm, relativesignal
@@ -33,114 +33,176 @@ export AbstractMWIFittingModel, NNLSRegression, TwoPoolMagnToMagn, ThreePoolMagn
 # export diffeq_solver, expokit_solver, expmv_solver
 export getmwf, fitmwfmodel, mwimodel, initialparams
 
-export ExpokitExpmv
+export MultiSpinEchoCallback
+export ExpokitExpmv, HighamExpmv
 
 # ---------------------------------------------------------------------------- #
-# expmv and related functions
+# ODEProblem constructor for ParabolicDomain's and MyelinDomain's
 # ---------------------------------------------------------------------------- #
 
-struct ExpokitExpmv <: OrdinaryDiffEqAlgorithm end
-
-function DiffEqBase.ODEProblem(
-        m::MyelinDomain,
-        u0,
-        tspan
-    )
-    A = ParabolicLinearMap(getdomain(m))
+function OrdinaryDiffEq.ODEProblem(d::ParabolicDomain, u0, tspan)
+    A = ParabolicLinearMap(d)
     p = (A,)
     f!(du,u,p,t) = LinearAlgebra.mul!(du, p[1], u)
     return ODEProblem(f!, u0, tspan, p)
 end
+OrdinaryDiffEq.ODEProblem(m::MyelinDomain, u0, tspan) = ODEProblem(getdomain(m), u0, tspan)
 
-function DiffEqBase.solve(
-        prob::ODEProblem{uType,tType,isinplace},
-        alg::ExpokitExpmv;
-        reltol = 1e-8,
-        saveat = eltype(tType)[],
-        tstops = eltype(tType)[],
-        dt = nothing,
-        m::Int = 30,
-        norm = LinearAlgebra.norm,
-        opnorm = LinearAlgebra.opnorm,
-        anorm = opnorm(prob.p[1], Inf), # p[1] is the matrix `A`
-        affect! = identity,
-        verbose = true
-    ) where {uType,tType,isinplace}
+# ---------------------------------------------------------------------------- #
+# SpinEchoCallback
+# ---------------------------------------------------------------------------- #
 
-    # Timer
-    to = TimerOutput()
+function MultiSpinEchoCallback(
+        tspan::NTuple{2,T};
+        TE::T = (tspan[2]-tspan[1]), # default to single echo
+        TE0::T = tspan[1] + TE/2, # default to first echo at TE/2
+        kwargs...
+    ) where {T}
 
-    # Problem parameters
-    A, tspan = prob.p[1], prob.tspan
+    # Apply π-pulse/return next π-pulse time
+    time_choice(integrator) = (t = integrator.t; return ifelse(t == tspan[1], TE0, t + TE))
+    user_affect!(integrator) = @views(integrator.u[2:2:end] .= -integrator.u[2:2:end])
 
-    if !(dt == nothing)
-        nsteps = round(Int, (tspan[2]-tspan[1])/dt)
-        @assert tspan[2]-tspan[1] ≈ dt * nsteps
-
-        # `saveat` points
-        for t in range(tspan[1], stop=tspan[2], length=nsteps+1)
-            push!(saveat, t)
-        end
-
-        # `tstops` points
-        for t in (tspan[1] .+ dt/2 .+ dt .* (0:nsteps-1))
-            push!(tstops, t)
-        end
-    end
-
-    # Ensure that tspan[2] is included in saveat, and tspan[1] is not
-    saveat = sort(collect(saveat))
-    !(saveat[1] == tspan[1]) && pushfirst!(saveat, tspan[1])
-    !(saveat[end] == tspan[2]) && push!(saveat, tspan[2])
-
-    # Form tcheckpoints
-    tstops = sort(collect(tstops))
-    tcheckpoints = sort(vcat(saveat, tstops)) # all checkpoints
-
-    # Check that all checkpoints are strictly within tspan
-    # @assert (tcheckpoints[1] > tspan[1]) && (tcheckpoints[end] < tspan[2])
-    # push!(tcheckpoints, tspan[2]) # now, safely add last checkpoint to mean simulation is finished
-
-    t = [tspan[1]]
-    u = uType[copy(prob.u0)] # for _ in 1:length(t)]
-
-    (tcheckpoints[1] == tspan[1]) && popfirst!(tcheckpoints) # already saved
-    @timeit to "Total Time" begin
-        # for i = 1:length(t)-1
-        while !isempty(tcheckpoints)
-            tc = popfirst!(tcheckpoints)
-            tstep = tc - t[end]
-
-            # Check for tstop
-            if tc ∈ tstops
-                push!(t, tc)
-                push!(u, affect!(copy(u[end])))
-            end
-
-            push!(t, tc)
-            push!(u, similar(prob.u0))
-
-            # @timeit to "Step $i/$(length(t)-1)" begin
-            Expokit.expmv!(u[end], tstep, A, u[end-1];
-                tol = reltol,
-                m = m,
-                norm = norm,
-                anorm = anorm
-            )
-            # end
-        end
-    end
-    verbose && print_timer(to)
-
-    # Keep only `saveat` points
-    b = t .∈ [saveat]
-    t, u = t[b], u[b]
-
-    # Build and return solution
-    sol = DiffEqBase.build_solution(prob, alg, t, u)
-
-    return sol
+    # Return IterativeCallback
+    return IterativeCallback(time_choice, user_affect!, T; initial_affect = false, kwargs...)
 end
+
+# ---------------------------------------------------------------------------- #
+# AbstractExpmv utilities
+# ---------------------------------------------------------------------------- #
+
+abstract type AbstractExpmvAlgorithm <: OrdinaryDiffEq.OrdinaryDiffEqAlgorithm end
+
+OrdinaryDiffEq.isfsal(alg::AbstractExpmvAlgorithm) = true # NOTE: this is default; "first same as last" property
+OrdinaryDiffEq.alg_order(alg::AbstractExpmvAlgorithm) = 2 # TODO: order of expmv? used for interpolation; likely unimportant?
+OrdinaryDiffEq.alg_cache(alg::AbstractExpmvAlgorithm,u,rate_prototype,uEltypeNoUnits,uBottomEltypeNoUnits,tTypeNoUnits,uprev,uprev2,f,t,dt,reltol,p,calck,::Type{Val{true}})  = ExpmvCache(u,uprev,similar(u),zero(rate_prototype),zero(rate_prototype))
+OrdinaryDiffEq.alg_cache(alg::AbstractExpmvAlgorithm,u,rate_prototype,uEltypeNoUnits,uBottomEltypeNoUnits,tTypeNoUnits,uprev,uprev2,f,t,dt,reltol,p,calck,::Type{Val{false}}) = ExpmvConstantCache()
+
+struct ExpmvCache{uType,rateType} <: OrdinaryDiffEq.OrdinaryDiffEqMutableCache
+    u::uType
+    uprev::uType
+    tmp::uType
+    k::rateType
+    fsalfirst::rateType
+end
+struct ExpmvConstantCache <: OrdinaryDiffEq.OrdinaryDiffEqConstantCache end
+
+OrdinaryDiffEq.u_cache(c::ExpmvCache) = ()
+OrdinaryDiffEq.du_cache(c::ExpmvCache) = (c.k,c.fsalfirst)
+
+# function OrdinaryDiffEq.initialize!(integrator,cache::ExpmvConstantCache)
+#   integrator.kshortsize = 2
+#   integrator.k = typeof(integrator.k)(undef, integrator.kshortsize)
+#   integrator.fsalfirst = integrator.f(integrator.uprev, integrator.p, integrator.t) # Pre-start fsal
+#
+#   # Avoid undefined entries if k is an array of arrays
+#   integrator.fsallast = zero(integrator.fsalfirst)
+#   integrator.k[1] = integrator.fsalfirst
+#   integrator.k[2] = integrator.fsallast
+# end
+
+function OrdinaryDiffEq.initialize!(integrator,cache::ExpmvCache)
+    integrator.kshortsize = 2
+    @unpack k,fsalfirst = cache
+    integrator.fsalfirst = fsalfirst
+    integrator.fsallast = k
+    resize!(integrator.k, integrator.kshortsize)
+    integrator.k[1] = integrator.fsalfirst
+    integrator.k[2] = integrator.fsallast
+    integrator.f(integrator.fsalfirst,integrator.uprev,integrator.p,integrator.t) # For the interpolation, needs k at the updated point
+end
+
+# ---------------------------------------------------------------------------- #
+# ExpokitExpmv stepper
+# ---------------------------------------------------------------------------- #
+
+@with_kw struct ExpokitExpmv{T,F} <: AbstractExpmvAlgorithm
+    m::Int = 30
+    anorm::T = 1.0
+    norm::F = LinearAlgebra.norm
+end
+ExpokitExpmv(A; kwargs...) = ExpokitExpmv(;kwargs..., anorm = LinearAlgebra.norm(A, Inf))
+
+# function OrdinaryDiffEq.perform_step!(integrator,cache::ExpokitExpmvConstantCache,repeat_step=false)
+#   @unpack t,dt,uprev,u,f,p = integrator
+#   @muladd u = uprev + dt*integrator.fsalfirst
+#   k = f(u, p, t+dt) # For the interpolation, needs k at the updated point
+#   integrator.fsallast = k
+#   integrator.k[1] = integrator.fsalfirst
+#   integrator.k[2] = integrator.fsallast
+#   integrator.u = u
+# end
+
+function OrdinaryDiffEq.perform_step!(
+        integrator::OrdinaryDiffEq.ODEIntegrator{Alg},
+        cache::Cache,
+        repeat_step = false
+    ) where {Alg <: ExpokitExpmv, Cache <: ExpmvCache}
+
+    @unpack t,dt,uprev,u,f,p = integrator
+    A = p[1] # matrix being exponentiated
+
+    Expokit.expmv!(u, dt, A, uprev;
+        tol = integrator.opts.reltol,
+        m = integrator.alg.m,
+        norm = integrator.alg.norm,
+        anorm = eltype(A)(integrator.alg.anorm)
+    )
+    integrator.fsallast = u
+end
+
+# ---------------------------------------------------------------------------- #
+# ExpokitExpmv stepper
+# ---------------------------------------------------------------------------- #
+
+@with_kw struct HighamExpmv{T,F1,F2} <: AbstractExpmvAlgorithm
+    M::Matrix{T} = Matrix{T}(undef, 0, 0)
+    prec::String = "double"
+    shift::Bool = true
+    full_term::Bool = false
+    prnt::Bool = false
+    m_max::Int = 55
+    p_max::Int = 8
+    force_estm::Bool = false
+    norm::F1 = LinearAlgebra.norm
+    opnorm::F2 = LinearAlgebra.opnorm
+end
+HighamExpmv(A, b; kwargs...) = HighamExpmv(;kwargs..., M = _select_taylor_degree(A, b; kwargs...))
+function _select_taylor_degree(A, b; m_max = 55, p_max = 8, prec = "double", shift = false, force_estm = false, opnorm = LinearAlgebra.opnorm, kwargs...)
+    M = select_taylor_degree(A, b; m_max = m_max, p_max = p_max, prec = prec, shift = shift, force_estm = force_estm, opnorm = opnorm)[1]
+end
+
+# function OrdinaryDiffEq.perform_step!(integrator,cache::HighamExpmvConstantCache,repeat_step=false)
+#   @unpack t,dt,uprev,u,f,p = integrator
+#   @muladd u = uprev + dt*integrator.fsalfirst
+#   k = f(u, p, t+dt) # For the interpolation, needs k at the updated point
+#   integrator.fsallast = k
+#   integrator.k[1] = integrator.fsalfirst
+#   integrator.k[2] = integrator.fsallast
+#   integrator.u = u
+# end
+
+function OrdinaryDiffEq.perform_step!(
+        integrator::OrdinaryDiffEq.ODEIntegrator{Alg},
+        cache::Cache,
+        repeat_step = false
+    ) where {Alg <: HighamExpmv, Cache <: ExpmvCache}
+
+    @unpack t,dt,uprev,u,f,p,alg = integrator
+    A = p[1] # matrix being exponentiated
+
+    Expmv.expmv!(u, dt, A, uprev, cache.tmp;
+        M = alg.M,
+        prec = alg.prec,
+        shift = alg.shift,
+        full_term = alg.full_term,
+        prnt = alg.prnt,
+        norm = alg.norm,
+        opnorm = alg.opnorm
+    )
+    integrator.fsallast = u
+end
+# Expmv.normAm(A::LinearMap, p::Real, t::Int = 10) = (normest1_norm(A^p, 1, t), 0) # no mv-product estimate
 
 # function diffeq_solver(domain;
 #                        alg = CVODE_BDF(linear_solver = :GMRES),
@@ -171,62 +233,6 @@ end
 #         return sol, signal
 #     end
 #     return solver!
-# end
-#
-# function expokit_solver(domain; tol = 1e-8, m = 30, opnorm = normest1_norm)
-#     function solver!(U, A, tspan, U0)
-#         anorm = opnorm(A, Inf)
-#         Expokit.expmv!(U, tspan[end], A, U0;
-#             anorm = anorm,
-#             tol = tol,
-#             m = m)
-#         return U
-#     end
-#     return solver!
-# end
-#
-# function expmv_solver(domain; prec = "single", opnorm = normest1_norm)
-#     function solver!(U, A, tspan, U0)
-#         M = Expmv.select_taylor_degree(A, U0; opnorm = opnorm)[1]
-#         Expmv.expmv!(U, tspan[end], A, U0;
-#             prec = prec,
-#             M = M,
-#             opnorm = opnorm)
-#         return U
-#     end
-#     return solver!
-# end
-# Expmv.normAm(A::LinearMap, p::Real, t::Int = 10) = (normest1_norm(A^p, 1, t), 0) # no mv-product estimate
-#
-# function DiffEqBase.solve(prob, domains, tspan = (0.0,1e-3);
-#                           abstol = 1e-8,
-#                           reltol = 1e-8,
-#                           linear_solver = :GMRES)
-#     to = TimerOutput()
-#     N = numsubdomains(domains)
-#     u0 = Vec{2}((0.0, 1.0))
-#     sols = Vector{ODESolution}(undef, N)
-#     signals = Vector{SignalIntegrator}(undef, N)
-#
-#     # @timeit to "Assembly" doassemble!(prob, domains)
-#     # @timeit to "Factorization" factorize!(domains)
-#     @timeit to "Interpolation" U0 = BlochTorreyUtils.interpolate(u0, domains) # π/2-pulse at each node
-#
-#     @timeit to "Solving on subdomains" begin
-#         Threads.@threads for i = 1:N
-#             subdomain = getsubdomain(domains, i)
-#             # print("Subdomain $i/$(numsubdomains(domains)): ")
-#             @time @timeit to "Subdomain $i/$(numsubdomains(domains))" begin
-#                 A = ParabolicLinearMap(subdomain)
-#                 solver! = diffeq_solver(subdomain; abstol = abstol, reltol = reltol, linear_solver = linear_solver)
-#                 sols[i], signals[i] = solver!(nothing, A, tspan, U0[i])
-#             end
-#             flush(stdout)
-#         end
-#     end
-#
-#     print_timer(to)
-#     return sols, signals
 # end
 
 # ---------------------------------------------------------------------------- #
@@ -389,7 +395,7 @@ function fitmwfmodel(
         TE = 10e-3, # First time point
         nTE = 32, # Number of echos
         T2Range = [15e-3, 2.0], # Min and Max T2 values used during fitting (typical for in-vivo)
-        nT2 = 120, # Number of T2 bins used during fitting process, spaced logarithmically in `T2Range`
+        nT2 = 40, # Number of T2 bins used during fitting process, spaced logarithmically in `T2Range`
         Threshold = 0.0, # First echo intensity cutoff for empty voxels
         RefConAngle = 165.0, # Refocusing Pulse Control Angle (TODO: check value from scanner)
         spwin = [1.5*TE, 40e-3], # short peak window (typically 1.5X echospacing to 40ms)
@@ -419,12 +425,19 @@ function fitmwfmodel(
     )
 
     if PLOTDIST
-        # logspace(start,stop,length) = exp10.(range(log10(start), stop=log10(stop), length=length))
+        logspace(start,stop,length) = exp10.(range(log10(start), stop=log10(stop), length=length))
+        mwf = getmwf(NNLSRegression(), MWImaps, MWIdist, MWIpart)
+
         mxcall(:figure, 0)
+        mxcall(:semilogx, 0, 1e3 .* logspace(T2Range..., nT2), MWIdist[:])
+        mxcall(:axis, 0, "on")
+        mxcall(:xlim, 0, 1e3 .* [T2Range...])
+        mxcall(:xlabel, 0, "T2 [ms]")
+        mxcall(:title, 0, "T2 Distribution: nT2 = $nT2, mwf = $(round(mwf; digits=4))")
         mxcall(:hold, 0, "on")
-        mxcall(:plot, 0, MWIdist[:])
-        # mxcall(:xlabel, 0, "T2 [s]")
-        # mxcall(:title, 0, "T2 Distribution")
+        ylim = mxcall(:ylim, 1)
+        for s in spwin; mxcall(:semilogx, 0, 1e3 .* [s,s], ylim, "r--"); end
+        for m in mpwin; mxcall(:semilogx, 0, 1e3 .* [m,m], ylim, "g-."); end
     end
 
     MWImaps, MWIdist, MWIpart

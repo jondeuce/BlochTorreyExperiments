@@ -1,9 +1,8 @@
 
 expmv(t, A, b; kwargs...) = (f = similar(b); return expmv!(f, t, A, b; kwargs...))
 
-function expmv!(f, t, A, b; kwargs...)
-    f, _b, Ab = copyto!(f, b), copy(b), similar(b)
-    _expmv!(f, t, A, _b, Ab; kwargs...) # `f`, `_b`, and `Ab` all modified in place
+function expmv!(f, t, A, b, Ab = similar(b); kwargs...)
+    _expmv!(copyto!(f, b), t, A, copy(b), Ab; kwargs...)
     return f
 end
 
@@ -12,15 +11,17 @@ end
 #   b is the initial vector (will be overwritten)
 #   f is initialized such that all f[i] == b[i] (will be overwritten with result)
 #   Ab is a buffer (will be overwritten)
-function _expmv!(f, t, A, b, Ab = similar(b);
-                 M = [],
-                 prec = "double",
-                 shift = true,
-                 full_term = false,
-                 prnt = false,
-                 norm = LinearAlgebra.norm,
-                 opnorm = LinearAlgebra.opnorm)
-               # bal = false,
+function _expmv!(
+        f, t, A, b, Ab = similar(b);
+        M = [],
+        prec = "double",
+        shift = true,
+        full_term = false,
+        prnt = false,
+        norm = LinearAlgebra.norm,
+        opnorm = LinearAlgebra.opnorm
+        # bal = false,
+    )
 
     #EXPMV   Matrix exponential times vector or matrix.
     #   [F,S,M,MV,MVD] = EXPMV(t,A,B,[],PREC) computes EXPM(t*A)*B without
@@ -75,12 +76,14 @@ function _expmv!(f, t, A, b, Ab = similar(b);
         mvd = 0
     end
 
-    tol = if prec == "double"
-        T(2)^(-53)
-    elseif prec == "single"
+    tol = if prec == "single"
         T(2)^(-24)
     elseif prec == "half"
         T(2)^(-10)
+    else prec == "double"
+        !(prec == "double") && @warn "prec must be \"double\", \"single\", or \"half\"; got $prec. Defaulting to \"double\"."
+        prec = "double"
+        T(2)^(-53)
     end
 
     s = 1

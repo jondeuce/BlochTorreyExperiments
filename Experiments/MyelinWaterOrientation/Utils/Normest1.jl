@@ -28,9 +28,6 @@ export normest1
 #    end
 # end
 
-function normest1(A,
-                  t::Int = 2,
-                  X = initialize_X(A,t))
 #NORMEST1 Estimate of 1-norm of matrix by block 1-norm power method.
 #   C = NORMEST1(A) returns an estimate C of norm(A,1), where A is N-by-N.
 #   A can be an explicit matrix or a function AFUN such that
@@ -79,6 +76,11 @@ function normest1(A,
 
 #   Nicholas J. Higham
 #   Copyright 1984-2012 The MathWorks, Inc.
+function normest1(
+      A,
+      t::Int = 2,
+      X = initialize_X(A,t)
+   )
 
    @assert size(A,1) == size(A,2) "AbstractMatrix A must be square"
 
@@ -98,7 +100,7 @@ function normest1(A,
    if t == n || n <= 4
       # Get full matrix
       Y = zeros(Te, n, n)
-      X = eye(Te, n)
+      X = I#eye(Te, n)
       mul!(Y, A, X) # A_mul_B!(Y, A, X)
 
       # equivalent to `temp, m = sort( sum(abs(Y)) )` in MATLAB
@@ -313,17 +315,15 @@ end
 
 #UNDUPLI   Look for and replace columns of S parallel to other columns of S or
 #          to columns of Sold.
-function undupli(S::AbstractMatrix{Te},
-                 S_old::AbstractMatrix{Te},
-                 prnt::Bool) where {Te}
-   #TODO why can't the type be inferred here?
-   n = size(S,1)::Int
-   t = size(S,2)::Int
+function undupli(
+      S::AbstractMatrix{Te},
+      S_old::AbstractMatrix{Te},
+      prnt::Bool
+   ) where {Te}
 
+   n, t = size(S)
    r = 0
-   if t == 1
-      return S, r
-   end
+   (t == 1) && return S, r
 
    if isempty(S_old) # Looking just at S.
       # W = [S[:,1] zeros(n,t-1)]

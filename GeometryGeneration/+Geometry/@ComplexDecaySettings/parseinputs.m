@@ -106,7 +106,7 @@ if B0 == -3.0
     
     %Spijkerman J, Petersen E, Hendrikse J, et al. T2 mapping of cerebrospinal fluid: 3T versus 7T.
     %Magnetic Resonance Materials in Physics, Biology and Medicine. Epub ahead of print 6 November 2017. DOI: 10.1007/s10334-017-0659-3.
-    T2_CSF = 1790; % T2 of CSF at 3T [ms]; value corrected for partial volume effects; uncorrected value is 1672 ms
+    T2_CSF = 1790; % T2 of CSF at 3T [ms]; value corrected for partial volume effects is 1790 ms; uncorrected value is 1672 ms
     R2_CSF = 1000/T2_CSF; % CSF relaxation constant [ms] -> [Hz] 
     R2_VirchowRobin = R2_CSF; % Virchow-Robin space relaxation constant [Hz]
     
