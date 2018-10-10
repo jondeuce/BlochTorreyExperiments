@@ -449,20 +449,24 @@ getmwf(modeltype::NNLSRegression, MWImaps, MWIdist, MWIpart) = MWIpart["sfr"]
 # ThreePoolCplxToCplx model
 # ----------------------- #
 function initialparams(modeltype::ThreePoolCplxToCplx, ts::AbstractVector{T}, S::Vector{Vec{2,T}}) where {T}
-    S1, S2 = complex(S[2]), complex(S[end]) # initial/final complex signals (S[1] is t=0 point)
-    ΔT = ts[end] - ts[2] # time difference between S1 and S2
-    A1, ϕ1, ϕ2 = abs(S1), angle(S1), angle(S2)
-    Δϕ = ϕ2 - ϕ1
-    Δf = -Δϕ/(2π*ΔT) # negative phase convention
+    S1, S2, SN = complex.(S[[2,3,end]]) # initial/final complex signals (S[1] is t=0 point)
+    A1, AN, ϕ1, ϕ2 = abs(S1), abs(SN), angle(S1), angle(S2)
+    t1, t2, tN = ts[2], ts[3], ts[end] # time points/differences
+    Δt, ΔT = t2 - t1, tN - t1
 
-    A_my, A_ax, A_ex = A1/10, 6*A1/10, 3*A1/10 # Relative magnitude initial guesses
+    R = log(A1/AN)/ΔT
+    A0 = A1*exp(R*t1) # Approximate initial total magnitude as mono-exponential
+    # Δf = inv(2*(t2-t1)) # Assume a phase shift of π between S1 and S2
+    Δf = (ϕ2-ϕ1)/(2π*Δt) # Use actual phase shift of π between S1 and S2 (negative sign cancelled by π pulse between t0 and t1)
+
+    A_my, A_ax, A_ex = A0/10, 6*A0/10, 3*A0/10 # Relative magnitude initial guesses
     T2_my, T2_ax, T2_ex = T(10e-3), T(64e-3), T(48e-3) # T2* initial guesses
     Δf_bg_my, Δf_bg_ax, Δf_bg_ex = Δf, Δf, Δf # zero(T), zero(T), zero(T) # In continuous setting, initialize to zero #TODO (?)
-    𝛷₀ = -ϕ1 # zero(T) # Initial phase (negative phase convention)
+    𝛷₀ = ϕ1 # Initial phase (negative phase convention: -(-ϕ1) = ϕ1 from phase flip between t0 and t1)
 
-    p  = T[A_my, A_ax, A_ex, T2_my,  T2_ax,  T2_ex, Δf_bg_my,  Δf_bg_ax,  Δf_bg_ex,  𝛷₀]
-    lb = T[0.0,  0.0,  0.0,   3e-3,  25e-3,  25e-3, Δf - 75.0, Δf - 25.0, Δf - 25.0, -π]
-    ub = T[2*A1, 2*A1, 2*A1, 25e-3, 150e-3, 150e-3, Δf + 75.0, Δf + 25.0, Δf + 25.0,  π]
+    p  = T[A_my, A_ax, A_ex, T2_my,  T2_ax,  T2_ex, Δf_bg_my,  Δf_bg_ax,  Δf_bg_ex,  𝛷₀    ]
+    lb = T[0.0,  0.0,  0.0,   3e-3,  25e-3,  25e-3, Δf - 75.0, Δf - 25.0, Δf - 25.0, 𝛷₀ - π]
+    ub = T[2*A0, 2*A0, 2*A0, 25e-3, 150e-3, 150e-3, Δf + 75.0, Δf + 25.0, Δf + 25.0, 𝛷₀ + π]
 
     p[4:6] = inv.(p[4:6]) # fit for R2 instead of T2
     lb[4:6], ub[4:6] = inv.(ub[4:6]), inv.(lb[4:6]) # swap bounds
@@ -485,15 +489,20 @@ end
 
 # ThreePoolCplxToMagn model
 function initialparams(modeltype::ThreePoolCplxToMagn, ts::AbstractVector{T}, S::Vector{Vec{2,T}}) where {T}
-    A1 = norm(S[2]) # initial magnitude (S[1] is t=0 point)
+    A1, AN = norm(S[2]), norm(S[end]) # initial/final signal magnitudes (S[1] is t=0 point)
+    t1, t2, tN = ts[2], ts[3], ts[end] # time points/differences
+    Δt, ΔT = t2 - t1, tN - t1
 
-    A_my, A_ax, A_ex = A1/10, 6*A1/10, 3*A1/10 # Relative magnitude initial guesses
+    R = log(A1/AN)/ΔT
+    A0 = A1*exp(R*t1) # Approximate initial total magnitude as mono-exponential
+
+    A_my, A_ax, A_ex = A0/10, 6*A0/10, 3*A0/10 # Relative magnitude initial guesses
     T2_my, T2_ax, T2_ex = T(10e-3), T(64e-3), T(48e-3) # T2* initial guesses
-    Δf_my_ex, Δf_ax_ex = T(5), zero(T) # zero(T), zero(T) # In continuous setting, initialize to zero #TODO (?)
+    Δf_my_ex, Δf_ax_ex = T(5), zero(T) # In continuous setting, initialize to zero #TODO (?)
 
-    p  = T[A_my, A_ax, A_ex, T2_my,  T2_ax,  T2_ex, Δf_my_ex,  Δf_ax_ex]
-    lb = T[0.0,  0.0,  0.0,   3e-3,  25e-3,  25e-3,    -75.0,     -25.0]
-    ub = T[2*A1, 2*A1, 2*A1, 25e-3, 150e-3, 150e-3,    +75.0,     +25.0]
+    p  = T[A_my, A_ax, A_ex, T2_my,  T2_ax,  T2_ex, Δf_my_ex, Δf_ax_ex]
+    lb = T[0.0,  0.0,  0.0,   3e-3,  25e-3,  25e-3,    -75.0,    -25.0]
+    ub = T[2*A0, 2*A0, 2*A0, 25e-3, 150e-3, 150e-3,    +75.0,    +25.0]
 
     p[4:6] = inv.(p[4:6]) # fit for R2 instead of T2
     lb[4:6], ub[4:6] = inv.(ub[4:6]), inv.(lb[4:6]) # swap bounds
@@ -514,14 +523,19 @@ end
 
 # ThreePoolMagnToMagn model
 function initialparams(modeltype::ThreePoolMagnToMagn, ts::AbstractVector{T}, S::Vector{Vec{2,T}}) where {T}
-    A1 = norm(S[2]) # initial magnitude (S[1] is t=0 point)
+    A1, AN = norm(S[2]), norm(S[end]) # initial/final signal magnitudes (S[1] is t=0 point)
+    t1, t2, tN = ts[2], ts[3], ts[end] # time points/differences
+    Δt, ΔT = t2 - t1, tN - t1
 
-    A_my, A_ax, A_ex = A1/10, 6*A1/10, 3*A1/10 # Relative magnitude initial guesses
+    R = log(A1/AN)/ΔT
+    A0 = A1*exp(R*t1) # Approximate initial total magnitude as mono-exponential
+
+    A_my, A_ax, A_ex = A0/10, 6*A0/10, 3*A0/10 # Relative magnitude initial guesses
     T2_my, T2_ax, T2_ex = T(10e-3), T(64e-3), T(48e-3) # T2* initial guesses
 
     p  = T[A_my, A_ax, A_ex, T2_my,  T2_ax,  T2_ex]
     lb = T[0.0,  0.0,  0.0,   3e-3,  25e-3,  25e-3]
-    ub = T[2*A1, 2*A1, 2*A1, 25e-3, 150e-3, 150e-3]
+    ub = T[2*A0, 2*A0, 2*A0, 25e-3, 150e-3, 150e-3]
 
     p[4:6] = inv.(p[4:6]) # fit for R2 instead of T2
     lb[4:6], ub[4:6] = inv.(ub[4:6]), inv.(lb[4:6]) # swap bounds
@@ -539,14 +553,19 @@ end
 
 # TwoPoolMagnToMagn model
 function initialparams(modeltype::TwoPoolMagnToMagn, ts::AbstractVector{T}, S::Vector{Vec{2,T}}) where {T}
-    A1 = norm(S[2]) # initial magnitude (S[1] is t=0 point)
+    A1, AN = norm(S[2]), norm(S[end]) # initial/final signal magnitudes (S[1] is t=0 point)
+    t1, t2, tN = ts[2], ts[3], ts[end] # time points/differences
+    Δt, ΔT = t2 - t1, tN - t1
 
-    A_my, A_ex = A1/3, 2*A1/3 # Relative magnitude initial guesses
+    R = log(A1/AN)/ΔT
+    A0 = A1*exp(R*t1) # Approximate initial total magnitude as mono-exponential
+
+    A_my, A_ex = A0/3, 2*A0/3 # Relative magnitude initial guesses
     T2_my, T2_ex = T(10e-3), T(48e-3) # T2* initial guesses
 
     p  = T[A_my, A_ex, T2_my,  T2_ex]
     lb = T[0.0,  0.0,   3e-3,  25e-3]
-    ub = T[2*A1, 2*A1, 25e-3, 150e-3]
+    ub = T[2*A0, 2*A0, 25e-3, 150e-3]
 
     p[3:4] = inv.(p[3:4]) # fit for R2 instead of T2
     lb[3:4], ub[3:4] = inv.(ub[3:4]), inv.(lb[3:4]) # swap bounds

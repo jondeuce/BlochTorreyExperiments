@@ -29,7 +29,7 @@ export doassemble!, addquadweights!, factorize!, interpolate, interpolate!, inte
 export getgrid, getdomain, numfibres, createmyelindomains
 export getdofhandler, getcellvalues, getfacevalues,
        getmass, getmassfact, getstiffness, getquadweights,
-       getoutercircles, getinnercircles, getoutercircle, getinnercircle, getouterradius, getinnerradius
+       getregion, getoutercircles, getinnercircles, getoutercircle, getinnercircle, getouterradius, getinnerradius
 export testproblem
 
 # ---------------------------------------------------------------------------- #
@@ -221,9 +221,9 @@ end
 # Create BlochTorreyProblem from a MyelinProblem and a MyelinDomain
 function BlochTorreyProblem(p::MyelinProblem{T}, m::MyelinDomain) where {T}
     # Axon region
-    @inline Dcoeff(x...) = dcoeff(x..., p.params, m) # Dcoeff
-    @inline Rdecay(x...) = rdecay(x..., p.params, m) # R2
-    @inline Omega(x...) = omega(x..., p.params, m) # Axonal region
+    @inline Dcoeff(x...) = dcoeff(x..., p, m) # Dcoeff
+    @inline Rdecay(x...) = rdecay(x..., p, m) # R2
+    @inline Omega(x...) = omega(x..., p, m) # Axonal region
     return BlochTorreyProblem{T}(Dcoeff, Rdecay, Omega)
 end
 
@@ -247,7 +247,8 @@ ParabolicLinearMap(d::ParabolicDomain) = ParabolicLinearMap(getmass(d), getmassf
 # BlochTorreyParameters methods
 # ---------------------------------------------------------------------------- #
 
-radiidistribution(p::BlochTorreyParameters) = Distributions.Gamma(p.R_shape, p.R_mu/p.R_shape)
+@inline radiidistribution(p::BlochTorreyParameters) = Distributions.Gamma(p.R_shape, p.R_mu/p.R_shape)
+@inline radiidistribution(p::MyelinProblem) = radiidistribution(p.params)
 
 # ---------------------------------------------------------------------------- #
 # AbstractDomain methods
@@ -373,6 +374,7 @@ end
 # MyelinDomain methods
 # ---------------------------------------------------------------------------- #
 
+@inline getregion(m::MyelinDomain) = m.region
 @inline getdomain(m::MyelinDomain) = m.domain
 @inline getoutercircles(m::MyelinDomain) = m.outercircles
 @inline getinnercircles(m::MyelinDomain) = m.innercircles
@@ -565,16 +567,16 @@ struct OmegaDerivedConstants{T}
     ω₀::T
     s²::T
     c²::T
-    function OmegaDerivedConstants(p::BlochTorreyParameters{T}) where {T}
-        γ, B₀, θ = p.gamma, p.B0, p.theta
+    function OmegaDerivedConstants(p::MyelinProblem{T}) where {T}
+        γ, B₀, θ = p.params.gamma, p.params.B0, p.params.theta
         ω₀ = γ * B₀
         s, c = sincos(θ)
         return new{T}(ω₀, s^2, c^2)
     end
 end
 
-@inline function omega_tissue(x::Vec{2}, p::BlochTorreyParameters, b::OmegaDerivedConstants, c_in::Circle{2}, c_out::Circle{2})
-    χI, χA, ri², ro² = p.ChiI, p.ChiA, radius(c_in)^2, radius(c_out)^2
+@inline function omega_tissue(x::Vec{2}, p::MyelinProblem, b::OmegaDerivedConstants, c_in::Circle{2}, c_out::Circle{2})
+    χI, χA, ri², ro² = p.params.ChiI, p.params.ChiA, radius(c_in)^2, radius(c_out)^2
     dx = x - origin(c_in)
     r² = dx⋅dx
     cos2ϕ = (dx[1]-dx[2])*(dx[1]+dx[2])/r² # cos2ϕ == (x²-y²)/r² == (x-y)*(x+y)/r²
@@ -585,21 +587,21 @@ end
     return b.ω₀ * (I + A)
 end
 
-@inline function omega_myelin(x::Vec{2}, p::BlochTorreyParameters, b::OmegaDerivedConstants, c_in::Circle{2}, c_out::Circle{2})
-    χI, χA, ri², ro = p.ChiI, p.ChiA, radius(c_in)^2, radius(c_out)
+@inline function omega_myelin(x::Vec{2}, p::MyelinProblem, b::OmegaDerivedConstants, c_in::Circle{2}, c_out::Circle{2})
+    χI, χA, ri², ro = p.params.ChiI, p.params.ChiA, radius(c_in)^2, radius(c_out)
     dx = x - origin(c_in)
     r² = dx⋅dx
     cos2ϕ = (dx[1]-dx[2])*(dx[1]+dx[2])/r² # cos2ϕ == (x²-y²)/r² == (x-y)*(x+y)/r²
     r = √r²
 
-    I = χI/2 * (b.c² - 1/3 - b.s² * cos2ϕ * ri² / r²) # isotropic component
+    I = χI * (b.c² - 1/3 - b.s² * cos2ϕ * ri² / r²)/2 # isotropic component
     A = χA * (b.s² * (-5/12 - cos2ϕ/8 * (1 + ri²/r²) + 3/4 * log(ro/r)) - b.c²/6) # anisotropic component
     return b.ω₀ * (I + A)
 end
 
-@inline function omega_axon(x::Vec{2}, p::BlochTorreyParameters, b::OmegaDerivedConstants, c_in::Circle{2}, c_out::Circle{2})
-    χA, ri, ro = p.ChiA, radius(c_in), radius(c_out)
-    A = 3/4 * χA * b.s² * log(ro/ri) # anisotropic (and only) component
+@inline function omega_axon(x::Vec{2}, p::MyelinProblem, b::OmegaDerivedConstants, c_in::Circle{2}, c_out::Circle{2})
+    χA, ri, ro = p.params.ChiA, radius(c_in), radius(c_out)
+    A = 3χA/4 * b.s² * log(ro/ri) # anisotropic (and only) component
     return b.ω₀ * A
 end
 
@@ -611,52 +613,68 @@ end
 # can be called on its own, and wrap with a method that takes a MyelinDomain
 
 # Calculate ω(x) inside region number `region`, which is assumed to be tissue
-function omega(x::Vec{2}, params::BlochTorreyParameters, domain::MyelinDomain{TissueRegion})
-    constants = OmegaDerivedConstants(params)
+function omega(x::Vec{2}, p::MyelinProblem, region::TissueRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {C<:Circle{2}}
+    constants = OmegaDerivedConstants(p)
 
-    ω = sum(eachindex(domain.outercircles, domain.innercircles)) do i
-        @inbounds ωi = omega_tissue(x, params, constants, domain.innercircles[i], domain.outercircles[i])
+    ω = sum(eachindex(outercircles, innercircles)) do i
+        @inbounds ωi = omega_tissue(x, p, constants, innercircles[i], outercircles[i])
         return ωi
     end
 
     return ω
 end
+@inline omega(x::Vec{2}, p::MyelinProblem, domain::MyelinDomain{TissueRegion}) = omega(x, p, getregion(domain), getoutercircles(domain), getinnercircles(domain))
+
 
 # Calculate ω(x) inside region number `region`, which is assumed to be myelin
-function omega(x::Vec{2}, params::BlochTorreyParameters, domain::MyelinDomain{MyelinRegion})
-    constants = OmegaDerivedConstants(params)
+function omega(x::Vec{2}, p::MyelinProblem, region::MyelinRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {C<:Circle{2}}
+    constants = OmegaDerivedConstants(p)
 
-    ω = sum(eachindex(domain.outercircles, domain.innercircles)) do i
-        @inbounds ωi = if i == domain.region.parent_circle_idx
-            omega_myelin(x, params, constants, domain.innercircles[i], domain.outercircles[i])
+    ω = sum(eachindex(outercircles, innercircles)) do i
+        @inbounds ωi = if i == region.parent_circle_idx
+            omega_myelin(x, p, constants, innercircles[i], outercircles[i])
         else
-            omega_tissue(x, params, constants, domain.innercircles[i], domain.outercircles[i])
+            omega_tissue(x, p, constants, innercircles[i], outercircles[i])
         end
         return ωi
     end
 
     return ω
 end
+@inline omega(x::Vec{2}, p::MyelinProblem, domain::MyelinDomain{MyelinRegion}) = omega(x, p, getregion(domain), getoutercircles(domain), getinnercircles(domain))
 
 # Calculate ω(x) inside region number `region`, which is assumed to be axonal
-function omega(x::Vec{2}, params::BlochTorreyParameters, domain::MyelinDomain{AxonRegion})
-    constants = OmegaDerivedConstants(params)
+function omega(x::Vec{2}, p::MyelinProblem, region::AxonRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {C<:Circle{2}}
+    constants = OmegaDerivedConstants(p)
 
-    ω = sum(eachindex(domain.outercircles, domain.innercircles)) do i
-        @inbounds ωi = if i == domain.region.parent_circle_idx
-            omega_axon(x, params, constants, domain.innercircles[i], domain.outercircles[i])
+    ω = sum(eachindex(outercircles, innercircles)) do i
+        @inbounds ωi = if i == region.parent_circle_idx
+            omega_axon(x, p, constants, innercircles[i], outercircles[i])
         else
-            omega_tissue(x, params, constants, domain.innercircles[i], domain.outercircles[i])
+            omega_tissue(x, p, constants, innercircles[i], outercircles[i])
         end
         return ωi
     end
 
     return ω
 end
+@inline omega(x::Vec{2}, p::MyelinProblem, domain::MyelinDomain{AxonRegion}) = omega(x, p, getregion(domain), getoutercircles(domain), getinnercircles(domain))
 
 # Individual coordinate input
-@inline function omega(x, y, params::BlochTorreyParameters, domain::MyelinDomain)
-    return omega(Vec{2}((x, y)), params, domain)
+@inline omega(x, y, p::MyelinProblem, domain::MyelinDomain) = omega(Vec{2}((x, y)), p, domain)
+
+# Return a vector of vectors of nodal values of ω(x) evaluated on each MyelinDomain
+function omegamap(
+        p::MyelinProblem,
+        myelindomains::AbstractVector{<:MyelinDomain{R} where R}
+    )
+    omegavalues = map(myelindomains) do m
+        ω = BlochTorreyProblem(p, m).Omega # Get omega function for domain m
+        return map(getnodes(getgrid(m))) do node
+            # Map over grid nodes, return ω(x) for each node
+            ω(getcoordinates(node))
+        end
+    end
 end
 
 # ---------------------------------------------------------------------------- #
@@ -666,15 +684,15 @@ end
 #TODO: re-write to take in plain vectors of inner/outer circles/ferritins which
 # can be called on its own, and wrap with a method that takes a MyelinDomain
 
-@inline dcoeff(x, p::BlochTorreyParameters, m::MyelinDomain{TissueRegion}) = p.D_Tissue
-@inline dcoeff(x, p::BlochTorreyParameters, m::MyelinDomain{MyelinRegion}) = p.D_Sheath
-@inline dcoeff(x, p::BlochTorreyParameters, m::MyelinDomain{AxonRegion}) = p.D_Axon
-@inline dcoeff(x, y, p::BlochTorreyParameters, m::MyelinDomain) = dcoeff(Vec{2}((x, y)), p, m)
+@inline dcoeff(x, p::MyelinProblem, m::MyelinDomain{TissueRegion}) = p.params.D_Tissue
+@inline dcoeff(x, p::MyelinProblem, m::MyelinDomain{MyelinRegion}) = p.params.D_Sheath
+@inline dcoeff(x, p::MyelinProblem, m::MyelinDomain{AxonRegion}) = p.params.D_Axon
+@inline dcoeff(x, y, p::MyelinProblem, m::MyelinDomain) = dcoeff(Vec{2}((x, y)), p, m)
 
-@inline rdecay(x, p::BlochTorreyParameters, m::MyelinDomain{TissueRegion}) = p.R2_Tissue
-@inline rdecay(x, p::BlochTorreyParameters, m::MyelinDomain{MyelinRegion}) = p.R2_sp
-@inline rdecay(x, p::BlochTorreyParameters, m::MyelinDomain{AxonRegion}) = p.R2_lp
-@inline rdecay(x, y, p::BlochTorreyParameters, m::MyelinDomain) = rdecay(Vec{2}((x, y)), p, m)
+@inline rdecay(x, p::MyelinProblem, m::MyelinDomain{TissueRegion}) = p.params.R2_Tissue
+@inline rdecay(x, p::MyelinProblem, m::MyelinDomain{MyelinRegion}) = p.params.R2_sp
+@inline rdecay(x, p::MyelinProblem, m::MyelinDomain{AxonRegion}) = p.params.R2_lp
+@inline rdecay(x, y, p::MyelinProblem, m::MyelinDomain) = rdecay(Vec{2}((x, y)), p, m)
 
 # ============================================================================ #
 #
