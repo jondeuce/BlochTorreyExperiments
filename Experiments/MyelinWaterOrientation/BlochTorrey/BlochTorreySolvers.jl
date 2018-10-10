@@ -367,13 +367,6 @@ const ThreePoolModel = Union{ThreePoolMagnToMagn, ThreePoolCplxToMagn, ThreePool
 # Convenience conversion between a Vec{2} and a complex number
 @inline Base.complex(x::Vec{2}) = complex(x[1], x[2])
 
-# True myelin water fraction
-# function getmwf(m::MyelinDomain)
-#     A_total = area(m)
-#     A_myelin = sum(area, getmyelindomains(m))
-#     return A_myelin/A_total
-# end
-
 # Abstract interface
 function getmwf(
         signals::Vector{V},
@@ -589,14 +582,6 @@ function fitmwfmodel(
         fitmethod = :local
     ) where {V <: Vec{2}}
 
-    # # Scplx = sum(ApproxFun.Fun.(signals))
-    # # d = ApproxFun.domain(ApproxFun.space(Scplx))
-    # # tspan = (first(d), last(d))
-    #
-    # Scplx = Interpolations.interpolate(signals)
-    # tspan = (gettime(signals[1])[1], gettime(signals[1])[end])
-    # tdata = range(tspan[1], stop = tspan[2], length = npts)
-
     nTE = length(signals)-1 # S[1] is t=0 point
     ts = TE.*(0:nTE) |> collect
     ydata = mwimodeldata(modeltype, signals) # model data
@@ -643,6 +628,13 @@ end
 function getmwf(modeltype::TwoPoolModel, modelfit, errors)
     A_my, A_ex = modelfit.param[1:2]
     return A_my/(A_my + A_ex)
+end
+
+# For calculating exact mwf from grid
+function getmwf(outer::VecOfCircles{2}, inner::VecOfCircles{2}, bdry::Rectangle)
+    myelin_area = intersect_area(outer, bdry) - intersect_area(inner, bdry)
+    total_area = area(bdry)
+    return myelin_area/total_area
 end
 
 end # module BlochTorreySolvers

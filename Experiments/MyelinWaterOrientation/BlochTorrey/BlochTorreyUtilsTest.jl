@@ -84,9 +84,9 @@ function singleaxontests(
             chiI = testtype == :anisotropic ? zero(T) : btparams.ChiI
             params = BlochTorreyParameters(btparams; ChiI = chiI, ChiA = chiA)
 
-            @unpack B0, gamma, theta, ChiI, ChiA, g_ratio = params
+            @unpack B0, gamma, theta, ChiI, ChiA, E, g_ratio = params
             ω₀ = gamma * B0
-            ωI, ωA = ω₀*ChiI, ω₀*ChiA
+            ωI, ωA, ωE = ω₀*ChiI, ω₀*ChiA, ω₀*E
             s², c² = sin(theta)^2, cos(theta)^2
 
             prob = MyelinProblem(params)
@@ -116,14 +116,14 @@ function singleaxontests(
                     @test maximum(w) ≈ ωA * s² * -3*log(g_ratio)/4 rtol = 5*eps(T) # should be exact
                     @test minimum(w) ≈ ωA * s² * -3*log(g_ratio)/4 rtol = 5*eps(T) # should be exact
                 elseif isa(region, MyelinRegion) && testtype == :isotropic
-                    @test maximum(w) ≈ ωI * (c² - 1/3 - c2ϕ_min_in * s²)/2 rtol = RTOL
-                    @test minimum(w) ≈ ωI * (c² - 1/3 - c2ϕ_max_in * s²)/2 rtol = RTOL
+                    @test maximum(w) ≈ ωE + ωI * (c² - 1/3 - c2ϕ_min_in * s²)/2 rtol = RTOL
+                    @test minimum(w) ≈ ωE + ωI * (c² - 1/3 - c2ϕ_max_in * s²)/2 rtol = RTOL
                 elseif isa(region, MyelinRegion) && testtype == :anisotropic
-                    @test maximum(w) ≈ ωA * s² * (-5/12 - c2ϕ_min_in * 2/8 - 3*log(g_ratio)/4) - ωA * c²/6 rtol = RTOL
-                    @test minimum(w) ≈ ωA * s² * (-5/12 - c2ϕ_max_out * 1/8 * (1 + g_ratio^2)) - ωA * c²/6 rtol = RTOL
+                    @test maximum(w) ≈ ωE + ωA * s² * (-5/12 - c2ϕ_min_in * 2/8 - 3*log(g_ratio)/4) - ωA * c²/6 rtol = RTOL
+                    @test minimum(w) ≈ ωE + ωA * s² * (-5/12 - c2ϕ_max_out * 1/8 * (1 + g_ratio^2)) - ωA * c²/6 rtol = RTOL
                 elseif isa(region, MyelinRegion) && testtype == :total
-                    @test maximum(w) ≈ ωI * (c² - 1/3 - c2ϕ_min_in * s²)/2 + ωA * s² * (-5/12 - c2ϕ_min_in * 2/8 - 3*log(g_ratio)/4) - ωA * c²/6 rtol = RTOL
-                    @test minimum(w) ≈ ωI * (c² - 1/3 - c2ϕ_max_out * s² * g_ratio^2)/2 + ωA * s² * (-5/12 - c2ϕ_max_out * 1/8 * (1 + g_ratio^2)) - ωA * c²/6 rtol = RTOL
+                    @test maximum(w) ≈ ωE + ωI * (c² - 1/3 - c2ϕ_min_in * s²)/2 + ωA * s² * (-5/12 - c2ϕ_min_in * 2/8 - 3*log(g_ratio)/4) - ωA * c²/6 rtol = RTOL
+                    @test minimum(w) ≈ ωE + ωI * (c² - 1/3 - c2ϕ_max_out * s² * g_ratio^2)/2 + ωA * s² * (-5/12 - c2ϕ_max_out * 1/8 * (1 + g_ratio^2)) - ωA * c²/6 rtol = RTOL
                 elseif isa(region, TissueRegion) && testtype == :isotropic
                     @test maximum(w) ≈ ωI * s² * c2ϕ_max_out * (1 - g_ratio^2)/2 rtol = RTOL
                     @test minimum(w) ≈ ωI * s² * c2ϕ_min_out * (1 - g_ratio^2)/2 rtol = RTOL
@@ -195,31 +195,29 @@ function multipleaxontests(
 
     @testset "Multiple Axons" begin
         myelindomains, inner_circles, outer_circles, bdry = domainsetup
+        prob = MyelinProblem(btparams)
 
         if PLOTOMEGA
             mxcall(:figure, 0)
-            omegavalues = omegamap(MyelinProblem(btparams), myelindomains)
+            omegavalues = omegamap(prob, myelindomains)
             for (m, w) in zip(myelindomains, omegavalues)
                 simpplot(getgrid(m); newfigure = false, hold = true, axis = mxaxis(bdry), facecol = w);
             end
         end
 
-        omegavalues = omegamap(MyelinProblem(btparams), myelindomains)
-        for (m, w) in zip(myelindomains, omegavalues)
-            #
-            # ω = BlochTorreyProblem(MyelinProblem(btparams), m).Omega # Get omega function for domain m
-            #
-            # R = typeof(getregion(m))
-            # reg = R <: TissueRegion ? R() : R(1)
-            # outercircles =
-            # w_test = sum(zip(getoutercircles(m), getinnercircles(m))) do (c_out, c_in)
-            #     map(getnodes(getgrid(m))) do node
-            #         x = getcoordinates(node)
-            #         omega(x, MyelinProblem(btparams), reg, [c_out], [c_in])
-            #     end
-            # end
-            # @show norm(w .- w_test)
+        omegavalues = omegamap(prob, myelindomains)
+        omegatest = map(myelindomains, omegavalues) do m, w
+            outer_bdry_point_type = isa(getregion(m), MyelinRegion) ? :myelin : :tissue
+            inner_bdry_point_type = isa(getregion(m), MyelinRegion) ? :myelin : :axon
+            map(getnodes(getgrid(m))) do node
+                x = getcoordinates(node)
+                sum(zip(getoutercircles(m), getinnercircles(m))) do (c_out, c_in)
+                    omega(x, prob, [c_out], [c_in], outer_bdry_point_type, inner_bdry_point_type)
+                end
+            end
         end
+
+        @test omegavalues == omegatest
     end
 
 end

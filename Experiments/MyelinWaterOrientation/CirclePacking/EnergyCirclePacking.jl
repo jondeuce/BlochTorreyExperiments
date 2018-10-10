@@ -44,6 +44,14 @@ function pack(
     # Initial circles
     T, N = eltype(radii), length(initial_origins)
     initial_circles = Circle.(T, initial_origins, radii)
+
+    # Check of circles are already sufficiently densely packed
+    if estimate_density(initial_circles) ≥ goaldensity
+        packed_circles = scale_to_density(initial_circles, goaldensity)
+        return packed_circles
+    end
+
+    # Initial unknowns
     x0 = copy(reinterpret(T, origin.(initial_circles)))
 
     # Scaling factor: average over all pairs, and normalize by typical squared distance

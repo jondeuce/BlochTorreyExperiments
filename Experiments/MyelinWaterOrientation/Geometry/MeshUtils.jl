@@ -152,24 +152,39 @@ end
 # ---------------------------------------------------------------------------- #
 # simpplot: call the DistMesh function `simpplot` to plot the grid
 # ---------------------------------------------------------------------------- #
-function DistMesh.simpplot(g::Grid{2,3,T}; kwargs...) where {T}
-    # Node positions matrix
+
+# Form node positions matrix
+function nodematrix(g::Grid{2,3,T}) where {T}
     p = zeros(T, getnnodes(g), 2)
     @inbounds for i in 1:getnnodes(g)
         p[i,1], p[i,2] = getcoordinates(getnodes(g)[i])
     end
+    return p
+end
 
-    # Triangle indices matrix
+# Form triangle indices matrix
+function trimatrix(g::Grid{2,3,T}) where {T}
     t = zeros(Int, getncells(g), 3)
     @inbounds for i in 1:getncells(g)
         t[i,1], t[i,2], t[i,3] = vertices(getcells(g)[i])
     end
+    return t
+end
 
-    # Plot grid
-    simpplot(p, t; kwargs...)
-
+# Plot grid or vector of grids
+function DistMesh.simpplot(gs::Vector{G}; kwargs...) where {G <: Grid{2,3}}
+    ps = nodematrix.(gs) # Vector of matrices of node positions
+    ts = trimatrix.(gs) # Vector of matrices of triangle indices
+    idxshifts = cumsum(size.(ps,1))
+    for i in 2:length(ts)
+        ts[i] .+= idxshifts[i-1] # correct for indices shifts
+    end
+    p = reduce(vcat, ps) # Node positions matrix
+    t = reduce(vcat, ts) # Triangle indices matrix
+    simpplot(p, t; kwargs...) # Plot grid
     return nothing
 end
+DistMesh.simpplot(g::Grid{2,3}; kwargs...) = simpplot(nodematrix(g), trimatrix(g); kwargs...)
 
 # ---------------------------------------------------------------------------- #
 # Helper functions for DistMesh, etc.

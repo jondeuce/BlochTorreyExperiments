@@ -16,7 +16,7 @@ using LinearAlgebra
 using SparseArrays
 using StatsBase
 using LinearMaps
-using Parameters: @with_kw
+using Parameters: @with_kw, @unpack
 
 import Distributions
 import Lazy
@@ -60,8 +60,8 @@ const VectorOfVectors{T} = AbstractVector{<:AbstractVector{T}}
     R2_lp::T          =    T(inv(63e-3))    # #TODO (play with these?) 1st attempt was 63E-3. 2nd attempt 76 ms
     R2_Tissue::T      =    T(inv(63e-3))    # #TODO (was 14.5Hz; changed to match R2_lp) Relaxation rate of tissue [s^-1]
     R2_water::T       =    T(inv(2.2))      # Relaxation rate of pure water
-    D_Tissue::T       =    T(2000.0)        # #TODO (reference?) Diffusion coefficient in tissue [um^2/s]
-    D_Sheath::T       =    T(500.0)         # #TODO (reference?) Diffusion coefficient in myelin sheath [um^2/s]
+    D_Tissue::T       =    T(1500.0)        # #TODO (reference?) Diffusion coefficient in tissue [um^2/s]
+    D_Sheath::T       =    T(250.0)         # #TODO (reference?) Diffusion coefficient in myelin sheath [um^2/s]
     D_Axon::T         =    T(2000.0)        # #TODO (reference?) Diffusion coefficient in axon interior [um^2/s]
     D_Blood::T        =    T(3037.0)        # Diffusion coefficient in blood [um^2/s]
     D_Water::T        =    T(3037.0)        # Diffusion coefficient in water [um^2/s]
@@ -588,7 +588,7 @@ end
 end
 
 @inline function omega_myelin(x::Vec{2}, p::MyelinProblem, b::OmegaDerivedConstants, c_in::Circle{2}, c_out::Circle{2})
-    χI, χA, ri², ro = p.params.ChiI, p.params.ChiA, radius(c_in)^2, radius(c_out)
+    χI, χA, E, ri², ro = p.params.ChiI, p.params.ChiA, p.params.E, radius(c_in)^2, radius(c_out)
     dx = x - origin(c_in)
     r² = dx⋅dx
     cos2ϕ = (dx[1]-dx[2])*(dx[1]+dx[2])/r² # cos2ϕ == (x²-y²)/r² == (x-y)*(x+y)/r²
@@ -596,7 +596,7 @@ end
 
     I = χI * (b.c² - 1/3 - b.s² * cos2ϕ * ri² / r²)/2 # isotropic component
     A = χA * (b.s² * (-5/12 - cos2ϕ/8 * (1 + ri²/r²) + 3/4 * log(ro/r)) - b.c²/6) # anisotropic component
-    return b.ω₀ * (I + A)
+    return b.ω₀ * (I + A + E)
 end
 
 @inline function omega_axon(x::Vec{2}, p::MyelinProblem, b::OmegaDerivedConstants, c_in::Circle{2}, c_out::Circle{2})
@@ -608,9 +608,6 @@ end
 # ---------------------------------------------------------------------------- #
 # Global frequency perturbation functions: calculate ω(x) due to entire domain
 # ---------------------------------------------------------------------------- #
-
-#TODO: re-write to take in plain vectors of inner/outer circles/ferritins which
-# can be called on its own, and wrap with a method that takes a MyelinDomain
 
 # Calculate ω(x) inside region number `region`, which is assumed to be tissue
 function omega(x::Vec{2}, p::MyelinProblem, region::TissueRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {C<:Circle{2}}
@@ -624,7 +621,6 @@ function omega(x::Vec{2}, p::MyelinProblem, region::TissueRegion, outercircles::
     return ω
 end
 @inline omega(x::Vec{2}, p::MyelinProblem, domain::MyelinDomain{TissueRegion}) = omega(x, p, getregion(domain), getoutercircles(domain), getinnercircles(domain))
-
 
 # Calculate ω(x) inside region number `region`, which is assumed to be myelin
 function omega(x::Vec{2}, p::MyelinProblem, region::MyelinRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {C<:Circle{2}}
@@ -662,6 +658,37 @@ end
 
 # Individual coordinate input
 @inline omega(x, y, p::MyelinProblem, domain::MyelinDomain) = omega(Vec{2}((x, y)), p, domain)
+
+# Calculate ω(x) inside region number `region`, which is assumed to be axonal
+function omega(
+        x::Vec{2},
+        p::MyelinProblem,
+        outercircles::Vector{Circle{2,T}},
+        innercircles::Vector{Circle{2,T}},
+        outer_bdry_point_type = :myelin, # `:tissue` or `:myelin`
+        inner_bdry_point_type = :myelin, # `:myelin` or `:axon`
+        thresh_outer = outer_bdry_point_type == :myelin ?  √eps(T) : -√eps(T),
+        thresh_inner = inner_bdry_point_type == :myelin ? -√eps(T) :  √eps(T)
+    ) where {T}
+
+    # - A positive `thresh_outer` interprets `outercircles` boundary points as
+    #   being in the myelin region, and tissue region for a negative value
+    # - Similarly, a negative `thresh_inner` interprets `innercircles` boundary
+    #   points as being within the myelin region, and axon region for positive
+    i_outer = findfirst(c -> is_in_circle(x, c, thresh_outer), outercircles)
+    i_inner = findfirst(c -> is_in_circle(x, c, thresh_inner), innercircles)
+
+    region = if i_outer == nothing
+        TissueRegion() # not in outercircles -> tissue region
+    elseif i_inner != nothing
+        AxonRegion(i_inner) # in innercircles -> axon region
+    else
+        MyelinRegion(i_outer) # in outercircles but not innercircles -> myelin region
+    end
+
+    return omega(x, p, region, outercircles, innercircles)
+end
+@inline omega(x::Vec{2}, p::MyelinProblem, domain::MyelinDomain{AxonRegion}) = omega(x, p, getregion(domain), getoutercircles(domain), getinnercircles(domain))
 
 # Return a vector of vectors of nodal values of ω(x) evaluated on each MyelinDomain
 function omegamap(
@@ -899,31 +926,31 @@ end
 # "Neumann Boundary" is a subset of boundary points, use:
 #     `onboundary(cell, face) && (cellid(cell), face) ∈ getfaceset(grid, "Neumann Boundary")`
 function surface_integral!(Ke, facevalues::FaceVectorValues, cell, q_point, coords, func::Function)
-   for face in 1:nfaces(cell)
-       if !onboundary(cell, face)
-           # Initialize face values
-           reinit!(facevalues, cell, face)
+    for face in 1:nfaces(cell)
+        if !onboundary(cell, face)
+            # Initialize face values
+            reinit!(facevalues, cell, face)
 
-           for q_point in 1:getnquadpoints(facevalues)
-               dΓ = getdetJdV(facevalues, q_point)
-               coords_qp = spatial_coordinate(facevalues, q_point, coords)
+            for q_point in 1:getnquadpoints(facevalues)
+                dΓ = getdetJdV(facevalues, q_point)
+                coords_qp = spatial_coordinate(facevalues, q_point, coords)
 
-               # calculate the heat conductivity and heat source at point `coords_qp`
-               f = func(coords_qp)
-               fdΓ = f * dΓ
+                # calculate the heat conductivity and heat source at point `coords_qp`
+                f = func(coords_qp)
+                fdΓ = f * dΓ
 
-               for i in 1:getnbasefunctions(facevalues)
-                   n = getnormal(facevalues, q_point)
-                   v = shape_value(facevalues, q_point, i)
-                   vfdΓ = v * fdΓ
-                   for j in 1:n_basefuncs
-                       ∇u = shape_gradient(facevalues, q_point, j)
-                       Ke[i,j] += (∇u⋅n) * vfdΓ
-                   end
-               end
-           end
-       end
-   end
+                for i in 1:getnbasefunctions(facevalues)
+                    n = getnormal(facevalues, q_point)
+                    v = shape_value(facevalues, q_point, i)
+                    vfdΓ = v * fdΓ
+                    for j in 1:n_basefuncs
+                        ∇u = shape_gradient(facevalues, q_point, j)
+                        Ke[i,j] += (∇u⋅n) * vfdΓ
+                    end
+                end
+            end
+        end
+    end
 end
 
 end # module BlochTorreyUtils

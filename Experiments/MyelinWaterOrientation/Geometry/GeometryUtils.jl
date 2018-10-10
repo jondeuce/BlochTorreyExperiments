@@ -16,7 +16,7 @@ using PolynomialRoots
 using Optim
 using LineSearches
 
-export Ellipse, Circle, Rectangle
+export Ellipse, Circle, Rectangle, VecOfCircles, VecOfEllipses, VecOfRectangles
 export norm2, hadamardproduct, ⊙, skewprod, ⊠
 export origin, radius, radii, widths, corners, geta, getb, getc, getF1, getF2, rotmat
 export dimension, floattype, xmin, ymin, xmax, ymax, area, volume
@@ -43,6 +43,10 @@ struct Rectangle{dim,T}
     mins::Vec{dim,T}
     maxs::Vec{dim,T}
 end
+
+const VecOfCircles{dim} = Vector{Circle{dim,T}} where T
+const VecOfEllipses{dim} = Vector{Ellipse{dim,T}} where T
+const VecOfRectangles{dim} = Vector{Rectangle{dim,T}} where T
 
 # ---------------------------------------------------------------------------- #
 # Misc. utilities for Vec type from Tensors.jl
@@ -285,26 +289,30 @@ end
 # is_on_circle/is_on_any_circle
 @inline function is_on_circle(x::Vec{dim,T},
                               circle::Circle{dim,T},
-                              thresh::T=sqrt(eps(T))) where {dim,T}
-    return abs(norm(x - origin(circle)) - radius(circle)) <= thresh
+                              thresh::T=sqrt(eps(T)),
+                              lt = ≤) where {dim,T}
+    return lt(abs(norm(x - origin(circle)) - radius(circle)), thresh)
 end
 function is_on_any_circle(x::Vec{dim,T},
                           circles::Vector{Circle{dim,T}},
-                          thresh::T=sqrt(eps(T))) where {dim,T}
-    return any(circle->is_on_circle(x, circle, thresh), circles)
+                          thresh::T=sqrt(eps(T)),
+                          lt = ≤) where {dim,T}
+    return any(circle->is_on_circle(x, circle, thresh, lt), circles)
 end
 
 # is_in_circle/is_in_any_circle
 @inline function is_in_circle(x::Vec{dim,T},
                               circle::Circle{dim,T},
-                              thresh::T=sqrt(eps(T))) where {dim,T}
+                              thresh::T=sqrt(eps(T)),
+                              lt = ≤) where {dim,T}
     dx = x - origin(circle)
-    return dx⋅dx <= (radius(circle) + thresh)^2
+    return lt(dx⋅dx, (radius(circle) + thresh)^2)
 end
 function is_in_any_circle(x::Vec{dim,T},
                           circles::Vector{Circle{dim,T}},
-                          thresh::T=sqrt(eps(T))) where {dim,T}
-    return any(circle->is_in_circle(x, circle, thresh), circles)
+                          thresh::T=sqrt(eps(T)),
+                          lt = ≤) where {dim,T}
+    return any(circle->is_in_circle(x, circle, thresh, lt), circles)
 end
 
 # check if c1 and c2 are overlapping

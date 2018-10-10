@@ -271,16 +271,16 @@ end
 # DelaunayTessellation2D iteration protocol
 # ---------------------------------------------------------------------------- #
 
-function Base.iterate(tess::DelaunayTessellation2D, ix = 2)
-    @inbounds while isexternal(tess._trigs[ix]) && ix <= tess._last_trig_index
-        ix += 1
-    end
-    @inbounds if ix > tess._last_trig_index
-        return nothing
-    else
-        return (tess._trigs[ix], ix + 1)
-    end
-end
+# function Base.iterate(tess::DelaunayTessellation2D, ix = 2)
+#     @inbounds while isexternal(tess._trigs[ix]) && ix <= tess._last_trig_index
+#         ix += 1
+#     end
+#     @inbounds if ix > tess._last_trig_index
+#         return nothing
+#     else
+#         return (tess._trigs[ix], ix + 1)
+#     end
+# end
 
 function Base.length(tess::DelaunayTessellation2D)
     len = 0
