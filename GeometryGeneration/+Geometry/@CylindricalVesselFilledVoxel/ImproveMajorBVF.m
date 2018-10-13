@@ -34,6 +34,9 @@ if isAngleZero( G.MajorAngle )
     get_BV      =  @(R,p0) RepDimGsize * sum(vec(get_Vmap(R,p0)));
     get_rand_p0 =  @() G.p0 + P0_FACT * G.SubVoxSize * [2*rand(2,G.Nmajor)-1; zeros(1,G.Nmajor)];
     % dBV_Fun     =  @(R) 2*pi*R * G.Nmajor * (RepDimGsize / G.SubVoxSize^2);
+    
+    % max allowed radius satisfies 2*R*sqrt(N) = Width, e.g. if they were all in a regular grid
+    r0_bounds   =  [ 0.5 * G.Rmajor, min( 1.5 * G.Rmajor, min(G.VoxelSize(1:2))/(2*sqrt(G.Nmajor)) ) ];
 elseif isAngleNinety( G.MajorAngle )
     SliceGsize  =  [1, G.GridSize(2:3)];
     SliceVsize  =  [G.SubVoxSize, G.VoxelSize(2:3)];
@@ -43,6 +46,9 @@ elseif isAngleNinety( G.MajorAngle )
     get_BV      =  @(R,p0) RepDimGsize * sum(vec(get_Vmap(R,p0)));
     get_rand_p0 =  @() G.p0 + P0_FACT * G.SubVoxSize * [zeros(1,G.Nmajor); 2*rand(2,G.Nmajor)-1];
     % dBV_Fun     =  @(R) 2*pi*R * G.Nmajor * (RepDimGsize / G.SubVoxSize^2);
+    
+    % max allowed radius satisfies 2*R*sqrt(N) = Width, e.g. if they were all in a regular grid
+    r0_bounds   =  [ 0.5 * G.Rmajor, min( 1.5 * G.Rmajor, min(G.VoxelSize(2:3))/(2*sqrt(G.Nmajor)) ) ];
 else
     get_Vmap    =  @(R,p0) getCylinderMask( G.GridSize, G.SubVoxSize, G.VoxelCenter, G.VoxelSize, p0, G.vz0, R*ones(1,G.Nmajor), G.vx0, G.vy0, isUnit, isCentered, prec, [] );
     get_BV      =  @(R,p0) sum(vec(get_Vmap(R,p0)));
@@ -50,10 +56,10 @@ else
     
     % TODO: this has not been updated
     % dBV_Fun   =  @(R) 2*pi*R * G.Nmajor * (G.GridSize(3) / G.SubVoxSize^2);
+    
+    % max allowed radius satisfies 2*R*sqrt(N) = Width, e.g. if they were all in a regular grid
+    r0_bounds   =  [ 0.5 * G.Rmajor, min( 1.5 * G.Rmajor, min(G.VoxelSize)/(2*sqrt(G.Nmajor)) ) ];
 end
-
-% max allowed radius satisfies 2*R*sqrt(N) = Width, e.g. if they were all in a regular grid
-r0_bounds   =  [ 0.5 * G.Rmajor, min( 1.5 * G.Rmajor, min(G.VoxelSize)/(2*sqrt(G.Nmajor)) ) ];
 
 BV_Target   =  G.Targets.aBVF * prod(G.GridSize); % Blood Volume in units of voxels
 BV_Tol      =  0.0001 * BV_Target * (G.SubVoxSize/max(G.r0));

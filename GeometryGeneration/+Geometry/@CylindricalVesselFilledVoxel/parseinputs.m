@@ -64,7 +64,9 @@ addParameter(p,'VRSRelativeRad',[]);
 %-------------------------------------------------------------------------%
 % Allow intersecting cylinders or not
 addParameter(p,'AllowMinorSelfIntersect',true,@(x)VA(x,{'logical'},{'scalar'}));
-addParameter(p,'AllowMinorMajorIntersect',false,@(x)VA(x,{'logical'},{'scalar'}));
+addParameter(p,'AllowMinorMajorIntersect',true,@(x)VA(x,{'logical'},{'scalar'}));
+addParameter(p,'ImproveMajorBVF',true,@(x)VA(x,{'logical'},{'scalar'}));
+addParameter(p,'ImproveMinorBVF',true,@(x)VA(x,{'logical'},{'scalar'}));
 
 % Minor vessel orientation
 expectedinterptype = {'RANDOM','ALIGNED','PERIODIC'};
@@ -150,20 +152,47 @@ Minor_Area = pi * ( G.Rminor_mu.^2 + G.Rminor_sig.^2 );
 VoxHeight = G.VoxelSize(3);
 % NumMinorVesselsGuess = round( Minor_BloodVol ./ (VoxHeight * Minor_Area) );
 
-% Empirical model for average cylinder length:
-%     see: GeometryGeneration/old/test/AvgLineLength.m
-[xc,yc,zc] = deal(1, 2/3, 0);
-[xr,yr,zr] = deal(1, 4/3, 1/2);
-avgCylLengthFun = @(relX, relY) zc + zr * sqrt(1 - min((relX-xc).^2 / xr^2 + (relY-yc).^2 / yr^2, 1));
+% % Empirical model for average cylinder length:
+% %     see: GeometryGeneration/old/test/AvgLineLength.m
+% [xc,yc,zc] = deal(1, 2/3, 0);
+% [xr,yr,zr] = deal(1, 4/3, 1/2);
+% avgCylLengthFun = @(relX, relY) zc + zr * sqrt(1 - min((relX-xc).^2 / xr^2 + (relY-yc).^2 / yr^2, 1));
+% 
+% % avg length should be greater than the smallest dimension; if not,
+% % something is likely wrong with the empirical estimate, so should default
+% % to the smallLength
+% sVSize = sort(G.VoxelSize);
+% smallLength = min(G.VoxelSize);
+% avgCylLength = norm(G.VoxelSize) * avgCylLengthFun(sVSize(1)/sVSize(3), sVSize(2)/sVSize(3));
+% avgCylLength = max(avgCylLength, smallLength);
 
-% avg length should be greater than the smallest dimension; if not,
-% something is likely wrong with the empirical estimate, so should default
-% to the smallLength
-sVSize = sort(G.VoxelSize);
-smallLength = min(G.VoxelSize);
-avgCylLength = norm(G.VoxelSize) * avgCylLengthFun(sVSize(1)/sVSize(3), sVSize(2)/sVSize(3));
-avgCylLength = max(avgCylLength, smallLength);
+% % If you model two random vectors X = (x,y,z) and X0 = (x0,y0,z0) as being
+% % drawn uniformly randomly in a domain [0,a]x[0,b]x[0,c], then the
+% % expectation E(|X-X0|^2) = (a^2+b^2+c^2)/6.
+% % An (over-)estimation of the average length of each cylinder, then, is
+% % sqrt((a^2+b^2+c^2)/6). Simulating this empirically, the over-estimation
+% % is never more than ~18%, and never less than ~6%. Since we would over-
+% % estimating the number of cylinders, the expected length is reduced by 25%
+% avgCylLength = norm(G.VoxelSize)/6; % * 0.75;
 
+% f = @(X) sqrt(((X(:,1)-X(:,2)).^2 + X(:,1).^2 + X(:,2).^2)) + ...
+%          sqrt(((X(:,3)-X(:,4)).^2 + X(:,3).^2 + X(:,4).^2)) + ...
+%          sqrt(((X(:,5)-X(:,6)).^2 + X(:,5).^2 + X(:,6).^2));
+% a = G.VoxelSize(1); b = G.VoxelSize(2); c = G.VoxelSize(3); 
+% bd = [0 a; 0 a; 0 b; 0 b; 0 c; 0 c];
+% I = integralN_mc(f, bd, 'k', 1, 'reltol', 1e-12, 'abstol', 1e-8);
+% avgCylLength = I/(3*(a*b*c)^2);
+
+% Just simulate it! Generate N random cylinder intersections, take the
+% average, and use this for the initial guess.
+N = 100000;
+a = G.VoxelSize(1); b = G.VoxelSize(2); c = G.VoxelSize(3); 
+Origins = [a*rand(1,N); b*rand(1,N); c*rand(1,N)];
+Directions = randn(3,N); Directions = bsxfun(@rdivide, Directions, sqrt(sum(Directions.^2, 1)));
+[tmin, tmax] = rayBoxIntersection( Origins, Directions, G.VoxelSize, G.VoxelSize/2 );
+avgCylLength = mean(tmax - tmin);
+
+% Expected number of simply minor blood vol divided by expected vessel volume
 NumMinorVesselsGuess = round( Minor_BloodVol ./ (avgCylLength * Minor_Area) );
 
 % Major blood vessel diameters: N*pi*r^2*len = V

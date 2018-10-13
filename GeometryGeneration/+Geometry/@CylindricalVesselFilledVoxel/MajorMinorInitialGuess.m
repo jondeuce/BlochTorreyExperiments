@@ -8,9 +8,9 @@ function [ G ] = MajorMinorInitialGuess( G )
 % Initial points
 [x,y] = regular_grid_2D(G.Nmajor,false);
 G.p0  = roty(G.MajorAngle) * ... % rotate points by MajorAngle
-    [ min(G.VoxelSize) * x(:)'
-    min(G.VoxelSize) * y(:)'
-    zeros(1,G.Nmajor,'double') ]; % Evenly spaced points in the plane
+    [ G.VoxelSize(1) * x(:)'
+      G.VoxelSize(2) * y(:)'
+      zeros(1,G.Nmajor,'double') ]; % Evenly spaced points in the plane
 G.p0  = bsxfun( @plus, G.VoxelCenter(:), G.p0 ); % Translate to VoxelCenter
 
 % Initial directions

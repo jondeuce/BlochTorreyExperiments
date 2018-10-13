@@ -21,7 +21,7 @@ if G.Verbose; display_toc_time( t_InitialGuess, 'major/minor cylinders initial g
 %==========================================================================
 
 t_ImproveMajor = tic;
-G = ImproveMajorBVF(G);
+if G.opts.ImproveMajorBVF; G = ImproveMajorBVF(G); end
 t_ImproveMajor = toc(t_ImproveMajor);
 if G.Verbose; display_toc_time( t_ImproveMajor, 'impoving major cylinders BVF', 0 ); end
 
@@ -30,7 +30,7 @@ if G.Verbose; display_toc_time( t_ImproveMajor, 'impoving major cylinders BVF', 
 %==========================================================================
 
 t_ImproveMinor = tic;
-G = ImproveMinorBVF(G);
+if G.opts.ImproveMinorBVF; G = ImproveMinorBVF(G); end
 t_ImproveMinor = toc(t_ImproveMinor);
 if G.Verbose; display_toc_time( t_ImproveMinor, 'impoving minor cylinders BVF', 0 ); end
 
