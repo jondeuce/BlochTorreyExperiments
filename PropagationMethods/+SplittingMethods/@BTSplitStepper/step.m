@@ -13,8 +13,7 @@ end
 if nargin < 3
     dx = {};
 elseif isempty(dx)
-    % convert [] --> {}
-    if ~iscell(dx); dx = {}; end
+    if ~iscell(dx); dx = {}; end % convert [] --> {}
 elseif ~iscell(dx)
     dx = {dx}; % wrap in cell
 end

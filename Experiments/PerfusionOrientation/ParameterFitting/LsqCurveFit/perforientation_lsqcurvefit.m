@@ -11,8 +11,8 @@ currentoptfun = which('perforientation_fun');
 copyfile(currentoptfun,backupoptfun);
 
 %Save diary of workspace
-% DiaryFilename = [datestr(now,30), '__', 'diary.txt'];
-DiaryFilename = '';
+DiaryFilename = [datestr(now,30), '__', 'diary.txt'];
+% DiaryFilename = '';
 if ~isempty(DiaryFilename)
     diary(DiaryFilename);
 else
@@ -20,74 +20,69 @@ else
     input('[Press enter to continue...]\n\n')
 end
 
-%Save current directory and go to save path
-% currentpath = cd;
-% cd '/home/coopar7/Dropbox/Masters Year 1/UBCMRI/CurveFitting_Trial2_7umMinor'
-
 % ---- Angles to simulate ---- %
 % alpha_range = 2.5:5.0:87.5;
+alpha_range = 22.5:5.0:87.5;
 % alpha_range = 7.5:10.0:87.5;
-alpha_range = 17.5:10.0:87.5;
+% alpha_range = 17.5:10.0:87.5;
 % alpha_range = 7.5:20.0:87.5;
 % alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
 % alpha_range = [37.5, 52.5, 72.5, 17.5, 87.5];
 % alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 
-% % % ---- GRE w/ Diffusion Initial Guess (large minor) ---- %
-% % lb  = [ 4.000,          1.0000/100,         0.8000/100 ];
-% % CA0 =   6.230;  iBVF0 = 2.2999/100; aBVF0 = 1.1601/100;
-% % ub  = [ 8.000,          3.5000/100,         1.5000/100 ];
+% =============================== DATA ================================== %
+
+% % ---- GRE w/ Diffusion Initial Guess (large minor) ---- %
+% lb  = [ 4.000,          1.0000/100,         0.8000/100 ];
+% CA0 =   6.230;  iBVF0 = 2.2999/100; aBVF0 = 1.1601/100;
+% ub  = [ 8.000,          3.5000/100,         1.5000/100 ];
+
+% ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
+lb  = [ 2.000,          0.4000/100,         0.4000/100 ];
+CA0 =   4.520;  iBVF0 = 1.4200/100; aBVF0 = 0.6840/100;
+ub  = [ 9.000,          2.5000/100,         2.5000/100 ];
+
+x0 = [CA0, iBVF0, aBVF0];
+
+type = 'GRE';
+[alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize, BinCounts] = get_GRE_data(alpha_range);
+TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
+
+% % ---- SE w/ Diffusion Initial Guess ---- %
+% lb  = [ 1.0000,          0.5000/100,         0.5000/100 ];
+% CA0 =   3.7152;  iBVF0 = 1.6334/100; aBVF0 = 1.0546/100;
+% ub  = [ 8.0000,          2.5000/100,         2.5000/100 ];
 % 
-% % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
-% lb  = [ 3.000,          0.7500/100,         0.7000/100 ];
-% CA0 =   5.000;  iBVF0 = 1.3000/100; aBVF0 = 1.1000/100;
-% ub  = [ 9.000,          2.5000/100,         2.0000/100 ];
+% x0  = [CA0, iBVF0, aBVF0];
 % 
-% x0 = [CA0, iBVF0, aBVF0];
+% type = 'SE';
+% [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize] = get_SE_data(alpha_range);
 % 
-% type = 'GRE';
-% [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize, BinCounts] = get_GRE_data(alpha_range);
+% % TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512,512,512];
 
-% ---- SE w/ Diffusion Initial Guess ---- %
-lb  = [ 1.0000,          0.5000/100,         0.5000/100 ];
-CA0 =   3.7152;  iBVF0 = 1.6334/100; aBVF0 = 1.0546/100;
-ub  = [ 8.0000,          2.5000/100,         2.5000/100 ];
+% ============================== END DATA =============================== %
 
-x0  = [CA0, iBVF0, aBVF0];
-
-type = 'SE';
-[alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize] = get_SE_data(alpha_range);
-
-% Override some terms
-% TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512,512,512];
-% TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
-
-Nmajor = 8;
+Nmajor = 4;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
 % Rminor_sig = 2.1;
 
-%with diffusion
-D_Tissue = 3037; %[um^2/s]
-D_Blood = 3037; %[um^2/s]
-D_VRS = 3037; %[um^2/s]
-VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless] => 3X volume (see below)
-% VRSRelativeRad = sqrt(5/2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(5/2) => 1.5X
-% VRSRelativeRad = sqrt(3); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(3) => 2X
+% % ---- With Diffusion ---- %
+% D_Tissue = 3037; %[um^2/s]
+% D_Blood = 3037; %[um^2/s]
+% D_VRS = 3037; %[um^2/s]
+% Nsteps = 4;
+% StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
+% % Nsteps = 2;
+% % StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
 
-Nsteps = 8;
+% ---- Diffusionless ---- %
+D_Tissue = 0; %[um^2/s]
+D_Blood = []; %[um^2/s]
+D_VRS = []; %[um^2/s]
+Nsteps = 1; % one exact step
 StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
-% Nsteps = 2;
-% StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
-NparticlesPerParam = 2;
-
-%diffusionless
-% D_Tissue = 0; %[um^2/s]
-% D_Blood = []; %[um^2/s]
-% D_VRS = []; %[um^2/s]
-% Nsteps = 1;
-% NparticlesPerParam = 3;
 
 B0 = -3.0; %[Tesla]
 rng('default'); seed = rng; % for consistent geometries between sims.
@@ -96,6 +91,9 @@ RotateGeom = false; % geometry is fixed; dipole rotates
 MajorAngle = 0.0; % major vessel angle w.r.t z-axis [degrees]
 NumMajorArteries = 0;
 MinorArterialFrac = 0.0;
+VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless] => 3X volume (see below)
+% VRSRelativeRad = sqrt(5/2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(5/2) => 1.5X
+% VRSRelativeRad = sqrt(3); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(3) => 2X
 
 PlotFigs = true;
 SaveFigs = true;

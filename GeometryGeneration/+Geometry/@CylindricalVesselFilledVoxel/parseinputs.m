@@ -152,6 +152,9 @@ Minor_Area = pi * ( G.Rminor_mu.^2 + G.Rminor_sig.^2 );
 VoxHeight = G.VoxelSize(3);
 % NumMinorVesselsGuess = round( Minor_BloodVol ./ (VoxHeight * Minor_Area) );
 
+% ----------------- %
+% ------ OLD ------ %
+
 % % Empirical model for average cylinder length:
 % %     see: GeometryGeneration/old/test/AvgLineLength.m
 % [xc,yc,zc] = deal(1, 2/3, 0);
@@ -183,13 +186,18 @@ VoxHeight = G.VoxelSize(3);
 % I = integralN_mc(f, bd, 'k', 1, 'reltol', 1e-12, 'abstol', 1e-8);
 % avgCylLength = I/(3*(a*b*c)^2);
 
+% ---- END OLD ---- %
+% ----------------- %
+
 % Just simulate it! Generate N random cylinder intersections, take the
 % average, and use this for the initial guess.
 N = 100000;
-a = G.VoxelSize(1); b = G.VoxelSize(2); c = G.VoxelSize(3); 
-Origins = [a*rand(1,N); b*rand(1,N); c*rand(1,N)];
-Directions = randn(3,N); Directions = bsxfun(@rdivide, Directions, sqrt(sum(Directions.^2, 1)));
-[tmin, tmax] = rayBoxIntersection( Origins, Directions, G.VoxelSize, G.VoxelSize/2 );
+% a = G.VoxelSize(1); b = G.VoxelSize(2); c = G.VoxelSize(3); 
+% Origins = [a*rand(1,N); b*rand(1,N); c*rand(1,N)];
+% Directions = randn(3,N);
+% Directions = bsxfun(@rdivide, Directions, sqrt(sum(Directions.^2, 1)));
+[Origins, Directions, ~] = sampleRandomCylinders( G.VoxelSize, G.VoxelCenter, [], N );
+[tmin, tmax] = rayBoxIntersection( Origins, Directions, G.VoxelSize, G.VoxelCenter );
 avgCylLength = mean(tmax - tmin);
 
 % Expected number of simply minor blood vol divided by expected vessel volume
