@@ -21,8 +21,9 @@ else
 end
 
 % ---- Angles to simulate ---- %
-% alpha_range = 2.5:5.0:87.5;
-alpha_range = 22.5:5.0:87.5;
+% alpha_range = [2.5, 47.5, 87.5];
+alpha_range = 2.5:5.0:87.5;
+% alpha_range = 22.5:5.0:87.5;
 % alpha_range = 7.5:10.0:87.5;
 % alpha_range = 17.5:10.0:87.5;
 % alpha_range = 7.5:20.0:87.5;
@@ -38,7 +39,7 @@ alpha_range = 22.5:5.0:87.5;
 % ub  = [ 8.000,          3.5000/100,         1.5000/100 ];
 
 % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
-lb  = [ 2.000,          0.4000/100,         0.4000/100 ];
+lb  = [ 2.000,          0.3500/100,         0.3500/100 ];
 CA0 =   4.520;  iBVF0 = 1.4200/100; aBVF0 = 0.6840/100;
 ub  = [ 9.000,          2.5000/100,         2.5000/100 ];
 
@@ -60,29 +61,29 @@ TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350
 % 
 % % TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512,512,512];
 
-% ============================== END DATA =============================== %
+% ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 4;
+Nmajor = 7;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
 % Rminor_sig = 2.1;
 
-% % ---- With Diffusion ---- %
-% D_Tissue = 3037; %[um^2/s]
-% D_Blood = 3037; %[um^2/s]
-% D_VRS = 3037; %[um^2/s]
-% Nsteps = 4;
-% StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
-% % Nsteps = 2;
-% % StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
-
-% ---- Diffusionless ---- %
-D_Tissue = 0; %[um^2/s]
-D_Blood = []; %[um^2/s]
-D_VRS = []; %[um^2/s]
-Nsteps = 1; % one exact step
+% ---- With Diffusion ---- %
+D_Tissue = 3037; %[um^2/s]
+D_Blood = 3037; %[um^2/s]
+D_VRS = 3037; %[um^2/s]
+Nsteps = 8;
 StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
+% Nsteps = 2;
+% StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
+
+% % ---- Diffusionless ---- %
+% D_Tissue = 0; %[um^2/s]
+% D_Blood = []; %[um^2/s]
+% D_VRS = []; %[um^2/s]
+% Nsteps = 1; % one exact step
+% StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
 
 B0 = -3.0; %[Tesla]
 rng('default'); seed = rng; % for consistent geometries between sims.
@@ -101,54 +102,112 @@ FigTypes = {'png'}; % outputs a lot of figures, so just 'png' is probably best
 CloseFigs = true;
 SaveResults = true;
 
+% ============================= GEOMETRY ================================ %
+
+% OptVariables = 'CA_iBVF_aBVF';
+OptVariables = 'CA_Rmajor_MinorExpansion';
+
+% Fixed Geometry Arguments
+GeomArgs = struct( ...% 'iBVF', iBVF, 'aBVF', aBVF, ... % these are set below
+    'VoxelSize', VoxelSize, 'GridSize', GridSize, 'VoxelCenter', VoxelCenter, ...
+    'Nmajor', Nmajor, 'MajorAngle', MajorAngle, ......
+    'NumMajorArteries', NumMajorArteries, 'MinorArterialFrac', MinorArterialFrac, ...
+    'Rminor_mu', Rminor_mu, 'Rminor_sig', Rminor_sig, ...
+    'VRSRelativeRad', VRSRelativeRad, ...
+    'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', true, ...
+    'ImproveMajorBVF', true, 'ImproveMinorBVF', true, ...
+    'PopulateIdx', true, 'seed', seed );
+
+% Generate initial guess and geometry
+switch upper(OptVariables)
+    case 'CA_IBVF_ABVF'
+        Geom = []; % Geom is created inside perforientation_fun
+    case 'CA_RMAJOR_MINOREXPANSION'
+        GeomArgs.ImproveMajorBVF = false;
+        GeomArgs.ImproveMinorBVF = false;
+        
+        % Generate geometry for contraction
+        GeomArgs.iBVF = ub(2);
+        GeomArgs.aBVF = ub(3);
+        GeomNameValueArgs = struct2arglist(GeomArgs);
+        Geom = Geometry.CylindricalVesselFilledVoxel( GeomNameValueArgs{:} );
+        
+        % Generate new initial guesses and bounds
+        getRmajor0 = @(aBVF) sqrt( prod(VoxelSize) * aBVF / ( Nmajor * pi * rayBoxIntersectionLength( VoxelCenter(:), [sind(MajorAngle); 0; cosd(MajorAngle)], VoxelSize(:), VoxelCenter(:) ) ) );
+        getSpaceFactor0 = @(iBVF) (Geom.iBVF/iBVF)^(1/2.3); % empirical model: iBVF = iBVF_max * SpaceFactor^(-2.3)
+        
+        lb_old = lb;
+        ub_old = ub;
+        lb = [lb_old(1), getRmajor0(lb_old(3)), getSpaceFactor0(ub_old(2))];
+        x0 = [x0(1),     getRmajor0(aBVF0),     getSpaceFactor0(iBVF0)];
+        ub = [ub_old(1), getRmajor0(ub_old(3)), getSpaceFactor0(lb_old(2))];
+        
+    otherwise
+        error('''OptVariables'' must be ''CA_iBVF_aBVF'' or ''CA_Rmajor_MinorExpansion''');
+end
+
+% =========================== OPTIMIZATION ============================== %
+
+% Call lsqcurvefit or lsqnonlin (essentially the same function; lsqcurvefit
+% is a special case of lsqnonlin, but it doesn't accept weight vectors).
+% Also, lsqnonlin functions must output the residual, where lsqcurvefit is
+% the simulated function values themselves.
+OptFunction = 'lsqnonlin';
+% OptFunction = 'lsqcurvefit';
+
 % Limiting factor will always be MaxIter or MaxFunEvals, as due to
 % simulation randomness, TolX/TolFun tend to not be reliable measures of 
 % goodness of fit
-LsqOpts = optimoptions('lsqcurvefit', ...
+LsqOpts = optimoptions(OptFunction, ...
     'MaxFunEvals', 500, ...
     'Algorithm', 'trust-region-reflective', ...
-    'MaxIter', 30, ...
+    'MaxIter', 15, ...
     'TolX', 1e-12, ...
     'TolFun', 1e-12, ...
     'TypicalX', x0, ...
-    'FinDiffRelStep', [0.03, 0.05, 0.05], ...
+    'FinDiffRelStep', [0.01, 0.01, 0.01], ...
     'Display', 'iter' ...
     );
 
 % Call diary before the minimization starts
 if ~isempty(DiaryFilename); diary(DiaryFilename); end
 
+% Simulation function handle
 optfun = @(x,xdata) perforientation_fun(x, xdata, dR2_Data, ...
     TE, Nsteps, type, B0, D_Tissue, D_Blood, D_VRS, ...
+    'OptVariables', OptVariables, ...
     'Navgs', Navgs, 'StepperArgs', StepperArgs, ...
     'PlotFigs', PlotFigs, 'SaveFigs', SaveFigs, 'CloseFigs', CloseFigs, 'FigTypes', FigTypes, ...
     'SaveResults', SaveResults, 'DiaryFilename', DiaryFilename, ...
-    'VoxelSize', VoxelSize, 'VoxelCenter', VoxelCenter, 'GridSize', GridSize, ...
-    'Nmajor', Nmajor, 'Rminor_mu', Rminor_mu, 'Rminor_sig', Rminor_sig, ......
-    'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', true, ...
-    'MajorAngle', MajorAngle, 'RotateGeom', RotateGeom, ...
-    'NumMajorArteries', NumMajorArteries, 'MinorArterialFrac', MinorArterialFrac, ...
-    'VRSRelativeRad', VRSRelativeRad, ...
-    'geomseed', seed);
+    'GeomArgs', GeomArgs, 'Geom', Geom);
 
-[x,resnorm,residual,exitflag,output] = lsqcurvefit(optfun, ...
-    x0, alpha_range, dR2_Data, lb, ub, LsqOpts);
+% Weighted residual function handle
+Weights = BinCounts / sum(BinCounts(:));
+resfun = @(x) sqrt(Weights) .* (optfun(x, alpha_range) - dR2_Data);
 
-Params0 = struct('CA0',CA0,'iBVF0',iBVF0,'aBVF0',aBVF0,'lb',lb,'ub',ub);
+% Call optimization routine
+switch upper(OptFunction)
+    case 'LSQCURVEFIT'
+        [x,resnorm,residual,exitflag,output,lambda,jacobian] = ...
+            lsqcurvefit(optfun, x0, alpha_range, dR2_Data, lb, ub, LsqOpts);
+    case 'LSQNONLIN'
+        [x,resnorm,residual,exitflag,output,lambda,jacobian] = ...
+            lsqnonlin(resfun, x0, lb, ub, LsqOpts);
+    otherwise
+        error('OptFunction must be ''lsqcurvefit'' or ''lsqnonlin''');
+end
 
-CA = x(1);
-iBVF = x(2);
-aBVF = x(3);
-BVF = iBVF + aBVF;
-iRBVF = iBVF/BVF;
-aRBVF = aBVF/BVF;
+Params0 = struct('OptVariables', OptVariables,...
+    'CA0', CA0, 'iBVF0', iBVF0, 'aBVF0', aBVF0,...
+    'x0', x0, 'lb', lb, 'ub', ub);
 
 % Go back to original directory
 % cd(currentpath);
 
 if ~isempty(DiaryFilename); diary(DiaryFilename); diary('off'); end
 
-% Generate text file of best simulation results
+% =========== Generate text file of best simulation results ============= %
+
 fout = fopen([datestr(now,30),'__','LsqfitIterationsOutput.txt'], 'w');
 iter = 1;
 L2w_best = Inf;
@@ -169,4 +228,8 @@ fclose(fout);
 clear fout iter Results f
 
 % Save resulting workspace
+if ~isempty(Geom)
+    Geom = Compress(Geom);
+    clear optfun resfun getRmajor0 getSpaceFactor0
+end
 save([datestr(now,30),'__','LsqcurvefitResults'], '-v7');

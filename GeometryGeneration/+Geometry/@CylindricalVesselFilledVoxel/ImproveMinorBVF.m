@@ -154,7 +154,7 @@ G.Nminor = G.N - G.Nmajor;
 VolumeFactor = G.Targets.iBVF/G.iBVF;
 TolX = 1e-6 * G.SubVoxSize; % Approximate grid resolution
 TolF = 1e-4 * G.Targets.iBVF; % Approximate function tolerance
-G = ExpandMinorVessels(G, VolumeFactor, TolX, TolF);
+G = ExpandMinorVesselsByVolumeFactor(G, VolumeFactor, TolX, TolF);
 G = NormalizeCylinderVecs(G); % probably unnecessary, but it's cheap
 
 G.BVF   = G.iBVF + G.aBVF;
