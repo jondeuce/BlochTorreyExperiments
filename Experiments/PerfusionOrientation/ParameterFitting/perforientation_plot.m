@@ -9,16 +9,18 @@ iRBVF = iBVF/BVF;
 alpha_range = args.xdata;
 
 vec = @(x) x(:);
-L2w = perforientation_objfun( args.params, alpha_range, args.dR2_Data, dR2(end,:), args.Weights, 'L2' );
-R2w = perforientation_objfun( args.params, alpha_range, args.dR2_Data, dR2(end,:), args.Weights, 'R2' );
 R2  = perforientation_objfun( args.params, alpha_range, args.dR2_Data, dR2(end,:), 'uniform', 'R2' );
+R2w = perforientation_objfun( args.params, alpha_range, args.dR2_Data, dR2(end,:), args.Weights, 'R2w' );
+
+Nfun = args.Normfun;
+Funval = perforientation_objfun( args.params, alpha_range, args.dR2_Data, dR2(end,:), args.Weights, Nfun );
 
 avg_rminor = mean(vec([AllGeoms.Rminor_mu]));
 avg_rmajor = mean(vec([AllGeoms.Rmajor]));
 
 title_lines = {...
     sprintf('iBVF = %.4f%%, aBVF = %.4f%%, CA = %.4f, BVF = %.4f%%, iRBVF = %.2f%%', iBVF*100, aBVF*100, CA, BVF*100, iRBVF*100 ), ...
-    sprintf('N = %d, Rmajor = %.2fum, Rminor = %.2fum, L2w = %.4f, R2 = %.4f, R2w = %.4f', args.Nmajor, avg_rmajor, avg_rminor, L2w, R2, R2w) ...
+    sprintf('N = %d, Rmajor = %.2fum, Rminor = %.2fum, R2 = %.4f, R2w = %.4f, %s = %.4f', args.Nmajor, avg_rmajor, avg_rminor, R2, R2w, Nfun, Funval) ...
     };
 title_lines = cellfun(@(s)strrep(s,'%','\%'),title_lines,'uniformoutput',false);
 title_str = [title_lines{1},', ',title_lines{2}];
@@ -27,6 +29,7 @@ FileName = strrep( title_str, ' ', '' );
 FileName = strrep( FileName, '\%', '' );
 FileName = strrep( FileName, '=', '-' );
 FileName = strrep( FileName, ',', '__' );
+FileName = strrep( FileName, '--', '-m' ); % double dash is a dash and a minus sign
 FileName = strrep( FileName, '.', 'p' );
 FileName = [datestr(now,30), '__', FileName];
 
@@ -67,7 +70,6 @@ try
         end
     end
 catch me
-    keyboard
     warning('Unable to save figure.\nError message: %s', me.message);
 end
 
