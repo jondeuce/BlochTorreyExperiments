@@ -40,8 +40,13 @@ alpha_range = 2.5:5.0:87.5;
 
 % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
 lb  = [ 2.0000,          0.3500/100,         0.3500/100 ];
-CA0 =   4.3095;  iBVF0 = 1.4358/100; aBVF0 = 0.6727/100;
+CA0 =   4.3226;  iBVF0 = 1.2279/100; aBVF0 = 0.7951/100;
 ub  = [ 9.0000,          2.5000/100,         2.5000/100 ];
+
+% % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
+% lb  = [ 3.5000,          1.0000/100,         0.6000/100 ];
+% CA0 =   4.3226;  iBVF0 = 1.2279/100; aBVF0 = 0.7951/100;
+% ub  = [ 5.5000,          1.5000/100,         1.1000/100 ];
 
 x0 = [CA0, iBVF0, aBVF0];
 
@@ -64,7 +69,7 @@ Weights = BinCounts / sum(BinCounts(:));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 8;
+Nmajor = 3;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
@@ -156,8 +161,8 @@ Normfun = 'AICc';
 % simulation randomness, TolX/TolFun tend to not be reliable measures of 
 % goodness of fit
 OptOpts = optimoptions('fmincon', ...
-    'MaxFunEvals', 500, ...
-    ...%'Algorithm', 'trust-region-reflective', ...
+    'MaxFunEvals', 50, ...
+    'Algorithm', 'sqp', ... % trust-region-reflective', ...
     'MaxIter', 15, ...
     'TolX', 1e-12, ...
     'TolFun', 1e-12, ...
@@ -177,7 +182,7 @@ objfun = @(x) perforientation_objfun(x, alpha_range, dR2_Data, [], Weights, Norm
     'Weights', Weights, 'Normfun', Normfun, ...
     'PlotFigs', PlotFigs, 'SaveFigs', SaveFigs, 'CloseFigs', CloseFigs, 'FigTypes', FigTypes, ...
     'SaveResults', SaveResults, 'DiaryFilename', DiaryFilename, ...
-    'GeomArgs', GeomArgs, 'Geom', Geom);
+    'GeomArgs', GeomArgs, 'Geom', Geom, 'RotateGeom', RotateGeom);
 
 % Call `fmincon` optimization routine
 [x, fval, exitflag, output, lambda, grad, hessian] = ...
@@ -194,21 +199,25 @@ if ~isempty(DiaryFilename); diary(DiaryFilename); diary('off'); end
 fout = fopen([datestr(now,30),'__','FminconIterationsOutput.txt'], 'w');
 iter = 1;
 Norm_best = Inf;
-fprintf(fout, '%s', 'Timestamp       f-count            f(x)       Best f(x)');
+R2w_best = -Inf;
+fprintf(fout, '%s', 'Timestamp       f-count            f(x)       Best f(x)             R2w        Best R2w');
 for s = dir('*.mat')'
     try
         Results = load(s.name);
         Results = Results.Results;
-        f = perforientation_objfun(Results.params, Results.alpha_range, Results.dR2_Data, Results.dR2, Results.args.Weights);
+        normfun = @(normfun) perforientation_objfun(Results.params, Results.alpha_range, Results.dR2_Data, Results.dR2, Results.args.Weights, normfun);
+        f = normfun(Results.args.Normfun);
+        R2w = normfun('R2w');
         Norm_best = min(f, Norm_best);
-        fprintf(fout, '\n%s%8d%16.8f%16.8f', s.name(1:15), iter, f, Norm_best);
+        R2w_best = max(R2w, R2w_best);
+        fprintf(fout, '\n%s%8d%16.8f%16.8f%16.8f%16.8f', s.name(1:15), iter, f, Norm_best, R2w, R2w_best);
         iter = iter + 1;
     catch me
         warning(me.message);
     end
 end
 fclose(fout);
-clear fout iter Results f
+clear fout iter Results f R2w
 
 % Save resulting workspace
 if ~isempty(Geom)

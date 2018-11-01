@@ -137,11 +137,12 @@ if prnt
     G.ShowBVFResults
 end
 
-G.Rmajor = r0_CurrentBest;
+Rmajor = r0_CurrentBest;
+G.Rmajor = Rmajor;
 G.aBVF = BV_CurrentBest/prod(G.GridSize);
 G.p0 = p0_CurrentBest;
 
-G.RmajorFun = @(varargin) G.Rmajor*ones(varargin{:});
-G.r0 = G.RmajorFun(1,G.Nmajor);
+G.RmajorFun = @(varargin) Rmajor .* ones(varargin{:});
+G.r0 = G.RmajorFun(1, G.Nmajor);
 
 end

@@ -6,8 +6,8 @@ function [ G ] = SetRmajor(G, Rmajor)
 %   G = Uncompress(G);
 
 G.Rmajor = Rmajor;
-G.RmajorFun = @(varargin) Rmajor * ones(varargin{:});
-G.r0 = Rmajor * ones(1, G.Nmajor);
+G.RmajorFun = @(varargin) Rmajor .* ones(varargin{:});
+G.r0 = Rmajor .* ones(1, G.Nmajor);
 
 end
 

@@ -327,6 +327,15 @@ end
 parse(p, varargin{:});
 args = p.Results;
 
+% ---- Inconsistent inputs checking ---- %
+if strcmpi(args.type, 'SE') && mod(args.Nsteps, 2) ~= 0
+    % Spin echo scans must have an even number of time steps for pi/2-pulse
+    newNsteps = 2*floor(args.Nsteps/2) + 2;
+    warning('Nsteps is not an even number and scan type is ''SE''; increasing from %d to %d.', ...
+        args.Nsteps, newNsteps);
+    args.Nsteps = newNsteps;
+end
+
 % Mean-squared diffusion length in n-dimensions is
 %   d = sqrt(2*n*D*t)
 % If this distance (where t is the entire simulation time TE) is less than

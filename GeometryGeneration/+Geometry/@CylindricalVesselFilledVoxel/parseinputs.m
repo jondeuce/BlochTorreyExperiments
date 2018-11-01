@@ -135,10 +135,12 @@ switch upper(G.opts.MajorVesselMode)
         error('Unknown option "MajorVesselMode = %s"', G.opts.MajorVesselMode)
 end
 
-G.SubVoxSize  = mean(G.VoxelSize./G.GridSize);
-G.RminorFun  = @(varargin) G.Rminor_mu + G.Rminor_sig .* randn(varargin{:});
+% unpack so that RminorFun doesn't close over G
+[Rminor_mu, Rminor_sig] = deal(G.Rminor_mu, G.Rminor_sig);
+G.RminorFun  = @(varargin) Rminor_mu + Rminor_sig .* randn(varargin{:});
 
 % Calculate blood volumes
+G.SubVoxSize  = mean(G.VoxelSize./G.GridSize);
 Total_Volume   = prod(G.VoxelSize); % total volume of voxel [um^3]
 Total_BloodVol = G.Targets.BVF * Total_Volume; % total blood volume (main and minor vessels)
 Minor_BloodVol = G.Targets.iRBVF .* Total_BloodVol; % blood volume for minor vessels
@@ -149,7 +151,7 @@ Major_BloodVol = Total_BloodVol - Minor_BloodVol; % blood volume for major vesse
 Minor_Area = pi * ( G.Rminor_mu.^2 + G.Rminor_sig.^2 );
 
 % Minor Volume ~ N*Area*Height (underestimated)
-VoxHeight = G.VoxelSize(3);
+% VoxHeight = G.VoxelSize(3);
 % NumMinorVesselsGuess = round( Minor_BloodVol ./ (VoxHeight * Minor_Area) );
 
 % ----------------- %
@@ -219,7 +221,8 @@ G.InitGuesses = struct( ...
 
 [G.P,G.Vx,G.Vy,G.Vz] = deal(zeros(3,G.InitGuesses.N));
 
-G.RmajorFun = @(varargin) G.InitGuesses.Rmajor * ones(varargin{:});
+Rmajor = G.InitGuesses.Rmajor; % Unpack so RmajorFun doesn't close over G
+G.RmajorFun = @(varargin) Rmajor .* ones(varargin{:});
 G.R = G.RmajorFun(1,G.InitGuesses.N);
 
 G.MinorRadiusFactor = sqrt(G.MinorDilation);
@@ -341,9 +344,10 @@ G.GridSize    = SimSettings.GridSize;
 G.Nmajor      = SimSettings.NumMajorVessels;
 G.seed        = rng;
 
-G.Rminor_mu  = SimSettings.R_Minor_mu;
-G.Rminor_sig = SimSettings.R_Minor_sig;
-G.RminorFun  = @(varargin) G.Rminor_mu + G.Rminor_sig .* randn(varargin{:});
+[Rminor_mu, Rminor_sig] = deal(SimSettings.R_Minor_mu, SimSettings.R_Minor_sig);
+G.Rminor_mu  = Rminor_mu;
+G.Rminor_sig = Rminor_sig;
+G.RminorFun  = @(varargin) Rminor_mu + Rminor_sig .* randn(varargin{:});
 
 %==============================================================
 % Goal BVF, etc.
@@ -367,8 +371,9 @@ G.InitGuesses = struct( ...
 
 [G.P,G.Vx,G.Vy,G.Vz] = deal(zeros(3,G.InitGuesses.N));
 
-G.RmajorFun = @(varargin) G.InitGuesses.Rmajor * ones(varargin{:});
-G.R = G.RmajorFun(1,G.InitGuesses.N);
+Rmajor = G.InitGuesses.Rmajor; % unpack so that RmajorFun doesn't close over G
+G.RmajorFun = @(varargin) Rmajor * ones(varargin{:});
+G.R = G.RmajorFun(1, G.InitGuesses.N);
 
 end
 
