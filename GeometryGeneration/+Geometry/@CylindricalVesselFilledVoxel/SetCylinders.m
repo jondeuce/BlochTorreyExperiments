@@ -39,14 +39,14 @@ G.aRBVF = G.aBVF/G.BVF;
 % Add arteries
 %==========================================================================
 
-t_AddArteries = tic;
+t_SetArteries = tic;
 
 G.NumMajorArteries = NumMajorArteries;
 G.MinorArterialFrac = MinorArterialFrac;
-G = AddArteries(G);
+G = SetArteries(G);
 
-t_AddArteries = toc(t_AddArteries);
-if G.Verbose; display_toc_time( t_AddArteries, 'adding arteries', 0 ); end
+t_SetArteries = toc(t_SetArteries);
+if G.Verbose; display_toc_time( t_SetArteries, 'setting arteries', 0 ); end
 
 %==========================================================================
 % Show Resulting Accuracy Info

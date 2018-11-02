@@ -3,7 +3,8 @@ function [ G ] = Uncompress( G )
 
 for ii = 1:numel(G)
     G(ii) = CalculateVasculatureMap(G(ii));
-    G(ii) = AddArteries(G(ii), G(ii).MajorArteries, G(ii).MinorArteries);
+    G(ii) = SetArteries(G(ii), G(ii).MajorArteries, G(ii).MinorArteries);
+    G(ii) = SetVirchowRobinSpace(G(ii), G(ii).VRSRelativeRad );
 end
 
 end

@@ -57,13 +57,16 @@ addParameter(p,'iBVF',  []);
 addParameter(p,'aBVF',  []);
 
 addParameter(p,'Rmajor',[]);
-
+addParameter(p,'VRSRelativeRad',[]);
+        
 %-------------------------------------------------------------------------%
 % Optional parameters
 %-------------------------------------------------------------------------%
 % Allow intersecting cylinders or not
 addParameter(p,'AllowMinorSelfIntersect',true,@(x)VA(x,{'logical'},{'scalar'}));
-addParameter(p,'AllowMinorMajorIntersect',false,@(x)VA(x,{'logical'},{'scalar'}));
+addParameter(p,'AllowMinorMajorIntersect',true,@(x)VA(x,{'logical'},{'scalar'}));
+addParameter(p,'ImproveMajorBVF',true,@(x)VA(x,{'logical'},{'scalar'}));
+addParameter(p,'ImproveMinorBVF',true,@(x)VA(x,{'logical'},{'scalar'}));
 
 % Minor vessel orientation
 expectedinterptype = {'RANDOM','ALIGNED','PERIODIC'};
@@ -79,8 +82,9 @@ end
 
 function G = setParsedArgs(G,p)
 
-NamedArgs = {'VoxelSize','VoxelCenter','GridSize','Nmajor','MajorAngle','NumMajorArteries', ...
-    'MinorArterialFrac','MinorDilation','Rmajor','Rminor_mu','Rminor_sig','Verbose','seed'};
+NamedArgs = {'VoxelSize','VoxelCenter','GridSize','Nmajor','MajorAngle',...
+    'NumMajorArteries','MinorArterialFrac','MinorDilation','Rmajor',...
+    'Rminor_mu','Rminor_sig','VRSRelativeRad','Verbose','seed'};
 TargetArgs = {'BVF','iRBVF','aRBVF','iBVF','aBVF'};
 
 for f = NamedArgs; G.(f{1}) = p.Results.(f{1}); end
@@ -126,13 +130,17 @@ switch upper(G.opts.MajorVesselMode)
     case 'ABVF_FIXED'
         [G] = CalculateBVFValues(G);
     case 'RMAJOR_FIXED'
-        
+        % do nothing
+    otherwise
+        error('Unknown option "MajorVesselMode = %s"', G.opts.MajorVesselMode)
 end
 
-G.SubVoxSize  = mean(G.VoxelSize./G.GridSize);
-G.RminorFun  = @(varargin) G.Rminor_mu + G.Rminor_sig .* randn(varargin{:});
+% unpack so that RminorFun doesn't close over G
+[Rminor_mu, Rminor_sig] = deal(G.Rminor_mu, G.Rminor_sig);
+G.RminorFun  = @(varargin) Rminor_mu + Rminor_sig .* randn(varargin{:});
 
 % Calculate blood volumes
+G.SubVoxSize  = mean(G.VoxelSize./G.GridSize);
 Total_Volume   = prod(G.VoxelSize); % total volume of voxel [um^3]
 Total_BloodVol = G.Targets.BVF * Total_Volume; % total blood volume (main and minor vessels)
 Minor_BloodVol = G.Targets.iRBVF .* Total_BloodVol; % blood volume for minor vessels
@@ -143,23 +151,58 @@ Major_BloodVol = Total_BloodVol - Minor_BloodVol; % blood volume for major vesse
 Minor_Area = pi * ( G.Rminor_mu.^2 + G.Rminor_sig.^2 );
 
 % Minor Volume ~ N*Area*Height (underestimated)
-VoxHeight = G.VoxelSize(3);
-NumMinorVesselsGuess = round( Minor_BloodVol ./ (VoxHeight * Minor_Area) );
+% VoxHeight = G.VoxelSize(3);
+% NumMinorVesselsGuess = round( Minor_BloodVol ./ (VoxHeight * Minor_Area) );
 
-% Empirical model for average cylinder length:
-%     see: GeometryGeneration/old/test/AvgLineLength.m
-[xc,yc,zc] = deal(1, 2/3, 0);
-[xr,yr,zr] = deal(1, 4/3, 1/2);
-avgCylLengthFun = @(relX, relY) zc + zr * sqrt(1 - min((relX-xc).^2 / xr^2 + (relY-yc).^2 / yr^2, 1));
+% ----------------- %
+% ------ OLD ------ %
 
-% avg length should be greater than the smallest dimension; if not,
-% something is likely wrong with the empirical estimate, so should default
-% to the smallLength
-sVSize = sort(G.VoxelSize);
-smallLength = min(G.VoxelSize);
-avgCylLength = norm(G.VoxelSize) * avgCylLengthFun(sVSize(1)/sVSize(3), sVSize(2)/sVSize(3));
-avgCylLength = max(avgCylLength, smallLength);
+% % Empirical model for average cylinder length:
+% %     see: GeometryGeneration/old/test/AvgLineLength.m
+% [xc,yc,zc] = deal(1, 2/3, 0);
+% [xr,yr,zr] = deal(1, 4/3, 1/2);
+% avgCylLengthFun = @(relX, relY) zc + zr * sqrt(1 - min((relX-xc).^2 / xr^2 + (relY-yc).^2 / yr^2, 1));
+% 
+% % avg length should be greater than the smallest dimension; if not,
+% % something is likely wrong with the empirical estimate, so should default
+% % to the smallLength
+% sVSize = sort(G.VoxelSize);
+% smallLength = min(G.VoxelSize);
+% avgCylLength = norm(G.VoxelSize) * avgCylLengthFun(sVSize(1)/sVSize(3), sVSize(2)/sVSize(3));
+% avgCylLength = max(avgCylLength, smallLength);
 
+% % If you model two random vectors X = (x,y,z) and X0 = (x0,y0,z0) as being
+% % drawn uniformly randomly in a domain [0,a]x[0,b]x[0,c], then the
+% % expectation E(|X-X0|^2) = (a^2+b^2+c^2)/6.
+% % An (over-)estimation of the average length of each cylinder, then, is
+% % sqrt((a^2+b^2+c^2)/6). Simulating this empirically, the over-estimation
+% % is never more than ~18%, and never less than ~6%. Since we would over-
+% % estimating the number of cylinders, the expected length is reduced by 25%
+% avgCylLength = norm(G.VoxelSize)/6; % * 0.75;
+
+% f = @(X) sqrt(((X(:,1)-X(:,2)).^2 + X(:,1).^2 + X(:,2).^2)) + ...
+%          sqrt(((X(:,3)-X(:,4)).^2 + X(:,3).^2 + X(:,4).^2)) + ...
+%          sqrt(((X(:,5)-X(:,6)).^2 + X(:,5).^2 + X(:,6).^2));
+% a = G.VoxelSize(1); b = G.VoxelSize(2); c = G.VoxelSize(3); 
+% bd = [0 a; 0 a; 0 b; 0 b; 0 c; 0 c];
+% I = integralN_mc(f, bd, 'k', 1, 'reltol', 1e-12, 'abstol', 1e-8);
+% avgCylLength = I/(3*(a*b*c)^2);
+
+% ---- END OLD ---- %
+% ----------------- %
+
+% Just simulate it! Generate N random cylinder intersections, take the
+% average, and use this for the initial guess.
+N = 100000;
+% a = G.VoxelSize(1); b = G.VoxelSize(2); c = G.VoxelSize(3); 
+% Origins = [a*rand(1,N); b*rand(1,N); c*rand(1,N)];
+% Directions = randn(3,N);
+% Directions = bsxfun(@rdivide, Directions, sqrt(sum(Directions.^2, 1)));
+[Origins, Directions, ~] = sampleRandomCylinders( G.VoxelSize, G.VoxelCenter, [], N );
+[tmin, tmax] = rayBoxIntersection( Origins, Directions, G.VoxelSize, G.VoxelCenter );
+avgCylLength = mean(tmax - tmin);
+
+% Expected number of simply minor blood vol divided by expected vessel volume
 NumMinorVesselsGuess = round( Minor_BloodVol ./ (avgCylLength * Minor_Area) );
 
 % Major blood vessel diameters: N*pi*r^2*len = V
@@ -178,7 +221,8 @@ G.InitGuesses = struct( ...
 
 [G.P,G.Vx,G.Vy,G.Vz] = deal(zeros(3,G.InitGuesses.N));
 
-G.RmajorFun = @(varargin) G.InitGuesses.Rmajor * ones(varargin{:});
+Rmajor = G.InitGuesses.Rmajor; % Unpack so RmajorFun doesn't close over G
+G.RmajorFun = @(varargin) Rmajor .* ones(varargin{:});
 G.R = G.RmajorFun(1,G.InitGuesses.N);
 
 G.MinorRadiusFactor = sqrt(G.MinorDilation);
@@ -300,9 +344,10 @@ G.GridSize    = SimSettings.GridSize;
 G.Nmajor      = SimSettings.NumMajorVessels;
 G.seed        = rng;
 
-G.Rminor_mu  = SimSettings.R_Minor_mu;
-G.Rminor_sig = SimSettings.R_Minor_sig;
-G.RminorFun  = @(varargin) G.Rminor_mu + G.Rminor_sig .* randn(varargin{:});
+[Rminor_mu, Rminor_sig] = deal(SimSettings.R_Minor_mu, SimSettings.R_Minor_sig);
+G.Rminor_mu  = Rminor_mu;
+G.Rminor_sig = Rminor_sig;
+G.RminorFun  = @(varargin) Rminor_mu + Rminor_sig .* randn(varargin{:});
 
 %==============================================================
 % Goal BVF, etc.
@@ -326,8 +371,9 @@ G.InitGuesses = struct( ...
 
 [G.P,G.Vx,G.Vy,G.Vz] = deal(zeros(3,G.InitGuesses.N));
 
-G.RmajorFun = @(varargin) G.InitGuesses.Rmajor * ones(varargin{:});
-G.R = G.RmajorFun(1,G.InitGuesses.N);
+Rmajor = G.InitGuesses.Rmajor; % unpack so that RmajorFun doesn't close over G
+G.RmajorFun = @(varargin) Rmajor * ones(varargin{:});
+G.R = G.RmajorFun(1, G.InitGuesses.N);
 
 end
 

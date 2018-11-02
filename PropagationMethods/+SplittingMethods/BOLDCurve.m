@@ -12,8 +12,20 @@ switch upper(stepper)
         kernelstepper = SplittingMethods.BTSplitStepper(...
             dt, Dcoeff, Gamma, dGamma, Geom.GridSize, Geom.VoxelSize, ...
             'NReps', 1, 'Order', 2);
+        getstepper = @(gamma) precomputeExpDecays(kernelstepper, gamma);
+    case 'EXPMVSTEPPER'
+        getstepper = @(gamma) precompute(...
+            ExpmvStepper(dt, ...
+                setbuffer( ...
+                    BlochTorreyOp(gamma, Dcoeff, Geom.GridSize, Geom.VoxelSize), ...
+                    BlochTorreyOp.DiagState ...
+                    ), ...
+                Geom.GridSize, Geom.VoxelSize, ...
+                'type', 'GRE', 'prec', 'half', ...%1e-6, ...
+                'prnt', true, 'forcesparse', false, 'shift', true, ...
+                'bal', false, 'full_term', false), ...
+            gamma);
 end
-getstepper = @(gamma) precomputeExpDecays(kernelstepper, gamma);
 
 for ii = 1:NumAngles
     
@@ -57,6 +69,18 @@ ScaleSum = prod(V.VoxelSize) / prod(V.GridSize);
 TE = EchoTimes(:).';
 dt = V.TimeStep;
 
+is_approx_eq = @(x,y) max(abs(x(:)-y(:))) <= 5*eps(max(max(abs(x(:))), max(abs(y(:)))));
+switch upper(type)
+    case 'GRE'
+        if ~is_approx_eq(dt*round(TE/dt), TE)
+            error('Each echotime must be disible by the timestep for GRE');
+        end
+    case 'SE'
+        if ~is_approx_eq(2*dt*round(TE/(2*dt)), TE)
+            error('Each echotime must be disible by twice the timestep for SE');
+        end
+end
+
 addStartPoint = (TE(1)==0.0); % Can add back TE = 0.0 solution later
 TE = TE(1+addStartPoint:end); % Don't simulate TE = 0.0
 NumEchoTimes = numel( TE );
@@ -69,15 +93,14 @@ SE_FirstHalfSteps  = [SE_SecondHalfSteps(1), diff(SE_SecondHalfSteps)];
 Time0 = 0;
 M0 = double(1i);
 Signal0 = M0 * prod(V.VoxelSize);
-Signal  = cell(NumEchoTimes,1);
+Signal = cell(NumEchoTimes,1);
 for ll = 1:NumEchoTimes; Signal{ll} = [Time0, Signal0]; end
 
 % ScaleSum converts from units of voxels^3 to um^3
-% IntegrateMagnetization = @(M) ScaleSum * sum(M(:));
-IntegrateMagnetization = @(M) ScaleSum * sum_pw(M);
+IntegrateMagnetization = @(M) ScaleSum * sum(sum(sum(M,1),2),3);
 
 % Initialize current magnetization
-Mcurr  =  M0 * ones( V.GridSize );
+Mcurr = M0 * ones( V.GridSize );
 
 for kk = 1:NumEchoTimes
     
@@ -85,9 +108,10 @@ for kk = 1:NumEchoTimes
 
     switch upper(type)
         case 'GRE'
+            
             for jj = 1:GRE_Steps(kk)
                 
-                Mcurr = step(V,Mcurr);
+                [Mcurr,~,~,V] = step(V, Mcurr);
                 for ll = kk:NumEchoTimes
                     Signal{ll} = [Signal{ll}; [Signal{ll}(end,1)+dt, IntegrateMagnetization(Mcurr)]];
                 end
@@ -95,9 +119,10 @@ for kk = 1:NumEchoTimes
             end
             
         case 'SE'
+            
             for jj = 1:SE_FirstHalfSteps(kk)
                 
-                Mcurr = step(V,Mcurr);
+                [Mcurr,~,~,V] = step(V, Mcurr);
                 for ll = kk:NumEchoTimes
                     Signal{ll} = [Signal{ll}; [Signal{ll}(end,1)+dt, IntegrateMagnetization(Mcurr)]];
                 end
@@ -109,7 +134,7 @@ for kk = 1:NumEchoTimes
             
             for jj = 1:SE_SecondHalfSteps(kk)
                 
-                M = step(V,M);
+                [M,~,~,V] = step(V, M);
                 Signal{kk}  =  [Signal{kk}; [Signal{kk}(end,1)+dt, IntegrateMagnetization(M)]];
                 
             end
@@ -121,7 +146,8 @@ for kk = 1:NumEchoTimes
 end
 
 if addStartPoint
-    Signal = [Signal{1}(1,:); Signal]; %Add first timepoint back onto front
+    % Add initial signal to the front of subsequent simulated signals
+    Signal = [Signal{1}(1,:); Signal];
 end
 
 end

@@ -1,5 +1,5 @@
-function [y,dy,t] = step(V, x, dx, t0, varargin)
-%STEP [y,dy,t] = step(V, x, dx, t0, varargin)
+function [y,dy,t,V] = step(V, x, dx, t0, varargin)
+%STEP [y,dy,t,V] = step(V, x, dx, t0, varargin)
 %{
 [y,dy,t] = step(V, x, dx, t0, ... % positional args (V and x required)
 'Verbose', false, 'CompDerivs', true, ... % optional positionless args
@@ -13,8 +13,7 @@ end
 if nargin < 3
     dx = {};
 elseif isempty(dx)
-    % convert [] --> {}
-    if ~iscell(dx); dx = {}; end
+    if ~iscell(dx); dx = {}; end % convert [] --> {}
 elseif ~iscell(dx)
     dx = {dx}; % wrap in cell
 end

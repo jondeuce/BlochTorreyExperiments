@@ -1,4 +1,4 @@
-%perforientation_lsqcurvefit
+%PERFORIENTATION_FMINCON
 
 %Save a copy of this script in the directory of the caller
 backupscript  = sprintf('%s__%s.m',datestr(now,30),mfilename);
@@ -39,9 +39,14 @@ alpha_range = 2.5:5.0:87.5;
 % ub  = [ 8.000,          3.5000/100,         1.5000/100 ];
 
 % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
-lb  = [ 2.000,          0.3500/100,         0.3500/100 ];
-CA0 =   4.520;  iBVF0 = 1.4200/100; aBVF0 = 0.6840/100;
-ub  = [ 9.000,          2.5000/100,         2.5000/100 ];
+lb  = [ 2.0000,          0.3500/100,         0.3500/100 ];
+CA0 =   4.3226;  iBVF0 = 1.2279/100; aBVF0 = 0.7951/100;
+ub  = [ 9.0000,          2.5000/100,         2.5000/100 ];
+
+% % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
+% lb  = [ 3.5000,          1.0000/100,         0.6000/100 ];
+% CA0 =   4.3226;  iBVF0 = 1.2279/100; aBVF0 = 0.7951/100;
+% ub  = [ 5.5000,          1.5000/100,         1.1000/100 ];
 
 x0 = [CA0, iBVF0, aBVF0];
 
@@ -64,7 +69,7 @@ Weights = BinCounts / sum(BinCounts(:));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 7;
+Nmajor = 3;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
@@ -149,19 +154,15 @@ end
 
 % =========================== OPTIMIZATION ============================== %
 
-% Call lsqcurvefit or lsqnonlin (essentially the same function; lsqcurvefit
-% is a special case of lsqnonlin, but it doesn't accept weight vectors).
-% Also, lsqnonlin functions must output the residual, where lsqcurvefit is
-% the simulated function values themselves.
-OptFunction = 'lsqnonlin';
-% OptFunction = 'lsqcurvefit';
+% Norm function type for the weighted residual (see PERFORIENTATION_OBJFUN)
+Normfun = 'AICc';
 
 % Limiting factor will always be MaxIter or MaxFunEvals, as due to
 % simulation randomness, TolX/TolFun tend to not be reliable measures of 
 % goodness of fit
-LsqOpts = optimoptions(OptFunction, ...
-    'MaxFunEvals', 500, ...
-    'Algorithm', 'trust-region-reflective', ...
+OptOpts = optimoptions('fmincon', ...
+    'MaxFunEvals', 50, ...
+    'Algorithm', 'sqp', ... % trust-region-reflective', ...
     'MaxIter', 15, ...
     'TolX', 1e-12, ...
     'TolFun', 1e-12, ...
@@ -174,63 +175,89 @@ LsqOpts = optimoptions(OptFunction, ...
 if ~isempty(DiaryFilename); diary(DiaryFilename); end
 
 % Simulation function handle
-optfun = @(x,xdata) perforientation_fun(x, xdata, dR2_Data, ...
+objfun = @(x) perforientation_objfun(x, alpha_range, dR2_Data, [], Weights, Normfun, ...
     TE, Nsteps, type, B0, D_Tissue, D_Blood, D_VRS, ...
     'OptVariables', OptVariables, ...
     'Navgs', Navgs, 'StepperArgs', StepperArgs, ...
-    'Weights', Weights, 'Normfun', 'L2w', ...
+    'Weights', Weights, 'Normfun', Normfun, ...
     'PlotFigs', PlotFigs, 'SaveFigs', SaveFigs, 'CloseFigs', CloseFigs, 'FigTypes', FigTypes, ...
     'SaveResults', SaveResults, 'DiaryFilename', DiaryFilename, ...
-    'GeomArgs', GeomArgs, 'Geom', Geom);
+    'GeomArgs', GeomArgs, 'Geom', Geom, 'RotateGeom', RotateGeom);
 
-% Weighted residual function handle
-resfun = @(x) sqrt(Weights) .* (optfun(x, alpha_range) - dR2_Data);
-
-% Call optimization routine
-switch upper(OptFunction)
-    case 'LSQCURVEFIT'
-        [x,resnorm,residual,exitflag,output,lambda,jacobian] = ...
-            lsqcurvefit(optfun, x0, alpha_range, dR2_Data, lb, ub, LsqOpts);
-    case 'LSQNONLIN'
-        [x,resnorm,residual,exitflag,output,lambda,jacobian] = ...
-            lsqnonlin(resfun, x0, lb, ub, LsqOpts);
-    otherwise
-        error('OptFunction must be ''lsqcurvefit'' or ''lsqnonlin''');
-end
+% Call `fmincon` optimization routine
+[x, fval, exitflag, output, lambda, grad, hessian] = ...
+    fmincon(objfun, x0, [], [], [], [], lb, ub, [], OptOpts);
 
 Params0 = struct('OptVariables', OptVariables,...
     'CA0', CA0, 'iBVF0', iBVF0, 'aBVF0', aBVF0,...
     'x0', x0, 'lb', lb, 'ub', ub);
 
-% Go back to original directory
-% cd(currentpath);
-
 if ~isempty(DiaryFilename); diary(DiaryFilename); diary('off'); end
 
 % =========== Generate text file of best simulation results ============= %
 
-fout = fopen([datestr(now,30),'__','LsqfitIterationsOutput.txt'], 'w');
+fout = fopen([datestr(now,30),'__','FminconIterationsOutput.txt'], 'w');
 iter = 1;
-L2w_best = Inf;
-fprintf(fout, '%s', 'Timestamp       f-count            f(x)       Best f(x)');
+Norm_best = Inf;
+R2w_best = -Inf;
+fprintf(fout, '%s', 'Timestamp       f-count            f(x)       Best f(x)             R2w        Best R2w');
 for s = dir('*.mat')'
     try
         Results = load(s.name);
         Results = Results.Results;
-        f = perforientation_objfun(Results.params, Results.alpha_range, Results.dR2_Data, Results.dR2, Results.args.Weights);
-        L2w_best = min(f, L2w_best);
-        fprintf(fout, '\n%s%8d%16.8f%16.8f', s.name(1:15), iter, f, L2w_best);
+        normfun = @(normfun) perforientation_objfun(Results.params, Results.alpha_range, Results.dR2_Data, Results.dR2, Results.args.Weights, normfun);
+        f = normfun(Results.args.Normfun);
+        R2w = normfun('R2w');
+        Norm_best = min(f, Norm_best);
+        R2w_best = max(R2w, R2w_best);
+        fprintf(fout, '\n%s%8d%16.8f%16.8f%16.8f%16.8f', s.name(1:15), iter, f, Norm_best, R2w, R2w_best);
         iter = iter + 1;
     catch me
         warning(me.message);
     end
 end
 fclose(fout);
-clear fout iter Results f
+clear fout iter Results f R2w
 
 % Save resulting workspace
 if ~isempty(Geom)
+    % Clear anonymous functions which close over `Geom` for saving
+    clear objfun getRmajor0 getSpaceFactor0
+    
+    % Compress `Geom` for saving
     Geom = Compress(Geom);
-    clear optfun resfun getRmajor0 getSpaceFactor0
 end
-save([datestr(now,30),'__','LsqcurvefitResults'], '-v7');
+save([datestr(now,30),'__','FminconResults'], '-v7');
+
+
+% ====== Code for regenerating figures/FminconIterationsOutput file ===== %
+
+% fout = fopen([datestr(now,30),'__','FminconIterationsOutput.txt'], 'w');
+% iter = 1;
+% Norm_best = Inf;
+% fprintf(fout, '%s', 'Timestamp       f-count            f(x)       Best f(x)');
+% 
+% for s = dir('*.mat')'
+%     try
+%         % Load results struct
+%         Results = load(s.name);
+%         Results = Results.Results;
+%         
+%         % % Set proper weights/normfun
+%         % [~, ~, ~, ~, ~, ~, Results.args.Weights] = get_GRE_data(Results.alpha_range);
+%         % Results.args.Weights = Results.args.Weights/sum(Results.args.Weights(:));
+%         % Results.args.Normfun = 'L2w';
+%         % save(s.name, 'Results');
+%         
+%         % replot and save fig
+%         [ fig, ~ ] = perforientation_plot( Results.dR2, Results.dR2_all, Results.Geometries, Results.args );
+%         
+%         % recreate norm values file
+%         f = perforientation_objfun(Results.params, Results.alpha_range, Results.dR2_Data, Results.dR2, Results.args.Weights, Results.args.Normfun);
+%         Norm_best = min(f, Norm_best);
+%         fprintf(fout, '\n%s%8d%16.8f%16.8f', s.name(1:15), iter, f, Norm_best);
+%         iter = iter + 1;
+%     catch me
+%         warning(me.message);
+%     end
+% end

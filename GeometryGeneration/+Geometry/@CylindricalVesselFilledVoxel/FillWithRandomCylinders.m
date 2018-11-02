@@ -21,7 +21,7 @@ if G.Verbose; display_toc_time( t_InitialGuess, 'major/minor cylinders initial g
 %==========================================================================
 
 t_ImproveMajor = tic;
-G = ImproveMajorBVF(G);
+if G.opts.ImproveMajorBVF; G = ImproveMajorBVF(G); end
 t_ImproveMajor = toc(t_ImproveMajor);
 if G.Verbose; display_toc_time( t_ImproveMajor, 'impoving major cylinders BVF', 0 ); end
 
@@ -30,7 +30,7 @@ if G.Verbose; display_toc_time( t_ImproveMajor, 'impoving major cylinders BVF', 
 %==========================================================================
 
 t_ImproveMinor = tic;
-G = ImproveMinorBVF(G);
+if G.opts.ImproveMinorBVF; G = ImproveMinorBVF(G); end
 t_ImproveMinor = toc(t_ImproveMinor);
 if G.Verbose; display_toc_time( t_ImproveMinor, 'impoving minor cylinders BVF', 0 ); end
 
@@ -44,10 +44,19 @@ G = CalculateVasculatureMap( G );
 % Add arteries
 %==========================================================================
 
-t_AddArteries = tic;
-G = AddArteries(G);
-t_AddArteries = toc(t_AddArteries);
-if G.Verbose; display_toc_time( t_AddArteries, 'adding arteries', 0 ); end
+t_SetArteries = tic;
+G = SetArteries(G);
+t_SetArteries = toc(t_SetArteries);
+if G.Verbose; display_toc_time( t_SetArteries, 'setting arteries', 0 ); end
+
+%==========================================================================
+% Add Virchow-Robin space
+%==========================================================================
+
+t_VirchowRobin = tic;
+G = SetVirchowRobinSpace(G);
+t_VirchowRobin = toc(t_VirchowRobin);
+if G.Verbose; display_toc_time( t_VirchowRobin, 'setting VRS', 0 ); end
 
 %==========================================================================
 % Show Resulting Accuracy Info

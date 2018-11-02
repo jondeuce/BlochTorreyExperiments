@@ -148,7 +148,6 @@ function distmesh2d(
         count += 1
 
         # 3. Retriangulation by the Delaunay algorithm
-        # try
         if count == 1 || (√maximum(norm2.(p.-pold)) > h0 * TTOL)               # Any large movement?
             p = threshunique(p; rtol = √eps(T), atol = eps(T))
             isempty(p) && (return restart())
@@ -187,13 +186,13 @@ function distmesh2d(
             if any(b)
                 ix = setdiff(reinterpret(Int, bars[b]), 1:nfix)
                 deleteat!(p, unique!(sort!(ix)))
-                pold = V[InfV]
+                pold = V[InfV]                               # `Inf` so that retriangulation is forced
                 continue
             end
         end
 
         F = max.(L0 .- L, zero(T))                           # Bar forces (scalars)
-        Fvec = F./L .* barvec                                # Bar forces (x,y components)
+        Fvec = F ./ L .* barvec                              # Bar forces (x,y components)
         Ftot = zeros(V, length(p))
         @inbounds for (i, b) in enumerate(bars)
             Ftot[b[1]] += Fvec[i]
@@ -271,16 +270,16 @@ end
 # DelaunayTessellation2D iteration protocol
 # ---------------------------------------------------------------------------- #
 
-function Base.iterate(tess::DelaunayTessellation2D, ix = 2)
-    @inbounds while isexternal(tess._trigs[ix]) && ix <= tess._last_trig_index
-        ix += 1
-    end
-    @inbounds if ix > tess._last_trig_index
-        return nothing
-    else
-        return (tess._trigs[ix], ix + 1)
-    end
-end
+# function Base.iterate(tess::DelaunayTessellation2D, ix = 2)
+#     @inbounds while isexternal(tess._trigs[ix]) && ix <= tess._last_trig_index
+#         ix += 1
+#     end
+#     @inbounds if ix > tess._last_trig_index
+#         return nothing
+#     else
+#         return (tess._trigs[ix], ix + 1)
+#     end
+# end
 
 function Base.length(tess::DelaunayTessellation2D)
     len = 0
