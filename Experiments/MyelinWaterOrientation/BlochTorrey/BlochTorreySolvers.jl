@@ -455,11 +455,11 @@ function initialparams(modeltype::ThreePoolCplxToCplx, ts::AbstractVector{T}, S:
     A_my, A_ax, A_ex = A0/10, 6*A0/10, 3*A0/10 # Relative magnitude initial guesses
     T2_my, T2_ax, T2_ex = T(10e-3), T(64e-3), T(48e-3) # T2* initial guesses
     Δf_bg_my, Δf_bg_ax, Δf_bg_ex = Δf, Δf, Δf # zero(T), zero(T), zero(T) # In continuous setting, initialize to zero #TODO (?)
-    𝛷₀ = ϕ1 # Initial phase (negative phase convention: -(-ϕ1) = ϕ1 from phase flip between t0 and t1)
+    θ = ϕ1 # Initial phase (negative phase convention: -(-ϕ1) = ϕ1 from phase flip between t0 and t1)
 
-    p  = T[A_my, A_ax, A_ex, T2_my,  T2_ax,  T2_ex, Δf_bg_my,  Δf_bg_ax,  Δf_bg_ex,  𝛷₀    ]
-    lb = T[0.0,  0.0,  0.0,   3e-3,  25e-3,  25e-3, Δf - 75.0, Δf - 25.0, Δf - 25.0, 𝛷₀ - π]
-    ub = T[2*A0, 2*A0, 2*A0, 25e-3, 150e-3, 150e-3, Δf + 75.0, Δf + 25.0, Δf + 25.0, 𝛷₀ + π]
+    p  = T[A_my, A_ax, A_ex, T2_my,  T2_ax,  T2_ex, Δf_bg_my,  Δf_bg_ax,  Δf_bg_ex,  θ    ]
+    lb = T[0.0,  0.0,  0.0,   3e-3,  25e-3,  25e-3, Δf - 75.0, Δf - 25.0, Δf - 25.0, θ - π]
+    ub = T[2*A0, 2*A0, 2*A0, 25e-3, 150e-3, 150e-3, Δf + 75.0, Δf + 25.0, Δf + 25.0, θ + π]
 
     p[4:6] = inv.(p[4:6]) # fit for R2 instead of T2
     lb[4:6], ub[4:6] = inv.(ub[4:6]), inv.(lb[4:6]) # swap bounds
@@ -468,13 +468,13 @@ function initialparams(modeltype::ThreePoolCplxToCplx, ts::AbstractVector{T}, S:
 end
 
 function mwimodel(modeltype::ThreePoolCplxToCplx, t::AbstractVector, p::Vector)
-    # A_my, A_ax, A_ex, T2_my, T2_ax, T2_ex, Δf_bg_my, Δf_bg_ax, Δf_bg_ex, 𝛷₀ = p
+    # A_my, A_ax, A_ex, T2_my, T2_ax, T2_ex, Δf_bg_my, Δf_bg_ax, Δf_bg_ex, θ = p
     # Γ_my, Γ_ax, Γ_ex = complex(1/T2_my, 2*pi*Δf_bg_my), complex(1/T2_ax, 2*pi*Δf_bg_ax), complex(1/T2_ex, 2*pi*Δf_bg_ex)
 
-    A_my, A_ax, A_ex, R2_my, R2_ax, R2_ex, Δf_bg_my, Δf_bg_ax, Δf_bg_ex, 𝛷₀ = p
+    A_my, A_ax, A_ex, R2_my, R2_ax, R2_ex, Δf_bg_my, Δf_bg_ax, Δf_bg_ex, θ = p
     Γ_my, Γ_ax, Γ_ex = complex(R2_my, 2π*Δf_bg_my), complex(R2_ax, 2π*Δf_bg_ax), complex(R2_ex, 2π*Δf_bg_ex)
 
-    S = @. (A_my * exp(-Γ_my * t) + A_ax * exp(-Γ_ax * t) + A_ex * exp(-Γ_ex * t)) * cis(-𝛷₀)
+    S = @. (A_my * exp(-Γ_my * t) + A_ax * exp(-Γ_ax * t) + A_ex * exp(-Γ_ex * t)) * cis(-θ)
     T = real(eltype(S)) # gives T s.t. eltype(S) <: Complex{T}
     S = copy(reinterpret(T, S)) # reinterpret as real array
     return S
