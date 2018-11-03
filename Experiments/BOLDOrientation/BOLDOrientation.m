@@ -28,10 +28,10 @@ Hct = 0.44; % Hematocrit = volume fraction of red blood cells
 
 %% BOLD Common Settings
 
-% type = 'SE';
-% dt = 2.5e-3;
-type = 'GRE';
+type = 'SE';
 dt = 2.5e-3;
+% type = 'GRE';
+% dt = 2.5e-3;
 
 % EchoTimes = 0:dt:120e-3; % Echotimes in seconds to simulate [s]
 % alpha_range = [0, 45, 90]; % degrees
@@ -42,69 +42,71 @@ B0 = -7.0; %[Tesla]
 % D_Tissue = 2000; %[um^2/s]
 % D_Blood = []; %[um^2/s]
 % D_VRS = 3037; %[um^2/s]
-D_Tissue = 3037; %[um^2/s]
-D_Blood = []; %[um^2/s]
-D_VRS = []; %[um^2/s]
+D_Tissue = 1000; %[um^2/s]
+D_Blood = 3037; %[um^2/s]
+D_VRS = 3037; %[um^2/s]
 
 %% Geometry Settings
-% % Results from SE perfusion orientation simulations
-% % NOTE: For calculating the BOLD curve, it is important to consider that
-% %       approximately 1/3 of the vasculature is arterial
-% iBVF = 1.1803/100;
-% aBVF = 1.3425/100;
-% BVF = iBVF + aBVF;
-% iRBVF = iBVF/BVF;
-% aRBVF = aBVF/BVF;
-% 
-% Nmajor = 4; % Number of major vessels (optimal number is from SE perf. orientation. sim)
-% MajorAngle = 0.0; % Major vessel angles compared to B0 [degrees]
-% NumMajorArteries = 1; % Number of major arteries
-% MinorArterialFrac = 1/3; % Fraction of minor vessels which are arteries
-% VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless]
-% 
-% Navgs = 1; % Number of geometries to simulate
-% VoxelSize = [2500,2500,2500]; % Typical isotropic voxel dimensions. [um]
-% GridSize = [512,512,512]; % Voxel size to ensure isotropic subvoxels
-% VoxelCenter = [0,0,0];
-% 
-% % Rminor_mu = 13.7;
-% % Rminor_sig = 2.1;
-% Rminor_mu = 7.0;
-% Rminor_sig = 0.5;
-% rng('default'); seed = rng; % for consistent geometries between sims.
+% Results from SE perfusion orientation simulations, N = 3
+% NOTE: For calculating the BOLD curve, it is important to consider that
+%       approximately 1/3 of the vasculature is arterial
+iBVF = 1.5775668712247/100;
+aBVF = 1.2390732542589/100;
 
-%% Mock Common/Geometry Settings (for testing)
-% type = 'SE';
-type = 'GRE';
-EchoTimes = (0:5:60)/1000; % Echotimes in seconds to simulate [s]
-% EchoTimes = [0:5:20, 30:30:60]/1000; % Echotimes in seconds to simulate [s]
-dt = 5.0e-3;
-alpha_range = [0, 45, 90];
+BVF = iBVF + aBVF;
+iRBVF = iBVF/BVF;
+aRBVF = aBVF/BVF;
 
-% Results from SE perfusion orientation simulations
-% NOTE: We use only 2/3 of the resulting values, as as only 2/3 of cerebral
-%       vasculature is venous and therefore contributes to the BOLD effect
-iBVF = (2/3) * 1.5/100;
-aBVF = (2/3) * 1.5/100;
-BVF  = iBVF + aBVF; iRBVF = iBVF/BVF; aRBVF = aBVF/BVF;
-
-Nmajor = 4; % Number of major vessels (optimal number is from SE perf. orientation. sim)
-Navgs = 1; % Number of geometries to simulate
+Nmajor = 3; % Number of major vessels (optimal number is from SE perf. orientation. sim)
 MajorAngle = 0.0; % Major vessel angles compared to B0 [degrees]
 NumMajorArteries = 1; % Number of major arteries
 MinorArterialFrac = 1/3; % Fraction of minor vessels which are arteries
 VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless]
 
+Navgs = 1; % Number of geometries to simulate
 VoxelSize = [2500,2500,2500]; % Typical isotropic voxel dimensions. [um]
-GridSize = [128,128,128]; % Voxel size to ensure isotropic subvoxels
-% GridSize = [256,256,256]; % Voxel size to ensure isotropic subvoxels
+GridSize = [512,512,512]; % Voxel size to ensure isotropic subvoxels
 VoxelCenter = [0,0,0];
 
 % Rminor_mu = 13.7;
 % Rminor_sig = 2.1;
-Rminor_mu = 25.0;
+Rminor_mu = 7.0;
 Rminor_sig = 0.5;
 rng('default'); seed = rng; % for consistent geometries between sims.
+
+%% Mock Common/Geometry Settings (for testing)
+% % type = 'SE';
+% type = 'GRE';
+% EchoTimes = (0:5:60)/1000; % Echotimes in seconds to simulate [s]
+% % EchoTimes = [0:5:20, 30:30:60]/1000; % Echotimes in seconds to simulate [s]
+% dt = 5.0e-3;
+% alpha_range = [0, 45, 90];
+% 
+% % Results from SE perfusion orientation simulations
+% % NOTE: Even though only approx. 2/3 of vasculature is veinous and therefore
+% %       contributes to the BOLD affect, we use the full simulated BVF and
+% %       "black out" 1/3 of the blood by setting them to be arteries below
+% iBVF = 1.5/100;
+% aBVF = 1.5/100;
+% BVF  = iBVF + aBVF; iRBVF = iBVF/BVF; aRBVF = aBVF/BVF;
+% 
+% Nmajor = 3; % Number of major vessels (optimal number is from SE perf. orientation. sim)
+% Navgs = 1; % Number of geometries to simulate
+% MajorAngle = 0.0; % Major vessel angles compared to B0 [degrees]
+% NumMajorArteries = 1; % Number of major arteries
+% MinorArterialFrac = 1/3; % Fraction of minor vessels which are arteries
+% VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless]
+% 
+% VoxelSize = [2500,2500,2500]; % Typical isotropic voxel dimensions. [um]
+% GridSize = [128,128,128]; % Voxel size to ensure isotropic subvoxels
+% % GridSize = [256,256,256]; % Voxel size to ensure isotropic subvoxels
+% VoxelCenter = [0,0,0];
+% 
+% % Rminor_mu = 13.7;
+% % Rminor_sig = 2.1;
+% Rminor_mu = 25.0;
+% Rminor_sig = 0.5;
+% rng('default'); seed = rng; % for consistent geometries between sims.
 
 %% Geometry generator
 NewGeometry = @() Geometry.CylindricalVesselFilledVoxel( ...
@@ -119,8 +121,8 @@ NewGeometry = @() Geometry.CylindricalVesselFilledVoxel( ...
     'PopulateIdx', true, 'seed', seed );
 
 %% Bloch-Torrey propagation stepper
-stepper = 'BTSplitStepper'; % Splitting method
-% stepper = 'ExpmvStepper'; % Expmv-based method
+% stepper = 'BTSplitStepper'; % Splitting method
+stepper = 'ExpmvStepper'; % Expmv-based method
 
 %% Update Diary
 diary(DiaryFilename);
@@ -146,11 +148,11 @@ for ii = 1:Navgs
     AllResults = push(AllResults, Results);
     
     try
-        title_lines = { sprintf('Nmajor = %d, iBVF = %.4f%%, aBVF = %.4f%%, BVF = %.4f%%, iRBVF = %.2f%%', Nmajor, iBVF*100, aBVF*100, BVF*100, iRBVF*100), ...
-                        sprintf('B0 = %1.1fT, Y0 = %.2f, Y = %.2f, Hct = %.2f, Rmajor = %.2fum, Rminor = %.2fum', -B0, Y0, Y, Hct, mean(Geom.Rmajor(:)), Geom.Rminor_mu) };
+        title_lines = { sprintf('$Nmajor = %d, iBVF = %.4f%%, aBVF = %.4f%%, BVF = %.4f%%, iRBVF = %.2f%%, PVSVol = %.4fX$', Nmajor, iBVF*100, aBVF*100, BVF*100, iRBVF*100, mean(vec([Geometries.VRSRelativeRad]))^2 - 1), ...
+                        sprintf('$B0 = %1.1fT, Y0 = %.2f, Y = %.2f, Hct = %.2f, Rmajor = %.2fum, Rminor = %.2fum$', -B0, Y0, Y, Hct, mean(Geom.Rmajor(:)), Geom.Rminor_mu) };
         title_lines = cellfun(@(s)strrep(s,'%','\%'),title_lines,'uniformoutput',false);
         
-        title_str = title_lines{1}; for ll = 2:numel(title_lines); title_str = [title_str,char(10),title_lines{ll}]; end
+        title_str = title_lines{1}; for ll = 2:numel(title_lines); title_str = [title_str, newline(), title_lines{ll}]; end
         fig = plot(Results, 'title', title_str, 'scalefactor', 100/prod(VoxelSize), 'ylabel', [upper(type),' ','BOLD Signal [\%]'], 'legendlocation', 'eastoutside', 'interp', true);
         
         fname = [title_lines{1},', ',title_lines{2}];
