@@ -19,6 +19,10 @@ switch upper(type)
         btroot = '/data/ubcitar/jdoucette/';
         btexp_branch = '';
         
+    case 'UBCITAR/LAURA' % ubcitar/jdoucette server path
+        btroot = '/data/ubcitar/jdoucette/';
+        btexp_branch = 'Laura';
+        
     case 'HOME/COOPAR7/MASTER' % coopar7 local path
         btroot = '/home/coopar7/Documents/code/';
         btexp_branch = 'master';
