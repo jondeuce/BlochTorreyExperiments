@@ -29,7 +29,12 @@ switch upper(opts.scalefactor)
 end
 boldsignals = opts.scalefactor * boldsignals;
 
-cmap = jet(numel(alphas));
+switch upper(opts.colormap)
+    case 'DISTINGUISHABLE'
+        cmap = distinguishable_colors(numel(alphas));
+    otherwise
+        cmap = jet(numel(alphas));
+end
 
 switch upper(opts.fig)
     case ''; fig = figure;
@@ -161,6 +166,7 @@ addParameter(p,'scalefactor','normalize',@(x)isnumeric(x) || ischar(x));
 addParameter(p,'xlabel','TE [ms]',@(x)VA(x,{'char'},{'nonempty'}));
 addParameter(p,'ylabel','BOLD Signal',@(x)VA(x,{'char'},{'nonempty'}));
 addParameter(p,'title','',@(x)VA(x,{'char'},{'nonempty'}))
+addParameter(p,'colormap','jet',@(x)VA(x,{'char'},{'nonempty'}))
 
 expectedfigarg = {'current'};
 addParameter(p,'fig','',@(x) any(VS(x,expectedfigarg)));
