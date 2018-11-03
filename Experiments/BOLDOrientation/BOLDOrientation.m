@@ -1,9 +1,7 @@
 %BOLDORIENTATION
 
 %% Setup simulation for saving prompt output + current script
-
-%Save diary of workspace
-DiaryFilename = [datestr(now,30), '__', 'diary.txt'];
+DiaryFilename = [datestr(now,30), '__', 'diary.txt']; %Save diary of console outputs
 diary(DiaryFilename);
 
 %Save a copy of this script (and others) in the directory of the caller
@@ -16,7 +14,6 @@ end
 clear BOLDscripts boldscript backupscpt currentscpt
 
 %% Oxygenation parameters (w/ references)
-
 % Y0 = 0.54; % Oxygen saturation fraction for deoxygenated blood, aka Y0 [fraction]
 % Y  = 0.65; % Oxygen saturation fractions for oxygenated blood to simulate, aka Y [fraction]
 % Hct = 0.45; % Hematocrit = volume fraction of red blood cells
@@ -27,7 +24,6 @@ Y   = 0.73; % Yv, activated venous oxygenated blood fraction [fraction]
 Hct = 0.44; % Hematocrit = volume fraction of red blood cells
 
 %% BOLD Common Settings
-
 type = 'SE';
 dt = 2.5e-3;
 % type = 'GRE';
@@ -35,13 +31,17 @@ dt = 2.5e-3;
 
 % EchoTimes = 0:dt:120e-3; % Echotimes in seconds to simulate [s]
 % alpha_range = [0, 45, 90]; % degrees
-EchoTimes = 0:5e-3:120e-3; % Echotimes in seconds to simulate [s]
-alpha_range = 0:5:90; % degrees
+% EchoTimes   = 1e-3 * [0:10:20, 25:5:45, 50:15:80, 100:20:120]; % Echotimes in seconds to simulate [s]
+% alpha_range = [0, 15, 25:5:60, 70:10:90]; % degrees
+EchoTimes   = [0     5    10    15    20    30    35    50    65    80   105   120] * 1e-3; % [s]
+alpha_range = [0     5    15    25    30    35    40    45    60    70    85    90]; % [deg]
+% EchoTimes = 0:5e-3:120e-3; % Echotimes in seconds to simulate [s]
+% alpha_range = 0:5:90; % degrees
 
 B0 = -7.0; %[Tesla]
-% D_Tissue = 2000; %[um^2/s]
+% D_Tissue = 3037; %[um^2/s]
 % D_Blood = []; %[um^2/s]
-% D_VRS = 3037; %[um^2/s]
+% D_VRS = []; %[um^2/s]
 D_Tissue = 1000; %[um^2/s]
 D_Blood = 3037; %[um^2/s]
 D_VRS = 3037; %[um^2/s]
@@ -75,12 +75,15 @@ Rminor_sig = 0.5;
 rng('default'); seed = rng; % for consistent geometries between sims.
 
 %% Mock Common/Geometry Settings (for testing)
-% % type = 'SE';
-% type = 'GRE';
-% EchoTimes = (0:5:60)/1000; % Echotimes in seconds to simulate [s]
+% type = 'SE';
+% % type = 'GRE';
+% dt = 2.5e-3;
+% 
+% % alpha_range = [0, 45, 90];
+% % EchoTimes = (0:5:60)/1000; % Echotimes in seconds to simulate [s]
 % % EchoTimes = [0:5:20, 30:30:60]/1000; % Echotimes in seconds to simulate [s]
-% dt = 5.0e-3;
-% alpha_range = [0, 45, 90];
+% alpha_range = [0     5    15    25    30    35    40    45    60    70    85    90]; % [deg]
+% EchoTimes   = [0     5    10    15    20    30    35    50    65    80   105   120] * 1e-3; % [s]
 % 
 % % Results from SE perfusion orientation simulations
 % % NOTE: Even though only approx. 2/3 of vasculature is veinous and therefore
@@ -156,8 +159,7 @@ for ii = 1:Navgs
         fig = plot(Results, 'title', title_str, 'scalefactor', 100/prod(VoxelSize), 'ylabel', [upper(type),' ','BOLD Signal [\%]'], 'legendlocation', 'eastoutside', 'interp', true);
         
         fname = [title_lines{1},', ',title_lines{2}];
-        fname = strrep( fname, ' ', '' ); fname = strrep( fname, '\%', '' ); fname = strrep( fname, '=', '-' );
-        fname = strrep( fname, ',', '__' );   fname = strrep( fname, '.', 'p' ); fname = [datestr(now,30), '__', fname];
+        fname = strrep( fname, ' ', '' ); fname = strrep( fname, '$', '' ); fname = strrep( fname, '\%', '' ); fname = strrep( fname, '=', '-' ); fname = strrep( fname, ',', '__' );   fname = strrep( fname, '.', 'p' ); fname = [datestr(now,30), '__', fname];
         
         save(fname,'Results','Geom','-v7');
         diary(DiaryFilename);

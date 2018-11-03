@@ -42,8 +42,12 @@ for ii = 1:NumAngles
     [ Signal_Baseline ] = PropBOLDSignal( V, EchoTimes, type );
     Results = push( Results, Signal_Baseline, [], EchoTimes, deg2rad(alpha), ResultsArgs{3:end} );
     
-    display_toc_time( toc(t_Base), sprintf( 'Angle %2d/%2d, %5.2f%s, Baseline ', ...
-        ii, NumAngles, alpha, '°' ) );
+    try
+        save([datestr(now,30), '__IntermediateResults'], 'Results', '-v7');
+    catch me
+        warning(me.message)
+    end
+    display_toc_time( toc(t_Base), sprintf( 'Angle %2d/%2d, %5.2f%s, Baseline ', ii, NumAngles, alpha, '°' ) );
     
     % ---- Activated Signal: BloodOxygenation = Y ---- %
     t_Base  =  tic;
@@ -52,13 +56,16 @@ for ii = 1:NumAngles
     [ Signal_Activated ] = PropBOLDSignal( V, EchoTimes, type );
     Results = push( Results, [], Signal_Activated, EchoTimes, deg2rad(alpha), ResultsArgs{3:end} );
     
-    display_toc_time( toc(t_Base), sprintf( 'Angle %2d/%2d, %5.2f%s, Activated', ...
-        ii, NumAngles, alpha, '°' ) );
+    try
+        save([datestr(now,30), '__IntermediateResults'], 'Results', '-v7');
+    catch me
+        warning(me.message)
+    end
+    display_toc_time( toc(t_Base), sprintf( 'Angle %2d/%2d, %5.2f%s, Activated', ii, NumAngles, alpha, '°' ) );
     
     % ---- Total Time ---- %
     str = sprintf('Total time for alpha = %.2f',alpha);
     display_toc_time(toc(alpha_loop_time), str, [true,true]);
-    
 end
 
 end
