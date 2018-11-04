@@ -1,4 +1,4 @@
-function D = dipole(mSize, vSize, BDir, prec)
+function D = dipole(mSize, vSize, BDir, prec, kspace)
 %DIPOLE Generate the Dipole Kernel in kspace
 %
 %   mSize - matrix size
@@ -7,6 +7,15 @@ function D = dipole(mSize, vSize, BDir, prec)
 %
 %   D - dipole kernel in kspace
     
+    if nargin < 5
+        kspace = true;
+    end
+    
+%     if ~kspace
+%         warning('Image space not implemented; defaulting to kspace');
+%         kspace = true;
+%     end
+
     if nargin == 4 && strcmpi(prec, 'single')
         mSize = single(mSize);
     end
@@ -24,7 +33,11 @@ function D = dipole(mSize, vSize, BDir, prec)
     mHigh = mLow - ~mod(mSize, 2);
     
     % Step Size
-    dxyz  = 1 ./ (mSize .* vSize);
+    if kspace
+        dxyz  = 1 ./ (mSize .* vSize);
+    else
+        dxyz  = vSize ./ mSize;
+    end
     
     mLow  = mLow  .* dxyz;
     mHigh = mHigh .* dxyz;
@@ -33,21 +46,45 @@ function D = dipole(mSize, vSize, BDir, prec)
                        -mLow(2) : dxyz(2) : mHigh(2),...
                        -mLow(3) : dxyz(3) : mHigh(3));
     
-    kz = X.*BDir(1) + Y.*BDir(2) + Z.*BDir(3);
-    k2 = X.*X + Y.*Y + Z.*Z;
-    clear X Y Z
-    
-    D  = 1/3 - (kz.*kz ./ k2);
-    clear kz
-    
-    D(k2 == 0) = 0;
-    clear k2
-    
-    D(abs(D) <= eps(2/3)) = 0;
-    
-%     c = floor(mSize ./ 2 + 1);
-%     D(c(1), c(2), c(3)) = -2/3;
-    
-    D  = ifftshift(D);
+    if kspace
+        kz = X.*BDir(1) + Y.*BDir(2) + Z.*BDir(3);
+        k2 = X.*X + Y.*Y + Z.*Z;
+        I = find(k2 == 0); % origin will be set to zero
+        clear X Y Z
+        
+        D  = 1/3 - (kz.*kz ./ k2);
+        clear kz k2
+        
+        if ~isempty(I)
+            D(I) = 0;
+        end
+        
+        D(abs(D) <= eps(2/3)) = 0;
+        
+        % c = floor(mSize ./ 2 + 1);
+        % D(c(1), c(2), c(3)) = -2/3;
+        
+        D  = ifftshift(D);
+    else
+        rz = X.*BDir(1) + Y.*BDir(2) + Z.*BDir(3);
+        r2 = X.*X + Y.*Y + Z.*Z;
+        I = find(r2 == 0); % origin will be set to zero
+        clear X Y Z
+        
+        num = 3 .* rz .* rz - r2;
+        clear rz
+        
+        den = (4*pi) .* (r2 .* r2 .* sqrt(r2));
+        clear r2
+        
+        D  = num ./ den;
+        clear num den
+        
+        if ~isempty(I)
+            D(I) = 0; % set origin to zero
+        end
+        
+        D  = fftn(ifftshift(D));
+    end
     
 end
