@@ -61,7 +61,7 @@ Nmajor = 3; % Number of major vessels (optimal number is from SE perf. orientati
 MajorAngle = 0.0; % Major vessel angles compared to B0 [degrees]
 NumMajorArteries = 1; % Number of major arteries
 MinorArterialFrac = 1/3; % Fraction of minor vessels which are arteries
-VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless]
+VRSRelativeRad = 1; % Radius of Virchow-Robin space relative to major vessel radius [unitless]
 
 Navgs = 1; % Number of geometries to simulate
 VoxelSize = [2500,2500,2500]; % Typical isotropic voxel dimensions. [um]
@@ -143,7 +143,9 @@ ComputeBOLDCurve = @(R,G) SplittingMethods.BOLDCurve(R, EchoTimes, dt, Y0, Y, Hc
 Geometries = [];
 for ii = 1:Navgs
     Geom = NewGeometry();
+    
     Results = BOLDResults( EchoTimes, deg2rad(alpha_range), Y0, Y, Hct, ii );
+    Results.MetaData.Geom = Compress(Geom);
     Results = ComputeBOLDCurve(Results, Geom);
     
     Geom = Compress(Geom);

@@ -1,4 +1,4 @@
-function [ output_args ] = splinefillingtest( Results, type )
+function [ ] = splinefillingtest( Results, type )
 %SPLINEFILLINGTEST
 
 if nargin < 2; type = 'plot'; end
@@ -23,7 +23,7 @@ switch upper(type)
         
         % close all force
         plot(Results);
-        InterpBOLDs = splinefill(TEs1, Angles1, Results, true);
+        FilledResults = splinefill(Results, TEs1, Angles1, true);
         
     case 'FINDBEST'
         NumTEs = 12;
@@ -33,26 +33,28 @@ end
 
 end
 
-function InterpBOLDs = splinefill(TEs1, Angles1, Results, plot)
+function [FilledResults, InterpBOLDs] = splinefill(Results, TEs1, Angles1, plotresults)
+%SPLINEFILL Fills in `Results` with times `TEs` and angles `Angles`.
+% Plots results if `plot` is `true`.
 
-if nargin < 4; plot = false; end
+if nargin < 4; plotresults = false; end
 
 [AllTEs1, AllAngles1, AllBOLDsCell] = getBOLDSignals(Results);
 [AllTEs, AllAngles] = meshgrid(AllTEs1(:), AllAngles1(:));
 AllBOLDs = AllBOLDsCell{1}.';
 AllBOLDs = AllBOLDs/max(AllBOLDs(:));
 
-dTE = mean(diff(AllTEs1(:)));
-dAngle = mean(diff(AllAngles1(:)));
-idx_TEs1 = round(TEs1/dTE + 1);
-idx_Angles1 = round(Angles1/dAngle + 1);
+idx_TEs1 = ismembertol(AllTEs1(:), TEs1(:), 1e-8);
+idx_Angles1 = ismembertol(AllAngles1(:), Angles1(:), 1e-8);
 
 [TEs, Angles] = meshgrid(TEs1, Angles1);
 BOLDs = AllBOLDs(idx_Angles1,idx_TEs1);
 
 InterpBOLDs = interp2(TEs, Angles, BOLDs, AllTEs, AllAngles, 'spline');
 
-if plot
+FilledResults = [];
+
+if plotresults
     figure, surf(1000*AllTEs, 180/pi*AllAngles, AllBOLDs); xlabel('time [ms]'); ylabel('angles [deg]'); zlabel('original'); zlim([0,1]);
     figure, surf(1000*AllTEs, 180/pi*AllAngles, InterpBOLDs); xlabel('time [ms]'); ylabel('angles [deg]'); zlabel('interp'); zlim([0,1]);
     figure, surf(1000*AllTEs, 180/pi*AllAngles, (AllBOLDs - InterpBOLDs)./(AllBOLDs + 1e-12)); xlabel('time [ms]'); ylabel('angles [deg]'); zlabel('rel diff'); zlim([-3,3]*1e-3);
@@ -68,7 +70,6 @@ AllAngles1 = AllAngles1(:);
 AllBOLDs = AllBOLDsCell{1}.';
 AllBOLDs = AllBOLDs/max(AllBOLDs(:));
 dTE = mean(diff(AllTEs1(:)));
-dAngle = mean(diff(AllAngles1(:)));
 
 [ErrorBest, NumStepsBest] = deal(Inf);
 
@@ -76,12 +77,12 @@ stall_iter = 0;
 STALL_ITER_MAX = 5000;
 
 while true
-    idx_TEs1 = sort([1, 1 + randperm(length(AllTEs1)-2, NumTEs-2), length(AllTEs1)]);
-    idx_Angles1 = sort([1, 1 + randperm(length(AllAngles1)-2, NumAngles-2), length(AllAngles1)]);
+    idx_TEs1    = [true, rand(1, length(AllTEs1)-2) > 0.5, true];
+    idx_Angles1 = [true, rand(1, length(AllAngles1)-2) > 0.5, true];
     
     TEs1 = AllTEs1(idx_TEs1);
     Angles1 = AllAngles1(idx_Angles1);
-    InterpBOLDs = splinefill(TEs1, Angles1, Results);
+    [~, InterpBOLDs] = splinefill(Results, TEs1, Angles1);
     
     Error = max(abs(vec( (AllBOLDs - InterpBOLDs)./(AllBOLDs + 1e-12) )));
     NumSteps = SE_num_timesteps(round(TEs1(2:end)/dTE), 2);

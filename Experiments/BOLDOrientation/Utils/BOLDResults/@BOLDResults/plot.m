@@ -25,16 +25,38 @@ switch upper(opts.scalefactor)
     case 'NORMALIZE'
         opts.scalefactor = 1/max(boldsignals(:));
     case 'RELATIVE'
-        opts.scalefactor = 1/prod(R.MetaData.SimSettings.VoxelSize);
+        try
+            opts.scalefactor = 100/prod(R.MetaData.Geom.VoxelSize);
+        catch me
+            warning(me.message)
+            opts.scalefactor = 1;
+        end
+    otherwise
+        opts.scalefactor = 1;
 end
 boldsignals = opts.scalefactor * boldsignals;
 
 switch upper(opts.colormap)
     case 'DISTINGUISHABLE'
         cmap = distinguishable_colors(numel(alphas));
+    case 'JET'
+        cmap = jet(numel(alphas));
+    case 'PLASMA'
+        cmap = plasma(numel(alphas));
+    case 'MAGMA'
+        cmap = magma(numel(alphas));
+    case 'PARULA'
+        cmap = fake_parula(numel(alphas));
+    case 'INFERNO'
+        cmap = inferno(numel(alphas));
+    case 'VIRIDIS'
+        cmap = viridis(numel(alphas));
+    case 'CIVIDIS'
+        cmap = cividis(numel(alphas));
     otherwise
         cmap = jet(numel(alphas));
 end
+if true; cmap = flipud(cmap); end
 
 switch upper(opts.fig)
     case ''; fig = figure;
@@ -173,7 +195,7 @@ addParameter(p,'fig','',@(x) any(VS(x,expectedfigarg)));
 
 expectedfigarg = {'on','off'};
 addParameter(p,'legend','on',@(x) any(VS(x,expectedfigarg)));
-addParameter(p,'legendlocation','best',@(x)VA(x,{'char'},{'nonempty'}));
+addParameter(p,'legendlocation','eastoutside',@(x)VA(x,{'char'},{'nonempty'}));
 
 expectedangleunits = {'deg','rad'};
 addParameter(p,'angleunits','deg',@(x) any(VS(x,expectedangleunits)));
