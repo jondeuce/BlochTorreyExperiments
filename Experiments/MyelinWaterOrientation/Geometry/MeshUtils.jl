@@ -22,7 +22,7 @@ export mxbbox, mxaxis
 # ---------------------------------------------------------------------------- #
 
 # `JuAFEM.Grid` constructor given a vector of points and a vector of tuples of
-# triangle vertices.
+# integers representing triangle vertice indices.
 #NOTE: assumes triangles are properly oriented
 function JuAFEM.Grid(
         p::AbstractVector{Vec{2,T}},
@@ -38,6 +38,23 @@ function JuAFEM.Grid(
     grid.boundary_matrix = JuAFEM.boundaries_to_sparse(e)
 
     return grid
+end
+
+function DistMesh.boundedges(g::Grid{dim,N,T,M}) where {dim,N,T,M}
+    return boundedges(
+        copy(reinterpret(Vec{dim,T}, getnodes(g))),
+        copy(reinterpret(NTuple{N,Int}, getcells(g)))
+    )
+end
+
+# Area of 2D grid
+function GeometryUtils.area(g::Grid{2,3,T,3}) where {T}
+    nc = getncells(g)
+    return nc == 0 ? zero(T) : sum(1:nc) do i
+        A, B, C = getcoordinates(g, i)
+        D = (A[1] - C[1]) * (B[2] - A[2]) - (A[1] - B[1]) * (C[2] - A[2])
+        return abs(D)/2 # half of unsigned parallelpiped volume (area)
+    end
 end
 
 # Get faceset for entire 2D grid
@@ -172,7 +189,8 @@ function trimatrix(g::Grid{2,3,T}) where {T}
     return t
 end
 
-# Plot grid or vector of grids
+# Plot Grid or vector of Grids. Vector of Grids are combined into one large Grid
+# before plotting for speed, so that simpplot need only be called once
 function DistMesh.simpplot(gs::Vector{G}; kwargs...) where {G <: Grid{2,3}}
     ps = nodematrix.(gs) # Vector of matrices of node positions
     ts = trimatrix.(gs) # Vector of matrices of triangle indices
@@ -194,7 +212,7 @@ DistMesh.simpplot(g::Grid{2,3}; kwargs...) = simpplot(nodematrix(g), trimatrix(g
 @inline mxbbox(r::Rectangle{2}) = [xmin(r) ymin(r); xmax(r) ymax(r)]
 @inline mxaxis(r::Rectangle{2}) = [xmin(r) xmax(r) ymin(r) ymax(r)]
 
-# Clamping functions: η γ α
+# Clamping functions: (parameters η, γ, α)
 # -Provides a continuous transition from h = h0 to h = η*h0 when d goes from
 #  abs(d) = h0 to abs(d) = γ*h0, with h clamped at h0 for abs(d) < h0 and
 #  η*h0 for abs(d) > γ*h0
@@ -234,29 +252,6 @@ end
     return powerclamp(dshell(x, c_in, c_out), h0, η, γ, α)
 end
 
-# Break a rectangle `r` into an m x n array of subrectangles, where the input
-# `tiling` = (m,n). The output is a 2D array of Rectangle's `rs` such that
-# rs[1,1] is the lower left rectangle, rs[1,n] is the lower right, rs[m,1] is
-# the upper left, and rs[m,n] is the upper right.
-function tile_rectangle(r::Rectangle{2}, tiling = (1,1))
-    # Trivial case
-    (tiling == (1,1)) && return [r]
-
-    m, n = tiling
-    xs = range(xmin(r), stop = xmax(r), length = n+1)
-    ys = range(ymin(r), stop = ymax(r), length = m+1)
-
-    R = typeof(r)
-    rs = Matrix{R}(undef, m, n)
-    for j in 1:n
-        for i in 1:m
-            rs[i,j] = R(Vec{2}((xs[j], ys[i])), Vec{2}((xs[j+1], ys[i+1])))
-        end
-    end
-
-    return rs
-end
-
 # ---------------------------------------------------------------------------- #
 # disjoint_rect_mesh_with_tori
 # ---------------------------------------------------------------------------- #
@@ -270,9 +265,10 @@ function disjoint_rect_mesh_with_tori(
         h_range::T = T(10*h_min), # distance over which h increases from h_min to h_max
         h_rate::T = T(0.7); # rate of increase of h from circle boundaries (power law)
         exterior_tiling = (1,1), # tile exterior grid into (m,n) subgrids
-        maxstalliters = 500, # default to no limit
         plotgrids = false, # plot resulting grids
-        plotgridprogress = false # plot grids as they are created
+        plotgridprogress = false, # plot grids as they are created
+        CIRCLESTALLITERS = 1000, # stall iterations for interior/tori grids
+        EXTERIORSTALLITERS = 500, # stall iterations for exterior grids
     ) where {T}
 
     # Useful defines
@@ -281,6 +277,7 @@ function disjoint_rect_mesh_with_tori(
     eta = T(h_max/h0) # approx ratio between largest/smallest edges, i.e. max ≈ eta * h0
     gamma = T(h_range/h0) # max edge length of `eta * h0` occurs approx. `gamma * h0` from circle edges
     alpha = h_rate # power law for edge length
+    D_BDRY = h0*cbrt(eps(T))^2 # points within D_BDRY from boundary edges are deemed on the boundary
 
     # Ensure that:
     # -there are the same number of outer/inner circles, and at least 1 of each
@@ -292,56 +289,139 @@ function disjoint_rect_mesh_with_tori(
     @assert all(c -> origin(c[1]) ≈ origin(c[2]), zip(inner_circles, outer_circles))
     @assert !is_any_overlapping(outer_circles, <)
 
-    function circle_bdry_points(p, e, c, h0, thresh = h0/3)
+    function check_include_circle(c)
+        # Allow circle if the circle is sufficiently inside the boundary rectangle;
+        # here, if intersect(c,rect_bdry) has size at least "h0" in all dimensions
+        c_bounding_box = intersect(rect_bdry, bounding_box(c))
+        return min(widths(c_bounding_box)...) ≥ h0
+    end
+
+    function circle_bdry_points(p::AbstractVector{V}, e, c, thresh = D_BDRY) where {V <: Vec{2}}
         e_unique = unique!(sort!(copy(reinterpret(Int, e)))) # unique indices of boundary points
         p_bdry = filter(x -> is_on_circle(x, c, thresh), p[e_unique]) # keep points which are on `c`
         return p_bdry
     end
+    function circle_bdry_points(g::Grid{dim,N,T,M}, c, thresh = D_BDRY) where {dim,N,T,M}
+        e_unique = unique!(sort!(copy(reinterpret(Int, boundedges(g)))))
+        p_bdry_all = Vec{dim,T}[getcoordinates(getnodes(g)[i]) for i in e_unique]
+        p_bdry = filter(x -> is_on_circle(x, c, thresh), p_bdry_all)
+        return p_bdry
+    end
 
     # Project points onto circles/boundaries if they are within a distance `thresh`
-    function fix_gridpoints!(p,
-            thresh = h0/3,
+    function fix_gridpoints!(p, t,
             rect_bdry = rect_bdry,
             inner_circles = inner_circles,
             outer_circles = outer_circles
         )
-        @inbounds for i in eachindex(p)
+
+        e = boundedges(p, t) # vectors of NTuple{2,Int}'s of boundary edge points
+        bdry_indices = unique(reinterpret(Int, e)) # boundary point indices
+        for i in bdry_indices
             pᵢ = p[i]
-            for c in Iterators.flatten((inner_circles, outer_circles))
+            d_in, idx_in = findmin([abs(dcircle(pᵢ, c)) for c in inner_circles])
+            d_out, idx_out = findmin([abs(dcircle(pᵢ, c)) for c in outer_circles])
+            d_rect = abs(drectangle0(pᵢ, rect_bdry))
+
+            if d_rect ≤ min(d_in, d_out)
+                dxL, dxR = abs(pᵢ[1] - xmin(rect_bdry)), abs(pᵢ[1] - xmax(rect_bdry))
+                dyL, dyR = abs(pᵢ[2] - ymin(rect_bdry)), abs(pᵢ[2] - ymax(rect_bdry))
+                _, idx = findmin((dxL, dxR, dyL, dyR))
+
+                # Project onto nearest rectangle wall
+                p[i] = idx == 1 ? V((xmin(rect_bdry), pᵢ[2])) :
+                       idx == 2 ? V((xmax(rect_bdry), pᵢ[2])) :
+                       idx == 3 ? V((pᵢ[1], ymin(rect_bdry))) :
+                                  V((pᵢ[1], ymax(rect_bdry)))
+            else
+                # Project onto nearest circle
+                c = d_in < d_out ? inner_circles[idx_in] : outer_circles[idx_out]
                 dx = pᵢ - origin(c)
-                normdx = norm(dx)
-                if abs(normdx - radius(c)) <= thresh
-                    pᵢ = origin(c) + (radius(c)/normdx) * dx
-                end
+                p[i] = origin(c) + (radius(c)/norm(dx)) * dx
             end
-            x = xmin(rect_bdry); (x-thresh <= pᵢ[1] <= x+thresh) && (pᵢ = V((x, pᵢ[2])))
-            x = xmax(rect_bdry); (x-thresh <= pᵢ[1] <= x+thresh) && (pᵢ = V((x, pᵢ[2])))
-            y = ymin(rect_bdry); (y-thresh <= pᵢ[2] <= y+thresh) && (pᵢ = V((pᵢ[1], y)))
-            y = ymax(rect_bdry); (y-thresh <= pᵢ[2] <= y+thresh) && (pᵢ = V((pᵢ[1], y)))
         end
+
         return p
     end
 
-    function remove_extra_boundary_points(p, t, p_allowed, p_input, fd)
-        # p_to_remove = setdiff(p_input, p_allowed)
-        p_to_remove = filter(x -> !any(norm(x-y) < h0/3 for y in p_allowed), p_input)
+    function remove_extra_boundary_points(p, t, p_allowed, p_input, fd, thresh = D_BDRY)
+        p_to_remove = filter(x -> !any(norm(x-y) < thresh for y in p_allowed), p_input)
         if !isempty(p_to_remove)
-            p = filter(x -> !any(norm(x-y) < h0/3 for y in p_to_remove), p)
+            p = filter(x -> !any(norm(x-y) < thresh for y in p_to_remove), p)
             t = delaunay2(p) # new Delaunay triangulation
             pmid = V[(p[t[1]] + p[t[2]] + p[t[3]])/3 for t in t] # Compute centroids
-            t = t[fd.(pmid) .< 0] # Keep interior triangles
+            t = t[fd.(pmid) .< thresh] # Keep interior triangles
             p, t, _ = fixmesh(p, t)
         end
         return p, t
     end
 
-    # Initialize Grids
+    # Initialize interior/tori grids
     interiorgrids, torigrids = G[], G[], G[]
-    parent_circle_indices = Int[]
+    parent_circle_indices = collect(1:length(inner_circles))
 
     # Initialize exterior grid
     exteriorgrids = Matrix{G}(undef, exterior_tiling)
     tiled_ext_bdry = tile_rectangle(rect_bdry, exterior_tiling)
+
+    @inbounds for i = 1:length(inner_circles)
+        # Fixed points for inner/outer circles, as well as boundary points
+        c_in = inner_circles[i]
+        int_bdry = intersect(rect_bdry, bounding_box(c_in))
+
+        println("$i/$(length(inner_circles)): Interior")
+        if check_include_circle(c_in)
+            fd = x -> dintersect(drectangle0(x, int_bdry), dcircle(x, c_in))
+            fh = x -> hcircle(x, h0, eta, gamma, alpha, c_in)
+
+            pfix = intersection_points(rect_bdry, c_in)
+            !isempty(pfix) && unique!(sort!(pfix; by = first))
+
+            p, t = distmesh2d(
+                fd, fh, h0, mxbbox(int_bdry), pfix;
+                PLOT = plotgridprogress, MAXSTALLITERS = CIRCLESTALLITERS
+            )
+            fix_gridpoints!(p, t, rect_bdry)
+
+            plotgrids && simpplot(p, t; newfigure = true)
+            push!(interiorgrids, Grid(p, t))
+        else
+            push!(interiorgrids, Grid(Triangle[], Node{2,T}[]))
+        end
+    end
+
+    @inbounds for i = 1:length(outer_circles)
+        # Fixed points for inner/outer circles, as well as boundary points
+        c_in, c_out = inner_circles[i], outer_circles[i]
+        out_bdry = intersect(rect_bdry, bounding_box(c_out))
+
+        println("$i/$(length(outer_circles)): Annular")
+        if check_include_circle(c_out)
+            fd = x -> dintersect(drectangle0(x, out_bdry), dshell(x, c_in, c_out))
+            fh = x -> hshell(x, h0, eta, gamma, alpha, c_in, c_out)
+
+            pfix_prev = circle_bdry_points(interiorgrids[i], c_in)
+            pfix = vcat(
+                intersection_points(rect_bdry, c_out), # only fix w.r.t rect_bdry to avoid tangent points being fixed
+                pfix_prev # interior circle boundary points from inner grid
+            )
+            !isempty(pfix) && unique!(sort!(pfix; by = first))
+
+            p, t = distmesh2d(
+                fd, fh, h0, mxbbox(out_bdry), pfix;
+                PLOT = plotgridprogress, MAXSTALLITERS = CIRCLESTALLITERS
+            )
+            fix_gridpoints!(p, t, rect_bdry)
+
+            pfix_now = circle_bdry_points(p, boundedges(p,t), c_in)
+            p, t = remove_extra_boundary_points(p, t, pfix_prev, pfix_now, fd)
+
+            plotgrids && simpplot(p, t; newfigure = true)
+            push!(torigrids, Grid(p, t)) #push!(torigrids, Grid(p, t, e))
+        else
+            push!(torigrids, Grid(Triangle[], Node{2,T}[]))
+        end
+    end
 
     for i in 1:exterior_tiling[1]
         for j in 1:exterior_tiling[2]
@@ -370,20 +450,25 @@ function disjoint_rect_mesh_with_tori(
             fd = x -> dexterior(x, ext_bdry, outer_circles)
             fh = x -> hcircles(x, h0, eta, gamma, alpha, outer_circles)
 
-            pfix_ext = reduce(vcat, intersection_points(ext_bdry, c_out) for c_out in outer_circles) # circle intersection points
-            pfix_ext = vcat(pfix_ext, filter(x -> !is_in_any_circle(x, outer_circles), [corners(ext_bdry)...])) # ext_bdry corners, if not in an outer_circle
-            pfix_ext = vcat(pfix_ext, fixed_boundary_points_below_and_left()) # fixed points from previous domain
-            !isempty(pfix_ext) && unique!(sort!(pfix_ext; by = first))
+            pfix_prev = vcat(
+                fixed_boundary_points_below_and_left(), # fixed points from previous domain
+                reduce(vcat, circle_bdry_points(torigrids[i], c_out) for (i, c_out) in enumerate(outer_circles)) # boundary points from outer circles
+            )
+            pfix = vcat(
+                filter(x -> !is_in_any_circle(x, outer_circles), [corners(ext_bdry)...]), # ext_bdry corners, if not in an outer_circle
+                pfix_prev
+            )
+            !isempty(pfix) && unique!(sort!(pfix; by = first))
 
             p, t = distmesh2d(
-                fd, fh, h0, mxbbox(ext_bdry), pfix_ext;
-                PLOT = plotgridprogress, MAXSTALLITERS = maxstalliters
+                fd, fh, h0, mxbbox(ext_bdry), pfix;
+                PLOT = plotgridprogress, MAXSTALLITERS = EXTERIORSTALLITERS
             )
-            fix_gridpoints!(p, h0/3, ext_bdry)
+            fix_gridpoints!(p, t, ext_bdry)
 
-            # # Remove extra boundary points which were erroneously created
-            # p_bdry = boundary_points_below_and_left(p)
-            # p, t = remove_extra_boundary_points(p, t, pfix_ext, p_bdry, fd)
+            e = boundedges(p,t)
+            pfix_now = reduce(vcat, circle_bdry_points(p, e, c_out) for c_out in outer_circles)
+            p, t = remove_extra_boundary_points(p, t, pfix_prev, pfix_now, fd)
 
             # Form exterior grid, and plot if requested
             exteriorgrids[i,j] = Grid(p, t)
@@ -391,72 +476,268 @@ function disjoint_rect_mesh_with_tori(
         end
     end
 
-    @inbounds for i = 1:length(outer_circles)
-        # Fixed points for inner/outer circles, as well as boundary points
-        c_in, c_out = inner_circles[i], outer_circles[i]
-        pfix_int, pfix_out, pfix_int_bdry, pfix_out_bdry = V[], V[], V[], V[]
-        push!(parent_circle_indices, i)
-
-        println("$i/$(length(outer_circles)): Annular")
-        out_bdry = intersect(rect_bdry, bounding_box(c_out))
-        if !(√area(out_bdry) ≈ zero(T))
-            fd = x -> dintersect(drectangle0(x, out_bdry), dshell(x, c_in, c_out))
-            fh = x -> hshell(x, h0, eta, gamma, alpha, c_in, c_out)
-
-            pfix_out = reduce(vcat, filter(x -> is_on_circle(x, c_out, h0/3), getcoordinates.(getnodes(g))) for g in exteriorgrids)
-            pfix_out = vcat(pfix_out, intersection_points(rect_bdry, c_in)) # only fix w.r.t rect_bdry to avoid tangent points being fixed
-            !isempty(pfix_out) && unique!(sort!(pfix_out; by = first))
-            # pfix_out = vcat(pfix_out, pfix_int_bdry,
-            # intersection_points(rect_bdry, c_in),
-            # intersection_points(rect_bdry, c_out)) # only fix w.r.t rect_bdry to avoid tangent points being fixed
-
-            p, t = distmesh2d(
-                fd, fh, h0, mxbbox(out_bdry), pfix_out;
-                PLOT = plotgridprogress, MAXSTALLITERS = maxstalliters
-            )
-            fix_gridpoints!(p, h0/3, rect_bdry)
-
-            p, t = remove_extra_boundary_points(p, t,
-                reduce(vcat, getcoordinates.(getnodes(g)) for g in exteriorgrids),
-                filter(x -> is_on_circle(x, c_out, h0/3), p),
-                fd
-            )
-
-            # e = boundedges(p, t)
-            # pfix_out_bdry = vcat(pfix_out_bdry, circle_bdry_points(p, e, c_out, h0))
-            # pfix_ext = vcat(pfix_ext, pfix_out_bdry)
-
-            plotgrids && simpplot(p, t; newfigure = true)
-            push!(torigrids, Grid(p, t)) #push!(torigrids, Grid(p, t, e))
-        else
-            push!(torigrids, Grid(Triangle[], Node{2,T}[]))
-        end
-    end
-
-    # println("$i/$(length(inner_circles)): Interior")
-    # int_bdry = intersect(rect_bdry, bounding_box(c_in))
-    # if !(√area(int_bdry) ≈ zero(T))
-    #     fd = x -> dintersect(drectangle0(x, int_bdry), dcircle(x, c_in))
-    #     fh = x -> hcircle(x, h0, eta, gamma, alpha, c_in)
-    #     pfix_int = vcat(pfix_int, intersection_points(rect_bdry, c_in)) # only fix w.r.t rect_bdry to avoid tangent points being fixed
-    #
-    #     p, t = distmesh2d(
-    #     fd, fh, h0, mxbbox(int_bdry), pfix_int;
-    #     PLOT = plotgridprogress, MAXSTALLITERS = maxstalliters
-    #     )
-    #     fix_gridpoints!(p)
-    #
-    #     e = boundedges(p, t)
-    #     pfix_int_bdry = vcat(pfix_int_bdry, circle_bdry_points(p, e, c_in, h0))
-    #
-    #     plotgrids && simpplot(p, t; newfigure = true)
-    #     push!(interiorgrids, Grid(p, t, e))
-    # else
-    #     push!(interiorgrids, Grid(Triangle[], Node{2,T}[]))
-    # end
-
     return exteriorgrids, torigrids, interiorgrids, parent_circle_indices
 end
+
+# function disjoint_rect_mesh_with_tori(
+#         rect_bdry::Rectangle{2,T},
+#         inner_circles::Vector{Circle{2,T}},
+#         outer_circles::Vector{Circle{2,T}},
+#         h_min::T, # minimum edge length
+#         h_max::T = h_min, # maximum edge length (default to uniform)
+#         h_range::T = T(10*h_min), # distance over which h increases from h_min to h_max
+#         h_rate::T = T(0.7); # rate of increase of h from circle boundaries (power law)
+#         exterior_tiling = (1,1), # tile exterior grid into (m,n) subgrids
+#         maxstalliters = 500, # default to no limit
+#         plotgrids = false, # plot resulting grids
+#         plotgridprogress = false # plot grids as they are created
+#     ) where {T}
+#
+#     # Useful defines
+#     V, G = Vec{2,T}, Grid{2,3,T,3}
+#     h0 = h_min # typical h-value
+#     eta = T(h_max/h0) # approx ratio between largest/smallest edges, i.e. max ≈ eta * h0
+#     gamma = T(h_range/h0) # max edge length of `eta * h0` occurs approx. `gamma * h0` from circle edges
+#     alpha = h_rate # power law for edge length
+#     D_BDRY = h0/100 # points within D_BDRY from boundary edges are deemed on the boundary
+#
+#     # Ensure that:
+#     # -there are the same number of outer/inner circles, and at least 1 of each
+#     # -outer circles strictly contain inner circles
+#     # -outer/inner circles have the same origins
+#     # -outer circles are strictly non-overlapping
+#     @assert length(inner_circles) == length(outer_circles) >= 1
+#     @assert all(c -> is_inside(c[1], c[2], <), zip(inner_circles, outer_circles))
+#     @assert all(c -> origin(c[1]) ≈ origin(c[2]), zip(inner_circles, outer_circles))
+#     @assert !is_any_overlapping(outer_circles, <)
+#
+#     function check_include_circle(c)
+#         # Allow circle if the circle is sufficiently inside the boundary rectangle;
+#         # here, if intersect(c,rect_bdry) has size at least "h0" in all dimensions
+#         c_bounding_box = intersect(rect_bdry, bounding_box(c))
+#         return min(widths(c_bounding_box)...) ≥ h0
+#     end
+#
+#     function circle_bdry_points(p::AbstractVector{V}, e, c, thresh = D_BDRY) where {V <: Vec{2}}
+#         e_unique = unique!(sort!(copy(reinterpret(Int, e)))) # unique indices of boundary points
+#         p_bdry = filter(x -> is_on_circle(x, c, thresh), p[e_unique]) # keep points which are on `c`
+#         return p_bdry
+#     end
+#     function circle_bdry_points(g::Grid{dim,N,T,M}, c, thresh = D_BDRY) where {dim,N,T,M}
+#         e_unique = unique!(sort!(copy(reinterpret(Int, boundedges(g)))))
+#         p_bdry_all = Vec{dim,T}[getcoordinates(getnodes(g)[i]) for i in e_unique]
+#         p_bdry = filter(x -> is_on_circle(x, c, thresh), p_bdry_all)
+#         return p_bdry
+#     end
+#
+#     # Project points onto circles/boundaries if they are within a distance `thresh`
+#     function fix_gridpoints!(p, t,
+#             rect_bdry = rect_bdry,
+#             inner_circles = inner_circles,
+#             outer_circles = outer_circles
+#         )
+#         # @inbounds for i in eachindex(p)
+#         #     pᵢ = p[i]
+#         #     for c in Iterators.flatten((inner_circles, outer_circles))
+#         #         dx = pᵢ - origin(c)
+#         #         normdx = norm(dx)
+#         #         if abs(normdx - radius(c)) <= D_BDRY
+#         #             pᵢ = origin(c) + (radius(c)/normdx) * dx
+#         #         end
+#         #     end
+#         #     x = xmin(rect_bdry); (x-D_BDRY <= pᵢ[1] <= x+D_BDRY) && (pᵢ = V((x, pᵢ[2])))
+#         #     x = xmax(rect_bdry); (x-D_BDRY <= pᵢ[1] <= x+D_BDRY) && (pᵢ = V((x, pᵢ[2])))
+#         #     y = ymin(rect_bdry); (y-D_BDRY <= pᵢ[2] <= y+D_BDRY) && (pᵢ = V((pᵢ[1], y)))
+#         #     y = ymax(rect_bdry); (y-D_BDRY <= pᵢ[2] <= y+D_BDRY) && (pᵢ = V((pᵢ[1], y)))
+#         #     p[i] = pᵢ
+#         # end
+#
+#         e = boundedges(p, t) # vectors of NTuple{2,Int}'s of boundary edge points
+#         bdry_indices = unique(reinterpret(Int, e)) # boundary point indices
+#         for i in bdry_indices
+#             pᵢ = p[i]
+#             d_in, idx_in = findmin([abs(dcircle(pᵢ, c)) for c in inner_circles])
+#             d_out, idx_out = findmin([abs(dcircle(pᵢ, c)) for c in outer_circles])
+#             d_rect = abs(drectangle0(pᵢ, rect_bdry))
+#
+#             if d_rect ≤ min(d_in, d_out)
+#                 dxL, dxR = abs(pᵢ[1] - xmin(rect_bdry)), abs(pᵢ[1] - xmax(rect_bdry))
+#                 dyL, dyR = abs(pᵢ[2] - ymin(rect_bdry)), abs(pᵢ[2] - ymax(rect_bdry))
+#                 _, idx = findmin((dxL, dxR, dyL, dyR))
+#
+#                 # Project onto nearest rectangle wall
+#                 p[i] = idx == 1 ? V((xmin(rect_bdry), pᵢ[2])) :
+#                        idx == 2 ? V((xmax(rect_bdry), pᵢ[2])) :
+#                        idx == 3 ? V((pᵢ[1], ymin(rect_bdry))) :
+#                                   V((pᵢ[1], ymax(rect_bdry)))
+#             else
+#                 # Project onto nearest circle
+#                 c = d_in < d_out ? inner_circles[idx_in] : outer_circles[idx_out]
+#                 dx = pᵢ - origin(c)
+#                 p[i] = origin(c) + (radius(c)/norm(dx)) * dx
+#             end
+#
+#             # if d_rect ≥ D_BDRY
+#             #     # Project onto nearest circle
+#             #     c = d_in < d_out ? inner_circles[idx_in] : outer_circles[idx_out]
+#             #     dx = pᵢ - origin(c)
+#             #     p[i] = origin(c) + (radius(c)/norm(dx)) * dx
+#             # end
+#         end
+#
+#         return p
+#     end
+#
+#     function remove_extra_boundary_points(p, t, p_allowed, p_input, fd, thresh = D_BDRY)
+#         p_to_remove = filter(x -> !any(norm(x-y) < thresh for y in p_allowed), p_input)
+#         if !isempty(p_to_remove)
+#             p = filter(x -> !any(norm(x-y) < thresh for y in p_to_remove), p)
+#             t = delaunay2(p) # new Delaunay triangulation
+#             pmid = V[(p[t[1]] + p[t[2]] + p[t[3]])/3 for t in t] # Compute centroids
+#             t = t[fd.(pmid) .< thresh] # Keep interior triangles
+#             p, t, _ = fixmesh(p, t)
+#         end
+#         return p, t
+#     end
+#
+#     # Initialize Grids
+#     interiorgrids, torigrids = G[], G[], G[]
+#     parent_circle_indices = Int[]
+#
+#     # Initialize exterior grid
+#     exteriorgrids = Matrix{G}(undef, exterior_tiling)
+#     tiled_ext_bdry = tile_rectangle(rect_bdry, exterior_tiling)
+#
+#     for i in 1:exterior_tiling[1]
+#         for j in 1:exterior_tiling[2]
+#             # Get current exterior boundary
+#             ext_bdry = tiled_ext_bdry[i,j]
+#
+#             # Fixed boundary points are those to the left/below current grid
+#             boundary_points_below_and_left = (p) -> begin
+#                 p_bdry = V[]
+#                 (j > 1) && (p_bdry = vcat(p_bdry, filter(x -> x[1] ≈ xmax(tiled_ext_bdry[i,j-1]), p)))
+#                 (i > 1) && (p_bdry = vcat(p_bdry, filter(x -> x[2] ≈ ymax(tiled_ext_bdry[i-1,j]), p)))
+#                 !isempty(p_bdry) && unique!(sort!(p_bdry; by = first))
+#                 return p_bdry
+#             end
+#
+#             fixed_boundary_points_below_and_left = () -> begin
+#                 p_bdry = V[]
+#                 (j > 1) && (p_bdry = vcat(p_bdry, boundary_points_below_and_left(getcoordinates.(getnodes(exteriorgrids[i,j-1])))))
+#                 (i > 1) && (p_bdry = vcat(p_bdry, boundary_points_below_and_left(getcoordinates.(getnodes(exteriorgrids[i-1,j])))))
+#                 !isempty(p_bdry) && unique!(sort!(p_bdry; by = first))
+#                 return p_bdry
+#             end
+#
+#             # Create Delaunay tessellation
+#             println("$i/$(exterior_tiling[1]), $j/$(exterior_tiling[2]): Exterior")
+#             fd = x -> dexterior(x, ext_bdry, outer_circles)
+#             fh = x -> hcircles(x, h0, eta, gamma, alpha, outer_circles)
+#
+#             pfix_ext = reduce(vcat, intersection_points(ext_bdry, c_out) for c_out in outer_circles) # circle intersection points
+#             pfix_ext = vcat(pfix_ext, filter(x -> !is_in_any_circle(x, outer_circles), [corners(ext_bdry)...])) # ext_bdry corners, if not in an outer_circle
+#             pfix_ext = vcat(pfix_ext, fixed_boundary_points_below_and_left()) # fixed points from previous domain
+#             !isempty(pfix_ext) && unique!(sort!(pfix_ext; by = first))
+#
+#             p, t = distmesh2d(
+#                 fd, fh, h0, mxbbox(ext_bdry), pfix_ext;
+#                 PLOT = plotgridprogress, MAXSTALLITERS = maxstalliters
+#             )
+#             fix_gridpoints!(p, t, ext_bdry)
+#
+#             # # Remove extra boundary points which were erroneously created
+#             # p_bdry = boundary_points_below_and_left(p)
+#             # p, t = remove_extra_boundary_points(p, t, pfix_ext, p_bdry, fd)
+#
+#             # Form exterior grid, and plot if requested
+#             exteriorgrids[i,j] = Grid(p, t)
+#             plotgrids && simpplot(p, t; newfigure = true)
+#         end
+#     end
+#
+#     @inbounds for i = 1:length(outer_circles)
+#         # Fixed points for inner/outer circles, as well as boundary points
+#         c_in, c_out = inner_circles[i], outer_circles[i]
+#         out_bdry = intersect(rect_bdry, bounding_box(c_out))
+#         push!(parent_circle_indices, i)
+#
+#         println("$i/$(length(outer_circles)): Annular")
+#         if check_include_circle(c_out)
+#             fd = x -> dintersect(drectangle0(x, out_bdry), dshell(x, c_in, c_out))
+#             fh = x -> hshell(x, h0, eta, gamma, alpha, c_in, c_out)
+#
+#             pfix_out = vcat(
+#                 # reduce(vcat, filter(x -> is_on_circle(x, c_out, D_BDRY), getcoordinates.(getnodes(g))) for g in exteriorgrids),
+#                 reduce(vcat, circle_bdry_points(g, c_out) for g in exteriorgrids),
+#                 intersection_points(rect_bdry, c_in) # only fix w.r.t rect_bdry to avoid tangent points being fixed
+#             )
+#             !isempty(pfix_out) && unique!(sort!(pfix_out; by = first))
+#
+#             p, t = distmesh2d(
+#                 fd, fh, h0, mxbbox(out_bdry), pfix_out;
+#                 PLOT = plotgridprogress, MAXSTALLITERS = maxstalliters
+#             )
+#             fix_gridpoints!(p, t, rect_bdry)
+#
+#             p, t = remove_extra_boundary_points(p, t,
+#                 pfix_out,
+#                 circle_bdry_points(p, boundedges(p, t), c_out),
+#                 # reduce(vcat, getcoordinates.(getnodes(g)) for g in exteriorgrids),
+#                 # filter(x -> is_on_circle(x, c_out, D_BDRY), p),
+#                 fd
+#                 # x -> ddiff(drectangle0(x, rect_bdry), dcircle(x, c_in))
+#             )
+#
+#             plotgrids && simpplot(p, t; newfigure = true)
+#             push!(torigrids, Grid(p, t)) #push!(torigrids, Grid(p, t, e))
+#         else
+#             push!(torigrids, Grid(Triangle[], Node{2,T}[]))
+#         end
+#     end
+#
+#     @inbounds for i = 1:length(inner_circles)
+#         # Fixed points for inner/outer circles, as well as boundary points
+#         c_in = inner_circles[i]
+#         int_bdry = intersect(rect_bdry, bounding_box(c_in))
+#
+#         println("$i/$(length(inner_circles)): Interior")
+#         if check_include_circle(c_in)
+#             fd = x -> dintersect(drectangle0(x, int_bdry), dcircle(x, c_in))
+#             fh = x -> hcircle(x, h0, eta, gamma, alpha, c_in)
+#
+#             # pfix_int = vcat(
+#             #     reduce(vcat, filter(x -> is_on_circle(x, c_in, D_BDRY), getcoordinates.(getnodes(g))) for g in exteriorgrids),
+#             #     reduce(vcat, filter(x -> is_on_circle(x, c_in, D_BDRY), getcoordinates.(getnodes(g))) for g in torigrids)
+#             # )
+#             # pfix_int = reduce(vcat, filter(x -> is_on_circle(x, c_in, D_BDRY), getcoordinates.(getnodes(g))) for g in torigrids)
+#             pfix_int = reduce(vcat, circle_bdry_points(g, c_in) for g in torigrids)
+#
+#             !isempty(pfix_int) && unique!(sort!(pfix_int; by = first))
+#
+#             p, t = distmesh2d(
+#                 fd, fh, h0, mxbbox(int_bdry), pfix_int;
+#                 PLOT = plotgridprogress, MAXSTALLITERS = maxstalliters
+#             )
+#             fix_gridpoints!(p, t, rect_bdry)
+#
+#             p, t = remove_extra_boundary_points(p, t,
+#                 pfix_int,
+#                 circle_bdry_points(p, boundedges(p, t), c_in),
+#                 # reduce(vcat, getcoordinates.(getnodes(g)) for g in exteriorgrids),
+#                 # filter(x -> is_on_circle(x, c_in, D_BDRY), p),
+#                 fd # desired region is convex; just use `fd`
+#             )
+#
+#             plotgrids && simpplot(p, t; newfigure = true)
+#             push!(interiorgrids, Grid(p, t))
+#         else
+#             push!(interiorgrids, Grid(Triangle[], Node{2,T}[]))
+#         end
+#     end
+#
+#     return exteriorgrids, torigrids, interiorgrids, parent_circle_indices
+# end
 
 # function disjoint_rect_mesh_with_tori(
 #         rect_bdry::Rectangle{2,T},

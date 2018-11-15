@@ -26,7 +26,18 @@ FileName = [datestr(now,30), '__', FileName];
 fig = figure; set(gcf,'color','w'); hold on
 
 alpha_range = args.xdata;
-plot(alpha_range(:), dR2_all.', '-.');
+if size(dR2_all, 1) > 1
+    % More than one dR2 to plot
+    N_dR2 = size(dR2_all, 1);
+    cmap = flipud(jet(N_dR2));
+%     cmap = jet(N_dR2);
+%     cmap = flipud(plasma(N_dR2+5));
+%     cmap = cmap(5+1:end, :);
+    h_all = plot(alpha_range(:), dR2_all.', '-.');
+    for ii = 1:N_dR2
+        set(h_all(ii),'color',cmap(ii,:));
+    end
+end
 h = plot(alpha_range(:), [args.dR2_Data(:), dR2.'], '-', ...
     'marker', '+', 'linewidth', 4, 'markersize', 10);
 

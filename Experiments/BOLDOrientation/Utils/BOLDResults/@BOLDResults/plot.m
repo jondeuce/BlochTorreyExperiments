@@ -22,17 +22,21 @@ end
 function [hbold,leg,fig] = plotBOLDSignal(R,echotimes,alphas,boldsignals,opts)
 
 switch upper(opts.scalefactor)
-    case 'NORMALIZE'
-        opts.scalefactor = 1/max(boldsignals(:));
+    case 'NONE'
+        opts.scalefactor = 1;
+        opts.ylabel = [opts.ylabel, ' [raw]'];
     case 'RELATIVE'
         try
             opts.scalefactor = 100/prod(R.MetaData.Geom.VoxelSize);
+            opts.ylabel = [opts.ylabel, ' [percent]'];
         catch me
             warning(me.message)
-            opts.scalefactor = 1;
+            opts.scalefactor = 1/max(boldsignals(:));
+            opts.ylabel = [opts.ylabel, ' [normalized]'];
         end
-    otherwise
-        opts.scalefactor = 1;
+    otherwise % 'NORMALIZE'
+        opts.scalefactor = 1/max(boldsignals(:));
+        opts.ylabel = [opts.ylabel, ' [normalized]'];
 end
 boldsignals = opts.scalefactor * boldsignals;
 
@@ -183,7 +187,7 @@ VA = @(varargin) validateattributes(varargin{:});
 VS = @(varargin) validatestring(varargin{:});
 
 addParameter(p,'type','BOLD',@(x)VA(x,{'char'},{'nonempty'}));
-addParameter(p,'scalefactor','normalize',@(x)isnumeric(x) || ischar(x));
+addParameter(p,'scalefactor','relative',@(x)isnumeric(x) || ischar(x));
 
 addParameter(p,'xlabel','TE [ms]',@(x)VA(x,{'char'},{'nonempty'}));
 addParameter(p,'ylabel','BOLD Signal',@(x)VA(x,{'char'},{'nonempty'}));

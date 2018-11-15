@@ -38,7 +38,7 @@ alpha_range = [0     5    15    25    30    35    40    45    60    70    85    
 % EchoTimes = 0:5e-3:120e-3; % Echotimes in seconds to simulate [s]
 % alpha_range = 0:5:90; % degrees
 
-B0 = -7.0; %[Tesla]
+B0 = -3.0; %[Tesla]
 % D_Tissue = 3037; %[um^2/s]
 % D_Blood = []; %[um^2/s]
 % D_VRS = []; %[um^2/s]

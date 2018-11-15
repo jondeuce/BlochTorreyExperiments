@@ -24,8 +24,7 @@ export wrap_gradient, check_density_callback
 
 function opt_subdomain(
         circles::AbstractVector{Circle{2,T}},
-        alpha_lb = T(0.1),
-        alpha_ub = T(1.0)
+        α::Number = T(0.75)
     ) where {T}
 
     # starting_rectangle = bounding_box(circles)
@@ -59,8 +58,7 @@ function opt_subdomain(
     # α = Optim.minimizer(optimize(energy, alpha_lb, alpha_ub, Brent()))
     # opt_rectangle = scale_shape(starting_rectangle, α)
 
-    α = 0.75
-    opt_rectangle = scale_shape(inscribed_square(crude_bounding_circle(circles)), α)
+    opt_rectangle = scale_shape(inscribed_square(crude_bounding_circle(circles)), T(α))
 
     return opt_rectangle, α
 end

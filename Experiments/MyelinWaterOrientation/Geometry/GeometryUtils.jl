@@ -22,7 +22,7 @@ export origin, radius, radii, widths, corners, geta, getb, getc, getF1, getF2, r
 export dimension, floattype, xmin, ymin, xmax, ymax, area, volume
 export scale_shape, translate_shape, inscribed_square
 export signed_edge_distance, minimum_signed_edge_distance
-export bounding_box, bounding_circle, crude_bounding_circle, opt_bounding_ellipse, opt_bounding_circle, intersect_area, intersection_points
+export bounding_box, bounding_circle, crude_bounding_circle, opt_bounding_ellipse, opt_bounding_circle, intersect_area, intersection_points, tile_rectangle
 export is_inside, is_overlapping, is_any_overlapping, is_on_circle, is_on_any_circle, is_in_circle, is_in_any_circle, is_inside, is_outside, is_on_boundary
 
 # ---------------------------------------------------------------------------- #
@@ -574,6 +574,28 @@ end
     return !(is_inside(c, r, lt) || is_outside(c, r, lt))
 end
 
+# Break a rectangle `r` into an m x n array of subrectangles, where the input
+# `tiling` = (m,n). The output is a 2D array of Rectangle's `rs` such that
+# rs[1,1] is the lower left rectangle, rs[1,n] is the lower right, rs[m,1] is
+# the upper left, and rs[m,n] is the upper right.
+function tile_rectangle(r::Rectangle{2}, tiling = (1,1))
+    # Trivial case
+    (tiling == (1,1)) && return [r]
+
+    m, n = tiling
+    xs = range(xmin(r), stop = xmax(r), length = n+1)
+    ys = range(ymin(r), stop = ymax(r), length = m+1)
+
+    R = typeof(r)
+    rs = Matrix{R}(undef, m, n)
+    for j in 1:n
+        for i in 1:m
+            rs[i,j] = R(Vec{2}((xs[j], ys[i])), Vec{2}((xs[j+1], ys[i+1])))
+        end
+    end
+
+    return rs
+end
 
 # ---------------------------------------------------------------------------- #
 # Area of intersections between shapes (2D)
