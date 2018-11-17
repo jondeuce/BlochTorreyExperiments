@@ -204,7 +204,7 @@ function boundedges(
     # Orientation
     v1 = p[e[:,2],:] - p[e[:,1],:]
     v2 = p[node3,:] - p[e[:,1],:]
-    ix = findall(v1[:,1] .* v2[:,2] .- v1[:,2] .* v2[:,1] .> zero(T));
+    ix = findall(v1[:,1] .* v2[:,2] .- v1[:,2] .* v2[:,1] .> zero(T))
     e[ix, [1,2]] = e[ix, [2,1]]
     e = sort!(to_tuple(e); by = first)
 

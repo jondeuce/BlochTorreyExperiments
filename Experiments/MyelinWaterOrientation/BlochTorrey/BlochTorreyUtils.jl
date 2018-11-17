@@ -11,6 +11,7 @@ module BlochTorreyUtils
 using Normest1
 using GeometryUtils
 using MeshUtils
+using DistMesh
 using JuAFEM
 using LinearAlgebra
 using SparseArrays
@@ -26,7 +27,7 @@ import Lazy
 # ---------------------------------------------------------------------------- #
 export normest1_norm, radiidistribution
 export doassemble!, addquadweights!, factorize!, interpolate, interpolate!, integrate
-export getgrid, getdomain, numfibres, createmyelindomains
+export getgrid, getdomain, numfibres, createmyelindomains, omegamap
 export getdofhandler, getcellvalues, getfacevalues,
        getmass, getmassfact, getstiffness, getquadweights,
        getregion, getoutercircles, getinnercircles, getoutercircle, getinnercircle, getouterradius, getinnerradius
@@ -43,6 +44,12 @@ export BlochTorreyParameters,
        AbstractDomain,
        ParabolicDomain,
        MyelinDomain,
+       AbstractRegion,
+       AbstractRegionUnion,
+       AxonRegion,
+       MyelinRegion,
+       TissueRegion,
+       PermeableInterfaceRegion,
        ParabolicLinearMap,
        DiffEqParabolicLinearMapWrapper
 
@@ -120,49 +127,58 @@ mutable struct ParabolicDomain{uDim,gDim,T,Nd,Nf} <: AbstractDomain{uDim,gDim,T,
     dh::DofHandler{gDim,Nd,T,Nf}
     cellvalues::CellValues{gDim,T}
     facevalues::FaceValues{gDim,T}
+    refshape::Type{<:JuAFEM.AbstractRefShape}
+    quadorder::Int
+    funcinterporder::Int
+    geominterporder::Int
     M::Union{<:SparseMatrixCSC{T}, Symmetric{T,<:SparseMatrixCSC{T}}}
     Mfact::Union{Nothing, Factorization{T}}
     K::SparseMatrixCSC{T}
     w::Vector{T}
+end
 
-    function ParabolicDomain(
-            grid::Grid{gDim,Nd,T,Nf},
-            ::Val{uDim} = Val(2);
-            refshape = RefTetrahedron,
-            quadorder = 3,
-            funcinterporder = 1,
-            geominterporder = 1
-        ) where {uDim,gDim,Nd,T,Nf}
+function ParabolicDomain(
+        grid::Grid{gDim,Nd,T,Nf},
+        ::Val{uDim} = Val(2);
+        refshape = RefTetrahedron,
+        quadorder = 3,
+        funcinterporder = 1,
+        geominterporder = 1
+    ) where {uDim,gDim,Nd,T,Nf}
 
-        @assert uDim == 2 #TODO: where is this assumption? likely, assume dim(u) == dim(grid) somewhere
+    @assert uDim == 2 #TODO: where is this assumption? likely, assume dim(u) == dim(grid) somewhere
 
-        # Quadrature and interpolation rules and corresponding cellvalues/facevalues
-        func_interp = Lagrange{gDim, refshape, funcinterporder}()
-        geom_interp = Lagrange{gDim, refshape, geominterporder}()
-        quadrule = QuadratureRule{gDim, refshape}(quadorder)
-        quadrule_face = QuadratureRule{gDim-1, refshape}(quadorder)
-        cellvalues = CellVectorValues(T, quadrule, func_interp, geom_interp)
-        facevalues = FaceVectorValues(T, quadrule_face, func_interp, geom_interp)
-        # cellvalues = CellScalarValues(T, quadrule, func_interp, geom_interp)
-        # facevalues = FaceScalarValues(T, quadrule_face, func_interp, geom_interp)
+    # Quadrature and interpolation rules and corresponding cellvalues/facevalues
+    func_interp = Lagrange{gDim, refshape, funcinterporder}()
+    geom_interp = Lagrange{gDim, refshape, geominterporder}()
+    quadrule = QuadratureRule{gDim, refshape}(quadorder)
+    quadrule_face = QuadratureRule{gDim-1, refshape}(quadorder)
+    cellvalues = CellVectorValues(T, quadrule, func_interp, geom_interp)
+    facevalues = FaceVectorValues(T, quadrule_face, func_interp, geom_interp)
+    # cellvalues = CellScalarValues(T, quadrule, func_interp, geom_interp)
+    # facevalues = FaceScalarValues(T, quadrule_face, func_interp, geom_interp)
 
-        # Degree of freedom handler
-        dh = DofHandler(grid)
-        push!(dh, :u, uDim, func_interp)
-        close!(dh)
+    # Degree of freedom handler
+    dh = DofHandler(grid)
+    push!(dh, :u, uDim, func_interp)
+    close!(dh)
 
-        # Mass matrix, inverse mass matrix, stiffness matrix, and weights vector
-        M = create_sparsity_pattern(dh)
-        # M = create_symmetric_sparsity_pattern(dh)
-        K = create_sparsity_pattern(dh)
-        w = zeros(T, ndofs(dh))
-        Mfact = nothing
+    # Mass matrix, inverse mass matrix, stiffness matrix, and weights vector
+    M = create_sparsity_pattern(dh)
+    # M = create_symmetric_sparsity_pattern(dh)
+    K = create_sparsity_pattern(dh)
+    w = zeros(T, ndofs(dh))
+    Mfact = nothing
 
-        new{uDim,gDim,T,Nd,Nf}(grid, dh, cellvalues, facevalues, M, Mfact, K, w)
-    end
+    ParabolicDomain{uDim,gDim,T,Nd,Nf}(
+        grid, dh, cellvalues, facevalues,
+        refshape, quadorder, funcinterporder, geominterporder,
+        M, Mfact, K, w
+    )
 end
 
 abstract type AbstractRegion end
+abstract type AbstractRegionUnion <: AbstractRegion end
 
 struct AxonRegion <: AbstractRegion
     parent_circle_idx::Int
@@ -171,39 +187,40 @@ struct MyelinRegion <: AbstractRegion
     parent_circle_idx::Int
 end
 struct TissueRegion <: AbstractRegion end
+struct PermeableInterfaceRegion <: AbstractRegionUnion end
 
 # MyelinDomain:
-# TODO: new description
-# generic domain type which holds this information necessary to
-# solve a parabolic FEM problem M*du/dt = K*u on a number of subdomains which
-# represent different parts of the Myelin tissue. This subdomains are
-# represented themselves as ParabolicDomain's
+# Generic domain type which holds the information necessary to solve a parabolic
+# FEM problem M*du/dt = K*u on a domain which represents a region containing
+# or in close proximity to myelin. The complete domain is represented as a
+# ParabolicDomain, which stores the underlying grid, mass matrix M, stiffness
+# matrix K, etc.
 mutable struct MyelinDomain{R<:AbstractRegion,uDim,gDim,T,Nd,Nf} <: AbstractDomain{uDim,gDim,T,Nd,Nf}
     region::R
     domain::ParabolicDomain{uDim,gDim,T,Nd,Nf}
     outercircles::Vector{Circle{2,T}}
     innercircles::Vector{Circle{2,T}}
     ferritins::Vector{Vec{3,T}}
+end
 
-    # Constructor given a `Grid` and kwargs in place of a `ParabolicDomain`
-    function MyelinDomain(
-            region::R,
-            grid::Grid{gDim,Nd,T,Nf},
-            outercircles::Vector{Circle{2,T}},
-            innercircles::Vector{Circle{2,T}},
-            ferritins::Vector{Vec{3,T}} = Vec{3,T}[],
-            ::Val{uDim} = Val(2);
-            kwargs...
-        ) where {R,uDim,gDim,T,Nd,Nf}
+# Constructor given a `Grid` and kwargs in place of a `ParabolicDomain`
+function MyelinDomain(
+        region::R,
+        grid::Grid{gDim,Nd,T,Nf},
+        outercircles::Vector{Circle{2,T}},
+        innercircles::Vector{Circle{2,T}},
+        ferritins::Vector{Vec{3,T}} = Vec{3,T}[],
+        ::Val{uDim} = Val(2);
+        kwargs...
+    ) where {R,uDim,gDim,T,Nd,Nf}
 
-        return new{R,uDim,gDim,T,Nd,Nf}(
-            region,
-            ParabolicDomain(grid, Val(uDim); kwargs...),
-            outercircles,
-            innercircles,
-            ferritins
-        )
-    end
+    return MyelinDomain{R,uDim,gDim,T,Nd,Nf}(
+        region,
+        ParabolicDomain(grid, Val(uDim); kwargs...),
+        outercircles,
+        innercircles,
+        ferritins
+    )
 end
 
 # Copy constructor for new ParabolicDomain keyword arguments
@@ -323,6 +340,10 @@ interpolate(u0::Vec{uDim}, domains::VectorOfDomains{uDim}) where {uDim} = map(d 
 @inline getdofhandler(d::ParabolicDomain) = d.dh
 @inline getcellvalues(d::ParabolicDomain) = d.cellvalues
 @inline getfacevalues(d::ParabolicDomain) = d.facevalues
+@inline getrefshape(d::ParabolicDomain) = d.refshape
+@inline getquadorder(d::ParabolicDomain) = d.quadorder
+@inline getfuncinterporder(d::ParabolicDomain) = d.funcinterporder
+@inline getgeominterporder(d::ParabolicDomain) = d.geominterporder
 @inline getmass(d::ParabolicDomain) = d.M
 @inline getmassfact(d::ParabolicDomain) = d.Mfact
 @inline getstiffness(d::ParabolicDomain) = d.K
@@ -384,7 +405,7 @@ end
 @inline getinnerradius(m::MyelinDomain, i::Int) = radius(getinnercircle(m,i))
 @inline numfibres(m::MyelinDomain) = length(getoutercircles(m))
 
-Lazy.@forward MyelinDomain.domain (getgrid, getdofhandler, getcellvalues, getfacevalues, getmass, getmassfact, getstiffness, getquadweights)
+Lazy.@forward MyelinDomain.domain (getgrid, getdofhandler, getcellvalues, getfacevalues, getrefshape, getquadorder, getfuncinterporder, getgeominterporder, getmass, getmassfact, getstiffness, getquadweights)
 Lazy.@forward MyelinDomain.domain (factorize!, addquadweights!)
 Lazy.@forward MyelinDomain.domain (JuAFEM.ndofs, LinearAlgebra.norm, GeometryUtils.area)
 
@@ -415,7 +436,7 @@ function createmyelindomains(
 
     @assert length(outercircles) == length(innercircles) == length(myelingrids) == length(axongrids)
 
-    isgridempty(g::Grid) = (getnnodes(g) == 0 && getncells(g) == 0)
+    isgridempty(g::Grid) = (getnnodes(g) == 0 || getncells(g) == 0)
 
     Mtype = MyelinDomain{R,uDim,gDim,T,Nd,Nf} where {R}
     ms = Vector{Mtype}()
@@ -436,6 +457,93 @@ function createmyelindomains(
     end
 
     return ms
+end
+
+# General type signature is MyelinDomain{R<:AbstractRegion,uDim,gDim,T,Nd,Nf},
+# so here we restrict it to 2D geometry (gDim) with triangular elements (number
+# of nodes per elem Nd = 3, number of faces per elem Nf = 3).
+const TriangularMyelinDomain{R,uDim,T} = MyelinDomain{R,uDim,2,T,3,3}
+
+# Create interface domain from vector of MyelinDomain's which are all assumed
+# to have the same outercircles, innercircles, and ferritins
+function MyelinDomain(
+        region::PermeableInterfaceRegion,
+        prob::MyelinProblem,
+        ms::AbstractVector{<:MyelinDomain{R} where R}
+    )
+    domain, ips = ParabolicDomain(region, prob, ms)
+    return MyelinDomain(
+        PermeableInterfaceRegion(),
+        domain,
+        ms[1].outercircles, # assume these are the same for all domains
+        ms[1].innercircles, # assume these are the same for all domains
+        ms[1].ferritins # assume these are the same for all domains
+    ), ips
+end
+
+function ParabolicDomain(
+        region::PermeableInterfaceRegion,
+        prob::MyelinProblem,
+        ms::AbstractVector{<:TriangularMyelinDomain{R,uDim,T} where {R}}
+    ) where {uDim,T}
+
+    # Construct one large ParabolicDomain containing all grids
+    gDim, Nd, Nf = 2, 3, 3 # Triangular 2D domain
+    grid = Grid(getgrid.(ms)) # combine grids into single large grid
+    domain = ParabolicDomain(grid, Val(uDim);
+        refshape = getrefshape(ms[1]), # assume these are the same for all domains
+        quadorder = getquadorder(ms[1]), # assume these are the same for all domains
+        funcinterporder = getfuncinterporder(ms[1]), # assume these are the same for all domains
+        geominterporder = getgeominterporder(ms[1]) # assume these are the same for all domains
+    )
+    domain.M = blockdiag(getmass.(ms)...)
+    domain.K = blockdiag(getstiffness.(ms)...)
+    domain.w = reduce(vcat, getquadweights.(ms))
+
+    # Find interface pairs
+    cells, nodes = getcells(getgrid(domain)), getnodes(getgrid(domain))
+    boundaryfaceset = getfaceset(getgrid(domain), "boundary")
+    nodepairs = [JuAFEM.faces(cells[f[1]])[f[2]] for f in boundaryfaceset]
+    nodecoordpairs = [(getcoordinates(nodes[n[1]]), getcoordinates(nodes[n[2]])) for n in nodepairs]
+    nodecoordpairssorted = copy(nodecoordpairs)
+    for (i,p) in enumerate(nodecoordpairssorted)
+        if p[1][1] < p[2][1]
+            nodecoordpairssorted[i] = reverse(nodecoordpairssorted[i])
+        elseif p[1][1] == p[2][1] && p[1][2] < p[2][2]
+            nodecoordpairssorted[i] = reverse(nodecoordpairssorted[i])
+        end
+    end
+    nodecoordindices = sortperm(nodecoordpairssorted; by = x->(x[1][1], x[1][2], x[2][1], x[2][2]))
+
+    interfacepairs = Vector{NTuple{4,Int}}()
+    @inbounds for i in 1:length(nodecoordindices)-1
+        i1, i2 = nodecoordindices[i], nodecoordindices[i+1]
+        p1, p2 = nodecoordpairssorted[i1], nodecoordpairssorted[i2]
+        if p1[1] ≈ p2[1] && p1[2] ≈ p2[2]
+            push!(interfacepairs, (nodepairs[i1]..., nodepairs[i2]...))
+        end
+    end
+
+    # Add contribution of the local `S` matrices
+    Se = T[ 2  1 -1  2
+            1  2 -2 -1
+           -1 -2  2  1
+           -2 -1  1  2 ] # permeability interaction matrix
+    S = zeros(2*uDim, 2*uDim)
+    Idx = repeat(1:4, 1, uDim) |> transpose |> vec |> Vector
+    S = Se[Idx, Idx] # repeat permeability for each element of u
+
+    # AssemblerSparsityPattern(getstiffness(domain), T[], Int[], Int[])
+    # assembler_K = start_assemble()
+    # for p in interfacepairs
+    #     I = [(uDim .* p .- 1)...]
+    #     for d=0:uDim-1
+    #         addtosparsemat!(Mat, I.+d, I.+d, S)
+    #         assemble!(assembler_M, I.+d, Me)
+    #     end
+    # end
+
+    return domain, interfacepairs
 end
 
 # ---------------------------------------------------------------------------- #
@@ -514,7 +622,7 @@ function LinearAlgebra.tr(A::LinearMap{T}, t::Int = 10) where {T}
 end
 
 # `norm`, `opnorm`, and `normAm`
-function normest1_norm(A, p::Real=1, t::Int=10)
+function normest1_norm(A, p::Number=1, t::Int=10)
     !(size(A,1) == size(A,2)) && error("Matrix A must be square")
     !(p == 1 || p == Inf) && error("Only p=1 or p=Inf supported")
     p == Inf && (A = A')
@@ -523,8 +631,8 @@ function normest1_norm(A, p::Real=1, t::Int=10)
 end
 
 # Default to p = 2 for consistency with Base, even though it would throw an error
-LinearAlgebra.norm(A::LinearMap, p::Real = 2, t::Int = 10) = normest1_norm(A, p, t)
-LinearAlgebra.opnorm(A::LinearMap, p::Real = 2, t::Int = 10) = normest1_norm(A, p, t)
+LinearAlgebra.norm(A::LinearMap, p::Number = 2, t::Int = 10) = normest1_norm(A, p, t)
+LinearAlgebra.opnorm(A::LinearMap, p::Number = 2, t::Int = 10) = normest1_norm(A, p, t)
 
 function Base.show(io::IO, d::ParabolicLinearMap)
     compact = get(io, :compact, false)
@@ -538,15 +646,20 @@ function Base.show(io::IO, d::ParabolicLinearMap)
     end
 end
 
+# ---------------------------------------------------------------------------- #
+# DiffEqParabolicLinearMapWrapper methods: Effectively a simplified LinearMap,
+# but subtypes AbstractMatrix so that it can be passed to DiffEq* solvers
+# ---------------------------------------------------------------------------- #
+
 struct DiffEqParabolicLinearMapWrapper{T,Atype} <: AbstractMatrix{T}
     A::Atype
     DiffEqParabolicLinearMapWrapper(A::Atype) where {Atype} = new{eltype(A), Atype}(A)
 end
 
 Base.size(A::DiffEqParabolicLinearMapWrapper, args...) = size(A.A, args...)
-LinearAlgebra.issymmetric(A::DiffEqParabolicLinearMapWrapper) = false
-LinearAlgebra.ishermitian(A::DiffEqParabolicLinearMapWrapper) = false
-LinearAlgebra.isposdef(A::DiffEqParabolicLinearMapWrapper) = false
+LinearAlgebra.issymmetric(A::DiffEqParabolicLinearMapWrapper) = issymmetric(A.A)
+LinearAlgebra.ishermitian(A::DiffEqParabolicLinearMapWrapper) = ishermitian(A.A)
+LinearAlgebra.isposdef(A::DiffEqParabolicLinearMapWrapper) = isposdef(A.A)
 Base.show(io::IO, A::DiffEqParabolicLinearMapWrapper) = print(io, "$(typeof(A))")
 Base.show(io::IO, ::MIME"text/plain", A::DiffEqParabolicLinearMapWrapper) = print(io, "$(size(A,1)) × $(size(A,2)) $(typeof(A))")
 Base.display(io::IO, A::DiffEqParabolicLinearMapWrapper) = show(io, A)
@@ -557,8 +670,8 @@ LinearAlgebra.transpose(A::DiffEqParabolicLinearMapWrapper) = DiffEqParabolicLin
 LinearAlgebra.mul!(Y::AbstractVector, A::DiffEqParabolicLinearMapWrapper, X::AbstractVector) = mul!(Y, A.A, X)
 LinearAlgebra.mul!(Y::AbstractMatrix, A::DiffEqParabolicLinearMapWrapper, X::AbstractMatrix) = mul!(Y, A.A, X)
 
-LinearAlgebra.norm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A, p, t)
-LinearAlgebra.opnorm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A, p, t)
+LinearAlgebra.norm(A::DiffEqParabolicLinearMapWrapper, p::Number, t::Int = 10) = normest1_norm(A, p, t)
+LinearAlgebra.opnorm(A::DiffEqParabolicLinearMapWrapper, p::Number, t::Int = 10) = normest1_norm(A, p, t)
 
 # ---------------------------------------------------------------------------- #
 # Local frequency perturbation map functions
@@ -659,7 +772,7 @@ end
 # Individual coordinate input
 @inline omega(x, y, p::MyelinProblem, domain::MyelinDomain) = omega(Vec{2}((x, y)), p, domain)
 
-# Calculate ω(x) inside region number `region`, which is assumed to be axonal
+# Calculate ω(x) by searching for the region which `x` is contained in
 function omega(
         x::Vec{2},
         p::MyelinProblem,
@@ -688,21 +801,15 @@ function omega(
 
     return omega(x, p, region, outercircles, innercircles)
 end
-@inline omega(x::Vec{2}, p::MyelinProblem, domain::MyelinDomain{AxonRegion}) = omega(x, p, getregion(domain), getoutercircles(domain), getinnercircles(domain))
 
 # Return a vector of vectors of nodal values of ω(x) evaluated on each MyelinDomain
-function omegamap(
-        p::MyelinProblem,
-        myelindomains::AbstractVector{<:MyelinDomain{R} where R}
-    )
-    omegavalues = map(myelindomains) do m
-        ω = BlochTorreyProblem(p, m).Omega # Get omega function for domain m
-        return map(getnodes(getgrid(m))) do node
-            # Map over grid nodes, return ω(x) for each node
-            ω(getcoordinates(node))
-        end
+function omegamap(p::MyelinProblem, m::MyelinDomain)
+    ω = BlochTorreyProblem(p, m).Omega # Get omega function for domain m
+    return map(getnodes(getgrid(m))) do node
+        ω(getcoordinates(node)) # Map over grid nodes, returning ω(x) for each node
     end
 end
+# omegamap(p::MyelinProblem, ms::AbstractArray{<:MyelinDomain}) = map(m -> omegamap(p,m), ms)
 
 # ---------------------------------------------------------------------------- #
 # Global dcoeff/rdecay functions on each region
@@ -733,26 +840,26 @@ end
 
 # Assemble the `BlochTorreyProblem` system $M u_t = K u$ on the domain `domain`.
 function doassemble!(
-        domain::ParabolicDomain{uDim,gDim,T},
+        domain::ParabolicDomain{uDim,gDim,T,Nd,Nf},
         prob::BlochTorreyProblem{T}
-    ) where {uDim,gDim,T}
+    ) where {uDim,gDim,T,Nd,Nf}
 
     # This assembly function is only for CellVectorValues
     @assert typeof(getcellvalues(domain)) <: CellVectorValues
 
-    # We allocate the element stiffness matrix and element force vector
+    # First, we create assemblers for the stiffness matrix `K` and the mass
+    # matrix `M`. The assemblers are just thin wrappers around `K` and `M`
+    # and some extra storage to make the assembling faster.
+    assembler_K = start_assemble(getstiffness(domain), getquadweights(domain))
+    assembler_M = start_assemble(getmass(domain))
+
+    # Next, we allocate the element stiffness matrix and element mass matrix
     # just once before looping over all the cells instead of allocating
     # them every time in the loop.
     n_basefuncs = getnbasefunctions(getcellvalues(domain))
     Ke = zeros(T, n_basefuncs, n_basefuncs)
     Me = zeros(T, n_basefuncs, n_basefuncs)
     we = zeros(T, n_basefuncs)
-
-    # Next we create assemblers for the stiffness matrix `K` and the mass
-    # matrix `M`. The assemblers are just thin wrappers around `K` and `M`
-    # and some extra storage to make the assembling faster.
-    assembler_K = start_assemble(getstiffness(domain), getquadweights(domain))
-    assembler_M = start_assemble(getmass(domain))
 
     # It is now time to loop over all the cells in our grid. We do this by iterating
     # over a `CellIterator`. The iterator caches some useful things for us, for example
@@ -805,9 +912,46 @@ function doassemble!(
         assemble!(assembler_M, celldofs(cell), Me)
     end
 
+    # # Now, allocate local interface element matrices.
+    # n_basefuncs = getnbasefunctions(getfacevalues(domain))
+    # Se = zeros(T, 2*n_basefuncs, 2*n_basefuncs)
+    # @show size(Se)
+    #
+    # # Loop over the edges of the cell for interface contributions to `Ke`.
+    # # For example, if "Neumann Boundary" is a subset of boundary points, use:
+    # #   `onboundary(cell, face) && (cellid(cell), face) ∈ getfaceset(grid, "Neumann Boundary")`
+    # for face in 1:nfaces(cell) && (cellid(cell), face) ∈ getfaceset(grid, "Interface")
+    #     if onboundary(cell, face)
+    #         # Initialize face values
+    #         JuAFEM.reinit!(getfacevalues(domain), cell, face)
+    #
+    #         for q_point in 1:getnquadpoints(facevalues)
+    #             dΓ = getdetJdV(facevalues, q_point)
+    #             coords_qp = spatial_coordinate(facevalues, q_point, coords)
+    #
+    #             # calculate the heat conductivity and heat source at point `coords_qp`
+    #             f = func(coords_qp)
+    #             fdΓ = f * dΓ
+    #
+    #             for i in 1:getnbasefunctions(facevalues)
+    #                 n = getnormal(facevalues, q_point)
+    #                 v = shape_value(facevalues, q_point, i)
+    #                 vfdΓ = v * fdΓ
+    #                 for j in 1:n_basefuncs
+    #                     ∇u = shape_gradient(facevalues, q_point, j)
+    #                     Ke[i,j] += (∇u⋅n) * vfdΓ
+    #                 end
+    #             end
+    #         end
+    #     end
+    # end
+
+    # function surface_integral!(Ke, facevalues::FaceVectorValues, cell, q_point, coords, func::Function)
+    # end
+
+
     return domain
 end
-
 # ---------------------------------------------------------------------------- #
 # Assembly on a MyelinDomain of a MyelinProblem
 # ---------------------------------------------------------------------------- #
