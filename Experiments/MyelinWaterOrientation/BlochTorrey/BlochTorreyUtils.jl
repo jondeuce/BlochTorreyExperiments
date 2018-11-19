@@ -72,6 +72,7 @@ const VectorOfVectors{T} = AbstractVector{<:AbstractVector{T}}
     D_Axon::T         =    T(2000.0)        # #TODO (reference?) Diffusion coefficient in axon interior [um^2/s]
     D_Blood::T        =    T(3037.0)        # Diffusion coefficient in blood [um^2/s]
     D_Water::T        =    T(3037.0)        # Diffusion coefficient in water [um^2/s]
+    K_perm            =    T(1.0)           # Interface permeability constant [um/s]
     R_mu::T           =    T(0.46)          # Axon mean radius [um] ; this is taken to be outer radius.
     R_shape::T        =    T(5.7)           # Axon shape parameter for Gamma distribution (Xu et al. 2017)
     R_scale::T        =    T(0.46/5.7)      # Axon scale parameter for Gamma distribution (Xu et al. 2017)
@@ -471,14 +472,14 @@ function MyelinDomain(
         prob::MyelinProblem,
         ms::AbstractVector{<:MyelinDomain{R} where R}
     )
-    domain, ips = ParabolicDomain(region, prob, ms)
+    domain = ParabolicDomain(region, prob, ms)
     return MyelinDomain(
         PermeableInterfaceRegion(),
         domain,
         ms[1].outercircles, # assume these are the same for all domains
         ms[1].innercircles, # assume these are the same for all domains
         ms[1].ferritins # assume these are the same for all domains
-    ), ips
+    )
 end
 
 function ParabolicDomain(
@@ -500,50 +501,80 @@ function ParabolicDomain(
     domain.K = blockdiag(getstiffness.(ms)...)
     domain.w = reduce(vcat, getquadweights.(ms))
 
-    # Find interface pairs
-    cells, nodes = getcells(getgrid(domain)), getnodes(getgrid(domain))
-    boundaryfaceset = getfaceset(getgrid(domain), "boundary")
-    nodepairs = [JuAFEM.faces(cells[f[1]])[f[2]] for f in boundaryfaceset]
-    nodecoordpairs = [(getcoordinates(nodes[n[1]]), getcoordinates(nodes[n[2]])) for n in nodepairs]
-    nodecoordpairssorted = copy(nodecoordpairs)
-    for (i,p) in enumerate(nodecoordpairssorted)
-        if p[1][1] < p[2][1]
-            nodecoordpairssorted[i] = reverse(nodecoordpairssorted[i])
-        elseif p[1][1] == p[2][1] && p[1][2] < p[2][2]
-            nodecoordpairssorted[i] = reverse(nodecoordpairssorted[i])
-        end
-    end
-    nodecoordindices = sortperm(nodecoordpairssorted; by = x->(x[1][1], x[1][2], x[2][1], x[2][2]))
-
-    interfacepairs = Vector{NTuple{4,Int}}()
-    @inbounds for i in 1:length(nodecoordindices)-1
-        i1, i2 = nodecoordindices[i], nodecoordindices[i+1]
-        p1, p2 = nodecoordpairssorted[i1], nodecoordpairssorted[i2]
-        if p1[1] ≈ p2[1] && p1[2] ≈ p2[2]
-            push!(interfacepairs, (nodepairs[i1]..., nodepairs[i2]...))
-        end
-    end
-
-    # Add contribution of the local `S` matrices
-    Se = T[ 2  1 -1  2
-            1  2 -2 -1
-           -1 -2  2  1
-           -2 -1  1  2 ] # permeability interaction matrix
-    S = zeros(2*uDim, 2*uDim)
-    Idx = repeat(1:4, 1, uDim) |> transpose |> vec |> Vector
-    S = Se[Idx, Idx] # repeat permeability for each element of u
-
-    # AssemblerSparsityPattern(getstiffness(domain), T[], Int[], Int[])
-    # assembler_K = start_assemble()
-    # for p in interfacepairs
-    #     I = [(uDim .* p .- 1)...]
-    #     for d=0:uDim-1
-    #         addtosparsemat!(Mat, I.+d, I.+d, S)
-    #         assemble!(assembler_M, I.+d, Me)
+    # # Find interface pairs
+    # cells, nodes = getcells(getgrid(domain)), getnodes(getgrid(domain))
+    # boundaryfaceset = getfaceset(getgrid(domain), "boundary")
+    # nodepairs = [JuAFEM.faces(cells[f[1]])[f[2]] for f in boundaryfaceset]
+    # nodecoordpairs = [(getcoordinates(nodes[n[1]]), getcoordinates(nodes[n[2]])) for n in nodepairs]
+    #
+    # # nodecoordpairssorted = copy(nodecoordpairs)
+    # # for (i,p) in enumerate(nodecoordpairssorted)
+    # #     if p[1][1] < p[2][1]
+    # #         nodecoordpairssorted[i] = reverse(nodecoordpairssorted[i])
+    # #     elseif p[1][1] == p[2][1] && p[1][2] < p[2][2]
+    # #         nodecoordpairssorted[i] = reverse(nodecoordpairssorted[i])
+    # #     end
+    # # end
+    # # nodecoordindices = sortperm(nodecoordpairssorted; by = x->(x[1][1], x[1][2], x[2][1], x[2][2]))
+    # #
+    # # interfaceindices = Vector{NTuple{4,Int}}()
+    # # @inbounds for i in 1:length(nodecoordindices)-1
+    # #     i1, i2 = nodecoordindices[i], nodecoordindices[i+1]
+    # #     p1, p2 = nodecoordpairssorted[i1], nodecoordpairssorted[i2]
+    # #     if norm2(p1[1] - p2[1]) < eps(T) && norm2(p1[2] - p2[2]) < eps(T)
+    # #         push!(interfaceindices, (nodepairs[i1]..., nodepairs[i2]...))
+    # #     end
+    # # end
+    #
+    # # Brute force search for pairs
+    # interfaceindices = Vector{NTuple{4,Int}}()
+    # @inbounds for i1 in 1:length(nodecoordpairs)
+    #     p1 = nodecoordpairs[i1]
+    #     for i2 in 1:i1-1
+    #         p2 = nodecoordpairs[i2]
+    #         if norm2(p1[1] - p2[2]) < eps(T) && norm2(p1[2] - p2[1]) < eps(T)
+    #             push!(interfaceindices, (nodepairs[i1]..., nodepairs[i2]...))
+    #         end
     #     end
     # end
+    #
+    # # Local permeability interaction matrix, unscaled by length
+    # κ = prob.params.K_perm
+    # Se = (κ/6) .* T[ 2  1 -1 -2
+    #                  1  2 -2 -1
+    #                 -1 -2  2  1
+    #                 -2 -1  1  2 ]
+    # Sck = similar(Se) # temp matrix for assigning ck .* Se to
+    #
+    # # S matrix global indices
+    # Is, Js, Ss = Vector{Int}(), Vector{Int}(), Vector{T}()
+    # sizehint!(Is, length(Se) * uDim * length(interfaceindices))
+    # sizehint!(Js, length(Se) * uDim * length(interfaceindices))
+    # sizehint!(Ss, length(Se) * uDim * length(interfaceindices))
+    #
+    # for idx in interfaceindices
+    #     ck = norm(getcoordinates(nodes[idx[1]]) - getcoordinates(nodes[idx[2]])) # length of edge segment
+    #     # @assert ck ≈ norm(getcoordinates(nodes[idx[3]]) - getcoordinates(nodes[idx[4]]))
+    #     Sck .= ck .* Se
+    #
+    #     dof = uDim .* idx .- (uDim-1) # node indices --> first dof indices
+    #     for d in 1:uDim
+    #         Dof = dof .+ (d-1) # first dof indices --> d'th dof indices
+    #         for i in 1:length(Dof)
+    #             append!(Is, Dof)
+    #             for j in 1:length(Dof)
+    #                 append!(Js, Dof[i])
+    #             end
+    #         end
+    #         append!(Ss, Sck)
+    #     end
+    # end
+    #
+    # # Form final stiffness matrix
+    # I, J, V = findnz(domain.K)
+    # domain.K = sparse([I; Is], [J; Js], [V; Ss])
 
-    return domain, interfacepairs
+    return domain
 end
 
 # ---------------------------------------------------------------------------- #
@@ -622,7 +653,7 @@ function LinearAlgebra.tr(A::LinearMap{T}, t::Int = 10) where {T}
 end
 
 # `norm`, `opnorm`, and `normAm`
-function normest1_norm(A, p::Number=1, t::Int=10)
+function normest1_norm(A, p::Real = 1, t::Int=10)
     !(size(A,1) == size(A,2)) && error("Matrix A must be square")
     !(p == 1 || p == Inf) && error("Only p=1 or p=Inf supported")
     p == Inf && (A = A')
@@ -631,8 +662,8 @@ function normest1_norm(A, p::Number=1, t::Int=10)
 end
 
 # Default to p = 2 for consistency with Base, even though it would throw an error
-LinearAlgebra.norm(A::LinearMap, p::Number = 2, t::Int = 10) = normest1_norm(A, p, t)
-LinearAlgebra.opnorm(A::LinearMap, p::Number = 2, t::Int = 10) = normest1_norm(A, p, t)
+LinearAlgebra.norm(A::LinearMap, p::Real = 2, t::Int = 10) = normest1_norm(A, p, t)
+LinearAlgebra.opnorm(A::LinearMap, p::Real = 2, t::Int = 10) = normest1_norm(A, p, t)
 
 function Base.show(io::IO, d::ParabolicLinearMap)
     compact = get(io, :compact, false)
@@ -670,8 +701,8 @@ LinearAlgebra.transpose(A::DiffEqParabolicLinearMapWrapper) = DiffEqParabolicLin
 LinearAlgebra.mul!(Y::AbstractVector, A::DiffEqParabolicLinearMapWrapper, X::AbstractVector) = mul!(Y, A.A, X)
 LinearAlgebra.mul!(Y::AbstractMatrix, A::DiffEqParabolicLinearMapWrapper, X::AbstractMatrix) = mul!(Y, A.A, X)
 
-LinearAlgebra.norm(A::DiffEqParabolicLinearMapWrapper, p::Number, t::Int = 10) = normest1_norm(A, p, t)
-LinearAlgebra.opnorm(A::DiffEqParabolicLinearMapWrapper, p::Number, t::Int = 10) = normest1_norm(A, p, t)
+LinearAlgebra.norm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A, p, t)
+LinearAlgebra.opnorm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A, p, t)
 
 # ---------------------------------------------------------------------------- #
 # Local frequency perturbation map functions
