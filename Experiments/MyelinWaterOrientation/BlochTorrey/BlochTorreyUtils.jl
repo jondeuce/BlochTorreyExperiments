@@ -507,6 +507,13 @@ function ParabolicDomain(
     nodepairs = [JuAFEM.faces(cells[f[1]])[f[2]] for f in boundaryfaceset]
     nodecoordpairs = [(getcoordinates(nodes[n[1]]), getcoordinates(nodes[n[2]])) for n in nodepairs]
 
+    # There should be a way to sort the nodes into a list and easily pick out
+    # the pairs, but it's possibly not worth the trouble. One option would be to
+    # pick e.g. a random point and sort with respect to distance from this point;
+    # for a general set of points, it is extremely unlikely that any two points
+    # have the same magnitude (i.e. lie on a circle centred at this random point),
+    # and any which do must be the same point.
+
     # nodecoordpairssorted = copy(nodecoordpairs)
     # for (i,p) in enumerate(nodecoordpairssorted)
     #     if p[1][1] < p[2][1]
@@ -528,11 +535,16 @@ function ParabolicDomain(
 
     # Brute force search for pairs
     interfaceindices = Vector{NTuple{4,Int}}()
+    sizehint!(interfaceindices, length(nodecoordpairs)÷2)
     @inbounds for i1 in 1:length(nodecoordpairs)
         p1 = nodecoordpairs[i1]
         for i2 in 1:i1-1
             p2 = nodecoordpairs[i2]
             if norm2(p1[1] - p2[2]) < eps(T) && norm2(p1[2] - p2[1]) < eps(T)
+                # Reverse the ordering of one of the node pairs. This is because,
+                # for properly oriented triangles, the edge nodes will be stored
+                # in opposite order for all coincident edges which don't share a
+                # triangle face
                 push!(interfaceindices, (nodepairs[i1]..., reverse(nodepairs[i2])...))
             end
         end
@@ -540,10 +552,10 @@ function ParabolicDomain(
 
     # Local permeability interaction matrix, unscaled by length
     κ = prob.params.K_perm
-    Se = (-κ/6) .* T[ 2  1 -1 -2
+    Se = (-κ/6) .* T[ 2  1 -1 -2 # minus sign in front since we build the negative stiffness matrix
                       1  2 -2 -1
                      -1 -2  2  1
-                     -2 -1  1  2 ] # minus sign in front since we build the negative stiffness matrix
+                     -2 -1  1  2 ]
     Sck = similar(Se) # temp matrix for assigning ck .* Se to
 
     # S matrix global indices
@@ -557,13 +569,13 @@ function ParabolicDomain(
         # @assert ck ≈ norm(getcoordinates(nodes[idx[3]]) - getcoordinates(nodes[idx[4]]))
         Sck .= ck .* Se
 
-        dof = uDim .* idx .- (uDim-1) # node indices --> first dof indices
+        dof = uDim .* idx .- (uDim-1) # node indices --> first dof indices (i.e. 1st component of u)
         for d in 1:uDim
-            Dof = dof .+ (d-1) # first dof indices --> d'th dof indices
+            Dof = dof .+ (d-1) # first dof indices --> d'th dof indices (i.e. d'th component of u)
             for i in 1:length(Dof)
                 append!(Is, Dof)
                 for j in 1:length(Dof)
-                    append!(Js, Dof[i])
+                    push!(Js, Dof[i])
                 end
             end
             append!(Ss, Sck)

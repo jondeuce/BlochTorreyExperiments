@@ -56,6 +56,7 @@ Base.convert(::Type{SVector{dim,T1}}, x::Vec{dim,T2}) where {dim,T1,T2} = SVecto
 @inline Base.Tuple(v::Vec) = Tensors.get_data(v)
 
 @inline norm2(x::Vec) = dot(x,x)
+@inline Base.angle(x::Vec{2}) = atan(x[2], x[1])
 @inline Base.sincos(x::Vec{2}) = (r = norm(x); sinθ = x[2]/r; cosθ = x[1]/r; return (sinθ, cosθ))
 @inline function rotmat(x::Vec{2,T}) where {T}
     sinθ, cosθ = sincos(x)

@@ -40,31 +40,120 @@ export ExpokitExpmv, HighamExpmv
 # ODEProblem constructor for ParabolicDomain's and MyelinDomain's
 # ---------------------------------------------------------------------------- #
 
-function OrdinaryDiffEq.ODEProblem(d::ParabolicDomain, u0, tspan)
-    A = ParabolicLinearMap(d)
-    p = (A,)
+# Create an `ODEProblem` from a `ParabolicDomain` representing either
+#   du/dt = (M\K)*u   [invertmass = true], or
+#   M*du/dt = K*u     [invertmass = false]
+function OrdinaryDiffEq.ODEProblem(d::ParabolicDomain, u0, tspan; invertmass = true)
+    # RHS action of ODE for general matrix A stored in p[1]
     f!(du,u,p,t) = LinearAlgebra.mul!(du, p[1], u)
-    return ODEProblem(f!, u0, tspan, p)
+
+    if invertmass
+        # ParabolicLinearMap returns a linear operator which acts by (M\K)*u.
+        A = ParabolicLinearMap(d) # subtype of LinearMap
+        p = (DiffEqParabolicLinearMapWrapper(A),) # wrap LinearMap in an AbstractArray wrapper
+        F! = ODEFunction{true,true}(f!; # represents M*du/dt = K*u system
+            mass_matrix = I, # mass matrix
+            jac = (J,u,p,t) -> J, # Jacobian is constant (DiffEqParabolicLinearMapWrapper)
+            jac_prototype = p[1]
+        )
+        return ODEProblem(F!, u0, tspan, p)
+    else
+        K, M = getstiffness(d), getmass(d)
+        p = (K, M)
+        F! = ODEFunction{true,true}(f!; # represents M*du/dt = K*u system
+            mass_matrix = M, # mass matrix
+            jac = (J,u,p,t) -> J, # Jacobian is constant (stiffness matrix)
+            jac_prototype = K
+        )
+        return ODEProblem(F!, u0, tspan, p)
+    end
 end
-OrdinaryDiffEq.ODEProblem(m::MyelinDomain, u0, tspan) = ODEProblem(getdomain(m), u0, tspan)
+OrdinaryDiffEq.ODEProblem(m::MyelinDomain, u0, tspan; kwargs...) = ODEProblem(getdomain(m), u0, tspan; kwargs...)
 
 # ---------------------------------------------------------------------------- #
 # SpinEchoCallback
 # ---------------------------------------------------------------------------- #
 
+# # NOTE: This constructor works and is more robust, but requires callbacks to be
+# #       initialized; Sundials currently doesn't support this
+# function MultiSpinEchoCallback(
+#         tspan::NTuple{2,T};
+#         TE::T = (tspan[2] - tspan[1]), # default to single echo
+#         pulsetimes::AbstractVector{T} = tspan[1] + TE/2 : TE : tspan[2], # default equispaced π-pulses every TE starting at TE/2
+#         kwargs...
+#     ) where {T}
+#
+#     if isempty(pulsetimes)
+#         @warn "No pulsetimes given; returning `nothing` for callback"
+#         return nothing
+#     end
+#
+#     # If first pulse time is at tspan[1], set initial_affect true and pop tstops[1]
+#     tstops = copy(collect(pulsetimes))
+#     initial_affect = (tstops[1] == tspan[1]) # tstops is non-empty from above check
+#     initial_affect && popfirst!(tstops) # first pulse is handled by initial_affect
+#
+#     # Apply π-pulse/return next π-pulse time
+#     time_choice(integrator) = isempty(tstops) ? typemax(T) : popfirst!(tstops)
+#     function user_affect!(integrator)
+#         println("π-pulse at t = $(1000*integrator.t) ms")
+#         return @views(integrator.u[2:2:end] .= -integrator.u[2:2:end])
+#     end
+#
+#     # Return IterativeCallback
+#     callback = IterativeCallback(time_choice, user_affect!, T; initial_affect = initial_affect, kwargs...)
+#     return callback
+# end
+
+# NOTE: This constructor works but is fragile, in particular `tstops` must be
+#       passed to `solve` to ensure that no pulses are missed; the above
+#       constructor should be preferred when not using Sundials
 function MultiSpinEchoCallback(
         tspan::NTuple{2,T};
-        TE::T = (tspan[2]-tspan[1]), # default to single echo
-        TE0::T = tspan[1] + TE/2, # default to first echo at TE/2
+        TE::T = (tspan[2] - tspan[1]), # default to single echo
+        verbose = true, # verbose printing
         kwargs...
     ) where {T}
 
-    # Apply π-pulse/return next π-pulse time
-    time_choice(integrator) = (t = integrator.t; return ifelse(t == tspan[1], TE0, t + TE))
-    user_affect!(integrator) = @views(integrator.u[2:2:end] .= -integrator.u[2:2:end])
+    # Pulse times start at tspan[1] + TE/2 and repeat every TE
+    tstops = collect(tspan[1] + TE/2 : TE : tspan[2])
+    next_pulse() = isempty(tstops) ? typemax(T) : popfirst!(tstops) # next pulse time function
+    next_pulse(integrator) = next_pulse() # next_pulse is integrator independent
 
-    # Return IterativeCallback
-    return IterativeCallback(time_choice, user_affect!, T; initial_affect = false, kwargs...)
+    # Discrete condition
+    tnext = Ref(typemin(T)) # initialize to -Inf
+    function condition(u, t, integrator)
+        # TODO this initialization hack is due to Sundials not supporting initializing callbacks
+        # NOTE this can fail if the first time step is bigger than TE/2! need to set tstops in `solve` explicitly to be sure
+        (tnext[] == typemin(T)) && (tnext[] = next_pulse(); add_tstop!(integrator, tnext[]))
+        t == tnext[]
+    end
+
+    # # Discrete condition
+    # tnext = Ref(next_pulse()) # initialize to tstops[1]
+    # function condition(u, t, integrator)
+    #     t == tnext[]
+    # end
+
+    # Apply π-pulse
+    function apply_pulse!(integrator)
+        verbose && println("π-pulse at t = $(1000*integrator.t) ms")
+        return @views(integrator.u[2:2:end] .= -integrator.u[2:2:end])
+    end
+
+    # Affect function
+    function affect!(integrator)
+        apply_pulse!(integrator)
+        tnext[] = next_pulse()
+        (tnext[] <= tspan[2]) && add_tstop!(integrator, tnext[])
+        return integrator
+    end
+
+    # Create DiscreteCallback
+    callback = DiscreteCallback(condition, affect!; kwargs...)
+
+    # Return CallbackSet
+    return callback
 end
 
 # ---------------------------------------------------------------------------- #
@@ -367,14 +456,41 @@ const ThreePoolModel = Union{ThreePoolMagnToMagn, ThreePoolCplxToMagn, ThreePool
 # Convenience conversion between a Vec{2} and a complex number
 @inline Base.complex(x::Vec{2}) = complex(x[1], x[2])
 
-# Abstract interface
+# Calculate exact mwf from grid
+function getmwf(outer::VecOfCircles{2}, inner::VecOfCircles{2}, bdry::Rectangle)
+    myelin_area = intersect_area(outer, bdry) - intersect_area(inner, bdry)
+    total_area = area(bdry)
+    return myelin_area/total_area
+end
+
+# Abstract interface for calculating mwf from measured signals
 function getmwf(
         signals::Vector{V},
         modeltype::AbstractMWIFittingModel;
         kwargs...
-        ) where {V <: Vec{2}}
-    return getmwf(modeltype, fitmwfmodel(signals, modeltype; kwargs...)...)
+    ) where {V <: Vec{2}}
+    try
+        _getmwf(modeltype, fitmwfmodel(signals, modeltype; kwargs...)...)
+    catch e
+        @warn "error computing the myelin water fraction"; @warn e
+        NaN
+    end
 end
+
+# Abstract interface
+function fitmwfmodel(
+        signals::Vector{V},
+        modeltype::AbstractMWIFittingModel;
+        kwargs...
+    ) where {V <: Vec{2}}
+    try
+        _fitmwfmodel(signals, modeltype; kwargs...)
+    catch e
+        @warn "error fitting $modeltype model to signal."; @warn e
+        nothing
+    end
+end
+
 
 # MWI model data
 mwimodeldata(modeltype::ThreePoolCplxToCplx, S::Vector{Vec{2,T}}) where {T} = copy(reinterpret(T, S[2:end]))
@@ -382,7 +498,7 @@ mwimodeldata(modeltype::ThreePoolMagnData, S::Vector{V}) where {V <: Vec{2}} = n
 mwimodeldata(modeltype::TwoPoolMagnData, S::Vector{V}) where {V <: Vec{2}} = norm.(S[2:end])
 
 # NNLSRegression model
-function fitmwfmodel(
+function _fitmwfmodel(
         signals::Vector{V},
         modeltype::NNLSRegression;
         TE = 10e-3, # First time point
@@ -419,7 +535,7 @@ function fitmwfmodel(
 
     if PLOTDIST
         logspace(start,stop,length) = exp10.(range(log10(start), stop=log10(stop), length=length))
-        mwf = getmwf(NNLSRegression(), MWImaps, MWIdist, MWIpart)
+        mwf = _getmwf(NNLSRegression(), MWImaps, MWIdist, MWIpart)
 
         mxcall(:figure, 0)
         mxcall(:semilogx, 0, 1e3 .* logspace(T2Range..., nT2), MWIdist[:])
@@ -436,7 +552,7 @@ function fitmwfmodel(
     MWImaps, MWIdist, MWIpart
 end
 
-getmwf(modeltype::NNLSRegression, MWImaps, MWIdist, MWIpart) = MWIpart["sfr"]
+_getmwf(modeltype::NNLSRegression, MWImaps, MWIdist, MWIpart) = MWIpart["sfr"]
 
 # ----------------------- #
 # ThreePoolCplxToCplx model
@@ -575,7 +691,7 @@ function mwimodel(modeltype::TwoPoolMagnToMagn, t::AbstractVector, p::Vector)
 end
 
 # Fitting of general AbstractMWIFittingModel
-function fitmwfmodel(
+function _fitmwfmodel(
         signals::Vector{V}, # signal vectors
         modeltype::AbstractMWIFittingModel = ThreePoolCplxToCplx();
         TE = 10e-3, # echo spacing
@@ -590,7 +706,7 @@ function fitmwfmodel(
 
     model(t, p) = mwimodel(modeltype, t, p)
 
-    if fitmethod == :global
+    return if fitmethod == :global
         # global optimization
         loss(p) = sum(abs2, ydata .- model(tdata, p))
         global_result = BlackBoxOptim.bboptimize(loss;
@@ -603,6 +719,8 @@ function fitmwfmodel(
 
         modelfit = (param = global_xbest,)
         errors = nothing
+
+        modelfit, errors
     else
         # default to local optimization
         wrapped_model(p) = model(tdata, p)
@@ -615,26 +733,19 @@ function fitmwfmodel(
         catch e
             nothing
         end
-    end
 
-    return modelfit, errors
+        modelfit, errors
+    end
 end
 
-function getmwf(modeltype::ThreePoolModel, modelfit, errors)
+function _getmwf(modeltype::ThreePoolModel, modelfit, errors)
     A_my, A_ax, A_ex = modelfit.param[1:3]
     return A_my/(A_my + A_ax + A_ex)
 end
 
-function getmwf(modeltype::TwoPoolModel, modelfit, errors)
+function _getmwf(modeltype::TwoPoolModel, modelfit, errors)
     A_my, A_ex = modelfit.param[1:2]
     return A_my/(A_my + A_ex)
-end
-
-# For calculating exact mwf from grid
-function getmwf(outer::VecOfCircles{2}, inner::VecOfCircles{2}, bdry::Rectangle)
-    myelin_area = intersect_area(outer, bdry) - intersect_area(inner, bdry)
-    total_area = area(bdry)
-    return myelin_area/total_area
 end
 
 end # module BlochTorreySolvers

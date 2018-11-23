@@ -1,20 +1,7 @@
 # ============================================================================ #
-# Module path loading
+# Module path loading (do this before using Revise to ensure Revise sees them)
 # ============================================================================ #
-let
-    HOME = realpath("../../..") # assume we are in MyelinWaterOrientation folder
-    BTMASTERPATH = joinpath(HOME, "BlochTorreyExperiments-master/")
-    MWOPATH = joinpath(BTMASTERPATH, "Experiments/MyelinWaterOrientation/")
-    push!(LOAD_PATH, MWOPATH)
-
-    # Add paths to modules defined in folders
-    MWOFOLDERS = ["BlochTorrey/", "CirclePacking/", "DistMesh/", "Expmv/", "Geometry/", "Utils/"]
-    MWOFOLDERS = joinpath.(MWOPATH, MWOFOLDERS)
-    push!(LOAD_PATH, MWOFOLDERS...)
-
-    # Might need to define this environment variable on Windows
-    # ENV["MATLAB_HOME"] = "C:\\Users\\Jonathan\\Downloads\\Mathworks Matlab R2016a\\R2016a"
-end
+include(joinpath(@__DIR__, "initpaths.jl"))
 
 # ============================================================================ #
 # Revise and Rebugger
@@ -66,6 +53,8 @@ using BlochTorreySolvers
 
 import EnergyCirclePacking
 import GreedyCirclePacking
+
+using MWFUtils
 
 # Packages to load
 using JuAFEM
