@@ -44,17 +44,16 @@ end
 # end
 
 # My files and modules to load
-using Expmv
 using GeometryUtils
 using CirclePackingUtils
 using MeshUtils
 using BlochTorreyUtils
 using BlochTorreySolvers
+using Expmv
+using MWFUtils
 
 import EnergyCirclePacking
 import GreedyCirclePacking
-
-using MWFUtils
 
 # Packages to load
 using JuAFEM

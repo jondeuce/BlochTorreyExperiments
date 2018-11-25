@@ -504,8 +504,8 @@ function ParabolicDomain(
     # Find interface pairs
     cells, nodes = getcells(getgrid(domain)), getnodes(getgrid(domain))
     boundaryfaceset = getfaceset(getgrid(domain), "boundary")
-    nodepairs = [JuAFEM.faces(cells[f[1]])[f[2]] for f in boundaryfaceset]
-    nodecoordpairs = [(getcoordinates(nodes[n[1]]), getcoordinates(nodes[n[2]])) for n in nodepairs]
+    nodepairs = NTuple{gDim,Int}[JuAFEM.faces(cells[f[1]])[f[2]] for f in boundaryfaceset] # pairs of node indices
+    nodecoordpairs = NTuple{gDim,Vec{uDim,T}}[(getcoordinates(nodes[n[1]]), getcoordinates(nodes[n[2]])) for n in nodepairs] # pairs of node coordinates
 
     # There should be a way to sort the nodes into a list and easily pick out
     # the pairs, but it's possibly not worth the trouble. One option would be to
@@ -527,8 +527,8 @@ function ParabolicDomain(
     # interfaceindices = Vector{NTuple{4,Int}}()
     # @inbounds for i in 1:length(nodecoordindices)-1
     #     i1, i2 = nodecoordindices[i], nodecoordindices[i+1]
-    #     p1, p2 = nodecoordpairssorted[i1], nodecoordpairssorted[i2]
-    #     if norm2(p1[1] - p2[1]) < eps(T) && norm2(p1[2] - p2[2]) < eps(T)
+    #     np1, np2 = nodecoordpairssorted[i1], nodecoordpairssorted[i2]
+    #     if norm2(np1[1] - np2[1]) < eps(T) && norm2(np1[2] - np2[2]) < eps(T)
     #         push!(interfaceindices, (nodepairs[i1]..., nodepairs[i2]...))
     #     end
     # end
@@ -537,24 +537,27 @@ function ParabolicDomain(
     interfaceindices = Vector{NTuple{4,Int}}()
     sizehint!(interfaceindices, length(nodecoordpairs)÷2)
     @inbounds for i1 in 1:length(nodecoordpairs)
-        p1 = nodecoordpairs[i1]
+        np1 = nodecoordpairs[i1] # pair of Vec's
         for i2 in 1:i1-1
-            p2 = nodecoordpairs[i2]
-            if norm2(p1[1] - p2[2]) < eps(T) && norm2(p1[2] - p2[1]) < eps(T)
-                # Reverse the ordering of one of the node pairs. This is because,
-                # for properly oriented triangles, the edge nodes will be stored
-                # in opposite order for all coincident edges which don't share a
-                # triangle face
-                push!(interfaceindices, (nodepairs[i1]..., reverse(nodepairs[i2])...))
+            np2 = nodecoordpairs[i2] # pair of Vec's
+            # For properly oriented triangles, the edge nodes will be stored in
+            # opposite order coincident edges which share a triangle face, i.e.
+            # np1[1] should equal np2[2], and vice-versa
+            if norm2(np1[1] - np2[2]) < eps(T) && norm2(np1[2] - np2[1]) < eps(T)
+                # The nodes are stored as e.g. np1 = (A,B) and np2 = (B,A).
+                # We want to keep them in this order, as is expected by the
+                # local stiffness matrix `Se` below
+                ip1, ip2 = nodepairs[i1], nodepairs[i2] # pairs of node indices
+                push!(interfaceindices, (ip1..., ip2...))
             end
         end
     end
 
     # Local permeability interaction matrix, unscaled by length
     κ = prob.params.K_perm
-    Se = (-κ/6) .* T[ 2  1 -1 -2 # minus sign in front since we build the negative stiffness matrix
-                      1  2 -2 -1
-                     -1 -2  2  1
+    Se = (-κ/6) .* T[ 2  1 -1 -2 # Minus sign in front since we build the negative stiffness matrix
+                      1  2 -2 -1 # `Se` represents the local stiffness of a zero volume interface element with points (A,B)
+                     -1 -2  2  1 # The points are ordered such that `Se` acts on [A,B,B,A]
                      -2 -1  1  2 ]
     Sck = similar(Se) # temp matrix for assigning ck .* Se to
 
