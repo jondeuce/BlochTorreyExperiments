@@ -49,7 +49,7 @@ using CirclePackingUtils
 using MeshUtils
 using BlochTorreyUtils
 using BlochTorreySolvers
-using Expmv
+using ExpmvHigham
 using MWFUtils
 
 import EnergyCirclePacking

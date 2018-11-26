@@ -1,4 +1,4 @@
-using BenchmarkTools, Expokit, Expmv
+using BenchmarkTools, Expokit, ExpmvHigham
 
 BenchmarkTools.DEFAULT_PARAMETERS.seconds = 120
 
@@ -9,7 +9,7 @@ for d in 2.^(5:10)
     println("d = $d ...")
     b1 = @benchmarkable expm(full_r)*rv setup=((full_r,rv) = (full(randn()*sprandn($d,$d,p/2)+1im*sprandn($d,$d,p/2)), rv=normalize(randn($d)+1im*randn($d))))
     b2 = @benchmarkable Expokit.expmv(rt,r,rv) setup=((rt,r,rv)=(rand(), sprandn($d,$d,p/2)+1im*sprandn($d,$d,p/2), normalize(randn($d)+1im*randn($d))))
-    b3 = @benchmarkable Expmv.expmv(rt,r,rv) setup=((rt,r,rv)=(rand(), sprandn($d,$d,p/2)+1im*sprandn($d,$d,p/2), normalize(randn($d)+1im*randn($d))))
+    b3 = @benchmarkable ExpmvHigham.expmv(rt,r,rv) setup=((rt,r,rv)=(rand(), sprandn($d,$d,p/2)+1im*sprandn($d,$d,p/2), normalize(randn($d)+1im*randn($d))))
 
     t1 = run(b1)
     t2 = run(b2)

@@ -1,4 +1,4 @@
-module Expmv
+module ExpmvHigham
 
 using LinearAlgebra
 

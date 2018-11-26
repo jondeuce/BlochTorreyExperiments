@@ -1,4 +1,4 @@
-using Expmv
+using ExpmvHigham
 using Base.Test
 
 for i = 1:100, d in 10:10:60, herm in [true, false]

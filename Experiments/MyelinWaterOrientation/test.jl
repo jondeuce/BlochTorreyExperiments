@@ -101,15 +101,15 @@ function expmv_tests(;N = 10, h = √2*(2/N), grid = generate_grid(Triangle, (N,
 
     μ = tr(A)/n
     Ashift = A - μ*I
-    M = Expmv.select_taylor_degree(A, x0; opnorm = normest1_norm)[1]
-    Mshift = Expmv.select_taylor_degree(Ashift, x0; opnorm = normest1_norm)[1]
+    M = ExpmvHigham.select_taylor_degree(A, x0; opnorm = normest1_norm)[1]
+    Mshift = ExpmvHigham.select_taylor_degree(Ashift, x0; opnorm = normest1_norm)[1]
 
     Ys = [zeros(n) for i in 1:5]
     @btime $(Ys[1]) .= $Ef * $x0  evals = 1
     @btime Expokit.expmv!($(Ys[2]), $t, $A, $x0; tol=1e-14, anorm = normest1_norm($A,Inf), m=30)  evals = 1
-    @btime Expmv.expmv!($(Ys[3]), $t, $A, $x0; opnorm = normest1_norm)  evals = 1
-    @btime Expmv.expmv!($(Ys[4]), $t, $A, $x0; M = $M, opnorm = normest1_norm)  evals = 1
-    @btime $(Ys[5]) .= exp($μ*$t) .* Expmv.expmv!($(Ys[5]), $t, $Ashift, $x0; M = $M, shift = false, opnorm = normest1_norm)  evals = 1
+    @btime ExpmvHigham.expmv!($(Ys[3]), $t, $A, $x0; opnorm = normest1_norm)  evals = 1
+    @btime ExpmvHigham.expmv!($(Ys[4]), $t, $A, $x0; M = $M, opnorm = normest1_norm)  evals = 1
+    @btime $(Ys[5]) .= exp($μ*$t) .* ExpmvHigham.expmv!($(Ys[5]), $t, $Ashift, $x0; M = $M, shift = false, opnorm = normest1_norm)  evals = 1
 
     @test norm(Ys[1] - Ys[2], Inf) ≈ 0.0 rtol = 1e-12 atol = 1e-12
     @test norm(Ys[2] - Ys[3], Inf) ≈ 0.0 rtol = 1e-12 atol = 1e-12

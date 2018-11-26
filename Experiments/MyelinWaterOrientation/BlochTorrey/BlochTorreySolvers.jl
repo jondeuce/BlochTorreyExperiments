@@ -7,7 +7,7 @@ module BlochTorreySolvers
 using GeometryUtils
 using BlochTorreyUtils
 using MeshUtils
-using Expmv
+using ExpmvHigham
 using Expokit
 
 using LinearAlgebra
@@ -280,7 +280,7 @@ function OrdinaryDiffEq.perform_step!(
     @unpack t,dt,uprev,u,f,p,alg = integrator
     A = p[1] # matrix being exponentiated
 
-    Expmv.expmv!(u, dt, A, uprev, cache.tmp;
+    ExpmvHigham.expmv!(u, dt, A, uprev, cache.tmp;
         M = alg.M,
         prec = alg.prec,
         shift = alg.shift,
@@ -291,7 +291,7 @@ function OrdinaryDiffEq.perform_step!(
     )
     integrator.fsallast = u
 end
-# Expmv.normAm(A::LinearMap, p::Real, t::Int = 10) = (normest1_norm(A^p, 1, t), 0) # no mv-product estimate
+# ExpmvHigham.normAm(A::LinearMap, p::Real, t::Int = 10) = (normest1_norm(A^p, 1, t), 0) # no mv-product estimate
 
 # function diffeq_solver(domain;
 #                        alg = CVODE_BDF(linear_solver = :GMRES),

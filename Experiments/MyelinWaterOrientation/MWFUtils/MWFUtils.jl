@@ -5,7 +5,7 @@ using CirclePackingUtils
 using MeshUtils
 using BlochTorreyUtils
 using BlochTorreySolvers
-using Expmv
+using ExpmvHigham
 import EnergyCirclePacking
 import GreedyCirclePacking
 
