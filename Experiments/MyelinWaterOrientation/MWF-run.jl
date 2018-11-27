@@ -75,7 +75,7 @@ function run_MWF!(Drange, Krange, thetarange, btparams, results, domains, omegas
 
         try
             println("\n\n")
-            println("NEW SIMULATION: $(Dates.now())")
+            println("---- SIMULATION $count/$totalcount: $(Dates.now()) ----")
             @show rad2deg(theta), D, K
             println("\n\n")
 
