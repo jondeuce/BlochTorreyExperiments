@@ -84,7 +84,7 @@ function run_MWF!(Drange, Krange, thetarange, btparams, results, domains, omegas
                 theta = theta,
                 K_perm = K,
                 D_Tissue = D,
-                D_Sheath = D,
+                D_Sheath = D/10,
                 D_Axon = D)
             MWF!(results, domains, omegas, params, exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry)
 
