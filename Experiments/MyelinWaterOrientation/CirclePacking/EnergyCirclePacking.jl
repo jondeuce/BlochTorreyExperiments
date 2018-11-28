@@ -11,7 +11,7 @@ module EnergyCirclePacking
 using GeometryUtils
 using CirclePackingUtils
 using LinearAlgebra, Statistics
-using DiffBase, Optim, LineSearches, ForwardDiff, Roots
+using DiffResults, Optim, LineSearches, ForwardDiff, Roots
 using Tensors
 # using Parameters: @with_kw
 # using JuAFEM

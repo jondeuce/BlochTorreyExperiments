@@ -10,7 +10,7 @@ module CirclePackingUtils
 
 using GeometryUtils
 using LinearAlgebra, Statistics
-using DiffBase, Optim, LineSearches, ForwardDiff, Roots
+using DiffResults, Optim, LineSearches, ForwardDiff, Roots
 using Tensors
 
 export estimate_density, opt_subdomain, scale_to_density, covariance_energy
@@ -411,9 +411,9 @@ function wrap_gradient(f, x0::AbstractArray{T},
 
     fg! = (out, x) -> begin
         # `DiffResult` is both a light wrapper around gradient `out` and storage for the forward pass
-        all_results = DiffBase.DiffResult(zero(T), out)
+        all_results = DiffResults.DiffResult(zero(T), out)
         ForwardDiff.gradient!(all_results, f, x, cfg, Val{TF}()) # update out == ∇f(x)
-        return DiffBase.value(all_results) # return f(x)
+        return DiffResults.value(all_results) # return f(x)
     end
 
     return g!, fg!, cfg
