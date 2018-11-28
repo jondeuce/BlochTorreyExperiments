@@ -35,7 +35,7 @@ end
 
 function creategrids(btparams::BlochTorreyParameters{T}; fname = nothing) where {T}
     Dim = 2
-    Ncircles = 30
+    Ncircles = 10
 
     η = btparams.AxonPDensity # goal packing density
     ϵ = 0.1 * btparams.R_mu # overlap occurs when distance between circle edges is ≤ ϵ

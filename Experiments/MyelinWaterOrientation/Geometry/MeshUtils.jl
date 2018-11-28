@@ -65,7 +65,9 @@ function JuAFEM.Grid(grids::AbstractVector{G}) where {G<:Grid}
     grid = Grid(cells, nodes)
 
     # Add boundary set and boundary matrix, including inner boundaries
-    e = boundaryfaceset(grid)
+    println("********")
+    @time e = boundaryfaceset(grid)
+    println("********")
     addfaceset!(grid, "boundary", e)
     grid.boundary_matrix = JuAFEM.boundaries_to_sparse(e)
 
@@ -77,10 +79,15 @@ function boundaryfaceset(g::Grid{dim,N,T,M}) where {dim,N,T,M}
     edgeindices = boundedges(g)
 
     faceset = Set{Tuple{Int,Int}}() # tuples of (cell_idx, face_idx)
+    sizehint!(faceset, length(edgeindices))
     for e in edgeindices
         for (cell_idx, cell) in enumerate(cells)
             face_idx = findfirst(f -> all(ei ∈ f for ei in e), faces(cell))
             !(face_idx == nothing) && push!(faceset, (cell_idx, face_idx))
+            # for (face_idx,f) in enumerate(faces(cell))
+            #     v = all(ei -> ei ∈ f, e)
+            #     v && push!(faceset, (cell_idx, face_idx))
+            # end
         end
     end
     JuAFEM._warn_emptyset(faceset)

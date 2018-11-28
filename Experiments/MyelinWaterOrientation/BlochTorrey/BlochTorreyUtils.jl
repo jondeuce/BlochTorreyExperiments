@@ -473,13 +473,14 @@ function MyelinDomain(
         ms::AbstractVector{<:MyelinDomain{R} where R}
     )
     domain = ParabolicDomain(region, prob, ms)
-    return MyelinDomain(
+    myelindomain = MyelinDomain(
         PermeableInterfaceRegion(),
         domain,
         ms[1].outercircles, # assume these are the same for all domains
         ms[1].innercircles, # assume these are the same for all domains
         ms[1].ferritins # assume these are the same for all domains
     )
+    return myelindomain
 end
 
 function ParabolicDomain(
@@ -490,7 +491,9 @@ function ParabolicDomain(
 
     # Construct one large ParabolicDomain containing all grids
     gDim, Nd, Nf = 2, 3, 3 # Triangular 2D domain
+    println("--------")
     grid = Grid(getgrid.(ms)) # combine grids into single large grid
+    println("--------")
     domain = ParabolicDomain(grid, Val(uDim);
         refshape = getrefshape(ms[1]), # assume these are the same for all domains
         quadorder = getquadorder(ms[1]), # assume these are the same for all domains
@@ -533,9 +536,22 @@ function ParabolicDomain(
     #     end
     # end
 
-    # Brute force search for pairs
+    # Sort pairs by midpoints and read off pairs
+    midpointsort = (np) -> (x = (np[1] + np[2])/2; return norm2(x), angle(x))
+    nodecoordindices = sortperm(nodecoordpairs; by = midpointsort) # sort pairs by midpoint location
     interfaceindices = Vector{NTuple{4,Int}}()
     sizehint!(interfaceindices, length(nodecoordpairs)÷2)
+    @inbounds for i in 1:length(nodecoordindices)-1
+        i1, i2 = nodecoordindices[i], nodecoordindices[i+1]
+        np1, np2 = nodecoordpairs[i1], nodecoordpairs[i2]
+        if norm2(np1[1] - np2[2]) < eps(T) && norm2(np1[2] - np2[1]) < eps(T)
+            push!(interfaceindices, (nodepairs[i1]..., nodepairs[i2]...))
+        end
+    end
+
+    # Brute force search for pairs
+    interfaceindices_brute = Vector{NTuple{4,Int}}()
+    sizehint!(interfaceindices_brute, length(nodecoordpairs)÷2)
     @inbounds for i1 in 1:length(nodecoordpairs)
         np1 = nodecoordpairs[i1] # pair of Vec's
         for i2 in 1:i1-1
@@ -548,10 +564,13 @@ function ParabolicDomain(
                 # We want to keep them in this order, as is expected by the
                 # local stiffness matrix `Se` below
                 ip1, ip2 = nodepairs[i1], nodepairs[i2] # pairs of node indices
-                push!(interfaceindices, (ip1..., ip2...))
+                push!(interfaceindices_brute, (ip1..., ip2...))
             end
         end
     end
+
+    # @show length(interfaceindices)
+    # @show length(interfaceindices_brute)
 
     # Local permeability interaction matrix, unscaled by length
     κ = prob.params.K_perm
