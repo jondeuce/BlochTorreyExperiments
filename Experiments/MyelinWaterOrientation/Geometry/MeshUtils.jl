@@ -65,9 +65,7 @@ function JuAFEM.Grid(grids::AbstractVector{G}) where {G<:Grid}
     grid = Grid(cells, nodes)
 
     # Add boundary set and boundary matrix, including inner boundaries
-    println("********")
-    @time e = boundaryfaceset(grid)
-    println("********")
+    e = boundaryfaceset(grid)
     addfaceset!(grid, "boundary", e)
     grid.boundary_matrix = JuAFEM.boundaries_to_sparse(e)
 
@@ -78,61 +76,57 @@ function boundaryfaceset(g::Grid{dim,N,T,M}) where {dim,N,T,M}
     nodes, cells = getnodes(g), getcells(g)
     edgeindices = boundedges(g) # Vector{NTuple{M,Int}}
 
-    faceset_brute = Set{Tuple{Int,Int}}() # tuples of (cell_idx, face_idx)
-    sizehint!(faceset_brute, length(edgeindices))
+    # Brute force search for edges
+    # faceset_brute = Set{Tuple{Int,Int}}() # tuples of (cell_idx, face_idx)
+    # sizehint!(faceset_brute, length(edgeindices))
+    # for e in edgeindices
+    #     for (cell_idx, cell) in enumerate(cells)
+    #         face_idx = findfirst(f -> all(ei ∈ f for ei in e), faces(cell))
+    #         !(face_idx == nothing) && push!(faceset_brute, (cell_idx, face_idx))
+    #         # for (face_idx,f) in enumerate(faces(cell))
+    #         #     v = all(ei -> ei ∈ f, e)
+    #         #     v && push!(faceset_brute, (cell_idx, face_idx))
+    #         # end
+    #     end
+    # end
 
-    @time for e in edgeindices
-        for (cell_idx, cell) in enumerate(cells)
-            face_idx = findfirst(f -> all(ei ∈ f for ei in e), faces(cell))
-            !(face_idx == nothing) && push!(faceset_brute, (cell_idx, face_idx))
-            # for (face_idx,f) in enumerate(faces(cell))
-            #     v = all(ei -> ei ∈ f, e)
-            #     v && push!(faceset_brute, (cell_idx, face_idx))
-            # end
-        end
-    end
-
+    # Create an array of (cell_index, face_index) pairs, as well as an array of
+    # nodetuples which stores the node indices for each face
+    Np = length(faces(cells[1])[1]) # number of points per cell face
     cellfaces = NTuple{2,Int}[]; sizehint!(cellfaces, M*length(cells)) #[(c,f) for f in faces(c) for c in 1:length(cells)]
-    nodetuples = NTuple{M,Int}[]; sizehint!(cellfaces, M*length(cells))
-    @time for (ci,c) in enumerate(cells)
+    nodetuples = NTuple{Np,Int}[]; sizehint!(cellfaces, M*length(cells))
+    for (ci,c) in enumerate(cells)
         for (fi,f) in enumerate(faces(c))
             push!(cellfaces, (ci,fi)) # `i` is the face index for the cell `c`
             push!(nodetuples, f) # `f` is a pair of Int's (node indices)
         end
     end
 
-    @time nodetuples = sort!(nodetuples) # by default, sorts by x[1], then x[2], etc.
-    @time edgeindices = sort!(edgeindices)
-    @time facetuples = intersect(nodetuples, edgeindices)
-
+    # Find edges by taking the intersect, and then scanning through to find the
+    # corresponding indices
+    facetuples = intersect(nodetuples, edgeindices) # order is preserved for arrays
     faceindices = Int[]
     sizehint!(faceindices, length(facetuples))
     ix = 1
-    @time for f in facetuples
-        # facetuples are sorted, so can just linearly move through to find indices
-        while (ix <= length(edgeindices)) && !(f == edgeindices[ix])
+    for f in facetuples
+        # facetuples order is preserved, so can just linearly move through to find indices
+        while (ix <= length(nodetuples)) && !(f == nodetuples[ix])
             ix += 1
         end
-        if ix <= length(edgeindices)
+        if ix <= length(nodetuples)
             push!(faceindices, ix)
         else
             break
         end
     end
 
+    # Push resulting (cell_index, face_index) pairs to a Set
     faceset = Set{Tuple{Int,Int}}() # tuples of (cell_idx, face_idx)
-    sizehint!(faceset, length(edgeindices))
-    @time for ix in faceindices
+    sizehint!(faceset, length(nodetuples))
+    for ix in faceindices
         push!(faceset, cellfaces[ix])
     end
 
-    @show length(facetuples)
-    @show length(faceindices)
-    @show length(faceset)
-    @show length(faceset_brute)
-    @show isequal(faceset_brute, faceset)
-
-    faceset = copy(faceset_brute)
     JuAFEM._warn_emptyset(faceset)
     return faceset
 end

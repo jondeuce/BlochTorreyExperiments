@@ -202,9 +202,9 @@ function boundedges(
     node3 = node3[ix[qx]]
 
     # Orientation
-    v1 = p[e[:,2],:] - p[e[:,1],:]
-    v2 = p[node3,:] - p[e[:,1],:]
-    ix = findall(v1[:,1] .* v2[:,2] .- v1[:,2] .* v2[:,1] .> zero(T))
+    v12 = p[e[:,2],:] - p[e[:,1],:]
+    v13 = p[node3,:] - p[e[:,1],:]
+    ix = findall(v12[:,1] .* v13[:,2] .- v12[:,2] .* v13[:,1] .< zero(T)) #NOTE this is different in DistMesh (they check for > 0) - I believe it's an error in their code
     e[ix, [1,2]] = e[ix, [2,1]]
     e = sort!(to_tuple(e); by = first)
 

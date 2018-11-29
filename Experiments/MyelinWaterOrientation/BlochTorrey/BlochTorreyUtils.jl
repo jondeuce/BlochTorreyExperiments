@@ -491,9 +491,7 @@ function ParabolicDomain(
 
     # Construct one large ParabolicDomain containing all grids
     gDim, Nd, Nf = 2, 3, 3 # Triangular 2D domain
-    println("--------")
     grid = Grid(getgrid.(ms)) # combine grids into single large grid
-    println("--------")
     domain = ParabolicDomain(grid, Val(uDim);
         refshape = getrefshape(ms[1]), # assume these are the same for all domains
         quadorder = getquadorder(ms[1]), # assume these are the same for all domains
