@@ -105,10 +105,10 @@ omegas = []
 thetarange = range(0.0, stop = π/2, length = 2)
 # Krange = [0.0, 10.0.^(-2:3)...]
 # Drange = [10.0.^(0:3)..., 2000.0]
-Krange = [0.0, 1e-3, 5e-3, 10e-3, 25e-3, 50e-3, 100e-3, 250e-3, 500e-3, 1.0, 2.0, 5.0, 10.0, 50.0, 100.0, 1000.0]
-Drange = [1e-2, 1e-1, 1.0, 2.0, 4.0, 8.0, 15.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2000.0]
-# Krange = [1000.0]
-# Drange = [1e-3]
+# Krange = [0.0, 1e-3, 5e-3, 10e-3, 25e-3, 50e-3, 100e-3, 250e-3, 500e-3, 1.0, 2.0, 5.0, 10.0, 50.0, 100.0, 1000.0]
+# Drange = [1e-2, 1e-1, 1.0, 2.0, 4.0, 8.0, 15.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2000.0]
+Krange = [0.0]
+Drange = [1e-10]
 
 run_MWF!(Drange, Krange, thetarange, btparams, # loop params
     results, domains, omegas, # modified in-place
