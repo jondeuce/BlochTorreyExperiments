@@ -3,7 +3,8 @@ function testbtfindiff2D(opts::BlochTorreyParameters{T};
         Domain::NTuple{2,T} = opts.R_mu .* (-2,2),  # Bounds for side of square domain
         Router::T           = opts.R_mu,            # Outer radius; defaults to R_mu
         Time::T             = 60e-3,                # Simulation time
-        PLOT::Bool          = true                  # Plot resulting magnitude and phase
+        IsPermeable::Bool   = false,                # Permeability of myelin
+        Plot::Bool          = true                  # Plot resulting magnitude and phase
     ) where {T}
 
     @assert opts.D_Axon == opts.D_Tissue == opts.D_Sheath
@@ -19,8 +20,8 @@ function testbtfindiff2D(opts::BlochTorreyParameters{T};
     g  = opts.g_ratio # 0.8
     ro = Router #0.5
     ri = g*ro
-    m_int = Bool[x^2 + y^2 < ri^2 for x in pts, y in pts]
-    m_ext = Bool[x^2 + y^2 > ro^2 for x in pts, y in pts]
+    m_int = IsPermeable ? falses(Npts,Npts) : Bool[x^2 + y^2 < ri^2 for x in pts, y in pts]
+    m_ext = IsPermeable ?  trues(Npts,Npts) : Bool[x^2 + y^2 > ro^2 for x in pts, y in pts]
 
     tmp = similar(G)
     function A(du,u,isadj::Bool=false)

@@ -3,7 +3,7 @@ function testbtfinelem2D(opts::BlochTorreyParameters{T};
         Domain::NTuple{2,T} = opts.R_mu .* (-2,2),  # Bounds for side of square domain
         Router::T           = opts.R_mu,            # Outer radius; defaults to R_mu
         Time::T             = 60e-3,                # Simulation time
-        PLOT::Bool          = true                  # Plot resulting magnitude and phase
+        Plot::Bool          = true                  # Plot resulting magnitude and phase
     ) where {T}
 
     a, b = Domain
@@ -20,10 +20,10 @@ function testbtfinelem2D(opts::BlochTorreyParameters{T};
         TE = Time,
         cb = nothing
     )
-    # sols = solve(myelindomains)
-    sols = solve(myelinsubdomains)
+    sols = solve(myelindomains)
+    # sols = solve(myelinsubdomains)
 
-    if PLOT
+    if Plot
         paramstr = "theta = $(rad2deg(opts.theta)) deg, D = $(opts.D_Tissue) um2/s, K = $(opts.K_perm) um/s"
         simpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = omega)
         plotmagnitude(sols, opts, myelindomains, bdry; titlestr = "Magnitude: " * paramstr)

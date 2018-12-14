@@ -924,6 +924,10 @@ function doassemble!(
     Me = zeros(T, n_basefuncs, n_basefuncs)
     we = zeros(T, n_basefuncs)
 
+    isfirst = true
+    Rfirst = zero(T)
+    dΩfirst = zero(T)
+
     # It is now time to loop over all the cells in our grid. We do this by iterating
     # over a `CellIterator`. The iterator caches some useful things for us, for example
     # the nodal coordinates for the cell, and the local degrees of freedom.
@@ -953,6 +957,13 @@ function doassemble!(
             D = prob.Dcoeff(coords_qp)
             ω = prob.Omega(coords_qp)
 
+            if isfirst
+                Rfirst = R
+                dΩfirst = dΩ
+                @show q_point
+                @show coords_qp
+            end
+
             # For each quadrature point we loop over all the (local) shape functions.
             # We need the value and gradient of the testfunction `v` and also the gradient
             # of the trial function `u`. We get all of these from `cellvalues`.
@@ -967,6 +978,14 @@ function doassemble!(
                     Me[i, j] += (v ⋅ u) * dΩ
                 end
             end
+        end
+
+        if isfirst
+            _Ke = -(Rfirst.*Me .+ Ke)
+            println("---- Ke ----\n"); display(_Ke); @show sum(_Ke, dims=2); println("\n")
+            println("---- Me ----\n"); display(Me); println("\n")
+            println("---- we ----\n"); display(we); println("\n")
+            isfirst = false
         end
 
         # The last step in the element loop is to assemble `Ke` and `Me`
