@@ -1,17 +1,11 @@
-#TESTBLOCHTORREY2D testblochtorrey2D(;kwargs...)
-#
-# Example usage:
-#   U = testblochtorrey2D(D_Axon = 1.0, D_Tissue = 1.0, D_Sheath = 1.0, Plot = true)
-function testblochtorrey2D(;
-        Npts::Int           = 101,          # Number of points per dimension
-        Domain::Vector{T}   = [-1.0, 1.0],  # Bounds for side of square domain
-        R_outer_rel::T      = 1.0,          # Outer radius relative to R_mu
-        Time::T             = 60e-3,        # Simulation time
-        Plot::Bool          = true,         # Plot resulting magnitude and phase
-        kwargs...
+function testbtfindiff2D(opts::BlochTorreyParameters{T};
+        Npts::Int           = 100,                  # Number of points per dimension
+        Domain::NTuple{2,T} = opts.R_mu .* (-2,2),  # Bounds for side of square domain
+        Router::T           = opts.R_mu,            # Outer radius; defaults to R_mu
+        Time::T             = 60e-3,                # Simulation time
+        PLOT::Bool          = true                  # Plot resulting magnitude and phase
     ) where {T}
 
-    opts = BlochTorreyParameters{T}(;kwargs...)
     @assert opts.D_Axon == opts.D_Tissue == opts.D_Sheath
 
     D = opts.D_Tissue
@@ -19,11 +13,11 @@ function testblochtorrey2D(;
     h = (b-a)/(Npts-1)
     pts = range(a, stop = b, length = Npts)
 
-    Gamma(x,y) = complex(r2decay(x,y,R_outer_rel,opts), omega(x,y,R_outer_rel,opts))
+    Gamma(x,y) = complex(r2decay(x,y,opts,Router), omega(x,y,opts,Router))
     G = Complex{T}[Gamma(x,y) for x in pts, y in pts]
 
     g  = opts.g_ratio # 0.8
-    ro = R_outer_rel * opts.R_mu #0.5
+    ro = Router #0.5
     ri = g*ro
     m_int = Bool[x^2 + y^2 < ri^2 for x in pts, y in pts]
     m_ext = Bool[x^2 + y^2 > ro^2 for x in pts, y in pts]
@@ -39,7 +33,7 @@ function testblochtorrey2D(;
         axpy!(-one(real(T)), tmp, du)
         return du
     end
-    Amap = FunctionMap{Complex{T}}(
+    Amap = LinearMaps.FunctionMap{Complex{T}}(
         (du,u) -> A(du,u,false), (du,u) -> A(du,u,true), Npts^2;
         issymmetric = true, ishermitian = false, ismutating = true)
 
@@ -54,14 +48,23 @@ function testblochtorrey2D(;
     # figure, imagesc(rot90(unwrap(angle(U)))); axis image; title phase; colorbar
     # figure, imagesc(rot90(abs(U))); axis image; title magnitude; colorbar
 
-    return U, Amap, U0, G
+    # Return a named tupled of geometry structures
+    geom = (
+        pts = pts,
+        m_int = m_int,
+        m_ext = m_ext,
+        Amap = Amap,
+        U0 = U0
+    )
+
+    return U, geom
 end
 
 function omega(
         x::T,
         y::T,
-        R_outer_rel::T = 1.0, # Outer radius relative to R_mu
-        opts::BlochTorreyParameters{T} = BlochTorreyParameters{T}()
+        opts::BlochTorreyParameters{T} = BlochTorreyParameters{T}(),
+        Router::T = opts.R_mu
     ) where {T}
 
     B0    = opts.B0    # -3.0         # External magnetic field (z-direction) [T]
@@ -75,7 +78,7 @@ function omega(
     E     = opts.E    #  10e-9  # Exchange component to resonance freqeuency [ppb] (Wharton and Bowtell 2012)
 
     g  = opts.g_ratio # 0.8
-    ro = R_outer_rel * opts.R_mu #0.5
+    ro = Router #0.5
     ri = g*ro
     ri2 = ri^2
     ro2 = ro^2
@@ -101,15 +104,15 @@ end
 function r2decay(
         x::T,
         y::T,
-        R_outer_rel::T = 1.0, # Outer radius relative to R_mu
-        opts::BlochTorreyParameters{T} = BlochTorreyParameters{T}()
+        opts::BlochTorreyParameters{T} = BlochTorreyParameters{T}(),
+        Router::T = opts.R_mu # Outer radius relative to R_mu
     ) where {T}
 
     R2_sp = opts.R2_sp # 1/15e-3 # Relaxation rate of small pool [s^-1] (Myelin) (Xu et al. 2017) (15e-3s)
     R2_lp = opts.R2_lp # 1/63e-3 # Relaxation rate of large pool [s^-1] (Intra/Extra-cellular)
 
     g  = opts.g_ratio # 0.8
-    ro = R_outer_rel * opts.R_mu #0.5
+    ro = Router #0.5
     ri = g*ro
     ri2 = ri^2
     ro2 = ro^2
@@ -137,12 +140,3 @@ end
 # Base.eltype(A::BTOp{T}) where {T} = T
 # Base.:*(a::Number, A::BTOp) = BTOp(a.*A.G, A.h./sqrt(a), A.m_int, A.m_ext)
 # LinearAlgebra.opnorm(A::BTOp{T}, p) where {T} = one(T)
-
-# function testblochtorrey2D(;
-#         kwargs...
-#     )
-#
-#     @show kwargs
-#
-#     return nothing
-# end

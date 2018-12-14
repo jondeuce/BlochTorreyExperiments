@@ -9,7 +9,7 @@ let
     push!(LOAD_PATH, MWOPATH)
 
     # Add paths to modules defined in folders
-    MWOFOLDERS = ["BlochTorrey", "CirclePacking", "DistMesh", "ExpmvHigham", "Geometry", "Utils", "MWFUtils", "Test"]
+    MWOFOLDERS = ["BlochTorrey", "CirclePacking", "DistMesh", "ExpmvHigham", "Geometry", "Utils", "MWFUtils", "TestBlochTorrey2D"]
     MWOFOLDERS = joinpath.(MWOPATH, MWOFOLDERS)
     append!(LOAD_PATH, MWOFOLDERS)
 

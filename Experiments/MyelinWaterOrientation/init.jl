@@ -6,23 +6,23 @@ include(joinpath(@__DIR__, "initpaths.jl"))
 # ============================================================================ #
 # Revise and Rebugger
 # ============================================================================ #
-try
-    @eval using Revise
-    # Turn on Revise's automatic-evaluation behavior
-    Revise.async_steal_repl_backend()
-catch err
-    @warn "Could not load Revise."
-end
-
-try
-    @eval using Rebugger
-    # Activate Rebugger's key bindings
-    Rebugger.keybindings[:stepin] = "\e[17~"      # Add the keybinding F6 to step into a function.
-    Rebugger.keybindings[:stacktrace] = "\e[18~"  # Add the keybinding F7 to capture a stacktrace.
-    atreplinit(Rebugger.repl_init)
-catch
-    @warn "Could not load Rebugger."
-end
+# try
+#     @eval using Revise
+#     # Turn on Revise's automatic-evaluation behavior
+#     Revise.async_steal_repl_backend()
+# catch err
+#     @warn "Could not load Revise."
+# end
+#
+# try
+#     @eval using Rebugger
+#     # Activate Rebugger's key bindings
+#     Rebugger.keybindings[:stepin] = "\e[17~"      # Add the keybinding F6 to step into a function.
+#     Rebugger.keybindings[:stacktrace] = "\e[18~"  # Add the keybinding F7 to capture a stacktrace.
+#     atreplinit(Rebugger.repl_init)
+# catch
+#     @warn "Could not load Rebugger."
+# end
 
 @static if VERSION >= v"0.7.0"
     # Packages moved out of base for v0.7.0+
@@ -51,6 +51,7 @@ using BlochTorreyUtils
 using BlochTorreySolvers
 using ExpmvHigham
 using MWFUtils
+using TestBlochTorrey2D
 
 import EnergyCirclePacking
 import GreedyCirclePacking

@@ -20,7 +20,7 @@ export creategrids, createdomains
 export calcomegas, calcomega
 export calcsignals, calcsignal
 export solveblochtorrey, default_algfun, get_algfun
-export plotmagnitude, plotSEcorr, plotbiexp
+export plotmagnitude, plotphase, plotSEcorr, plotbiexp
 export compareMWFmethods
 export savefig, getnow
 
@@ -33,24 +33,24 @@ export MWFResults
     mwfvalues::Vector{Dict{Symbol,T}}        = []
 end
 
-function creategrids(btparams::BlochTorreyParameters{T}; fname = nothing) where {T}
-    Dim = 2
-    Ncircles = 20
+function packcircles(btparams::BlochTorreyParameters{T};
+        N = 20, # number of circles
+        η = btparams.AxonPDensity, # goal packing density
+        ϵ = 0.1 * btparams.R_mu, # overlap occurs when distance between circle edges is ≤ ϵ
+        α = 1e-1, # covariance penalty weight (enforces circular distribution)
+        β = 1e-6, # mutual distance penalty weight
+        λ = 1.0, # overlap penalty weight (or lagrange multiplier for constrained version)
+        it = 100 # maximum iterations for greedy packing
+    ) where {T}
 
-    η = btparams.AxonPDensity # goal packing density
-    ϵ = 0.1 * btparams.R_mu # overlap occurs when distance between circle edges is ≤ ϵ
-    α = 1e-1 # covariance penalty weight (enforces circular distribution)
-    β = 1e-6 # mutual distance penalty weight
-    λ = 1.0 # overlap penalty weight (or lagrange multiplier for constrained version)
-
-    rs = rand(radiidistribution(btparams), Ncircles)
-    @time initial_circles = GreedyCirclePacking.pack(rs; goaldensity = 1.0, iters = 100)
+    rs = rand(radiidistribution(btparams), N)
+    @time initial_circles = GreedyCirclePacking.pack(rs; goaldensity = 1.0, iters = it)
     @show minimum(radius.(initial_circles))
     @show estimate_density(initial_circles)
     @show minimum_signed_edge_distance(initial_circles)
     @show estimate_density(initial_circles)
 
-    @time outercircles = EnergyCirclePacking.pack(initial_circles;
+    @time circles = EnergyCirclePacking.pack(initial_circles;
         autodiff = true,
         secondorder = false,
         setcallback = false,
@@ -59,7 +59,26 @@ function creategrids(btparams::BlochTorreyParameters{T}; fname = nothing) where 
         weights = [α, β, λ],
         epsilon = ϵ
     )
-    innercircles = scale_shape.(outercircles, btparams.g_ratio)
+
+    return circles
+end
+
+function creategrids(btparams::BlochTorreyParameters{T};
+        fname = nothing, # filename for saving
+        N = 20, # number of circles
+        η = btparams.AxonPDensity, # goal packing density
+        ϵ = 0.1 * btparams.R_mu, # overlap occurs when distance between circle edges is ≤ ϵ
+        α = 1e-1, # covariance penalty weight (enforces circular distribution)
+        β = 1e-6, # mutual distance penalty weight
+        λ = 1.0, # overlap penalty weight (or lagrange multiplier for constrained version)
+        it = 100, # maximum iterations for greedy packing
+        bdry = nothing, # default boundary is automatically determined in packcircles
+        outercircles = packcircles(btparams; N=N,η=η,ϵ=ϵ,α=α,β=β,λ=λ,it=it), # outer circles
+        RESOLUTION = 1.0,
+        CIRCLESTALLITERS = 500,
+        EXTERIORSTALLITERS = 1000,
+        PLOT = true
+    ) where {T}
 
     dmin = minimum_signed_edge_distance(outercircles)
     @show covariance_energy(outercircles)
@@ -67,23 +86,29 @@ function creategrids(btparams::BlochTorreyParameters{T}; fname = nothing) where 
     @show is_any_overlapping(outercircles)
     @show (dmin, ϵ, dmin > ϵ)
 
-    h0 = minimum(radius.(outercircles))*(1-btparams.g_ratio) # fraction of size of minimum torus width
+    h0 = RESOLUTION * minimum(radius.(outercircles))*(1-btparams.g_ratio) # fraction of size of minimum torus width
     h_min = 1.0*h0 # minimum edge length
     h_max = 5.0*h0 # maximum edge length
     h_range = 10.0*h0 # distance over which h increases from h_min to h_max
     h_rate = 0.6 # rate of increase of h from circle boundaries (power law; smaller = faster radial increase)
 
-    bdry, _ = opt_subdomain(outercircles)
+    if (bdry == nothing)
+        bdry, _ = opt_subdomain(outercircles)
+    end
+    innercircles = scale_shape.(outercircles, btparams.g_ratio)
+
     @time exteriorgrids, torigrids, interiorgrids, parentcircleindices = disjoint_rect_mesh_with_tori(
         bdry, innercircles, outercircles, h_min, h_max, h_range, h_rate;
-        CIRCLESTALLITERS = 500, EXTERIORSTALLITERS = 1000, plotgrids = false, exterior_tiling = (1, 1)
+        CIRCLESTALLITERS = CIRCLESTALLITERS, EXTERIORSTALLITERS = EXTERIORSTALLITERS, plotgrids = PLOT, exterior_tiling = (1, 1)
     )
 
     cell_area_mismatch = sum(area.(exteriorgrids)) + sum(area.(torigrids)) + sum(area.(interiorgrids)) - area(bdry)
     @show cell_area_mismatch
 
-    allgrids = vcat(exteriorgrids[:], torigrids[:], interiorgrids[:])
-    simpplot(allgrids; newfigure = true, axis = mxaxis(bdry))
+    if PLOT
+        allgrids = vcat(exteriorgrids[:], torigrids[:], interiorgrids[:])
+        simpplot(allgrids; newfigure = true, axis = mxaxis(bdry))
+    end
 
     !(fname == nothing) && savefig(fname)
 
@@ -131,25 +156,26 @@ end
 # Sum signals over all domains
 calcsignal(sols, ts, myelindomains) = sum(calcsignals(sols, ts, myelindomains))
 
-function solveblochtorrey(myelinprob, myelindomains, algfun = default_algfun())
-    tspan = (0.0, 320.0e-3)
-    TE = 10e-3
-    ts = tspan[1]:TE/2:tspan[2] # tstops, which includes π-pulse times
-    u0 = Vec{2}((0.0, 1.0)) # initial π/2 pulse
-
+function solveblochtorrey(myelinprob, myelindomains, algfun = default_algfun();
+        tspan = (0.0, 320.0e-3),
+        TE = 10e-3,
+        ts = tspan[1]:TE/2:tspan[2], # tstops, which includes π-pulse times
+        u0 = Vec{2}((0.0, 1.0)), # initial π/2 pulse
+        cb = MultiSpinEchoCallback(tspan; TE = TE),
+        reltol = 1e-4
+    )
     probs = [ODEProblem(m, interpolate(u0, m), tspan; invertmass = true) for m in myelindomains]
     sols = Vector{ODESolution}()
 
     @time for (i,prob) in enumerate(probs)
         println("i = $i/$(length(probs)): ")
-        cb = MultiSpinEchoCallback(tspan; TE = TE)
         alg = algfun(prob)
         sol = @time solve(prob, alg;
             dense = false, # don't save all intermediate time steps
             saveat = ts, # timepoints to save solution at
             tstops = ts, # ensure stopping at all ts points
             dt = TE,
-            reltol = 1e-4,
+            reltol = reltol,
             callback = cb
         )
         push!(sols, sol)
@@ -171,6 +197,20 @@ default_algfun() = prob -> ExpokitExpmv(prob.p[1]; m = 30) # first parameter is 
 function plotmagnitude(sols, btparams, myelindomains, bdry; titlestr = "Magnitude", fname = nothing)
     Umagn = reduce(vcat, norm.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
     simpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = Umagn)
+    mxcall(:title, 0, titlestr)
+
+    !(fname == nothing) && savefig(fname)
+
+    # Uphase = reduce(vcat, angle.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
+    # simpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = Uphase)
+    # mxcall(:title, 0, "Phase")
+
+    nothing
+end
+
+function plotphase(sols, btparams, myelindomains, bdry; titlestr = "Phase", fname = nothing)
+    Uphase = reduce(vcat, angle.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
+    simpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = Uphase)
     mxcall(:title, 0, titlestr)
 
     !(fname == nothing) && savefig(fname)
