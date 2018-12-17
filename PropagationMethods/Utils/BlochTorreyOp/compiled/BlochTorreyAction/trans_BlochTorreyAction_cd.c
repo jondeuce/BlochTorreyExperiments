@@ -49,7 +49,7 @@
 #endif /* REALTYPE */
 
 /* Simple unsafe swap macro: https://stackoverflow.com/questions/3982348/implement-generic-swap-macro-in-c */
-#define SWAP(x,y) do { typeof(x) SWAP = x; x = y; y = SWAP; } while (0)
+#define SWAP(x,y,T) do { T SWAP = x; x = y; y = SWAP; } while (0)
 
 void trans_BlochTorreyAction3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL K, const REAL *gsize );
 void trans_BlochTorreyAction4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL K, const REAL *gsize );
@@ -110,8 +110,8 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     /* Evaluate the trans_BlochTorreyAction iters-1 times using temp variable, if necessary */
     int i;
     for(i = 1; i < iters; ++i) {
-        SWAP(dxr, yr);
-        SWAP(dxi, yi);
+        SWAP(dxr, yr, REAL*);
+        SWAP(dxi, yi, REAL*);
         trans_BlochTorreyAction( dxr, dxi, yr, yi, fr, fi, K, gsize );
     }
     

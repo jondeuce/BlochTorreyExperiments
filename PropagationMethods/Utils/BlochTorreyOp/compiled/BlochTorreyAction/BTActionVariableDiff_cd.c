@@ -53,7 +53,7 @@
 #endif /* REALTYPE */
 
 /* Simple unsafe swap macro: https://stackoverflow.com/questions/3982348/implement-generic-swap-macro-in-c */
-#define SWAP(x,y) do { typeof(x) SWAP = x; x = y; y = SWAP; } while (0)
+#define SWAP(x,y,T) do { T SWAP = x; x = y; y = SWAP; } while (0)
 
 /* Notation:
  *  x     = x[l]          = "center"
@@ -147,8 +147,8 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
         yi = mxMalloc(mxGetNumberOfElements(__x__) * sizeof(REAL));
         int i;
         for(i = 1; i < iters; ++i) {
-            SWAP(dxr, yr);
-            SWAP(dxi, yi);
+            SWAP(dxr, yr, REAL*);
+            SWAP(dxi, yi, REAL*);
             BTActionVariableDiff( dxr, dxi, yr, yi, fr, fi, Dr, Di, K, gsize );
         }
         /* Free temporary variable, if necessary */
