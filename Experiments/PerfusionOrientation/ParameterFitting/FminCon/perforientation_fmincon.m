@@ -69,16 +69,16 @@ Weights = BinCounts / sum(BinCounts(:));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 3;
+Nmajor = 4;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
 % Rminor_sig = 2.1;
 
 % ---- With Diffusion ---- %
-D_Tissue = 3037; %[um^2/s]
-D_Blood = 3037; %[um^2/s]
-D_VRS = 3037; %[um^2/s]
+D_Tissue = 1000; %[um^2/s]
+D_Blood = 1000; %[um^2/s]
+D_VRS = []; %[um^2/s]
 Nsteps = 8;
 StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
 % Nsteps = 2;
@@ -98,7 +98,8 @@ RotateGeom = false; % geometry is fixed; dipole rotates
 MajorAngle = 0.0; % major vessel angle w.r.t z-axis [degrees]
 NumMajorArteries = 0;
 MinorArterialFrac = 0.0;
-VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless] => 3X volume (see below)
+VRSRelativeRad = 1; % Radius of Virchow-Robin space relative to major vessel radius [unitless] => 0X volume (see below)
+% VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless] => 3X volume (see below)
 % VRSRelativeRad = sqrt(5/2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(5/2) => 1.5X
 % VRSRelativeRad = sqrt(3); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(3) => 2X
 
