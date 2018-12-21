@@ -34,6 +34,14 @@ function y = bwd_diff(x,d)
 y = x - circshift(x, 1, d);
 end
 
+function y = fwd_av(x,d)
+y = 0.5 .* (circshift(x, -1, d) + x);
+end
+
+function y = bwd_av(x,d)
+y = 0.5 .* (x + circshift(x, 1, d));
+end
+
 function y = Lap(x,includecenter)
 if nargin < 2; includecenter = true; end
 y = circshift(x, 1, 1);
@@ -63,14 +71,28 @@ z = z + bwd_diff( D .* fwd_diff(x,2), 2 );
 z = z + bwd_diff( D .* fwd_diff(x,3), 3 );
 end
 
+function z = FluxDiff(x,D)
+% div(D*grad(x)) with backward divergence/forward gradient
+phiF =  fwd_av(D,1) .* fwd_diff(x,1) + ...
+        fwd_av(D,2) .* fwd_diff(x,2) + ...
+        fwd_av(D,3) .* fwd_diff(x,3);
+phiB =  bwd_av(D,1) .* bwd_diff(x,1) + ...
+        bwd_av(D,2) .* bwd_diff(x,2) + ...
+        bwd_av(D,3) .* bwd_diff(x,3);
+z = phiF - phiB;
+end
+
 function y = BTAction_Scalar_D(x,h,D,f)
 % f is the diagonal, not Gamma
 y = (D/h^2) * Lap(x,false) + f.*x;
 end
 
 function y = BTAction_Variable_D(x,h,D,f)
+% Flux difference minus Gamma term (f is Gamma := R2 + i*dw)
+y = FluxDiff(x,D)/h^2 - f.*x;
+
 % Divergence of gradient minus Gamma term (f is Gamma := R2 + i*dw)
-y = DivDGrad(x,D)/h^2 - f.*x;
+% y = DivDGrad(x,D)/h^2 - f.*x;
 
 % Symmetrized expanded diffusion term minus Gamma term (f is Gamma := R2 + i*dw)
 % y = (D.*Lap(x,true))/h^2 + GradDot(D,x)/h^2 - f.*x;

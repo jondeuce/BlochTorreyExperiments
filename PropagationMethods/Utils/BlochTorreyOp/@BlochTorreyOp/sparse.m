@@ -44,39 +44,87 @@ else
     % divergence and forward differences for the gradient, we have:
     %       div(D*grad(u)) = sum_j -Fj^T*diag(D)*Fj*u
     
-    % "Isotropic diffusion" term is simply multiplying pointwise by D, i.e.
-    % multiplication with a diagonal matrix on the left
-    D  = toDiag(A.D(:));
-    
     % Construct forward difference matrices (backwards: negative transpose)
-    Bx = spdiags( (1/hx) * repmat([-1,1],Nx,1), [-1 0], Nx, Nx );
-    By = spdiags( (1/hy) * repmat([-1,1],Ny,1), [-1 0], Ny, Ny );
-    Bz = spdiags( (1/hz) * repmat([-1,1],Nz,1), [-1 0], Nz, Nz );
-    Fx = spdiags( (1/hx) * repmat([-1,1],Nx,1), [ 0 1], Nx, Nx );
-    Fy = spdiags( (1/hy) * repmat([-1,1],Ny,1), [ 0 1], Ny, Ny );
-    Fz = spdiags( (1/hz) * repmat([-1,1],Nz,1), [ 0 1], Nz, Nz );
+    % and forward averaging matrices (backwards: transpose)
+    Ax = spdiags( (0.5/hx) .* repmat([ 1,1],Nx,1), [0 1], Nx, Nx );
+    Ay = spdiags( (0.5/hy) .* repmat([ 1,1],Ny,1), [0 1], Ny, Ny );
+    Az = spdiags( (0.5/hz) .* repmat([ 1,1],Nz,1), [0 1], Nz, Nz );
+    Fx = spdiags( (1.0/hx) .* repmat([-1,1],Nx,1), [0 1], Nx, Nx );
+    Fy = spdiags( (1.0/hy) .* repmat([-1,1],Ny,1), [0 1], Ny, Ny );
+    Fz = spdiags( (1.0/hz) .* repmat([-1,1],Nz,1), [0 1], Nz, Nz );
     
     % Periodic boundary conditions
-    [ Fx(end,1), Fy(end,1), Fz(end,1) ] = deal( 1/hx,  1/hy,  1/hz);
-    [ Bx(1,end), By(1,end), Bz(1,end) ] = deal(-1/hx, -1/hy, -1/hz);
+    [ Fx(end,1), Fy(end,1), Fz(end,1) ] = deal(1.0/hx, 1.0/hy, 1.0/hz);
+    [ Ax(end,1), Ay(end,1), Az(end,1) ] = deal(0.5/hx, 0.5/hy, 0.5/hz);
     
     % Construct full matrices via Kronecker product, and add averaged
     % forward/backward difference "flux diffusion" terms one by one (just
     % to save memory)
     Fx = kron(Iz, kron(Iy, Fx)); % Forward difference matrix: d/dx
-    J = J - ( Fx' * D * Fx );
-    clear Fx
+    Ax = kron(Iz, kron(Iy, Ax)); % Forward averaging matrix: x-direction
+    
+    J = J + ( toDiag(Ax * A.D(:)) * Fx + toDiag(Ax' * A.D(:)) * Fx' );
+    clear Fx Ax
     
     Fy = kron(Iz, kron(Fy, Ix)); % forward d/dy
-    J = J - ( Fy' * D * Fy );
-    clear Fy
+    Ay = kron(Iz, kron(Ay, Ix)); % forward averaging in y
+    J = J + ( toDiag(Ay * A.D(:)) * Fy + toDiag(Ay' * A.D(:)) * Fy' );
+    clear Fy Ay
     
     Fz = kron(kron(Fz, Iy), Ix); % forward d/dz
-    J = J - ( Fz' * D * Fz );
-    clear Fz
+    Az = kron(kron(Az, Iy), Ix); % forward averaging in z
+    J = J + ( toDiag(Az * A.D(:)) * Fz + toDiag(Az' * A.D(:)) * Fz' );
+    clear Fz Az
 end
 
 end
+
+% -------------------------------------------------- %
+% ---- Forward grad/backward divergence version ---- %
+% -------------------------------------------------- %
+
+% % Diffusion operator is:
+% %       div(D*grad(u)) = sum_j d/dj(D*du/dj)
+% % Let Fj be the forward finite difference matrix. Then, -Fj^T is the
+% % backward finite difference matrix. Using backward differences for the
+% % divergence and forward differences for the gradient, we have:
+% %       div(D*grad(u)) = sum_j -Fj^T*diag(D)*Fj*u
+% 
+% % "Isotropic diffusion" term is simply multiplying pointwise by D, i.e.
+% % multiplication with a diagonal matrix on the left
+% D  = toDiag(A.D(:));
+% 
+% % Construct forward difference matrices (backwards: negative transpose)
+% Bx = spdiags( (1/hx) * repmat([-1,1],Nx,1), [-1 0], Nx, Nx );
+% By = spdiags( (1/hy) * repmat([-1,1],Ny,1), [-1 0], Ny, Ny );
+% Bz = spdiags( (1/hz) * repmat([-1,1],Nz,1), [-1 0], Nz, Nz );
+% Fx = spdiags( (1/hx) * repmat([-1,1],Nx,1), [ 0 1], Nx, Nx );
+% Fy = spdiags( (1/hy) * repmat([-1,1],Ny,1), [ 0 1], Ny, Ny );
+% Fz = spdiags( (1/hz) * repmat([-1,1],Nz,1), [ 0 1], Nz, Nz );
+% 
+% % Periodic boundary conditions
+% [ Fx(end,1), Fy(end,1), Fz(end,1) ] = deal( 1/hx,  1/hy,  1/hz);
+% [ Bx(1,end), By(1,end), Bz(1,end) ] = deal(-1/hx, -1/hy, -1/hz);
+% 
+% % Construct full matrices via Kronecker product, and add averaged
+% % forward/backward difference "flux diffusion" terms one by one (just
+% % to save memory)
+% Fx = kron(Iz, kron(Iy, Fx)); % Forward difference matrix: d/dx
+% J = J - ( Fx' * D * Fx );
+% clear Fx
+% 
+% Fy = kron(Iz, kron(Fy, Ix)); % forward d/dy
+% J = J - ( Fy' * D * Fy );
+% clear Fy
+% 
+% Fz = kron(kron(Fz, Iy), Ix); % forward d/dz
+% J = J - ( Fz' * D * Fz );
+% clear Fz
+
+
+% --------------------------------- %
+% ---- Symmetrized Lap version ---- %
+% --------------------------------- %
 
 % % Diffusion operator is:
 % %     Lap(D*grad(u)) = D*Lap(u) + dot(grad(D),grad(u))
