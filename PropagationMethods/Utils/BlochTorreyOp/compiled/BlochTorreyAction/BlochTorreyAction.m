@@ -27,9 +27,9 @@ if ~( iters > 0 && iters == round(iters) ); error('iters must be a positive inte
 
 [ndim, ntime, gsize1D, gsize2D, gsize3D, gsize4D] = getGridSizes(x, gsize3D);
 
-x = checkArray(x, gsize1D, gsize2D, gsize3D, gsize4D, true);
-f = checkArray(f, gsize1D, gsize2D, gsize3D, gsize4D, true);
-D = checkArray(D, gsize1D, gsize2D, gsize3D, gsize4D, false);
+x = checkArray(x, gsize1D, gsize2D, gsize3D, gsize4D, true,  true);
+f = checkArray(f, gsize1D, gsize2D, gsize3D, gsize4D, true,  true);
+D = checkArray(D, gsize1D, gsize2D, gsize3D, gsize4D, false, true);
 h = checkGridSpacing(h);
 
 %----------------------------------------------------------------------
@@ -67,7 +67,7 @@ else
         f = f*ones(gsize3D);
     end
     if ~isreal(D)
-        %TODO this is somewhat inefficient allocation-wise
+        %TODO this is inefficient allocation-wise
         y = BTActionVariableDiff_cd(x, h, real(D), f, gsize4D, ndim, iters, isdiag);
         y = y + 1i * BTActionVariableDiff_cd(x, h, imag(D), complex(zeros(size(f))), gsize4D, ndim, iters, isdiag);
     else

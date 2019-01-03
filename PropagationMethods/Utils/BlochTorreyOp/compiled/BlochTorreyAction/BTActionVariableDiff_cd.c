@@ -130,16 +130,28 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     REAL *dxi = mxMalloc(mxGetNumberOfElements(__x__) * sizeof(REAL));
 
     void (*BTActionVariableDiff)(REAL *, REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL, const REAL *);
-    if( ndim == 3 )
-        if( isdiag )
+    if (ndim == 3)
+    {
+        if (isdiag)
+        {
             BTActionVariableDiff = &BTActionVariableDiffDiagonal3D;
+        }
         else
+        {
             BTActionVariableDiff = &BTActionVariableDiff3D;
+        }
+    }
     else
-        if( isdiag )
+    {
+        if (isdiag)
+        {
             BTActionVariableDiff = &BTActionVariableDiffDiagonal4D;
+        }
         else
+        {
             BTActionVariableDiff = &BTActionVariableDiff4D;
+        }
+    }
 
     /* Evaluate the BTActionVariableDiff once with input data */
     BTActionVariableDiff( dxr, dxi, xr, xi, fr, fi, Dr, Di, K, gsize );
@@ -196,7 +208,7 @@ void BTActionVariableDiff3D(
 
     uint64_t j, k;
     const uint32_t NUNROLL = 4;
-    const REAL K2 = 0.5*K;
+    const REAL K2 = K/2;
 
     /* *******************************************************************
      * Triply-nested for-loop, twice collapsed
@@ -271,7 +283,7 @@ void BTActionVariableDiff3D(
             dxr[l+2] = K2 * DIFFUSION_FLUXDIFF(Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3) - (Fr3*Xr3 - Fi3*Xi3);
             dxr[l+3] = K2 * DIFFUSION_FLUXDIFF(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4) - (Fr4*Xr4 - Fi4*Xi4);
 
-            dxi[l]   = K2 * DIFFUSION_FLUXDIFF(Xi1, XiD1, XiU1, XiL1, XiR1, XiB1, XiF1, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2) - (Fi1*Xr1 + Fr1*Xi1);
+            dxi[l]   = K2 * DIFFUSION_FLUXDIFF(Xi1, XiD1, XiU1, XiL1, XiR1, XiB1, XiF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1) - (Fi1*Xr1 + Fr1*Xi1);
             dxi[l+1] = K2 * DIFFUSION_FLUXDIFF(Xi2, XiD2, XiU2, XiL2, XiR2, XiB2, XiF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2) - (Fi2*Xr2 + Fr2*Xi2);
             dxi[l+2] = K2 * DIFFUSION_FLUXDIFF(Xi3, XiD3, XiU3, XiL3, XiR3, XiB3, XiF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3) - (Fi3*Xr3 + Fr3*Xi3);
             dxi[l+3] = K2 * DIFFUSION_FLUXDIFF(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4) - (Fi4*Xr4 + Fr4*Xi4);
@@ -424,7 +436,7 @@ void BTActionVariableDiffDiagonal3D(
 
     uint64_t j, k;
     const uint32_t NUNROLL = 4;
-    const REAL K2 = 0.5*K;
+    const REAL K2 = K/2;
 
     /* *******************************************************************
      * Triply-nested for-loop, twice collapsed
