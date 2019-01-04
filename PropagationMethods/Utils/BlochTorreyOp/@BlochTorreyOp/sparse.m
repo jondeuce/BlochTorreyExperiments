@@ -21,9 +21,9 @@ end
 
 if isscalar(A.D)
     % Construct periodic Laplacian via Kronecker product of 2nd difference block matrices
-    Jx = spdiags( (1/hx^2) * repmat([1,-2,1],Nx,1), [-1 0 1], Nx, Nx );
-    Jy = spdiags( (1/hy^2) * repmat([1,-2,1],Ny,1), [-1 0 1], Ny, Ny );
-    Jz = spdiags( (1/hz^2) * repmat([1,-2,1],Nz,1), [-1 0 1], Nz, Nz );
+    Jx = spdiags( repmat( (1/hx^2) * [1,-2,1], Nx, 1), [-1 0 1], Nx, Nx );
+    Jy = spdiags( repmat( (1/hy^2) * [1,-2,1], Ny, 1), [-1 0 1], Ny, Ny );
+    Jz = spdiags( repmat( (1/hz^2) * [1,-2,1], Nz, 1), [-1 0 1], Nz, Nz );
     
     % Set periodic BC's
     [ Jx(1,end), Jy(1,end), Jz(1,end), Jx(end,1), Jy(end,1), Jz(end,1) ] = ...
@@ -46,12 +46,12 @@ else
     
     % Construct forward difference matrices (backwards: negative transpose)
     % and forward averaging matrices (backwards: transpose)
-    Ax = spdiags( (0.5/hx) .* repmat([ 1,1],Nx,1), [0 1], Nx, Nx );
-    Ay = spdiags( (0.5/hy) .* repmat([ 1,1],Ny,1), [0 1], Ny, Ny );
-    Az = spdiags( (0.5/hz) .* repmat([ 1,1],Nz,1), [0 1], Nz, Nz );
-    Fx = spdiags( (1.0/hx) .* repmat([-1,1],Nx,1), [0 1], Nx, Nx );
-    Fy = spdiags( (1.0/hy) .* repmat([-1,1],Ny,1), [0 1], Ny, Ny );
-    Fz = spdiags( (1.0/hz) .* repmat([-1,1],Nz,1), [0 1], Nz, Nz );
+    Ax = spdiags( repmat( (0.5/hx) .* [ 1,1], Nx, 1), [0,1], Nx, Nx );
+    Ay = spdiags( repmat( (0.5/hy) .* [ 1,1], Ny, 1), [0,1], Ny, Ny );
+    Az = spdiags( repmat( (0.5/hz) .* [ 1,1], Nz, 1), [0,1], Nz, Nz );
+    Fx = spdiags( repmat( (1.0/hx) .* [-1,1], Nx, 1), [0,1], Nx, Nx );
+    Fy = spdiags( repmat( (1.0/hy) .* [-1,1], Ny, 1), [0,1], Ny, Ny );
+    Fz = spdiags( repmat( (1.0/hz) .* [-1,1], Nz, 1), [0,1], Nz, Nz );
     
     % Periodic boundary conditions
     [ Fx(end,1), Fy(end,1), Fz(end,1) ] = deal(1.0/hx, 1.0/hy, 1.0/hz);
@@ -60,23 +60,55 @@ else
     % Construct full matrices via Kronecker product, and add averaged
     % forward/backward difference "flux diffusion" terms one by one (just
     % to save memory)
-    Fx = kron(Iz, kron(Iy, Fx)); % Forward difference matrix: d/dx
-    Ax = kron(Iz, kron(Iy, Ax)); % Forward averaging matrix: x-direction
-    
-    J = J + ( toDiag(Ax * A.D(:)) * Fx + toDiag(Ax' * A.D(:)) * Fx' );
-    clear Fx Ax
-    
-    Fy = kron(Iz, kron(Fy, Ix)); % forward d/dy
-    Ay = kron(Iz, kron(Ay, Ix)); % forward averaging in y
-    J = J + ( toDiag(Ay * A.D(:)) * Fy + toDiag(Ay' * A.D(:)) * Fy' );
-    clear Fy Ay
-    
-    Fz = kron(kron(Fz, Iy), Ix); % forward d/dz
-    Az = kron(kron(Az, Iy), Ix); % forward averaging in z
-    J = J + ( toDiag(Az * A.D(:)) * Fz + toDiag(Az' * A.D(:)) * Fz' );
-    clear Fz Az
+    if isempty(A.mask)
+        Fx = kron(Iz, kron(Iy, Fx)); % Forward difference matrix: d/dx
+        Ax = kron(Iz, kron(Iy, Ax)); % Forward averaging matrix: x-direction
+        J = J + ( toDiag(Ax * A.D(:)) * Fx + toDiag(Ax' * A.D(:)) * Fx' );
+        clear Fx Ax
+        
+        Fy = kron(Iz, kron(Fy, Ix)); % forward d/dy
+        Ay = kron(Iz, kron(Ay, Ix)); % forward averaging in y
+        J = J + ( toDiag(Ay * A.D(:)) * Fy + toDiag(Ay' * A.D(:)) * Fy' );
+        clear Fy Ay
+        
+        Fz = kron(kron(Fz, Iy), Ix); % forward d/dz
+        Az = kron(kron(Az, Iy), Ix); % forward averaging in z
+        J = J + ( toDiag(Az * A.D(:)) * Fz + toDiag(Az' * A.D(:)) * Fz' );
+        clear Fz Az
+    else
+        Fx = kron(Iz, kron(Iy, Fx)); % Forward difference matrix: d/dx
+        Ax = kron(Iz, kron(Iy, Ax)); % Forward averaging matrix: x-direction
+        Mx = xor(A.mask, circshift(A.mask, -1, 1)); % forward mask
+        J = J + toDiag(maskRows(Ax, Mx) * A.D(:)) * maskRows(Fx, Mx);
+        Mx = xor(A.mask, circshift(A.mask, +1, 1)); % backward mask
+        J = J + toDiag(maskRows(Ax', Mx) * A.D(:)) * maskRows(Fx', Mx);
+        clear Fx Ax Mx
+
+        Fy = kron(Iz, kron(Fy, Ix)); % forward d/dy
+        Ay = kron(Iz, kron(Ay, Ix)); % forward averaging in y
+        My = xor(A.mask, circshift(A.mask, -1, 2)); % forward mask
+        J = J + toDiag(maskRows(Ay, My) * A.D(:)) * maskRows(Fy, My);
+        My = xor(A.mask, circshift(A.mask, +1, 2)); % backward mask
+        J = J + toDiag(maskRows(Ay', My) * A.D(:)) * maskRows(Fy', My);
+        clear Fy Ay My
+        
+        Fz = kron(kron(Fz, Iy), Ix); % forward d/dz
+        Az = kron(kron(Az, Iy), Ix); % forward averaging in z
+        Mz = xor(A.mask, circshift(A.mask, -1, 3)); % forward mask
+        J = J + toDiag(maskRows(Az, Mz) * A.D(:)) * maskRows(Fz, Mz);
+        Mz = xor(A.mask, circshift(A.mask, +1, 3)); % backward mask
+        J = J + toDiag(maskRows(Az', Mz) * A.D(:)) * maskRows(Fz', Mz);
+        clear Fz Az Mz
+    end
 end
 
+end
+
+function mask = maskRows(mask, b)
+    if isempty(mask) || isempty(b)
+        return
+    end
+    mask(b, :) = 0;
 end
 
 % -------------------------------------------------- %

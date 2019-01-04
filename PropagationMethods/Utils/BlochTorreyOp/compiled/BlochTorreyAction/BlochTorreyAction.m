@@ -1,4 +1,4 @@
-function y = BlochTorreyAction(x, h, D, f, gsize3D, iters, istrans, isdiag)
+function y = BlochTorreyAction(x, h, D, f, gsize3D, iters, istrans, isdiag, mask)
 %BLOCHTORREYACTION Discrete Bloch-Torrey operator w/ 2nd order
 % central difference approximations on derivatives and periodic boundary
 % conditions. The operator is:
@@ -18,6 +18,9 @@ function y = BlochTorreyAction(x, h, D, f, gsize3D, iters, istrans, isdiag)
 %   iters:      Number of iterations to apply the operator to the input (default 1)
 %   istrans:    Applies conjugate transpose operator if true (default false)
 %   isdiag:     Assumes f represents the diagonal term (default true)
+
+if nargin < 9; mask = logical([]); end
+if ~isa(mask, 'logical'); mask = logical(mask); end
 
 if nargin < 8 || ~isa(isdiag, 'logical'); isdiag  = true; end
 if nargin < 7 || ~isa(istrans,'logical'); istrans = false; end

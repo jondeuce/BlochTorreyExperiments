@@ -16,12 +16,13 @@ classdef BlochTorreyOp
     properties ( GetAccess = public, SetAccess = immutable )
         gsize % Grid size, e.g. [512,512,512]
         gdims % Grid dimensions (unitful), e.g. [3000,3000,3000] um
-        N     % Total number of elements on grid, i.e. prod(gsize)
-        h     % Physical distance between elements, e.g. gdims./gsize = [5.8594,5.8594,5.8594] um
+        N     % Total number of elements on grid, i.e. `prod(gsize)`
+        h     % Physical distance between elements, e.g. `gdims./gsize` = [5.8594,5.8594,5.8594] um
     end
 
     properties ( GetAccess = public, SetAccess = private )
         D      % Diffusion coefficient, e.g. 3037 um^2/s
+        mask   % Vasculature mask of size `gsize`, or defaults to []
     end
 
     properties ( Dependent = true, GetAccess = public, SetAccess = private )
@@ -46,7 +47,7 @@ classdef BlochTorreyOp
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     methods ( Access = public, Static = false )
 
-        function [ A ] = BlochTorreyOp( Buffer, Dcoeff, GridSize, GridDims, isdiag )
+        function [ A ] = BlochTorreyOp( Buffer, Dcoeff, GridSize, GridDims, isdiag, mask )
             % [ A ] = BlochTorreyOp( Gamma, Dcoeff, GridSize, GridDims )
             %   INPUTS:
             %       Buffer:     Complex array which may represent Gamma = R2 + i*dw, or the diagonal of the numeral BT operator
@@ -54,9 +55,8 @@ classdef BlochTorreyOp
             %       GridSize:   Grid size, e.g. [512,512,512]
             %       GridDims:   Grid dimensions, e.g. [3000,3000,3000] (in um)
 
-            if nargin < 5
-                isdiag = false; %default is Buffer = Gamma
-            end
+            if nargin < 6; mask = logical([]); end % default is mask = []
+            if nargin < 5; isdiag = false; end % default is Buffer = Gamma
 
             if ~(isscalar(Buffer) || isequal(numel(Buffer), prod(GridSize)))
                 error('Gamma must be scalar or have the same number of elements as the grid');
@@ -86,6 +86,7 @@ classdef BlochTorreyOp
             A.D      = Dcoeff;
             A.h      = A.gdims./A.gsize;
             A.buffer = Buffer;
+            A.mask   = mask;
             if isdiag
                 A.state  = BlochTorreyOp.DiagState;
             else
@@ -103,27 +104,27 @@ classdef BlochTorreyOp
             if A.state == BlochTorreyOp.DiagState
                 diag = A.buffer;
             else % BlochTorreyOp.GammaState
-                diag = calculate_diagonal(A.D,A.buffer,A.h,A.gsize);
+                diag = calculate_diagonal(A.D, A.buffer, A.h, A.gsize, A.mask);
             end
         end
         function gamma = get.Gamma(A)
             if A.state == BlochTorreyOp.DiagState
-                gamma = calculate_gamma(A.D,A.buffer,A.h,A.gsize);
+                gamma = calculate_gamma(A.D, A.buffer, A.h, A.gsize, A.mask);
             else % BlochTorreyOp.GammaState
                 gamma = A.buffer;
             end
         end
 
-        function A = set.Diag(A,diag)
+        function A = set.Diag(A, diag)
             A.buffer = diag;
             A.state  = BlochTorreyOp.DiagState;
         end
-        function A = set.Gamma(A,gamma)
+        function A = set.Gamma(A, gamma)
             A.buffer = gamma;
             A.state  = BlochTorreyOp.GammaState;
         end
 
-        function A = setbuffer(A,State)
+        function A = setbuffer(A, State)
             if isequal(State, A.state)
                 % already in state State; do nothing
                 return
@@ -131,11 +132,11 @@ classdef BlochTorreyOp
             switch State
                 case BlochTorreyOp.DiagState
                     % in GammaState; switch to DiagState
-                    A.buffer = calculate_diagonal(A.D,A.buffer,A.h,A.gsize);
+                    A.buffer = calculate_diagonal(A.D, A.buffer, A.h, A.gsize, A.mask);
                     A.state  = BlochTorreyOp.DiagState;
                 case BlochTorreyOp.GammaState
                     % in DiagState; switch to GammaState
-                    A.buffer = calculate_gamma(A.D,A.buffer,A.h,A.gsize);
+                    A.buffer = calculate_gamma(A.D, A.buffer, A.h, A.gsize, A.mask);
                     A.state  = BlochTorreyOp.GammaState;
             end
         end
@@ -212,7 +213,7 @@ classdef BlochTorreyOp
                         iters = 1; % one iteration, i.e. x->A*x
                         istrans = false; % regular application, not A'
                         isdiag = (A.state == BlochTorreyOp.DiagState);
-                        y = BlochTorreyAction(x, A.h, A.D, A.buffer, A.gsize, iters, istrans, isdiag);
+                        y = BlochTorreyAction(x, A.h, A.D, A.buffer, A.gsize, iters, istrans, isdiag, A.mask);
                     end
                 end
             elseif ~AIsBTOp && xIsBTOp
@@ -602,7 +603,7 @@ classdef BlochTorreyOp
             %For variable isotropic diffusion, the 6 elements for each row
             %are returned (by symmetry, they are the same as the
             %offdiagonal elements for the corresponding column).
-            out = calculate_offdiagonals(A.D,A.h);
+            out = calculate_offdiagonals(A.D, A.h, A.mask);
         end
 
         function [ c, mv ] = normAm( A, m, checkpos ) %jd
@@ -749,7 +750,7 @@ function y = sumall(x)
 y = sum(sum(sum(sum(x,1),2),3),4);
 end
 
-function out = calculate_offdiagonals(D,h)
+function out = calculate_offdiagonals(D, h, mask)
 
 if ~BlochTorreyOp.is_isotropic(h)
     error('h must be isotropic for offdiagonals calculation');
@@ -761,12 +762,12 @@ if isscalar(D)
 else
     % out = [ vec(D), vec(D), vec(D), vec(circshift(D,1,1)), vec(circshift(D,1,2)), vec(circshift(D,1,3)) ]; % forward grad/backward div
     out = [ vec(D + circshift(D, 1, 1)), vec(D + circshift(D, 1, 2)), vec(D + circshift(D, 1, 3)), ...
-            vec(D + circshift(D, 1,-1)), vec(D + circshift(D, 1,-2)), vec(D + circshift(D, 1,-3)) ]; % flux difference
+            vec(D + circshift(D,-1, 1)), vec(D + circshift(D,-1, 2)), vec(D + circshift(D,-1, 3)) ]; % flux difference
 end
 
 end
 
-function Diagonal = calculate_diagonal(D, Gamma, h, gsize)
+function Diagonal = calculate_diagonal(D, Gamma, h, gsize, mask)
 
 if ~BlochTorreyOp.is_isotropic(h)
     error('h must be isotropic for diagonal calculation');
@@ -797,11 +798,11 @@ end
 
 end
 
-function Gamma = calculate_gamma(D, Diagonal, h, gsize)
+function Gamma = calculate_gamma(D, Diagonal, h, gsize, mask)
 
 % By linearity, since Diagonal == L - Gamma for some generic diagonal L, we
 % similarly have Gamma == L - Diagonal. Therefore, just reuse the
 % calculate_diagonal function
-Gamma = calculate_diagonal(D, Diagonal, h, gsize);
+Gamma = calculate_diagonal(D, Diagonal, h, gsize, mask);
 
 end
