@@ -12,72 +12,72 @@ x0 = randnc(Gsize);
 % Mask for scalar D must be empty
 mask = logical([]);
 
-% Gamma randnc, Dcoeff scalar positive
-Gamma = randnc(Gsize)/10;
-Dcoeff = rand()*h^2;
-b = run_suite_combinations('Gamma randnc, Dcoeff scalar positive', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
+% % Gamma randnc, Dcoeff scalar positive
+% Gamma = randnc(Gsize)/10;
+% Dcoeff = rand()*h^2;
+% b = run_suite_combinations('Gamma randnc, Dcoeff scalar positive', ...
+%     x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
 
-% Gamma randnc, Dcoeff scalar negative
-Gamma = randnc(Gsize)/10;
-Dcoeff = -rand()*h^2;
-b = run_suite_combinations('Gamma randnc, Dcoeff scalar negative', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
+% % Gamma randnc, Dcoeff scalar negative
+% Gamma = randnc(Gsize)/10;
+% Dcoeff = -rand()*h^2;
+% b = run_suite_combinations('Gamma randnc, Dcoeff scalar negative', ...
+%     x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
 
-% Gamma randnc, Dcoeff randnc
-Gamma = randnc(Gsize)/10;
-Dcoeff = randnc()*h^2;
-b = run_suite_combinations('Gamma randnc, Dcoeff randnc', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
+% % Gamma randnc, Dcoeff randnc
+% Gamma = randnc(Gsize)/10;
+% Dcoeff = randnc()*h^2;
+% b = run_suite_combinations('Gamma randnc, Dcoeff randnc', ...
+%     x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
 
-% Gamma randnc, Dcoeff == 0
-Gamma = randnc(Gsize)/10;
-Dcoeff = 0;
-b = run_suite_combinations('Gamma randnc, Dcoeff == 0', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
+% % Gamma randnc, Dcoeff == 0
+% Gamma = randnc(Gsize)/10;
+% Dcoeff = 0;
+% b = run_suite_combinations('Gamma randnc, Dcoeff == 0', ...
+%     x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
 
-% Gamma scalar randnc, Dcoeff randnc
-Gamma = randnc()/10;
-Dcoeff = randnc()*h^2;
-b = run_suite_combinations('Gamma scalar randnc, Dcoeff randnc', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
+% % Gamma scalar randnc, Dcoeff randnc
+% Gamma = randnc()/10;
+% Dcoeff = randnc()*h^2;
+% b = run_suite_combinations('Gamma scalar randnc, Dcoeff randnc', ...
+%     x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
 
-% Gamma scalar randnc, Dcoeff positive
-Gamma = randnc()/10;
-Dcoeff = rand()*h^2;
-b = run_suite_combinations('Gamma scalar randnc, Dcoeff positive', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
+% % Gamma scalar randnc, Dcoeff positive
+% Gamma = randnc()/10;
+% Dcoeff = rand()*h^2;
+% b = run_suite_combinations('Gamma scalar randnc, Dcoeff positive', ...
+%     x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
 
-% Identity test: Gamma == -1, Dcoeff == 0
-Gamma = -1;
-Dcoeff = 0;
-b = run_suite_combinations('Gamma == -1, Dcoeff == 0', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
+% % Identity test: Gamma == -1, Dcoeff == 0
+% Gamma = -1;
+% Dcoeff = 0;
+% b = run_suite_combinations('Gamma == -1, Dcoeff == 0', ...
+%     x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
 
 % Mask for non-const D array
-% [X,Y,Z] = meshgrid(...
-%     linspace(-Vsize(2)/2, Vsize(2)/2, Gsize(2)), ...
-%     linspace(-Vsize(1)/2, Vsize(1)/2, Gsize(1)), ...
-%     linspace(-Vsize(3)/2, Vsize(3)/2, Gsize(3)));
-% mask = X.^2 + Y.^2 + Z.^2 <= (min(Vsize(:))/2)^2;
+[X,Y,Z] = meshgrid(...
+    linspace(-Vsize(2)/2, Vsize(2)/2, Gsize(2)), ...
+    linspace(-Vsize(1)/2, Vsize(1)/2, Gsize(1)), ...
+    linspace(-Vsize(3)/2, Vsize(3)/2, Gsize(3)));
+mask = X.^2 + Y.^2 + Z.^2 <= (min(Vsize(:))/2)^2;
 
-% Gamma zeros, Dcoeff h^2 * ones array
-Gamma = zeros(Gsize);
-Dcoeff = h^2 * ones(Gsize);
-b = run_suite_combinations('Gamma zeros, Dcoeff h^2 * ones array', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
+% % Gamma zeros, Dcoeff h^2 * ones array
+% Gamma = zeros(Gsize);
+% Dcoeff = h^2 * ones(Gsize);
+% b = run_suite_combinations('Gamma zeros, Dcoeff h^2 * ones array', ...
+%     x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
 
-% Gamma zeros, Dcoeff const array
-Gamma = zeros(Gsize);
-Dcoeff = rand()*ones(Gsize)*h^2;
-b = run_suite_combinations('Gamma zeros, Dcoeff const array', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
+% % Gamma zeros, Dcoeff const array
+% Gamma = zeros(Gsize);
+% Dcoeff = rand()*ones(Gsize)*h^2;
+% b = run_suite_combinations('Gamma zeros, Dcoeff const array', ...
+%     x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
 
-% Gamma randnc, Dcoeff zeros array
-Gamma = randnc(Gsize)/10;
-Dcoeff = zeros(Gsize);
-b = run_suite_combinations('Gamma randnc, Dcoeff zeros array', ...
-    x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
+% % Gamma randnc, Dcoeff zeros array
+% Gamma = randnc(Gsize)/10;
+% Dcoeff = zeros(Gsize);
+% b = run_suite_combinations('Gamma randnc, Dcoeff zeros array', ...
+%     x0, Gamma, Dcoeff, Gsize, Vsize, mask) && b;
 
 % Gamma zeros, Dcoeff randn array
 Gamma = zeros(Gsize);
@@ -136,8 +136,8 @@ Af = full(A);
 Ab = full_Brute(Gamma, Dcoeff, Gsize, Vsize, mask);
 
 boolchoose = @(b,x,y) b.*x + (1-b).*y; % returns `x` if `b` is true, `y` otherwise
-randstate = @() boolchoose(rand()>0.5, BlochTorreyOp.DiagState, BlochTorreyOp.GammaState);
-% randstate = @() BlochTorreyOp.GammaState;
+% randstate = @() boolchoose(rand()>0.5, BlochTorreyOp.DiagState, BlochTorreyOp.GammaState);
+randstate = @() BlochTorreyOp.GammaState;
 % randstate = @() BlochTorreyOp.DiagState;
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

@@ -3,7 +3,7 @@
 #include <omp.h>
 #include "mex.h"
 
-/* BTACTIONVARIABLEDIFF_CD
+/* BTACTIONVARIABLEDIFFNEUMANN_CD
  *
  * INPUT ARGUMENTS
  *  prhs[0] -> x:     input array (3D complex REAL array)
@@ -12,7 +12,7 @@
  *  prhs[3] -> G:     Complex decay term Gamma = R2 + i*dw (3D complex REAL array)
  *  prhs[4] -> gsize: size of grid operated on (3 or 4 element REAL array)
  *  prhs[5] -> ndim:  number of dimensions operated on (scalar REAL = 3 or 4)
- *  prhs[6] -> iters: number of iterations to apply the BTActionVariableDiff (scalar REAL)
+ *  prhs[6] -> iters: number of iterations to apply the BTACTIONVARIABLEDIFFNEUMANN (scalar REAL)
  *
  * OUTPUT ARGUMENTS
  *  plhs[0] -> dx:    output array (3D complex REAL array)
@@ -20,17 +20,18 @@
  */
 
 /* Simple aliases for input pointers */
-#define __x__ (prhs[0])
-#define __h__ (prhs[1])
-#define __D__ (prhs[2])
-#define __G__ (prhs[3])
-#define __gsize__ (prhs[4])
-#define __ndim__ (prhs[5])
-#define __iters__ (prhs[6])
+#define __x__      (prhs[0])
+#define __h__      (prhs[1])
+#define __D__      (prhs[2])
+#define __G__      (prhs[3])
+#define __gsize__  (prhs[4])
+#define __ndim__   (prhs[5])
+#define __iters__  (prhs[6])
 #define __isdiag__ (prhs[7])
+#define __M__      (prhs[8])
 
 /* Simple aliases for output pointers */
-#define __dx__ (plhs[0])
+#define __dx__     (plhs[0])
 
 /* Defines for omp parallel for loops */
 #define USE_PARALLEL 1
@@ -38,9 +39,6 @@
 #define NUM_THREADS (omp_get_max_threads())
 // #define OMP_PARFOR_ARGS
 #define OMP_PARFOR_ARGS schedule(static) num_threads(NUM_THREADS)
-
-/* Enum for different implementations (Type 1 currently fastest) */
-#define BLOCHTORREY3D_TYPE 1
 
 /* Alias for basic element type, for easier switching between single/double */
 #define REALTYPE 1 /* 1 for double, 0 for single */
@@ -62,34 +60,21 @@
  *  xB/xF = x[kl] /x[kr]  = "back/forw"
  */
 
-/* Discretising using `div( D * grad(x) )` with backward divergence/forward gradient */
-#define DIFFUSION_BCKDIV_D_FWDGRAD(x,xD,xU,xL,xR,xB,xF,D,DD,DL,DB) \
-    ((xF + xR + xU - 3*x)*D + (xB - x)*DB + (xL - x)*DL + (xD - x)*DD)
-#define DIFFUSION_BCKDIV_D_FWDGRAD_DIAG(x,xD,xU,xL,xR,xB,xF,D,DD,DL,DB) \
-    ((xF + xR + xU)*D + xB*DB + xL*DL + xD*DD)
+/* Discretising using `div( D * grad(x) )` with forward/backward flux gradients with D on flux boundary */
+#define FLUX_FWD(x,xF,D,DF) \
+    ((DF + D) * (xF - x)) // Diffusive flux in one direction; arbitrarily call it "forward"
+#define FLUXDIFF_FWD(x,xB,xF,D,DB,DF,m,mB,mF) \
+    ((m == mF) * FLUX_FWD(x,xF,D,DF) - (m == mB) * FLUX_FWD(xB,x,DB,D)) // flux difference on boundaries
+#define DIFFUSION_FLUXDIFF(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF,m,mD,mU,mL,mR,mB,mF) \
+    (FLUXDIFF_FWD(x,xD,xU,D,DD,DU,m,mD,mU) + FLUXDIFF_FWD(x,xL,xR,D,DL,DR,m,mL,mR) + FLUXDIFF_FWD(x,xB,xF,D,DB,DF,m,mB,mF))
 
-/* Discretising using `div( D * grad(x) )` with symmetrized divergence/gradient */
-#define DIFFUSION_SYM_DIV_D_GRAD(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF) \
-    ((xB + xF + xL + xR + xD + xU - 6*x)*D + (xB - x)*DB + (xF - x)*DF + (xL - x)*DL + (xR - x)*DR + (xD - x)*DD + (xU - x)*DU)
-#define DIFFUSION_SYM_DIV_D_GRAD_DIAG(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF) \
-    ((xB + xF + xL + xR + xD + xU)*D + xB*DB + xF*DF + xL*DL + xR*DR + xD*DD + xU*DU)
-
-/* Discretising using `D * lap(x) + dot( grad(D), grad(x) )` with symmetrized gradients */
-#define DIFFUSION_D_LAP_SYM_GRAD_DOT(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF) \
-    (3*(xB + xF + xL + xR + xD + xU - 6*x)*D + (x - xF)*DB + (x - xB)*DF + (x - xL)*DR + (x - xR)*DL + (x - xD)*DU + (x - xU)*DD)
-#define DIFFUSION_D_LAP_SYM_GRAD_DOT_DIAG(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF) \
-    (3*(xB + xF + xL + xR + xD + xU)*D - xF*DB - xB*DF - xL*DR - xR*DL - xD*DU - xU*DD)
-
- /* Discretising using `div( D * grad(x) )` with forward/backward flux gradients with D on flux boundary */
- #define DIFFUSION_FLUXDIFF(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF) \
-    ((DB + D)*xB + (DF + D)*xF + (DL + D)*xL + (DR + D)*xR + (DD + D)*xD + (DU + D)*xU - (DB + DF + DL + DR + DD + DU + 6*D)*x)
- #define DIFFUSION_FLUXDIFF_DIAG(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF) \
+#define DIFFUSION_FLUXDIFF_DIAG(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF) \
     ((DB + D)*xB + (DF + D)*xF + (DL + D)*xL + (DR + D)*xR + (DD + D)*xD + (DU + D)*xU)
 
-void BTActionVariableDiff3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const REAL K, const REAL *gsize );
-void BTActionVariableDiff4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const REAL K, const REAL *gsize );
-void BTActionVariableDiffDiagonal3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const REAL K, const REAL *gsize );
-void BTActionVariableDiffDiagonal4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const REAL K, const REAL *gsize );
+void BTActionVariableDiffNeumann3D(         REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const bool *M, const REAL K, const REAL *gsize );
+void BTActionVariableDiffNeumann4D(         REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const bool *M, const REAL K, const REAL *gsize );
+void BTActionVariableDiffNeumannDiagonal3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const bool *M, const REAL K, const REAL *gsize );
+void BTActionVariableDiffNeumannDiagonal4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const bool *M, const REAL K, const REAL *gsize );
 
 void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
 {
@@ -100,8 +85,8 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     const REAL K = 1.0/(h*h);
 
     /* Represented dimensions of input: ndim will be 3 or 4, and gsize will have respectively 3 or 4 elements */
-    const REAL  *gsize = (const REAL*)mxGetData(__gsize__);
-    const uint64_t ndim  = (const uint64_t) ((REAL*)mxGetData(__ndim__))[0];
+    const REAL *gsize = (const REAL*)mxGetData(__gsize__);
+    const uint64_t ndim = (const uint64_t) ((REAL*)mxGetData(__ndim__))[0];
 
     /* Number of iterations to apply */
     const uint64_t iters = (const uint64_t) ((REAL*)mxGetData(__iters__))[0];
@@ -125,29 +110,32 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     const REAL *fr = (const REAL*)mxGetData(__G__);
     const REAL *fi = (const REAL*)mxGetImagData(__G__);
 
+    /* boolean mask */
+    const bool *M  = (const bool*)mxGetLogicals(__M__);
+
     /* temporary variable which will be later associated with the complex output array */
     REAL *dxr = mxMalloc(mxGetNumberOfElements(__x__) * sizeof(REAL));
     REAL *dxi = mxMalloc(mxGetNumberOfElements(__x__) * sizeof(REAL));
 
-    void (*BTActionVariableDiff)(REAL *, REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL, const REAL *);
+    void (*BTActionVariableDiffNeumann)(REAL *, REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const bool *, const REAL, const REAL *);
     if (ndim == 3) {
         if (isdiag) {
-            BTActionVariableDiff = &BTActionVariableDiffDiagonal3D;
+            BTActionVariableDiffNeumann = &BTActionVariableDiffNeumannDiagonal3D;
         } else {
-            BTActionVariableDiff = &BTActionVariableDiff3D;
+            BTActionVariableDiffNeumann = &BTActionVariableDiffNeumann3D;
         }
     } else {
         if (isdiag) {
-            BTActionVariableDiff = &BTActionVariableDiffDiagonal4D;
+            BTActionVariableDiffNeumann = &BTActionVariableDiffNeumannDiagonal4D;
         } else {
-            BTActionVariableDiff = &BTActionVariableDiff4D;
+            BTActionVariableDiffNeumann = &BTActionVariableDiffNeumann4D;
         }
     }
 
-    /* Evaluate the BTActionVariableDiff once with input data */
-    BTActionVariableDiff( dxr, dxi, xr, xi, fr, fi, Dr, Di, K, gsize );
+    /* Evaluate the BTActionVariableDiffNeumann once with input data */
+    BTActionVariableDiffNeumann( dxr, dxi, xr, xi, fr, fi, Dr, Di, M, K, gsize );
 
-    /* Evaluate the BTActionVariableDiff iters-1 times using temp variable, if necessary */
+    /* Evaluate the BTActionVariableDiffNeumann iters-1 times using temp variable, if necessary */
     REAL *yr, *yi;
     if( iters > 1 ) {
         /* If we are doing multiple applications, we must make a copy to
@@ -158,7 +146,7 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
         for(i = 1; i < iters; ++i) {
             SWAP(dxr, yr, REAL*);
             SWAP(dxi, yi, REAL*);
-            BTActionVariableDiff( dxr, dxi, yr, yi, fr, fi, Dr, Di, K, gsize );
+            BTActionVariableDiffNeumann( dxr, dxi, yr, yi, fr, fi, Dr, Di, M, K, gsize );
         }
         /* Free temporary variable, if necessary */
         mxFree(yr);
@@ -179,11 +167,12 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
 /* *******************************************************************
  * Bloch-Torrey action when the input is Gamma
  ******************************************************************* */
-void BTActionVariableDiff3D(
+void BTActionVariableDiffNeumann3D(
         REAL *dxr, REAL *dxi,
         const REAL *xr, const REAL *xi,
         const REAL *fr, const REAL *fi,
         const REAL *Dr, const REAL *Di,
+        const bool *M,
         const REAL K,
         const REAL *gsize
         )
@@ -214,10 +203,10 @@ void BTActionVariableDiff3D(
 
             /* Periodic Boundary Conditions on y, z indexes */
             l  = j + k;
-            jl = (j==0 ) ? l+NY : l-nx;
-            jr = (j==NY) ? l-NY : l+nx;
-            kl = (k==0 ) ? l+NZ : l-nxny;
-            kr = (k==NZ) ? l-NZ : l+nxny;
+            jl = (j == 0 ) ? l+NY : l-nx;
+            jr = (j == NY) ? l-NY : l+nx;
+            kl = (k == 0 ) ? l+NZ : l-nxny;
+            kr = (k == NZ) ? l-NZ : l+nxny;
 
             /* Notation:
              *  x     = x[l]          = "center"
@@ -230,6 +219,11 @@ void BTActionVariableDiff3D(
                     Xr2, XrD2, XrU2, XrL2, XrR2, XrB2, XrF2, Xi2, XiD2, XiU2, XiL2, XiR2, XiB2, XiF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2, Fr2, Fi2,
                     Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Xi3, XiD3, XiU3, XiL3, XiR3, XiB3, XiF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3, Fr3, Fi3,
                     Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, Fr4, Fi4;
+
+            bool    M1, MD1, MU1, ML1, MR1, MB1, MF1,
+                    M2, MD2, MU2, ML2, MR2, MB2, MF2,
+                    M3, MD3, MU3, ML3, MR3, MB3, MF3,
+                    M4, MD4, MU4, ML4, MR4, MB4, MF4;
 
             /* LHS Boundary Condition */
             Xr1 = xr[l]; Xi1 = xi[l];
@@ -249,12 +243,6 @@ void BTActionVariableDiff3D(
             XrD1 = xr[l+NX]; XrD2 = Xr1; Xr2 = XrU1; XrD3 = Xr2; Xr3 = XrU2; XrD4 = Xr3; Xr4 = XrU3;
             XiD1 = xi[l+NX]; XiD2 = Xi1; Xi2 = XiU1; XiD3 = Xi2; Xi3 = XiU2; XiD4 = Xi3; Xi4 = XiU3;
 
-            // DrD1 = Dr[l+NX];
-            // Dr1  = Dr[l];  Dr2  = Dr[l+1];  Dr3  = Dr[l+2];  Dr4 = Dr[l+3];
-            // DrL1 = Dr[jl]; DrL2 = Dr[jl+1]; DrL3 = Dr[jl+2]; DrL4 = Dr[jl+3];
-            // DrB1 = Dr[kl]; DrB2 = Dr[kl+1]; DrB3 = Dr[kl+2]; DrB4 = Dr[kl+3];
-            // DrD2 = Dr1;    DrD3 = Dr2;      DrD4 = Dr3;
-
             Dr1 = Dr[l];
 
             DrU1 = Dr[l+1]; DrU2 = Dr[l+2];  DrU3 = Dr[l+3];  DrU4 = Dr[l+4];
@@ -265,19 +253,29 @@ void BTActionVariableDiff3D(
 
             DrD1 = Dr[l+NX]; DrD2 = Dr1; Dr2 = DrU1; DrD3 = Dr2; Dr3 = DrU2; DrD4 = Dr3; Dr4 = DrU3;
 
+            M1 = M[l];
+
+            MU1 = M[l+1]; MU2 = M[l+2];  MU3 = M[l+3];  MU4 = M[l+4];
+            ML1 = M[jl];  ML2 = M[jl+1]; ML3 = M[jl+2]; ML4 = M[jl+3];
+            MR1 = M[jr];  MR2 = M[jr+1]; MR3 = M[jr+2]; MR4 = M[jr+3];
+            MB1 = M[kl];  MB2 = M[kl+1]; MB3 = M[kl+2]; MB4 = M[kl+3];
+            MF1 = M[kr];  MF2 = M[kr+1]; MF3 = M[kr+2]; MF4 = M[kr+3];
+
+            MD1 = M[l+NX]; MD2 = M1; M2 = MU1; MD3 = M2; M3 = MU2; MD4 = M3; M4 = MU3;
+
             Fr1 = fr[l]; Fr2 = fr[l+1]; Fr3 = fr[l+2]; Fr4 = fr[l+3];
             Fi1 = fi[l]; Fi2 = fi[l+1]; Fi3 = fi[l+2]; Fi4 = fi[l+3];
 
             /* Discretising `div( D * grad(x) ) - Gamma * x` with finite differences */
-            dxr[l]   = K2 * DIFFUSION_FLUXDIFF(Xr1, XrD1, XrU1, XrL1, XrR1, XrB1, XrF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1) - (Fr1*Xr1 - Fi1*Xi1);
-            dxr[l+1] = K2 * DIFFUSION_FLUXDIFF(Xr2, XrD2, XrU2, XrL2, XrR2, XrB2, XrF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2) - (Fr2*Xr2 - Fi2*Xi2);
-            dxr[l+2] = K2 * DIFFUSION_FLUXDIFF(Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3) - (Fr3*Xr3 - Fi3*Xi3);
-            dxr[l+3] = K2 * DIFFUSION_FLUXDIFF(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4) - (Fr4*Xr4 - Fi4*Xi4);
-
-            dxi[l]   = K2 * DIFFUSION_FLUXDIFF(Xi1, XiD1, XiU1, XiL1, XiR1, XiB1, XiF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1) - (Fi1*Xr1 + Fr1*Xi1);
-            dxi[l+1] = K2 * DIFFUSION_FLUXDIFF(Xi2, XiD2, XiU2, XiL2, XiR2, XiB2, XiF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2) - (Fi2*Xr2 + Fr2*Xi2);
-            dxi[l+2] = K2 * DIFFUSION_FLUXDIFF(Xi3, XiD3, XiU3, XiL3, XiR3, XiB3, XiF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3) - (Fi3*Xr3 + Fr3*Xi3);
-            dxi[l+3] = K2 * DIFFUSION_FLUXDIFF(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4) - (Fi4*Xr4 + Fr4*Xi4);
+            dxr[l]   = K2 * DIFFUSION_FLUXDIFF(Xr1, XrD1, XrU1, XrL1, XrR1, XrB1, XrF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1, M1, MD1, MU1, ML1, MR1, MB1, MF1) - (Fr1*Xr1 - Fi1*Xi1);
+            dxr[l+1] = K2 * DIFFUSION_FLUXDIFF(Xr2, XrD2, XrU2, XrL2, XrR2, XrB2, XrF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2, M2, MD2, MU2, ML2, MR2, MB2, MF2) - (Fr2*Xr2 - Fi2*Xi2);
+            dxr[l+2] = K2 * DIFFUSION_FLUXDIFF(Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3, M3, MD3, MU3, ML3, MR3, MB3, MF3) - (Fr3*Xr3 - Fi3*Xi3);
+            dxr[l+3] = K2 * DIFFUSION_FLUXDIFF(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, M4, MD4, MU4, ML4, MR4, MB4, MF4) - (Fr4*Xr4 - Fi4*Xi4);
+            
+            dxi[l]   = K2 * DIFFUSION_FLUXDIFF(Xi1, XiD1, XiU1, XiL1, XiR1, XiB1, XiF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1, M1, MD1, MU1, ML1, MR1, MB1, MF1) - (Fi1*Xr1 + Fr1*Xi1);
+            dxi[l+1] = K2 * DIFFUSION_FLUXDIFF(Xi2, XiD2, XiU2, XiL2, XiR2, XiB2, XiF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2, M2, MD2, MU2, ML2, MR2, MB2, MF2) - (Fi2*Xr2 + Fr2*Xi2);
+            dxi[l+2] = K2 * DIFFUSION_FLUXDIFF(Xi3, XiD3, XiU3, XiL3, XiR3, XiB3, XiF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3, M3, MD3, MU3, ML3, MR3, MB3, MF3) - (Fi3*Xr3 + Fr3*Xi3);
+            dxi[l+3] = K2 * DIFFUSION_FLUXDIFF(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, M4, MD4, MU4, ML4, MR4, MB4, MF4) - (Fi4*Xr4 + Fr4*Xi4);
 
             l+=NUNROLL; jl+=NUNROLL; jr+=NUNROLL; kl+=NUNROLL; kr+=NUNROLL;
 
@@ -300,12 +298,6 @@ void BTActionVariableDiff3D(
                 XrD1 = Xr4; XrD2 = Xr1; Xr2 = XrU1; XrD3 = Xr2; Xr3 = XrU2; XrD4 = Xr3; Xr4 = XrU3;
                 XiD1 = Xi4; XiD2 = Xi1; Xi2 = XiU1; XiD3 = Xi2; Xi3 = XiU2; XiD4 = Xi3; Xi4 = XiU3;
 
-                // DrD1 = Dr4;
-                // Dr1  = Dr[l];  Dr2  = Dr[l+1];  Dr3  = Dr[l+2];  Dr4 = Dr[l+3];
-                // DrL1 = Dr[jl]; DrL2 = Dr[jl+1]; DrL3 = Dr[jl+2]; DrL4 = Dr[jl+3];
-                // DrB1 = Dr[kl]; DrB2 = Dr[kl+1]; DrB3 = Dr[kl+2]; DrB4 = Dr[kl+3];
-                // DrD2 = Dr1;    DrD3 = Dr2;      DrD4 = Dr3;
-
                 Dr1 = DrU4;
 
                 DrU1 = Dr[l+1]; DrU2 = Dr[l+2];  DrU3 = Dr[l+3];  DrU4 = Dr[l+4];
@@ -316,19 +308,29 @@ void BTActionVariableDiff3D(
 
                 DrD1 = Dr4; DrD2 = Dr1; Dr2 = DrU1; DrD3 = Dr2; Dr3 = DrU2; DrD4 = Dr3; Dr4 = DrU3;
 
+                M1 = MU4;
+
+                MU1 = M[l+1]; MU2 = M[l+2];  MU3 = M[l+3];  MU4 = M[l+4];
+                ML1 = M[jl];  ML2 = M[jl+1]; ML3 = M[jl+2]; ML4 = M[jl+3];
+                MR1 = M[jr];  MR2 = M[jr+1]; MR3 = M[jr+2]; MR4 = M[jr+3];
+                MB1 = M[kl];  MB2 = M[kl+1]; MB3 = M[kl+2]; MB4 = M[kl+3];
+                MF1 = M[kr];  MF2 = M[kr+1]; MF3 = M[kr+2]; MF4 = M[kr+3];
+
+                MD1 = M4; MD2 = M1; M2 = MU1; MD3 = M2; M3 = MU2; MD4 = M3; M4 = MU3;
+
                 Fr1 = fr[l]; Fr2 = fr[l+1]; Fr3 = fr[l+2]; Fr4 = fr[l+3];
                 Fi1 = fi[l]; Fi2 = fi[l+1]; Fi3 = fi[l+2]; Fi4 = fi[l+3];
 
                 /* Discretising `div( D * grad(x) ) - Gamma * x` with finite differences */
-                dxr[l]   = K2 * DIFFUSION_FLUXDIFF(Xr1, XrD1, XrU1, XrL1, XrR1, XrB1, XrF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1) - (Fr1*Xr1 - Fi1*Xi1);
-                dxr[l+1] = K2 * DIFFUSION_FLUXDIFF(Xr2, XrD2, XrU2, XrL2, XrR2, XrB2, XrF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2) - (Fr2*Xr2 - Fi2*Xi2);
-                dxr[l+2] = K2 * DIFFUSION_FLUXDIFF(Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3) - (Fr3*Xr3 - Fi3*Xi3);
-                dxr[l+3] = K2 * DIFFUSION_FLUXDIFF(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4) - (Fr4*Xr4 - Fi4*Xi4);
-
-                dxi[l]   = K2 * DIFFUSION_FLUXDIFF(Xi1, XiD1, XiU1, XiL1, XiR1, XiB1, XiF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1) - (Fi1*Xr1 + Fr1*Xi1);
-                dxi[l+1] = K2 * DIFFUSION_FLUXDIFF(Xi2, XiD2, XiU2, XiL2, XiR2, XiB2, XiF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2) - (Fi2*Xr2 + Fr2*Xi2);
-                dxi[l+2] = K2 * DIFFUSION_FLUXDIFF(Xi3, XiD3, XiU3, XiL3, XiR3, XiB3, XiF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3) - (Fi3*Xr3 + Fr3*Xi3);
-                dxi[l+3] = K2 * DIFFUSION_FLUXDIFF(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4) - (Fi4*Xr4 + Fr4*Xi4);
+                dxr[l]   = K2 * DIFFUSION_FLUXDIFF(Xr1, XrD1, XrU1, XrL1, XrR1, XrB1, XrF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1, M1, MD1, MU1, ML1, MR1, MB1, MF1) - (Fr1*Xr1 - Fi1*Xi1);
+                dxr[l+1] = K2 * DIFFUSION_FLUXDIFF(Xr2, XrD2, XrU2, XrL2, XrR2, XrB2, XrF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2, M2, MD2, MU2, ML2, MR2, MB2, MF2) - (Fr2*Xr2 - Fi2*Xi2);
+                dxr[l+2] = K2 * DIFFUSION_FLUXDIFF(Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3, M3, MD3, MU3, ML3, MR3, MB3, MF3) - (Fr3*Xr3 - Fi3*Xi3);
+                dxr[l+3] = K2 * DIFFUSION_FLUXDIFF(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, M4, MD4, MU4, ML4, MR4, MB4, MF4) - (Fr4*Xr4 - Fi4*Xi4);
+                
+                dxi[l]   = K2 * DIFFUSION_FLUXDIFF(Xi1, XiD1, XiU1, XiL1, XiR1, XiB1, XiF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1, M1, MD1, MU1, ML1, MR1, MB1, MF1) - (Fi1*Xr1 + Fr1*Xi1);
+                dxi[l+1] = K2 * DIFFUSION_FLUXDIFF(Xi2, XiD2, XiU2, XiL2, XiR2, XiB2, XiF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2, M2, MD2, MU2, ML2, MR2, MB2, MF2) - (Fi2*Xr2 + Fr2*Xi2);
+                dxi[l+2] = K2 * DIFFUSION_FLUXDIFF(Xi3, XiD3, XiU3, XiL3, XiR3, XiB3, XiF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3, M3, MD3, MU3, ML3, MR3, MB3, MF3) - (Fi3*Xr3 + Fr3*Xi3);
+                dxi[l+3] = K2 * DIFFUSION_FLUXDIFF(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, M4, MD4, MU4, ML4, MR4, MB4, MF4) - (Fi4*Xr4 + Fr4*Xi4);
 
                 l+=NUNROLL; jl+=NUNROLL; jr+=NUNROLL; kl+=NUNROLL; kr+=NUNROLL;
             }
@@ -336,15 +338,14 @@ void BTActionVariableDiff3D(
             /* RHS Boundary Condition + Remainder Loop */
             for(; i < nx; ++i) {
                 ir = (i==NX) ? l-NX : l+1;
-                XrD4 = Xr4;  Xr4 = XrU4;  XrU4 = xr[ir]; XrL4 = xr[jl]; XrR4 = xr[jr]; XrB4 = xr[kl]; XrF4 = xr[kr];
-                XiD4 = Xi4;  Xi4 = XiU4;  XiU4 = xi[ir]; XiL4 = xi[jl]; XiR4 = xi[jr]; XiB4 = xi[kl]; XiF4 = xi[kr];
-                DrD4 = Dr4;  Dr4 = DrU4;  DrU4 = Dr[ir]; DrL4 = Dr[jl]; DrR4 = Dr[jr]; DrB4 = Dr[kl]; DrF4 = Dr[kr];
-                // DrD4 = Dr4;  Dr4 = Dr[l]; DrL4 = Dr[jl]; DrB4 = Dr[kl];
-                Fr4 = fr[l]; Fi4 = fi[l];
+                XrD4 = Xr4;   Xr4 = XrU4;  XrU4 = xr[ir]; XrL4 = xr[jl]; XrR4 = xr[jr]; XrB4 = xr[kl]; XrF4 = xr[kr];
+                XiD4 = Xi4;   Xi4 = XiU4;  XiU4 = xi[ir]; XiL4 = xi[jl]; XiR4 = xi[jr]; XiB4 = xi[kl]; XiF4 = xi[kr];
+                DrD4 = Dr4;   Dr4 = DrU4;  DrU4 = Dr[ir]; DrL4 = Dr[jl]; DrR4 = Dr[jr]; DrB4 = Dr[kl]; DrF4 = Dr[kr];
+                MD4  = M4;    M4  = MU4;   MU4  = M[ir];  ML4  = M[jl];  MR4  = M[jr];  MB4  = M[kl];  MF4  = M[kr];
+                Fr4  = fr[l]; Fi4 = fi[l];
 
-                /* Discretising `div( D * grad(x) ) - Gamma * x` with finite differences */
-                dxr[l] = K2 * DIFFUSION_FLUXDIFF(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4) - (Fr4*Xr4 - Fi4*Xi4);
-                dxi[l] = K2 * DIFFUSION_FLUXDIFF(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4) - (Fi4*Xr4 + Fr4*Xi4);
+                dxr[l] = K2 * DIFFUSION_FLUXDIFF(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, M4, MD4, MU4, ML4, MR4, MB4, MF4) - (Fr4*Xr4 - Fi4*Xi4);
+                dxi[l] = K2 * DIFFUSION_FLUXDIFF(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, M4, MD4, MU4, ML4, MR4, MB4, MF4) - (Fi4*Xr4 + Fr4*Xi4);
                 ++l; ++jl; ++jr; ++kl; ++kr;
             }
 
@@ -370,11 +371,12 @@ void BTActionVariableDiff3D(
     return;
 }
 
-void BTActionVariableDiff4D(
+void BTActionVariableDiffNeumann4D(
         REAL *dxr, REAL *dxi,
         const REAL *xr, const REAL *xi,
         const REAL *fr, const REAL *fi,
         const REAL *Dr, const REAL *Di,
+        const bool *M,
         const REAL K,
         const REAL *gsize
         )
@@ -398,7 +400,7 @@ void BTActionVariableDiff4D(
 // #pragma omp parallel for OMP_PARFOR_ARGS
 // #endif /* USE_PARALLEL */
     for(w = 0; w < nxnynznw; w += nxnynz) {
-        BTActionVariableDiff3D( &dxr[w], &dxi[w], &xr[w], &xi[w], fr, fi, Dr, Di, K, gsize );
+        BTActionVariableDiffNeumann3D( &dxr[w], &dxi[w], &xr[w], &xi[w], fr, fi, Dr, Di, M, K, gsize );
     }
 
     return;
@@ -408,11 +410,12 @@ void BTActionVariableDiff4D(
 /* *******************************************************************
  * Bloch-Torrey action when the input is the matrix diagonal
  ******************************************************************* */
-void BTActionVariableDiffDiagonal3D(
+void BTActionVariableDiffNeumannDiagonal3D(
         REAL *dxr, REAL *dxi,
         const REAL *xr, const REAL *xi,
         const REAL *fr, const REAL *fi,
         const REAL *Dr, const REAL *Di,
+        const bool *M,
         const REAL K,
         const REAL *gsize
         )
@@ -443,10 +446,10 @@ void BTActionVariableDiffDiagonal3D(
 
             /* Periodic Boundary Conditions on y, z indexes */
             l  = j + k;
-            jl = (j==0 ) ? l+NY : l-nx;
-            jr = (j==NY) ? l-NY : l+nx;
-            kl = (k==0 ) ? l+NZ : l-nxny;
-            kr = (k==NZ) ? l-NZ : l+nxny;
+            jl = (j == 0 ) ? l+NY : l-nx;
+            jr = (j == NY) ? l-NY : l+nx;
+            kl = (k == 0 ) ? l+NZ : l-nxny;
+            kr = (k == NZ) ? l-NZ : l+nxny;
 
             /* Notation:
              *  x     = x[l]          = "center"
@@ -599,11 +602,12 @@ void BTActionVariableDiffDiagonal3D(
     return;
 }
 
-void BTActionVariableDiffDiagonal4D(
+void BTActionVariableDiffNeumannDiagonal4D(
         REAL *dxr, REAL *dxi,
         const REAL *xr, const REAL *xi,
         const REAL *fr, const REAL *fi,
         const REAL *Dr, const REAL *Di,
+        const bool *M,
         const REAL K,
         const REAL *gsize
         )
@@ -627,7 +631,7 @@ void BTActionVariableDiffDiagonal4D(
 // #pragma omp parallel for OMP_PARFOR_ARGS
 // #endif /* USE_PARALLEL */
     for(w = 0; w < nxnynznw; w += nxnynz) {
-        BTActionVariableDiffDiagonal3D( &dxr[w], &dxi[w], &xr[w], &xi[w], fr, fi, Dr, Di, K, gsize );
+        BTActionVariableDiffNeumannDiagonal3D( &dxr[w], &dxi[w], &xr[w], &xi[w], fr, fi, Dr, Di, M, K, gsize );
     }
 
     return;

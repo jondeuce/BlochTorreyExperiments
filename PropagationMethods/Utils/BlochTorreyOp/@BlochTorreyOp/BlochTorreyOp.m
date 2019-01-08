@@ -372,7 +372,7 @@ classdef BlochTorreyOp
 
         function [ B ] = uminus( A )
             isdiagstate = (A.state == BlochTorreyOp.DiagState);
-            B = BlochTorreyOp( -A.buffer, -A.D, A.gsize, A.gdims, isdiagstate );
+            B = BlochTorreyOp( -A.buffer, -A.D, A.gsize, A.gdims, isdiagstate, A.mask );
         end
 
         function [ B ] = transpose( A )
@@ -385,7 +385,7 @@ classdef BlochTorreyOp
                 B = A;
             else
                 isdiagstate = (A.state == BlochTorreyOp.DiagState);
-                B = BlochTorreyOp( conj(A.buffer), conj(A.D), A.gsize, A.gdims, isdiagstate );
+                B = BlochTorreyOp( conj(A.buffer), conj(A.D), A.gsize, A.gdims, isdiagstate, A.mask );
             end
         end
 
@@ -419,22 +419,22 @@ classdef BlochTorreyOp
 
         function [ B ] = abs( A )
             % need to take full abs(A.Diag); no linearity
-            B = BlochTorreyOp( abs(A.Diag), abs(A.D), A.gsize, A.gdims, true ); % forward gradient/backward divergence
+            B = BlochTorreyOp( abs(A.Diag), abs(A.D), A.gsize, A.gdims, true, A.mask ); % forward gradient/backward divergence
         end
 
         function [ B ] = real( A )
             isdiagstate = (A.state == BlochTorreyOp.DiagState);
-            B = BlochTorreyOp( real(A.buffer), real(A.D), A.gsize, A.gdims, isdiagstate );
+            B = BlochTorreyOp( real(A.buffer), real(A.D), A.gsize, A.gdims, isdiagstate, A.mask );
         end
 
         function [ B ] = imag( A )
             isdiagstate = (A.state == BlochTorreyOp.DiagState);
-            B = BlochTorreyOp( imag(A.buffer), imag(A.D), A.gsize, A.gdims, isdiagstate );
+            B = BlochTorreyOp( imag(A.buffer), imag(A.D), A.gsize, A.gdims, isdiagstate, A.mask );
         end
 
         function [ B ] = conj( A )
             isdiagstate = (A.state == BlochTorreyOp.DiagState);
-            B = BlochTorreyOp( conj(A.buffer), conj(A.D), A.gsize, A.gdims, isdiagstate );
+            B = BlochTorreyOp( conj(A.buffer), conj(A.D), A.gsize, A.gdims, isdiagstate, A.mask );
         end
 
         function [ B ] = full( A, thresh )
@@ -695,7 +695,7 @@ classdef BlochTorreyOp
         function B = zerosLike( A, varargin )
             if nargin == 1
                 % For zeros('like',obj)
-                B = BlochTorreyOp(0,0,A.gsize,A.gdims);
+                B = BlochTorreyOp(0, 0, A.gsize, A.gdims, true, A.mask);
             elseif  any([varargin{:}] <= 0)
                 % For zeros with any dimension <= 0
                 error('Dimensions <= 0, and empty method is not implemented.');
@@ -704,14 +704,14 @@ classdef BlochTorreyOp
                 if ~isequal([varargin{:}], size(A))
                     error('ZEROS: must use zeros(size(A),''like'',A)');
                 end
-                B = BlochTorreyOp(0,0,A.gsize,A.gdims);
+                B = BlochTorreyOp(0, 0, A.gsize, A.gdims, true, A.mask);
             end
         end
 
         function B = eyeLike( A, varargin )
             if nargin == 1
                 % For eye('like',obj)
-                B = BlochTorreyOp(-1,0,A.gsize,A.gdims);
+                B = BlochTorreyOp(1, 0, A.gsize, A.gdims, true, A.mask);
             elseif any([varargin{:}] <= 0)
                 % For eye with any dimension <= 0
                 error('Dimensions <= 0, and empty method is not implemented.');
@@ -723,7 +723,7 @@ classdef BlochTorreyOp
                 if ~isequal([varargin{:}], size(A))
                     error('ZEROS: must use zeros(size(A),''like'',A)');
                 end
-                B = BlochTorreyOp(-1,0,A.gsize,A.gdims);
+                B = BlochTorreyOp(1, 0, A.gsize, A.gdims, true, A.mask);
             end
         end
 

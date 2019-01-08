@@ -50,6 +50,11 @@ if istrans
     if ~isreal(D); D = conj(D); end
 end
 
+if isempty(mask) && isscalar(D)
+    warning('Scalar D not supported with mask; expanding D to gridsize');
+    D = D * ones(gsize3D);
+end
+
 if isscalar(D)
     if isscalar(f)
         % Avoid allocating f*ones by just taking laplacian
@@ -67,14 +72,24 @@ if isscalar(D)
 else
     if isscalar(f)
         %warning('TODO: expanding Gamma to size of grid');
-        f = f*ones(gsize3D);
+        f = f * ones(gsize3D);
     end
-    if ~isreal(D)
-        %TODO this is inefficient allocation-wise
-        y = BTActionVariableDiff_cd(x, h, real(D), f, gsize4D, ndim, iters, isdiag);
-        y = y + 1i * BTActionVariableDiff_cd(x, h, imag(D), complex(zeros(size(f))), gsize4D, ndim, iters, isdiag);
+    if isempty(mask)
+        if ~isreal(D)
+            %TODO this is inefficient allocation-wise
+            y = BTActionVariableDiff_cd(x, h, real(D), f, gsize4D, ndim, iters, isdiag);
+            y = y + 1i * BTActionVariableDiff_cd(x, h, imag(D), complex(zeros(size(f))), gsize4D, ndim, iters, isdiag);
+        else
+            y = BTActionVariableDiff_cd(x, h, D, f, gsize4D, ndim, iters, isdiag);
+        end
     else
-        y = BTActionVariableDiff_cd(x, h, D, f, gsize4D, ndim, iters, isdiag);
+        if ~isreal(D)
+            %TODO this is inefficient allocation-wise
+            y = BTActionVariableDiffNeumann_cd(x, h, real(D), f, gsize4D, ndim, iters, isdiag, mask);
+            y = y + 1i * BTActionVariableDiffNeumann_cd(x, h, imag(D), complex(zeros(size(f))), gsize4D, ndim, iters, isdiag, mask);
+        else
+            y = BTActionVariableDiffNeumann_cd(x, h, D, f, gsize4D, ndim, iters, isdiag, mask);
+        end
     end
 end
 

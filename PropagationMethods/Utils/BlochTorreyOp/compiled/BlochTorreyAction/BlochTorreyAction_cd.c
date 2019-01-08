@@ -105,17 +105,20 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     REAL *dxi = mxMalloc(mxGetNumberOfElements(__x__) * sizeof(REAL));
     
     void (*BlochTorreyAction)(REAL *, REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL, const REAL *);
-    if( ndim == 3 )
-        if( isdiag )
+    if( ndim == 3 ) {
+        if( isdiag ) {
             BlochTorreyAction = &BlochTorreyActionDiagonal3D;
-        else
+        } else {
             BlochTorreyAction = &BlochTorreyAction3D;
-    else
-        if( isdiag )
+        }
+    } else {
+        if( isdiag ) {
             BlochTorreyAction = &BlochTorreyActionDiagonal4D;
-        else
+        } else {
             BlochTorreyAction = &BlochTorreyAction4D;
-    
+        }
+    }
+
     /* Evaluate the BlochTorreyAction once with input data */
     BlochTorreyAction( dxr, dxi, xr, xi, fr, fi, K, gsize );
     
@@ -214,9 +217,10 @@ void BlochTorreyAction4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, 
     
     int64_t w = 0;
     
-#if USE_PARALLEL
-#pragma omp parallel for OMP_PARFOR_ARGS
-#endif /* USE_PARALLEL */
+// Parallelism should be left for the deepest nested loop, not these outer loops
+// #if USE_PARALLEL
+// #pragma omp parallel for OMP_PARFOR_ARGS
+// #endif /* USE_PARALLEL */
     for(w = 0; w < nxnynznw; w += nxnynz) {
         BlochTorreyAction3D( &dxr[w], &dxi[w], &xr[w], &xi[w], fr, fi, K, gsize );
     }
@@ -294,9 +298,10 @@ void BlochTorreyActionDiagonal4D( REAL *dxr, REAL *dxi, const REAL *xr, const RE
     
     int64_t w = 0;
     
-#if USE_PARALLEL
-#pragma omp parallel for OMP_PARFOR_ARGS
-#endif /* USE_PARALLEL */
+// Parallelism should be left for the deepest nested loop, not these outer loops
+// #if USE_PARALLEL
+// #pragma omp parallel for OMP_PARFOR_ARGS
+// #endif /* USE_PARALLEL */
     for(w = 0; w < nxnynznw; w += nxnynz) {
         BlochTorreyActionDiagonal3D( &dxr[w], &dxi[w], &xr[w], &xi[w], fr, fi, K, gsize );
     }

@@ -87,6 +87,22 @@ y = SevenPointStencil(real(x),real(kern),gsize,iters);
 yb = SevenPointStencil_Brute(real(x),real(kern),gsize,iters);
 b = test_approx_eq(y,yb,'real-real') && b;
 
+y = SevenPointStencilMasked_cd(x,kern,gsize,iters,true(gsize));
+yb = SevenPointStencil_Brute(x,kern,gsize,iters);
+b = test_approx_eq(y,yb,'cplx-cplx') && b;
+
+y = SevenPointStencilMasked_cd(x,real(kern),gsize,iters,true(gsize));
+yb = SevenPointStencil_Brute(x,real(kern),gsize,iters);
+b = test_approx_eq(y,yb,'cplx-real') && b;
+
+y = SevenPointStencilMasked_cd(real(x),kern,gsize,iters,true(gsize));
+yb = SevenPointStencil_Brute(real(x),kern,gsize,iters);
+b = test_approx_eq(y,yb,'real-cplx') && b;
+
+y = SevenPointStencilMasked_cd(real(x),real(kern),gsize,iters,true(gsize));
+yb = SevenPointStencil_Brute(real(x),real(kern),gsize,iters);
+b = test_approx_eq(y,yb,'real-real') && b;
+
 end
 
 function str = errmsg(name, msg)

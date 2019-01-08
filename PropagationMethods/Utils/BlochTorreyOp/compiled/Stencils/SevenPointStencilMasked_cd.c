@@ -23,6 +23,7 @@
 #define __gsize__ (prhs[2])
 #define __ndim__  (prhs[3])
 #define __iters__ (prhs[4])
+#define __M__     (prhs[5])
 
 /* Simple aliases for output pointers */
 #define __dx__    (plhs[0])
@@ -47,14 +48,14 @@
 /* Simple unsafe swap macro: https://stackoverflow.com/questions/3982348/implement-generic-swap-macro-in-c */
 #define SWAP(x,y,T) do { T SWAP = x; x = y; y = SWAP; } while (0)
 
-void SevenPointStencilCplx3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const REAL *gsize );
-void SevenPointStencilCplx4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const REAL *gsize );
-void SevenPointStencilCplxKern3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const REAL *gsize );
-void SevenPointStencilCplxKern4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const REAL *gsize );
-void SevenPointStencilRealKern3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const REAL *gsize );
-void SevenPointStencilRealKern4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const REAL *gsize );
-void SevenPointStencilReal3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const REAL *gsize );
-void SevenPointStencilReal4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const REAL *gsize );
+void SevenPointStencilCplx3D(     REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const bool *M, const REAL *gsize );
+void SevenPointStencilCplx4D(     REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const bool *M, const REAL *gsize );
+void SevenPointStencilCplxKern3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const bool *M, const REAL *gsize );
+void SevenPointStencilCplxKern4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const bool *M, const REAL *gsize );
+void SevenPointStencilRealKern3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const bool *M, const REAL *gsize );
+void SevenPointStencilRealKern4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const bool *M, const REAL *gsize );
+void SevenPointStencilReal3D(     REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const bool *M, const REAL *gsize );
+void SevenPointStencilReal4D(     REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const bool *M, const REAL *gsize );
 
 void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
 {
@@ -76,6 +77,9 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     /* (possibly complex) input array */
     const REAL *xr = (const REAL*)mxGetData(__x__);
     const REAL *xi = (const REAL*)mxGetImagData(__x__);
+
+    /* boolean mask */
+    const bool *M  = (const bool*)mxGetLogicals(__M__);
 
     /* Flags for checking complex variables */
     const bool is_kern_cplx = mxIsComplex(__kern__);
@@ -103,7 +107,7 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
         dxi = mxMalloc(mxGetNumberOfElements(__x__) * sizeof(REAL));
     }
 
-    void (*SevenPointStencil)(REAL *, REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const REAL *);
+    void (*SevenPointStencil)(REAL *, REAL *, const REAL *, const REAL *, const REAL *, const REAL *, const bool *, const REAL *);
     if (ndim == 3) {
         if (is_kern_cplx) {
             if (is_x_cplx) {
@@ -135,7 +139,7 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     }
 
     /* Evaluate the SevenPointStencil once with input data */
-    SevenPointStencil( dxr, dxi, xr, xi, kern_real, kern_imag, gsize );
+    SevenPointStencil( dxr, dxi, xr, xi, kern_real, kern_imag, M, gsize );
 
     /* Evaluate the SevenPointStencil iters-1 times using temp variable, if necessary */
     int i;
@@ -146,14 +150,15 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
         } else {
             SWAP(dxr, yr, REAL*);
         }
-        SevenPointStencil( dxr, dxi, yr, yi, kern_real, kern_imag, gsize );
+        SevenPointStencil( dxr, dxi, yr, yi, kern_real, kern_imag, M, gsize );
     }
 
     /* Create (possibly complex) output array */
-    if( is_dx_cplx )
+    if( is_dx_cplx ) {
         __dx__ = mxCreateNumericMatrix(0, 0, mxELEMENT_CLASS, mxCOMPLEX); /* Create an empty array */
-    else
+    } else {
         __dx__ = mxCreateNumericMatrix(0, 0, mxELEMENT_CLASS, mxREAL); /* Create an empty array */
+    }
     mxSetDimensions(__dx__, mxGetDimensions(__x__), mxGetNumberOfDimensions(__x__)); /* Set the dimensions to be same as input */
 
     /* Associate with output array */
@@ -177,8 +182,14 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     return;
 }
 
-void SevenPointStencilRealKern3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const REAL *gsize ) {
-
+void SevenPointStencilRealKern3D(
+    REAL *dxr, REAL *dxi,
+    const REAL *xr, const REAL *xi,
+    const REAL *kreal, const REAL *kimag,
+    const bool *M,
+    const REAL *gsize
+    )
+{
     const uint32_t nx     = (uint32_t)gsize[0];
     const uint32_t ny     = (uint32_t)gsize[1];
     const uint32_t nz     = (uint32_t)gsize[2];
@@ -206,29 +217,47 @@ void SevenPointStencilRealKern3D( REAL *dxr, REAL *dxi, const REAL *xr, const RE
             kl = (k==0 ) ? l+NZ : l-nxny;
             kr = (k==NZ) ? l-NZ : l+nxny;
 
+            bool m, mD, mU, mL, mR, mB, mF;
+            REAL KD, KU, KL, KR, KB, KF;
+            
+            m = M[l]; mD = M[l+NX]; mU = M[l+1]; mL = M[jl]; mR = M[jr]; mB = M[kl]; mF = M[kr];
+            mD = (m == mD); mU = (m == mU); mL = (m == mL); mR = (m == mR); mB = (m == mB); mF = (m == mF);
+            
             /* LHS Boundary Condition */
-            dxr[l] = k_cent * xr[l] + k_down * xr[l+NX] + k_up * xr[l+1] + k_left * xr[jl] + k_right * xr[jr] + k_back * xr[kl] + k_forw * xr[kr];
-            dxi[l] = k_cent * xi[l] + k_down * xi[l+NX] + k_up * xi[l+1] + k_left * xi[jl] + k_right * xi[jr] + k_back * xi[kl] + k_forw * xi[kr];
+            dxr[l] = k_cent * xr[l] + mD * k_down * xr[l+NX] + mU * k_up * xr[l+1] + mL * k_left * xr[jl] + mR * k_right * xr[jr] + mB * k_back * xr[kl] + mF * k_forw * xr[kr];
+            dxi[l] = k_cent * xi[l] + mD * k_down * xi[l+NX] + mU * k_up * xi[l+1] + mL * k_left * xi[jl] + mR * k_right * xi[jr] + mB * k_back * xi[kl] + mF * k_forw * xi[kr];
 
             /* Inner Points */
             ++l, ++jl, ++jr, ++kl, ++kr;
             for(i = 1; i < nx-1; ++i) {
-                dxr[l] = k_cent * xr[l] + k_down * xr[l-1] + k_up * xr[l+1] + k_left * xr[jl] + k_right * xr[jr] + k_back * xr[kl] + k_forw * xr[kr];
-                dxi[l] = k_cent * xi[l] + k_down * xi[l-1] + k_up * xi[l+1] + k_left * xi[jl] + k_right * xi[jr] + k_back * xi[kl] + k_forw * xi[kr];
+                m = M[l]; mD = M[l-1]; mU = M[l+1]; mL = M[jl]; mR = M[jr]; mB = M[kl]; mF = M[kr];
+                mD = (m == mD); mU = (m == mU); mL = (m == mL); mR = (m == mR); mB = (m == mB); mF = (m == mF);
+
+                dxr[l] = k_cent * xr[l] + mD * k_down * xr[l-1] + mU * k_up * xr[l+1] + mL * k_left * xr[jl] + mR * k_right * xr[jr] + mB * k_back * xr[kl] + mF * k_forw * xr[kr];
+                dxi[l] = k_cent * xi[l] + mD * k_down * xi[l-1] + mU * k_up * xi[l+1] + mL * k_left * xi[jl] + mR * k_right * xi[jr] + mB * k_back * xi[kl] + mF * k_forw * xi[kr];
                 ++l, ++jl, ++jr, ++kl, ++kr;
             }
 
             /* RHS Boundary Condition */
-            dxr[l] = k_cent * xr[l] + k_down * xr[l-1] + k_up * xr[l-NX] + k_left * xr[jl] + k_right * xr[jr] + k_back * xr[kl] + k_forw * xr[kr];
-            dxi[l] = k_cent * xi[l] + k_down * xi[l-1] + k_up * xi[l-NX] + k_left * xi[jl] + k_right * xi[jr] + k_back * xi[kl] + k_forw * xi[kr];
+            m = M[l]; mD = M[l-1]; mU = M[l-NX]; mL = M[jl]; mR = M[jr]; mB = M[kl]; mF = M[kr];
+            mD = (m == mD); mU = (m == mU); mL = (m == mL); mR = (m == mR); mB = (m == mB); mF = (m == mF);
+
+            dxr[l] = k_cent * xr[l] + mD * k_down * xr[l-1] + mU * k_up * xr[l-NX] + mL * k_left * xr[jl] + mR * k_right * xr[jr] + mB * k_back * xr[kl] + mF * k_forw * xr[kr];
+            dxi[l] = k_cent * xi[l] + mD * k_down * xi[l-1] + mU * k_up * xi[l-NX] + mL * k_left * xi[jl] + mR * k_right * xi[jr] + mB * k_back * xi[kl] + mF * k_forw * xi[kr];
         }
     }
 
     return;
 }
 
-void SevenPointStencilRealKern4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const REAL *gsize ) {
-
+void SevenPointStencilRealKern4D(
+    REAL *dxr, REAL *dxi,
+    const REAL *xr, const REAL *xi,
+    const REAL *kreal, const REAL *kimag,
+    const bool *M,
+    const REAL *gsize
+    )
+{
     const uint32_t nx       = (uint32_t)gsize[0];
     const uint32_t ny       = (uint32_t)gsize[1];
     const uint32_t nz       = (uint32_t)gsize[2];
@@ -248,14 +277,20 @@ void SevenPointStencilRealKern4D( REAL *dxr, REAL *dxi, const REAL *xr, const RE
 // #pragma omp parallel for OMP_PARFOR_ARGS
 // #endif /* USE_PARALLEL */
     for(w = 0; w < nxnynznw; w += nxnynz) {
-        SevenPointStencilRealKern3D( &dxr[w], &dxi[w], &xr[w], &xi[w], kreal, kimag, gsize );
+        SevenPointStencilRealKern3D( &dxr[w], &dxi[w], &xr[w], &xi[w], kreal, kimag, M, gsize );
     }
 
     return;
 }
 
-void SevenPointStencilCplx3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const REAL *gsize ) {
-
+void SevenPointStencilCplx3D(
+    REAL *dxr, REAL *dxi,
+    const REAL *xr, const REAL *xi,
+    const REAL *kreal, const REAL *kimag,
+    const bool *M,
+    const REAL *gsize
+    )
+{
     const uint32_t nx     = (uint32_t)gsize[0];
     const uint32_t ny     = (uint32_t)gsize[1];
     const uint32_t nz     = (uint32_t)gsize[2];
@@ -289,35 +324,53 @@ void SevenPointStencilCplx3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *
             kl = (k==0 ) ? l+NZ : l-nxny;
             kr = (k==NZ) ? l-NZ : l+nxny;
 
+            bool m, mD, mU, mL, mR, mB, mF;
+            REAL KD, KU, KL, KR, KB, KF;
+            
+            m = M[l]; mD = M[l+NX]; mU = M[l+1]; mL = M[jl]; mR = M[jr]; mB = M[kl]; mF = M[kr];
+            mD = (m == mD); mU = (m == mU); mL = (m == mL); mR = (m == mR); mB = (m == mB); mF = (m == mF);
+            
             /* LHS Boundary Condition */
-            dxr[l] = kr_cent * xr[l] + kr_down * xr[l+NX] + kr_up * xr[l+1] + kr_left * xr[jl] + kr_right * xr[jr] + kr_back * xr[kl] + kr_forw * xr[kr]
-                 - ( ki_cent * xi[l] + ki_down * xi[l+NX] + ki_up * xi[l+1] + ki_left * xi[jl] + ki_right * xi[jr] + ki_back * xi[kl] + ki_forw * xi[kr] );
-            dxi[l] = kr_cent * xi[l] + kr_down * xi[l+NX] + kr_up * xi[l+1] + kr_left * xi[jl] + kr_right * xi[jr] + kr_back * xi[kl] + kr_forw * xi[kr]
-                 + ( ki_cent * xr[l] + ki_down * xr[l+NX] + ki_up * xr[l+1] + ki_left * xr[jl] + ki_right * xr[jr] + ki_back * xr[kl] + ki_forw * xr[kr] );
+            dxr[l] = kr_cent * xr[l] + mD * kr_down * xr[l+NX] + mU * kr_up * xr[l+1] + mL * kr_left * xr[jl] + mR * kr_right * xr[jr] + mB * kr_back * xr[kl] + mF * kr_forw * xr[kr]
+                 - ( ki_cent * xi[l] + mD * ki_down * xi[l+NX] + mU * ki_up * xi[l+1] + mL * ki_left * xi[jl] + mR * ki_right * xi[jr] + mB * ki_back * xi[kl] + mF * ki_forw * xi[kr] );
+            dxi[l] = kr_cent * xi[l] + mD * kr_down * xi[l+NX] + mU * kr_up * xi[l+1] + mL * kr_left * xi[jl] + mR * kr_right * xi[jr] + mB * kr_back * xi[kl] + mF * kr_forw * xi[kr]
+                 + ( ki_cent * xr[l] + mD * ki_down * xr[l+NX] + mU * ki_up * xr[l+1] + mL * ki_left * xr[jl] + mR * ki_right * xr[jr] + mB * ki_back * xr[kl] + mF * ki_forw * xr[kr] );
 
             /* Inner Points */
             ++l, ++jl, ++jr, ++kl, ++kr;
             for(i = 1; i < nx-1; ++i) {
-                dxr[l] = kr_cent * xr[l] + kr_down * xr[l-1] + kr_up * xr[l+1] + kr_left * xr[jl] + kr_right * xr[jr] + kr_back * xr[kl] + kr_forw * xr[kr]
-                     - ( ki_cent * xi[l] + ki_down * xi[l-1] + ki_up * xi[l+1] + ki_left * xi[jl] + ki_right * xi[jr] + ki_back * xi[kl] + ki_forw * xi[kr] );
-                dxi[l] = kr_cent * xi[l] + kr_down * xi[l-1] + kr_up * xi[l+1] + kr_left * xi[jl] + kr_right * xi[jr] + kr_back * xi[kl] + kr_forw * xi[kr]
-                     + ( ki_cent * xr[l] + ki_down * xr[l-1] + ki_up * xr[l+1] + ki_left * xr[jl] + ki_right * xr[jr] + ki_back * xr[kl] + ki_forw * xr[kr] );
+                m = M[l]; mD = M[l-1]; mU = M[l+1]; mL = M[jl]; mR = M[jr]; mB = M[kl]; mF = M[kr];
+                mD = (m == mD); mU = (m == mU); mL = (m == mL); mR = (m == mR); mB = (m == mB); mF = (m == mF);
+
+                dxr[l] = kr_cent * xr[l] + mD * kr_down * xr[l-1] + mU * kr_up * xr[l+1] + mL * kr_left * xr[jl] + mR * kr_right * xr[jr] + mB * kr_back * xr[kl] + mF * kr_forw * xr[kr]
+                     - ( ki_cent * xi[l] + mD * ki_down * xi[l-1] + mU * ki_up * xi[l+1] + mL * ki_left * xi[jl] + mR * ki_right * xi[jr] + mB * ki_back * xi[kl] + mF * ki_forw * xi[kr] );
+                dxi[l] = kr_cent * xi[l] + mD * kr_down * xi[l-1] + mU * kr_up * xi[l+1] + mL * kr_left * xi[jl] + mR * kr_right * xi[jr] + mB * kr_back * xi[kl] + mF * kr_forw * xi[kr]
+                     + ( ki_cent * xr[l] + mD * ki_down * xr[l-1] + mU * ki_up * xr[l+1] + mL * ki_left * xr[jl] + mR * ki_right * xr[jr] + mB * ki_back * xr[kl] + mF * ki_forw * xr[kr] );
                 ++l, ++jl, ++jr, ++kl, ++kr;
             }
 
             /* RHS Boundary Condition */
-            dxr[l] = kr_cent * xr[l] + kr_down * xr[l-1] + kr_up * xr[l-NX] + kr_left * xr[jl] + kr_right * xr[jr] + kr_back * xr[kl] + kr_forw * xr[kr]
-                 - ( ki_cent * xi[l] + ki_down * xi[l-1] + ki_up * xi[l-NX] + ki_left * xi[jl] + ki_right * xi[jr] + ki_back * xi[kl] + ki_forw * xi[kr] );
-            dxi[l] = kr_cent * xi[l] + kr_down * xi[l-1] + kr_up * xi[l-NX] + kr_left * xi[jl] + kr_right * xi[jr] + kr_back * xi[kl] + kr_forw * xi[kr]
-                 + ( ki_cent * xr[l] + ki_down * xr[l-1] + ki_up * xr[l-NX] + ki_left * xr[jl] + ki_right * xr[jr] + ki_back * xr[kl] + ki_forw * xr[kr] );
+            m = M[l]; mD = M[l-1]; mU = M[l-NX]; mL = M[jl]; mR = M[jr]; mB = M[kl]; mF = M[kr];
+            mD = (m == mD); mU = (m == mU); mL = (m == mL); mR = (m == mR); mB = (m == mB); mF = (m == mF);
+            
+            dxr[l] = kr_cent * xr[l] + mD * kr_down * xr[l-1] + mU * kr_up * xr[l-NX] + mL * kr_left * xr[jl] + mR * kr_right * xr[jr] + mB * kr_back * xr[kl] + mF * kr_forw * xr[kr]
+                 - ( ki_cent * xi[l] + mD * ki_down * xi[l-1] + mU * ki_up * xi[l-NX] + mL * ki_left * xi[jl] + mR * ki_right * xi[jr] + mB * ki_back * xi[kl] + mF * ki_forw * xi[kr] );
+            dxi[l] = kr_cent * xi[l] + mD * kr_down * xi[l-1] + mU * kr_up * xi[l-NX] + mL * kr_left * xi[jl] + mR * kr_right * xi[jr] + mB * kr_back * xi[kl] + mF * kr_forw * xi[kr]
+                 + ( ki_cent * xr[l] + mD * ki_down * xr[l-1] + mU * ki_up * xr[l-NX] + mL * ki_left * xr[jl] + mR * ki_right * xr[jr] + mB * ki_back * xr[kl] + mF * ki_forw * xr[kr] );
         }
     }
 
     return;
 }
 
-void SevenPointStencilCplx4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const REAL *gsize ) {
-
+void SevenPointStencilCplx4D(
+    REAL *dxr, REAL *dxi,
+    const REAL *xr, const REAL *xi,
+    const REAL *kreal, const REAL *kimag,
+    const bool *M,
+    const REAL *gsize
+    )
+{
     const uint32_t nx       = (uint32_t)gsize[0];
     const uint32_t ny       = (uint32_t)gsize[1];
     const uint32_t nz       = (uint32_t)gsize[2];
@@ -337,15 +390,21 @@ void SevenPointStencilCplx4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *
 // #pragma omp parallel for OMP_PARFOR_ARGS
 // #endif /* USE_PARALLEL */
     for(w = 0; w < nxnynznw; w += nxnynz) {
-        SevenPointStencilCplx3D( &dxr[w], &dxi[w], &xr[w], &xi[w], kreal, kimag, gsize );
+        SevenPointStencilCplx3D( &dxr[w], &dxi[w], &xr[w], &xi[w], kreal, kimag, M, gsize );
     }
 
     return;
 }
 
 
-void SevenPointStencilCplxKern3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const REAL *gsize ) {
-
+void SevenPointStencilCplxKern3D(
+    REAL *dxr, REAL *dxi,
+    const REAL *xr, const REAL *xi,
+    const REAL *kreal, const REAL *kimag,
+    const bool *M,
+    const REAL *gsize
+    )
+{
     const uint32_t nx     = (uint32_t)gsize[0];
     const uint32_t ny     = (uint32_t)gsize[1];
     const uint32_t nz     = (uint32_t)gsize[2];
@@ -379,6 +438,12 @@ void SevenPointStencilCplxKern3D( REAL *dxr, REAL *dxi, const REAL *xr, const RE
             kl = (k==0 ) ? l+NZ : l-nxny;
             kr = (k==NZ) ? l-NZ : l+nxny;
 
+            bool m, mD, mU, mL, mR, mB, mF;
+            REAL KD, KU, KL, KR, KB, KF;
+            
+            m = M[l]; mD = M[l+NX]; mU = M[l+1]; mL = M[jl]; mR = M[jr]; mB = M[kl]; mF = M[kr];
+            mD = (m == mD); mU = (m == mU); mL = (m == mL); mR = (m == mR); mB = (m == mB); mF = (m == mF);
+            
             /* LHS Boundary Condition */
             dxr[l] = kr_cent * xr[l] + kr_down * xr[l+NX] + kr_up * xr[l+1] + kr_left * xr[jl] + kr_right * xr[jr] + kr_back * xr[kl] + kr_forw * xr[kr];
             dxi[l] = ki_cent * xr[l] + ki_down * xr[l+NX] + ki_up * xr[l+1] + ki_left * xr[jl] + ki_right * xr[jr] + ki_back * xr[kl] + ki_forw * xr[kr];
@@ -386,12 +451,18 @@ void SevenPointStencilCplxKern3D( REAL *dxr, REAL *dxi, const REAL *xr, const RE
             /* Inner Points */
             ++l, ++jl, ++jr, ++kl, ++kr;
             for(i = 1; i < nx-1; ++i) {
+                m = M[l]; mD = M[l-1]; mU = M[l+1]; mL = M[jl]; mR = M[jr]; mB = M[kl]; mF = M[kr];
+                mD = (m == mD); mU = (m == mU); mL = (m == mL); mR = (m == mR); mB = (m == mB); mF = (m == mF);
+
                 dxr[l] = kr_cent * xr[l] + kr_down * xr[l-1] + kr_up * xr[l+1] + kr_left * xr[jl] + kr_right * xr[jr] + kr_back * xr[kl] + kr_forw * xr[kr];
                 dxi[l] = ki_cent * xr[l] + ki_down * xr[l-1] + ki_up * xr[l+1] + ki_left * xr[jl] + ki_right * xr[jr] + ki_back * xr[kl] + ki_forw * xr[kr];
                 ++l, ++jl, ++jr, ++kl, ++kr;
             }
 
             /* RHS Boundary Condition */
+            m = M[l]; mD = M[l-1]; mU = M[l-NX]; mL = M[jl]; mR = M[jr]; mB = M[kl]; mF = M[kr];
+            mD = (m == mD); mU = (m == mU); mL = (m == mL); mR = (m == mR); mB = (m == mB); mF = (m == mF);
+
             dxr[l] = kr_cent * xr[l] + kr_down * xr[l-1] + kr_up * xr[l-NX] + kr_left * xr[jl] + kr_right * xr[jr] + kr_back * xr[kl] + kr_forw * xr[kr];
             dxi[l] = ki_cent * xr[l] + ki_down * xr[l-1] + ki_up * xr[l-NX] + ki_left * xr[jl] + ki_right * xr[jr] + ki_back * xr[kl] + ki_forw * xr[kr];
         }
@@ -400,8 +471,14 @@ void SevenPointStencilCplxKern3D( REAL *dxr, REAL *dxi, const REAL *xr, const RE
     return;
 }
 
-void SevenPointStencilCplxKern4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const REAL *gsize ) {
-
+void SevenPointStencilCplxKern4D(
+    REAL *dxr, REAL *dxi,
+    const REAL *xr, const REAL *xi,
+    const REAL *kreal, const REAL *kimag,
+    const bool *M,
+    const REAL *gsize
+    )
+{
     const uint32_t nx       = (uint32_t)gsize[0];
     const uint32_t ny       = (uint32_t)gsize[1];
     const uint32_t nz       = (uint32_t)gsize[2];
@@ -421,15 +498,21 @@ void SevenPointStencilCplxKern4D( REAL *dxr, REAL *dxi, const REAL *xr, const RE
 // #pragma omp parallel for OMP_PARFOR_ARGS
 // #endif /* USE_PARALLEL */
     for(w = 0; w < nxnynznw; w += nxnynz) {
-        SevenPointStencilCplxKern3D( &dxr[w], &dxi[w], &xr[w], &xi[w], kreal, kimag, gsize );
+        SevenPointStencilCplxKern3D( &dxr[w], &dxi[w], &xr[w], &xi[w], kreal, kimag, M, gsize );
     }
 
     return;
 }
 
 
-void SevenPointStencilReal3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const REAL *gsize ) {
-
+void SevenPointStencilReal3D(
+    REAL *dxr, REAL *dxi,
+    const REAL *xr, const REAL *xi,
+    const REAL *kreal, const REAL *kimag,
+    const bool *M,
+    const REAL *gsize
+    )
+{
     const uint32_t nx     = (uint32_t)gsize[0];
     const uint32_t ny     = (uint32_t)gsize[1];
     const uint32_t nz     = (uint32_t)gsize[2];
@@ -457,26 +540,44 @@ void SevenPointStencilReal3D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *
             kl = (k==0 ) ? l+NZ : l-nxny;
             kr = (k==NZ) ? l-NZ : l+nxny;
 
+            bool m, mD, mU, mL, mR, mB, mF;
+            REAL KD, KU, KL, KR, KB, KF;
+            
+            m = M[l]; mD = M[l+NX]; mU = M[l+1]; mL = M[jl]; mR = M[jr]; mB = M[kl]; mF = M[kr];
+            mD = (m == mD); mU = (m == mU); mL = (m == mL); mR = (m == mR); mB = (m == mB); mF = (m == mF);
+            
             /* LHS Boundary Condition */
-            dxr[l] = k_cent * xr[l] + k_down * xr[l+NX] + k_up * xr[l+1] + k_left * xr[jl] + k_right * xr[jr] + k_back * xr[kl] + k_forw * xr[kr];
+            dxr[l] = k_cent * xr[l] + mD * k_down * xr[l+NX] + mU * k_up * xr[l+1] + mL * k_left * xr[jl] + mR * k_right * xr[jr] + mB * k_back * xr[kl] + mF * k_forw * xr[kr];
 
             /* Inner Points */
             ++l, ++jl, ++jr, ++kl, ++kr;
             for(i = 1; i < nx-1; ++i) {
-                dxr[l] = k_cent * xr[l] + k_down * xr[l-1] + k_up * xr[l+1] + k_left * xr[jl] + k_right * xr[jr] + k_back * xr[kl] + k_forw * xr[kr];
+                m = M[l]; mD = M[l-1]; mU = M[l+1]; mL = M[jl]; mR = M[jr]; mB = M[kl]; mF = M[kr];
+                mD = (m == mD); mU = (m == mU); mL = (m == mL); mR = (m == mR); mB = (m == mB); mF = (m == mF);
+                
+                dxr[l] = k_cent * xr[l] + mD * k_down * xr[l-1] + mU * k_up * xr[l+1] + mL * k_left * xr[jl] + mR * k_right * xr[jr] + mB * k_back * xr[kl] + mF * k_forw * xr[kr];
                 ++l, ++jl, ++jr, ++kl, ++kr;
             }
 
             /* RHS Boundary Condition */
-            dxr[l] = k_cent * xr[l] + k_down * xr[l-1] + k_up * xr[l-NX] + k_left * xr[jl] + k_right * xr[jr] + k_back * xr[kl] + k_forw * xr[kr];
+            m = M[l]; mD = M[l-1]; mU = M[l-NX]; mL = M[jl]; mR = M[jr]; mB = M[kl]; mF = M[kr];
+            mD = (m == mD); mU = (m == mU); mL = (m == mL); mR = (m == mR); mB = (m == mB); mF = (m == mF);
+            
+            dxr[l] = k_cent * xr[l] + mD * k_down * xr[l-1] + mU * k_up * xr[l-NX] + mL * k_left * xr[jl] + mR * k_right * xr[jr] + mB * k_back * xr[kl] + mF * k_forw * xr[kr];
         }
     }
 
     return;
 }
 
-void SevenPointStencilReal4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *kreal, const REAL *kimag, const REAL *gsize ) {
-
+void SevenPointStencilReal4D(
+    REAL *dxr, REAL *dxi,
+    const REAL *xr, const REAL *xi,
+    const REAL *kreal, const REAL *kimag,
+    const bool *M,
+    const REAL *gsize
+    )
+{
     const uint32_t nx       = (uint32_t)gsize[0];
     const uint32_t ny       = (uint32_t)gsize[1];
     const uint32_t nz       = (uint32_t)gsize[2];
@@ -496,7 +597,7 @@ void SevenPointStencilReal4D( REAL *dxr, REAL *dxi, const REAL *xr, const REAL *
 // #pragma omp parallel for OMP_PARFOR_ARGS
 // #endif /* USE_PARALLEL */
     for(w = 0; w < nxnynznw; w += nxnynz) {
-        SevenPointStencilReal3D( &dxr[w], &dxi[w], &xr[w], &xi[w], kreal, kimag, gsize );
+        SevenPointStencilReal3D( &dxr[w], &dxi[w], &xr[w], &xi[w], kreal, kimag, M, gsize );
     }
 
     return;

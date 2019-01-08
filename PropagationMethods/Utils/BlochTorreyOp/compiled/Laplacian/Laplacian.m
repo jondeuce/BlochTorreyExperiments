@@ -1,5 +1,5 @@
 function y = Laplacian(x, h, gsize3D, iters)
-%BLOCHTORREYACTION Laplacian operator w/ 2nd order central difference
+%LAPLACIAN Laplacian operator w/ 2nd order central difference
 % approximations on derivatives and periodic boundary conditions.
 % 
 % INPUTS:
