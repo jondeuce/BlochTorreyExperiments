@@ -178,15 +178,10 @@ classdef BlochTorreyOp
                         % A is simply a diagonal matrix, with negative-Gamma on the diagonal
                         if isscalar(A.buffer)
                             diag = A.Diag; % cheap, since buffer is scalar
-                            tol  = 5*eps(class(diag));
-                            if abs(diag) <= tol
-                                y =  zeros(size(x),'like',x);
-                            elseif abs(diag - 1) <= tol
-                                y =  x;
-                            elseif abs(diag + 1) <= tol
-                                y = -x;
-                            else
-                                y = diag .* x;
+                            if     diag ==  0; y = zeros(size(x),'like',x);
+                            elseif diag ==  1; y = x;
+                            elseif diag == -1; y = -x;
+                            else;              y = diag .* x;
                             end
                         else
                             diag = A.Diag; % equally cheap to taking -A.Gamma when A.D == 0
@@ -198,15 +193,14 @@ classdef BlochTorreyOp
                                     error('size(x) must be either the (repeated-)grid size or (repeated-)flattened size');
                                 end
                                 if ismatrix(x)
-                                    % x is a (possibly repeated) matrix;
-                                    % multiply x across rows by diag
-                                    y = bsxfun(@times,diag(:),x);
+                                    % x is a (possibly repeated) matrix;  multiply x across rows by diag
+                                    if ~iscolumn(diag); diag = diag(:); end
                                 else
-                                    % x is a (possibly repeated) 3D array;
-                                    % multiply x along dimensions 1:3 by diag
+                                    % x is a (possibly repeated) 3D array; multiply x along dimensions 1:3 by diag
                                     sizx = size(x);
-                                    y = bsxfun(@times,reshape(diag,sizx(1:3)),x);
+                                    if ~isequal(size(diag), sizx(1:3)); diag = reshape(diag, sizx(1:3)); end
                                 end
+                                y = bsxfun(@times, diag, x);
                             end
                         end
                     else
@@ -220,10 +214,8 @@ classdef BlochTorreyOp
                 if isscalar(A) && isnumeric(A)
                     y = times( A, x );
                 else
-                    % A*x = (x' * A')' and variants (where x is the BT
-                    % operator) can be reimplemented using the mtimes
-                    % branch above, assuming that (c)transpose is known for
-                    % BT operators
+                    % A*x = (x' * A')' and variants (where x is the BT operator) can be reimplemented using the mtimes
+                    % branch above, assuming that (c)transpose is known for BT operators
                     isrealx = isreal(x);
                     isrealA = isreal(A);
                     if ismatrix(A)
@@ -242,8 +234,7 @@ classdef BlochTorreyOp
                             y = (x' * A')';
                         end
                     else
-                        % In this case, we interpret the 3D array A as a
-                        % vector, and do conjugation manually
+                        % In this case, we interpret the 3D array A as a vector, and do conjugation manually
                         if isrealx && isrealA
                             %(x' * A')' = (x.' * A.').'
                             y = x.' * A; %y = reshape( x * A(:), size(A) );
@@ -325,34 +316,34 @@ classdef BlochTorreyOp
                     y = A;
                     if A.state == BlochTorreyOp.DiagState
                         if isscalar(y.buffer)
-                            y.buffer = y.buffer + reshape(full(diag(B)),A.gsize);
+                            y.buffer = y.buffer + reshape(full(diag(B)), A.gsize);
                         else
-                            y.buffer = y.buffer + reshape(full(diag(B)),size(y.buffer));
+                            y.buffer = y.buffer + reshape(full(diag(B)), size(y.buffer));
                         end
                     else
                         if isscalar(y.buffer)
-                            y.buffer = y.buffer - reshape(full(diag(B)),A.gsize);
+                            y.buffer = y.buffer - reshape(full(diag(B)), A.gsize);
                         else
-                            y.buffer = y.buffer - reshape(full(diag(B)),size(y.buffer));
+                            y.buffer = y.buffer - reshape(full(diag(B)), size(y.buffer));
                         end
                     end
                 else
                     error('PLUS: second argument must be a BlochTorreyOp or a diagonal matrix.');
                 end
-            elseif ~AIsBTOp &&  BIsBTOp
+            elseif ~AIsBTOp && BIsBTOp
                 if isequal(size(A),size(B)) && isdiag(A)
                     y = B;
                     if A.state == BlochTorreyOp.DiagState
                         if isscalar(y.buffer)
-                            y.buffer = y.buffer + reshape(full(diag(A)),A.gsize);
+                            y.buffer = y.buffer + reshape(full(diag(A)), B.gsize);
                         else
-                            y.buffer = y.buffer + reshape(full(diag(A)),size(y.buffer));
+                            y.buffer = y.buffer + reshape(full(diag(A)), size(y.buffer));
                         end
                     else
                         if isscalar(y.buffer)
-                            y.buffer = y.buffer - reshape(full(diag(A)),A.gsize);
+                            y.buffer = y.buffer - reshape(full(diag(A)), B.gsize);
                         else
-                            y.buffer = y.buffer - reshape(full(diag(A)),size(y.buffer));
+                            y.buffer = y.buffer - reshape(full(diag(A)), size(y.buffer));
                         end
                     end
                 else
@@ -391,12 +382,12 @@ classdef BlochTorreyOp
 
         function [ d ] = diag( A, k )
             if nargin == 2 && k ~= 0
-                error('DIAG(::BlochTorreyOp,k~=0): Can only return 0th (i.e. main) diagonal');
+                error('DIAG(::BlochTorreyOp, k~=0): Can only return 0th (i.e. main) diagonal.');
             end
 
             d = A.Diag(:);
             if isscalar(d)
-                d = d*ones(A.N,1);
+                d = d * ones(A.N,1);
             end
         end
 
@@ -409,17 +400,25 @@ classdef BlochTorreyOp
             end
 
             if A.state == BlochTorreyOp.GammaState
-                if isscalar(A.D)
-                    Tr = (-6*A.D/mean(A.h)^2) * A.N - Tr;
+                if isempty(A.mask)
+                    if isscalar(A.D)
+                        Tr = (-6*A.D/mean(A.h)^2) * A.N - Tr;
+                    else
+                        Tr = (-6/mean(A.h)^2)*sumall(A.D) - Tr;
+                    end
                 else
-                    Tr = (-6/mean(A.h)^2)*sumall(A.D) - Tr;
+                    Tr = sumall(A.Diag);
                 end
             end
         end
 
         function [ B ] = abs( A )
             % need to take full abs(A.Diag); no linearity
-            B = BlochTorreyOp( abs(A.Diag), abs(A.D), A.gsize, A.gdims, true, A.mask ); % forward gradient/backward divergence
+            if isempty(A.mask)
+                B = BlochTorreyOp( abs(A.Diag), abs(A.D), A.gsize, A.gdims, true, A.mask ); % forward gradient/backward divergence
+            else
+                error('cannot take abs(A) for a BlochTorreyOp with a non-empty mask.');
+            end
         end
 
         function [ B ] = real( A )
@@ -442,7 +441,7 @@ classdef BlochTorreyOp
             if A.N > thresh
                 error('FULL: Matrix too large; threshold set at size(A) = %dx%d', thresh, thresh);
             end
-            B = A * eye(size(A),'double');
+            B = A * eye(size(A), 'double');
         end
 
         function [ varargout ] = size( A, dim )
@@ -501,15 +500,27 @@ classdef BlochTorreyOp
                     % out = sqrt(sumall( abs2(diag) + (6/hh^4)*abs2(A.D) ));
                     
                     % flux difference
-                    K = (0.5/mean(A.h)^2);
-                    tmp = abs2(diag);
-                    tmp = tmp + abs2(SevenPointStencil(A.D, K * [1,1,0,0,0,0,0], A.gsize, 1));
-                    tmp = tmp + abs2(SevenPointStencil(A.D, K * [1,0,1,0,0,0,0], A.gsize, 1));
-                    tmp = tmp + abs2(SevenPointStencil(A.D, K * [1,0,0,1,0,0,0], A.gsize, 1));
-                    tmp = tmp + abs2(SevenPointStencil(A.D, K * [1,0,0,0,1,0,0], A.gsize, 1));
-                    tmp = tmp + abs2(SevenPointStencil(A.D, K * [1,0,0,0,0,1,0], A.gsize, 1));
-                    tmp = tmp + abs2(SevenPointStencil(A.D, K * [1,0,0,0,0,0,1], A.gsize, 1));
-                    out = sqrt(sumall(tmp));
+                    if isempty(A.mask)
+                        K = (0.5/mean(A.h)^2);
+                        tmp = abs2(diag);
+                        tmp = tmp + abs2(SevenPointStencil(A.D, K * [1,1,0,0,0,0,0], A.gsize, 1));
+                        tmp = tmp + abs2(SevenPointStencil(A.D, K * [1,0,1,0,0,0,0], A.gsize, 1));
+                        tmp = tmp + abs2(SevenPointStencil(A.D, K * [1,0,0,1,0,0,0], A.gsize, 1));
+                        tmp = tmp + abs2(SevenPointStencil(A.D, K * [1,0,0,0,1,0,0], A.gsize, 1));
+                        tmp = tmp + abs2(SevenPointStencil(A.D, K * [1,0,0,0,0,1,0], A.gsize, 1));
+                        tmp = tmp + abs2(SevenPointStencil(A.D, K * [1,0,0,0,0,0,1], A.gsize, 1));
+                        out = sqrt(sumall(tmp));
+                    else
+                        K = (0.5/mean(A.h)^2);
+                        tmp = abs2(diag);
+                        tmp = tmp + abs2(SevenPointSumMasked(A.D, K * [0,1,0,0,0,0,0], A.gsize, 1, A.mask));
+                        tmp = tmp + abs2(SevenPointSumMasked(A.D, K * [0,0,1,0,0,0,0], A.gsize, 1, A.mask));
+                        tmp = tmp + abs2(SevenPointSumMasked(A.D, K * [0,0,0,1,0,0,0], A.gsize, 1, A.mask));
+                        tmp = tmp + abs2(SevenPointSumMasked(A.D, K * [0,0,0,0,1,0,0], A.gsize, 1, A.mask));
+                        tmp = tmp + abs2(SevenPointSumMasked(A.D, K * [0,0,0,0,0,1,0], A.gsize, 1, A.mask));
+                        tmp = tmp + abs2(SevenPointSumMasked(A.D, K * [0,0,0,0,0,0,1], A.gsize, 1, A.mask));
+                        out = sqrt(sumall(tmp));
+                    end
                 end
             elseif isnumeric(p) && isscalar(p) && (p == 1 || p == inf)
                 % 1-norm is same as infinity-norm for symmetric matrices
@@ -519,18 +530,30 @@ classdef BlochTorreyOp
                 else
                     % % forward gradient/backward divergence:
                     % kern = (1/mean(A.h)^2) * [3,1,0,1,0,1,0];
-                    % out = maximum(abs(diag) + SevenPointStencil(abs(A.D), kern, A.gsize, 1));
+                    % out = infnorm(abs(diag) + SevenPointStencil(abs(A.D), kern, A.gsize, 1));
                     
                     % flux difference
-                    K = (0.5/mean(A.h)^2);
-                    tmp = abs(diag);
-                    tmp = tmp + abs(SevenPointStencil(A.D, K * [1,1,0,0,0,0,0], A.gsize, 1));
-                    tmp = tmp + abs(SevenPointStencil(A.D, K * [1,0,1,0,0,0,0], A.gsize, 1));
-                    tmp = tmp + abs(SevenPointStencil(A.D, K * [1,0,0,1,0,0,0], A.gsize, 1));
-                    tmp = tmp + abs(SevenPointStencil(A.D, K * [1,0,0,0,1,0,0], A.gsize, 1));
-                    tmp = tmp + abs(SevenPointStencil(A.D, K * [1,0,0,0,0,1,0], A.gsize, 1));
-                    tmp = tmp + abs(SevenPointStencil(A.D, K * [1,0,0,0,0,0,1], A.gsize, 1));
-                    out = maximum(tmp);
+                    if isempty(A.mask)
+                        K = (0.5/mean(A.h)^2);
+                        tmp = abs(diag);
+                        tmp = tmp + abs(SevenPointStencil(A.D, K * [1,1,0,0,0,0,0], A.gsize, 1));
+                        tmp = tmp + abs(SevenPointStencil(A.D, K * [1,0,1,0,0,0,0], A.gsize, 1));
+                        tmp = tmp + abs(SevenPointStencil(A.D, K * [1,0,0,1,0,0,0], A.gsize, 1));
+                        tmp = tmp + abs(SevenPointStencil(A.D, K * [1,0,0,0,1,0,0], A.gsize, 1));
+                        tmp = tmp + abs(SevenPointStencil(A.D, K * [1,0,0,0,0,1,0], A.gsize, 1));
+                        tmp = tmp + abs(SevenPointStencil(A.D, K * [1,0,0,0,0,0,1], A.gsize, 1));
+                        out = infnorm(tmp);
+                    else
+                        K = (0.5/mean(A.h)^2);
+                        tmp = abs(diag);
+                        tmp = tmp + abs(SevenPointSumMasked(A.D, K * [0,1,0,0,0,0,0], A.gsize, 1, A.mask));
+                        tmp = tmp + abs(SevenPointSumMasked(A.D, K * [0,0,1,0,0,0,0], A.gsize, 1, A.mask));
+                        tmp = tmp + abs(SevenPointSumMasked(A.D, K * [0,0,0,1,0,0,0], A.gsize, 1, A.mask));
+                        tmp = tmp + abs(SevenPointSumMasked(A.D, K * [0,0,0,0,1,0,0], A.gsize, 1, A.mask));
+                        tmp = tmp + abs(SevenPointSumMasked(A.D, K * [0,0,0,0,0,1,0], A.gsize, 1, A.mask));
+                        tmp = tmp + abs(SevenPointSumMasked(A.D, K * [0,0,0,0,0,0,1], A.gsize, 1, A.mask));
+                        out = infnorm(tmp);
+                    end
                 end
             else
                 error('Only Frobenius-, 1-, and infinity-norms are implemented for BlochTorreyOp''s');
@@ -748,6 +771,7 @@ end
 function y = sumall(x)
 % faster and more accurate than sum(x(:))
 y = sum(sum(sum(sum(x,1),2),3),4);
+y = sum(y(:)); % incase ndims(x) >= 5
 end
 
 function out = calculate_offdiagonals(D, h, mask)
@@ -760,9 +784,23 @@ h = mean(h(:));
 if isscalar(D)
     out = (D/h^2) * ones(1,6);
 else
-    % out = [ vec(D), vec(D), vec(D), vec(circshift(D,1,1)), vec(circshift(D,1,2)), vec(circshift(D,1,3)) ]; % forward grad/backward div
-    out = [ vec(D + circshift(D, 1, 1)), vec(D + circshift(D, 1, 2)), vec(D + circshift(D, 1, 3)), ...
-            vec(D + circshift(D,-1, 1)), vec(D + circshift(D,-1, 2)), vec(D + circshift(D,-1, 3)) ]; % flux difference
+    % forward grad/backward div
+    % out = (1/h^2) * [ vec(D), vec(D), vec(D), vec(circshift(D,1,1)), vec(circshift(D,1,2)), vec(circshift(D,1,3)) ];
+    
+    % flux difference
+    if isempty(mask)
+        out = (1.0/h^2) * ...
+            [ vec(D + circshift(D, 1, 1)), vec(D + circshift(D, 1, 2)), vec(D + circshift(D, 1, 3)), ...
+              vec(D + circshift(D,-1, 1)), vec(D + circshift(D,-1, 2)), vec(D + circshift(D,-1, 3)) ];
+    else
+        out = (0.5/h^2) * ...
+            [ vec( (mask == circshift(mask, 1, 1)) .* (D + circshift(D, 1, 1)) ), ...
+              vec( (mask == circshift(mask, 1, 2)) .* (D + circshift(D, 1, 2)) ), ...
+              vec( (mask == circshift(mask, 1, 3)) .* (D + circshift(D, 1, 3)) ), ...
+              vec( (mask == circshift(mask,-1, 1)) .* (D + circshift(D,-1, 1)) ), ...
+              vec( (mask == circshift(mask,-1, 2)) .* (D + circshift(D,-1, 2)) ), ...
+              vec( (mask == circshift(mask,-1, 3)) .* (D + circshift(D,-1, 3)) ) ];
+    end
 end
 
 end
@@ -792,8 +830,13 @@ else
     % Diagonal = 0.5*Laplacian(D,h,size(D),1) - (6/h^2)*D - Gamma;
 
     % Flux difference for div(D*grad(x))
-    kern = (-0.5/h^2) .* [6,1,1,1,1,1,1];
-    Diagonal = SevenPointStencil(D, kern, gsize, 1) - Gamma;
+    if isempty(mask)
+        kern = (-0.5/h^2) .* [6,1,1,1,1,1,1];
+        Diagonal = SevenPointStencil(D, kern, gsize, 1) - Gamma;
+    else
+        kern = (-0.5/h^2) .* [0,1,1,1,1,1,1];
+        Diagonal = SevenPointSumMasked(D, kern, gsize, 1, mask) - Gamma;
+    end
 end
 
 end

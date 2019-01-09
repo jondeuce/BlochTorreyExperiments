@@ -26,7 +26,7 @@ if nargin < 8 || ~isa(isdiag, 'logical'); isdiag  = true; end
 if nargin < 7 || ~isa(istrans,'logical'); istrans = false; end
 
 if nargin < 6 || isempty(iters); iters = 1; end
-if ~( iters > 0 && iters == round(iters) ); error('iters must be a positive integer'); end
+if ~(iters > 0 && iters == round(iters)); error('iters must be a positive integer'); end
 
 [ndim, ntime, gsize1D, gsize2D, gsize3D, gsize4D] = getGridSizes(x, gsize3D);
 
@@ -37,9 +37,9 @@ h = checkGridSpacing(h);
 
 %----------------------------------------------------------------------
 
-isSingle	=   isa(x,'single');
-isDouble	=   isa(x,'double');
-isReal      =   isreal(x);
+isSingle = isa(x,'single');
+isDouble = isa(x,'double');
+isReal   = isreal(x);
 
 if ~(isSingle || isDouble), error('x must be double or single.'); end
 if isSingle, x = double(x); end

@@ -68,8 +68,12 @@
 #define DIFFUSION_FLUXDIFF(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF,m,mD,mU,mL,mR,mB,mF) \
     (FLUXDIFF_FWD(x,xD,xU,D,DD,DU,m,mD,mU) + FLUXDIFF_FWD(x,xL,xR,D,DL,DR,m,mL,mR) + FLUXDIFF_FWD(x,xB,xF,D,DB,DF,m,mB,mF))
 
-#define DIFFUSION_FLUXDIFF_DIAG(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF) \
-    ((DB + D)*xB + (DF + D)*xF + (DL + D)*xL + (DR + D)*xR + (DD + D)*xD + (DU + D)*xU)
+#define FLUX_FWD_DIAG(x,xF,D,DF) \
+    ((DF + D) * xF) // Diffusive flux in one direction with diagonal zeroed out
+#define FLUXDIFF_FWD_DIAG(x,xB,xF,D,DB,DF,m,mB,mF) \
+    ((m == mF) * FLUX_FWD_DIAG(x,xF,D,DF) - (m == mB) * FLUX_FWD_DIAG(xB,x,DB,D)) // flux difference on boundaries
+#define DIFFUSION_FLUXDIFF_DIAG(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF,m,mD,mU,mL,mR,mB,mF) \
+    (FLUXDIFF_FWD_DIAG(x,xD,xU,D,DD,DU,m,mD,mU) + FLUXDIFF_FWD_DIAG(x,xL,xR,D,DL,DR,m,mL,mR) + FLUXDIFF_FWD_DIAG(x,xB,xF,D,DB,DF,m,mB,mF))
 
 void BTActionVariableDiffNeumann3D(         REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const bool *M, const REAL K, const REAL *gsize );
 void BTActionVariableDiffNeumann4D(         REAL *dxr, REAL *dxi, const REAL *xr, const REAL *xi, const REAL *fr, const REAL *fi, const REAL *Dr, const REAL *Di, const bool *M, const REAL K, const REAL *gsize );
@@ -348,23 +352,6 @@ void BTActionVariableDiffNeumann3D(
                 dxi[l] = K2 * DIFFUSION_FLUXDIFF(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, M4, MD4, MU4, ML4, MR4, MB4, MF4) - (Fi4*Xr4 + Fr4*Xi4);
                 ++l; ++jl; ++jr; ++kl; ++kr;
             }
-
-            // /* LHS Boundary Condition */
-            // dxr[l] = K2 * DIFFUSION_FLUXDIFF(xr[l],xr[l+NX],xr[l+1],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l+NX],Dr[jl],Dr[kl]) - (fr[l]*xr[l] - fi[l]*xi[l]);
-            // dxi[l] = K2 * DIFFUSION_FLUXDIFF(xi[l],xi[l+NX],xi[l+1],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l+NX],Dr[jl],Dr[kl]) - (fi[l]*xr[l] + fr[l]*xi[l]);
-            //
-            // /* Inner Points */
-            // ++l, ++jl, ++jr, ++kl, ++kr;
-            // for(i = 1; i < nx-1; ++i) {
-            //     /* Discretising `div( D * grad(x) ) - Gamma * x` with finite differences */
-            //     dxr[l] = K2 * DIFFUSION_FLUXDIFF(xr[l],xr[l-1],xr[l+1],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl]) - (fr[l]*xr[l] - fi[l]*xi[l]);
-            //     dxi[l] = K2 * DIFFUSION_FLUXDIFF(xi[l],xi[l-1],xi[l+1],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl]) - (fi[l]*xr[l] + fr[l]*xi[l]);
-            //     ++l, ++jl, ++jr, ++kl, ++kr;
-            // }
-            //
-            // /* RHS Boundary Condition */
-            // dxr[l] = K2 * DIFFUSION_FLUXDIFF(xr[l],xr[l-1],xr[l-NX],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl]) - (fr[l]*xr[l] - fi[l]*xi[l]);
-            // dxi[l] = K2 * DIFFUSION_FLUXDIFF(xi[l],xi[l-1],xi[l-NX],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl]) - (fi[l]*xr[l] + fr[l]*xi[l]);
         }
     }
 
@@ -463,6 +450,11 @@ void BTActionVariableDiffNeumannDiagonal3D(
                     Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Xi3, XiD3, XiU3, XiL3, XiR3, XiB3, XiF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3, Fr3, Fi3,
                     Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, Fr4, Fi4;
 
+            bool    M1, MD1, MU1, ML1, MR1, MB1, MF1,
+                    M2, MD2, MU2, ML2, MR2, MB2, MF2,
+                    M3, MD3, MU3, ML3, MR3, MB3, MF3,
+                    M4, MD4, MU4, ML4, MR4, MB4, MF4;
+            
             /* LHS Boundary Condition */
             Xr1 = xr[l]; Xi1 = xi[l];
 
@@ -481,12 +473,6 @@ void BTActionVariableDiffNeumannDiagonal3D(
             XrD1 = xr[l+NX]; XrD2 = Xr1; Xr2 = XrU1; XrD3 = Xr2; Xr3 = XrU2; XrD4 = Xr3; Xr4 = XrU3;
             XiD1 = xi[l+NX]; XiD2 = Xi1; Xi2 = XiU1; XiD3 = Xi2; Xi3 = XiU2; XiD4 = Xi3; Xi4 = XiU3;
 
-            // DrD1 = Dr[l+NX];
-            // Dr1  = Dr[l];  Dr2  = Dr[l+1];  Dr3  = Dr[l+2];  Dr4 = Dr[l+3];
-            // DrL1 = Dr[jl]; DrL2 = Dr[jl+1]; DrL3 = Dr[jl+2]; DrL4 = Dr[jl+3];
-            // DrB1 = Dr[kl]; DrB2 = Dr[kl+1]; DrB3 = Dr[kl+2]; DrB4 = Dr[kl+3];
-            // DrD2 = Dr1;    DrD3 = Dr2;      DrD4 = Dr3;
-
             Dr1 = Dr[l];
 
             DrU1 = Dr[l+1]; DrU2 = Dr[l+2];  DrU3 = Dr[l+3];  DrU4 = Dr[l+4];
@@ -497,19 +483,29 @@ void BTActionVariableDiffNeumannDiagonal3D(
 
             DrD1 = Dr[l+NX]; DrD2 = Dr1; Dr2 = DrU1; DrD3 = Dr2; Dr3 = DrU2; DrD4 = Dr3; Dr4 = DrU3;
 
+            M1 = M[l];
+
+            MU1 = M[l+1]; MU2 = M[l+2];  MU3 = M[l+3];  MU4 = M[l+4];
+            ML1 = M[jl];  ML2 = M[jl+1]; ML3 = M[jl+2]; ML4 = M[jl+3];
+            MR1 = M[jr];  MR2 = M[jr+1]; MR3 = M[jr+2]; MR4 = M[jr+3];
+            MB1 = M[kl];  MB2 = M[kl+1]; MB3 = M[kl+2]; MB4 = M[kl+3];
+            MF1 = M[kr];  MF2 = M[kr+1]; MF3 = M[kr+2]; MF4 = M[kr+3];
+
+            MD1 = M[l+NX]; MD2 = M1; M2 = MU1; MD3 = M2; M3 = MU2; MD4 = M3; M4 = MU3;
+
             Fr1 = fr[l]; Fr2 = fr[l+1]; Fr3 = fr[l+2]; Fr4 = fr[l+3];
             Fi1 = fi[l]; Fi2 = fi[l+1]; Fi3 = fi[l+2]; Fi4 = fi[l+3];
 
             /* Discretising `div( D * grad(x) ) - Diag * x` with finite differences */
-            dxr[l]   = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr1, XrD1, XrU1, XrL1, XrR1, XrB1, XrF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1) + (Fr1*Xr1 - Fi1*Xi1);
-            dxr[l+1] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr2, XrD2, XrU2, XrL2, XrR2, XrB2, XrF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2) + (Fr2*Xr2 - Fi2*Xi2);
-            dxr[l+2] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3) + (Fr3*Xr3 - Fi3*Xi3);
-            dxr[l+3] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4) + (Fr4*Xr4 - Fi4*Xi4);
-
-            dxi[l]   = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi1, XiD1, XiU1, XiL1, XiR1, XiB1, XiF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1) + (Fi1*Xr1 + Fr1*Xi1);
-            dxi[l+1] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi2, XiD2, XiU2, XiL2, XiR2, XiB2, XiF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2) + (Fi2*Xr2 + Fr2*Xi2);
-            dxi[l+2] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi3, XiD3, XiU3, XiL3, XiR3, XiB3, XiF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3) + (Fi3*Xr3 + Fr3*Xi3);
-            dxi[l+3] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4) + (Fi4*Xr4 + Fr4*Xi4);
+            dxr[l]   = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr1, XrD1, XrU1, XrL1, XrR1, XrB1, XrF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1, M1, MD1, MU1, ML1, MR1, MB1, MF1) + (Fr1*Xr1 - Fi1*Xi1);
+            dxr[l+1] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr2, XrD2, XrU2, XrL2, XrR2, XrB2, XrF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2, M2, MD2, MU2, ML2, MR2, MB2, MF2) + (Fr2*Xr2 - Fi2*Xi2);
+            dxr[l+2] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3, M3, MD3, MU3, ML3, MR3, MB3, MF3) + (Fr3*Xr3 - Fi3*Xi3);
+            dxr[l+3] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, M4, MD4, MU4, ML4, MR4, MB4, MF4) + (Fr4*Xr4 - Fi4*Xi4);
+            
+            dxi[l]   = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi1, XiD1, XiU1, XiL1, XiR1, XiB1, XiF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1, M1, MD1, MU1, ML1, MR1, MB1, MF1) + (Fi1*Xr1 + Fr1*Xi1);
+            dxi[l+1] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi2, XiD2, XiU2, XiL2, XiR2, XiB2, XiF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2, M2, MD2, MU2, ML2, MR2, MB2, MF2) + (Fi2*Xr2 + Fr2*Xi2);
+            dxi[l+2] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi3, XiD3, XiU3, XiL3, XiR3, XiB3, XiF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3, M3, MD3, MU3, ML3, MR3, MB3, MF3) + (Fi3*Xr3 + Fr3*Xi3);
+            dxi[l+3] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, M4, MD4, MU4, ML4, MR4, MB4, MF4) + (Fi4*Xr4 + Fr4*Xi4);
 
             l+=NUNROLL; jl+=NUNROLL; jr+=NUNROLL; kl+=NUNROLL; kr+=NUNROLL;
 
@@ -532,12 +528,6 @@ void BTActionVariableDiffNeumannDiagonal3D(
                 XrD1 = Xr4; XrD2 = Xr1; Xr2 = XrU1; XrD3 = Xr2; Xr3 = XrU2; XrD4 = Xr3; Xr4 = XrU3;
                 XiD1 = Xi4; XiD2 = Xi1; Xi2 = XiU1; XiD3 = Xi2; Xi3 = XiU2; XiD4 = Xi3; Xi4 = XiU3;
 
-                // DrD1 = Dr4;
-                // Dr1  = Dr[l];  Dr2  = Dr[l+1];  Dr3  = Dr[l+2];  Dr4 = Dr[l+3];
-                // DrL1 = Dr[jl]; DrL2 = Dr[jl+1]; DrL3 = Dr[jl+2]; DrL4 = Dr[jl+3];
-                // DrB1 = Dr[kl]; DrB2 = Dr[kl+1]; DrB3 = Dr[kl+2]; DrB4 = Dr[kl+3];
-                // DrD2 = Dr1;    DrD3 = Dr2;      DrD4 = Dr3;
-
                 Dr1 = DrU4;
 
                 DrU1 = Dr[l+1]; DrU2 = Dr[l+2];  DrU3 = Dr[l+3];  DrU4 = Dr[l+4];
@@ -548,19 +538,29 @@ void BTActionVariableDiffNeumannDiagonal3D(
 
                 DrD1 = Dr4; DrD2 = Dr1; Dr2 = DrU1; DrD3 = Dr2; Dr3 = DrU2; DrD4 = Dr3; Dr4 = DrU3;
 
+                M1 = MU4;
+
+                MU1 = M[l+1]; MU2 = M[l+2];  MU3 = M[l+3];  MU4 = M[l+4];
+                ML1 = M[jl];  ML2 = M[jl+1]; ML3 = M[jl+2]; ML4 = M[jl+3];
+                MR1 = M[jr];  MR2 = M[jr+1]; MR3 = M[jr+2]; MR4 = M[jr+3];
+                MB1 = M[kl];  MB2 = M[kl+1]; MB3 = M[kl+2]; MB4 = M[kl+3];
+                MF1 = M[kr];  MF2 = M[kr+1]; MF3 = M[kr+2]; MF4 = M[kr+3];
+
+                MD1 = M4; MD2 = M1; M2 = MU1; MD3 = M2; M3 = MU2; MD4 = M3; M4 = MU3;
+
                 Fr1 = fr[l]; Fr2 = fr[l+1]; Fr3 = fr[l+2]; Fr4 = fr[l+3];
                 Fi1 = fi[l]; Fi2 = fi[l+1]; Fi3 = fi[l+2]; Fi4 = fi[l+3];
 
                 /* Discretising `div( D * grad(x) ) - Diag * x` with finite differences */
-                dxr[l]   = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr1, XrD1, XrU1, XrL1, XrR1, XrB1, XrF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1) + (Fr1*Xr1 - Fi1*Xi1);
-                dxr[l+1] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr2, XrD2, XrU2, XrL2, XrR2, XrB2, XrF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2) + (Fr2*Xr2 - Fi2*Xi2);
-                dxr[l+2] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3) + (Fr3*Xr3 - Fi3*Xi3);
-                dxr[l+3] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4) + (Fr4*Xr4 - Fi4*Xi4);
-
-                dxi[l]   = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi1, XiD1, XiU1, XiL1, XiR1, XiB1, XiF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1) + (Fi1*Xr1 + Fr1*Xi1);
-                dxi[l+1] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi2, XiD2, XiU2, XiL2, XiR2, XiB2, XiF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2) + (Fi2*Xr2 + Fr2*Xi2);
-                dxi[l+2] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi3, XiD3, XiU3, XiL3, XiR3, XiB3, XiF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3) + (Fi3*Xr3 + Fr3*Xi3);
-                dxi[l+3] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4) + (Fi4*Xr4 + Fr4*Xi4);
+                dxr[l]   = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr1, XrD1, XrU1, XrL1, XrR1, XrB1, XrF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1, M1, MD1, MU1, ML1, MR1, MB1, MF1) + (Fr1*Xr1 - Fi1*Xi1);
+                dxr[l+1] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr2, XrD2, XrU2, XrL2, XrR2, XrB2, XrF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2, M2, MD2, MU2, ML2, MR2, MB2, MF2) + (Fr2*Xr2 - Fi2*Xi2);
+                dxr[l+2] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3, M3, MD3, MU3, ML3, MR3, MB3, MF3) + (Fr3*Xr3 - Fi3*Xi3);
+                dxr[l+3] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, M4, MD4, MU4, ML4, MR4, MB4, MF4) + (Fr4*Xr4 - Fi4*Xi4);
+                
+                dxi[l]   = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi1, XiD1, XiU1, XiL1, XiR1, XiB1, XiF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1, M1, MD1, MU1, ML1, MR1, MB1, MF1) + (Fi1*Xr1 + Fr1*Xi1);
+                dxi[l+1] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi2, XiD2, XiU2, XiL2, XiR2, XiB2, XiF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2, M2, MD2, MU2, ML2, MR2, MB2, MF2) + (Fi2*Xr2 + Fr2*Xi2);
+                dxi[l+2] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi3, XiD3, XiU3, XiL3, XiR3, XiB3, XiF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3, M3, MD3, MU3, ML3, MR3, MB3, MF3) + (Fi3*Xr3 + Fr3*Xi3);
+                dxi[l+3] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, M4, MD4, MU4, ML4, MR4, MB4, MF4) + (Fi4*Xr4 + Fr4*Xi4);
 
                 l+=NUNROLL; jl+=NUNROLL; jr+=NUNROLL; kl+=NUNROLL; kr+=NUNROLL;
             }
@@ -568,34 +568,17 @@ void BTActionVariableDiffNeumannDiagonal3D(
             /* RHS Boundary Condition + Remainder Loop */
             for(; i < nx; ++i) {
                 ir = (i==NX) ? l-NX : l+1;
-                XrD4 = Xr4;  Xr4 = XrU4;  XrU4 = xr[ir]; XrL4 = xr[jl]; XrR4 = xr[jr]; XrB4 = xr[kl]; XrF4 = xr[kr];
-                XiD4 = Xi4;  Xi4 = XiU4;  XiU4 = xi[ir]; XiL4 = xi[jl]; XiR4 = xi[jr]; XiB4 = xi[kl]; XiF4 = xi[kr];
-                DrD4 = Dr4;  Dr4 = DrU4;  DrU4 = Dr[ir]; DrL4 = Dr[jl]; DrR4 = Dr[jr]; DrB4 = Dr[kl]; DrF4 = Dr[kr];
-                // DrD4 = Dr4;  Dr4 = Dr[l]; DrL4 = Dr[jl]; DrB4 = Dr[kl];
-                Fr4 = fr[l]; Fi4 = fi[l];
-
+                XrD4 = Xr4;   Xr4 = XrU4;  XrU4 = xr[ir]; XrL4 = xr[jl]; XrR4 = xr[jr]; XrB4 = xr[kl]; XrF4 = xr[kr];
+                XiD4 = Xi4;   Xi4 = XiU4;  XiU4 = xi[ir]; XiL4 = xi[jl]; XiR4 = xi[jr]; XiB4 = xi[kl]; XiF4 = xi[kr];
+                DrD4 = Dr4;   Dr4 = DrU4;  DrU4 = Dr[ir]; DrL4 = Dr[jl]; DrR4 = Dr[jr]; DrB4 = Dr[kl]; DrF4 = Dr[kr];
+                MD4  = M4;    M4  = MU4;   MU4  = M[ir];  ML4  = M[jl];  MR4  = M[jr];  MB4  = M[kl];  MF4  = M[kr];
+                Fr4  = fr[l]; Fi4 = fi[l];
+                
                 /* Discretising `div( D * grad(x) ) - Diag * x` with finite differences */
-                dxr[l] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4) + (Fr4*Xr4 - Fi4*Xi4);
-                dxi[l] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4) + (Fi4*Xr4 + Fr4*Xi4);
+                dxr[l] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, M4, MD4, MU4, ML4, MR4, MB4, MF4) + (Fr4*Xr4 - Fi4*Xi4);
+                dxi[l] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, M4, MD4, MU4, ML4, MR4, MB4, MF4) + (Fi4*Xr4 + Fr4*Xi4);
                 ++l; ++jl; ++jr; ++kl; ++kr;
             }
-
-            // /* LHS Boundary Condition */
-            // dxr[l] = K2 * DIFFUSION_FLUXDIFF_DIAG(xr[l],xr[l+NX],xr[l+1],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l+NX],Dr[jl],Dr[kl]) + (fr[l]*xr[l] - fi[l]*xi[l]);
-            // dxi[l] = K2 * DIFFUSION_FLUXDIFF_DIAG(xi[l],xi[l+NX],xi[l+1],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l+NX],Dr[jl],Dr[kl]) + (fi[l]*xr[l] + fr[l]*xi[l]);
-            //
-            // /* Inner Points */
-            // ++l, ++jl, ++jr, ++kl, ++kr;
-            // for(i = 1; i < nx-1; ++i) {
-            //     /* Discretising `div( D * grad(x) ) - Diag * x` with finite differences */
-            //     dxr[l] = K2 * DIFFUSION_FLUXDIFF_DIAG(xr[l],xr[l-1],xr[l+1],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl]) + (fr[l]*xr[l] - fi[l]*xi[l]);
-            //     dxi[l] = K2 * DIFFUSION_FLUXDIFF_DIAG(xi[l],xi[l-1],xi[l+1],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl]) + (fi[l]*xr[l] + fr[l]*xi[l]);
-            //     ++l, ++jl, ++jr, ++kl, ++kr;
-            // }
-            //
-            // /* RHS Boundary Condition */
-            // dxr[l] = K2 * DIFFUSION_FLUXDIFF_DIAG(xr[l],xr[l-1],xr[l-NX],xr[jl],xr[jr],xr[kl],xr[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl]) + (fr[l]*xr[l] - fi[l]*xi[l]);
-            // dxi[l] = K2 * DIFFUSION_FLUXDIFF_DIAG(xi[l],xi[l-1],xi[l-NX],xi[jl],xi[jr],xi[kl],xi[kr],Dr[l],Dr[l-1],Dr[jl],Dr[kl]) + (fi[l]*xr[l] + fr[l]*xi[l]);
         }
     }
 
