@@ -50,7 +50,7 @@ if istrans
     if ~isreal(D); D = conj(D); end
 end
 
-if isempty(mask) && isscalar(D)
+if isscalar(D) && ~isempty(mask)
     warning('Scalar D not supported with mask; expanding D to gridsize');
     D = D * ones(gsize3D);
 end

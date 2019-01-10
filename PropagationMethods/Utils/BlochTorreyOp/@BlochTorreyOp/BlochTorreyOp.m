@@ -79,7 +79,11 @@ classdef BlochTorreyOp
             if any([GridDims,GridSize]) <= 0 || ~isequal(GridSize,round(GridSize))
                 error('gdims and gsize must contain only positive values, and gsize must be integers');
             end
-
+            
+            if ~all(GridSize >= [5,3,3])
+                error('Grid size must be at least 5 x 3 x 3, i.e. all(gsize >= [5,3,3])');
+            end
+            
             A.gsize  = GridSize;
             A.gdims  = GridDims;
             A.N      = prod(A.gsize);
@@ -295,24 +299,22 @@ classdef BlochTorreyOp
             BIsBTOp = isa(B, 'BlochTorreyOp');
 
             if AIsBTOp && BIsBTOp
-                if ~iscompatible(A,B)
-                    error('PLUS: Dimension mismatch');
-                end
-
+                if ~iscompatible(A,B); error('PLUS: Dimension mismatch'); end
                 if A.state == B.state
                     y = A;
                     y.buffer = y.buffer + B.buffer;
+                    y.D = y.D + B.D;
                 elseif A.state == BlochTorreyOp.DiagState
                     y = A;
                     y.buffer = y.buffer + B.Diag;
+                    y.D = y.D + B.D;
                 else
                     y = B;
                     y.buffer = y.buffer + A.Diag;
+                    y.D = y.D + A.D;
                 end
-                y.D = y.D + B.D;
-
-            elseif  AIsBTOp && ~BIsBTOp
-                if isequal(size(A),size(B)) && isdiag(B)
+            elseif AIsBTOp && ~BIsBTOp
+                if isequal(size(A), size(B)) && isdiag(B)
                     y = A;
                     if A.state == BlochTorreyOp.DiagState
                         if isscalar(y.buffer)
@@ -330,25 +332,8 @@ classdef BlochTorreyOp
                 else
                     error('PLUS: second argument must be a BlochTorreyOp or a diagonal matrix.');
                 end
-            elseif ~AIsBTOp && BIsBTOp
-                if isequal(size(A),size(B)) && isdiag(A)
-                    y = B;
-                    if A.state == BlochTorreyOp.DiagState
-                        if isscalar(y.buffer)
-                            y.buffer = y.buffer + reshape(full(diag(A)), B.gsize);
-                        else
-                            y.buffer = y.buffer + reshape(full(diag(A)), size(y.buffer));
-                        end
-                    else
-                        if isscalar(y.buffer)
-                            y.buffer = y.buffer - reshape(full(diag(A)), B.gsize);
-                        else
-                            y.buffer = y.buffer - reshape(full(diag(A)), size(y.buffer));
-                        end
-                    end
-                else
-                    error('PLUS: first argument must be a BlochTorreyOp or a diagonal matrix.');
-                end
+            else
+                y = B + A;
             end
         end
 
@@ -448,27 +433,16 @@ classdef BlochTorreyOp
             if nargin < 2
                 siz = [A.N, A.N];
             else
-                if dim == 1 || dim == 2
-                    siz = A.N;
-                else
-                    if dim == round(dim) && dim > 0
-                        siz = 1;
-                    else
-                        error('dim must be a positive integer');
-                    end
-                end
-                if nargout > 1
-                    error('Too many output arguments');
-                end
+                if ~(isscalar(dim) && dim > 0 && dim == round(dim)); error('dim must be a positive integer'); end
+                if dim == 1 || dim == 2; siz = A.N; else; siz = 1; end
+                if nargout > 1; error('Too many output arguments'); end
             end
             if nargout <= 1
                 varargout{1} = siz;
             elseif nargout >= 2
                 varargout{1} = siz(1);
                 varargout{2} = siz(2);
-                for ii = 3:nargout
-                    varargout{ii} = 1;
-                end
+                for ii = 3:nargout; varargout{ii} = 1; end
             end
         end
 

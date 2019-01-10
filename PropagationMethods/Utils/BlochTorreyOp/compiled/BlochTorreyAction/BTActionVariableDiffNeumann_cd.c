@@ -60,18 +60,17 @@
  *  xB/xF = x[kl] /x[kr]  = "back/forw"
  */
 
+/* Diffusive flux flowing in x1->x2 direction */
+#define FLUX_FWD(x1,x2,D1,D2) ((D1 + D2) * (x2 - x1))
+
 /* Discretising using `div( D * grad(x) )` with forward/backward flux gradients with D on flux boundary */
-#define FLUX_FWD(x,xF,D,DF) \
-    ((DF + D) * (xF - x)) // Diffusive flux in one direction; arbitrarily call it "forward"
 #define FLUXDIFF_FWD(x,xB,xF,D,DB,DF,m,mB,mF) \
-    ((m == mF) * FLUX_FWD(x,xF,D,DF) - (m == mB) * FLUX_FWD(xB,x,DB,D)) // flux difference on boundaries
+    ((m == mF) * FLUX_FWD(x,xF,D,DF) - (mB == m) * FLUX_FWD(xB,x,DB,D)) // flux difference on boundaries
 #define DIFFUSION_FLUXDIFF(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF,m,mD,mU,mL,mR,mB,mF) \
     (FLUXDIFF_FWD(x,xD,xU,D,DD,DU,m,mD,mU) + FLUXDIFF_FWD(x,xL,xR,D,DL,DR,m,mL,mR) + FLUXDIFF_FWD(x,xB,xF,D,DB,DF,m,mB,mF))
 
-#define FLUX_FWD_DIAG(x,xF,D,DF) \
-    ((DF + D) * xF) // Diffusive flux in one direction with diagonal zeroed out
 #define FLUXDIFF_FWD_DIAG(x,xB,xF,D,DB,DF,m,mB,mF) \
-    ((m == mF) * FLUX_FWD_DIAG(x,xF,D,DF) - (m == mB) * FLUX_FWD_DIAG(xB,x,DB,D)) // flux difference on boundaries
+    ((m == mF) * FLUX_FWD(((REAL)0),xF,D,DF) - (mB == m) * FLUX_FWD(xB,((REAL)0),DB,D)) // flux difference on boundaries
 #define DIFFUSION_FLUXDIFF_DIAG(x,xD,xU,xL,xR,xB,xF,D,DD,DU,DL,DR,DB,DF,m,mD,mU,mL,mR,mB,mF) \
     (FLUXDIFF_FWD_DIAG(x,xD,xU,D,DD,DU,m,mD,mU) + FLUXDIFF_FWD_DIAG(x,xL,xR,D,DL,DR,m,mL,mR) + FLUXDIFF_FWD_DIAG(x,xB,xF,D,DB,DF,m,mB,mF))
 
@@ -393,7 +392,6 @@ void BTActionVariableDiffNeumann4D(
     return;
 }
 
-
 /* *******************************************************************
  * Bloch-Torrey action when the input is the matrix diagonal
  ******************************************************************* */
@@ -454,7 +452,7 @@ void BTActionVariableDiffNeumannDiagonal3D(
                     M2, MD2, MU2, ML2, MR2, MB2, MF2,
                     M3, MD3, MU3, ML3, MR3, MB3, MF3,
                     M4, MD4, MU4, ML4, MR4, MB4, MF4;
-            
+
             /* LHS Boundary Condition */
             Xr1 = xr[l]; Xi1 = xi[l];
 
@@ -496,7 +494,7 @@ void BTActionVariableDiffNeumannDiagonal3D(
             Fr1 = fr[l]; Fr2 = fr[l+1]; Fr3 = fr[l+2]; Fr4 = fr[l+3];
             Fi1 = fi[l]; Fi2 = fi[l+1]; Fi3 = fi[l+2]; Fi4 = fi[l+3];
 
-            /* Discretising `div( D * grad(x) ) - Diag * x` with finite differences */
+            /* Discretising `div( D * grad(x) ) - Gamma * x` with finite differences */
             dxr[l]   = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr1, XrD1, XrU1, XrL1, XrR1, XrB1, XrF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1, M1, MD1, MU1, ML1, MR1, MB1, MF1) + (Fr1*Xr1 - Fi1*Xi1);
             dxr[l+1] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr2, XrD2, XrU2, XrL2, XrR2, XrB2, XrF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2, M2, MD2, MU2, ML2, MR2, MB2, MF2) + (Fr2*Xr2 - Fi2*Xi2);
             dxr[l+2] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3, M3, MD3, MU3, ML3, MR3, MB3, MF3) + (Fr3*Xr3 - Fi3*Xi3);
@@ -551,7 +549,7 @@ void BTActionVariableDiffNeumannDiagonal3D(
                 Fr1 = fr[l]; Fr2 = fr[l+1]; Fr3 = fr[l+2]; Fr4 = fr[l+3];
                 Fi1 = fi[l]; Fi2 = fi[l+1]; Fi3 = fi[l+2]; Fi4 = fi[l+3];
 
-                /* Discretising `div( D * grad(x) ) - Diag * x` with finite differences */
+                /* Discretising `div( D * grad(x) ) - Gamma * x` with finite differences */
                 dxr[l]   = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr1, XrD1, XrU1, XrL1, XrR1, XrB1, XrF1, Dr1, DrD1, DrU1, DrL1, DrR1, DrB1, DrF1, M1, MD1, MU1, ML1, MR1, MB1, MF1) + (Fr1*Xr1 - Fi1*Xi1);
                 dxr[l+1] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr2, XrD2, XrU2, XrL2, XrR2, XrB2, XrF2, Dr2, DrD2, DrU2, DrL2, DrR2, DrB2, DrF2, M2, MD2, MU2, ML2, MR2, MB2, MF2) + (Fr2*Xr2 - Fi2*Xi2);
                 dxr[l+2] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr3, XrD3, XrU3, XrL3, XrR3, XrB3, XrF3, Dr3, DrD3, DrU3, DrL3, DrR3, DrB3, DrF3, M3, MD3, MU3, ML3, MR3, MB3, MF3) + (Fr3*Xr3 - Fi3*Xi3);
@@ -573,8 +571,7 @@ void BTActionVariableDiffNeumannDiagonal3D(
                 DrD4 = Dr4;   Dr4 = DrU4;  DrU4 = Dr[ir]; DrL4 = Dr[jl]; DrR4 = Dr[jr]; DrB4 = Dr[kl]; DrF4 = Dr[kr];
                 MD4  = M4;    M4  = MU4;   MU4  = M[ir];  ML4  = M[jl];  MR4  = M[jr];  MB4  = M[kl];  MF4  = M[kr];
                 Fr4  = fr[l]; Fi4 = fi[l];
-                
-                /* Discretising `div( D * grad(x) ) - Diag * x` with finite differences */
+
                 dxr[l] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xr4, XrD4, XrU4, XrL4, XrR4, XrB4, XrF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, M4, MD4, MU4, ML4, MR4, MB4, MF4) + (Fr4*Xr4 - Fi4*Xi4);
                 dxi[l] = K2 * DIFFUSION_FLUXDIFF_DIAG(Xi4, XiD4, XiU4, XiL4, XiR4, XiB4, XiF4, Dr4, DrD4, DrU4, DrL4, DrR4, DrB4, DrF4, M4, MD4, MU4, ML4, MR4, MB4, MF4) + (Fi4*Xr4 + Fr4*Xi4);
                 ++l; ++jl; ++jr; ++kl; ++kr;

@@ -17,9 +17,19 @@ if ~V.isprecomputed; V = precompute(V, x); end
 
 % ---- Step solution ---- %
 if isdiag(V.A)
-    E = exp(V.TimeStep * diag(V.A));
-    y = reshape(x, [size(V.A,2), numel(x)/size(V.A,2)]);
-    y = bsxfun(@times, E, y);
+    % Size of x reshaped into a matrix
+    matsiz = [size(V.A,2), numel(x)/size(V.A,2)];
+    y = reshape(x, matsiz);
+    switch upper(V.opts.type)
+        case 'SE'
+            E = exp(V.TimeStep/2 * diag(V.A)); % dt/2 step evolution matrix
+            y = bsxfun(@times, E, y); % dt/2 step
+            y = conj(y); % pi/2-pulse
+            y = bsxfun(@times, E, y); % dt/2 step
+        otherwise
+            E = exp(V.TimeStep * diag(V.A)); % dt step evolution matrix
+            y = bsxfun(@times, E, y); % dt step
+    end
     y = reshape(y, size(x));
     m_min = [];
 else
