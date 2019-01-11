@@ -40,7 +40,7 @@ alpha_range = 2.5:5.0:87.5;
 
 % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
 lb  = [ 3.0000,          1.2000/100,         0.5000/100 ];
-CA0 =   3.7082;  iBVF0 = 1.6744/100; aBVF0 = 0.8261/100;
+CA0 =   3.8969;  iBVF0 = 1.6407/100; aBVF0 = 0.8261/100;
 ub  = [ 6.0000,          2.0000/100,         1.0000/100 ];
 
 % % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
@@ -69,21 +69,20 @@ Weights = BinCounts / sum(BinCounts(:));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 4;
+Nmajor = 9;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
 % Rminor_sig = 2.1;
 
 % ---- With Diffusion ---- %
-D_Tissue = 1000; %[um^2/s]
-D_Blood = 1000; %[um^2/s]
-D_VRS = []; %[um^2/s]
-MaskType = 'PVS';
-% Nsteps = 8;
-% StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
-Nsteps = 1;
-StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
+D_Tissue = 2000; %[um^2/s]
+D_Blood = 2000; %[um^2/s]
+D_VRS = 2000; %[um^2/s]
+Nsteps = 8;
+StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
+% Nsteps = 2;
+% StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
 
 % % ---- Diffusionless ---- %
 % D_Tissue = 0; %[um^2/s]
@@ -99,8 +98,9 @@ RotateGeom = false; % geometry is fixed; dipole rotates
 MajorAngle = 0.0; % major vessel angle w.r.t z-axis [degrees]
 NumMajorArteries = 0;
 MinorArterialFrac = 0.0;
-VRSRelativeRad = 1; % Radius of Virchow-Robin space relative to major vessel radius [unitless] => 0X volume (see below)
+% VRSRelativeRad = 1; % Radius of Virchow-Robin space relative to major vessel radius [unitless] => 0X volume (see below)
 % VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless] => 3X volume (see below)
+VRSRelativeRad = sqrt(2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(2) => 1X
 % VRSRelativeRad = sqrt(5/2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(5/2) => 1.5X
 % VRSRelativeRad = sqrt(3); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(3) => 2X
 
@@ -163,13 +163,13 @@ Normfun = 'AICc';
 % simulation randomness, TolX/TolFun tend to not be reliable measures of 
 % goodness of fit
 OptOpts = optimoptions('fmincon', ...
-    'MaxFunEvals', 50, ...
+    'MaxFunEvals', 150, ...
     'Algorithm', 'sqp', ... % trust-region-reflective', ...
-    'MaxIter', 15, ...
+    'MaxIter', 100, ...
     'TolX', 1e-12, ...
     'TolFun', 1e-12, ...
     'TypicalX', x0, ...
-    'FinDiffRelStep', [0.01, 0.01, 0.01], ...
+    'FinDiffRelStep', [0.02, 0.02, 0.02], ...
     'Display', 'iter' ...
     );
 
