@@ -77,14 +77,14 @@ Rminor_sig = 0.0;
 
 % ---- With Diffusion ---- %
 D_Tissue = 1000; %[um^2/s]
-% D_Blood = []; %[um^2/s]
-% D_VRS = []; %[um^2/s]
-% MaskType = '';
-D_Blood = 2000; %[um^2/s]
-D_VRS = 3000; %[um^2/s]
+D_Blood = []; %[um^2/s]
+D_VRS = []; %[um^2/s]
+MaskType = '';
+% D_Blood = 2000; %[um^2/s]
+% D_VRS = 3000; %[um^2/s]
+% MaskType = 'PVSAndVasculature';
 % MaskType = 'PVS';
 % MaskType = 'PVSOrVasculature';
-MaskType = 'PVSAndVasculature';
 % MaskType = 'Vasculature';
 
 GridSize = [500,500,500];
@@ -92,10 +92,10 @@ alpha_range = alpha_range(end:-1:1);
 dR2_Data = dR2_Data(end:-1:1);
 BinCounts = BinCounts(end:-1:1);
 
-% Nsteps = 8;
-% StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
-Nsteps = 1;
-StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
+Nsteps = 8;
+StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
+% Nsteps = 1;
+% StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
 
 % % ---- Diffusionless ---- %
 % D_Tissue = 0; %[um^2/s]
