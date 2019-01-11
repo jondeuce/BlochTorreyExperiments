@@ -79,25 +79,25 @@ else
     else
         Fx = kron(Iz, kron(Iy, Fx)); % Forward difference matrix: d/dx
         Ax = kron(Iz, kron(Iy, Ax)); % Forward averaging matrix: x-direction
-        Mx = xor(A.mask, circshift(A.mask, -1, 1)); % forward mask
+        Mx = (A.mask ~= circshift(A.mask, -1, 1)); % forward mask
         J = J + toDiag(maskRows(Ax, Mx) * vec(A.D)) * maskRows(Fx, Mx);
-        Mx = xor(A.mask, circshift(A.mask, +1, 1)); % backward mask
+        Mx = (A.mask ~= circshift(A.mask, +1, 1)); % backward mask
         J = J + toDiag(maskRows(Ax', Mx) * vec(A.D)) * maskRows(Fx', Mx);
         clear Fx Ax Mx
 
         Fy = kron(Iz, kron(Fy, Ix)); % forward d/dy
         Ay = kron(Iz, kron(Ay, Ix)); % forward averaging in y
-        My = xor(A.mask, circshift(A.mask, -1, 2)); % forward mask
+        My = (A.mask ~= circshift(A.mask, -1, 2)); % forward mask
         J = J + toDiag(maskRows(Ay, My) * vec(A.D)) * maskRows(Fy, My);
-        My = xor(A.mask, circshift(A.mask, +1, 2)); % backward mask
+        My = (A.mask ~= circshift(A.mask, +1, 2)); % backward mask
         J = J + toDiag(maskRows(Ay', My) * vec(A.D)) * maskRows(Fy', My);
         clear Fy Ay My
         
         Fz = kron(kron(Fz, Iy), Ix); % forward d/dz
         Az = kron(kron(Az, Iy), Ix); % forward averaging in z
-        Mz = xor(A.mask, circshift(A.mask, -1, 3)); % forward mask
+        Mz = (A.mask ~= circshift(A.mask, -1, 3)); % forward mask
         J = J + toDiag(maskRows(Az, Mz) * vec(A.D)) * maskRows(Fz, Mz);
-        Mz = xor(A.mask, circshift(A.mask, +1, 3)); % backward mask
+        Mz = (A.mask ~= circshift(A.mask, +1, 3)); % backward mask
         J = J + toDiag(maskRows(Az', Mz) * vec(A.D)) * maskRows(Fz', Mz);
         clear Fz Az Mz
     end

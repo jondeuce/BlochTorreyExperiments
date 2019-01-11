@@ -100,7 +100,7 @@ for ii = 1:s
         
         b = A*b;
         b = (t/(s*kk))*b;
-        f =  f + b;
+        f = f + b;
         mv = mv + 1;
         
         if ~full_term && (~skip_min || (skip_min && ~is_min))

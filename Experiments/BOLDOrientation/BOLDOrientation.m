@@ -42,9 +42,15 @@ B0 = -3.0; %[Tesla]
 % D_Tissue = 3037; %[um^2/s]
 % D_Blood = []; %[um^2/s]
 % D_VRS = []; %[um^2/s]
+% MaskType = '';
+
 D_Tissue = 1000; %[um^2/s]
 D_Blood = 3037; %[um^2/s]
 D_VRS = 3037; %[um^2/s]
+% MaskType = 'PVS';
+% MaskType = 'PVSOrVasculature';
+MaskType = 'PVSAndVasculature';
+% MaskType = 'Vasculature';
 
 %% Geometry Settings
 % Results from SE perfusion orientation simulations, N = 3
@@ -138,7 +144,7 @@ AllResults = BOLDResults( EchoTimes, deg2rad(alpha_range), Y0, Y, Hct, 1:Navgs )
 % Anon. func. for computing the BOLD Curve
 ComputeBOLDCurve = @(R,G) SplittingMethods.BOLDCurve(R, EchoTimes, dt, Y0, Y, Hct, ...
     CalculateDiffusionMap( G, D_Tissue, D_Blood, D_VRS ), ...
-    B0, alpha_range, G, type, stepper);
+    B0, alpha_range, G, MaskType, type, stepper);
 
 Geometries = [];
 for ii = 1:Navgs

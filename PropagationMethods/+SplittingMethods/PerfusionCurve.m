@@ -95,8 +95,9 @@ for jj = 1:Nalphas
     V = updateStepper(V, Gamma, 'Gamma');
     y = y0*ones(Geom.GridSize); %initial state
     
+    no_CA_time = tic;
     for ii = 1:Nsteps
-        no_CA_time = tic;
+        no_CA_iter_time = tic;
         
         [y,~,~,V] = step(V,y);
         S0(ii,jj) = IntegrateSignal(y);
@@ -105,8 +106,9 @@ for jj = 1:Nalphas
         end
         
         str = sprintf('step %2d/%2d (no CA)',ii,Nsteps);
-        display_toc_time(toc(no_CA_time), str);
+        display_toc_time(toc(no_CA_iter_time), str);
     end
+    display_toc_time(toc(no_CA_time), 'total time (no CA)');
     
     % ---- Adjust Gamma to account for CA ---- %
     y = y0*ones(Geom.GridSize); %initial state
@@ -125,8 +127,9 @@ for jj = 1:Nalphas
         clear Gamma
     end
     
+    with_CA_time = tic;
     for ii = 1:Nsteps
-        with_CA_time = tic;
+        with_CA_iter_time = tic;
         
         [y,dy,~,V] = step(V,y,dy);
         S(ii,jj) = IntegrateSignal(y);
@@ -142,8 +145,9 @@ for jj = 1:Nalphas
         end
         
         str = sprintf('step %2d/%2d (w/ CA)',ii,Nsteps);
-        display_toc_time(toc(with_CA_time), str);
+        display_toc_time(toc(with_CA_iter_time), str);
     end
+    display_toc_time(toc(with_CA_time), 'total time (w/ CA)');
     
     if args.CADerivative
         V = updateStepper(V, [], 'cleardgamma');
@@ -154,9 +158,9 @@ for jj = 1:Nalphas
     
 end
 
-% Add t=0 signals
+% Prepend t=0 signals
 S0 = [y0*Vox_Volume*ones(1,Nalphas); S0];
-S  = [y0*Vox_Volume*ones(1,Nalphas); S  ];
+S  = [y0*Vox_Volume*ones(1,Nalphas); S ];
 if args.CADerivative
     dS_Derivs.CA = [zeros(1,Nalphas); dS_Derivs.CA];
 end

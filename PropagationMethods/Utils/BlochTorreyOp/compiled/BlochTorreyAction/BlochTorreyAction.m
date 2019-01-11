@@ -19,8 +19,14 @@ function y = BlochTorreyAction(x, h, D, f, gsize3D, iters, istrans, isdiag, mask
 %   istrans:    Applies conjugate transpose operator if true (default false)
 %   isdiag:     Assumes f represents the diagonal term (default true)
 
+DEBUG = false;
+warn = @(str) warn_(DEBUG, str);
+
 if nargin < 9; mask = logical([]); end
-if ~isa(mask, 'logical'); mask = logical(mask); end
+if ~(isa(mask, 'logical') || isa(mask, 'double'))
+    warning('converting mask to double');
+    mask = double(mask);
+end
 
 if nargin < 8 || ~isa(isdiag, 'logical'); isdiag  = true; end
 if nargin < 7 || ~isa(istrans,'logical'); istrans = false; end
@@ -42,17 +48,16 @@ isDouble = isa(x,'double');
 isReal   = isreal(x);
 
 if ~(isSingle || isDouble), error('x must be double or single.'); end
-if isSingle, x = double(x); end
-if isReal, x = complex(x); end
+if isSingle, x = double(x); warn('BLOCHTORREYACTION: converting to double'); end
+if isReal, x = complex(x); warn('BLOCHTORREYACTION: converting to complex'); end
 
 if istrans
-    if ~isreal(f); f = conj(f); end
-    if ~isreal(D); D = conj(D); end
+    if ~isreal(f); f = conj(f); warn('BLOCHTORREYACTION: conjugating'); end
+    if ~isreal(D); D = conj(D); warn('BLOCHTORREYACTION: conjugating'); end
 end
 
 if isscalar(D) && ~isempty(mask)
-    warning('Scalar D not supported with mask; expanding D to gridsize');
-    D = D * ones(gsize3D);
+    D = D * ones(gsize3D); warn('BLOCHTORREYACTION: expanding scalar D to gsize');
 end
 
 if isscalar(D)
@@ -64,37 +69,49 @@ if isscalar(D)
     else
         if ~isreal(D)
             % BlochTorreyAction_cd assumes real D
-            y = D*BlochTorreyAction_cd(x, h, 1, f/D, gsize4D, ndim, iters, isdiag);
+            y = D*BlochTorreyAction_cd(x, h, 1, f/D, gsize4D, ndim, iters, isdiag); warn('BLOCHTORREYACTION: complex scalar D');
         else
             y = BlochTorreyAction_cd(x, h, D, f, gsize4D, ndim, iters, isdiag);
         end
     end
 else
     if isscalar(f)
-        %warning('TODO: expanding Gamma to size of grid');
-        f = f * ones(gsize3D);
+        f = f * ones(gsize3D); warn('BLOCHTORREYACTION: expanding gamma to gsize');
     end
     if isempty(mask)
         if ~isreal(D)
             %TODO this is inefficient allocation-wise
+            warn('BLOCHTORREYACTION: complex D array');
             y = BTActionVariableDiff_cd(x, h, real(D), f, gsize4D, ndim, iters, isdiag);
             y = y + 1i * BTActionVariableDiff_cd(x, h, imag(D), complex(zeros(size(f))), gsize4D, ndim, iters, isdiag);
         else
             y = BTActionVariableDiff_cd(x, h, D, f, gsize4D, ndim, iters, isdiag);
         end
     else
+        if islogical(mask)
+            BTNeumann = @BTActionVariableDiffNeumannBoolMask_cd;
+        else
+            BTNeumann = @BTActionVariableDiffNeumann_cd;
+        end
         if ~isreal(D)
             %TODO this is inefficient allocation-wise
-            y = BTActionVariableDiffNeumann_cd(x, h, real(D), f, gsize4D, ndim, iters, isdiag, mask);
-            y = y + 1i * BTActionVariableDiffNeumann_cd(x, h, imag(D), complex(zeros(size(f))), gsize4D, ndim, iters, isdiag, mask);
+            warn('BLOCHTORREYACTION: complex D array');
+            y = BTNeumann(x, h, real(D), f, gsize4D, ndim, iters, isdiag, mask);
+            y = y + 1i * BTNeumann(x, h, imag(D), complex(zeros(size(f))), gsize4D, ndim, iters, isdiag, mask);
         else
-            y = BTActionVariableDiffNeumann_cd(x, h, D, f, gsize4D, ndim, iters, isdiag, mask);
+            y = BTNeumann(x, h, D, f, gsize4D, ndim, iters, isdiag, mask);
         end
     end
 end
 
-if isSingle, y = single(y); end
+if isSingle, y = single(y); warn('BLOCHTORREYACTION: converting output to single');end
 
+end
+
+function warn_(DEBUG, str)
+if DEBUG
+    warning(str);
+end
 end
 
 % ----------------------------------------------------------------------- %
@@ -140,17 +157,17 @@ end
 % bool = ( ndim == 3 && checkDims3D(x, gsize1D, gsize3D) ) || ...
 %     ( ndim == 4 && checkDims4D(x, gsize2D, gsize4D) );
 % end
-% 
+%
 % function bool = checkDims3D(x, gsize1D, gsize3D)
 % bool = ( isequal(size(x), gsize3D) || isequal(size(x), gsize1D) );
 % end
-% 
+%
 % function bool = checkDims4D(x, gsize2D, gsize4D)
 % bool = ( isequal(size(x), gsize2D) || isequal(size(x), gsize4D) );
 % end
-% 
+%
 % function f = checkArray(f, gsize1D, gsize2D, gsize3D, gsize4D, forcecplx)
-% 
+%
 % if isempty(f)
 %     f = 0;
 % elseif isscalar(f)
@@ -158,14 +175,14 @@ end
 % elseif ~( checkDims3D(f, gsize1D, gsize3D) || checkDims4D(f, gsize2D, gsize4D) )
 %     error('size(f) must be one of: scalar, (repeated-)grid size, (repeated-)flattened size');
 % end
-% 
+%
 % if ~isa(f,'double'), f = double(f); end
 % if isreal(f) && forcecplx; f = complex(f); end
-% 
+%
 % end
-% 
+%
 % function h = checkGridSpacing(h)
-% 
+%
 % if isempty(h)
 %     h = 1;
 % elseif ~(isfloat(h) && all(h > 0))
@@ -174,8 +191,8 @@ end
 % if ~BlochTorreyOp.is_isotropic(h)
 %     error('h must be isotropic');
 % end
-% 
+%
 % h = h(1);
 % if ~isa(h,'double'); h = double(h); end
-% 
+%
 % end

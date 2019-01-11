@@ -46,7 +46,7 @@
 #endif /* REALTYPE */
 
 /* Alias for mask element type, for easier switching between bool/REAL */
-#define MASKTYPE 0 /* 1 for bool, 0 for REAL */
+#define MASKTYPE 1 /* 1 for bool, 0 for REAL */
 #if MASKTYPE
 #define MTYPE bool
 #define mxGETMASK mxGetLogicals

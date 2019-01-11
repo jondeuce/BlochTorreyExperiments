@@ -46,10 +46,11 @@ classdef BlochTorreyOp
     end
 
     properties ( Constant )
-        DiagState  = 1 % Data stored in buffer is Diag
-        GammaState = 2 % Data stored in buffer is Gamma
+        DiagState  = 1     % Data stored in buffer is Diag
+        GammaState = 2     % Data stored in buffer is Gamma
+        DEBUG      = false % Debug flag
     end
-
+    
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     % CLASS CONSTRUCTOR:
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -144,6 +145,7 @@ classdef BlochTorreyOp
             if isequal(State, A.state)
                 return % already in state State; do nothing
             end
+            if BlochTorreyOp.DEBUG; warning('BLOCHTORREYOP: switching state'); end
             switch State
                 case BlochTorreyOp.DiagState
                     % in GammaState; switch to DiagState

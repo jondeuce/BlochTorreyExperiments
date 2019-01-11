@@ -19,6 +19,7 @@ function y = SevenPointSumMasked(x, kern, gsize3D, iters, mask)
 %   iters:   Number of iterations to apply the operator to the input (default 1)
 
 if nargin < 5 || isempty(mask); mask = true(gsize3D); end
+if ~(isa(mask,'logical') || isa(mask,'double')); mask = double(mask); end
 if nargin < 4 || isempty(iters); iters = 1; end
 if ~(iters > 0 && iters == round(iters)); error('iters must be a positive integer'); end
 if ~(isnumeric(kern) && numel(kern)==7); error('kern must be a length 7 numeric array'); end
@@ -39,7 +40,11 @@ if isSingle, x = double(x); kern = double(kern); end %TODO: make single precisio
 % anyways, it is easiest to just force x to complex here
 if isreal(x) && ~isreal(kern) && iters > 1; x = complex(x); end
 
-y = SevenPointSumMasked_cd(x, kern, gsize4D, ndim, iters, mask);
+if islogical(mask)
+    y = SevenPointSumMaskedBoolMask_cd(x, kern, gsize4D, ndim, iters, mask);
+else
+    y = SevenPointSumMasked_cd(x, kern, gsize4D, ndim, iters, mask);
+end
 
 if isSingle, y = single(y); end
 
