@@ -62,7 +62,7 @@ switch upper(StepperArgs.Stepper)
             'NReps', 1, 'Order', StepperArgs.Order);
     case 'EXPMVSTEPPER'
         V = ExpmvStepper(dt, ...
-            BlochTorreyOp(0, 0, Geom.GridSize, Geom.VoxelSize), ...
+            BlochTorreyOp(0, 0, Geom.GridSize, Geom.VoxelSize, true, GetMask(Geom, args.MaskType)), ...
             Geom.GridSize, Geom.VoxelSize, ...
             'prec', StepperArgs.prec, ...
             'full_term', StepperArgs.full_term, ...
@@ -248,7 +248,7 @@ switch upper(class(V))
         
         switch upper(mode)
             case 'GAMMA'
-                A = BlochTorreyOp( in, V.A.D, V.A.gsize, V.A.gdims, false );
+                A = BlochTorreyOp( in, V.A.D, V.A.gsize, V.A.gdims, false, V.A.mask );
                 A = setbuffer( A, BlochTorreyOp.DiagState );
                 V = updateMatrix( V, A );
                 clear A
@@ -258,7 +258,7 @@ switch upper(class(V))
             case 'CLEARDGAMMA'
                 error('Gamma derivatives are not implemented for ExpmvStepper''s');
             case 'DIFFUSION'
-                A = BlochTorreyOp( V.A.Gamma, in, V.A.gsize, V.A.gdims, false );
+                A = BlochTorreyOp( V.A.Gamma, in, V.A.gsize, V.A.gdims, false, V.A.mask );
                 A = setbuffer( A, BlochTorreyOp.DiagState );
                 V = updateMatrix( V, A );
                 clear A
@@ -296,7 +296,7 @@ end
 function args = parseinputs(varargin)
 
 RequiredArgs = { 'AlphaRange', 'TE', 'Nsteps', 'type', 'CA', 'B0', 'D_Tissue' };
-OptionalArgs = struct( 'D_Blood', [], 'D_VRS', [] );
+OptionalArgs = struct( 'D_Blood', [], 'D_VRS', [], 'MaskType', '' );
 DefaultArgs = struct(...
     'Geom', [], ...
     'GeomArgs', [], ...

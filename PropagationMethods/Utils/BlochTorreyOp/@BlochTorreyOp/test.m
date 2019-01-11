@@ -107,7 +107,8 @@ mask = rand(Gsize) > 0.5; % Random mask
 %     linspace(-Vsize(2)/2, Vsize(2)/2, Gsize(2)), ...
 %     linspace(-Vsize(1)/2, Vsize(1)/2, Gsize(1)), ...
 %     linspace(-Vsize(3)/2, Vsize(3)/2, Gsize(3)));
-% mask = X.^2 + Y.^2 + Z.^2 <= (min(Vsize(:))/2)^2; % Spherical mask
+% R = min(Vsize(:))/4;
+% mask = X.^2 + Y.^2 + Z.^2 <= R^2; % Spherical mask
 
 % Gamma zeros, Dcoeff h^2 * ones array
 Gamma = zeros(Gsize);
@@ -215,7 +216,7 @@ for state = [BlochTorreyOp.GammaState, BlochTorreyOp.DiagState]
     % Matrix multiplication
     yb = BlochTorreyBrute(x0, Gamma, Dcoeff, Gsize, Vsize, mask);
     y  = A*x0;
-    ys = reshape(As*x0(:), size(x0));
+    ys = reshape(As*vec(x0), size(x0));
 
     b = test_approx_eq(yb, y, name, strpad('BTop mat*vec', Ns)) && b;
     b = test_approx_eq(yb, ys, name, strpad('BTsparse mat*vec', Ns)) && b;
@@ -223,7 +224,7 @@ for state = [BlochTorreyOp.GammaState, BlochTorreyOp.DiagState]
     % Matrix-transpose multiplication
     yb = BlochTorreyBrute(x0, Gamma, Dcoeff, Gsize, Vsize, mask); % symmetric
     y  = A.'*x0;
-    ys = reshape(As.'*x0(:), size(x0));
+    ys = reshape(As.'*vec(x0), size(x0));
 
     b = test_approx_eq(yb, y, name, strpad('BTop trans-mat*vec', Ns)) && b;
     b = test_approx_eq(yb, ys, name, strpad('BTsparse trans-mat*vec', Ns)) && b;
@@ -231,7 +232,7 @@ for state = [BlochTorreyOp.GammaState, BlochTorreyOp.DiagState]
     % Matrix-conjugate-transpose multiplication
     yb = BlochTorreyBrute(x0, conj(Gamma), conj(Dcoeff), Gsize, Vsize, mask);
     y  = A'*x0;
-    ys = reshape(As'*x0(:), size(x0));
+    ys = reshape(As'*vec(x0), size(x0));
 
     b = test_approx_eq(yb, y, name, strpad('BTop conj-trans-mat*vec', Ns)) && b;
     b = test_approx_eq(yb, ys, name, strpad('BTsparse conj-trans-mat*vec', Ns)) && b;
@@ -239,15 +240,15 @@ for state = [BlochTorreyOp.GammaState, BlochTorreyOp.DiagState]
     % Vector*Matrix multiplication (3D grid)
     yb = BlochTorreyBrute(conj(x0), Gamma, Dcoeff, Gsize, Vsize, mask);
     y  = conj(x0)*A;
-    ys = reshape(x0(:)'*As, size(x0));
+    ys = reshape(vec(x0)'*As, size(x0));
 
     b = test_approx_eq(yb, y, name, strpad('BTop vec-ctrans*mat (3D)', Ns)) && b;
     b = test_approx_eq(yb, ys, name, strpad('BTsparse vec-ctrans*mat (3D)', Ns)) && b;
 
     % Vector*Matrix multiplication (1D vector)
     yb = BlochTorreyBrute(conj(x0), Gamma, Dcoeff, Gsize, Vsize, mask);
-    y  = x0(:)'*A;
-    ys = x0(:)'*As;
+    y  = vec(x0)'*A;
+    ys = vec(x0)'*As;
 
     b = test_approx_eq(yb, y, name, strpad('BTop vec-ctrans*mat (1D)', Ns)) && b;
     b = test_approx_eq(yb, ys, name, strpad('BTsparse vec-ctrans*mat (1D)', Ns)) && b;
@@ -266,6 +267,10 @@ for state = [BlochTorreyOp.GammaState, BlochTorreyOp.DiagState]
     b = test_approx_eq(norm(Ab,inf), norm(A,inf), name, strpad('BTop inf-norm equal', Ns)) && b;
     b = test_approx_eq(norm(Ab,'fro'), norm(A,'fro'), name, strpad('BTop frob-norm equal', Ns), 100) && b; % more roundoff errors from squaring
 
+    o = offdiagonals(A); if size(o,1) == 1; o = repmat(o, length(A), 1); end
+    ob = get_offdiagonals(Ab, Gsize);
+    b = test_approx_eq(ob, o, name, strpad('BTop offdiagonals equal', Ns), 5*sqrt(length(A))) && b;
+        
     % trace is sensitive to floating point arithmetic; error should be O(sqrt(N))*eps
     b = test_approx_eq(trace(Ab), trace(A), name, strpad('BTop trace equal', Ns), 5*sqrt(length(A))) && b;
 
@@ -290,7 +295,7 @@ for state = [BlochTorreyOp.GammaState, BlochTorreyOp.DiagState]
     a  = randn();
     yb = a*BlochTorreyBrute(x0, Gamma, Dcoeff, Gsize, Vsize, mask);
     y  = (a*A)*x0;
-    ys = reshape((a*As)*x0(:), size(x0));
+    ys = reshape((a*As)*vec(x0), size(x0));
 
     b = test_approx_eq(yb, y, name, strpad('BTop RHS-real-scalar*mat*vec', Ns)) && b;
     b = test_approx_eq(yb, ys, name, strpad('BTsparse RHS-real-scalar*mat*vec', Ns)) && b;
@@ -303,7 +308,7 @@ for state = [BlochTorreyOp.GammaState, BlochTorreyOp.DiagState]
     a  = randnc();
     yb = a*BlochTorreyBrute(x0, Gamma, Dcoeff, Gsize, Vsize, mask);
     y  = (a*A)*x0;
-    ys = reshape((a*As)*x0(:), size(x0));
+    ys = reshape((a*As)*vec(x0), size(x0));
 
     b = test_approx_eq(yb, y, name, strpad('BTop RHS-cplx-scalar*mat*vec', Ns), 10) && b; % more roundoff errors from complex cancellation?
     b = test_approx_eq(yb, ys, name, strpad('BTsparse RHS-cplx-scalar*mat*vec', Ns), 10) && b; % more roundoff errors from complex cancellation?
@@ -317,18 +322,18 @@ for state = [BlochTorreyOp.GammaState, BlochTorreyOp.DiagState]
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
     t  = 0.1 * rand();
-    yb = expm(t*Ab) * x0(:);
+    yb = expm(t*Ab) * vec(x0);
     V  = ExpmvStepper(t, A, [], [], 'prnt', false);
     V  = precompute(V, x0);
     y  = step(V, x0);
     % y  = bt_expmv(t, A, x0, 'prnt', false);
-    ys = expmv(t, As, x0(:), [], 'double', true, false, false, false);
+    ys = expmv(t, As, vec(x0), [], 'double', true, false, false, false);
     b  = test_approx_eq(yb, y, name, strpad('BTop expmv equal (GRE)', Ns), 100) && b;
     b  = test_approx_eq(ys, y, name, strpad('BTsparse expmv equal (GRE)', Ns), 100) && b;
 
     t  = 0.1 * rand();
     Ef = expm(t/2*Ab);
-    yb = Ef * conj( Ef * x0(:) );
+    yb = Ef * conj( Ef * vec(x0) );
     % V  = ExpmvStepper(t/2, A, [], [], 'prnt', false, 'type', 'GRE');
     % V  = precompute(V, x0);
     % [y,~,~,V]  = step(V, x0);
@@ -336,7 +341,7 @@ for state = [BlochTorreyOp.GammaState, BlochTorreyOp.DiagState]
     V  = ExpmvStepper(t, A, [], [], 'prnt', false, 'type', 'SE');
     V  = precompute(V, x0);
     y  = step(V, x0);
-    ys = expmv(t/2, As, x0(:), [], 'double', true, false, false, false);
+    ys = expmv(t/2, As, vec(x0), [], 'double', true, false, false, false);
     ys = expmv(t/2, As, conj(ys), [], 'double', true, false, false, false);
     b  = test_approx_eq(yb, y, name, strpad('BTop expmv equal (SE)', Ns), 100) && b;
     b  = test_approx_eq(ys, y, name, strpad('BTsparse expmv equal (SE)', Ns), 100) && b;
@@ -405,7 +410,7 @@ maxval = max(infnorm(x), infnorm(y));
 tol    = max(tolfact * eps(maxval), tolfact * eps);
 % tol  = sqrt(tol); % For testing if failures are due to tolerance
 
-maxdiff = max(abs(x(:)-y(:)));
+maxdiff = max(abs(vec(x)-vec(y)));
 b = (maxdiff <= tol);
 
 if b
@@ -421,5 +426,32 @@ else
         fprintf('max value: '); disp(maxval);
     end
 end
+
+end
+
+function o = get_offdiagonals(A, Gsize)
+
+mod1X = @(x) 1 + mod(x-1, Gsize(1)); % circular indexing in x/y/z-direction
+mod1Y = @(x) 1 + mod(x-1, Gsize(2));
+mod1Z = @(x) 1 + mod(x-1, Gsize(3));
+
+iC = vec(1:prod(Gsize)); % row indices of center cell
+
+[I,J,K] = ind2sub(Gsize, iC);
+iD = sub2ind(Gsize, mod1X(I-1), J, K); % column indices of 6 neighbouring cells
+iU = sub2ind(Gsize, mod1X(I+1), J, K);
+iL = sub2ind(Gsize, I, mod1Y(J-1), K);
+iR = sub2ind(Gsize, I, mod1Y(J+1), K);
+iB = sub2ind(Gsize, I, J, mod1Z(K-1));
+iF = sub2ind(Gsize, I, J, mod1Z(K+1));
+
+iD = sub2ind(size(A), iC, iD); % linear indices of 6 neighbouring cells
+iU = sub2ind(size(A), iC, iU);
+iL = sub2ind(size(A), iC, iL);
+iR = sub2ind(size(A), iC, iR);
+iB = sub2ind(size(A), iC, iB);
+iF = sub2ind(size(A), iC, iF);
+
+o = [A(iD), A(iU), A(iL), A(iR), A(iB), A(iF)];
 
 end

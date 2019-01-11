@@ -2,8 +2,8 @@ function [ J ] = sparse( A )
 %SPARSE Creat sparse matrix from BlochTorreyOp object A.
 
 N = length(A);
-[Nx,Ny,Nz] = deal(A.gsize(1),A.gsize(2),A.gsize(3));
-[hx,hy,hz] = deal(A.h(1),A.h(2),A.h(3));
+[Nx,Ny,Nz] = deal(A.gsize(1), A.gsize(2), A.gsize(3));
+[hx,hy,hz] = deal(A.h(1), A.h(2), A.h(3));
 [Ix,Iy,Iz] = deal(speye(Nx), speye(Ny), speye(Nz)); % Sparse identity matrices along each dimension
 
 toDiag = @(x) spdiags(x,0,N,N);
@@ -12,9 +12,10 @@ toDiag = @(x) spdiags(x,0,N,N);
 if isscalar(A.Gamma)
     J = -A.Gamma * speye(N,N);
 else
-    J = toDiag(-A.Gamma(:));
+    J = toDiag(-vec(A.Gamma));
 end
 
+% If the diffusivity is zero, we are done
 if isequal(A.D, 0)
     return
 end
@@ -63,41 +64,41 @@ else
     if isempty(A.mask)
         Fx = kron(Iz, kron(Iy, Fx)); % Forward difference matrix: d/dx
         Ax = kron(Iz, kron(Iy, Ax)); % Forward averaging matrix: x-direction
-        J = J + ( toDiag(Ax * A.D(:)) * Fx + toDiag(Ax' * A.D(:)) * Fx' );
+        J = J + ( toDiag(Ax * vec(A.D)) * Fx + toDiag(Ax' * vec(A.D)) * Fx' );
         clear Fx Ax
         
         Fy = kron(Iz, kron(Fy, Ix)); % forward d/dy
         Ay = kron(Iz, kron(Ay, Ix)); % forward averaging in y
-        J = J + ( toDiag(Ay * A.D(:)) * Fy + toDiag(Ay' * A.D(:)) * Fy' );
+        J = J + ( toDiag(Ay * vec(A.D)) * Fy + toDiag(Ay' * vec(A.D)) * Fy' );
         clear Fy Ay
         
         Fz = kron(kron(Fz, Iy), Ix); % forward d/dz
         Az = kron(kron(Az, Iy), Ix); % forward averaging in z
-        J = J + ( toDiag(Az * A.D(:)) * Fz + toDiag(Az' * A.D(:)) * Fz' );
+        J = J + ( toDiag(Az * vec(A.D)) * Fz + toDiag(Az' * vec(A.D)) * Fz' );
         clear Fz Az
     else
         Fx = kron(Iz, kron(Iy, Fx)); % Forward difference matrix: d/dx
         Ax = kron(Iz, kron(Iy, Ax)); % Forward averaging matrix: x-direction
         Mx = xor(A.mask, circshift(A.mask, -1, 1)); % forward mask
-        J = J + toDiag(maskRows(Ax, Mx) * A.D(:)) * maskRows(Fx, Mx);
+        J = J + toDiag(maskRows(Ax, Mx) * vec(A.D)) * maskRows(Fx, Mx);
         Mx = xor(A.mask, circshift(A.mask, +1, 1)); % backward mask
-        J = J + toDiag(maskRows(Ax', Mx) * A.D(:)) * maskRows(Fx', Mx);
+        J = J + toDiag(maskRows(Ax', Mx) * vec(A.D)) * maskRows(Fx', Mx);
         clear Fx Ax Mx
 
         Fy = kron(Iz, kron(Fy, Ix)); % forward d/dy
         Ay = kron(Iz, kron(Ay, Ix)); % forward averaging in y
         My = xor(A.mask, circshift(A.mask, -1, 2)); % forward mask
-        J = J + toDiag(maskRows(Ay, My) * A.D(:)) * maskRows(Fy, My);
+        J = J + toDiag(maskRows(Ay, My) * vec(A.D)) * maskRows(Fy, My);
         My = xor(A.mask, circshift(A.mask, +1, 2)); % backward mask
-        J = J + toDiag(maskRows(Ay', My) * A.D(:)) * maskRows(Fy', My);
+        J = J + toDiag(maskRows(Ay', My) * vec(A.D)) * maskRows(Fy', My);
         clear Fy Ay My
         
         Fz = kron(kron(Fz, Iy), Ix); % forward d/dz
         Az = kron(kron(Az, Iy), Ix); % forward averaging in z
         Mz = xor(A.mask, circshift(A.mask, -1, 3)); % forward mask
-        J = J + toDiag(maskRows(Az, Mz) * A.D(:)) * maskRows(Fz, Mz);
+        J = J + toDiag(maskRows(Az, Mz) * vec(A.D)) * maskRows(Fz, Mz);
         Mz = xor(A.mask, circshift(A.mask, +1, 3)); % backward mask
-        J = J + toDiag(maskRows(Az', Mz) * A.D(:)) * maskRows(Fz', Mz);
+        J = J + toDiag(maskRows(Az', Mz) * vec(A.D)) * maskRows(Fz', Mz);
         clear Fz Az Mz
     end
 end
@@ -105,9 +106,7 @@ end
 end
 
 function mask = maskRows(mask, b)
-    if isempty(mask) || isempty(b)
-        return
-    end
+    if isempty(mask) || isempty(b); return; end
     mask(b, :) = 0;
 end
 
@@ -124,7 +123,7 @@ end
 % 
 % % "Isotropic diffusion" term is simply multiplying pointwise by D, i.e.
 % % multiplication with a diagonal matrix on the left
-% D  = toDiag(A.D(:));
+% D  = toDiag(vec(A.D));
 % 
 % % Construct forward difference matrices (backwards: negative transpose)
 % Bx = spdiags( (1/hx) * repmat([-1,1],Nx,1), [-1 0], Nx, Nx );
@@ -166,7 +165,7 @@ end
 % 
 % % "Isotropic diffusion" term is simply multiplying pointwise by D, i.e.
 % % multiplication with a diagonal matrix on the left
-% Dv = A.D(:);
+% Dv = vec(A.D);
 % D  = spdiags( Dv, 0, N, N );
 % J  = J + D * L;
 % 
