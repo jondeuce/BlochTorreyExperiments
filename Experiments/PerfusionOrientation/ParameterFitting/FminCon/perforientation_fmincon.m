@@ -69,37 +69,37 @@ Weights = BinCounts / sum(BinCounts(:));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 9;
+Nmajor = 1;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
 % Rminor_sig = 2.1;
 
-% ---- With Diffusion ---- %
-D_Tissue = 2000; %[um^2/s]
-D_Blood = []; %[um^2/s]
-D_VRS = []; %[um^2/s]
-MaskType = '';
-
-% D_Tissue = 1000; %[um^2/s]
-% D_Blood = 2000; %[um^2/s]
-% D_VRS = 3000; %[um^2/s]
-% MaskType = 'PVS';
-% MaskType = 'PVSOrVasculature';
-% MaskType = 'PVSAndVasculature';
-% MaskType = 'Vasculature';
-
-Nsteps = 8;
-StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
-% Nsteps = 1;
-% StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
-
-% % ---- Diffusionless ---- %
-% D_Tissue = 0; %[um^2/s]
+% % ---- With Diffusion ---- %
+% D_Tissue = 2000; %[um^2/s]
 % D_Blood = []; %[um^2/s]
 % D_VRS = []; %[um^2/s]
-% Nsteps = 1; % one exact step
+% MaskType = '';
+% 
+% % D_Tissue = 1000; %[um^2/s]
+% % D_Blood = 2000; %[um^2/s]
+% % D_VRS = 3000; %[um^2/s]
+% % MaskType = 'PVS';
+% % MaskType = 'PVSOrVasculature';
+% % MaskType = 'PVSAndVasculature';
+% % MaskType = 'Vasculature';
+% 
+% Nsteps = 8;
 % StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
+% % Nsteps = 1;
+% % StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
+
+% ---- Diffusionless ---- %
+D_Tissue = 0; %[um^2/s]
+D_Blood = []; %[um^2/s]
+D_VRS = []; %[um^2/s]
+Nsteps = 1; % one exact step
+StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
 
 B0 = -3.0; %[Tesla]
 rng('default'); seed = rng; % for consistent geometries between sims.
