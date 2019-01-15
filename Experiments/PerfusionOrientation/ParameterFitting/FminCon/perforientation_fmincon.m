@@ -69,33 +69,30 @@ Weights = BinCounts / sum(BinCounts(:));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 4;
+Nmajor = 9;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
 % Rminor_sig = 2.1;
 
 % ---- With Diffusion ---- %
-D_Tissue = 1000; %[um^2/s]
-% D_Blood = []; %[um^2/s]
-% D_VRS = []; %[um^2/s]
-% MaskType = '';
-D_Blood = 2000; %[um^2/s]
-D_VRS = 3000; %[um^2/s]
+D_Tissue = 2000; %[um^2/s]
+D_Blood = []; %[um^2/s]
+D_VRS = []; %[um^2/s]
+MaskType = '';
+
+% D_Tissue = 1000; %[um^2/s]
+% D_Blood = 2000; %[um^2/s]
+% D_VRS = 3000; %[um^2/s]
 % MaskType = 'PVS';
 % MaskType = 'PVSOrVasculature';
-MaskType = 'PVSAndVasculature';
+% MaskType = 'PVSAndVasculature';
 % MaskType = 'Vasculature';
 
-GridSize = [500,500,500];
-alpha_range = alpha_range(end:-1:1);
-dR2_Data = dR2_Data(end:-1:1);
-BinCounts = BinCounts(end:-1:1);
-
-% Nsteps = 8;
-% StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
-Nsteps = 1;
-StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
+Nsteps = 8;
+StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
+% Nsteps = 1;
+% StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
 
 % % ---- Diffusionless ---- %
 % D_Tissue = 0; %[um^2/s]
@@ -113,8 +110,8 @@ NumMajorArteries = 0;
 MinorArterialFrac = 0.0;
 % VRSRelativeRad = 1; % Radius of Virchow-Robin space relative to major vessel radius [unitless] => 0X volume (see below)
 % VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless] => 3X volume (see below)
-VRSRelativeRad = sqrt(2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(2) => 1X
-% VRSRelativeRad = sqrt(5/2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(5/2) => 1.5X
+% VRSRelativeRad = sqrt(2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(2) => 1X
+VRSRelativeRad = sqrt(5/2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(5/2) => 1.5X
 % VRSRelativeRad = sqrt(3); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(3) => 2X
 
 PlotFigs = true;

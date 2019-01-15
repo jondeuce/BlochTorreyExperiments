@@ -17,6 +17,8 @@ end
 
 % If the diffusivity is zero, we are done
 if isequal(A.D, 0)
+    
+    
     return
 end
 
