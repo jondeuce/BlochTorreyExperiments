@@ -69,7 +69,7 @@ Weights = BinCounts / sum(BinCounts(:));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 1;
+Nmajor = 9;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
@@ -98,6 +98,7 @@ Rminor_sig = 0.0;
 D_Tissue = 0; %[um^2/s]
 D_Blood = []; %[um^2/s]
 D_VRS = []; %[um^2/s]
+MaskType = '';
 Nsteps = 1; % one exact step
 StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
 
@@ -110,8 +111,8 @@ NumMajorArteries = 0;
 MinorArterialFrac = 0.0;
 % VRSRelativeRad = 1; % Radius of Virchow-Robin space relative to major vessel radius [unitless] => 0X volume (see below)
 % VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless] => 3X volume (see below)
-% VRSRelativeRad = sqrt(2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(2) => 1X
-VRSRelativeRad = sqrt(5/2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(5/2) => 1.5X
+VRSRelativeRad = sqrt(2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(2) => 1X
+% VRSRelativeRad = sqrt(5/2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(5/2) => 1.5X
 % VRSRelativeRad = sqrt(3); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(3) => 2X
 
 PlotFigs = true;
@@ -173,13 +174,13 @@ Normfun = 'AICc';
 % simulation randomness, TolX/TolFun tend to not be reliable measures of 
 % goodness of fit
 OptOpts = optimoptions('fmincon', ...
-    'MaxFunEvals', 150, ...
+    'MaxFunEvals', 100, ...
     'Algorithm', 'sqp', ... % trust-region-reflective', ...
     'MaxIter', 100, ...
     'TolX', 1e-12, ...
     'TolFun', 1e-12, ...
     'TypicalX', x0, ...
-    'FinDiffRelStep', [0.02, 0.02, 0.02], ...
+    'FinDiffRelStep', [0.05, 0.05, 0.05], ...
     'Display', 'iter' ...
     );
 
