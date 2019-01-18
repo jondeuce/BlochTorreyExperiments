@@ -3,7 +3,7 @@ function setbtpath( type, varargin )
 % setbtpath home/coopar7/master
 
 if nargin == 0
-    return
+    type = '.'; % use master branch in current folder
 end
 
 default_remove_list = btFoldersIgnored;
@@ -17,7 +17,7 @@ end
 switch upper(type)
     case 'UBCITAR' % ubcitar/jdoucette server path
         btroot = '/data/ubcitar/jdoucette/';
-        btexp_branch = '';
+        btexp_branch = 'master';
         
     case 'UBCITAR/LAURA' % ubcitar/jdoucette server path
         btroot = '/data/ubcitar/jdoucette/';
@@ -45,7 +45,15 @@ switch upper(type)
         
     case 'THINKPAD/TEMP1' % home thinkpad laptop
         btroot = 'C:\Users\Jonathan\Documents\MATLAB\';
-        btexp_branch = 'TEMP1';
+        btexp_branch = 'temp1';
+        
+    case '.'
+        btroot = [cd, '/'];
+        btexp_branch = 'master';
+        
+    otherwise % assume type is a branch in the current directory
+        btroot = [cd, '/'];
+        btexp_branch = type;
 end
 
 BlochTorreyResults = 'BlochTorreyResults';
