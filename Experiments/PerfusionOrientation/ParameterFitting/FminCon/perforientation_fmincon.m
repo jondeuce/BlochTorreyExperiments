@@ -109,11 +109,14 @@ RotateGeom = false; % geometry is fixed; dipole rotates
 MajorAngle = 0.0; % major vessel angle w.r.t z-axis [degrees]
 NumMajorArteries = 0;
 MinorArterialFrac = 0.0;
-% VRSRelativeRad = 1; % Radius of Virchow-Robin space relative to major vessel radius [unitless] => 0X volume (see below)
-% VRSRelativeRad = 2; % Radius of Virchow-Robin space relative to major vessel radius [unitless] => 3X volume (see below)
-VRSRelativeRad = sqrt(2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(2) => 1X
-% VRSRelativeRad = sqrt(5/2); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(5/2) => 1.5X
-% VRSRelativeRad = sqrt(3); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(3) => 2X
+
+% Radius of Virchow-Robin space relative to major vessel radius [unitless];
+% VRS space volume is approx (relrad^2-1)*BVF, so e.g. sqrt(2X radius) => 1X volume
+VRSRelativeRad = 1; % 1X => 0X volume
+% VRSRelativeRad = sqrt(2); % sqrt(2X) => 1X volume
+% VRSRelativeRad = sqrt(2.5); % sqrt(2.5X) => 1.5X volume
+% VRSRelativeRad = sqrt(3); % sqrt(3X) => 2X volume
+% VRSRelativeRad = 2; % 2X => 3X volume
 
 PlotFigs = true;
 SaveFigs = true;
