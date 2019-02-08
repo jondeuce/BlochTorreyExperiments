@@ -161,9 +161,12 @@ function distmesh2d(
             resize!(bars, 3*length(t))
             @inbounds for (i,tt) in enumerate(t)
                 a, b, c = sorttuple(tt)
+                # bars[3i-2] = (a, b)
+                # bars[3i-1] = (a, c)
+                # bars[3i  ] = (b, c)                                            # Interior bars duplicated
                 bars[3i-2] = (a, b)
-                bars[3i-1] = (a, c)
-                bars[3i  ] = (b, c)                                            # Interior bars duplicated
+                bars[3i-1] = (b, c)
+                bars[3i  ] = (c, a)                                            # Interior bars duplicated
             end
             unique!(sort!(bars; by = first))                                   # Bars as node pairs
 
@@ -228,7 +231,7 @@ function distmesh2d(
 
     # Clean up and plot final mesh
     p, t, _ = fixmesh(p,t)
-    (PLOT || PLOTLAST) && simpplot(p,t)
+    (PLOT || PLOTLAST) && simpplot(p,t;newfigure=true)
 
     return p, t
 end

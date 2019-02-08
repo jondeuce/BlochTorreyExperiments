@@ -148,31 +148,31 @@ function create_energy(
 
     # Energy function
     function energy(x)
-        T = eltype(x)
-        E_total = zero(T)
-        # !(w[1] ≈ zero(T)) && (E_total += energy_covariance(circles))
-        !(w[2] ≈ zero(T)) && (E_total += w[2] * f_mutual(x))
-        !(w[3] ≈ zero(T)) && (E_total += w[3] * f_overlap(x))
+        Tx = eltype(x)
+        E_total = zero(Tx)
+        # !(w[1] ≈ zero(Tx)) && (E_total += energy_covariance(circles))
+        !(w[2] ≈ zero(Tx)) && (E_total += w[2] * f_mutual(x))
+        !(w[3] ≈ zero(Tx)) && (E_total += w[3] * f_overlap(x))
         return β * E_total
     end
 
     # Energy function gradient
     function ∇energy!(g, x)
-        T = eltype(x)
-        g = fill!(g, zero(T))
-        # !(w[1] ≈ zero(T)) && (E_total += energy_covariance(circles))
-        !(w[2] ≈ zero(T)) && (g = up_g!(g, g_mutual!, x, β * w[2]))
-        !(w[3] ≈ zero(T)) && (g = up_g!(g, g_overlap!, x, β * w[3]))
+        Tx = eltype(x)
+        g = fill!(g, zero(Tx))
+        # !(w[1] ≈ zero(Tx)) && (E_total += energy_covariance(circles))
+        !(w[2] ≈ zero(Tx)) && (g = up_g!(g, g_mutual!, x, β * w[2]))
+        !(w[3] ≈ zero(Tx)) && (g = up_g!(g, g_overlap!, x, β * w[3]))
         return g
     end
 
     # Energy function hessian
     function ∇²energy!(h, x)
-        T = eltype(x)
-        h = fill!(h, zero(T))
-        # !(w[1] ≈ zero(T)) && (E_total += energy_covariance(circles))
-        !(w[2] ≈ zero(T)) && (h = up_h!(h, h_mutual!, x, β * w[2]))
-        !(w[3] ≈ zero(T)) && (h = up_h!(h, h_overlap!, x, β * w[3]))
+        Tx = eltype(x)
+        h = fill!(h, zero(Tx))
+        # !(w[1] ≈ zero(Tx)) && (E_total += energy_covariance(circles))
+        !(w[2] ≈ zero(Tx)) && (h = up_h!(h, h_mutual!, x, β * w[2]))
+        !(w[3] ≈ zero(Tx)) && (h = up_h!(h, h_overlap!, x, β * w[3]))
         return h
     end
 

@@ -22,7 +22,7 @@ export calcsignals, calcsignal
 export solveblochtorrey, default_algfun, get_algfun
 export plotmagnitude, plotphase, plotSEcorr, plotbiexp
 export compareMWFmethods
-export savefig, getnow
+export mxsavefig, getnow
 
 export MWFResults
 
@@ -92,6 +92,11 @@ function creategrids(btparams::BlochTorreyParameters{T};
     h_range = 10.0*h0 # distance over which h increases from h_min to h_max
     h_rate = 0.6 # rate of increase of h from circle boundaries (power law; smaller = faster radial increase)
 
+    DEBUG = true
+    if DEBUG
+        h_max = h_min
+    end
+
     if (bdry == nothing)
         bdry, _ = opt_subdomain(outercircles)
     end
@@ -110,7 +115,7 @@ function creategrids(btparams::BlochTorreyParameters{T};
         simpplot(allgrids; newfigure = true, axis = mxaxis(bdry))
     end
 
-    !(fname == nothing) && savefig(fname)
+    !(fname == nothing) && mxsavefig(fname)
 
     return exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry
 end
@@ -136,10 +141,7 @@ function createdomains(
     return myelinprob, myelinsubdomains, myelindomains
 end
 
-function calcomegas(myelinprob, myelinsubdomains)
-    omegavalues = omegamap.(Ref(myelinprob), myelinsubdomains)
-    return omegavalues
-end
+calcomegas(myelinprob, myelinsubdomains) = omegamap.(Ref(myelinprob), myelinsubdomains)
 calcomega(myelinprob, myelinsubdomains) = reduce(vcat, calcomegas(myelinprob, myelinsubdomains))
 
 # Vector of signals on each domain.
@@ -162,7 +164,8 @@ function solveblochtorrey(myelinprob, myelindomains, algfun = default_algfun();
         ts = tspan[1]:TE/2:tspan[2], # tstops, which includes π-pulse times
         u0 = Vec{2}((0.0, 1.0)), # initial π/2 pulse
         cb = MultiSpinEchoCallback(tspan; TE = TE),
-        reltol = 1e-4
+        reltol = 1e-4,
+        abstol = 1e-12,
     )
     probs = [ODEProblem(m, interpolate(u0, m), tspan; invertmass = true) for m in myelindomains]
     sols = Vector{ODESolution}()
@@ -176,6 +179,7 @@ function solveblochtorrey(myelinprob, myelindomains, algfun = default_algfun();
             tstops = ts, # ensure stopping at all ts points
             dt = TE,
             reltol = reltol,
+            abstol = abstol,
             callback = cb
         )
         push!(sols, sol)
@@ -187,23 +191,27 @@ end
 function get_algfun(algtype = :ExpokitExpmv)
     algfun = if algtype == :CVODE_BDF
         prob -> CVODE_BDF(;method = :Functional)
+    elseif algtype isa DiffEqBase.AbstractODEAlgorithm
+        prob -> algtype # given an DiffEqBase.AbstractODEAlgorithm algorithm directly
+    elseif algtype == ExpokitExpmv
+        expokit_algfun()
     else
         default_algfun()
     end
     return algfun
 end
-default_algfun() = prob -> ExpokitExpmv(prob.p[1]; m = 30) # first parameter is A in du/dt = A*u
+expokit_algfun() = prob -> ExpokitExpmv(prob.p[1]; m = 30) # first parameter is A in du/dt = A*u
+default_algfun() = expokit_algfun()
 
 function plotmagnitude(sols, btparams, myelindomains, bdry; titlestr = "Magnitude", fname = nothing)
     Umagn = reduce(vcat, norm.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
     simpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = Umagn)
     mxcall(:title, 0, titlestr)
 
-    !(fname == nothing) && savefig(fname)
+    # allgrids = vcat(exteriorgrids[:], torigrids[:], interiorgrids[:])
+    # simpplot(allgrids; newfigure = true, axis = mxaxis(bdry))
 
-    # Uphase = reduce(vcat, angle.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
-    # simpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = Uphase)
-    # mxcall(:title, 0, "Phase")
+    !(fname == nothing) && mxsavefig(fname)
 
     nothing
 end
@@ -213,11 +221,7 @@ function plotphase(sols, btparams, myelindomains, bdry; titlestr = "Phase", fnam
     simpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = Uphase)
     mxcall(:title, 0, titlestr)
 
-    !(fname == nothing) && savefig(fname)
-
-    # Uphase = reduce(vcat, angle.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
-    # simpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = Uphase)
-    # mxcall(:title, 0, "Phase")
+    !(fname == nothing) && mxsavefig(fname)
 
     nothing
 end
@@ -250,7 +254,7 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
     mxcall(:xlim, 0, 1000.0 .* [tspan...])
     mxcall(:ylabel, 0, "S(t) Magnitude")
 
-    !(fname == nothing) && savefig(fname)
+    !(fname == nothing) && mxsavefig(fname)
 
     nothing
 end
@@ -270,16 +274,16 @@ function plotSEcorr(sols, btparams, myelindomains; fname = nothing)
         PLOTDIST = true
     )
 
-    !(fname == nothing) && savefig(fname)
+    !(fname == nothing) && mxsavefig(fname)
 
     return MWImaps, MWIdist, MWIpart
 end
 
 # Save plot
-function savefig(fname)
-    datedfname = "$(getnow())__$fname"
-    mxcall(:savefig, 0, datedfname * ".fig")
-    mxcall(:export_fig, 0, datedfname, "-png")
+function mxsavefig(fname)
+    fname = getnow() * "__" * fname
+    mxcall(:savefig, 0, fname * ".fig")
+    mxcall(:export_fig, 0, fname, "-png")
     mxcall(:close, 0)
 end
 
@@ -302,7 +306,7 @@ end
 function CSV.write(results::MWFResults, i)
     for (j,sol) in enumerate(results.sols[i])
         df = DataFrame(sol)
-        fname = "$(getnow())__sol_$(i)__region_$(j).csv"
+        fname = getnow() * "__sol_$(i)__region_$(j).csv"
         CSV.write(fname, df)
     end
     return nothing

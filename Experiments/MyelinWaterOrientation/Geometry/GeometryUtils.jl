@@ -51,8 +51,8 @@ const VecOfRectangles{dim} = Vector{Rectangle{dim,T}} where T
 # ---------------------------------------------------------------------------- #
 # Misc. utilities for Vec type from Tensors.jl
 # ---------------------------------------------------------------------------- #
-Base.convert(::Type{Vec{dim,T1}}, x::SVector{dim,T2}) where {dim,T1,T2} = Vec{dim,promote_type(T1,T2)}(Tuple(x))
-Base.convert(::Type{SVector{dim,T1}}, x::Vec{dim,T2}) where {dim,T1,T2} = SVector{dim,promote_type(T1,T2)}(Tuple(x))
+@inline Base.convert(::Type{Vec{dim,T1}}, x::SVector{dim,T2}) where {dim,T1,T2} = Vec{dim,promote_type(T1,T2)}(Tuple(x))
+@inline Base.convert(::Type{SVector{dim,T1}}, x::Vec{dim,T2}) where {dim,T1,T2} = SVector{dim,promote_type(T1,T2)}(Tuple(x))
 @inline Base.Tuple(v::Vec) = Tensors.get_data(v)
 
 @inline norm2(x::Vec) = dot(x,x)

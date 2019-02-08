@@ -19,6 +19,10 @@ using StatsBase
 using LinearMaps
 using Parameters: @with_kw, @unpack
 
+# DEBUG
+using UnicodePlots
+using MATLAB
+
 import Distributions
 import Lazy
 
@@ -163,6 +167,16 @@ function ParabolicDomain(
     dh = DofHandler(grid)
     push!(dh, :u, uDim, func_interp)
     close!(dh)
+
+    # Assign dof ordering
+    perm = zeros(Int, ndofs(dh))
+    for cell in CellIterator(dh)
+        for (i,n) in enumerate(cell.nodes)
+            perm[cell.celldofs[2i-1]] = 2n-1
+            perm[cell.celldofs[2i]] = 2n
+        end
+    end
+    renumber!(dh, perm)
 
     # Mass matrix, inverse mass matrix, stiffness matrix, and weights vector
     M = create_sparsity_pattern(dh)
@@ -489,6 +503,8 @@ function ParabolicDomain(
         ms::AbstractVector{<:TriangularMyelinDomain{R,uDim,T} where {R}}
     ) where {uDim,T}
 
+    DEBUG = true
+
     # Construct one large ParabolicDomain containing all grids
     gDim, Nd, Nf = 2, 3, 3 # Triangular 2D domain
     grid = Grid(getgrid.(ms)) # combine grids into single large grid
@@ -508,35 +524,9 @@ function ParabolicDomain(
     nodepairs = NTuple{gDim,Int}[JuAFEM.faces(cells[f[1]])[f[2]] for f in boundaryfaceset] # pairs of node indices
     nodecoordpairs = NTuple{gDim,Vec{uDim,T}}[(getcoordinates(nodes[n[1]]), getcoordinates(nodes[n[2]])) for n in nodepairs] # pairs of node coordinates
 
-    # There should be a way to sort the nodes into a list and easily pick out
-    # the pairs, but it's possibly not worth the trouble. One option would be to
-    # pick e.g. a random point and sort with respect to distance from this point;
-    # for a general set of points, it is extremely unlikely that any two points
-    # have the same magnitude (i.e. lie on a circle centred at this random point),
-    # and any which do must be the same point.
-
-    # nodecoordpairssorted = copy(nodecoordpairs)
-    # for (i,p) in enumerate(nodecoordpairssorted)
-    #     if p[1][1] < p[2][1]
-    #         nodecoordpairssorted[i] = reverse(nodecoordpairssorted[i])
-    #     elseif p[1][1] == p[2][1] && p[1][2] < p[2][2]
-    #         nodecoordpairssorted[i] = reverse(nodecoordpairssorted[i])
-    #     end
-    # end
-    # nodecoordindices = sortperm(nodecoordpairssorted; by = x->(x[1][1], x[1][2], x[2][1], x[2][2]))
-    #
-    # interfaceindices = Vector{NTuple{4,Int}}()
-    # @inbounds for i in 1:length(nodecoordindices)-1
-    #     i1, i2 = nodecoordindices[i], nodecoordindices[i+1]
-    #     np1, np2 = nodecoordpairssorted[i1], nodecoordpairssorted[i2]
-    #     if norm2(np1[1] - np2[1]) < eps(T) && norm2(np1[2] - np2[2]) < eps(T)
-    #         push!(interfaceindices, (nodepairs[i1]..., nodepairs[i2]...))
-    #     end
-    # end
-
     # Sort pairs by midpoints and read off pairs
-    midpointsort = (np) -> (x = (np[1] + np[2])/2; return norm2(x), angle(x))
-    nodecoordindices = sortperm(nodecoordpairs; by = midpointsort) # sort pairs by midpoint location
+    bymidpoint = (np) -> (x = (np[1] + np[2])/2; return norm2(x), angle(x))
+    nodecoordindices = sortperm(nodecoordpairs; by = bymidpoint) # sort pairs by midpoint location
     interfaceindices = Vector{NTuple{4,Int}}()
     sizehint!(interfaceindices, length(nodecoordpairs)÷2)
     @inbounds for i in 1:length(nodecoordindices)-1
@@ -546,29 +536,31 @@ function ParabolicDomain(
             push!(interfaceindices, (nodepairs[i1]..., nodepairs[i2]...))
         end
     end
-
-    # Brute force search for pairs
-    interfaceindices_brute = Vector{NTuple{4,Int}}()
-    sizehint!(interfaceindices_brute, length(nodecoordpairs)÷2)
-    @inbounds for i1 in 1:length(nodecoordpairs)
-        np1 = nodecoordpairs[i1] # pair of Vec's
-        for i2 in 1:i1-1
-            np2 = nodecoordpairs[i2] # pair of Vec's
-            # For properly oriented triangles, the edge nodes will be stored in
-            # opposite order coincident edges which share a triangle face, i.e.
-            # np1[1] should equal np2[2], and vice-versa
-            if norm2(np1[1] - np2[2]) < eps(T) && norm2(np1[2] - np2[1]) < eps(T)
-                # The nodes are stored as e.g. np1 = (A,B) and np2 = (B,A).
-                # We want to keep them in this order, as is expected by the
-                # local stiffness matrix `Se` below
-                ip1, ip2 = nodepairs[i1], nodepairs[i2] # pairs of node indices
-                push!(interfaceindices_brute, (ip1..., ip2...))
+    
+    if DEBUG
+        # Brute force search for pairs
+        interfaceindices_brute = Vector{NTuple{4,Int}}()
+        sizehint!(interfaceindices_brute, length(nodecoordpairs)÷2)
+        @inbounds for i1 in 1:length(nodecoordpairs)
+            np1 = nodecoordpairs[i1] # pair of Vec's
+            for i2 in 1:i1-1
+                np2 = nodecoordpairs[i2] # pair of Vec's
+                # For properly oriented triangles, the edge nodes will be stored in
+                # opposite order coincident edges which share a triangle face, i.e.
+                # np1[1] should equal np2[2], and vice-versa
+                if norm2(np1[1] - np2[2]) < eps(T) && norm2(np1[2] - np2[1]) < eps(T)
+                    # The nodes are stored as e.g. np1 = (A,B) and np2 = (B,A).
+                    # We want to keep them in this order, as is expected by the
+                    # local stiffness matrix `Se` below
+                    ip1, ip2 = nodepairs[i1], nodepairs[i2] # pairs of node indices
+                    push!(interfaceindices_brute, (ip1..., ip2...))
+                end
             end
         end
-    end
 
-    # @show length(interfaceindices)
-    # @show length(interfaceindices_brute)
+        @show length(interfaceindices)
+        @show length(interfaceindices_brute)
+    end
 
     # Local permeability interaction matrix, unscaled by length
     κ = prob.params.K_perm
@@ -576,7 +568,7 @@ function ParabolicDomain(
                       1  2 -2 -1 # `Se` represents the local stiffness of a zero volume interface element with points (A,B)
                      -1 -2  2  1 # The points are ordered such that `Se` acts on [A,B,B,A]
                      -2 -1  1  2 ]
-    Sck = similar(Se) # temp matrix for assigning ck .* Se to
+    _Se = similar(Se) # temp matrix for storing ck * Se
 
     # S matrix global indices
     Is, Js, Ss = Vector{Int}(), Vector{Int}(), Vector{T}()
@@ -584,27 +576,95 @@ function ParabolicDomain(
     sizehint!(Js, length(Se) * uDim * length(interfaceindices))
     sizehint!(Ss, length(Se) * uDim * length(interfaceindices))
 
+    local u0
+    if DEBUG
+        u0 = zeros(T, ndofs(domain))
+        u0[uDim:uDim:end] .= 1
+    end
+
+    local isfirst
+    if DEBUG
+        isfirst = true
+    end
+
+    if DEBUG && ~isempty(interfaceindices)
+        @show 2 .* interfaceindices[1]
+    end
+
     for idx in interfaceindices
         ck = norm(getcoordinates(nodes[idx[1]]) - getcoordinates(nodes[idx[2]])) # length of edge segment
-        # @assert ck ≈ norm(getcoordinates(nodes[idx[3]]) - getcoordinates(nodes[idx[4]]))
-        Sck .= ck .* Se
+        if DEBUG
+            x1, x2, x3, x4 = getcoordinates.(getindex.(Ref(nodes), idx))
+            # @show norm(x1), norm(x2), norm(x3), norm(x4)
+            @assert ck ≈ norm(x1 - x2)
+            @assert ck ≈ norm(x3 - x4)
+            @assert x1 ≈ x4
+            @assert x2 ≈ x3
+            @assert !(ck ≈ 0)
+        end
+        _Se .= ck .* Se
+
+        # dof = uDim .* idx .- (uDim-1) # node indices --> first dof indices (i.e. 1st component of u)
+        # for d in 1:uDim
+        #     Dof = dof .+ (d-1) # first dof indices --> d'th dof indices (i.e. d'th component of u)
+        #     for i in 1:length(Dof)
+        #         # append!(Is, Dof)
+        #         for j in 1:length(Dof)
+        #             # push!(Js, Dof[i])
+        #             push!(Is, Dof[i])
+        #             push!(Js, Dof[j])
+        #             push!(Ss, _Se[i,j])
+        #         end
+        #     end
+        #     # append!(Ss, _Se)
+        # end
 
         dof = uDim .* idx .- (uDim-1) # node indices --> first dof indices (i.e. 1st component of u)
-        for d in 1:uDim
-            Dof = dof .+ (d-1) # first dof indices --> d'th dof indices (i.e. d'th component of u)
-            for i in 1:length(Dof)
-                append!(Is, Dof)
-                for j in 1:length(Dof)
-                    push!(Js, Dof[i])
+        for (j,dof_j) in enumerate(dof)
+            for (i,dof_i) in enumerate(dof)
+                for d in 0:uDim-1
+                    push!(Is, dof_i + d) # first dof indices --> d'th dof indices (i.e. d'th component of u)
+                    push!(Js, dof_j + d)
+                    push!(Ss, _Se[i,j])
+                    # DEBUG && (d == 1) && println("u0_i = $(u0[dof_i+d]), u0_j = $(u0[dof_j+d])")
                 end
             end
-            append!(Ss, Sck)
         end
     end
 
     # Form final stiffness matrix
     I, J, V = findnz(domain.K)
-    domain.K = sparse([I; Is], [J; Js], [V; Ss])
+    if DEBUG && ~isempty(interfaceindices)
+        Ks = sparse(Is, Js, Ss, size(domain.K)...)
+        # @show Ks
+        @show size(Ks)
+        @show size(domain.K)
+
+        ix = [(uDim.*interfaceindices[1].-1)...]
+        ks = Array(Ks[ix,ix])
+        !(ks[1,2] ≈ 0) && (ks ./= ks[1,2])
+        # display(ks)
+        
+        # display(spy(Ks))
+        # display(spy(domain.K))
+
+        # domain.K += Ks
+        domain.K = sparse([I; Is], [J; Js], [V; Ss])
+    else
+        domain.K = sparse([I; Is], [J; Js], [V; Ss])
+    end
+
+    if DEBUG
+        IJ = [I J]
+        IJs = [Is Js]
+        IJ_unique = unique(IJ, dims = 1)
+        IJs_unique = unique(IJs, dims = 1)
+        @show size(IJ), size(IJ_unique)
+        @show size(IJs), size(IJs_unique)
+        # @assert IJnew == IJunique
+
+        # display(spy(domain.K))
+    end
 
     return domain
 end
@@ -787,6 +847,7 @@ end
 
 # Calculate ω(x) inside region number `region`, which is assumed to be tissue
 function omega(x::Vec{2}, p::MyelinProblem, region::TissueRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {C<:Circle{2}}
+    (isempty(outercircles) && isempty(innercircles)) && return zero(eltype(x)) # no structures => no frequency shift
     constants = OmegaDerivedConstants(p)
 
     ω = sum(eachindex(outercircles, innercircles)) do i
@@ -800,6 +861,7 @@ end
 
 # Calculate ω(x) inside region number `region`, which is assumed to be myelin
 function omega(x::Vec{2}, p::MyelinProblem, region::MyelinRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {C<:Circle{2}}
+    (isempty(outercircles) && isempty(innercircles)) && return zero(eltype(x)) # no structures => no frequency shift
     constants = OmegaDerivedConstants(p)
 
     ω = sum(eachindex(outercircles, innercircles)) do i
@@ -817,6 +879,7 @@ end
 
 # Calculate ω(x) inside region number `region`, which is assumed to be axonal
 function omega(x::Vec{2}, p::MyelinProblem, region::AxonRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {C<:Circle{2}}
+    (isempty(outercircles) && isempty(innercircles)) && return zero(eltype(x)) # no structures => no frequency shift
     constants = OmegaDerivedConstants(p)
 
     ω = sum(eachindex(outercircles, innercircles)) do i
@@ -832,24 +895,24 @@ function omega(x::Vec{2}, p::MyelinProblem, region::AxonRegion, outercircles::Ve
 end
 @inline omega(x::Vec{2}, p::MyelinProblem, domain::MyelinDomain{AxonRegion}) = omega(x, p, getregion(domain), getoutercircles(domain), getinnercircles(domain))
 
-# Individual coordinate input
-@inline omega(x, y, p::MyelinProblem, domain::MyelinDomain) = omega(Vec{2}((x, y)), p, domain)
-
 # Calculate ω(x) by searching for the region which `x` is contained in
 function omega(
         x::Vec{2},
         p::MyelinProblem,
-        outercircles::Vector{Circle{2,T}},
-        innercircles::Vector{Circle{2,T}},
+        outercircles::Vector{C},
+        innercircles::Vector{C},
         outer_bdry_point_type = :myelin, # `:tissue` or `:myelin`
         inner_bdry_point_type = :myelin, # `:myelin` or `:axon`
-        thresh_outer = outer_bdry_point_type == :myelin ?  √eps(T) : -√eps(T),
-        thresh_inner = inner_bdry_point_type == :myelin ? -√eps(T) :  √eps(T)
-    ) where {T}
+        thresh_outer = outer_bdry_point_type == :myelin ?  √eps(eltype(x)) : -√eps(eltype(x)),
+        thresh_inner = inner_bdry_point_type == :myelin ? -√eps(eltype(x)) :  √eps(eltype(x))
+    ) where {C <: Circle{2}}
+    
+    # No structures => no frequency shift
+    (isempty(outercircles) && isempty(innercircles)) && return zero(eltype(x))
 
-    # - A positive `thresh_outer` interprets `outercircles` boundary points as
-    #   being in the myelin region, and tissue region for a negative value
-    # - Similarly, a negative `thresh_inner` interprets `innercircles` boundary
+    # - Positive `thresh_outer` interprets `outercircles` boundary points as being part of
+    #   the myelin region; negative interprets boundary points as in the tissue region
+    # - Similarly, negative `thresh_inner` interprets `innercircles` boundary
     #   points as being within the myelin region, and axon region for positive
     i_outer = findfirst(c -> is_in_circle(x, c, thresh_outer), outercircles)
     i_inner = findfirst(c -> is_in_circle(x, c, thresh_inner), innercircles)
@@ -864,6 +927,10 @@ function omega(
 
     return omega(x, p, region, outercircles, innercircles)
 end
+@inline omega(x::Vec{2}, p::MyelinProblem, domain::MyelinDomain{PermeableInterfaceRegion}) = omega(x, p, getoutercircles(domain), getinnercircles(domain))
+
+# Individual coordinate input
+@inline omega(x, y, p::MyelinProblem, domain::MyelinDomain) = omega(Vec{2}((x, y)), p, domain)
 
 # Return a vector of vectors of nodal values of ω(x) evaluated on each MyelinDomain
 function omegamap(p::MyelinProblem, m::MyelinDomain)
@@ -907,6 +974,10 @@ function doassemble!(
         prob::BlochTorreyProblem{T}
     ) where {uDim,gDim,T,Nd,Nf}
 
+    #TODO: DEBUGGING
+    DEBUG = true
+    isfirst = true
+
     # This assembly function is only for CellVectorValues
     @assert typeof(getcellvalues(domain)) <: CellVectorValues
 
@@ -923,10 +994,6 @@ function doassemble!(
     Ke = zeros(T, n_basefuncs, n_basefuncs)
     Me = zeros(T, n_basefuncs, n_basefuncs)
     we = zeros(T, n_basefuncs)
-
-    isfirst = true
-    Rfirst = zero(T)
-    dΩfirst = zero(T)
 
     # It is now time to loop over all the cells in our grid. We do this by iterating
     # over a `CellIterator`. The iterator caches some useful things for us, for example
@@ -952,16 +1019,32 @@ function doassemble!(
             dΩ = getdetJdV(getcellvalues(domain), q_point)
             coords_qp = spatial_coordinate(getcellvalues(domain), q_point, coords)
 
+            # if DEBUG && isfirst
+            #     mxcall(:hold, 0, "on")
+            #     mxcall(:scatter3, 0, [coords_qp[1]], [coords_qp[2]], [1.0], ".")
+            # end
+
             # calculate the heat conductivity and heat source at point `coords_qp`
             R = prob.Rdecay(coords_qp)
             D = prob.Dcoeff(coords_qp)
             ω = prob.Omega(coords_qp)
 
-            if isfirst
-                Rfirst = R
-                dΩfirst = dΩ
-                @show q_point
-                @show coords_qp
+            if DEBUG
+                # if norm2(coords_qp) <= T(0.3 + 1e-6)^2
+                #     R = T(0.1)
+                # end
+                # if norm2(coords_qp - Vec{2,T}((0.8,0.8))) <= T(0.2 + 1e-6)^2
+                #     R = T(0.1)
+                # end
+                if norm2(coords_qp - Vec{2,T}((0.5,0.5))) <= T(0.5 + 1e-6)^2
+                    R = T(0.1)
+                end
+            end
+
+            if DEBUG && isfirst
+                # @show q_point
+                # @show coords_qp
+                # @show R, ω
             end
 
             # For each quadrature point we loop over all the (local) shape functions.
@@ -980,18 +1063,40 @@ function doassemble!(
             end
         end
 
-        if isfirst
-            _Ke = -(Rfirst.*Me .+ Ke)
-            println("---- Ke ----\n"); display(_Ke); @show sum(_Ke, dims=2); println("\n")
-            println("---- Me ----\n"); display(Me); println("\n")
-            println("---- we ----\n"); display(we); println("\n")
+        if DEBUG && cell.current_cellid[]==3 && isfirst
             isfirst = false
+            # println("---- Ke ----\n"); display(Ke); @show sum(Ke, dims=2); println("\n")
+            # println("---- Me ----\n"); display(Me); println("\n")
+            # println("---- we ----\n"); display(we); println("\n")
+
+            println("\n\n")
+            offset = getdofhandler(domain).cell_dofs_offset[cell.current_cellid[]]
+            # @show getdofhandler(domain).cell_dofs[offset+]
+            @show cell.current_cellid[]
+            @show cell.nodes
+            @show cell.coords
+            @show celldofs(cell)
+            
+            # @show (cell.coords[1] + cell.coords[2])/2
+            # mid = sum(cell.coords)/length(cell.coords)
+            # @show mid
+            # @show (cell.coords[1] + mid)/2
+            # @show (cell.coords[2] + mid)/2
+            # @show (cell.coords[3] + mid)/2
+
+            # @show display(Ke)
+            # @show Ke
+            # @show Me
+            # @show we
+            println("\n\n")
         end
 
         # The last step in the element loop is to assemble `Ke` and `Me`
         # into the global `K` and `M` with `assemble!`.
         assemble!(assembler_K, celldofs(cell), Ke, we)
         assemble!(assembler_M, celldofs(cell), Me)
+
+        # error("breakpoint")
     end
 
     # # Now, allocate local interface element matrices.
@@ -1030,7 +1135,6 @@ function doassemble!(
 
     # function surface_integral!(Ke, facevalues::FaceVectorValues, cell, q_point, coords, func::Function)
     # end
-
 
     return domain
 end

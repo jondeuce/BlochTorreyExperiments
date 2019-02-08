@@ -13,20 +13,20 @@ btparams = BlochTorreyParameters{Float64}(
 
 exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = creategrids(btparams; fname = "gridplot")
 
-# TODO: For some reason, BSON has a bug with saving sets... just remove them for now
-exterior, tori, interior = deepcopy(exteriorgrids), deepcopy(torigrids), deepcopy(interiorgrids)
-for g in Iterators.flatten((exterior, tori, interior))
-    g.cellsets = Dict(); g.nodesets = Dict(); g.facesets = Dict()
-end
+# # TODO: For some reason, BSON has a bug with saving sets... just remove them for now
+# exterior, tori, interior = deepcopy(exteriorgrids), deepcopy(torigrids), deepcopy(interiorgrids)
+# for g in Iterators.flatten((exterior, tori, interior))
+#     g.cellsets = Dict(); g.nodesets = Dict(); g.facesets = Dict()
+# end
 
-BSON.bson("$(getnow())__grids.bson", Dict(
-    :exteriorgrids => exterior,
-    :torigrids => tori,
-    :interiorgrids => interior,
-    :outercircles => outercircles,
-    :innercircles => innercircles,
-    :bdry => bdry
-))
+# BSON.bson("$(getnow())__grids.bson", Dict(
+#     :exteriorgrids => exterior,
+#     :torigrids => tori,
+#     :interiorgrids => interior,
+#     :outercircles => outercircles,
+#     :innercircles => innercircles,
+#     :bdry => bdry
+# ))
 
 function MWF!(results, domains, omegas, # modified in-place
         params,
@@ -73,7 +73,7 @@ function run_MWF!(Drange, Krange, thetarange, btparams, results, domains, omegas
     for D in Drange for K in Krange for theta in thetarange
         count += 1
 
-        try
+        # try
             println("\n\n")
             println("---- SIMULATION $count/$totalcount: $(Dates.now()) ----")
             @show rad2deg(theta), D, K
@@ -90,9 +90,9 @@ function run_MWF!(Drange, Krange, thetarange, btparams, results, domains, omegas
 
             BSON.bson("$(getnow())__params_$count.bson", Dict(:params => params))
             CSV.write(results, count)
-        catch e
-            @warn "error running simulation $count/$totalcount"; @warn e
-        end
+        # catch e
+        #     @warn "error running simulation $count/$totalcount"; @warn e
+        # end
 
     end end end
 
@@ -102,15 +102,16 @@ end
 results = MWFResults{Float64}(metadata = Dict(:TE => 10e-3))
 domains = []
 omegas = []
-thetarange = range(0.0, stop = π/2, length = 2)
-# Krange = [0.0, 10.0.^(-2:3)...]
-# Drange = [10.0.^(0:3)..., 2000.0]
-# Krange = [0.0, 1e-3, 5e-3, 10e-3, 25e-3, 50e-3, 100e-3, 250e-3, 500e-3, 1.0, 2.0, 5.0, 10.0, 50.0, 100.0, 1000.0]
-# Drange = [1e-2, 1e-1, 1.0, 2.0, 4.0, 8.0, 15.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2000.0]
+thetarange = [π/2]
+# thetarange = range(0.0, stop = π/2, length = 2)
 Krange = [0.0]
-Drange = [1e-10]
+# Krange = [0.0, 10.0.^(-2:3)...]
+# Krange = [0.0, 1e-3, 5e-3, 10e-3, 25e-3, 50e-3, 100e-3, 250e-3, 500e-3, 1.0, 2.0, 5.0, 10.0, 50.0, 100.0, 1000.0]
+Drange = [1.0]
+# Drange = [1e-10]
+# Drange = [10.0.^(0:3)..., 2000.0]
+# Drange = [1e-2, 1e-1, 1.0, 2.0, 4.0, 8.0, 15.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2000.0]
 
 run_MWF!(Drange, Krange, thetarange, btparams, # loop params
     results, domains, omegas, # modified in-place
-    exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry # other args
-)
+    exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry) # other args
