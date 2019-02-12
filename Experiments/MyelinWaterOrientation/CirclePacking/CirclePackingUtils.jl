@@ -97,9 +97,9 @@ function scale_to_density(input_circles, goaldensity)
     ϵ = 100 * eps(α_min)
 
     if density(α_min + ϵ) ≤ goaldensity
-        # Goal density can't be reached; shrink as much as possible
+        # Goal density can't be reached; shrinking as much as possible
         @warn ("Density cannot be reached without overlapping circles; " *
-               "can only reach $(density(α_min + ϵ)) < $goaldensity")
+               "shrinking as much as possible to $(density(α_min + ϵ)) < $goaldensity")
         packed_circles = expand_circles(α_min + ϵ)
     else
         # Find α which results in the desired packing density

@@ -45,20 +45,21 @@ function packcircles(btparams::BlochTorreyParameters{T};
 
     rs = rand(radiidistribution(btparams), N)
     @time initial_circles = GreedyCirclePacking.pack(rs; goaldensity = 1.0, iters = it)
-    @show minimum(radius.(initial_circles))
-    @show estimate_density(initial_circles)
-    @show minimum_signed_edge_distance(initial_circles)
-    @show estimate_density(initial_circles)
 
-    @time circles = EnergyCirclePacking.pack(initial_circles;
-        autodiff = true,
-        secondorder = false,
-        setcallback = false,
-        goaldensity = η,
-        distancescale = btparams.R_mu,
-        weights = [α, β, λ],
-        epsilon = ϵ
-    )
+    # @time circles = EnergyCirclePacking.pack(initial_circles;
+    #     autodiff = true,
+    #     secondorder = false,
+    #     setcallback = false,
+    #     goaldensity = η,
+    #     distancescale = btparams.R_mu,
+    #     weights = [α, β, λ],
+    #     epsilon = ϵ
+    # )
+    circles = scale_to_density(initial_circles, η) # faster, and quite good
+
+    @show minimum_signed_edge_distance(circles)
+    @show minimum(radius.(circles))
+    @show estimate_density(circles)
 
     return circles
 end
@@ -88,14 +89,9 @@ function creategrids(btparams::BlochTorreyParameters{T};
 
     h0 = RESOLUTION * minimum(radius.(outercircles))*(1-btparams.g_ratio) # fraction of size of minimum torus width
     h_min = 1.0*h0 # minimum edge length
-    h_max = 5.0*h0 # maximum edge length
-    h_range = 10.0*h0 # distance over which h increases from h_min to h_max
-    h_rate = 0.6 # rate of increase of h from circle boundaries (power law; smaller = faster radial increase)
-
-    DEBUG = true
-    if DEBUG
-        h_max = h_min
-    end
+    h_max = 1.0*h0 # h_max = 5.0*h0 # maximum edge length
+    h_range = 5.0*h0 # h_range = 10.0*h0 # distance over which h increases from h_min to h_max
+    h_rate = 0.7 # rate of increase of h from circle boundaries (power law; smaller = faster radial increase)
 
     if (bdry == nothing)
         bdry, _ = opt_subdomain(outercircles)
@@ -132,11 +128,15 @@ function createdomains(
     myelinprob = MyelinProblem(btparams)
     myelinsubdomains = createmyelindomains(exteriorgrids[:], torigrids[:], interiorgrids[:], outercircles[:], innercircles[:])
 
+    println("Assembling...")
     @time doassemble!.(myelinsubdomains, Ref(myelinprob))
     @time factorize!.(getdomain.(myelinsubdomains))
     @time combinedmyelindomain = MyelinDomain(PermeableInterfaceRegion(), myelinprob, myelinsubdomains)
     @time factorize!(combinedmyelindomain)
     myelindomains = [combinedmyelindomain]
+
+    # error("breakpoint10")
+    # error("breakpoint15")
 
     return myelinprob, myelinsubdomains, myelindomains
 end

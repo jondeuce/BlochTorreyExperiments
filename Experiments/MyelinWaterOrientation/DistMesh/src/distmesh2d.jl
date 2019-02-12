@@ -147,6 +147,9 @@ function distmesh2d(
     while true
         count += 1
 
+        # Restart if no points are present
+        (isempty(p) || isempty(pold)) && (return restart())
+
         # 3. Retriangulation by the Delaunay algorithm
         if count == 1 || (√maximum(norm2.(p.-pold)) > h0 * TTOL)               # Any large movement?
             p = threshunique(p; rtol = √eps(T), atol = eps(T))
