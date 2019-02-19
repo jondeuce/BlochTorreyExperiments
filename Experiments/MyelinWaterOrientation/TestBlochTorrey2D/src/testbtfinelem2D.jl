@@ -25,7 +25,7 @@ function testbtfinelem2D(opts::BlochTorreyParameters{T};
 
     if Plot
         paramstr = "theta = $(rad2deg(opts.theta)) deg, D = $(opts.D_Tissue) um2/s, K = $(opts.K_perm) um/s"
-        simpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = omega)
+        mxsimpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = omega)
         plotmagnitude(sols, opts, myelindomains, bdry; titlestr = "Magnitude: " * paramstr)
         plotphase(sols, opts, myelindomains, bdry; titlestr = "Phase: " * paramstr)
         # plotSEcorr(sols, opts, myelindomains, fname = "SEcorr")

@@ -10,13 +10,13 @@ import EnergyCirclePacking
 import GreedyCirclePacking
 
 using JuAFEM
-using MATLAB
+using MATLABPlots
 using OrdinaryDiffEq, DiffEqOperators, Sundials
 using BenchmarkTools
 using Parameters: @with_kw, @unpack
 using IterableTables, DataFrames, CSV, Dates
 
-export creategrids, createdomains
+export packcircles, creategrids, createdomains
 export calcomegas, calcomega
 export calcsignals, calcsignal
 export solveblochtorrey, default_algfun, get_algfun
@@ -40,26 +40,46 @@ function packcircles(btparams::BlochTorreyParameters{T};
         α = 1e-1, # covariance penalty weight (enforces circular distribution)
         β = 1e-6, # mutual distance penalty weight
         λ = 1.0, # overlap penalty weight (or lagrange multiplier for constrained version)
-        it = 100 # maximum iterations for greedy packing
+        it = 100, # maximum iterations for greedy packing
+        maxiter = 5 # maximum attempts for sampling radii + greedy packing + energy packing
     ) where {T}
+    
+    local circles
+    η_best = 0.0
+    
+    for i in 1:maxiter
+        println("\nPacking... (attempt $i/$maxiter)\n")
+        rs = rand(radiidistribution(btparams), N) # Initial radii distribution
+        
+        print("GreedyCirclePacking: ")
+        @time greedycircles = GreedyCirclePacking.pack(rs; goaldensity = 1.0, iters = it)
 
-    rs = rand(radiidistribution(btparams), N)
-    @time initial_circles = GreedyCirclePacking.pack(rs; goaldensity = 1.0, iters = it)
+        print("EnergyCirclePacking: ")
+        @time energycircles = EnergyCirclePacking.pack(greedycircles;
+            autodiff = true,
+            secondorder = false,
+            setcallback = false,
+            goaldensity = 1.0, #η # pack as much as possible, scale to goal density after
+            distancescale = btparams.R_mu,
+            weights = [α, β, λ],
+            epsilon = ϵ # pack as much as possible, penalizing packing tighter than distance ϵ
+        )
 
-    # @time circles = EnergyCirclePacking.pack(initial_circles;
-    #     autodiff = true,
-    #     secondorder = false,
-    #     setcallback = false,
-    #     goaldensity = η,
-    #     distancescale = btparams.R_mu,
-    #     weights = [α, β, λ],
-    #     epsilon = ϵ
-    # )
-    circles = scale_to_density(initial_circles, η) # faster, and quite good
+        scaledcircles = CirclePackingUtils.scale_to_density(energycircles, η, ϵ)
 
-    @show minimum_signed_edge_distance(circles)
-    @show minimum(radius.(circles))
-    @show estimate_density(circles)
+        println("")
+        println("Distance threshold: $ϵ")
+        println("Minimum myelin thickness: $(minimum(radius.(scaledcircles))*(1-btparams.g_ratio))")
+        println("Minimum circles distance: $(minimum_signed_edge_distance(scaledcircles))")
+        println("")
+        println("GreedyCirclePacking density:  $(estimate_density(greedycircles))")
+        println("EnergyCirclePacking density:  $(estimate_density(energycircles))")
+        println("Final scaled circles density: $(estimate_density(scaledcircles))")
+        
+        η_curr = estimate_density(scaledcircles)
+        (η_curr ≈ η) && (circles = scaledcircles; break)
+        (η_curr > η_best) && (η_best = η_curr; circles = scaledcircles)
+    end
 
     return circles
 end
@@ -69,49 +89,48 @@ function creategrids(btparams::BlochTorreyParameters{T};
         N = 20, # number of circles
         η = btparams.AxonPDensity, # goal packing density
         ϵ = 0.1 * btparams.R_mu, # overlap occurs when distance between circle edges is ≤ ϵ
-        α = 1e-1, # covariance penalty weight (enforces circular distribution)
-        β = 1e-6, # mutual distance penalty weight
-        λ = 1.0, # overlap penalty weight (or lagrange multiplier for constrained version)
-        it = 100, # maximum iterations for greedy packing
-        bdry = nothing, # default boundary is automatically determined in packcircles
-        outercircles = packcircles(btparams; N=N,η=η,ϵ=ϵ,α=α,β=β,λ=λ,it=it), # outer circles
+        maxpackiter = 10,
+        outercircles = packcircles(btparams; N=N,η=η,ϵ=ϵ,α=1e-1,β=1e-6,λ=1.0,it=100,maxiter=maxpackiter), # outer circles
+        bdry = opt_subdomain(outercircles)[1], # default boundary is automatically determined in packcircles
+        FORCEDENSITY = false, # If this flag is true, an error is thrown if the reached packing density is not η
+        FORCEAREA = false, # If this flag is true, an error is thrown if the resulting grid area doesn't match the bdry area
         RESOLUTION = 1.0,
-        CIRCLESTALLITERS = 500,
-        EXTERIORSTALLITERS = 1000,
+        CIRCLESTALLITERS = 1000, #DEBUG
+        EXTERIORSTALLITERS = 1000, #DEBUG
         PLOT = true
     ) where {T}
 
-    dmin = minimum_signed_edge_distance(outercircles)
-    @show covariance_energy(outercircles)
-    @show estimate_density(outercircles)
-    @show is_any_overlapping(outercircles)
-    @show (dmin, ϵ, dmin > ϵ)
-
-    h0 = RESOLUTION * minimum(radius.(outercircles))*(1-btparams.g_ratio) # fraction of size of minimum torus width
-    h_min = 1.0*h0 # minimum edge length
-    h_max = 1.0*h0 # h_max = 5.0*h0 # maximum edge length
-    h_range = 5.0*h0 # h_range = 10.0*h0 # distance over which h increases from h_min to h_max
-    h_rate = 0.7 # rate of increase of h from circle boundaries (power law; smaller = faster radial increase)
-
-    if (bdry == nothing)
-        bdry, _ = opt_subdomain(outercircles)
+    if FORCEDENSITY
+        η_curr = estimate_density(outercircles)
+        !(η_curr ≈ η) && error("Packing density not reached: goal density was $η, reached $η_curr.")
     end
+
+    mindist = minimum_signed_edge_distance(outercircles)
+    h_min = RESOLUTION * T(0.5 * mindist)
+    h_max = RESOLUTION * T(1.0 * mindist)
+    h_range = RESOLUTION * T(2.0 * mindist)
+    h_rate = T(1.0)
+
     innercircles = scale_shape.(outercircles, btparams.g_ratio)
 
     @time exteriorgrids, torigrids, interiorgrids, parentcircleindices = disjoint_rect_mesh_with_tori(
         bdry, innercircles, outercircles, h_min, h_max, h_range, h_rate;
-        CIRCLESTALLITERS = CIRCLESTALLITERS, EXTERIORSTALLITERS = EXTERIORSTALLITERS, plotgrids = PLOT, exterior_tiling = (1, 1)
+        plotgrids = PLOT, exterior_tiling = (1, 1), # DEBUG
+        CIRCLESTALLITERS = CIRCLESTALLITERS, EXTERIORSTALLITERS = EXTERIORSTALLITERS
     )
 
-    cell_area_mismatch = sum(area.(exteriorgrids)) + sum(area.(torigrids)) + sum(area.(interiorgrids)) - area(bdry)
+    grid_area = sum(area.(exteriorgrids)) + sum(area.(torigrids)) + sum(area.(interiorgrids))
+    bdry_area = area(bdry)
+    cell_area_mismatch = bdry_area - grid_area
+    if FORCEAREA
+        !(grid_area ≈ bdry_area) && error("Grid area not matched with boundary area; relative error is $(cell_area_mismatch/bdry_area).")
+    end
     @show cell_area_mismatch
 
-    if PLOT
-        allgrids = vcat(exteriorgrids[:], torigrids[:], interiorgrids[:])
-        simpplot(allgrids; newfigure = true, axis = mxaxis(bdry))
-    end
+    PLOT && mxsimpplot(vcat(exteriorgrids[:], torigrids[:], interiorgrids[:]); newfigure = true, axis = mxaxis(bdry))
+    (fname != nothing) && mxsavefig(fname) #DEBUG
 
-    !(fname == nothing) && mxsavefig(fname)
+    # PLOT && simpplot(vcat(exteriorgrids[:], torigrids[:], interiorgrids[:]); color = :cyan) |> display
 
     return exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry
 end
@@ -205,11 +224,11 @@ default_algfun() = expokit_algfun()
 
 function plotmagnitude(sols, btparams, myelindomains, bdry; titlestr = "Magnitude", fname = nothing)
     Umagn = reduce(vcat, norm.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
-    simpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = Umagn)
+    mxsimpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = Umagn)
     mxcall(:title, 0, titlestr)
 
     # allgrids = vcat(exteriorgrids[:], torigrids[:], interiorgrids[:])
-    # simpplot(allgrids; newfigure = true, axis = mxaxis(bdry))
+    # mxsimpplot(allgrids; newfigure = true, axis = mxaxis(bdry))
 
     !(fname == nothing) && mxsavefig(fname)
 
@@ -218,7 +237,7 @@ end
 
 function plotphase(sols, btparams, myelindomains, bdry; titlestr = "Phase", fname = nothing)
     Uphase = reduce(vcat, angle.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
-    simpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = Uphase)
+    mxsimpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = Uphase)
     mxcall(:title, 0, titlestr)
 
     !(fname == nothing) && mxsavefig(fname)

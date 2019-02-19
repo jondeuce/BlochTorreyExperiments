@@ -15,6 +15,7 @@ using LinearAlgebra
 using PolynomialRoots
 using Optim
 using LineSearches
+using RecipesBase
 
 export Ellipse, Circle, Rectangle, VecOfCircles, VecOfEllipses, VecOfRectangles
 export norm2, hadamardproduct, ⊙, skewprod, ⊠
@@ -47,6 +48,12 @@ end
 const VecOfCircles{dim} = Vector{Circle{dim,T}} where T
 const VecOfEllipses{dim} = Vector{Ellipse{dim,T}} where T
 const VecOfRectangles{dim} = Vector{Rectangle{dim,T}} where T
+
+# ---------------------------------------------------------------------------- #
+# Plot Recipes
+# ---------------------------------------------------------------------------- #
+@recipe f(::Type{C}, c::C) where C <: Circle{2} = [Tuple(origin(c)) .+ radius(c) .* (cos(θ), sin(θ)) for θ in range(0, 2π, length=100)]
+@recipe f(::Type{R}, r::R) where R <: Rectangle{2} = [Tuple.(corners(r))...]
 
 # ---------------------------------------------------------------------------- #
 # Misc. utilities for Vec type from Tensors.jl
@@ -316,14 +323,18 @@ function is_in_any_circle(x::Vec{dim,T},
     return any(circle->is_in_circle(x, circle, thresh, lt), circles)
 end
 
-# check if c1 and c2 are overlapping
+# check if c1 and c2 are overlapping:
+#   positive thresh means circles must be at least a distance |thresh| = thresh apart
+#   negative thresh means that circles can overlap an amount up to |thresh| = -thresh
 @inline function is_overlapping(c1::Circle{dim,T}, c2::Circle{dim,T}, lt = ≤, thresh = zero(T)) where {dim,T}
     dx = origin(c1) - origin(c2)
-    d_min = radius(c1) + radius(c2)
-    return lt(dx⋅dx, (d_min + thresh)^2)
+    d_min = radius(c1) + radius(c2) + thresh
+    return lt(dx⋅dx, d_min^2)
 end
 
 # check if any circles in `cs` are overlapping
+#   positive thresh means circles must be at least a distance |thresh| = thresh apart
+#   negative thresh means that circles can overlap an amount up to |thresh| = -thresh
 function is_any_overlapping(cs::AbstractVector{C}, lt = ≤, thresh = zero(T)) where {C<:Circle{dim,T}} where {dim,T}
     @inbounds for i in 1:length(cs)-1
         ci = cs[i]

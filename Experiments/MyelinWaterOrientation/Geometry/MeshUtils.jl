@@ -14,10 +14,15 @@ using VoronoiDelaunay
 using JuAFEM
 using JuAFEM: vertices, faces, edges
 using SparseArrays, Statistics
+
+using RecipesBase
 # using MATLAB # Only need for MAT_* methods, which are no longer used
 
 export getfaces, simpplot, disjoint_rect_mesh_with_tori
 export mxbbox, mxaxis
+
+# DEBUG
+export sqrtclamp, linearclamp, quadclamp, powerclamp, dcircles, dexterior, hcircles, hcircle, hshell
 
 # ---------------------------------------------------------------------------- #
 # Misc grid utils
@@ -69,6 +74,7 @@ function JuAFEM.Grid(grids::AbstractVector{G}) where {G<:Grid}
     grid = Grid(cells, nodes)
 
     # Add boundary set and boundary matrix, including inner boundaries
+    # NOTE: this should already be done by the Grid constructor?
     e = boundaryfaceset(grid)
     addfaceset!(grid, "boundary", e)
     grid.boundary_matrix = JuAFEM.boundaries_to_sparse(e)
@@ -294,7 +300,7 @@ end
 
 # Plot Grid or vector of Grids. Vector of Grids are combined into one large Grid
 # before plotting for speed, so that simpplot need only be called once
-function DistMesh.simpplot(gs::Vector{G}; kwargs...) where {G <: Grid{2,3}}
+function DistMesh.unwrap_simpplot_args(gs::Vector{G}) where {G <: Grid{2,3}}
     ps = nodematrix.(gs) # Vector of matrices of node positions
     ts = cellmatrix.(gs) # Vector of matrices of triangle indices
     idxshifts = cumsum(size.(ps,1))
@@ -303,10 +309,9 @@ function DistMesh.simpplot(gs::Vector{G}; kwargs...) where {G <: Grid{2,3}}
     end
     p = reduce(vcat, ps) # Node positions matrix
     t = reduce(vcat, ts) # Triangle indices matrix
-    simpplot(p, t; kwargs...) # Plot grid
-    return nothing
+    return p, t
 end
-DistMesh.simpplot(g::Grid{2,3}; kwargs...) = simpplot(nodematrix(g), cellmatrix(g); kwargs...)
+DistMesh.unwrap_simpplot_args(g::G) where {G <: Grid{2,3}} = nodematrix(g), cellmatrix(g)
 
 # ---------------------------------------------------------------------------- #
 # Helper functions for DistMesh, etc.
@@ -320,6 +325,7 @@ DistMesh.simpplot(g::Grid{2,3}; kwargs...) = simpplot(nodematrix(g), cellmatrix(
 #  abs(d) = h0 to abs(d) = γ*h0, with h clamped at h0 for abs(d) < h0 and
 #  η*h0 for abs(d) > γ*h0
 # -sqrt/linear/quad clamps are special cases of the power clamp with exponent α
+# -lower α gives faster increasing edge sizes away from boundary; higher α gives slower
 @inline sqrtclamp(d, h0, η, γ) = clamp(η * sqrt(h0 * abs(d) / γ), h0, η * h0)
 @inline linearclamp(d, h0, η, γ) = clamp(η * abs(d) / γ, h0, η * h0)
 @inline quadclamp(d, h0, η, γ) = clamp((η / h0) * (abs(d) / γ)^2, h0, η * h0)
@@ -376,11 +382,8 @@ function disjoint_rect_mesh_with_tori(
 
     # Useful defines
     V, G = Vec{2,T}, Grid{2,3,T,3}
-    h0 = h_min # typical h-value
-    eta = T(h_max/h0) # approx ratio between largest/smallest edges, i.e. max ≈ eta * h0
-    gamma = T(h_range/h0) # max edge length of `eta * h0` occurs approx. `gamma * h0` from circle edges
-    alpha = h_rate # power law for edge length
-    D_BDRY = h0*sqrt(eps(T)) # points within D_BDRY from boundary edges are deemed on the boundary
+    D_BDRY = h_min*sqrt(eps(T)) # points within D_BDRY from boundary edges are deemed on the boundary
+    D_CIRC = h_min # circles with at least D_CIRC within the bounding box are included
 
     # Ensure that:
     # -there are the same number of outer/inner circles, and at least 1 of each
@@ -396,7 +399,7 @@ function disjoint_rect_mesh_with_tori(
         # Allow circle if the circle is sufficiently inside the boundary rectangle;
         # here, if intersect(c,rect_bdry) has size above a threshold in all dimensions
         c_bounding_box = intersect(rect_bdry, bounding_box(c))
-        return min(widths(c_bounding_box)...) ≥ D_BDRY # h0
+        return min(widths(c_bounding_box)...) ≥ D_CIRC
     end
 
     function circle_bdry_points(p::AbstractVector{V}, e, c, thresh = D_BDRY) where {V <: Vec{2}}
@@ -460,12 +463,17 @@ function disjoint_rect_mesh_with_tori(
     end
 
     # Initialize interior/tori grids
-    interiorgrids, torigrids = G[], G[], G[]
+    interiorgrids, torigrids = G[], G[]
     parent_circle_indices = collect(1:length(inner_circles))
 
     # Initialize exterior grid
     exteriorgrids = Matrix{G}(undef, exterior_tiling)
     tiled_ext_bdry = tile_rectangle(rect_bdry, exterior_tiling)
+
+    # Initialize plot, if any
+    local fighandle
+    # plotgrids && (fighandle = plot(;seriestype = :simpplot))
+    plotgrids && (fighandle = simpplot([],[]))
 
     @inbounds for i = 1:length(inner_circles)
         # Fixed points for inner/outer circles, as well as boundary points
@@ -473,27 +481,48 @@ function disjoint_rect_mesh_with_tori(
         int_bdry = intersect(rect_bdry, bounding_box(c_in))
 
         println("$i/$(length(inner_circles)): Interior")
-        if check_include_circle(c_in)
-            fd = x -> dintersect(drectangle0(x, int_bdry), dcircle(x, c_in))
-            fh = x -> hcircle(x, h0, eta, gamma, alpha, c_in)
-
-            pfix = vcat(
-                filter(x -> is_in_circle(x, c_in), [corners(rect_bdry)...]), # rect_bdry corners
-                intersection_points(rect_bdry, c_in)
-            )
-            !isempty(pfix) && unique!(sort!(pfix; by = first))
-
-            p, t = distmesh2d(
-                fd, fh, h0, mxbbox(int_bdry), pfix;
-                PLOT = plotgridprogress, MAXSTALLITERS = CIRCLESTALLITERS
-            )
-            fix_gridpoints!(p, t, rect_bdry)
-
-            plotgrids && simpplot(p, t; newfigure = true)
-            push!(interiorgrids, Grid(p, t))
-        else
+        if !check_include_circle(c_in)
             push!(interiorgrids, Grid(Triangle[], Node{2,T}[]))
+            continue
         end
+
+        halfwidth = min(radius(c_in)/5, 0.5 * min(widths(int_bdry)...))
+        h0 = min(h_min, halfwidth)
+        h1 = min((h_max/h_min) * h0, halfwidth) # preserve ratio eta, or clamp
+        h2 = h_range # don't want to shrink h_range
+
+        eta = h1/h0
+        gamma = h2/h0
+        alpha = h_rate
+
+        # println("\nDEBUG...")
+        # @show radius(c_in)
+        # @show h0, h1, h2
+        # @show eta, gamma, alpha
+        # @show length(DistMesh.init_points(mxbbox(int_bdry), h0))
+
+        fd = x -> dintersect(drectangle0(x, int_bdry), dcircle(x, c_in))
+        fh = x -> hcircle(x, h0, eta, gamma, alpha, c_in)
+
+        pfix = vcat(
+            filter(x -> is_in_circle(x, c_in), [corners(rect_bdry)...]), # rect_bdry corners
+            intersection_points(rect_bdry, c_in)
+        )
+        !isempty(pfix) && unique!(sort!(pfix; by = first))
+
+        p, t = distmesh2d(
+            fd, fh, h0, mxbbox(int_bdry), pfix;
+            PLOT = plotgridprogress, MAXSTALLITERS = CIRCLESTALLITERS
+        )
+        fix_gridpoints!(p, t, rect_bdry)
+
+        # @show length(p)
+        # println("...DEBUG\n")
+
+        # Push interior grid, and plot if requested
+        push!(interiorgrids, Grid(p, t))
+        plotgrids && simpplot!(fighandle, interiorgrids[end]; color = :yellow)
+        plotgrids && plot!(fighandle, Circle{2,T}(mean(p), 2*h_min); color = :white, seriestype = :shape, annotations = (mean(p)..., string(i)))
     end
 
     @inbounds for i = 1:length(outer_circles)
@@ -502,32 +531,53 @@ function disjoint_rect_mesh_with_tori(
         out_bdry = intersect(rect_bdry, bounding_box(c_out))
 
         println("$i/$(length(outer_circles)): Annular")
-        if check_include_circle(c_out)
-            fd = x -> dintersect(drectangle0(x, out_bdry), dshell(x, c_in, c_out))
-            fh = x -> hshell(x, h0, eta, gamma, alpha, c_in, c_out)
-
-            pfix_prev = circle_bdry_points(interiorgrids[i], c_in)
-            pfix = vcat(
-                filter(x -> is_in_circle(x, c_out) && !is_in_circle(x, c_in), [corners(rect_bdry)...]), # rect_bdry corners
-                intersection_points(rect_bdry, c_out), # only fix w.r.t rect_bdry to avoid tangent points being fixed
-                pfix_prev # interior circle boundary points from inner grid
-            )
-            !isempty(pfix) && unique!(sort!(pfix; by = first))
-
-            p, t = distmesh2d(
-                fd, fh, h0, mxbbox(out_bdry), pfix;
-                PLOT = plotgridprogress, MAXSTALLITERS = CIRCLESTALLITERS
-            )
-            fix_gridpoints!(p, t, rect_bdry)
-
-            pfix_now = circle_bdry_points(p, boundedges(p,t), c_in)
-            p, t = remove_extra_boundary_points(p, t, pfix_prev, pfix_now, fd)
-
-            plotgrids && simpplot(p, t; newfigure = true)
-            push!(torigrids, Grid(p, t)) #push!(torigrids, Grid(p, t, e))
-        else
+        if !check_include_circle(c_out)
             push!(torigrids, Grid(Triangle[], Node{2,T}[]))
+            continue
         end
+        
+        halfwidth = min(0.5 * (radius(c_out) - radius(c_in)), 0.5 * min(widths(out_bdry)...))
+        h0 = min(h_min, halfwidth)
+        # h1 = min((h_max/h_min) * h0, halfwidth) # preserve ratio eta, or clamp
+        h1 = h0 # sheaths should just be high resolution layers. they only take a small portion of the domain, anyways
+        h2 = h_range # don't want to shrink h_range
+
+        eta = h1/h0
+        gamma = h2/h0
+        alpha = h_rate
+
+        # println("\nDEBUG...")
+        # @show radius(c_out) - radius(c_in)
+        # @show h0, h1, h2
+        # @show eta, gamma, alpha
+        # @show length(DistMesh.init_points(mxbbox(out_bdry), h0))
+
+        fd = x -> dintersect(drectangle0(x, out_bdry), dshell(x, c_in, c_out))
+        fh = x -> hshell(x, h0, eta, gamma, alpha, c_in, c_out)
+
+        pfix_prev = circle_bdry_points(interiorgrids[i], c_in)
+        pfix = vcat(
+            filter(x -> is_in_circle(x, c_out) && !is_in_circle(x, c_in), [corners(rect_bdry)...]), # rect_bdry corners
+            intersection_points(rect_bdry, c_out), # only fix w.r.t rect_bdry to avoid tangent points being fixed
+            pfix_prev # interior circle boundary points from inner grid
+        )
+        !isempty(pfix) && unique!(sort!(pfix; by = first))
+
+        p, t = distmesh2d(
+            fd, fh, h0, mxbbox(out_bdry), pfix;
+            PLOT = plotgridprogress, MAXSTALLITERS = CIRCLESTALLITERS
+        )
+        fix_gridpoints!(p, t, rect_bdry)
+
+        pfix_now = circle_bdry_points(p, boundedges(p,t), c_in)
+        p, t = remove_extra_boundary_points(p, t, pfix_prev, pfix_now, fd)
+
+        # @show length(p)
+        # println("...DEBUG\n")
+
+        # Push tori grid, and plot if requested
+        push!(torigrids, Grid(p, t)) #push!(torigrids, Grid(p, t, e))
+        plotgrids && simpplot!(fighandle, torigrids[end]; color = :blue)
     end
 
     for i in 1:exterior_tiling[1]
@@ -554,6 +604,11 @@ function disjoint_rect_mesh_with_tori(
 
             # Create Delaunay tessellation
             println("$i/$(exterior_tiling[1]), $j/$(exterior_tiling[2]): Exterior")
+            h0 = h_min
+            eta = h_max/h_min
+            gamma = h_range/h_min
+            alpha = h_rate
+            
             fd = x -> dexterior(x, ext_bdry, outer_circles)
             fh = x -> hcircles(x, h0, eta, gamma, alpha, outer_circles)
 
@@ -565,7 +620,7 @@ function disjoint_rect_mesh_with_tori(
                 filter(x -> !is_in_any_circle(x, outer_circles), [corners(ext_bdry)...]), # ext_bdry corners, if not in an outer_circle
                 pfix_prev
             )
-            !isempty(pfix) && unique!(sort!(pfix; by = first))
+            !isempty(pfix) && unique!(sort!(filter!(p->is_inside(p, ext_bdry), pfix); by = first))
 
             p, t = distmesh2d(
                 fd, fh, h0, mxbbox(ext_bdry), pfix;
@@ -579,9 +634,12 @@ function disjoint_rect_mesh_with_tori(
 
             # Form exterior grid, and plot if requested
             exteriorgrids[i,j] = Grid(p, t)
-            plotgrids && simpplot(p, t; newfigure = true)
+            plotgrids && simpplot!(fighandle, exteriorgrids[i,j]; color = :cyan)
         end
     end
+
+    # Plot resulting grid
+    plotgrids && display(fighandle)
 
     return exteriorgrids, torigrids, interiorgrids, parent_circle_indices
 end

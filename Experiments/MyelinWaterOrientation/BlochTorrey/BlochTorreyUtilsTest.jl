@@ -75,7 +75,7 @@ function singleaxontests(
             mxcall(:figure, 0)
             omegavalues = omegamap(MyelinProblem(btparams), myelindomains)
             for (m, w) in zip(myelindomains, omegavalues)
-                simpplot(getgrid(m); newfigure = false, hold = true, axis = mxaxis(bdry), facecol = w);
+                mxsimpplot(getgrid(m); newfigure = false, hold = true, axis = mxaxis(bdry), facecol = w);
             end
         end
 
@@ -201,7 +201,7 @@ function multipleaxontests(
             mxcall(:figure, 0)
             omegavalues = omegamap(prob, myelindomains)
             for (m, w) in zip(myelindomains, omegavalues)
-                simpplot(getgrid(m); newfigure = false, hold = true, axis = mxaxis(bdry), facecol = w);
+                mxsimpplot(getgrid(m); newfigure = false, hold = true, axis = mxaxis(bdry), facecol = w);
             end
         end
 

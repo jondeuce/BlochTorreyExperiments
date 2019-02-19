@@ -221,42 +221,25 @@ end
 # simpplot
 # ---------------------------------------------------------------------------- #
 
-function simpplot(p::AbstractMatrix, t::AbstractMatrix;
-        newfigure = false,
-        hold = false,
-        xlim = nothing,
-        ylim = nothing,
-        axis = nothing,
-        expr = Float64[],
-        bcol = [0.8, 0.9, 1.0],
-        icol = [0.0, 0.0, 0.0],
-        nodes = 0.0,
-        tris = 0.0,
-        facecol = Float64[]
-    )
-    @assert size(p,2) == 2 && size(t,2) == 3
+@userplot SimpPlot
 
-    newfigure && mxcall(:figure, 0)
-    hold && mxcall(:hold, 0, "on")
-
-    if !(isempty(p) || isempty(t))
-        mxcall(:simpplot, 0,
-            Matrix{Float64}(p), Matrix{Float64}(t),
-            expr, bcol, icol, nodes, tris, facecol
-        )
+@recipe function f(h::SimpPlot)
+    unwrapped = unwrap_simpplot_args(h.args...)
+    if !(length(unwrapped) == 2 && typeof(unwrapped[1]) <: AbstractArray && typeof(unwrapped[2]) <: AbstractArray)
+        error("Arguments not properly parsed; expected two AbstractArray's, got: $unwrapped")
     end
-
-    !(xlim == nothing) && mxcall(:xlim, 0, xlim)
-    !(ylim == nothing) && mxcall(:ylim, 0, ylim)
-    !(axis == nothing) && mxcall(:axis, 0, axis)
-
-    return nothing
+    p, t = unwrapped
+    for i in 1:size(t,1)
+        x = [p[t[i,j],1] for j in 1:size(t,2)]
+        y = [p[t[i,j],2] for j in 1:size(t,2)]
+        @series begin
+            seriestype := :shape
+            x, y
+        end
+    end
 end
 
-function simpplot(
-        p::AbstractVector{V},
-        t::AbstractVector{NTuple{3,Int}};
-        kwargs...
-    ) where {V<:Vec{2}}
-    simpplot(to_mat(p), to_mat(t); kwargs...)
-end
+# unwrap_simpplot_args(args...) = args # we don't want this fallback; need to make sure it's caught below
+unwrap_simpplot_args(p::AbstractArray, t::AbstractArray) = p, t # this is the base case we are looking for
+unwrap_simpplot_args(p::AbstractVector{V}, t::AbstractVector{NTuple{3,Int}}) where {V<:Vec{2}} = to_mat(p), to_mat(t)
+unwrap_simpplot_args(plts::P, args...) where {P <: Union{<:AbstractPlot, <:AbstractArray{<:AbstractPlot}}} = unwrap_simpplot_args(args...) # skip plot objects

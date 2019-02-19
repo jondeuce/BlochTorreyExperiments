@@ -29,7 +29,7 @@ export normest1, normest1_norm
 # end
 
 # Wrap `normest1` below to return the norm estimate only.
-function normest1_norm(A, p::Real = 1, t::Int = 10)
+function normest1_norm(A, p::Real = 1, t::Int = 2)
    !(size(A,1) == size(A,2)) && error("Matrix A must be square")
    !(p == 1 || p == Inf) && error("Only p=1 or p=Inf supported")
    p == Inf && (A = A')
@@ -95,11 +95,11 @@ function normest1(
 
    A_is_real = isreal(A)
    Te = eltype(A)
-   n = size(A,2)#::Int #TODO why can't the compiler infer this?
-
+   n = size(A,2)
+   
    prnt = (t < 0)
-   t = abs(t)#::Int #TODO why can't the compiler infer this?
-
+   t = abs(t)
+   
    #error(message("MATLAB:normest1:TOutOfRange"))
    (t < 1 || t > max(n,2)) && error("t must be a non-zero integer with magnitude <= size(A,2)")
 
@@ -109,7 +109,7 @@ function normest1(
    if t == n || n <= 4
       # Get full matrix
       Y = zeros(Te, n, n)
-      X = I#eye(Te, n)
+      X = Array{Te}(I, n, n)
       mul!(Y, A, X) # A_mul_B!(Y, A, X)
 
       # equivalent to `temp, m = sort( sum(abs(Y)) )` in MATLAB

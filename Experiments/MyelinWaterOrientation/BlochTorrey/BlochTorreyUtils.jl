@@ -666,21 +666,17 @@ end
 LinearAlgebra.adjoint(A::DiffEqParabolicLinearMapWrapper) = DiffEqParabolicLinearMapWrapper(A.A')
 LinearAlgebra.transpose(A::DiffEqParabolicLinearMapWrapper) = DiffEqParabolicLinearMapWrapper(transpose(A.A))
 
-Lazy.@forward DiffEqParabolicLinearMapWrapper.A Base.size
-Lazy.@forward DiffEqParabolicLinearMapWrapper.A (LinearAlgebra.issymmetric, LinearAlgebra.ishermitian, LinearAlgebra.isposdef)
-Lazy.@forward DiffEqParabolicLinearMapWrapper.A (LinearAlgebra.mul!, LinearAlgebra.norm, LinearAlgebra.opnorm)
+# NOTE: purposefully not forwarding getindex; wrapper type should behave like a LinearMap
+Lazy.@forward DiffEqParabolicLinearMapWrapper.A (Base.size, LinearAlgebra.issymmetric, LinearAlgebra.ishermitian, LinearAlgebra.isposdef)
+
+# TODO: Lazy.@forward gives ambiguity related errors when trying to forward these methods: mul!, norm, opnorm
+LinearAlgebra.mul!(Y::AbstractVector, A::DiffEqParabolicLinearMapWrapper, X::AbstractVector) = mul!(Y, A.A, X)
+LinearAlgebra.mul!(Y::AbstractMatrix, A::DiffEqParabolicLinearMapWrapper, X::AbstractMatrix) = mul!(Y, A.A, X)
+LinearAlgebra.norm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A.A, p, t)
+LinearAlgebra.opnorm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A.A, p, t)
 
 Base.show(io::IO, A::DiffEqParabolicLinearMapWrapper) = print(io, "$(typeof(A))")
 Base.show(io::IO, ::MIME"text/plain", A::DiffEqParabolicLinearMapWrapper) = print(io, "$(size(A,1)) × $(size(A,2)) $(typeof(A))")
-
-# Base.size(A::DiffEqParabolicLinearMapWrapper, args...) = size(A.A, args...)
-# LinearAlgebra.issymmetric(A::DiffEqParabolicLinearMapWrapper) = issymmetric(A.A)
-# LinearAlgebra.ishermitian(A::DiffEqParabolicLinearMapWrapper) = ishermitian(A.A)
-# LinearAlgebra.isposdef(A::DiffEqParabolicLinearMapWrapper) = isposdef(A.A)
-# LinearAlgebra.mul!(Y::AbstractVector, A::DiffEqParabolicLinearMapWrapper, X::AbstractVector) = mul!(Y, A.A, X)
-# LinearAlgebra.mul!(Y::AbstractMatrix, A::DiffEqParabolicLinearMapWrapper, X::AbstractMatrix) = mul!(Y, A.A, X)
-# LinearAlgebra.norm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A.A, p, t)
-# LinearAlgebra.opnorm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A.A, p, t)
 
 # ---------------------------------------------------------------------------- #
 # Local frequency perturbation map functions

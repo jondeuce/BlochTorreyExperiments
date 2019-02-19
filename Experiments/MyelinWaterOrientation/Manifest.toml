@@ -50,7 +50,9 @@ version = "0.3.0"
 
 [[BSON]]
 deps = ["Profile", "Test"]
-path = "/home/jdoucette/.julia/dev/BSON"
+git-tree-sha1 = "d4ada8c7f4636c3ad5735c088d41ea3159aaab34"
+repo-rev = "master"
+repo-url = "https://github.com/jondeuce/BSON.jl"
 uuid = "fbb218c0-5317-5bc6-957e-2ee96dd4b1f0"
 version = "0.2.1+"
 
@@ -291,9 +293,9 @@ version = "0.3.2"
 
 [[DiffEqBase]]
 deps = ["Compat", "IteratorInterfaceExtensions", "LinearAlgebra", "RecipesBase", "RecursiveArrayTools", "Requires", "Roots", "SparseArrays", "StaticArrays", "Statistics", "SuiteSparse", "TableTraits", "Test", "TreeViews"]
-git-tree-sha1 = "62970db3b264e93c6decf6ee082c9875e8003bb8"
+git-tree-sha1 = "cd1f12b447ef3be91a4d061d3bb1d6459a978a78"
 uuid = "2b5f629d-d688-5b77-993f-72d75c75574e"
-version = "5.2.0"
+version = "5.2.2"
 
 [[DiffEqCallbacks]]
 deps = ["DataStructures", "DiffEqBase", "LinearAlgebra", "OrdinaryDiffEq", "RecipesBase", "RecursiveArrayTools", "StaticArrays", "Test"]
@@ -315,15 +317,15 @@ version = "3.4.0"
 
 [[DiffResults]]
 deps = ["Compat", "StaticArrays"]
-git-tree-sha1 = "db8acf46717b13d6c48deb7a12007c7f85a70cf7"
+git-tree-sha1 = "34a4a1e8be7bc99bc9c611b895b5baf37a80584c"
 uuid = "163ba53b-c6d8-5494-b064-1a9d43ac40c5"
-version = "0.0.3"
+version = "0.0.4"
 
 [[DiffRules]]
 deps = ["Random", "Test"]
-git-tree-sha1 = "09d69da75967ec48a8b1ad0897ec9144ee052bf9"
+git-tree-sha1 = "26b96a1a506b06cb272ef60568d478adab039b96"
 uuid = "b552c78f-8df3-52c6-915a-8e097449b14b"
-version = "0.0.8"
+version = "0.0.9"
 
 [[Discretizers]]
 deps = ["DataStructures", "SpecialFunctions", "Statistics", "StatsBase", "Test"]
@@ -361,9 +363,9 @@ version = "0.6.0"
 
 [[DoubleFloats]]
 deps = ["GenericLinearAlgebra", "LinearAlgebra", "Polynomials", "Random", "Test"]
-git-tree-sha1 = "08249210eb399d080c877d0d16e9e03d235aa837"
+git-tree-sha1 = "100c03b834c6a24b0101c36d9e3d0b6c64ae3bb3"
 uuid = "497a8b3b-efae-58df-a0af-a86822472b78"
-version = "0.6.1"
+version = "0.7.0"
 
 [[Expokit]]
 deps = ["LinearAlgebra", "SparseArrays", "Test"]
@@ -422,9 +424,9 @@ uuid = "9fa8497b-333b-5362-9e8d-4d0656e87820"
 
 [[GR]]
 deps = ["Base64", "DelimitedFiles", "LinearAlgebra", "Pkg", "Printf", "Random", "Serialization", "Sockets", "Test"]
-git-tree-sha1 = "3c62c19ddf86ff016829fdac1663cd3c75558c34"
+git-tree-sha1 = "41bd911efffb56957b45366770eaaa443de3f782"
 uuid = "28b8d3ca-fb5f-59d9-8090-bfdbd6d07a71"
-version = "0.37.0"
+version = "0.38.1"
 
 [[GenericLinearAlgebra]]
 deps = ["LinearAlgebra", "Printf", "Random", "Test"]
@@ -494,9 +496,9 @@ version = "0.7.1"
 
 [[IJulia]]
 deps = ["Base64", "Conda", "Dates", "InteractiveUtils", "JSON", "Markdown", "MbedTLS", "Pkg", "Printf", "REPL", "Random", "SoftGlobalScope", "Test", "UUIDs", "ZMQ"]
-git-tree-sha1 = "d2e3182d2ad6644bd05fbd75468d4114b39ac923"
+git-tree-sha1 = "84b875a0af6cef89fc812b15a728a583ed34b768"
 uuid = "7073ff75-c697-5162-941a-fcdaad2a7d2a"
-version = "1.16.0"
+version = "1.17.0"
 
 [[IdentityRanges]]
 deps = ["OffsetArrays", "Test"]
@@ -624,7 +626,7 @@ version = "0.20.0"
 
 [[JuAFEM]]
 deps = ["LinearAlgebra", "Reexport", "SparseArrays", "Tensors", "WriteVTK"]
-git-tree-sha1 = "b187a4fbe95e2f2d2fe26024c8754ba5ab491596"
+git-tree-sha1 = "79239dd3f6b6fadb141004aed054cb9a50aee774"
 repo-rev = "master"
 repo-url = "https://github.com/KristofferC/JuAFEM.jl"
 uuid = "30d91d44-8115-11e8-1d28-c19a5ac16de8"
@@ -711,9 +713,9 @@ uuid = "56ddb016-857b-54e1-b83d-db4d58db5568"
 
 [[LsqFit]]
 deps = ["Distributions", "LinearAlgebra", "NLSolversBase", "OptimBase", "Random", "StatsBase", "Test"]
-git-tree-sha1 = "28b6150ffc11ca0a2654f69331d3d83d736d25c4"
+git-tree-sha1 = "831607572cefd71ee5ca4a49aefc29ce3c20502b"
 uuid = "2fda8390-95c7-5789-9bda-21331edee243"
-version = "0.7.1"
+version = "0.7.3"
 
 [[MAT]]
 deps = ["BufferedStreams", "Compat", "HDF5", "Libz"]
@@ -784,9 +786,9 @@ version = "0.5.11"
 
 [[NLSolversBase]]
 deps = ["Calculus", "DiffEqDiffTools", "DiffResults", "Distributed", "ForwardDiff", "LinearAlgebra", "Random", "SparseArrays", "Test"]
-git-tree-sha1 = "3d58d0970b04c545534c0e70f3d8f12fe429b5e6"
+git-tree-sha1 = "0c6f0e7f2178f78239cfb75310359eed10f2cacb"
 uuid = "d41bc354-129a-5804-8e4c-c37616107c6c"
-version = "7.2.0"
+version = "7.3.1"
 
 [[NLsolve]]
 deps = ["DiffBase", "DiffEqDiffTools", "Distances", "ForwardDiff", "LineSearches", "LinearAlgebra", "NLSolversBase", "Printf", "Reexport", "SparseArrays", "Test"]
@@ -856,9 +858,9 @@ version = "1.0.2"
 
 [[OrdinaryDiffEq]]
 deps = ["DataStructures", "DiffEqBase", "DiffEqDiffTools", "DiffEqOperators", "ExponentialUtilities", "ForwardDiff", "GenericSVD", "InteractiveUtils", "LinearAlgebra", "Logging", "MuladdMacro", "NLsolve", "Parameters", "Printf", "Random", "RecursiveArrayTools", "Reexport", "SparseArrays", "StaticArrays", "Statistics", "Test"]
-git-tree-sha1 = "2b25ecdafa1b16858ecb5e37c158af0d77ac4616"
+git-tree-sha1 = "ad08db9efe2a5557d06daffd57e672a0e730f512"
 uuid = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
-version = "5.1.0"
+version = "5.1.4"
 
 [[PDMats]]
 deps = ["Arpack", "LinearAlgebra", "SparseArrays", "SuiteSparse", "Test"]
@@ -1193,9 +1195,9 @@ version = "0.1.0"
 
 [[TextParse]]
 deps = ["CodecZlib", "DataStructures", "Dates", "DoubleFloats", "Mmap", "Nullables", "PooledArrays", "Random", "Test", "WeakRefStrings"]
-git-tree-sha1 = "4092d42c5a4db70faf7e73ca17410630c64ffb91"
+git-tree-sha1 = "52647dcec045396814b542f56615fae5a3b4d6a4"
 uuid = "e0df1984-e451-5cb5-8b61-797a481e67e3"
-version = "0.7.2"
+version = "0.7.3"
 
 [[TikzPictures]]
 deps = ["LaTeXStrings", "Test"]
@@ -1272,9 +1274,9 @@ version = "0.3.1"
 
 [[WeakRefStrings]]
 deps = ["Missings", "Random", "Test"]
-git-tree-sha1 = "bccf012a0e8815410ad8b6846944a33903992fc3"
+git-tree-sha1 = "cf70c71939e621a3fac4156a8bfb3c80d745794a"
 uuid = "ea10d353-3f73-51f8-a26c-33c1cb351aa5"
-version = "0.5.6"
+version = "0.5.7"
 
 [[Weave]]
 deps = ["Base64", "Compat", "Dates", "Highlights", "JSON", "Markdown", "Mustache", "Pkg", "Printf", "REPL", "Requires", "Serialization", "Test", "YAML"]
