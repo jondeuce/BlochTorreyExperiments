@@ -7,7 +7,7 @@ using GreedyCirclePacking
 using MeshUtils
 using Tensors
 using JuAFEM
-using MATLAB
+using MATLABPlots
 
 using BlochTorreyUtils: omega_tissue, omega_myelin, omega_axon, omega, omegamap, dcoeff, rdecay
 using BlochTorreyUtils: AxonRegion, MyelinRegion, TissueRegion

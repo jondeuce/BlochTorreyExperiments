@@ -57,6 +57,12 @@ export BlochTorreyParameters,
 # Convenience definitions
 const MyelinBoundary{gDim,T} = Union{<:Circle{gDim,T}, <:Rectangle{gDim,T}, <:Ellipse{gDim,T}}
 const VectorOfVectors{T} = AbstractVector{<:AbstractVector{T}}
+const MaybeSymmSparseMatrixCSC{T} = Union{<:SparseMatrixCSC{T}, <:Symmetric{T,<:SparseMatrixCSC{T}}}
+const MaybeNothingFactorization{T} = Union{Nothing, <:Factorization{T}}
+
+const MassType{T} = MaybeSymmSparseMatrixCSC{T}
+const MassFactType{T} = MaybeNothingFactorization{T}
+const StiffnessType{T} = SparseMatrixCSC{T}
 
 # Struct of BlochTorreyParameters. T is the float type.
 @with_kw struct BlochTorreyParameters{T}
@@ -124,7 +130,7 @@ const VectorOfDomains{uDim,gDim,T,Nd,Nf} = AbstractVector{<:AbstractDomain{uDim,
 
 # ParabolicDomain: generic domain type which holds this information necessary to
 # solve a parabolic FEM problem M*du/dt = K*u
-mutable struct ParabolicDomain{uDim,gDim,T,Nd,Nf} <: AbstractDomain{uDim,gDim,T,Nd,Nf}
+mutable struct ParabolicDomain{uDim,gDim,T,Nd,Nf,MType<:MassType{T},MfactType<:MassFactType{T},KType<:StiffnessType{T}} <: AbstractDomain{uDim,gDim,T,Nd,Nf}
     grid::Grid{gDim,Nd,T,Nf}
     dh::DofHandler{gDim,Nd,T,Nf}
     cellvalues::CellValues{gDim,T}
@@ -133,9 +139,9 @@ mutable struct ParabolicDomain{uDim,gDim,T,Nd,Nf} <: AbstractDomain{uDim,gDim,T,
     quadorder::Int
     funcinterporder::Int
     geominterporder::Int
-    M::Union{<:SparseMatrixCSC{T}, Symmetric{T,<:SparseMatrixCSC{T}}}
-    Mfact::Union{Nothing, Factorization{T}}
-    K::SparseMatrixCSC{T}
+    M::MType
+    Mfact::MfactType
+    K::KType
     w::Vector{T}
 end
 
@@ -265,14 +271,14 @@ end
 # ParabolicLinearMap: create a LinearMaps subtype which wrap the action of
 # Mfact\K in a LinearMap object. Does not make copies of M, Mfact, or K;
 # simply is a light wrapper for them
-struct ParabolicLinearMap{T} <: LinearMap{T}
-    M::AbstractMatrix{T}
-    Mfact::Factorization{T}
-    K::AbstractMatrix{T}
-    function ParabolicLinearMap(M::AbstractMatrix{T}, Mfact::Factorization{T}, K::AbstractMatrix{T}) where {T}
+struct ParabolicLinearMap{T,MType<:AbstractMatrix{T},MfactType<:MassFactType{T},KType<:AbstractMatrix{T}} <: LinearMap{T}
+    M::MType
+    Mfact::MfactType
+    K::KType
+    function ParabolicLinearMap(M::AbstractMatrix{T}, Mfact::MassFactType{T}, K::AbstractMatrix{T}) where {T}
         @assert (size(M) == size(K)) && (size(M,1) == size(M,2))
         # @assert (size(M) == size(Mfact) || size(M) == 2 .* size(Mfact)) # for factoring only M[1:2:end,1:2:end]
-        new{T}(M, Mfact, K)
+        new{T,typeof(M),typeof(Mfact),typeof(K)}(M, Mfact, K)
     end
 end
 ParabolicLinearMap(d::ParabolicDomain) = ParabolicLinearMap(getmass(d), getmassfact(d), getstiffness(d))
@@ -386,7 +392,7 @@ function _compact_show_sparse(io, A::Symmetric{T,<:SparseMatrixCSC{T}}) where {T
     S = A.data; xnnz = nnz(S)
     print(io, S.m, "×", S.n, " ", typeof(A), " with ", xnnz, " stored ", xnnz == 1 ? "entry" : "entries")
 end
-function _compact_show_factorization(io, F::Union{<:Factorization, Nothing})
+function _compact_show_factorization(io, F::Union{Nothing, <:Factorization})
     F == nothing && (show(io, F); return)
     m, n = size(F)
     print(io, m, "×", n, " ", typeof(F), " with ", nnz(F), " stored ", nnz(F) == 1 ? "entry" : "entries")
