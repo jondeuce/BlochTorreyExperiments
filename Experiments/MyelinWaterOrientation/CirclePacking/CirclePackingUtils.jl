@@ -24,9 +24,86 @@ export wrap_gradient, check_density_callback
 
 function opt_subdomain(
         circles::AbstractVector{Circle{2,T}},
-        α::Number = T(0.75)
+        α::Real = T(0.75),
+        α_lb::Real = T(0.65),
+        α_ub::Real = T(0.80),
+        d_thresh::Real = T(minimum(radius, circles)/2),
+        λ_relative = T(0.1)
+        # λ2_relative = 50 * length(circles)
     ) where {T}
+    
+    # # Simple method
+    # opt_rectangle = scale_shape(inscribed_square(crude_bounding_circle(circles)), T(α))
+    
+    # Brute force search method which tries to force circle/rectangle intersection angles
+    # to be as close to 90 degrees as possible, and also to maximimze the distance between
+    # interior circles (within d_thresh of the boundary) and the square boundary
+    get_inscribed_rect(α) = scale_shape(inscribed_square(crude_bounding_circle(circles)), T(α))
+    function energy(α)
+        r = get_inscribed_rect(α)
+        drect(x) = min(x[1] - xmin(r), xmax(r) - x[1], x[2] - ymin(r), ymax(r) - x[2])
+        
+        # # This seems to be too strong of a condition
+        # centred_energy = sum(circles) do c
+        #     out = zero(T)
+        #     if is_on_boundary(c, r)
+        #         d = drect(origin(c)) #distance btwn circle origin and rect bdry
+        #         out += (d/d_thresh)^2 # penalize away from zero
+        #     end
+        #     return out
+        # end
 
+        # Strongly penalize corners not being contained in circles
+        corner_energy = sum(corners(r)) do p
+            is_in_any_circle(p, circles) ? zero(T) : T(1e6)*length(circles)
+        end
+
+        angle_count = 0
+        angle_energy = sum(circles) do c
+            out = zero(T)
+            for p in intersection_points(r, c)
+                t1 = (p[1] ≈ xmin(r) || p[1] ≈ xmax(r)) ? # check if intersect is on left/right side 
+                    Vec{2,T}((0,1)) : # left/right: tangent vector to rect is vertical
+                    Vec{2,T}((1,0)) # top/bottom: tangent vector to rect is horizontal.
+                n2 = p - origin(c) # normal vector to circle at p
+                t2 = Vec{2,T}((-n2[2], n2[1])) # tangent vector to circle at p
+                θ = acos(abs(t1⋅t2)/(norm(t1)*norm(t2))) # (smallest) angle between t1 and t2
+                
+                out += (1 - θ/(T(π)/2))^2
+                angle_count += 1 # count number of terms
+            end
+            return out
+        end
+        angle_energy /= max(angle_count, 1)
+
+        distance_count = 0
+        distance_energy = sum(circles) do c
+            out = zero(T)
+            if is_inside(c, r)
+                d = drect(origin(c)) - radius(c) #distance btwn circle and rect bdry
+                if d < d_thresh
+                    out += (1 - d/d_thresh)^2 # penalize away from d_thresh
+                    distance_count += 1 # count number of terms
+                end
+            end
+            return out
+        end
+        distance_energy /= max(distance_count, 1)
+
+        total_energy = angle_energy + λ_relative * distance_energy + corner_energy
+        # println("$angle_energy, $distance_energy, $total_energy") #DEBUG
+        
+        # total_energy = centred_energy + λ_relative * distance_energy + corner_energy
+        # println("$centred_energy, $distance_energy, $corner_energy, $total_energy") #DEBUG
+        
+        return total_energy
+    end
+    α_range = range(T(α_lb), T(α_ub), length=151)
+    _, i_opt = findmin([energy(α) for α in α_range])
+    α = α_range[i_opt]
+    opt_rectangle = get_inscribed_rect(α)
+
+    # # Energy method (not very effective)
     # starting_rectangle = bounding_box(circles)
     # mean_radius = mean(radius, circles)
     # N_total = length(circles)
@@ -55,10 +132,8 @@ function opt_subdomain(
     # end
     #
     # # Find the optimal α using a Bisection method
-    # α = Optim.minimizer(optimize(energy, alpha_lb, alpha_ub, Brent()))
+    # α = Optim.minimizer(optimize(energy, α_lb, α_ub, Brent()))
     # opt_rectangle = scale_shape(starting_rectangle, α)
-
-    opt_rectangle = scale_shape(inscribed_square(crude_bounding_circle(circles)), T(α))
 
     return opt_rectangle, α
 end
@@ -87,23 +162,23 @@ function estimate_density(
     return T(Σ/A)
 end
 
-function scale_to_density(input_circles, goaldensity)
+function scale_to_density(input_circles, goaldensity, distthresh = 0)
     # Check that desired desired packing density can be attained
     # _, α_inner_domain = opt_subdomain(input_circles) # fix the opt_subdomain relative size
     expand_circles = (α) -> translate_shape.(input_circles, α)
     density = (α) -> estimate_density(expand_circles(α))#, α_inner_domain)
 
-    α_min = find_zero(α -> is_any_overlapping(expand_circles(α)) - 0.5, (1.0e-3, 1.0e3), Bisection())
-    ϵ = 100 * eps(α_min)
+    α_min = find_zero(α -> is_any_overlapping(expand_circles(α), ≤, distthresh) - 0.5, (1.0e-3, 1.0e3), Bisection())
+    α_eps = 100 * eps(α_min)
 
-    if density(α_min + ϵ) ≤ goaldensity
-        # Goal density can't be reached; shrink as much as possible
-        @warn ("Density cannot be reached without overlapping circles; " *
-               "can only reach $(density(α_min + ϵ)) < $goaldensity")
-        packed_circles = expand_circles(α_min + ϵ)
+    if density(α_min + α_eps) ≤ goaldensity
+        # Goal density can't be reached; shrinking as much as possible
+        @warn ("Density cannot be reached without overlapping circles more than distthresh = $distthresh; " *
+               "shrinking as much as possible to $(density(α_min + α_eps)) < $goaldensity")
+        packed_circles = expand_circles(α_min + α_eps)
     else
         # Find α which results in the desired packing density
-        α_best = find_zero(α -> density(α) - goaldensity, (α_min + ϵ, 1.0e3), Bisection())
+        α_best = find_zero(α -> density(α) - goaldensity, (α_min + α_eps, 1.0e3), Bisection())
         packed_circles = expand_circles(α_best)
     end
 
@@ -432,7 +507,7 @@ function check_density_callback(state, r, goaldensity, epsilon)
         currstate = state
     end
     circles = tocircles(currstate.metadata["x"], r)
-    return (estimate_density(circles) > goaldensity) && !is_any_overlapping(circles, <, epsilon)
+    return (estimate_density(circles) > goaldensity) && !is_any_overlapping(circles, ≤, epsilon)
 end
 
 end # module CirclePackingUtils

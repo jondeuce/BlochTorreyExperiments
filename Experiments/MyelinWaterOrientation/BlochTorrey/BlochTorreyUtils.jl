@@ -15,6 +15,7 @@ using DistMesh
 using JuAFEM
 using LinearAlgebra
 using SparseArrays
+using SuiteSparse # need to define ldiv! for SuiteSparse.CHOLMOD.Factor
 using StatsBase
 using LinearMaps
 using Parameters: @with_kw, @unpack
@@ -56,6 +57,12 @@ export BlochTorreyParameters,
 # Convenience definitions
 const MyelinBoundary{gDim,T} = Union{<:Circle{gDim,T}, <:Rectangle{gDim,T}, <:Ellipse{gDim,T}}
 const VectorOfVectors{T} = AbstractVector{<:AbstractVector{T}}
+const MaybeSymmSparseMatrixCSC{T} = Union{<:SparseMatrixCSC{T}, <:Symmetric{T,<:SparseMatrixCSC{T}}}
+const MaybeNothingFactorization{T} = Union{Nothing, <:Factorization{T}}
+
+const MassType{T} = MaybeSymmSparseMatrixCSC{T}
+const MassFactType{T} = MaybeNothingFactorization{T}
+const StiffnessType{T} = SparseMatrixCSC{T}
 
 # Struct of BlochTorreyParameters. T is the float type.
 @with_kw struct BlochTorreyParameters{T}
@@ -123,7 +130,7 @@ const VectorOfDomains{uDim,gDim,T,Nd,Nf} = AbstractVector{<:AbstractDomain{uDim,
 
 # ParabolicDomain: generic domain type which holds this information necessary to
 # solve a parabolic FEM problem M*du/dt = K*u
-mutable struct ParabolicDomain{uDim,gDim,T,Nd,Nf} <: AbstractDomain{uDim,gDim,T,Nd,Nf}
+mutable struct ParabolicDomain{uDim,gDim,T,Nd,Nf,MType<:MassType{T},MfactType<:MassFactType{T},KType<:StiffnessType{T}} <: AbstractDomain{uDim,gDim,T,Nd,Nf}
     grid::Grid{gDim,Nd,T,Nf}
     dh::DofHandler{gDim,Nd,T,Nf}
     cellvalues::CellValues{gDim,T}
@@ -132,20 +139,20 @@ mutable struct ParabolicDomain{uDim,gDim,T,Nd,Nf} <: AbstractDomain{uDim,gDim,T,
     quadorder::Int
     funcinterporder::Int
     geominterporder::Int
-    M::Union{<:SparseMatrixCSC{T}, Symmetric{T,<:SparseMatrixCSC{T}}}
-    Mfact::Union{Nothing, Factorization{T}}
-    K::SparseMatrixCSC{T}
+    M::MType
+    Mfact::MfactType
+    K::KType
     w::Vector{T}
 end
 
 function ParabolicDomain(
         grid::Grid{gDim,Nd,T,Nf},
-        ::Val{uDim} = Val(2);
+        uDim::Int = 2;
         refshape = RefTetrahedron,
-        quadorder = 3,
-        funcinterporder = 1,
-        geominterporder = 1
-    ) where {uDim,gDim,Nd,T,Nf}
+        quadorder::Int = 3,
+        funcinterporder::Int = 1,
+        geominterporder::Int = 1
+    ) where {gDim,Nd,T,Nf}
 
     @assert uDim == 2 #TODO: where is this assumption? likely, assume dim(u) == dim(grid) somewhere
 
@@ -163,6 +170,20 @@ function ParabolicDomain(
     dh = DofHandler(grid)
     push!(dh, :u, uDim, func_interp)
     close!(dh)
+
+    # Assign dof ordering to be such that node number `n` corresponds to dof's `uDim*n-(uDim-1):uDim*n`
+    # NOTE: this is somewhat wasteful as nodes are visited multiple times, but it's easy
+    if ndofs(dh) == uDim * getnnodes(grid)
+        perm = zeros(Int, ndofs(dh))
+        for cell in CellIterator(dh)
+            for (i,n) in enumerate(cell.nodes)
+                for d in uDim-1:-1:0
+                    perm[cell.celldofs[uDim*i-d]] = uDim*n-d
+                end
+            end
+        end
+        renumber!(dh, perm)
+    end
 
     # Mass matrix, inverse mass matrix, stiffness matrix, and weights vector
     M = create_sparsity_pattern(dh)
@@ -211,52 +232,53 @@ function MyelinDomain(
         outercircles::Vector{Circle{2,T}},
         innercircles::Vector{Circle{2,T}},
         ferritins::Vector{Vec{3,T}} = Vec{3,T}[],
-        ::Val{uDim} = Val(2);
+        uDim::Int = 2; #::Val{uDim} = Val(2);
         kwargs...
-    ) where {R,uDim,gDim,T,Nd,Nf}
+    ) where {R,gDim,T,Nd,Nf} #{R,uDim,gDim,T,Nd,Nf}
 
     return MyelinDomain{R,uDim,gDim,T,Nd,Nf}(
         region,
-        ParabolicDomain(grid, Val(uDim); kwargs...),
+        ParabolicDomain(grid, uDim; kwargs...),
         outercircles,
         innercircles,
         ferritins
     )
 end
 
-# Copy constructor for new ParabolicDomain keyword arguments
-function MyelinDomain(m::MyelinDomain; kwargs...)
-    return MyelinDomain(
-        m.region,
-        getgrid(m.domain),
-        m.outercircles,
-        m.innercircles,
-        m.ferritins;
-        kwargs...
-    )
-end
+# # Copy constructor for new ParabolicDomain keyword arguments
+# function MyelinDomain(m::MyelinDomain; kwargs...)
+#     return MyelinDomain(
+#         m.region,
+#         getgrid(m.domain),
+#         m.outercircles,
+#         m.innercircles,
+#         m.ferritins;
+#         kwargs...
+#     )
+# end
 
 # Create BlochTorreyProblem from a MyelinProblem and a MyelinDomain
 function BlochTorreyProblem(p::MyelinProblem{T}, m::MyelinDomain) where {T}
-    # Axon region
-    @inline Dcoeff(x...) = dcoeff(x..., p, m) # Dcoeff
-    @inline Rdecay(x...) = rdecay(x..., p, m) # R2
-    @inline Omega(x...) = omega(x..., p, m) # Axonal region
+    @inline Dcoeff(x...) = dcoeff(x..., p, m) # Dcoeff function
+    @inline Rdecay(x...) = rdecay(x..., p, m) # R2 function
+    @inline Omega(x...) = omega(x..., p, m) # Omega function
     return BlochTorreyProblem{T}(Dcoeff, Rdecay, Omega)
 end
 
-ParabolicDomain(m::MyelinDomain) = m.domain
+# Copy constructor for creating a ParabolicDomain from a MyelinDomain
+# ParabolicDomain(m::MyelinDomain) = deepcopy(m.domain)
 
 # ParabolicLinearMap: create a LinearMaps subtype which wrap the action of
-# Mfact\K in a LinearMap object
-struct ParabolicLinearMap{T} <: LinearMap{T}
-    M::AbstractMatrix{T}
-    Mfact::Factorization{T}
-    K::AbstractMatrix{T}
-    function ParabolicLinearMap(M::AbstractMatrix{T}, Mfact::Factorization{T}, K::AbstractMatrix{T}) where {T}
+# Mfact\K in a LinearMap object. Does not make copies of M, Mfact, or K;
+# simply is a light wrapper for them
+struct ParabolicLinearMap{T,MType<:AbstractMatrix{T},MfactType<:MassFactType{T},KType<:AbstractMatrix{T}} <: LinearMap{T}
+    M::MType
+    Mfact::MfactType
+    K::KType
+    function ParabolicLinearMap(M::AbstractMatrix{T}, Mfact::MassFactType{T}, K::AbstractMatrix{T}) where {T}
         @assert (size(M) == size(K)) && (size(M,1) == size(M,2))
-        @assert (size(M) == size(Mfact) || size(M) == 2 .* size(Mfact))
-        new{T}(M, Mfact, K)
+        # @assert (size(M) == size(Mfact) || size(M) == 2 .* size(Mfact)) # for factoring only M[1:2:end,1:2:end]
+        new{T,typeof(M),typeof(Mfact),typeof(K)}(M, Mfact, K)
     end
 end
 ParabolicLinearMap(d::ParabolicDomain) = ParabolicLinearMap(getmass(d), getmassfact(d), getstiffness(d))
@@ -302,8 +324,8 @@ function interpolate!(u::AbstractVector{T}, u0::Vec{uDim,T}, domain::AbstractDom
     if length(u) == uDim * getnnodes(getgrid(domain))
         # degrees of freedom are nodal; can efficiently assign directly
         u = reinterpret(Vec{uDim,T}, u)
-        u .= (u0,)
-        u = copy(reinterpret(T, u)) #TODO: would like to avoid copy here, if possible
+        u .= Ref(u0)
+        u = copy(reinterpret(T, u))
     else
         # degrees of freedom are not nodal; call general projection
         interpolate!(u, x->u0, domain)
@@ -335,8 +357,6 @@ interpolate(u0::Vec{uDim}, domains::VectorOfDomains{uDim}) where {uDim} = map(d 
 # ParabolicDomain methods
 # ---------------------------------------------------------------------------- #
 
-# @inline numsubdomains(d::ParabolicDomain) = 1
-# @inline getsubdomain(d::ParabolicDomain, i::Int) = i == 1 ? d : error("i=$i, but ParabolicDomain has only 1 subdomain.")
 @inline getgrid(d::ParabolicDomain) = d.grid
 @inline getdofhandler(d::ParabolicDomain) = d.dh
 @inline getcellvalues(d::ParabolicDomain) = d.cellvalues
@@ -361,9 +381,8 @@ factorize!(d::ParabolicDomain) = (d.Mfact = cholesky(getmass(d)); return d)
 # end
 LinearAlgebra.norm(u, domain::ParabolicDomain) = √dot(u, getmass(domain) * u)
 
-# Quad weights are vectors of Vec{uDim,T} and are the same for each component;
-# just taking the sum of the first component will return the area
-GeometryUtils.area(d::ParabolicDomain{uDim}) where {uDim} = sum(@views getquadweights(d)[1:uDim:end])
+# GeometryUtils.area(d::ParabolicDomain{uDim}) where {uDim} = sum(@views getquadweights(d)[1:uDim:end]) # summing the quad weights for one component gives area
+GeometryUtils.area(d::ParabolicDomain{uDim}) where {uDim} = area(getgrid(d)) # just calculate area of grid directly
 
 # Show methods
 function _compact_show_sparse(io, S::SparseMatrixCSC)
@@ -373,7 +392,7 @@ function _compact_show_sparse(io, A::Symmetric{T,<:SparseMatrixCSC{T}}) where {T
     S = A.data; xnnz = nnz(S)
     print(io, S.m, "×", S.n, " ", typeof(A), " with ", xnnz, " stored ", xnnz == 1 ? "entry" : "entries")
 end
-function _compact_show_factorization(io, F::Union{<:Factorization, Nothing})
+function _compact_show_factorization(io, F::Union{Nothing, <:Factorization})
     F == nothing && (show(io, F); return)
     m, n = size(F)
     print(io, m, "×", n, " ", typeof(F), " with ", nnz(F), " stored ", nnz(F) == 1 ? "entry" : "entries")
@@ -431,9 +450,9 @@ function createmyelindomains(
         outercircles::AbstractVector{Circle{2,T}},
         innercircles::AbstractVector{Circle{2,T}},
         ferritins::AbstractVector{Vec{3,T}} = Vec{3,T}[],
-        ::Val{uDim} = Val(2);
+        ::Val{uDim} = Val(2); #uDim::Int = 2;
         kwargs...
-    ) where {uDim,gDim,T,Nd,Nf}
+    ) where {uDim,gDim,T,Nd,Nf} #{gDim,T,Nd,Nf}
 
     @assert length(outercircles) == length(innercircles) == length(myelingrids) == length(axongrids)
 
@@ -444,17 +463,17 @@ function createmyelindomains(
 
     for (i, a) in enumerate(axongrids)
         isgridempty(a) && continue
-        push!(ms, MyelinDomain(AxonRegion(i), a, outercircles, innercircles, ferritins, Val(uDim); kwargs...))
+        push!(ms, MyelinDomain(AxonRegion(i), a, outercircles, innercircles, ferritins, uDim; kwargs...))
     end
 
     for (i, m) in enumerate(myelingrids)
         isgridempty(m) && continue
-        push!(ms, MyelinDomain(MyelinRegion(i), m, outercircles, innercircles, ferritins, Val(uDim); kwargs...))
+        push!(ms, MyelinDomain(MyelinRegion(i), m, outercircles, innercircles, ferritins, uDim; kwargs...))
     end
 
     for t in tissuegrids
         isgridempty(t) && continue
-        push!(ms, MyelinDomain(TissueRegion(), t, outercircles, innercircles, ferritins, Val(uDim); kwargs...))
+        push!(ms, MyelinDomain(TissueRegion(), t, outercircles, innercircles, ferritins, uDim; kwargs...))
     end
 
     return ms
@@ -470,10 +489,10 @@ const TriangularMyelinDomain{R,uDim,T} = MyelinDomain{R,uDim,2,T,3,3}
 function MyelinDomain(
         region::PermeableInterfaceRegion,
         prob::MyelinProblem,
-        ms::AbstractVector{<:MyelinDomain{R} where R}
-    )
+        ms::AbstractVector{<:TriangularMyelinDomain{R,uDim,T} where R}
+    ) where {uDim,T}
     domain = ParabolicDomain(region, prob, ms)
-    myelindomain = MyelinDomain(
+    myelindomain = TriangularMyelinDomain{PermeableInterfaceRegion,uDim,T}(
         PermeableInterfaceRegion(),
         domain,
         ms[1].outercircles, # assume these are the same for all domains
@@ -492,7 +511,7 @@ function ParabolicDomain(
     # Construct one large ParabolicDomain containing all grids
     gDim, Nd, Nf = 2, 3, 3 # Triangular 2D domain
     grid = Grid(getgrid.(ms)) # combine grids into single large grid
-    domain = ParabolicDomain(grid, Val(uDim);
+    domain = ParabolicDomain(grid, uDim;
         refshape = getrefshape(ms[1]), # assume these are the same for all domains
         quadorder = getquadorder(ms[1]), # assume these are the same for all domains
         funcinterporder = getfuncinterporder(ms[1]), # assume these are the same for all domains
@@ -508,35 +527,9 @@ function ParabolicDomain(
     nodepairs = NTuple{gDim,Int}[JuAFEM.faces(cells[f[1]])[f[2]] for f in boundaryfaceset] # pairs of node indices
     nodecoordpairs = NTuple{gDim,Vec{uDim,T}}[(getcoordinates(nodes[n[1]]), getcoordinates(nodes[n[2]])) for n in nodepairs] # pairs of node coordinates
 
-    # There should be a way to sort the nodes into a list and easily pick out
-    # the pairs, but it's possibly not worth the trouble. One option would be to
-    # pick e.g. a random point and sort with respect to distance from this point;
-    # for a general set of points, it is extremely unlikely that any two points
-    # have the same magnitude (i.e. lie on a circle centred at this random point),
-    # and any which do must be the same point.
-
-    # nodecoordpairssorted = copy(nodecoordpairs)
-    # for (i,p) in enumerate(nodecoordpairssorted)
-    #     if p[1][1] < p[2][1]
-    #         nodecoordpairssorted[i] = reverse(nodecoordpairssorted[i])
-    #     elseif p[1][1] == p[2][1] && p[1][2] < p[2][2]
-    #         nodecoordpairssorted[i] = reverse(nodecoordpairssorted[i])
-    #     end
-    # end
-    # nodecoordindices = sortperm(nodecoordpairssorted; by = x->(x[1][1], x[1][2], x[2][1], x[2][2]))
-    #
-    # interfaceindices = Vector{NTuple{4,Int}}()
-    # @inbounds for i in 1:length(nodecoordindices)-1
-    #     i1, i2 = nodecoordindices[i], nodecoordindices[i+1]
-    #     np1, np2 = nodecoordpairssorted[i1], nodecoordpairssorted[i2]
-    #     if norm2(np1[1] - np2[1]) < eps(T) && norm2(np1[2] - np2[2]) < eps(T)
-    #         push!(interfaceindices, (nodepairs[i1]..., nodepairs[i2]...))
-    #     end
-    # end
-
     # Sort pairs by midpoints and read off pairs
-    midpointsort = (np) -> (x = (np[1] + np[2])/2; return norm2(x), angle(x))
-    nodecoordindices = sortperm(nodecoordpairs; by = midpointsort) # sort pairs by midpoint location
+    bymidpoint = (np) -> (mid = (np[1] + np[2])/2; return norm2(mid), angle(mid))
+    nodecoordindices = sortperm(nodecoordpairs; by = bymidpoint) # sort pairs by midpoint location
     interfaceindices = Vector{NTuple{4,Int}}()
     sizehint!(interfaceindices, length(nodecoordpairs)÷2)
     @inbounds for i in 1:length(nodecoordindices)-1
@@ -546,37 +539,34 @@ function ParabolicDomain(
             push!(interfaceindices, (nodepairs[i1]..., nodepairs[i2]...))
         end
     end
-
-    # Brute force search for pairs
-    interfaceindices_brute = Vector{NTuple{4,Int}}()
-    sizehint!(interfaceindices_brute, length(nodecoordpairs)÷2)
-    @inbounds for i1 in 1:length(nodecoordpairs)
-        np1 = nodecoordpairs[i1] # pair of Vec's
-        for i2 in 1:i1-1
-            np2 = nodecoordpairs[i2] # pair of Vec's
-            # For properly oriented triangles, the edge nodes will be stored in
-            # opposite order coincident edges which share a triangle face, i.e.
-            # np1[1] should equal np2[2], and vice-versa
-            if norm2(np1[1] - np2[2]) < eps(T) && norm2(np1[2] - np2[1]) < eps(T)
-                # The nodes are stored as e.g. np1 = (A,B) and np2 = (B,A).
-                # We want to keep them in this order, as is expected by the
-                # local stiffness matrix `Se` below
-                ip1, ip2 = nodepairs[i1], nodepairs[i2] # pairs of node indices
-                push!(interfaceindices_brute, (ip1..., ip2...))
-            end
-        end
-    end
-
-    # @show length(interfaceindices)
-    # @show length(interfaceindices_brute)
+    
+    # # Brute force search for pairs
+    # interfaceindices_brute = Vector{NTuple{4,Int}}()
+    # sizehint!(interfaceindices_brute, length(nodecoordpairs)÷2)
+    # @inbounds for i1 in 1:length(nodecoordpairs)
+    #     np1 = nodecoordpairs[i1] # pair of Vec's
+    #     for i2 in 1:i1-1
+    #         np2 = nodecoordpairs[i2] # pair of Vec's
+    #         # For properly oriented triangles, the edge nodes will be stored in
+    #         # opposite order coincident edges which share a triangle face, i.e.
+    #         # np1[1] should equal np2[2], and vice-versa
+    #         if norm2(np1[1] - np2[2]) < eps(T) && norm2(np1[2] - np2[1]) < eps(T)
+    #             # The nodes are stored as e.g. np1 = (A,B) and np2 = (B,A).
+    #             # We want to keep them in this order, as is expected by the
+    #             # local stiffness matrix `Se` below
+    #             ip1, ip2 = nodepairs[i1], nodepairs[i2] # pairs of node indices
+    #             push!(interfaceindices_brute, (ip1..., ip2...))
+    #         end
+    #     end
+    # end
 
     # Local permeability interaction matrix, unscaled by length
     κ = prob.params.K_perm
-    Se = (-κ/6) .* T[ 2  1 -1 -2 # Minus sign in front since we build the negative stiffness matrix
-                      1  2 -2 -1 # `Se` represents the local stiffness of a zero volume interface element with points (A,B)
-                     -1 -2  2  1 # The points are ordered such that `Se` acts on [A,B,B,A]
-                     -2 -1  1  2 ]
-    Sck = similar(Se) # temp matrix for assigning ck .* Se to
+    Se = T(-κ/6) .* T[ 2  1 -1 -2   # Minus sign in front since we build the negative stiffness matrix
+                       1  2 -2 -1   # `Se` represents the local stiffness matrix of a zero volume (line segment) interface element
+                      -1 -2  2  1   # The segment interfaces between the pairs of nodes (A1,B1) and (A2,B2), where A nodes and B nodes have the same coordinates
+                      -2 -1  1  2 ] # `Se` is ordered such that it acts on [A1,B1,B2,A2]
+    _Se = similar(Se) # temp matrix for storing ck * Se
 
     # S matrix global indices
     Is, Js, Ss = Vector{Int}(), Vector{Int}(), Vector{T}()
@@ -586,19 +576,16 @@ function ParabolicDomain(
 
     for idx in interfaceindices
         ck = norm(getcoordinates(nodes[idx[1]]) - getcoordinates(nodes[idx[2]])) # length of edge segment
-        # @assert ck ≈ norm(getcoordinates(nodes[idx[3]]) - getcoordinates(nodes[idx[4]]))
-        Sck .= ck .* Se
-
+        _Se .= ck .* Se
         dof = uDim .* idx .- (uDim-1) # node indices --> first dof indices (i.e. 1st component of u)
-        for d in 1:uDim
-            Dof = dof .+ (d-1) # first dof indices --> d'th dof indices (i.e. d'th component of u)
-            for i in 1:length(Dof)
-                append!(Is, Dof)
-                for j in 1:length(Dof)
-                    push!(Js, Dof[i])
+        for (j,dof_j) in enumerate(dof)
+            for (i,dof_i) in enumerate(dof)
+                for d in 0:uDim-1
+                    push!(Is, dof_i + d) # first dof indices --> d'th dof indices (i.e. d'th component of u)
+                    push!(Js, dof_j + d)
+                    push!(Ss, _Se[i,j])
                 end
             end
-            append!(Ss, Sck)
         end
     end
 
@@ -619,48 +606,14 @@ LinearAlgebra.issymmetric(A::ParabolicLinearMap) = false
 LinearAlgebra.ishermitian(A::ParabolicLinearMap) = false
 LinearAlgebra.isposdef(A::ParabolicLinearMap) = false
 
-# #TODO Check that this actually needs to be defined, and isn't a bug in LinearMaps
-LinearMaps.A_mul_B!( Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = mul!(Y, A, X)
-LinearMaps.At_mul_B!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = mul!(Y, transpose(A), X)
-LinearMaps.Ac_mul_B!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = mul!(Y, adjoint(A), X)
-LinearMaps.A_mul_B!( Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = mul!(Y, A, X)
-LinearMaps.At_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = mul!(Y, transpose(A), X)
-LinearMaps.Ac_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = mul!(Y, adjoint(A), X)
-# LinearAlgebra.A_mul_B!( Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = mul!(Y, A, X)
-# LinearAlgebra.At_mul_B!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = mul!(Y, transpose(A), X)
-# LinearAlgebra.Ac_mul_B!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = mul!(Y, adjoint(A), X)
-# LinearAlgebra.A_mul_B!( Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = mul!(Y, A, X)
-# LinearAlgebra.At_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = mul!(Y, transpose(A), X)
-# LinearAlgebra.Ac_mul_B!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = mul!(Y, adjoint(A), X)
-
-# For taking literal powers of LinearMaps, e.g. A^2
-Base.to_power_type(A::Union{<:LinearMaps.AdjointMap, <:LinearMaps.TransposeMap, <:LinearMap}) = A
-
-function reassemble!(U,ux,uy)
-    @assert size(ux,1) == size(uy,1)
-    @assert size(U,1) == 2*size(ux,1)
-    @inbounds for (i,iU) in enumerate(1:2:2*size(ux,1))
-        @views U[iU  , :] = ux[i,:]
-        @views U[iU+1, :] = uy[i,:]
-    end
-    return U
-end
-
-function Minv_u(Mfact, X)
-    if size(Mfact,2) == size(X,1)
-        return Mfact\X
-    elseif 2*size(Mfact,2) == size(X,1)
-        x, y = X[1:2:end,:], X[2:2:end,:]
-        return reassemble!(similar(X), Mfact\x, Mfact\y)
-    else
-        throw(DimensionMismatch("Minv_u"))
-    end
-end
+# LinearAlgebra.ldiv! is not defined for SuiteSparse.CHOLMOD.Factor; define in terms of \ for simplicity
+LinearAlgebra.ldiv!(y::AbstractVecOrMat, A::SuiteSparse.CHOLMOD.Factor, x::AbstractVecOrMat) = copyto!(y, A\x)
+LinearAlgebra.ldiv!(A::SuiteSparse.CHOLMOD.Factor, x::AbstractVecOrMat) = copyto!(x, A\x)
 
 # Multiplication action
-Minv_K_mul_u!(Y, X, K, Mfact) = (mul!(Y, K, X); copyto!(Y, Minv_u(Mfact, Y)); return Y)
-Kt_Minv_mul_u!(Y, X, K, Mfact) = (mul!(Y, transpose(K), Minv_u(Mfact, X)); return Y)
-Kc_Minv_mul_u!(Y, X, K, Mfact) = (mul!(Y, adjoint(K), Minv_u(Mfact, X)); return Y)
+Minv_K_mul_u!(Y, X, K, Mfact) = (mul!(Y, K, X); ldiv!(Mfact, Y); return Y)
+Kt_Minv_mul_u!(Y, X, K, Mfact) = (mul!(Y, transpose(K), Mfact\X); return Y)
+Kc_Minv_mul_u!(Y, X, K, Mfact) = (mul!(Y, adjoint(K), Mfact\X); return Y)
 
 # Multiplication with Vector or Matrix
 LinearAlgebra.mul!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = Minv_K_mul_u!(Y, X, A.K, A.Mfact)
@@ -669,6 +622,25 @@ LinearAlgebra.mul!(Y::AbstractVector, A::LinearMaps.TransposeMap{T, ParabolicLin
 LinearAlgebra.mul!(Y::AbstractMatrix, A::LinearMaps.TransposeMap{T, ParabolicLinearMap{T}}, X::AbstractMatrix) where {T} = Kt_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
 LinearAlgebra.mul!(Y::AbstractVector, A::LinearMaps.AdjointMap{T, ParabolicLinearMap{T}}, X::AbstractVector) where {T} = Kc_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
 LinearAlgebra.mul!(Y::AbstractMatrix, A::LinearMaps.AdjointMap{T, ParabolicLinearMap{T}}, X::AbstractMatrix) where {T} = Kc_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
+
+function Base.show(io::IO, d::ParabolicLinearMap)
+    compact = get(io, :compact, false)
+    if compact
+        print(io, size(d,1), "×", size(d,2), " ", typeof(d))
+    else
+        print(io, "$(typeof(d)) with:")
+        print(io, "\n     M: "); _compact_show_sparse(io, d.M)
+        print(io, "\n Mfact: "); _compact_show_factorization(io, d.Mfact)
+        print(io, "\n     K: "); _compact_show_sparse(io, d.K)
+    end
+end
+
+# ---------------------------------------------------------------------------- #
+# LinearMap methods: helper functions for LinearMap's
+# ---------------------------------------------------------------------------- #
+
+# For taking literal powers of LinearMaps, e.g. A^2
+Base.to_power_type(A::Union{<:LinearMaps.AdjointMap, <:LinearMaps.TransposeMap, <:LinearMap}) = A
 
 function LinearAlgebra.tr(A::LinearMap{T}, t::Int = 10) where {T}
     # Approximate trace using mat-vec's with basis vectors
@@ -684,30 +656,9 @@ function LinearAlgebra.tr(A::LinearMap{T}, t::Int = 10) where {T}
     return tr * (N/t)
 end
 
-# `norm`, `opnorm`, and `normAm`
-function normest1_norm(A, p::Real = 1, t::Int=10)
-    !(size(A,1) == size(A,2)) && error("Matrix A must be square")
-    !(p == 1 || p == Inf) && error("Only p=1 or p=Inf supported")
-    p == Inf && (A = A')
-    t = min(t, size(A,2))
-    return normest1(A, t)[1]
-end
-
 # Default to p = 2 for consistency with Base, even though it would throw an error
 LinearAlgebra.norm(A::LinearMap, p::Real = 2, t::Int = 10) = normest1_norm(A, p, t)
 LinearAlgebra.opnorm(A::LinearMap, p::Real = 2, t::Int = 10) = normest1_norm(A, p, t)
-
-function Base.show(io::IO, d::ParabolicLinearMap)
-    compact = get(io, :compact, false)
-    if compact
-        print(io, size(d,1), "×", size(d,2), " ", typeof(d))
-    else
-        print(io, "$(typeof(d)) with:")
-        print(io, "\n     M: "); _compact_show_sparse(io, d.M)
-        print(io, "\n Mfact: "); _compact_show_factorization(io, d.Mfact)
-        print(io, "\n     K: "); _compact_show_sparse(io, d.K)
-    end
-end
 
 # ---------------------------------------------------------------------------- #
 # DiffEqParabolicLinearMapWrapper methods: Effectively a simplified LinearMap,
@@ -718,23 +669,20 @@ struct DiffEqParabolicLinearMapWrapper{T,Atype} <: AbstractMatrix{T}
     A::Atype
     DiffEqParabolicLinearMapWrapper(A::Atype) where {Atype} = new{eltype(A), Atype}(A)
 end
-
-Base.size(A::DiffEqParabolicLinearMapWrapper, args...) = size(A.A, args...)
-LinearAlgebra.issymmetric(A::DiffEqParabolicLinearMapWrapper) = issymmetric(A.A)
-LinearAlgebra.ishermitian(A::DiffEqParabolicLinearMapWrapper) = ishermitian(A.A)
-LinearAlgebra.isposdef(A::DiffEqParabolicLinearMapWrapper) = isposdef(A.A)
-Base.show(io::IO, A::DiffEqParabolicLinearMapWrapper) = print(io, "$(typeof(A))")
-Base.show(io::IO, ::MIME"text/plain", A::DiffEqParabolicLinearMapWrapper) = print(io, "$(size(A,1)) × $(size(A,2)) $(typeof(A))")
-Base.display(io::IO, A::DiffEqParabolicLinearMapWrapper) = show(io, A)
-Base.display(io::IO, ::MIME"text/plain", A::DiffEqParabolicLinearMapWrapper) = show(io, A)
-
 LinearAlgebra.adjoint(A::DiffEqParabolicLinearMapWrapper) = DiffEqParabolicLinearMapWrapper(A.A')
 LinearAlgebra.transpose(A::DiffEqParabolicLinearMapWrapper) = DiffEqParabolicLinearMapWrapper(transpose(A.A))
+
+# NOTE: purposefully not forwarding getindex; wrapper type should behave like a LinearMap
+Lazy.@forward DiffEqParabolicLinearMapWrapper.A (Base.size, LinearAlgebra.issymmetric, LinearAlgebra.ishermitian, LinearAlgebra.isposdef)
+
+# TODO: Lazy.@forward gives ambiguity related errors when trying to forward these methods: mul!, norm, opnorm
 LinearAlgebra.mul!(Y::AbstractVector, A::DiffEqParabolicLinearMapWrapper, X::AbstractVector) = mul!(Y, A.A, X)
 LinearAlgebra.mul!(Y::AbstractMatrix, A::DiffEqParabolicLinearMapWrapper, X::AbstractMatrix) = mul!(Y, A.A, X)
+LinearAlgebra.norm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A.A, p, t)
+LinearAlgebra.opnorm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A.A, p, t)
 
-LinearAlgebra.norm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A, p, t)
-LinearAlgebra.opnorm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A, p, t)
+Base.show(io::IO, A::DiffEqParabolicLinearMapWrapper) = print(io, "$(typeof(A))")
+Base.show(io::IO, ::MIME"text/plain", A::DiffEqParabolicLinearMapWrapper) = print(io, "$(size(A,1)) × $(size(A,2)) $(typeof(A))")
 
 # ---------------------------------------------------------------------------- #
 # Local frequency perturbation map functions
@@ -787,7 +735,10 @@ end
 
 # Calculate ω(x) inside region number `region`, which is assumed to be tissue
 function omega(x::Vec{2}, p::MyelinProblem, region::TissueRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {C<:Circle{2}}
-    constants = OmegaDerivedConstants(p)
+    
+    # If there are no structures, then there is no frequency shift ω
+    (isempty(outercircles) && isempty(innercircles)) && return zero(eltype(x))
+        constants = OmegaDerivedConstants(p)
 
     ω = sum(eachindex(outercircles, innercircles)) do i
         @inbounds ωi = omega_tissue(x, p, constants, innercircles[i], outercircles[i])
@@ -800,6 +751,9 @@ end
 
 # Calculate ω(x) inside region number `region`, which is assumed to be myelin
 function omega(x::Vec{2}, p::MyelinProblem, region::MyelinRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {C<:Circle{2}}
+        
+    # If there are no structures, then there is no frequency shift ω
+    (isempty(outercircles) && isempty(innercircles)) && return zero(eltype(x))
     constants = OmegaDerivedConstants(p)
 
     ω = sum(eachindex(outercircles, innercircles)) do i
@@ -817,6 +771,9 @@ end
 
 # Calculate ω(x) inside region number `region`, which is assumed to be axonal
 function omega(x::Vec{2}, p::MyelinProblem, region::AxonRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {C<:Circle{2}}
+    
+    # If there are no structures, then there is no frequency shift ω
+    (isempty(outercircles) && isempty(innercircles)) && return zero(eltype(x))
     constants = OmegaDerivedConstants(p)
 
     ω = sum(eachindex(outercircles, innercircles)) do i
@@ -832,24 +789,24 @@ function omega(x::Vec{2}, p::MyelinProblem, region::AxonRegion, outercircles::Ve
 end
 @inline omega(x::Vec{2}, p::MyelinProblem, domain::MyelinDomain{AxonRegion}) = omega(x, p, getregion(domain), getoutercircles(domain), getinnercircles(domain))
 
-# Individual coordinate input
-@inline omega(x, y, p::MyelinProblem, domain::MyelinDomain) = omega(Vec{2}((x, y)), p, domain)
-
 # Calculate ω(x) by searching for the region which `x` is contained in
 function omega(
         x::Vec{2},
         p::MyelinProblem,
-        outercircles::Vector{Circle{2,T}},
-        innercircles::Vector{Circle{2,T}},
+        outercircles::Vector{C},
+        innercircles::Vector{C},
         outer_bdry_point_type = :myelin, # `:tissue` or `:myelin`
         inner_bdry_point_type = :myelin, # `:myelin` or `:axon`
-        thresh_outer = outer_bdry_point_type == :myelin ?  √eps(T) : -√eps(T),
-        thresh_inner = inner_bdry_point_type == :myelin ? -√eps(T) :  √eps(T)
-    ) where {T}
+        thresh_outer = outer_bdry_point_type == :myelin ?  √eps(eltype(x)) : -√eps(eltype(x)),
+        thresh_inner = inner_bdry_point_type == :myelin ? -√eps(eltype(x)) :  √eps(eltype(x))
+    ) where {C <: Circle{2}}
+    
+    # If there are no structures, then there is no frequency shift ω
+    (isempty(outercircles) && isempty(innercircles)) && return zero(eltype(x))
 
-    # - A positive `thresh_outer` interprets `outercircles` boundary points as
-    #   being in the myelin region, and tissue region for a negative value
-    # - Similarly, a negative `thresh_inner` interprets `innercircles` boundary
+    # - Positive `thresh_outer` interprets `outercircles` boundary points as being part of
+    #   the myelin region; negative interprets boundary points as in the tissue region
+    # - Similarly, negative `thresh_inner` interprets `innercircles` boundary
     #   points as being within the myelin region, and axon region for positive
     i_outer = findfirst(c -> is_in_circle(x, c, thresh_outer), outercircles)
     i_inner = findfirst(c -> is_in_circle(x, c, thresh_inner), innercircles)
@@ -864,6 +821,10 @@ function omega(
 
     return omega(x, p, region, outercircles, innercircles)
 end
+@inline omega(x::Vec{2}, p::MyelinProblem, domain::MyelinDomain{PermeableInterfaceRegion}) = omega(x, p, getoutercircles(domain), getinnercircles(domain))
+
+# Individual coordinate input
+@inline omega(x, y, p::MyelinProblem, domain::MyelinDomain) = omega(Vec{2}((x, y)), p, domain)
 
 # Return a vector of vectors of nodal values of ω(x) evaluated on each MyelinDomain
 function omegamap(p::MyelinProblem, m::MyelinDomain)
@@ -872,14 +833,14 @@ function omegamap(p::MyelinProblem, m::MyelinDomain)
         ω(getcoordinates(node)) # Map over grid nodes, returning ω(x) for each node
     end
 end
-# omegamap(p::MyelinProblem, ms::AbstractArray{<:MyelinDomain}) = map(m -> omegamap(p,m), ms)
 
 # ---------------------------------------------------------------------------- #
 # Global dcoeff/rdecay functions on each region
 # ---------------------------------------------------------------------------- #
 
 #TODO: re-write to take in plain vectors of inner/outer circles/ferritins which
-# can be called on its own, and wrap with a method that takes a MyelinDomain
+# can be called on its own, and wrap with a method that takes a MyelinDomain,
+# just like omega(x,p,outercircles,innercircles,...) above
 
 @inline dcoeff(x, p::MyelinProblem, m::MyelinDomain{TissueRegion}) = p.params.D_Tissue
 @inline dcoeff(x, p::MyelinProblem, m::MyelinDomain{MyelinRegion}) = p.params.D_Sheath
@@ -891,11 +852,13 @@ end
 @inline rdecay(x, p::MyelinProblem, m::MyelinDomain{AxonRegion}) = p.params.R2_lp
 @inline rdecay(x, y, p::MyelinProblem, m::MyelinDomain) = rdecay(Vec{2}((x, y)), p, m)
 
+
 # ============================================================================ #
 #
 # Stiffness matrix and mass matrix assembly
 #
 # ============================================================================ #
+
 
 # ---------------------------------------------------------------------------- #
 # Assembly on a ParabolicDomain of a BlochTorreyProblem
@@ -923,10 +886,6 @@ function doassemble!(
     Ke = zeros(T, n_basefuncs, n_basefuncs)
     Me = zeros(T, n_basefuncs, n_basefuncs)
     we = zeros(T, n_basefuncs)
-
-    isfirst = true
-    Rfirst = zero(T)
-    dΩfirst = zero(T)
 
     # It is now time to loop over all the cells in our grid. We do this by iterating
     # over a `CellIterator`. The iterator caches some useful things for us, for example
@@ -957,13 +916,6 @@ function doassemble!(
             D = prob.Dcoeff(coords_qp)
             ω = prob.Omega(coords_qp)
 
-            if isfirst
-                Rfirst = R
-                dΩfirst = dΩ
-                @show q_point
-                @show coords_qp
-            end
-
             # For each quadrature point we loop over all the (local) shape functions.
             # We need the value and gradient of the testfunction `v` and also the gradient
             # of the trial function `u`. We get all of these from `cellvalues`.
@@ -978,14 +930,6 @@ function doassemble!(
                     Me[i, j] += (v ⋅ u) * dΩ
                 end
             end
-        end
-
-        if isfirst
-            _Ke = -(Rfirst.*Me .+ Ke)
-            println("---- Ke ----\n"); display(_Ke); @show sum(_Ke, dims=2); println("\n")
-            println("---- Me ----\n"); display(Me); println("\n")
-            println("---- we ----\n"); display(we); println("\n")
-            isfirst = false
         end
 
         # The last step in the element loop is to assemble `Ke` and `Me`
@@ -1027,20 +971,20 @@ function doassemble!(
     #         end
     #     end
     # end
-
     # function surface_integral!(Ke, facevalues::FaceVectorValues, cell, q_point, coords, func::Function)
     # end
 
-
     return domain
 end
+
+
 # ---------------------------------------------------------------------------- #
 # Assembly on a MyelinDomain of a MyelinProblem
 # ---------------------------------------------------------------------------- #
 
-function doassemble!(domain::MyelinDomain, prob::MyelinProblem)
-    doassemble!(ParabolicDomain(domain), BlochTorreyProblem(prob, domain))
-    return domain
+function doassemble!(myelindomain::MyelinDomain, prob::MyelinProblem)
+    doassemble!(getdomain(myelindomain), BlochTorreyProblem(prob, myelindomain))
+    return myelindomain
 end
 
 

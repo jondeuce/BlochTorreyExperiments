@@ -25,7 +25,7 @@ export pack
 function pack(
         radii::AbstractVector;
         initial_origins::AbstractVector{V} = initialize_origins(radii),
-        goaldensity = 0.8,
+        goaldensity = 1.0,
         distancescale = mean(radii),
         weights::AbstractVector = [1.0, 1e-6, 1.0],
         epsilon::Real = 0.1*distancescale,
@@ -47,7 +47,7 @@ function pack(
 
     # Check of circles are already sufficiently densely packed
     if estimate_density(initial_circles) ≥ goaldensity
-        packed_circles = scale_to_density(initial_circles, goaldensity)
+        packed_circles = scale_to_density(initial_circles, goaldensity, epsilon)
         return packed_circles
     end
 
@@ -78,7 +78,9 @@ function pack(
     end
 
     # Add callback which stops minimization when goaldensity is reached/exceeded
-    setcallback && (Opts = add_callback(Opts, radii; η = goaldensity, ϵ = epsilon))
+    if goaldensity < 1
+        setcallback && (Opts = add_callback(Opts, radii; η = goaldensity, ϵ = epsilon))
+    end
 
     # Optimize and get results
     result = optimize(opt_obj, x0, Alg, Opts)
@@ -88,7 +90,9 @@ function pack(
     packed_circles = tocircles(x, radii)
 
     # Scale to desired density, if possible
-    packed_circles = scale_to_density(packed_circles, goaldensity)
+    if goaldensity < 1
+        packed_circles = scale_to_density(packed_circles, goaldensity, epsilon)
+    end
 
     return packed_circles
 end
@@ -111,9 +115,11 @@ function add_callback(
     optvalues = getfield.(Ref(Opts), optfields)
     optdict = Dict(zip(optfields, optvalues))
 
-    return Optim.Options(; optdict...,
+    return Optim.Options(;
+        optdict...,
         callback = state -> check_density_callback(state, r, η, ϵ),
-        extended_trace = true)
+        extended_trace = true
+    )
 end
 
 function create_energy(
@@ -148,31 +154,31 @@ function create_energy(
 
     # Energy function
     function energy(x)
-        T = eltype(x)
-        E_total = zero(T)
-        # !(w[1] ≈ zero(T)) && (E_total += energy_covariance(circles))
-        !(w[2] ≈ zero(T)) && (E_total += w[2] * f_mutual(x))
-        !(w[3] ≈ zero(T)) && (E_total += w[3] * f_overlap(x))
+        Tx = eltype(x)
+        E_total = zero(Tx)
+        # !(w[1] ≈ zero(Tx)) && (E_total += energy_covariance(circles))
+        !(w[2] ≈ zero(Tx)) && (E_total += w[2] * f_mutual(x))
+        !(w[3] ≈ zero(Tx)) && (E_total += w[3] * f_overlap(x))
         return β * E_total
     end
 
     # Energy function gradient
     function ∇energy!(g, x)
-        T = eltype(x)
-        g = fill!(g, zero(T))
-        # !(w[1] ≈ zero(T)) && (E_total += energy_covariance(circles))
-        !(w[2] ≈ zero(T)) && (g = up_g!(g, g_mutual!, x, β * w[2]))
-        !(w[3] ≈ zero(T)) && (g = up_g!(g, g_overlap!, x, β * w[3]))
+        Tx = eltype(x)
+        g = fill!(g, zero(Tx))
+        # !(w[1] ≈ zero(Tx)) && (E_total += energy_covariance(circles))
+        !(w[2] ≈ zero(Tx)) && (g = up_g!(g, g_mutual!, x, β * w[2]))
+        !(w[3] ≈ zero(Tx)) && (g = up_g!(g, g_overlap!, x, β * w[3]))
         return g
     end
 
     # Energy function hessian
     function ∇²energy!(h, x)
-        T = eltype(x)
-        h = fill!(h, zero(T))
-        # !(w[1] ≈ zero(T)) && (E_total += energy_covariance(circles))
-        !(w[2] ≈ zero(T)) && (h = up_h!(h, h_mutual!, x, β * w[2]))
-        !(w[3] ≈ zero(T)) && (h = up_h!(h, h_overlap!, x, β * w[3]))
+        Tx = eltype(x)
+        h = fill!(h, zero(Tx))
+        # !(w[1] ≈ zero(Tx)) && (E_total += energy_covariance(circles))
+        !(w[2] ≈ zero(Tx)) && (h = up_h!(h, h_mutual!, x, β * w[2]))
+        !(w[3] ≈ zero(Tx)) && (h = up_h!(h, h_overlap!, x, β * w[3]))
         return h
     end
 

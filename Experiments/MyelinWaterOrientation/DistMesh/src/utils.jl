@@ -191,66 +191,55 @@ function boundedges(
 
     # Form all edges, non-duplicates are boundary edges
     p, t = to_mat(p), to_mat(t)
-    edges = [t[:,[1,2]]; t[:,[1,3]]; t[:,[2,3]]]
-    node3 = [t[:,3]; t[:,2]; t[:,1]]
-    edges = sort(edges; dims = 2)
+    # edges = [t[:,[1,2]]; t[:,[1,3]]; t[:,[2,3]]]
+    # node3 = [t[:,3]; t[:,2]; t[:,1]]
+    edges = [t[:,[1,2]]; t[:,[2,3]]; t[:,[3,1]]] #NOTE changed from above, but shouldn't matter
+    node3 = [t[:,3]; t[:,1]; t[:,2]]
+    edges = sort(edges; dims = 2) # for finding unique edges, make sure they're ordered the same
     _, ix, jx = findunique(to_tuple(edges))
-
-    h = fit(Histogram, jx, 1:maximum(jx); closed = :left)
-    qx = findall(w -> w==1, h.weights)
-    e = edges[ix[qx], :]
-    node3 = node3[ix[qx]]
-
+    
+    # Histogram edges are 1:max(jx)+1, closed on the left i.e. [a,b). First bin is [1,2), n'th bin is [n,n+1)
+    h = fit(Histogram, jx, weights(ones(Int, size(jx))), 1:length(ix)+1; closed = :left)
+    ix_unique = ix[h.weights .== 1]
+    edges = edges[ix_unique, :]
+    node3 = node3[ix_unique]
+    # qx = findall(w->w==1, h.weights)
+    # edges = edges[ix[qx], :]
+    # node3 = node3[ix[qx]]
+    
     # Orientation
-    v12 = p[e[:,2],:] - p[e[:,1],:]
-    v13 = p[node3,:] - p[e[:,1],:]
-    ix = findall(v12[:,1] .* v13[:,2] .- v12[:,2] .* v13[:,1] .< zero(T)) #NOTE this is different in DistMesh (they check for > 0) - I believe it's an error in their code
-    e[ix, [1,2]] = e[ix, [2,1]]
-    e = sort!(to_tuple(e); by = first)
+    v12 = p[edges[:,2],:] - p[edges[:,1],:]
+    v13 = p[node3,:] - p[edges[:,1],:]
+    b_flip = v12[:,1] .* v13[:,2] .- v12[:,2] .* v13[:,1] .< zero(T) #NOTE this is different in DistMesh (they check for > 0) - I believe it's an error in their code
+    edges[b_flip, [1,2]] = edges[b_flip, [2,1]]
+    edges = sort!(to_tuple(edges); by = first)
 
-    return e
+    return edges
 end
 
 # ---------------------------------------------------------------------------- #
 # simpplot
 # ---------------------------------------------------------------------------- #
 
-function simpplot(p::AbstractMatrix, t::AbstractMatrix;
-        newfigure = false,
-        hold = false,
-        xlim = nothing,
-        ylim = nothing,
-        axis = nothing,
-        expr = Float64[],
-        bcol = [0.8, 0.9, 1.0],
-        icol = [0.0, 0.0, 0.0],
-        nodes = 0.0,
-        tris = 0.0,
-        facecol = Float64[]
-    )
-    @assert size(p,2) == 2 && size(t,2) == 3
+@userplot SimpPlot
 
-    newfigure && mxcall(:figure, 0)
-    hold && mxcall(:hold, 0, "on")
-
-    if !(isempty(p) || isempty(t))
-        mxcall(:simpplot, 0,
-            Matrix{Float64}(p), Matrix{Float64}(t),
-            expr, bcol, icol, nodes, tris, facecol
-        )
+@recipe function f(h::SimpPlot)
+    unwrapped = unwrap_simpplot_args(h.args...)
+    if !(length(unwrapped) == 2 && typeof(unwrapped[1]) <: AbstractArray && typeof(unwrapped[2]) <: AbstractArray)
+        error("Arguments not properly parsed; expected two AbstractArray's, got: $unwrapped")
     end
-
-    !(xlim == nothing) && mxcall(:xlim, 0, xlim)
-    !(ylim == nothing) && mxcall(:ylim, 0, ylim)
-    !(axis == nothing) && mxcall(:axis, 0, axis)
-
-    return nothing
+    p, t = unwrapped
+    for i in 1:size(t,1)
+        x = [p[t[i,j],1] for j in 1:size(t,2)]
+        y = [p[t[i,j],2] for j in 1:size(t,2)]
+        @series begin
+            seriestype := :shape
+            x, y
+        end
+    end
 end
 
-function simpplot(
-        p::AbstractVector{V},
-        t::AbstractVector{NTuple{3,Int}};
-        kwargs...
-    ) where {V<:Vec{2}}
-    simpplot(to_mat(p), to_mat(t); kwargs...)
-end
+# unwrap_simpplot_args(args...) = args # we don't want this fallback; need to make sure it's caught below
+unwrap_simpplot_args(p::AbstractArray, t::AbstractArray) = p, t # this is the base case we are looking for
+unwrap_simpplot_args(p::AbstractVector{V}, t::AbstractVector{NTuple{3,Int}}) where {V<:Vec{2}} = to_mat(p), to_mat(t)
+unwrap_simpplot_args(plts::P, args...) where {P <: Union{<:AbstractPlot, <:AbstractArray{<:AbstractPlot}}} = unwrap_simpplot_args(args...) # skip plot objects

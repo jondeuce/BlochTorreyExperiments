@@ -62,13 +62,14 @@ function distmesh2d(
         fh, # edge length function
         h0::T, # nominal edge length
         bbox::Matrix{T}, # bounding box (2x2 matrix [xmin ymin; xmax ymax])
-        pfix = Vec{2,T}[], # fixed points
+        pfix::AbstractVector{Vec{2,T}} = Vec{2,T}[], # fixed points
+        pinit::AbstractVector{Vec{2,T}} = init_points(bbox, h0), # inital distribution of points (triangular grid by default)
         ∇fd = x -> Tensors.gradient(fd, x); # Gradient of distance function `fd`
         PLOT::Bool = false, # plot all triangulations during evolution
         PLOTLAST::Bool = false, # plot resulting triangulation
         DETERMINISTIC::Bool = false, # use deterministic pseudo-random
         MAXSTALLITERS::Int = 500, # max iterations of stalled progress
-        RESTARTEDGETHRESH::T = T(1e-4)*maximum(diff(bbox;dims=1)), # min. h0 s.t. restart is allowed
+        RESTARTEDGETHRESH::T = T(1e-4)*maximum(abs, diff(bbox;dims=1)), # min. h0 s.t. restart is allowed
         DENSITYCTRLFREQ::Int = 30, # density check frequency
         DPTOL::T = T(1e-3), # equilibrium step size threshold
         TTOL::T = T(0.1), # large movement tolerance for retriangulation
@@ -78,18 +79,15 @@ function distmesh2d(
         DEPS::T = sqrt(eps(T))*h0 # finite difference step-length
     ) where {T}
 
-    # 0. Useful defines
-    V = Vec{2,T}
-    InfV = V((Inf,Inf))
-
     # Function for restarting if h0 is large enough that all points get removed
     function restart()
         if h0/2 < RESTARTEDGETHRESH
             @warn "h0 too small to allow a restart; returning empty grid."
             return pfix, NTuple{3,Int}[]
         else
-            # @warn "No points remaining! Shrinking h0 -> h0/2 and retrying..."
-            return distmesh2d(fd, fh, h0/2, bbox, pfix, ∇fd;
+            #DEBUG
+            @warn "No points remaining! Shrinking h0 -> h0/2 and retrying..."
+            return distmesh2d(fd, fh, h0/2, bbox, pfix;
                 PLOT = PLOT,
                 PLOTLAST = PLOTLAST,
                 DETERMINISTIC = DETERMINISTIC,
@@ -106,19 +104,17 @@ function distmesh2d(
         end
     end
 
-    # 1. Create initial distribution in bounding box (equilateral triangles)
-    xrange, yrange = bbox[1,1]:h0:bbox[2,1], bbox[1,2]:h0*T(sqrt(3)/2):bbox[2,2]
-    p = zeros(V, length(yrange), length(xrange))
-    for (i,y) in enumerate(yrange), (j,x) in enumerate(xrange)
-        iseven(i) && (x += h0/2)            # Shift even rows
-        p[i,j] = V((x,y))                   # List of node coordinates
-    end
-    p = vec(p)
+    # 0. Useful defines
+    V = Vec{2,T}
+    InfV = V((Inf,Inf))
+
+    # 1. Create initial distribution in bounding box (equilateral triangles by default)
+    p = copy(pinit)
 
     # 2. Remove points outside the region, apply the rejection method
     p = filter!(x -> fd(x) < GEPS, p)       # Keep only d<0 points
+    isempty(p) && (return restart())
     r0 = inv.(fh.(p)).^2                    # Probability to keep point
-    isempty(r0) && (return restart())
 
     randlist = DETERMINISTIC ? mod.(T.(1:length(p)), T(2pi))./T(2pi) : rand(T, length(p))
     p = p[maximum(r0) .* randlist .< r0]                   # Rejection method
@@ -147,6 +143,9 @@ function distmesh2d(
     while true
         count += 1
 
+        # Restart if no points are present
+        (isempty(p) || isempty(pold)) && (return restart())
+
         # 3. Retriangulation by the Delaunay algorithm
         if count == 1 || (√maximum(norm2.(p.-pold)) > h0 * TTOL)               # Any large movement?
             p = threshunique(p; rtol = √eps(T), atol = eps(T))
@@ -162,8 +161,8 @@ function distmesh2d(
             @inbounds for (i,tt) in enumerate(t)
                 a, b, c = sorttuple(tt)
                 bars[3i-2] = (a, b)
-                bars[3i-1] = (a, c)
-                bars[3i  ] = (b, c)                                            # Interior bars duplicated
+                bars[3i-1] = (b, c)
+                bars[3i  ] = (c, a)                                            # Interior bars duplicated
             end
             unique!(sort!(bars; by = first))                                   # Bars as node pairs
 
@@ -228,9 +227,19 @@ function distmesh2d(
 
     # Clean up and plot final mesh
     p, t, _ = fixmesh(p,t)
-    (PLOT || PLOTLAST) && simpplot(p,t)
+    (PLOT || PLOTLAST) && simpplot(p,t;newfigure=true)
 
     return p, t
+end
+
+function init_points(bbox::Matrix{T}, h0::T) where {T}
+    xrange, yrange = bbox[1,1]:h0:bbox[2,1], bbox[1,2]:h0*sqrt(T(3))/2:bbox[2,2]
+    p = zeros(Vec{2,T}, length(yrange), length(xrange))
+    for (i,y) in enumerate(yrange), (j,x) in enumerate(xrange)
+        iseven(i) && (x += h0/2)            # Shift even rows
+        p[i,j] = Vec{2,T}((x,y))            # Add to list of node coordinates
+    end
+    return vec(p)
 end
 
 # ---------------------------------------------------------------------------- #
