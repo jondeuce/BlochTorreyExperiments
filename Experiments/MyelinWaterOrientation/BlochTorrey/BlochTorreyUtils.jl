@@ -58,10 +58,10 @@ export BlochTorreyParameters,
 const MyelinBoundary{gDim,T} = Union{<:Circle{gDim,T}, <:Rectangle{gDim,T}, <:Ellipse{gDim,T}}
 const VectorOfVectors{T} = AbstractVector{<:AbstractVector{T}}
 const MaybeSymmSparseMatrixCSC{T} = Union{<:SparseMatrixCSC{T}, <:Symmetric{T,<:SparseMatrixCSC{T}}}
-const MaybeNothingFactorization{T} = Union{Nothing, <:Factorization{T}}
+# const MaybeNothingFactorization{T} = Union{Nothing, <:Factorization{T}}
 
 const MassType{T} = MaybeSymmSparseMatrixCSC{T}
-const MassFactType{T} = MaybeNothingFactorization{T}
+# const MassFactType{T} = Factorization{T}
 const StiffnessType{T} = SparseMatrixCSC{T}
 
 # Struct of BlochTorreyParameters. T is the float type.
@@ -130,7 +130,7 @@ const VectorOfDomains{uDim,gDim,T,Nd,Nf} = AbstractVector{<:AbstractDomain{uDim,
 
 # ParabolicDomain: generic domain type which holds this information necessary to
 # solve a parabolic FEM problem M*du/dt = K*u
-mutable struct ParabolicDomain{uDim,gDim,T,Nd,Nf,MType<:MassType{T},MfactType<:MassFactType{T},KType<:StiffnessType{T}} <: AbstractDomain{uDim,gDim,T,Nd,Nf}
+mutable struct ParabolicDomain{uDim,gDim,T,Nd,Nf,MType<:MassType{T},KType<:StiffnessType{T}} <: AbstractDomain{uDim,gDim,T,Nd,Nf}
     grid::Grid{gDim,Nd,T,Nf}
     dh::DofHandler{gDim,Nd,T,Nf}
     cellvalues::CellValues{gDim,T}
@@ -140,7 +140,7 @@ mutable struct ParabolicDomain{uDim,gDim,T,Nd,Nf,MType<:MassType{T},MfactType<:M
     funcinterporder::Int
     geominterporder::Int
     M::MType
-    Mfact::MfactType
+    Mfact::Union{Nothing,<:Factorization}
     K::KType
     w::Vector{T}
 end
@@ -192,7 +192,7 @@ function ParabolicDomain(
     w = zeros(T, ndofs(dh))
     Mfact = nothing
 
-    ParabolicDomain{uDim,gDim,T,Nd,Nf}(
+    ParabolicDomain{uDim,gDim,T,Nd,Nf,typeof(M),typeof(K)}(
         grid, dh, cellvalues, facevalues,
         refshape, quadorder, funcinterporder, geominterporder,
         M, Mfact, K, w
@@ -217,9 +217,9 @@ struct PermeableInterfaceRegion <: AbstractRegionUnion end
 # or in close proximity to myelin. The complete domain is represented as a
 # ParabolicDomain, which stores the underlying grid, mass matrix M, stiffness
 # matrix K, etc.
-mutable struct MyelinDomain{R<:AbstractRegion,uDim,gDim,T,Nd,Nf} <: AbstractDomain{uDim,gDim,T,Nd,Nf}
+mutable struct MyelinDomain{R<:AbstractRegion,uDim,gDim,T,Nd,Nf,DType<:ParabolicDomain{uDim,gDim,T,Nd,Nf}} <: AbstractDomain{uDim,gDim,T,Nd,Nf}
     region::R
-    domain::ParabolicDomain{uDim,gDim,T,Nd,Nf}
+    domain::DType
     outercircles::Vector{Circle{2,T}}
     innercircles::Vector{Circle{2,T}}
     ferritins::Vector{Vec{3,T}}
@@ -236,12 +236,9 @@ function MyelinDomain(
         kwargs...
     ) where {R,gDim,T,Nd,Nf} #{R,uDim,gDim,T,Nd,Nf}
 
-    return MyelinDomain{R,uDim,gDim,T,Nd,Nf}(
-        region,
-        ParabolicDomain(grid, uDim; kwargs...),
-        outercircles,
-        innercircles,
-        ferritins
+    domain = ParabolicDomain(grid, uDim; kwargs...)
+    return MyelinDomain{R,uDim,gDim,T,Nd,Nf,typeof(domain)}(
+        region, domain, outercircles, innercircles, ferritins
     )
 end
 
@@ -271,14 +268,14 @@ end
 # ParabolicLinearMap: create a LinearMaps subtype which wrap the action of
 # Mfact\K in a LinearMap object. Does not make copies of M, Mfact, or K;
 # simply is a light wrapper for them
-struct ParabolicLinearMap{T,MType<:AbstractMatrix{T},MfactType<:MassFactType{T},KType<:AbstractMatrix{T}} <: LinearMap{T}
+struct ParabolicLinearMap{T,MType<:AbstractMatrix{T},KType<:AbstractMatrix{T}} <: LinearMap{T}
     M::MType
-    Mfact::MfactType
+    Mfact::Union{Nothing,<:Factorization}
     K::KType
-    function ParabolicLinearMap(M::AbstractMatrix{T}, Mfact::MassFactType{T}, K::AbstractMatrix{T}) where {T}
+    function ParabolicLinearMap(M::AbstractMatrix{T}, Mfact::Union{Nothing,<:Factorization}, K::AbstractMatrix{T}) where {T}
         @assert (size(M) == size(K)) && (size(M,1) == size(M,2))
         # @assert (size(M) == size(Mfact) || size(M) == 2 .* size(Mfact)) # for factoring only M[1:2:end,1:2:end]
-        new{T,typeof(M),typeof(Mfact),typeof(K)}(M, Mfact, K)
+        new{T,typeof(M),typeof(K)}(M, Mfact, K)
     end
 end
 ParabolicLinearMap(d::ParabolicDomain) = ParabolicLinearMap(getmass(d), getmassfact(d), getstiffness(d))
@@ -482,7 +479,7 @@ end
 # General type signature is MyelinDomain{R<:AbstractRegion,uDim,gDim,T,Nd,Nf},
 # so here we restrict it to 2D geometry (gDim) with triangular elements (number
 # of nodes per elem Nd = 3, number of faces per elem Nf = 3).
-const TriangularMyelinDomain{R,uDim,T} = MyelinDomain{R,uDim,2,T,3,3}
+const TriangularMyelinDomain{R,uDim,T,DType} = MyelinDomain{R,uDim,2,T,3,3,DType}
 
 # Create interface domain from vector of MyelinDomain's which are all assumed
 # to have the same outercircles, innercircles, and ferritins
@@ -492,7 +489,7 @@ function MyelinDomain(
         ms::AbstractVector{<:TriangularMyelinDomain{R,uDim,T} where R}
     ) where {uDim,T}
     domain = ParabolicDomain(region, prob, ms)
-    myelindomain = TriangularMyelinDomain{PermeableInterfaceRegion,uDim,T}(
+    myelindomain = TriangularMyelinDomain{PermeableInterfaceRegion,uDim,T,typeof(domain)}(
         PermeableInterfaceRegion(),
         domain,
         ms[1].outercircles, # assume these are the same for all domains
@@ -606,6 +603,18 @@ LinearAlgebra.issymmetric(A::ParabolicLinearMap) = false
 LinearAlgebra.ishermitian(A::ParabolicLinearMap) = false
 LinearAlgebra.isposdef(A::ParabolicLinearMap) = false
 
+# AdjointMap and TransposeMap wrapper definitions (shouldn't need these definitions since ParabolicLinearMap <: LinearMap)
+# LinearAlgebra.adjoint(A::ParabolicLinearMap) = LinearMaps.AdjointMap(A)
+# LinearAlgebra.transpose(A::ParabolicLinearMap) = LinearMaps.TransposeMap(A)
+
+# LinearMaps doesn't define A_mul_B etc. for abstract LinearMap's for some reason... Need to explicitly define them here
+LinearMaps.A_mul_B!(y::AbstractVector, A::ParabolicLinearMap, x::AbstractVector)  = mul!(y, A, x)
+LinearMaps.A_mul_B!(y::AbstractMatrix, A::ParabolicLinearMap, x::AbstractMatrix)  = mul!(y, A, x)
+LinearMaps.At_mul_B!(y::AbstractVector, A::ParabolicLinearMap, x::AbstractVector) = mul!(y, transpose(A), x)
+LinearMaps.At_mul_B!(y::AbstractMatrix, A::ParabolicLinearMap, x::AbstractMatrix) = mul!(y, transpose(A), x)
+LinearMaps.Ac_mul_B!(y::AbstractVector, A::ParabolicLinearMap, x::AbstractVector) = mul!(y, adjoint(A), x)
+LinearMaps.Ac_mul_B!(y::AbstractMatrix, A::ParabolicLinearMap, x::AbstractMatrix) = mul!(y, adjoint(A), x)
+
 # LinearAlgebra.ldiv! is not defined for SuiteSparse.CHOLMOD.Factor; define in terms of \ for simplicity
 LinearAlgebra.ldiv!(y::AbstractVecOrMat, A::SuiteSparse.CHOLMOD.Factor, x::AbstractVecOrMat) = copyto!(y, A\x)
 LinearAlgebra.ldiv!(A::SuiteSparse.CHOLMOD.Factor, x::AbstractVecOrMat) = copyto!(x, A\x)
@@ -618,10 +627,10 @@ Kc_Minv_mul_u!(Y, X, K, Mfact) = (mul!(Y, adjoint(K), Mfact\X); return Y)
 # Multiplication with Vector or Matrix
 LinearAlgebra.mul!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = Minv_K_mul_u!(Y, X, A.K, A.Mfact)
 LinearAlgebra.mul!(Y::AbstractMatrix, A::ParabolicLinearMap, X::AbstractMatrix) = Minv_K_mul_u!(Y, X, A.K, A.Mfact)
-LinearAlgebra.mul!(Y::AbstractVector, A::LinearMaps.TransposeMap{T, ParabolicLinearMap{T}}, X::AbstractVector) where {T} = Kt_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
-LinearAlgebra.mul!(Y::AbstractMatrix, A::LinearMaps.TransposeMap{T, ParabolicLinearMap{T}}, X::AbstractMatrix) where {T} = Kt_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
-LinearAlgebra.mul!(Y::AbstractVector, A::LinearMaps.AdjointMap{T, ParabolicLinearMap{T}}, X::AbstractVector) where {T} = Kc_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
-LinearAlgebra.mul!(Y::AbstractMatrix, A::LinearMaps.AdjointMap{T, ParabolicLinearMap{T}}, X::AbstractMatrix) where {T} = Kc_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
+LinearAlgebra.mul!(Y::AbstractVector, A::LinearMaps.TransposeMap{T, <:ParabolicLinearMap{T}}, X::AbstractVector) where {T} = Kt_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
+LinearAlgebra.mul!(Y::AbstractMatrix, A::LinearMaps.TransposeMap{T, <:ParabolicLinearMap{T}}, X::AbstractMatrix) where {T} = Kt_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
+LinearAlgebra.mul!(Y::AbstractVector, A::LinearMaps.AdjointMap{T, <:ParabolicLinearMap{T}}, X::AbstractVector) where {T} = Kc_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
+LinearAlgebra.mul!(Y::AbstractMatrix, A::LinearMaps.AdjointMap{T, <:ParabolicLinearMap{T}}, X::AbstractMatrix) where {T} = Kc_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
 
 function Base.show(io::IO, d::ParabolicLinearMap)
     compact = get(io, :compact, false)
@@ -647,18 +656,20 @@ function LinearAlgebra.tr(A::LinearMap{T}, t::Int = 10) where {T}
     N = size(A, 2)
     t = min(t, N)
     x = zeros(T, N)
-    tr = zero(T)
+    y = similar(x)
+    est = zero(T)
     for ix in StatsBase.sample(1:N, t; replace = false)
         x[ix] = one(T)
-        tr += (A*x)[ix]
+        y = mul!(y, A, x)
+        est += y[ix]
         x[ix] = zero(T)
     end
-    return tr * (N/t)
+    return N * (est/t)
 end
 
 # Default to p = 2 for consistency with Base, even though it would throw an error
-LinearAlgebra.norm(A::LinearMap, p::Real = 2, t::Int = 10) = normest1_norm(A, p, t)
 LinearAlgebra.opnorm(A::LinearMap, p::Real = 2, t::Int = 10) = normest1_norm(A, p, t)
+# LinearAlgebra.norm(A::LinearMap, p::Real = 2, t::Int = 10) = normest1_norm(A, p, t)
 
 # ---------------------------------------------------------------------------- #
 # DiffEqParabolicLinearMapWrapper methods: Effectively a simplified LinearMap,
@@ -673,13 +684,13 @@ LinearAlgebra.adjoint(A::DiffEqParabolicLinearMapWrapper) = DiffEqParabolicLinea
 LinearAlgebra.transpose(A::DiffEqParabolicLinearMapWrapper) = DiffEqParabolicLinearMapWrapper(transpose(A.A))
 
 # NOTE: purposefully not forwarding getindex; wrapper type should behave like a LinearMap
-Lazy.@forward DiffEqParabolicLinearMapWrapper.A (Base.size, LinearAlgebra.issymmetric, LinearAlgebra.ishermitian, LinearAlgebra.isposdef)
+Lazy.@forward DiffEqParabolicLinearMapWrapper.A (Base.size, LinearAlgebra.tr, LinearAlgebra.issymmetric, LinearAlgebra.ishermitian, LinearAlgebra.isposdef)
 
 # TODO: Lazy.@forward gives ambiguity related errors when trying to forward these methods: mul!, norm, opnorm
 LinearAlgebra.mul!(Y::AbstractVector, A::DiffEqParabolicLinearMapWrapper, X::AbstractVector) = mul!(Y, A.A, X)
 LinearAlgebra.mul!(Y::AbstractMatrix, A::DiffEqParabolicLinearMapWrapper, X::AbstractMatrix) = mul!(Y, A.A, X)
-LinearAlgebra.norm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A.A, p, t)
 LinearAlgebra.opnorm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A.A, p, t)
+# LinearAlgebra.norm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A.A, p, t)
 
 Base.show(io::IO, A::DiffEqParabolicLinearMapWrapper) = print(io, "$(typeof(A))")
 Base.show(io::IO, ::MIME"text/plain", A::DiffEqParabolicLinearMapWrapper) = print(io, "$(size(A,1)) × $(size(A,2)) $(typeof(A))")

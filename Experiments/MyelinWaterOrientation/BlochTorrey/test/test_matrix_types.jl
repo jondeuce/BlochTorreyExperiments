@@ -77,7 +77,7 @@ end
                 [sprand(ComplexF64, di, di, 6/di) |> to_posdef for di in ds]
             
             S = BlockDiagonalMatrix(As)
-            A = Matrix(S)
+            A = sparsemat ? sparse(S) : Matrix(S)
             x = cols == 1 ? randn(ComplexF64, d) : randn(ComplexF64, d, cols)
             y = similar(x)
 

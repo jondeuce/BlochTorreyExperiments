@@ -5,7 +5,6 @@ using CirclePackingUtils
 using MeshUtils
 using BlochTorreyUtils
 using BlochTorreySolvers
-using ExpmvHigham
 import EnergyCirclePacking
 import GreedyCirclePacking
 
@@ -186,7 +185,7 @@ function solveblochtorrey(myelinprob, myelindomains, algfun = default_algfun();
         reltol = 1e-4,
         abstol = 1e-12,
     )
-    probs = [ODEProblem(m, interpolate(u0, m), tspan; invertmass = true) for m in myelindomains]
+    probs = [ODEProblem(m, interpolate(u0, m), tspan) for m in myelindomains]
     sols = Vector{ODESolution}()
 
     @time for (i,prob) in enumerate(probs)
@@ -208,18 +207,21 @@ function solveblochtorrey(myelinprob, myelindomains, algfun = default_algfun();
 end
 
 function get_algfun(algtype = :ExpokitExpmv)
-    algfun = if algtype == :CVODE_BDF
-        prob -> CVODE_BDF(;method = :Functional)
-    elseif algtype isa DiffEqBase.AbstractODEAlgorithm
+    algfun = if algtype isa DiffEqBase.AbstractODEAlgorithm
         prob -> algtype # given an DiffEqBase.AbstractODEAlgorithm algorithm directly
-    elseif algtype == ExpokitExpmv
+    elseif algtype == :CVODE_BDF
+        prob -> CVODE_BDF(;method = :Functional)
+    elseif algtype == :ExpokitExpmv
         expokit_algfun()
+    elseif algtype == :HighamExpmV
+        higham_algfun()
     else
         default_algfun()
     end
     return algfun
 end
 expokit_algfun() = prob -> ExpokitExpmv(prob.p[1]; m = 30) # first parameter is A in du/dt = A*u
+higham_algfun() = prob -> HighamExpmv(prob.p[1]) # first parameter is A in du/dt = A*u
 default_algfun() = expokit_algfun()
 
 function plotmagnitude(sols, btparams, myelindomains, bdry; titlestr = "Magnitude", fname = nothing)

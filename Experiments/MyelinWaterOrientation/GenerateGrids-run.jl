@@ -17,14 +17,15 @@ function generate_and_save_geometry(btparams, numfibres, paramstr)
     mxcall(:close, 0, "all") # close all figures
 
     try
+        G, C = typeof(exteriorgrids[1]), typeof(outercircles[1])
         BSON.bson(
             getnow() * "__" * paramstr * "__grids.bson", #filename
             Dict(
-                :exteriorgrids => exteriorgrids,
-                :torigrids => torigrids,
-                :interiorgrids => interiorgrids,
-                :outercircles => outercircles,
-                :innercircles => innercircles,
+                :exteriorgrids => Vector{G}(exteriorgrids[:]),
+                :torigrids     => Vector{G}(torigrids[:]),
+                :interiorgrids => Vector{G}(interiorgrids[:]),
+                :outercircles  => Vector{C}(outercircles[:]),
+                :innercircles  => Vector{C}(innercircles[:]),
                 :bdry => bdry
             )
         )
@@ -38,7 +39,7 @@ end
 function main()
     default_btparams = BlochTorreyParameters{Float64}()
     numfibres = 10:10:50
-    g_ratios = [0.75, 0.80, default_btparams.g_ratio]
+    g_ratios = [0.75, 0.78, 0.80, default_btparams.g_ratio]
     packing_densities = [0.7, 0.75, 0.8, default_btparams.AxonPDensity]
 
     to_str(x) = @sprintf "%.4f" x

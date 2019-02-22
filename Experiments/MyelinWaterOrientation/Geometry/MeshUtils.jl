@@ -22,7 +22,7 @@ export getfaces, simpplot, disjoint_rect_mesh_with_tori
 export mxbbox, mxaxis
 
 # DEBUG
-export sqrtclamp, linearclamp, quadclamp, powerclamp, dcircles, dexterior, hcircles, hcircle, hshell
+# export sqrtclamp, linearclamp, quadclamp, powerclamp, dcircles, dexterior, hcircles, hcircle, hshell
 
 # ---------------------------------------------------------------------------- #
 # Misc grid utils

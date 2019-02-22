@@ -64,18 +64,22 @@ struct BlockDiagonalMatrix{T,AType}
     BlockDiagonalMatrix(As::AType...) where {AType} = new{eltype(AType), AType}([As...], [size.(As)...])
     BlockDiagonalMatrix(As::Vector{AType}) where {AType} = new{eltype(AType), AType}(As, size.(As))
 end
-Base.show(io::IO, A::BlockDiagonalMatrix) = (for A in A.As; show(io, A); end; nothing) 
 Base.size(A::BlockDiagonalMatrix, args...) = reduce((x,y)->x.+y, size(A, args...) for A in A.As)
+Base.eltype(A::BlockDiagonalMatrix{T}) where {T} = T
 Base.:*(A::BlockDiagonalMatrix, x) = LinearAlgebra.mul!(similar(x),A,x)
+Base.show(io::IO, A::BlockDiagonalMatrix) = (for A in A.As; show(io, A); end; nothing) 
+matrixtype(A::BlockDiagonalMatrix{T,AType}) where {T,AType} = AType
 
-Base.Matrix(A::BlockDiagonalMatrix{T,AType}) where {T,AType <: AbstractSparseArray} = blockdiag(A.As...)
+SparseArrays.sparse(A::BlockDiagonalMatrix{T,AType}) where {T,AType <: AbstractSparseArray} = blockdiag(A.As...)
+Base.Matrix(A::BlockDiagonalMatrix{T,AType}) where {T,AType <: AbstractSparseArray} = Matrix(sparse(A))
+
 function Base.Matrix(A::BlockDiagonalMatrix{T,AType}) where {T,AType}
     Af = zeros(T, size(A))
     start = 0
     for i in 1:length(A.As)
         (i > 1) && (start += A.sizes[i-1][2])
         ix = start .+ (1:A.sizes[i][2])
-        Af[ix,ix] .= A.As[i]
+        Af[ix,ix] .= Matrix(A.As[i])
     end
     return Af
 end
@@ -101,9 +105,9 @@ for f in [:(Base.:\)]
         start = 0
         for i in 1:length(A.As)
             (i > 1) && (start += A.sizes[i-1][2])
-            yv = view(y, firstindex(y,1) .+ stride(y,1) .* (start : start + A.sizes[i][2] - 1), :)
-            xv = view(x, firstindex(x,1) .+ stride(x,1) .* (start : start + A.sizes[i][2] - 1), :) |> collect # TODO: cholesky(A)\x fails without this
-            copyto!(yv, $f(A.As[i], xv))
+            iy = firstindex(y,1) .+ stride(y,1) .* (start : start + A.sizes[i][2] - 1) #view(y, ..., :)
+            ix = firstindex(x,1) .+ stride(x,1) .* (start : start + A.sizes[i][2] - 1) #view(x, ..., :) |> collect # TODO: cholesky(A)\x fails without this
+            y[iy] .= $f(A.As[i], x[ix])
         end
         return y
     end
@@ -116,9 +120,9 @@ for f in [:(Base.:/)]
         start = 0
         for i in 1:length(A.As)
             (i > 1) && (start += A.sizes[i-1][2])
-            yv = view(y, firstindex(y,1) .+ stride(y,1) .* (start : start + A.sizes[i][2] - 1), :)
-            xv = view(x, firstindex(x,1) .+ stride(x,1) .* (start : start + A.sizes[i][2] - 1), :) |> collect # TODO: cholesky(A)\x fails without this
-            copyto!(yv, $f(A.As[i], xv))
+            iy = firstindex(y,1) .+ stride(y,1) .* (start : start + A.sizes[i][2] - 1) #view(y, ..., :)
+            ix = firstindex(x,1) .+ stride(x,1) .* (start : start + A.sizes[i][2] - 1) #view(x, ..., :) |> collect # TODO: cholesky(A)\x fails without this
+            y[iy] .= $f(A.As[i], x[ix])
         end
         return y
     end
