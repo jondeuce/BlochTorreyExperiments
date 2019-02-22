@@ -112,8 +112,8 @@ MinorArterialFrac = 0.0;
 
 % Radius of Virchow-Robin space relative to major vessel radius [unitless];
 % VRS space volume is approx (relrad^2-1)*BVF, so e.g. sqrt(2X radius) => 1X volume
-VRSRelativeRad = 1; % 1X => 0X volume
-% VRSRelativeRad = sqrt(2); % sqrt(2X) => 1X volume
+% VRSRelativeRad = 1; % 1X => 0X volume
+VRSRelativeRad = sqrt(2); % sqrt(2X) => 1X volume
 % VRSRelativeRad = sqrt(2.5); % sqrt(2.5X) => 1.5X volume
 % VRSRelativeRad = sqrt(3); % sqrt(3X) => 2X volume
 % VRSRelativeRad = 2; % 2X => 3X volume
