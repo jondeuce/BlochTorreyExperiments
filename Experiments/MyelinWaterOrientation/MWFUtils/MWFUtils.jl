@@ -13,7 +13,7 @@ using MATLABPlots
 using OrdinaryDiffEq, DiffEqOperators, Sundials
 using BenchmarkTools
 using Parameters: @with_kw, @unpack
-using IterableTables, DataFrames, CSV, Dates
+using IterableTables, DataFrames, BSON, CSV, Dates
 
 export packcircles, creategrids, createdomains
 export calcomegas, calcomega
@@ -85,36 +85,42 @@ end
 
 function creategrids(btparams::BlochTorreyParameters{T};
         fname = nothing, # filename for saving
-        N = 20, # number of circles
-        η = btparams.AxonPDensity, # goal packing density
-        ϵ = 0.1 * btparams.R_mu, # overlap occurs when distance between circle edges is ≤ ϵ
+        Ncircles = 20, # number of circles
+        goaldensity = btparams.AxonPDensity, # goal packing density
+        overlapthresh = 0.1, # overlap occurs when distance between circle edges is ≤ overlapthresh * btparams.R_mu
         maxpackiter = 10,
-        outercircles = packcircles(btparams; N=N,η=η,ϵ=ϵ,α=1e-1,β=1e-6,λ=1.0,it=100,maxiter=maxpackiter), # outer circles
+        outercircles = packcircles(btparams;
+            N = Ncircles, η = goaldensity, ϵ = overlapthresh * btparams.R_mu,
+            α = 1e-1, β = 1e-6, λ = 1.0, it = 100, maxiter = maxpackiter), # outer circles
         bdry = opt_subdomain(outercircles)[1], # default boundary is automatically determined in packcircles
-        FORCEDENSITY = false, # If this flag is true, an error is thrown if the reached packing density is not η
+        h_min = 0.5, # minimum bar length, relative to the minimum distance between outer circles 
+        h_max = 1.0, # maximum bar length, relative to the minimum distance between outer circles 
+        h_range = 2.0, # range over which bar lengths vary, relative to the minimum distance between outer circles 
+        h_rate = 1.0, # rate of increase of bar lengths; 1.0 is linear, 0.5 is sqrt, etc.
+        RESOLUTION = 1.0, # Multiplicative factor to easily uniformly increase/decrease bar lengths
+        FORCEDENSITY = false, # If this flag is true, an error is thrown if the reached packing density is not goaldensity
         FORCEAREA = false, # If this flag is true, an error is thrown if the resulting grid area doesn't match the bdry area
-        RESOLUTION = 1.0,
         CIRCLESTALLITERS = 1000, #DEBUG
         EXTERIORSTALLITERS = 1000, #DEBUG
         PLOT = true
     ) where {T}
 
     if FORCEDENSITY
-        η_curr = estimate_density(outercircles)
-        !(η_curr ≈ η) && error("Packing density not reached: goal density was $η, reached $η_curr.")
+        density = estimate_density(outercircles)
+        !(density ≈ goaldensity) && error("Packing density not reached: goal density was $goaldensity, reached $density.")
     end
 
     mindist = minimum_signed_edge_distance(outercircles)
-    h_min = RESOLUTION * T(0.5 * mindist)
-    h_max = RESOLUTION * T(1.0 * mindist)
-    h_range = RESOLUTION * T(2.0 * mindist)
-    h_rate = T(1.0)
+    h_min = T(RESOLUTION * h_min * mindist)
+    h_max = T(RESOLUTION * h_max * mindist)
+    h_range = T(RESOLUTION * h_range * mindist)
+    h_rate = T(h_rate)
 
     innercircles = scale_shape.(outercircles, btparams.g_ratio)
 
     @time exteriorgrids, torigrids, interiorgrids, parentcircleindices = disjoint_rect_mesh_with_tori(
         bdry, innercircles, outercircles, h_min, h_max, h_range, h_rate;
-        plotgrids = PLOT, exterior_tiling = (1, 1), # DEBUG
+        plotgrids = PLOT, exterior_tiling = (1,1), # DEBUG
         CIRCLESTALLITERS = CIRCLESTALLITERS, EXTERIORSTALLITERS = EXTERIORSTALLITERS
     )
 
@@ -122,14 +128,28 @@ function creategrids(btparams::BlochTorreyParameters{T};
     bdry_area = area(bdry)
     cell_area_mismatch = bdry_area - grid_area
     if FORCEAREA
-        !(grid_area ≈ bdry_area) && error("Grid area not matched with boundary area; relative error is $(cell_area_mismatch/bdry_area).")
+        !(grid_area ≈ bdry_area) && error("Grid area not matched with boundary area; error is $(cell_area_mismatch).")
     end
     @show cell_area_mismatch
 
     PLOT && mxsimpplot(vcat(exteriorgrids[:], torigrids[:], interiorgrids[:]); newfigure = true, axis = mxaxis(bdry))
-    (fname != nothing) && mxsavefig(fname) #DEBUG
-
     # PLOT && simpplot(vcat(exteriorgrids[:], torigrids[:], interiorgrids[:]); color = :cyan) |> display
+
+    if fname != nothing
+        PLOT && mxsavefig(fname)     
+        try
+            BSON.bson(fname, Dict(
+                :exteriorgrids => exteriorgrids,
+                :torigrids     => torigrids,
+                :interiorgrids => interiorgrids,
+                :outercircles  => outercircles,
+                :innercircles  => innercircles,
+                :bdry => bdry))
+        catch e
+            @warn "Error saving geometries"
+        end
+    end
+
 
     return exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry
 end
@@ -301,10 +321,11 @@ function plotSEcorr(sols, btparams, myelindomains; fname = nothing)
 end
 
 # Save plot
-function mxsavefig(fname)
-    fname = getnow() * "__" * fname
-    mxcall(:savefig, 0, fname * ".fig")
-    mxcall(:export_fig, 0, fname, "-png")
+function mxsavefig(fname; fig = true, png = true, pdf = true, eps = true)
+    fig && mxcall(:savefig, 0, fname * ".fig")
+    png && mxcall(:export_fig, 0, fname, "-png")
+    pdf && mxcall(:export_fig, 0, fname, "-dpdf")
+    eps && mxcall(:export_fig, 0, fname, "-eps")
     mxcall(:close, 0)
 end
 
@@ -325,10 +346,10 @@ function compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry
 end
 
 function CSV.write(results::MWFResults, i)
+    curr_date = getnow()
     for (j,sol) in enumerate(results.sols[i])
-        df = DataFrame(sol)
-        fname = getnow() * "__sol_$(i)__region_$(j).csv"
-        CSV.write(fname, df)
+        fname = curr_date * "__sol_$(i)__region_$(j).csv"
+        CSV.write(fname, DataFrame(sol))
     end
     return nothing
 end

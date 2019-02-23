@@ -71,6 +71,7 @@ function distmesh2d(
         MAXSTALLITERS::Int = 500, # max iterations of stalled progress
         RESTARTEDGETHRESH::T = T(1e-4)*maximum(abs, diff(bbox;dims=1)), # min. h0 s.t. restart is allowed
         DENSITYCTRLFREQ::Int = 30, # density check frequency
+        DENSITYRELTHRESH::T = T(3.0), # density relative threshold
         DPTOL::T = T(1e-3), # equilibrium step size threshold
         TTOL::T = T(0.1), # large movement tolerance for retriangulation
         FSCALE::T = T(1.2), # scale bar lengths
@@ -112,11 +113,11 @@ function distmesh2d(
     p = copy(pinit)
 
     # 2. Remove points outside the region, apply the rejection method
-    p = filter!(x -> fd(x) < GEPS, p)       # Keep only d<0 points
+    p = filter!(x -> fd(x) < GEPS, p)                      # Keep only d<0 points
     isempty(p) && (return restart())
-    r0 = inv.(fh.(p)).^2                    # Probability to keep point
+    r0 = inv.(fh.(p)).^2                                   # Probability to keep point
 
-    randlist = DETERMINISTIC ? mod.(T.(1:length(p)), T(2pi))./T(2pi) : rand(T, length(p))
+    randlist = DETERMINISTIC ? rand(MersenneTwister(0), T, length(p)) : rand(T, length(p))
     p = p[maximum(r0) .* randlist .< r0]                   # Rejection method
     isempty(p) && (return restart())
 
@@ -128,28 +129,40 @@ function distmesh2d(
     p = vcat(pfix, p)                                      # Prepend fix points
     t = delaunay2(p)
 
-    # check that initial distribution is not empty
+    # Check that initial distribution is not empty
     (isempty(t) || length(p) == length(pfix)) && (return restart())
 
-    # plot initial points
+    # Plot initial points
     PLOT && simpplot(p,t)
+    
+    # Initialize buffers
+    bars = Vector{NTuple{2,Int}}() # bars indices buffer
+    barvec, Fvec, Ftot = Vector{V}(), Vector{V}(), Vector{V}() # vector buffers
+    L, L0, hbars, F = Vector{T}(), Vector{T}(), Vector{T}(), Vector{T}() # scalar buffers
 
-    count = 0
-    stallcount = 0
+    resize_buffers!(buf,len) = map!(x->resize!(x,len), buf, buf) # resize function
+    p_buffers = [Ftot] # buffers of length(p)
+    bars_buffers = [barvec, L, L0, hbars, F, Fvec] # buffers of length(bars)
+    
+    # Initialize variables for first iteration
+    count, stallcount = 0, 0
     dtermbest = T(Inf)
-    pold = V[InfV]                                                             # For first iteration
-    bars = Vector{NTuple{2,Int}}()
-
+    pold = V[InfV]
+    force_triangulation = true
+    resize_buffers!(p_buffers, length(p))
+    
     while true
         count += 1
 
         # Restart if no points are present
         (isempty(p) || isempty(pold)) && (return restart())
 
-        # 3. Retriangulation by the Delaunay algorithm
-        if count == 1 || (√maximum(norm2.(p.-pold)) > h0 * TTOL)               # Any large movement?
-            p = threshunique(p; rtol = √eps(T), atol = eps(T))
-            isempty(p) && (return restart())
+        # 3. (Re-)triangulation by the Delaunay algorithm
+        if force_triangulation || (√maximum(norm2.(p.-pold)) > h0 * TTOL)      # Any large movement?    
+            # DEBUG
+            # p = threshunique(p; rtol = √eps(T), atol = eps(T))
+            # resize_buffers!(p_buffers, length(p)) # Resize buffers of length(p)
+            # isempty(p) && (return restart())
 
             pold = copy(p)                                                     # Save current positions
             t = delaunay2!(t, p)                                               # List of triangles
@@ -157,67 +170,72 @@ function distmesh2d(
             t = t[fd.(pmid) .< -GEPS]                                          # Keep interior triangles
 
             # 4. Describe each bar by a unique pair of nodes
-            resize!(bars, 3*length(t))
+            bars = resize!(bars, 3*length(t))
             @inbounds for (i,tt) in enumerate(t)
                 a, b, c = sorttuple(tt)
                 bars[3i-2] = (a, b)
                 bars[3i-1] = (b, c)
                 bars[3i  ] = (c, a)                                            # Interior bars duplicated
             end
-            unique!(sort!(bars; by = first))                                   # Bars as node pairs
+            bars = unique!(sort!(bars; by = first))                            # Bars as node pairs
+            resize_buffers!(bars_buffers, length(bars))                        # Resize buffers of length(bars)
 
             # 5. Graphical output of the current mesh
             PLOT && simpplot(p,t)
         end
 
-        # Check that there are any points remaining
-        (isempty(bars) || isempty(t) || length(p) == length(pfix)) && (return restart())
+        # DEBUG
+        # # Check that there are any points remaining
+        # (isempty(bars) || isempty(t) || length(p) == length(pfix)) && (return restart())
 
         # 6. Move mesh points based on bar lengths L and forces F
-        barvec = V[p[b[1]] - p[b[2]] for b in bars]           # List of bar vectors
-        L = norm.(barvec)                                     # L  =  Bar lengths
-        hbars = fh.(V[(p[b[1]] + p[b[2]])/2 for b in bars])
-        L0 = hbars * (FSCALE * norm(L)/norm(hbars))           # L0  =  Desired lengths
+        @inbounds for (i, b) in enumerate(bars)
+            p1, p2 = p[b[1]], p[b[2]]
+            barvec[i] = p1 - p2                               # List of bar vectors
+            L[i] = norm(barvec[i])                            # L  =  Bar lengths
+            hbars[i] = fh((p1+p2)/2)
+        end
+        L0 .= hbars .* (FSCALE * norm(L)/norm(hbars))         # L0  =  Desired lengths
 
         # Density control - remove points that are too close
         if mod(count, DENSITYCTRLFREQ) == 0
-            b = L0 .> 2 .* L
+            b = L0 .> DENSITYRELTHRESH .* L
             if any(b)
                 ix = setdiff(reinterpret(Int, bars[b]), 1:nfix)
                 deleteat!(p, unique!(sort!(ix)))
-                pold = V[InfV]                               # `Inf` so that retriangulation is forced
+                resize_buffers!(p_buffers, length(p))         # Resize buffers of length(p)
+                # pold = V[InfV]                              # `Inf` so that retriangulation is forced
+                force_triangulation = true                    # Force retriangulation
                 continue
             end
         end
 
-        F = max.(L0 .- L, zero(T))                           # Bar forces (scalars)
-        Fvec = F ./ L .* barvec                              # Bar forces (x,y components)
-        Ftot = zeros(V, length(p))
+        F .= max.(L0 .- L, zero(T))                           # Bar forces (scalars)
+        Fvec .= (F./L) .* barvec                              # Bar forces (x,y components)
+        fill!(Ftot, zero(V))
         @inbounds for (i, b) in enumerate(bars)
             Ftot[b[1]] += Fvec[i]
             Ftot[b[2]] -= Fvec[i]
         end
         @inbounds for i in 1:length(pfix)
-            Ftot[i] = zero(V)                                # Force = 0 at fixed points
+            Ftot[i] = zero(V)                                 # Force = 0 at fixed points
         end
-        p .+= DELTAT .* Ftot                                 # Update node positions
+        p .+= DELTAT .* Ftot                                  # Update node positions
 
-        # 7. Bring outside points back to the boundary
-        d = fd.(p) # distances (used below)
-        @inbounds for (i,pᵢ) in enumerate(p)
-            if d[i] > zero(T)                                # Find points outside (d>0)
-                ∇dᵢ = ∇fd(pᵢ)                                # ForwardDiff gradient
-                p[i] -= ∇dᵢ * (d[i]/(∇dᵢ⋅∇dᵢ))               # Project
+        # 7. Bring outside points back to the boundary, and
+        # 8. Termination criterion: All interior nodes move less than DPTOL (scaled)
+        dterm = -T(Inf)
+        @inbounds for i in eachindex(p)
+            d = fd(p[i])
+            if d > zero(T)                                   # Find points outside (d>0)
+                ∇d = ∇fd(p[i])                               # ForwardDiff gradient
+                p[i] -= ∇d * (d/(∇d⋅∇d))                     # Project
+            elseif d < -GEPS
+                d_int = DELTAT * norm(Ftot[i])/h0 #TODO sqrt(DELTAT)?
+                dterm = max(dterm, d_int)
             end
         end
-
-        # 8. Termination criterion: All interior nodes move less than DPTOL (scaled)
-        d_int = DELTAT .* Ftot[d .< -GEPS] #TODO sqrt(DELTAT)?
-        dterm = isempty(d_int) ? T(Inf) : sqrt(maximum(norm2, d_int))/h0
-
-        if dterm >= dtermbest
-            stallcount = stallcount + 1
-        end
+        dterm >= dtermbest ? stallcount += 1 : stallcount = 0
         dtermbest = min(dtermbest, dterm)
 
         if dterm < DPTOL || stallcount >= MAXSTALLITERS
@@ -232,118 +250,52 @@ function distmesh2d(
     return p, t
 end
 
-function init_points(bbox::Matrix{T}, h0::T) where {T}
-    xrange, yrange = bbox[1,1]:h0:bbox[2,1], bbox[1,2]:h0*sqrt(T(3))/2:bbox[2,2]
-    p = zeros(Vec{2,T}, length(yrange), length(xrange))
-    for (i,y) in enumerate(yrange), (j,x) in enumerate(xrange)
-        iseven(i) && (x += h0/2)            # Shift even rows
-        p[i,j] = Vec{2,T}((x,y))            # Add to list of node coordinates
-    end
-    return vec(p)
-end
-
-# ---------------------------------------------------------------------------- #
-# Delaunay triangulation
-# ---------------------------------------------------------------------------- #
-
-function delaunay2!(
-        t::Vector{NTuple{3,Int}},
-        p::AbstractVector{Vec{2,T}}
+#HGEOM - Mesh size function based on medial axis distance
+#--------------------------------------------------------------------
+# Inputs:
+#    p     : points coordinates
+#    fd    : signed distance function
+#    pmax  : approximate medial axis points
+#
+# output:
+#    fh    : mesh size function of points p
+#--------------------------------------------------------------------
+#  (c) 2011, Koko J., ISIMA, koko@isima.fr
+#--------------------------------------------------------------------
+function make_hgeom(
+        fd, # distance function
+        h0::T, # nominal edge length
+        bbox::Matrix{T}, # bounding box (2x2 matrix [xmin ymin; xmax ymax])
+        pfix::AbstractVector{Vec{2,T}} = Vec{2,T}[], # fixed points
+        alpha::T = T(1.0) # Relative edge lengths constant; alpha = 0.25 -> rel. length = 5X; 0.5 -> 3X; 1.0 -> 2X
     ) where {T}
+    
+    # Numerical gradient (NOTE: this is for finding discontinuities in the gradient; can't use auto-diff!)
+    V = Vec{2,T}
+    @inline dfd_dx(x,h) = (fd(x + h*eᵢ(V,1)) - fd(x - h*eᵢ(V,1)))/(2h)
+    @inline dfd_dy(x,h) = (fd(x + h*eᵢ(V,2)) - fd(x - h*eᵢ(V,2)))/(2h)
+    @inline ∇fd(x,h) = V((dfd_dx(x,h), dfd_dy(x,h)))
 
-    p, pmin, pmax = scaleto(p, min_coord + T(0.1), max_coord - T(0.1))
-    P = IndexedPoint2D[IndexedPoint2D(pp[1], pp[2], i) for (i,pp) in enumerate(p)]
-    unique!(sort!(P; by = getx))
-
-    tess = DelaunayTessellation2D{IndexedPoint2D}(length(P))
-    push!(tess, P)
-    t = assign_triangles!(t, tess)
-
-    return t
-end
-delaunay2(p) = delaunay2!(Vector{NTuple{3,Int}}(), p)
-
-# ---------------------------------------------------------------------------- #
-# Assign triangle indicies from Delaunay triangulation
-# ---------------------------------------------------------------------------- #
-
-function assign_triangles!(t, tess)
-    resize!(t, length(tess))
-    @inbounds for (i,tt) in enumerate(tess)
-        t[i] = (getidx(geta(tt)), getidx(getb(tt)), getidx(getc(tt)))
+    # Compute the approximate medial axis
+    p, pmax = Vector{V}(), Vector{V}()
+    h1 = h0/4
+    while isempty(pmax)
+        p = V[V((xi,yi)) for xi in bbox[1,1]:h1:bbox[2,1] for yi in bbox[1,2]:h1:bbox[2,2]]
+        pmax = filter(x -> fd(x) <= 0 && norm(∇fd(x,h1/2)) < 0.99, p)
+        h1 /= 2
     end
-    return t
-end
+    pmax = unique!(sort!([pfix; pmax]; by = first))
 
-# ---------------------------------------------------------------------------- #
-# DelaunayTessellation2D iteration protocol
-# ---------------------------------------------------------------------------- #
-
-# function Base.iterate(tess::DelaunayTessellation2D, ix = 2)
-#     @inbounds while isexternal(tess._trigs[ix]) && ix <= tess._last_trig_index
-#         ix += 1
-#     end
-#     @inbounds if ix > tess._last_trig_index
-#         return nothing
-#     else
-#         return (tess._trigs[ix], ix + 1)
-#     end
-# end
-
-function Base.length(tess::DelaunayTessellation2D)
-    len = 0
-    for t in tess
-        len += 1
+    # Make and return hgeom
+    max_fh1 = maximum(x->abs(fd(x)), p)
+    max_fh2 = maximum(x->sqrt(minimum(y->norm2(x-y), pmax)), p)
+    
+    function hgeom(x)
+        fh1 = fd(x)/max_fh1 # Normalized signed distance fuction
+        fh2 = sqrt(minimum(y->norm2(x-y), pmax))/max_fh2 # Normalized medial axis distance
+        fh = alpha + min(abs(fh1), one(T)) + min(fh2, one(T)) # Size function (capped at 1 since max_fh1/max_fh2 are approximate)
+        return fh
     end
-    return len
+
+    return hgeom
 end
-
-Base.eltype(tess::DelaunayTessellation2D{P}) where {P} = VoronoiDelaunay.DelaunayTriangle{P}
-
-# ---------------------------------------------------------------------------- #
-# Testing new iteration protocol
-# ---------------------------------------------------------------------------- #
-
-# using VoronoiDelaunay
-# using BenchmarkTools
-#
-# function collect_triangles(tess::DelaunayTessellation2D)
-#     tris = VoronoiDelaunay.DelaunayTriangle{Point2D}[]
-#     for t in tess
-#         push!(tris, t)
-#     end
-#     return tris
-# end
-#
-# function testfun(tess::DelaunayTessellation2D)
-#     s = Point2D(0.0, 0.0)
-#     for t in tess
-#         s = geta(t)
-#     end
-#     return s
-# end
-#
-# tess = DelaunayTessellation()
-# width = max_coord - min_coord
-# a = Point2D[Point(min_coord+rand()*width, min_coord+rand()*width) for i in 1:100]
-# push!(tess, a)
-#
-# display(@benchmark testfun($tess))
-# tris_old = collect_triangles(tess)
-#
-# function Base.iterate(tess::DelaunayTessellation2D, ix = 2)
-#     @inbounds while isexternal(tess._trigs[ix]) && ix <= tess._last_trig_index
-#         ix += 1
-#     end
-#
-#     @inbounds if ix > tess._last_trig_index
-#         return nothing
-#     else
-#         return (tess._trigs[ix], ix + 1)
-#     end
-# end
-#
-# display(@benchmark testfun($tess))
-# tris_new = collect_triangles(tess)
-#
-# @show tris_old == tris_new

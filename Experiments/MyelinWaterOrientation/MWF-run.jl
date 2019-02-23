@@ -5,8 +5,8 @@ using BSON, CSV, Dates, Printf
 using Plots, MATLABPlots
 gr(size=(1200,1200), leg = false, grid = false, xticks = nothing, yticks = nothing)
 
-function load_geometry(filename)
-    d = BSON.load(filename)
+function load_geometry(fname)
+    d = BSON.load(fname)
     G = Grid{2,3,Float64,3} # 2D triangular grid
     C = Circle{2,Float64}
     R = Rectangle{2,Float64}
@@ -46,9 +46,10 @@ function MWF!(
     push!(results.sols, sols)
 
     titleparamstr = "theta = $(rad2deg(params.theta)) deg, D = $(params.D_Tissue) um2/s, K = $(params.K_perm) um/s"
-    plotmagnitude(sols, params, myelindomains, bdry; titlestr = "Magnitude: " * titleparamstr, fname = "magnitude")
-    plotSEcorr(sols, params, myelindomains, fname = "SEcorr")
-    plotbiexp(sols, params, myelindomains, outercircles, innercircles, bdry; titlestr = "Signal: " * titleparamstr, fname = "signal")
+    curr_date = getnow()
+    plotmagnitude(sols, params, myelindomains, bdry; titlestr = "Magnitude: " * titleparamstr, fname = "$(curr_date)__magnitude")
+    plotSEcorr(sols, params, myelindomains, fname = "$(curr_date)__SEcorr")
+    plotbiexp(sols, params, myelindomains, outercircles, innercircles, bdry; titlestr = "Signal: " * titleparamstr, fname = "$(curr_date)__signal")
 
     mwfvalues = compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry)
     push!(results.mwfvalues, mwfvalues)
@@ -58,8 +59,8 @@ end
 
 function main()
     # Load geometries
-    filename = "2019-02-15-T-14-57-53-542__N-20_g-0.8000_p-0.7500__grids.bson"
-    exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = load_geometry(filename)
+    fname = "2019-02-15-T-14-57-53-542__N-20_g-0.8000_p-0.7500__grids.bson"
+    exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = load_geometry(fname)
     numfibres = length(outercircles)
 
     # Default parameters

@@ -24,6 +24,55 @@ function to_mat(P::AbstractVector{NTuple{N,T}}) where {N,T}
 end
 to_mat(P::AbstractVector{Vec{N,T}}) where {N,T} = to_mat(reinterpret(NTuple{N,T}, P))
 
+function init_points(bbox::Matrix{T}, h0::T) where {T}
+    xrange, yrange = bbox[1,1]:h0:bbox[2,1], bbox[1,2]:h0*sqrt(T(3))/2:bbox[2,2]
+    p = zeros(Vec{2,T}, length(yrange), length(xrange))
+    for (i,y) in enumerate(yrange), (j,x) in enumerate(xrange)
+        iseven(i) && (x += h0/2)            # Shift even rows
+        p[i,j] = Vec{2,T}((x,y))            # Add to list of node coordinates
+    end
+    return vec(p)
+end
+
+# ---------------------------------------------------------------------------- #
+# Delaunay triangulation
+# ---------------------------------------------------------------------------- #
+
+function delaunay2!(
+        t::Vector{NTuple{3,Int}},
+        p::AbstractVector{Vec{2,T}}
+    ) where {T}
+
+    p, pmin, pmax = scaleto(p, min_coord + T(0.1), max_coord - T(0.1))
+    P = IndexedPoint2D[IndexedPoint2D(pp[1], pp[2], i) for (i,pp) in enumerate(p)]
+    unique!(sort!(P; by = getx))
+
+    tess = DelaunayTessellation2D{IndexedPoint2D}(length(P))
+    push!(tess, P)
+    t = assign_triangles!(t, tess)
+
+    return t
+end
+delaunay2(p) = delaunay2!(Vector{NTuple{3,Int}}(), p)
+
+function assign_triangles!(t, tess)
+    resize!(t, length(tess))
+    @inbounds for (i,tt) in enumerate(tess)
+        t[i] = (getidx(geta(tt)), getidx(getb(tt)), getidx(getc(tt)))
+    end
+    return t
+end
+
+function Base.length(tess::DelaunayTessellation2D)
+    len = 0
+    for t in tess
+        len += 1
+    end
+    return len
+end
+
+Base.eltype(tess::DelaunayTessellation2D{P}) where {P} = VoronoiDelaunay.DelaunayTriangle{P}
+
 # ---------------------------------------------------------------------------- #
 # Simple function for scaling vector of Vec's to range [a,b]
 # ---------------------------------------------------------------------------- #

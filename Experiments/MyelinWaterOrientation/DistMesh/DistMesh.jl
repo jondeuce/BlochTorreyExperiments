@@ -6,7 +6,7 @@ module DistMesh
 
 using LinearAlgebra
 using StatsBase
-# using Random
+using Random
 using Tensors # for gradients of tensor functions, and Vec type
 using VoronoiDelaunay # for Delaunay triangulation
 

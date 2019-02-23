@@ -521,8 +521,11 @@ function disjoint_rect_mesh_with_tori(
 
         # Push interior grid, and plot if requested
         push!(interiorgrids, Grid(p, t))
-        plotgrids && simpplot!(fighandle, interiorgrids[end]; color = :yellow)
-        plotgrids && plot!(fighandle, Circle{2,T}(mean(p), 2*h_min); color = :white, seriestype = :shape, annotations = (mean(p)..., string(i)))
+        if plotgrids
+            simpplot!(fighandle, interiorgrids[end]; color = :yellow)
+            plot!(fighandle, Circle{2,T}(mean(p), 2*h_min); color = :white, seriestype = :shape, annotations = (mean(p)..., string(i)))
+            display(fighandle)
+        end
     end
 
     @inbounds for i = 1:length(outer_circles)
@@ -577,7 +580,7 @@ function disjoint_rect_mesh_with_tori(
 
         # Push tori grid, and plot if requested
         push!(torigrids, Grid(p, t)) #push!(torigrids, Grid(p, t, e))
-        plotgrids && simpplot!(fighandle, torigrids[end]; color = :blue)
+        plotgrids && display(simpplot!(fighandle, torigrids[end]; color = :blue))
     end
 
     for i in 1:exterior_tiling[1]
@@ -634,7 +637,7 @@ function disjoint_rect_mesh_with_tori(
 
             # Form exterior grid, and plot if requested
             exteriorgrids[i,j] = Grid(p, t)
-            plotgrids && simpplot!(fighandle, exteriorgrids[i,j]; color = :cyan)
+            plotgrids && display(simpplot!(fighandle, exteriorgrids[i,j]; color = :cyan))
         end
     end
 
