@@ -523,7 +523,8 @@ function disjoint_rect_mesh_with_tori(
         push!(interiorgrids, Grid(p, t))
         if plotgrids
             simpplot!(fighandle, interiorgrids[end]; color = :yellow)
-            plot!(fighandle, Circle{2,T}(mean(p), 2*h_min); color = :white, seriestype = :shape, annotations = (mean(p)..., string(i)))
+            # plot!(fighandle, Circle{2,T}(mean(p), 2*h_min); color = :white, seriestype = :shape, annotations = (mean(p)..., string(i)))
+            plot!(fighandle; annotations = (mean(p)..., string(i)))
             display(fighandle)
         end
     end

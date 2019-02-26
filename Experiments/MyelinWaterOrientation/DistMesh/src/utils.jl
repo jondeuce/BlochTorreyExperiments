@@ -2,7 +2,7 @@
 # DistMesh helper functions
 # ---------------------------------------------------------------------------- #
 
-huniform(x::Vec) = one(eltype(x))
+huniform(x::Vec{dim,T}) where {dim,T} = one(T)
 norm2(x::Vec) = x⋅x
 
 function to_vec(p::AbstractMatrix{T}) where {T}
@@ -25,13 +25,78 @@ end
 to_mat(P::AbstractVector{Vec{N,T}}) where {N,T} = to_mat(reinterpret(NTuple{N,T}, P))
 
 function init_points(bbox::Matrix{T}, h0::T) where {T}
-    xrange, yrange = bbox[1,1]:h0:bbox[2,1], bbox[1,2]:h0*sqrt(T(3))/2:bbox[2,2]
-    p = zeros(Vec{2,T}, length(yrange), length(xrange))
-    for (i,y) in enumerate(yrange), (j,x) in enumerate(xrange)
+    # xrange, yrange = bbox[1,1]:h0:bbox[2,1], bbox[1,2]:h0*sqrt(T(3))/2:bbox[2,2]
+    Nx = ceil(Int, (bbox[2,1]-bbox[1,1])/h0)
+    Ny = ceil(Int, (bbox[2,2]-bbox[1,2])/(h0*sqrt(T(3))/2))
+    xrange, yrange = range(bbox[1,1], bbox[2,1], length=Nx), range(bbox[1,2], bbox[2,2], length=Ny)
+    p = zeros(Vec{2,T}, Ny, Nx)
+    @inbounds for (i,y) in enumerate(yrange), (j,x) in enumerate(xrange)
         iseven(i) && (x += h0/2)            # Shift even rows
         p[i,j] = Vec{2,T}((x,y))            # Add to list of node coordinates
     end
     return vec(p)
+end
+
+#HGEOM - Mesh size function based on medial axis distance
+#--------------------------------------------------------------------
+# Inputs:
+#    p     : points coordinates
+#    fd    : signed distance function
+#    pmax  : approximate medial axis points
+#
+# output:
+#    fh    : mesh size function of points p
+#--------------------------------------------------------------------
+#  (c) 2011, Koko J., ISIMA, koko@isima.fr
+#--------------------------------------------------------------------
+function make_hgeom(
+        fd, # distance function
+        h0::T, # nominal edge length
+        bbox::Matrix{T}, # bounding box (2x2 matrix [xmin ymin; xmax ymax])
+        pfix::AbstractVector{V} = V[], # fixed points
+        alpha::T = T(1.0) # Relative edge lengths constant; alpha = 0.25 -> rel. length = 5X; 0.5 -> 3X; 1.0 -> 2X
+    ) where {T, V<:Vec{2,T}}
+
+    # Make and return hgeom
+    pmax, p = medial_axis(fd, h0, bbox, pfix)
+    max_fh1 = maximum(x->abs(fd(x)), p)
+    max_fh2 = sqrt(maximum(x->minimum(y->norm2(x-y), pmax), p))
+
+    function hgeom(x)
+        fh1 = fd(x)/max_fh1 # Normalized signed distance fuction
+        fh2 = sqrt(minimum(y->norm2(x-y), pmax))/max_fh2 # Normalized medial axis distance
+        fh = alpha + min(abs(fh1), one(T)) + min(fh2, one(T)) # Size function (capped at 1 since max_fh1/max_fh2 are approximate)
+        return fh
+    end
+
+    return hgeom
+end
+
+function medial_axis(
+        fd, # distance function
+        h0::T, # nominal edge length
+        bbox::Matrix{T}, # bounding box (2x2 matrix [xmin ymin; xmax ymax])
+        pfix::AbstractVector{V} = V[] # fixed points
+    ) where {T, V<:Vec{2,T}}
+
+    # Numerical gradient (NOTE: this is for finding discontinuities in the gradient; can't use auto-diff!)
+    e1, e2 = basevec(V,1), basevec(V,2)
+    @inline dfd_dx(x::V,h) = (fd(x + h*e1) - fd(x - h*e1))/(2h)
+    @inline dfd_dy(x::V,h) = (fd(x + h*e2) - fd(x - h*e2))/(2h)
+    @inline    ∇fd(x::V,h) = V((dfd_dx(x,h), dfd_dy(x,h)))
+
+    # Compute the approximate medial axis
+    p, pmax = Vector{V}(), Vector{V}()
+    h1 = h0
+    while isempty(pmax) # shouldn't ever take more than one iteration
+        h1 /= 2
+        Nx, Ny = ceil(Int, (bbox[2,1]-bbox[1,1])/h1), ceil(Int, (bbox[2,2]-bbox[1,2])/h1)
+        p = V[V((xi,yi)) for xi in range(bbox[1,1], bbox[2,1], length=Nx) for yi in range(bbox[1,2], bbox[2,2], length=Ny)]
+        pmax = filter(x -> fd(x) <= 0 && norm(∇fd(x,h1/2)) < 0.99, p)
+    end
+    pmax = unique!(sort!([pfix; pmax]; by = first))
+
+    return pmax, p
 end
 
 # ---------------------------------------------------------------------------- #
@@ -155,8 +220,8 @@ function getedges(t::AbstractVector{NTuple{3,Int}})
     @inbounds for (i,tt) in enumerate(t)
         a, b, c = tt
         bars[3i-2] = (a, b)
-        bars[3i-1] = (a, c)
-        bars[3i  ] = (b, c)
+        bars[3i-1] = (b, c)
+        bars[3i  ] = (c, a)
     end
     return bars
 end
@@ -240,8 +305,6 @@ function boundedges(
 
     # Form all edges, non-duplicates are boundary edges
     p, t = to_mat(p), to_mat(t)
-    # edges = [t[:,[1,2]]; t[:,[1,3]]; t[:,[2,3]]]
-    # node3 = [t[:,3]; t[:,2]; t[:,1]]
     edges = [t[:,[1,2]]; t[:,[2,3]]; t[:,[3,1]]] #NOTE changed from above, but shouldn't matter
     node3 = [t[:,3]; t[:,1]; t[:,2]]
     edges = sort(edges; dims = 2) # for finding unique edges, make sure they're ordered the same
@@ -252,14 +315,11 @@ function boundedges(
     ix_unique = ix[h.weights .== 1]
     edges = edges[ix_unique, :]
     node3 = node3[ix_unique]
-    # qx = findall(w->w==1, h.weights)
-    # edges = edges[ix[qx], :]
-    # node3 = node3[ix[qx]]
     
     # Orientation
     v12 = p[edges[:,2],:] - p[edges[:,1],:]
     v13 = p[node3,:] - p[edges[:,1],:]
-    b_flip = v12[:,1] .* v13[:,2] .- v12[:,2] .* v13[:,1] .< zero(T) #NOTE this is different in DistMesh (they check for > 0) - I believe it's an error in their code
+    b_flip = v12[:,1] .* v13[:,2] .- v12[:,2] .* v13[:,1] .< zero(T) #NOTE this is different in DistMesh; they check for > 0 due to clockwise ordering
     edges[b_flip, [1,2]] = edges[b_flip, [2,1]]
     edges = sort!(to_tuple(edges); by = first)
 
@@ -270,25 +330,44 @@ end
 # simpplot
 # ---------------------------------------------------------------------------- #
 
-@userplot SimpPlot
-
-@recipe function f(h::SimpPlot)
-    unwrapped = unwrap_simpplot_args(h.args...)
-    if !(length(unwrapped) == 2 && typeof(unwrapped[1]) <: AbstractArray && typeof(unwrapped[2]) <: AbstractArray)
-        error("Arguments not properly parsed; expected two AbstractArray's, got: $unwrapped")
-    end
-    p, t = unwrapped
-    for i in 1:size(t,1)
-        x = [p[t[i,j],1] for j in 1:size(t,2)]
-        y = [p[t[i,j],2] for j in 1:size(t,2)]
-        @series begin
-            seriestype := :shape
-            x, y
-        end
+# Light grid wrapper structure for simpplot. Non-AbstractPlot arguments to simpplot
+# are forwarded to the SimpPlotGrid constructor.
+struct SimpPlotGrid{T}
+    p::Vector{Vec{2,T}}
+    t::Vector{NTuple{3,Int}}
+    SimpPlotGrid(g::SimpPlotGrid) = deepcopy(g)
+    SimpPlotGrid(p::AbstractVector{Vec{2,T}}, t::AbstractVector{NTuple{3,Int}}) where {T} = new{T}(p,t)
+    function SimpPlotGrid(p::AbstractMatrix{T}, t::AbstractMatrix{Int}) where {T}
+        size(p,2) == 2 || throw(DimensionMismatch("p must be a matrix of two columns, i.e. representing 2-vectors"))
+        size(t,2) == 3 || throw(DimensionMismatch("t must be a matrix of three columns, i.e. representing triangles"))
+        new{T}(to_vec(p), to_tuple(t))
     end
 end
 
-# unwrap_simpplot_args(args...) = args # we don't want this fallback; need to make sure it's caught below
-unwrap_simpplot_args(p::AbstractArray, t::AbstractArray) = p, t # this is the base case we are looking for
-unwrap_simpplot_args(p::AbstractVector{V}, t::AbstractVector{NTuple{3,Int}}) where {V<:Vec{2}} = to_mat(p), to_mat(t)
-unwrap_simpplot_args(plts::P, args...) where {P <: Union{<:AbstractPlot, <:AbstractArray{<:AbstractPlot}}} = unwrap_simpplot_args(args...) # skip plot objects
+@userplot SimpPlot
+
+@recipe function f(h::SimpPlot)
+    grid = parse_simpplot_args(h.args...)
+    if !(typeof(grid) <: SimpPlotGrid)
+        error("Arguments not properly parsed; expected two AbstractArray's, got: $unwrapped")
+    end
+    p, t = grid.p, grid.t
+    for tt in t
+        p1, p2, p3 = p[tt[1]], p[tt[2]], p[tt[3]]
+        x = [p1[1], p2[1], p3[1]]
+        y = [p1[2], p2[2], p3[2]]
+        @series begin
+            seriestype   := :shape
+            aspect_ratio := :equal
+            legend       := false
+            x, y
+        end
+    end
+    # Attributes
+    aspect_ratio := :equal
+    legend       := false
+end
+
+parse_simpplot_args(g::SimpPlotGrid) = g
+parse_simpplot_args(args...) = SimpPlotGrid(args...) # construct SimpPlotGrid
+parse_simpplot_args(plts::P, args...) where {P <: Union{<:AbstractPlot, <:AbstractArray{<:AbstractPlot}}} = parse_simpplot_args(args...) # skip plot objects

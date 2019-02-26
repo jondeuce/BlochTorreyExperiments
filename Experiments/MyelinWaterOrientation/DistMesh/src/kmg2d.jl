@@ -1,70 +1,39 @@
-# ---------------------------------------------------------------------------- #
-# DISTMESH2D 2-D Mesh Generator using Distance Functions.
-#   [P,T] = DISTMESH2D(FD,FH,H0,BBOX,PFIX,FPARAMS)
-#
-#      P:         Node positions (Nx2)
-#      T:         Triangle indices (NTx3)
-#      FD:        Distance function d(x,y)
-#      FH:        Scaled edge length function h(x,y)
-#      H0:        Initial edge length
-#      BBOX:      Bounding box [xmin,ymin; xmax,ymax]
-#      PFIX:      Fixed node positions (NFIXx2)
-#      FPARAMS:   Additional parameters passed to FD and FH
-#
-#   Example: (Uniform Mesh on Unit Circle)
-#      fd = @(p) sqrt(sum(p.^2,2))-1;
-#      [p,t] = distmesh2d(fd,@huniform,0.2,[-1,-1;1,1],[]);
-#
-#   Example: (Rectangle with circular hole, refined at circle boundary)
-#      fd = @(p) ddiff(drectangle(p,-1,1,-1,1),dcircle(p,0,0,0.5));
-#      fh = @(p) 0.05+0.3*dcircle(p,0,0,0.5);
-#      [p,t] = distmesh2d(fd,fh,0.05,[-1,-1;1,1],[-1,-1;-1,1;1,-1;1,1]);
-#
-#   Example: (Polygon)
-#      pv = [-0.4 -0.5;0.4 -0.2;0.4 -0.7;1.5 -0.4;0.9 0.1;
-#          1.6 0.8;0.5 0.5;0.2 1;0.1 0.4;-0.7 0.7;-0.4 -0.5];
-#      [p,t] = distmesh2d(@dpoly,@huniform,0.1,[-1,-1; 2,1],pv,pv);
-#
-#   Example: (Ellipse)
-#      fd = @(p) p(:,1).^2/2^2+p(:,2).^2/1^2-1;
-#      [p,t] = distmesh2d(fd,@huniform,0.2,[-2,-1;2,1],[]);
-#
-#   Example: (Square, with size function point and line sources)
-#      fd = @(p) drectangle(p,0,1,0,1);
-#      fh = @(p) min(min(0.01+0.3*abs(dcircle(p,0,0,0)), ...
-#                   0.025+0.3*abs(dpoly(p,[0.3,0.7; 0.7,0.5]))),0.15);
-#      [p,t] = distmesh2d(fd,fh,0.01,[0,0;1,1],[0,0;1,0;0,1;1,1]);
-#
-#   Example: (NACA0012 airfoil)
-#      hlead = 0.01; htrail = 0.04; hmax = 2; circx = 2; circr = 4;
-#      a = .12/.2*[0.2969,-0.1260,-0.3516,0.2843,-0.1036];
-#
-#      fd = @(p) ddiff(dcircle(p,circx,0,circr),(abs(p(:,2))-polyval([a(5:-1:2),0],p(:,1))).^2-a(1)^2*p(:,1));
-#      fh = @(p) min(min(hlead+0.3*dcircle(p,0,0,0),htrail+0.3*dcircle(p,1,0,0)),hmax);
-#
-#      fixx = 1-htrail*cumsum(1.3.^(0:4)');
-#      fixy = a(1)*sqrt(fixx)+polyval([a(5:-1:2),0],fixx);
-#      fix = [[circx+[-1,1,0,0]*circr; 0,0,circr*[-1,1]]'; 0,0; 1,0; fixx,fixy; fixx,-fixy];
-#      box = [circx-circr,-circr; circx+circr,circr];
-#      h0 = min([hlead,htrail,hmax]);
-#
-#      [p,t] = distmesh2d(fd,fh,h0,box,fix);
-#
-#
-#   See also: MESHDEMO2D, DISTMESHND, DELAUNAYN, TRIMESH.
-#
-#   distmesh2d.m v1.1
-#   Copyright (C) 2004-2012 Per-Olof Persson. See COPYRIGHT.TXT for details.
-# ---------------------------------------------------------------------------- #
+#KMG2D 2D-mesh generator using signed distance & size functions.
+#--------------------------------------------------------------------
+# [p,t,be,bn]=kmg2d(fd,fh,h0,bbox,dg,nr)
+# [p,t,be,bn]=kmg2d(fd,fh,h0,bbox,dg,nr,pfix)
+# [p,t,be,bn]=kmg2d(fd,fh,h0,bbox,dg,nr,[],fparam)
+# [p,t,be,bn]=kmg2d(fd,fh,h0,bbox,dg,nr,pfix,fparam)
+# Input:
+#   fd       : Signed distance  d(x,y)  (function handle)
+#   fh       : Mesh size function h(x,y) (function handle)
+#   h0       : Reference edge length
+#   bbox     : Boundary box [xmin,ymin; xmax,ymax]
+#   dg       : Type of triangular mesh: dg=1 linear; dg=2 quadratic
+#   nr       : Number of refinements (nr=0, without refinement)
+#   pfix     : Fixed nodes (nodes that must appear in the mesh)
+#   varargin : Additional parameters passed to fd and fh (optional)
+# Output:
+#   p        : Node coordinates np*2
+#   t        : Triangle vertices nt*3 (linear) or nt*6 (quadratic)
+#   be       : Boundary edges    ne*2 (linear) or nt*3 (quadratic)
+#   bn       : Boundary nodes    nb*1
+#--------------------------------------------------------------------
+# (c) 2009, Koko J., ISIMA, koko@isima.fr
+#--------------------------------------------------------------------
 
-function distmesh2d(
+function kmg2d(
         fd, # distance function
         fh, # edge length function
         h0::T, # nominal edge length
         bbox::Matrix{T}, # bounding box (2x2 matrix [xmin ymin; xmax ymax])
+        dg::Int = 1, # Type of triangular mesh: dg=1 linear; dg=2 quadratic
+        nr::Int = 0, # Number of refinements (nr=0, without refinement)
         pfix::AbstractVector{V} = V[], # fixed points
         pinit::AbstractVector{V} = init_points(bbox, h0), # inital distribution of points (triangular grid by default)
-        ∇fd = x -> Tensors.gradient(fd, x); # Gradient of distance function `fd`
+        fsubs::AbstractVector = nothing, # subregion distance functions, the boundaries of which are forced onto the grid
+        ∇fd = x -> Tensors.gradient(fd, x), # Gradient of distance function `fd`
+        ∇fsubs = [x -> Tensors.gradient(fs, x) for fs in fsubs]; # gradients of subregion distance functions
         PLOT::Bool = false, # plot all triangulations during evolution
         PLOTLAST::Bool = false, # plot resulting triangulation
         DETERMINISTIC::Bool = false, # use deterministic pseudo-random
@@ -79,31 +48,6 @@ function distmesh2d(
         GEPS::T = T(1e-3)*h0, # boundary distance threshold
         DEPS::T = sqrt(eps(T))*h0 # finite difference step-length
     ) where {T, V<:Vec{2,T}}
-
-    # Function for restarting if h0 is large enough that all points get removed
-    function restart()
-        if h0/2 < RESTARTEDGETHRESH
-            @warn "h0 too small to allow a restart; returning empty grid."
-            return pfix, NTuple{3,Int}[]
-        else
-            @warn "No points remaining! Shrinking h0 -> h0/2 and retrying..."
-            return distmesh2d(fd, fh, h0/2, bbox, pfix;
-                PLOT = PLOT,
-                PLOTLAST = PLOTLAST,
-                DETERMINISTIC = DETERMINISTIC,
-                MAXSTALLITERS = MAXSTALLITERS,
-                RESTARTEDGETHRESH = RESTARTEDGETHRESH,
-                DENSITYCTRLFREQ = DENSITYCTRLFREQ,
-                DENSITYRELTHRESH = DENSITYRELTHRESH,
-                DPTOL = DPTOL,
-                TTOL = TTOL,
-                FSCALE = FSCALE,
-                DELTAT = DELTAT,
-                GEPS = GEPS/2, # scales with h0
-                DEPS = DEPS/2 # scales with h0
-            )
-        end
-    end
 
     # 1. Create initial distribution in bounding box (equilateral triangles by default)
     p = copy(pinit)
@@ -130,7 +74,7 @@ function distmesh2d(
 
     # Plot initial points
     PLOT && display(simpplot(p,t))
-    
+
     # Initialize buffers
     bars = Vector{NTuple{2,Int}}() # bars indices buffer
     barvec, Fvec, Ftot = Vector{V}(), Vector{V}(), Vector{V}() # vector buffers
@@ -139,14 +83,14 @@ function distmesh2d(
     resize_buffers!(buf,len) = map!(x->resize!(x, len), buf, buf) # resize function
     p_buffers = [Ftot] # buffers of length(p)
     bars_buffers = [barvec, L, L0, hbars, F, Fvec] # buffers of length(bars)
-    
+
     # Initialize variables for first iteration
     count, stallcount = 0, 0
     dtermbest = T(Inf)
     pold = V[V((Inf,Inf))]
     force_triangulation = true
     resize_buffers!(p_buffers, length(p))
-    
+
     while true
         count += 1
 

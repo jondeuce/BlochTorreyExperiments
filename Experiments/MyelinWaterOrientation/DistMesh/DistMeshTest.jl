@@ -54,14 +54,17 @@ function runtests(;N = 1000)
 end
 
 function runbenchmarks()
-    fd = x -> x⋅x - one(eltype(x))
-    fh = x -> one(eltype(x))
-    h0 = 0.2
-    bbox = [-1.0 -1.0; 1.0 1.0]
+    T = Float64
+    V = Vec{2,T}
+    h0 = T(0.1)
+    bbox = T[-1 -1; 1 1]
+    pfix = V[V((1,0)), V((0,1)), V((-1,0)), V((0,-1))]
+    fd(x) = x⋅x - 1
+    fh(x) = 1 + 2*norm(x)
 
-    p, t = distmesh2d(fd, fh, h0, bbox; PLOT = false)
-    b = @benchmark distmesh2d($fd, $fh, $h0, $bbox; DETERMINISTIC = true)
-    display(b)
+    distmesh2d_(;kwargs...) = distmesh2d(fd, fh, h0, bbox, pfix; DETERMINISTIC = true, PLOT = false, kwargs...)
+    display(@benchmark $distmesh2d_())
+    distmesh2d_(;PLOTLAST = true)
 
     nothing
 end
