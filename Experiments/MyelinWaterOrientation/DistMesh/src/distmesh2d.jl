@@ -67,7 +67,7 @@ function distmesh2d(
         ∇fd = x -> Tensors.gradient(fd, x); # Gradient of distance function `fd`
         PLOT::Bool = false, # plot all triangulations during evolution
         PLOTLAST::Bool = false, # plot resulting triangulation
-        DETERMINISTIC::Bool = false, # use deterministic pseudo-random
+        DETERMINISTIC::Bool = false, # deterministically seed the pseudo-random rejection method
         MAXSTALLITERS::Int = 500, # max iterations of stalled progress
         RESTARTEDGETHRESH::T = T(1e-4)*maximum(abs, diff(bbox;dims=1)), # min. h0 s.t. restart is allowed
         DENSITYCTRLFREQ::Int = 30, # density check frequency

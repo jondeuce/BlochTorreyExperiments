@@ -56,15 +56,19 @@ end
 function runbenchmarks()
     T = Float64
     V = Vec{2,T}
-    h0 = T(0.1)
+    h0 = T(0.05)
     bbox = T[-1 -1; 1 1]
     pfix = V[V((1,0)), V((0,1)), V((-1,0)), V((0,-1))]
-    fd(x) = x⋅x - 1
+    fd(x) = ddiff(norm(x) - 1, norm(x-V((-0.2,-0.2))) - 0.4)
     fh(x) = 1 + 2*norm(x)
 
-    distmesh2d_(;kwargs...) = distmesh2d(fd, fh, h0, bbox, pfix; DETERMINISTIC = true, PLOT = false, kwargs...)
+    distmesh2d_(;kwargs...) = distmesh2d(fd, fh, h0, bbox, pfix; MAXSTALLITERS = 500, DETERMINISTIC = true, PLOT = false, kwargs...)
     display(@benchmark $distmesh2d_())
     distmesh2d_(;PLOTLAST = true)
+
+    kmg2d_(;kwargs...) = kmg2d(fd, [], fh, h0, bbox, 1, 0, pfix; MAXITERS = 500, DETERMINISTIC = true, PLOT = false, kwargs...)
+    display(@benchmark $kmg2d_())
+    kmg2d_(;PLOTLAST = true)
 
     nothing
 end
@@ -73,7 +77,7 @@ function runexamples()
     to_vec(P) = reinterpret(Vec{2,eltype(P)}, transpose(P)) |> vec |> copy
 
     # Example: (Uniform Mesh on Unit Circle)
-    fd = p -> p⋅p - one(eltype(p))
+    fd = p -> norm(p) - 1
     fh = huniform
     h0 = 0.2
     bbox = [-1.0 -1.0; 1.0 1.0]
