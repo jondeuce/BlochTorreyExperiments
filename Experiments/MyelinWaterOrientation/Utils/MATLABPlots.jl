@@ -2,6 +2,7 @@ module MATLABPlots
 
 using Reexport
 using DistMesh
+using MeshUtils
 using JuAFEM
 @reexport using MATLAB
 
@@ -47,7 +48,7 @@ function mxsimpplot(
     mxsimpplot(DistMesh.to_mat(p), DistMesh.to_mat(t); kwargs...)
 end
 
-mxsimpplot(g::G; kwargs...) where {G <: Grid{2,3}} = mxsimpplot(DistMesh.unwrap_simpplot_args(g)...; kwargs...)
-mxsimpplot(gs::AbstractArray{G}; kwargs...) where {G <: Grid{2,3}} = mxsimpplot(DistMesh.unwrap_simpplot_args(gs)...; kwargs...)
+mxsimpplot(g::G; kwargs...) where {G <: Grid{2,3}} = mxsimpplot(nodematrix(g), cellmatrix(g); kwargs...)
+mxsimpplot(gs::AbstractArray{G}; kwargs...) where {G <: Grid{2,3}} = mxsimpplot(nodecellmatrices(gs)...; kwargs...)
 
 end # module MATLABPlots

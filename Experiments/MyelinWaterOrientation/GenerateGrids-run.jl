@@ -32,7 +32,7 @@ function main()
         println("\n\n---- Generating geometry $i/$(length(paramlist)), $(Dates.now()): $paramstr ----\n\n")
 
         btparams = BlochTorreyParameters(default_btparams; AxonPDensity = p, g_ratio = g)
-        # try
+        try
             generate_and_save_geometry(btparams, paramstr;
                 fname = getnow() * "__" * paramstr, # filename for saving MATLAB figure
                 Ncircles = n, # number of fibres to pack (resulting grid will have less due to cropping)
@@ -45,10 +45,10 @@ function main()
                 FORCEDENSITY = true, # error if desired density isn't reached
                 FORCEAREA = true # error if the resulting grid area doesn't match the bdry area
             )
-        # catch e
-        #     @warn "error generating grid with param string: " * paramstr
-        #     @warn e
-        # end
+        catch e
+            @warn "error generating grid with param string: " * paramstr
+            @warn e
+        end
     end
 
     return nothing

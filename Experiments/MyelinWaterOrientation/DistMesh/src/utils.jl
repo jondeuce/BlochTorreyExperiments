@@ -15,6 +15,12 @@ end
 @inline triangle_quality(p1::Vec{2}, p2::Vec{2}, p3::Vec{2}) = triangle_quality(norm(p2-p1), norm(p3-p2), norm(p1-p3))
 @inline triangle_quality(t::NTuple{3,Int}, p::AbstractArray{V}) where {V<:Vec{2}} = triangle_quality(p[t[1]], p[t[2]], p[t[3]])
 
+function mesh_rho(p::AbstractVector{V}, t::AbstractVector{NTuple{3,Int}}) where {V <: Vec{2}}
+    edge_min, edge_max = extrema([norm(p[t[1]] - p[t[2]]) for t in t])
+    return edge_max/edge_min
+end
+mesh_quality(p::AbstractVector{V}, t::AbstractVector{NTuple{3,Int}}) where {V <: Vec{2}} = minimum(triangle_quality(t,p) for t in t)
+
 function to_vec(p::AbstractMatrix{T}) where {T}
     N = size(p, 2)
     P = reinterpret(Vec{N, T}, transpose(p)) |> vec |> copy
@@ -63,18 +69,20 @@ function hgeom(
         fd, # distance function
         h0::T, # nominal edge length
         bbox::Matrix{T}, # bounding box (2x2 matrix [xmin ymin; xmax ymax])
-        pfix::AbstractVector{V} = V[], # fixed points
-        alpha::T = T(1.0) # Relative edge lengths constant; alpha = 0.25 -> rel. length = 5X; 0.5 -> 3X; 1.0 -> 2X
-    ) where {T, V<:Vec{2,T}}
+        pfix::AbstractVector{Vec{2,T}} = Vec{2,T}[]; # fixed points
+        alpha::T = T(1.0), # Relative edge lengths constant; alpha = 0.25 -> rel. length = 5X; 0.5 -> 3X; 1.0 -> 2X
+        rtol::T = sqrt(eps(T)) # relative tolerance for medial axis search
+    ) where {T}
 
     # Make and return hgeom
-    pmax, p = medial_axis(fd, h0, bbox, pfix)
-    max_fh1 = maximum(x->abs(fd(x)), p)
-    max_fh2 = sqrt(maximum(x->minimum(y->norm2(x-y), pmax), p))
+    pmedial, pgrid = medial_axis_search(fd, h0/4, bbox)
+    pmedial = unique!(sort!([pfix; pmedial])) # Prepend (unique) fixed points
+    max_fh1 = maximum(x->abs(fd(x)), pgrid)
+    max_fh2 = sqrt(maximum(x->minimum(y->norm2(x-y), pmedial), pgrid))
 
     function hgeom(x)
         fh1 = fd(x)/max_fh1 # Normalized signed distance fuction
-        fh2 = sqrt(minimum(y->norm2(x-y), pmax))/max_fh2 # Normalized medial axis distance
+        fh2 = sqrt(minimum(y->norm2(x-y), pmedial))/max_fh2 # Normalized medial axis distance
         fh = alpha + min(abs(fh1), one(T)) + min(fh2, one(T)) # Size function (capped at 1 since max_fh1/max_fh2 are approximate)
         return fh
     end
@@ -85,28 +93,90 @@ end
 function medial_axis(
         fd, # distance function
         h0::T, # nominal edge length
-        bbox::Matrix{T}, # bounding box (2x2 matrix [xmin ymin; xmax ymax])
-        pfix::AbstractVector{V} = V[] # fixed points
-    ) where {T, V<:Vec{2,T}}
+        bbox::Matrix{T} # bounding box (2x2 matrix [xmin ymin; xmax ymax])
+    ) where {T}
 
     # Numerical gradient (NOTE: this is for finding discontinuities in the gradient; can't use auto-diff!)
-    e1, e2 = basevec(V,1), basevec(V,2)
-    @inline dfd_dx(x::V,h) = (fd(x + h*e1) - fd(x - h*e1))/(2h)
-    @inline dfd_dy(x::V,h) = (fd(x + h*e2) - fd(x - h*e2))/(2h)
-    @inline    ∇fd(x::V,h) = V((dfd_dx(x,h), dfd_dy(x,h)))
+    V = Vec{2,T}
+    e1, e2 = basevec(V)
+    @inline dfd_dx(x,h) = (fd(x + h*e1) - fd(x - h*e1))/(2h)
+    @inline dfd_dy(x,h) = (fd(x + h*e2) - fd(x - h*e2))/(2h)
+    @inline    ∇fd(x,h) = V((dfd_dx(x,h), dfd_dy(x,h)))
 
     # Compute the approximate medial axis
-    p, pmax = Vector{V}(), Vector{V}()
-    h1 = h0
-    while isempty(pmax) # shouldn't ever take more than one iteration
-        h1 /= 2
-        Nx, Ny = ceil(Int, (bbox[2,1]-bbox[1,1])/h1), ceil(Int, (bbox[2,2]-bbox[1,2])/h1)
-        p = V[V((xi,yi)) for xi in range(bbox[1,1], bbox[2,1], length=Nx) for yi in range(bbox[1,2], bbox[2,2], length=Ny)]
-        pmax = filter(x -> fd(x) <= 0 && norm(∇fd(x,h1/2)) < 0.99, p)
+    pcandidate = V[]
+    local pgrid
+    while isempty(pmedial) # shouldn't ever take more than one iteration
+        pgrid = cartesian_grid_generator(bbox, h0)
+        pmedial = collect(Iterators.filter(x -> fd(x) <= 0 && norm(∇fd(x,h0/8)) < 0.99, pgrid))
+        isempty(pmedial) && (h0 /= 2)
     end
-    pmax = unique!(sort!([pfix; pmax]; by = first))
 
-    return pmax, p
+    return pmedial, pgrid
+end
+
+function medial_axis_search(
+        fd, # distance function
+        h0::T, # nominal edge length
+        bbox::Matrix{T}, # bounding box (2x2 matrix [xmin ymin; xmax ymax])
+        ∇fd = x -> Tensors.gradient(fd, x); # gradient function
+        rtol::T = sqrt(eps(T))
+    ) where {T}
+
+    V = Vec{2,T}
+    e1, e2 = basevec(V)
+    
+    @inline isinterior(x) = fd(x) <= 0
+    @inline iscontinuous(x,h) = (dx = h*∇fd(x); ∇fd(x+dx)⋅∇fd(x-dx) > 1 - (h/h0)^2) # scale-invariant adaptive thresholding
+    @inline ismedial(x,h) = isinterior(x) && !iscontinuous(x,h)  
+
+    # Search for candidate approximate medial axis points
+    pcandidate = V[]
+    local pgrid
+    while isempty(pcandidate) # shouldn't ever take more than a couple iterations
+        pgrid = cartesian_grid_generator(bbox, h0)
+        pcandidate = collect(Iterators.filter(x->ismedial(x,h0/2), pgrid))
+        isempty(pcandidate) && (h0 /= 2)
+    end
+    
+    # Binary search for medial axis point on the interval [x0-h0/2*∇x0, x0+h0/2*∇x0].
+    # Returns exactly one found point, or nothing (does not search for multiple points in the interval)
+    function binarysearch(x0,h0,e=∇fd(x0))::Union{V,Nothing}
+        x, h = x0, h0/2 # Candidate x satisfies ismedial(x,h/2)
+        while (h > rtol * h0) && !(x == nothing)
+            s = (h/2)*e
+            x = ismedial(x-s,h/2) ? x-s :
+                ismedial(x+s,h/2) ? x+s :
+                nothing
+            h /= 2
+        end
+        return x
+    end
+
+    pmedial = V[]
+    sizehint!(pmedial, length(pcandidate))
+    for p0 in pcandidate
+        p = binarysearch(p0,h0)
+        !(p == nothing) && push!(pmedial, p::V)
+    end
+    resize!(pmedial, length(pmedial))
+    pmedial = threshunique(pmedial, norm2; rtol = zero(T), atol = h0^2)
+    
+    @show length(pcandidate)
+    @show length(pmedial)
+
+    return pmedial, pgrid
+end
+
+function cartesian_grid_generator(bbox::Matrix{T}, h0::T; vec=false) where {T}
+    @assert size(bbox) == (2,2)
+    Nx = round(Int, (bbox[2,1]-bbox[1,1])/h0) + 1
+    Ny = round(Int, (bbox[2,2]-bbox[1,2])/h0) + 1
+    xrange = range(bbox[1,1], bbox[2,1], length=Nx)
+    yrange = range(bbox[1,2], bbox[2,2], length=Ny)
+    g = vec ? (Vec{2,T}((x,y)) for x in xrange for y in yrange) : # generates a (Nx*Ny)-length vector
+              (Vec{2,T}(x) for x in Iterators.product(xrange, yrange)) # generates a Nx x Ny 2d grid
+    return g
 end
 
 # ---------------------------------------------------------------------------- #
@@ -114,17 +184,15 @@ end
 # ---------------------------------------------------------------------------- #
 
 function threshunique(
-        x::AbstractVector{T};
+        x::AbstractVector{T},
+        norm = LinearAlgebra.norm;
         rtol = √eps(T),
-        atol = eps(T),
-        norm = LinearAlgebra.norm
+        atol = eps(T)
     ) where T
 
-    uniqueset = Vector{T}()
+    uniqueset = T[]
     sizehint!(uniqueset, length(x))
-    ex = eachindex(x)
-    # idxs = Vector{eltype(ex)}()
-    for i in ex
+    @inbounds for i in eachindex(x)
         xi = x[i]
         norm_xi = norm(xi)
         isunique = true
@@ -135,8 +203,9 @@ function threshunique(
                 break
             end
         end
-        isunique && push!(uniqueset, xi) # push!(idxs, i)
+        isunique && push!(uniqueset, xi)
     end
+    resize!(uniqueset, length(uniqueset))
 
     return uniqueset
 end
@@ -289,6 +358,7 @@ end
 struct SimpPlotGrid{T}
     p::Vector{Vec{2,T}}
     t::Vector{NTuple{3,Int}}
+    SimpPlotGrid() = SimpPlotGrid(Vec{2,Float64}[], NTuple{3,Int}[])
     SimpPlotGrid(g::SimpPlotGrid) = deepcopy(g)
     SimpPlotGrid(p::AbstractVector{Vec{2,T}}, t::AbstractVector{NTuple{3,Int}}) where {T} = new{T}(p,t)
     function SimpPlotGrid(p::AbstractMatrix{T}, t::AbstractMatrix{Int}) where {T}
@@ -314,6 +384,7 @@ end
             seriestype   := :shape
             aspect_ratio := :equal
             legend       := false
+            hover        := nothing
             x, y
         end
     end

@@ -294,7 +294,7 @@ function radiidistribution(p::BlochTorreyParameters, lower = -1.5, upper = 2.5)
     d = Distributions.Gamma(k, θ)
     if !(lower == -Inf && upper == Inf)
         μ, σ = k*θ, √k*θ
-        d = Truncated(d, μ + lower*σ, μ + upper*σ)
+        d = Distributions.Truncated(d, μ + lower*σ, μ + upper*σ)
     end
     return d
 end

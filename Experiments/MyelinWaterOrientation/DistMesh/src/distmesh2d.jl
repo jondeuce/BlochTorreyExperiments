@@ -119,7 +119,7 @@ function distmesh2d(
 
     !isempty(pfix) && (p = setdiff!(p, pfix))              # Remove duplicated nodes
     pfix = sort!(copy(pfix); by = first)
-    pfix = threshunique(pfix; rtol = √eps(T), atol = eps(T))
+    pfix = threshunique(pfix; rtol = √eps(T), atol = √eps(T))
     nfix = length(pfix)
 
     p = vcat(pfix, p)                                      # Prepend fix points
@@ -186,14 +186,14 @@ function distmesh2d(
         @inbounds for (i, b) in enumerate(bars)
             p1, p2 = p[b[1]], p[b[2]]
             barvec[i] = p1 - p2                               # List of bar vectors
-            L[i] = norm(barvec[i])                            # L  =  Bar lengths
+            L[i] = norm(barvec[i])                            # L = Bar lengths
             hbars[i] = fh((p1+p2)/2)
         end
-        L0 .= hbars .* (FSCALE * norm(L)/norm(hbars))         # L0  =  Desired lengths
+        L0 .= hbars .* (FSCALE * norm(L)/norm(hbars))         # L0 = Desired lengths
 
         # Density control - remove points that are too close
         if mod(count, DENSITYCTRLFREQ) == 0
-            b = L0 .> DENSITYRELTHRESH .* L
+            b = DENSITYRELTHRESH .* L .< L0
             if any(b)
                 ix = setdiff(reinterpret(Int, bars[b]), 1:nfix)
                 deleteat!(p, unique!(sort!(ix)))

@@ -52,8 +52,10 @@ const VecOfRectangles{dim} = Vector{Rectangle{dim,T}} where T
 # ---------------------------------------------------------------------------- #
 # Plot Recipes
 # ---------------------------------------------------------------------------- #
-@recipe f(::Type{C}, c::C) where C <: Circle{2} = [Tuple(origin(c)) .+ radius(c) .* (cos(θ), sin(θ)) for θ in range(0, 2π, length=100)]
-@recipe f(::Type{R}, r::R) where R <: Rectangle{2} = [Tuple.(corners(r))...]
+vertices_for_plotting(c::Circle{2}) = [Tuple(origin(c)) .+ radius(c) .* (cos(θ), sin(θ)) for θ in range(0, 2π, length=100)]
+vertices_for_plotting(r::Rectangle{2}) = [Tuple.(corners(r))..., Tuple(corners(r)[1])]
+@recipe f(::Type{C}, c::C) where C <: Circle{2} = vertices_for_plotting(c)
+@recipe f(::Type{R}, r::R) where R <: Rectangle{2} = vertices_for_plotting(r)
 
 # ---------------------------------------------------------------------------- #
 # Misc. utilities for Vec type from Tensors.jl

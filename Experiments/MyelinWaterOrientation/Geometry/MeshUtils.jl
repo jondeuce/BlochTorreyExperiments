@@ -19,6 +19,7 @@ using RecipesBase
 # using MATLAB # Only need for MAT_* methods, which are no longer used
 
 export getfaces, simpplot, disjoint_rect_mesh_with_tori
+export nodevector, nodematrix, cellvector, cellmatrix, nodecellmatrices
 export mxbbox, mxaxis
 
 # DEBUG
@@ -285,6 +286,7 @@ function nodematrix(g::Grid{dim,N,T,M}) where {dim,N,T,M}
     end
     return p
 end
+nodevector(g::Grid) = getcoordinates.(getnodes(g))
 
 # Form triangle indices matrix
 function cellmatrix(g::Grid{dim,N,T,M}) where {dim,N,T,M}
@@ -297,10 +299,11 @@ function cellmatrix(g::Grid{dim,N,T,M}) where {dim,N,T,M}
     end
     return c
 end
+cellvector(g::Grid) = vertices.(getcells(g))
 
-# Plot Grid or vector of Grids. Vector of Grids are combined into one large Grid
-# before plotting for speed, so that simpplot need only be called once
-function DistMesh.unwrap_simpplot_args(gs::Vector{G}) where {G <: Grid{2,3}}
+# Return combined nodematrix and cellmatrix of a vector of grids,
+# renumbering nodes accordingly
+function nodecellmatrices(gs::Vector{G}) where {G <: Grid{2,3}}
     ps = nodematrix.(gs) # Vector of matrices of node positions
     ts = cellmatrix.(gs) # Vector of matrices of triangle indices
     idxshifts = cumsum(size.(ps,1))
@@ -311,7 +314,15 @@ function DistMesh.unwrap_simpplot_args(gs::Vector{G}) where {G <: Grid{2,3}}
     t = reduce(vcat, ts) # Triangle indices matrix
     return p, t
 end
-DistMesh.unwrap_simpplot_args(g::G) where {G <: Grid{2,3}} = nodematrix(g), cellmatrix(g)
+
+# Plot Grid or vector of Grids. Vector of Grids are combined into one large Grid
+# before plotting for speed, so that simpplot need only be called once
+function DistMesh.SimpPlotGrid(gs::Vector{G}) where {G <: Grid{2,3}}
+    return DistMesh.SimpPlotGrid(nodecellmatrices(gs)...)
+end
+function DistMesh.SimpPlotGrid(g::G) where {G <: Grid{2,3}}
+    return DistMesh.SimpPlotGrid(nodevector(g), cellvector(g))
+end
 
 # ---------------------------------------------------------------------------- #
 # Helper functions for DistMesh, etc.
@@ -473,7 +484,7 @@ function disjoint_rect_mesh_with_tori(
     # Initialize plot, if any
     local fighandle
     # plotgrids && (fighandle = plot(;seriestype = :simpplot))
-    plotgrids && (fighandle = simpplot([],[]))
+    plotgrids && (fighandle = simpplot())
 
     @inbounds for i = 1:length(inner_circles)
         # Fixed points for inner/outer circles, as well as boundary points
