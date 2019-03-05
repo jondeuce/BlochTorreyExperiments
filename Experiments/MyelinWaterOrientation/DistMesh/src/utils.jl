@@ -326,7 +326,7 @@ function boundedges(
     v13 = p[node3,:] - p[edges[:,1],:]
     b_flip = v12[:,1] .* v13[:,2] .- v12[:,2] .* v13[:,1] .< zero(T) #NOTE this is different in DistMesh; they check for > 0 due to clockwise ordering
     edges[b_flip, [1,2]] = edges[b_flip, [2,1]]
-    edges = sort!(to_tuple(edges); by = first)
+    edges = sort!(to_tuple(edges))
 
     return edges
 end

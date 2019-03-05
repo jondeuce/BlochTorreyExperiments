@@ -172,7 +172,7 @@ function distmesh2d(
                 bars[3i-1] = (b, c)
                 bars[3i  ] = (c, a)                                            # Interior bars duplicated
             end
-            bars = unique!(sort!(bars; by = first))                            # Bars as node pairs
+            bars = unique!(sort!(bars))                            # Bars as node pairs
             resize_buffers!(bars_buffers, length(bars))                        # Resize buffers of length(bars)
 
             # 5. Graphical output of the current mesh

@@ -11,20 +11,20 @@
 #   bbox     : Boundary box [xmin,ymin; xmax,ymax]
 #   dg       : Type of triangular mesh: dg=1 linear; dg=2 quadratic
 #   nr       : Number of refinements (nr=0, without refinement)
-#   pfix     : Fixed nodes (nodes that must appear in the mesh)
+#   pfix     : Fixed points (points that must appear in the mesh)
 #   varargin : Additional parameters passed to fd and fh (optional)
 # Output:
-#   p        : Node coordinates np*2
+#   p        : Point coordinates np*2
 #   t        : Triangle vertices nt*3 (linear) or nt*6 (quadratic)
 #   be       : Boundary edges    ne*2 (linear) or nt*3 (quadratic)
-#   bn       : Boundary nodes    nb*1
+#   bn       : Boundary points    nb*1
 #--------------------------------------------------------------------
 # (c) 2009, Koko J., ISIMA, koko@isima.fr
 #--------------------------------------------------------------------
 
 function kmg2d(
         fd,                             # signed distance function
-        fsubs::AbstractVector,          # vector subregion distance functions, the boundaries of which are forced onto the grid
+        fsubs::AbstractVector,          # vector of sub-region distance functions, the boundaries of which are forced onto the grid
         fh,                             # relative edge length function
         h0::T,                          # nominal edge length
         bbox::Matrix{T},                # bounding box (2x2 matrix [xmin ymin; xmax ymax])
@@ -33,7 +33,7 @@ function kmg2d(
         pfix::AbstractVector{Vec{2,T}}  = Vec{2,T}[], # fixed points
         pinit::AbstractVector{Vec{2,T}} = init_points(bbox, h0), # inital distribution of points (triangular grid by default)
         ∇fd                             = x -> Tensors.gradient(fd, x), # Gradient of distance function `fd`
-        ∇fsubs                          = [x -> Tensors.gradient(fs, x) for fs in fsubs]; # gradients of subregion distance functions
+        ∇fsubs                          = [x -> Tensors.gradient(fs, x) for fs in fsubs]; # gradients of sub-region distance functions
         PLOT::Bool                      = false, # plot all triangulations during evolution
         PLOTLAST::Bool                  = false, # plot resulting triangulation
         MAXITERS::Int                   = 1000, # max iterations of stalled progress
@@ -41,13 +41,14 @@ function kmg2d(
         VERBOSE::Bool                   = false, # print verbose information
         TRIANGLECTRLFREQ::Int           = 100, # period in which triangles are checked for quality
         DENSITYCTRLFREQ::Int            = 50, # period in which points are checked for being too close
-        DENSITYRELTHRESH::T             = T(2.5), # bars are too short if DENSITYRELTHRESH times bar length is less than the desired length
+        DENSITYRELTHRESH::T             = T(3.0), # bars are too short if DENSITYRELTHRESH times bar length is less than the desired length
         DETERMINISTIC::Bool             = false, # use deterministic pseudo-random
         MP::Int                         = 5, # equilibrium step size threshold (relative to length(p))
         PEPS::T                         = T(5e-3), # relative step size threshold for interior points
         REPS::T                         = T(0.5), # relative point movement threshold between iterations
         QMIN::T                         = T(0.5), # minimum triangle quality (0 < QMIN < 1)
-        GEPS::T                         = T(1e-3)*h0, # boundary distance threshold
+        GEPS::T                         = sqrt(eps(T))*h0, # boundary distance threshold (note: can be very low since exact ∇fd should project exactly to boundary)
+        LEPS::T                         = T(1e-3), # minimum relative bar length for force calculation (to avoid NaN forces)
         DEPS::T                         = sqrt(eps(T))*h0, # finite difference step-length
         FSCALE::T                       = T(1.2), # scale bar lengths
         DELTAT::T                       = T(0.1) # relative step size
@@ -62,10 +63,10 @@ function kmg2d(
 
     reject_prob = DETERMINISTIC ? rand(MersenneTwister(0), T, length(p)) : rand(T, length(p))
     p = p[maximum(r0) .* reject_prob .< r0]                # Rejection method
-    p = threshunique_all(p,h0)                             # Remove (approximately) duplicate input nodes
-    pfix = threshunique_all(pfix,h0)                       # Remove (approximately) duplicate fixed nodes
+    p = threshunique_all(p,h0)                             # Remove (approximately) duplicate input points
+    pfix = threshunique_all(pfix,h0)                       # Remove (approximately) duplicate fixed points
 
-    !isempty(pfix) && (p = setdiff!(p, pfix))              # Remove duplicated nodes between p and pfix
+    !isempty(pfix) && (p = setdiff!(p, pfix))              # Remove duplicated points between p and pfix
     p = [pfix; p]                                          # Prepend fix points
     t = NTuple{3,Int}[]
 
@@ -75,11 +76,12 @@ function kmg2d(
     barvec, L, Lbars, hbars = V[], T[], T[], T[]
     velocity, Δp = V[], T[]
     bars_bufs = [barvec, L, Lbars, hbars] # buffers with length == length(bars)
-    node_bufs = [velocity, Δp] # buffers with length == length(p)
+    point_bufs = [velocity, Δp] # buffers with length == length(p)
     
     # Initialize variables for first iteration
     iter, tricount = 0, 0
     ptol, rtol, fixed_nodes = T(1.0), T(1e2), Int[]
+    sub_bdry_nodes = [Int[] for _ in 1:length(fsubs)]
     local pold, bars, bdry_nodes, int_nodes
     
     MESHTIME = @elapsed while iter < MAXITERS && ptol > PEPS
@@ -97,13 +99,14 @@ function kmg2d(
 
             # Update mesh variables
             t = update_mesh!(t, p, fd, GEPS)
-            bars = unique!(sort!(sortededges(p,t); by=first)) # `sortededges` only sorts edges individually
+            bars = sortededges(p,t) |> sort! |> unique! # `sortededges` only sorts edges individually
             edges = boundedges(p,t)
-            bdry_nodes = unique!(sort!(copy(reinterpret(Int, copy(edges)))))
-            int_nodes = setdiff!(collect(1:length(p)), bdry_nodes)
-            
+            bdry_nodes = reinterpret(Int, edges) |> copy |> sort! |> unique! # unique boundary points of domain
+            int_nodes = setdiff(1:length(p), bdry_nodes)
+            !isempty(fsubs) && update_sub_bdry_nodes!(sub_bdry_nodes, p, t, fsubs, GEPS)
+
             # Resize buffers
-            resize_buffers!(node_bufs, length(p))
+            resize_buffers!(point_bufs, length(p))
             resize_buffers!(bars_bufs, length(bars))
 
             # Graphical output of the current mesh
@@ -132,7 +135,7 @@ function kmg2d(
         end
 
         # Density control - remove points that are too close
-        if iter != MAXITERS && mod(iter + div(DENSITYCTRLFREQ,2), DENSITYCTRLFREQ) == 0
+        if iter != MAXITERS && iter > DENSITYCTRLFREQ && mod(iter - div(DENSITYCTRLFREQ,2), DENSITYCTRLFREQ) == 0
             shortbars = bars[findall(ℓ -> ℓ < inv(DENSITYRELTHRESH), L)]
             ix = setdiff(reinterpret(Int, shortbars), union(1:length(pfix), fixed_nodes))
             ix = unique!(sort!(ix))
@@ -147,7 +150,7 @@ function kmg2d(
         # Compute velocity
         fill!(velocity, zero(V))
         @inbounds for (i, b) in enumerate(bars)
-            ℓ, e = L[i], barvec[i]
+            ℓ, e = max(L[i], LEPS), barvec[i]
             # f = max(1 - ℓ, zero(T)) # Persson–Strang force
             f = (1-ℓ^4) * exp(-ℓ^4) # Bossen–Heckbert smoothing function
             v = (f/ℓ) * e
@@ -165,26 +168,31 @@ function kmg2d(
             end
         end
         
-        # Update node positions
+        # Update point positions
         p .+= DELTAT .* velocity
 
-        # Check if boundary nodes are far from boundary, and if so, project back
-        @inbounds for i in bdry_nodes
-            d = fd(p[i])
-            while abs(d) > GEPS
-                p[i] -= d * ∇fd(p[i])
-                d = fd(p[i])
-            end
+        # Check if boundary points are far from boundary, and if so, project back
+        p = project_bdry_points!(p, bdry_nodes, fd, ∇fd, GEPS)
+        
+        # Project sub-region points, restarting if duplicate points are needed
+        old_length = length(p)
+        for i in eachindex(fsubs)
+            p = project_sub_bdry_points!(p, sub_bdry_nodes[i], fd, fsubs[i], ∇fsubs[i], GEPS)
+        end
+        if length(p) != old_length
+            ptol, rtol = T(1.0), T(1e2)
+            VERBOSE && println("iter = $iter: sub-region projection, $(length(p) - old_length) new points added, now $(length(p))")
+            continue
         end
 
-        # Termination criterion: All interior nodes move less than DPTOL (scaled)
+        # Termination criterion: All interior points move less than DPTOL (scaled)
         Δp .= DELTAT .* norm.(velocity)
         
         # Use mean for approximate convergence check
         ptol = mean(i -> Δp[i], int_nodes)/h0 # ptol = maximum(i -> Δp[i], int_nodes)/h0
         rtol = mean(ps -> norm(ps[1] - ps[2]), zip(p, pold))/h0 # rtol = maximum(ps -> norm(ps[1] - ps[2]), zip(p, pold))/h0
 
-        # Check the nodes speed at convergence
+        # If points have moved sufficiently little since last iteration, fix them in place
         if iter > min(MPITERS, MP * length(p))
             fixed_nodes = findall(dx -> norm(dx) < DELTAT * PEPS, Δp)
         end
@@ -193,26 +201,6 @@ function kmg2d(
         if iter != MAXITERS && (ptol < PEPS || mod(iter, TRIANGLECTRLFREQ) == 0)
             Amin = minimum(t->triangle_area(t, p), t)
             Qs = [triangle_quality(t, p) for t in t]
-            # Qidx = findall(Q -> Q < QMIN, Qs)
-            # Qmin = minimum(Qs)
-            # if Amin < 0 || !isempty(Qidx)
-            #     if !isempty(Qidx)
-            #         idx_to_delete = Int[]
-            #         all_fixed_nodes = union(1:length(pfix), fixed_nodes)
-            #         for qidx in Qidx
-            #             it = setdiff(t[qidx], all_fixed_nodes)
-            #             if length(it) > 1
-            #                 pmid = mean(p[i] for i in it) # 2 or 3 points are unfixed; this is either edge midpoint or triangle midpoint
-            #                 push!(p, pmid) # doesn't affect indexing
-            #                 append!(idx_to_delete, it)
-            #             end
-            #         end
-            #         deleteat!(p, unique!(sort!(idx_to_delete)))
-            #     end
-            #     ptol, rtol, fixed_nodes = T(1.0), T(1e2), Int[]
-            #     VERBOSE && println("iter = $iter: removed $(length(Qidx)) low quality trangles, Qmin = $Qmin")
-            #     continue
-            # end
             Qmin, Qidx = findmin(Qs)
             if Amin < 0 || Qmin < QMIN
                 if Qmin < QMIN
@@ -247,25 +235,78 @@ function kmg2d(
 end
 
 function update_mesh!(t, p, fd, GEPS)
-    # Delaunay triangulation
-    t = delaunay2!(t, p)
+    t = delaunay2!(t, p) # Delaunay triangulation
+    t = interior_triangles!(t, p, fd, GEPS)  # keep only interior triangles
+    t = oriented_triangles!(t, p) # ensure proper orientation
+    return t
+end
 
+function interior_triangles!(t, p, fd, GEPS)
     # Filter out triangles with midpoints outside of mesh
     t = filter!(t) do t
         @inbounds pmid = (p[t[1]] + p[t[2]] + p[t[3]])/3
         return fd(pmid) < -GEPS
     end
+    return t
+end
+interior_triangles(t, p, fd, GEPS) = interior_triangles!(copy(t), p, fd, GEPS)
 
+function oriented_triangles!(t, p)
     # Ensure triangles have proper orientation
     t = map!(t, t) do t
         @inbounds A = triangle_area(t, p)
         return A < 0 ? (t[1],t[3],t[2]) : t
     end
-
     return t
 end
+oriented_triangles(t, p) = oriented_triangles!(copy(t), p)
 
-threshunique_all(x::AbstractVector{Vec{2,T}}, h0::T) where {T} = threshunique(sort!(copy(x)); rtol = zero(T), atol = h0*√eps(T))
+function update_sub_bdry_nodes!(sub_bdry_nodes, p, t, fsubs, GEPS)
+    for (i,fd) in enumerate(fsubs)
+        tsub = interior_triangles(t, p, fd, GEPS)
+        subedges = boundedges(p, tsub)
+        sub_bdry_nodes[i] = reinterpret(Int, subedges) |> copy |> sort! |> unique!
+    end
+    return sub_bdry_nodes
+end
+
+@inline function project_point(x, fd, ∇fd, GEPS)
+    # Check if boundary points are far from boundary, and if so, project back.
+    # Note that if ∇fd computes the exact gradient, e.g. via automatic differentiation,
+    # then the inner while loop will always only take one iteration, as ∇d is a unit vector
+    # for a signed distance field d, and d is exactly the signed distance to the boundary
+    d = fd(x)
+    while abs(d) > GEPS
+        ∇d = ∇fd(x)
+        x -= d * ∇d
+        d = fd(x)
+    end
+    return x
+end
+
+function project_bdry_points!(p, bdry_nodes, fd, ∇fd, GEPS)
+    @inbounds for i in bdry_nodes
+        p[i] = project_point(p[i], fd, ∇fd, GEPS)
+    end
+    return p
+end
+
+function project_sub_bdry_points!(p, sub_bdry_nodes, fd, fsub, ∇fsub, GEPS)
+    @inbounds for (ix,i) in enumerate(sub_bdry_nodes)
+        x = project_point(p[i], fsub, ∇fsub, GEPS)
+        # If the original point p[i] was on the exterior boundary, but the new projected
+        # point x no longer is, push x into p and update the corresponding node
+        if abs(fd(p[i])) <= GEPS && !(abs(fd(x)) <= GEPS) #norm(x - p[i]) > GEPS
+            push!(p, x)
+            i = lastindex(p)
+            sub_bdry_nodes[ix] = i
+        else
+            p[i] = x
+        end
+    end
+    return p
+end
+
 function threshunique_fixed(
         p::AbstractVector{Vec{2,T}},
         ifixed::AbstractVector{Int},
@@ -279,3 +320,4 @@ function threshunique_fixed(
     end
     return [pfix; unfixed]
 end
+threshunique_all(x::AbstractVector{Vec{2,T}}, h0::T) where {T} = threshunique(sort!(copy(x)); rtol = zero(T), atol = h0*√eps(T))
