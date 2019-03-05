@@ -1,27 +1,25 @@
-complex# ---------------------------------------------------------------------------- #
+# ---------------------------------------------------------------------------- #
 # BlochTorreySolvers
 # ---------------------------------------------------------------------------- #
 
 module BlochTorreySolvers
 
-using GeometryUtils
-using BlochTorreyUtils
-using MeshUtils
-using ExpmvHigham
-using Expokit
+using BlochTorreyUtils, GeometryUtils # MeshUtils
+import ExpmV
+import Expokit
+# import ExpmvHigham
 
-using LinearAlgebra
-using JuAFEM
-using LinearMaps, ForwardDiff, Interpolations
-# using DifferentialEquations # really kills compile time
+using LinearAlgebra, SparseArrays, JuAFEM, Tensors
+using Parameters: @with_kw, @pack, @unpack
 using DiffEqBase, OrdinaryDiffEq, DiffEqCallbacks # DiffEqOperators, Sundials
-# using ApproxFun # really kills compile time
-using Tensors
-using LsqFit
-using BlackBoxOptim
 using MATLAB
 using TimerOutputs
-using Parameters: @with_kw, @pack, @unpack
+# using LinearMaps
+
+import ForwardDiff
+import LsqFit
+import BlackBoxOptim
+# import Interpolations
 
 # export SignalIntegrator
 # export gettime, getsignal, numsignals, signalnorm, complexsignal, relativesignalnorm, relativesignal
@@ -44,29 +42,33 @@ export ExpokitExpmv, HighamExpmv
 #   du/dt = (M\K)*u   [invertmass = true], or
 #   M*du/dt = K*u     [invertmass = false]
 function OrdinaryDiffEq.ODEProblem(d::ParabolicDomain, u0, tspan; invertmass = true)
-    # RHS action of ODE for general matrix A stored in p[1]
-    f!(du,u,p,t) = LinearAlgebra.mul!(du, p[1], u)
+    !invertmass && error("invertmass must be true for now")
 
-    if invertmass
-        # ParabolicLinearMap returns a linear operator which acts by (M\K)*u.
-        A = ParabolicLinearMap(d) # subtype of LinearMap
-        p = (DiffEqParabolicLinearMapWrapper(A),) # wrap LinearMap in an AbstractArray wrapper
-        F! = ODEFunction{true,true}(f!; # represents M*du/dt = K*u system
-            mass_matrix = I, # mass matrix
-            jac = (J,u,p,t) -> J, # Jacobian is constant (DiffEqParabolicLinearMapWrapper)
-            jac_prototype = p[1]
-        )
-        return ODEProblem(F!, u0, tspan, p)
-    else
-        K, M = getstiffness(d), getmass(d)
-        p = (K, M)
-        F! = ODEFunction{true,true}(f!; # represents M*du/dt = K*u system
-            mass_matrix = M, # mass matrix
-            jac = (J,u,p,t) -> J, # Jacobian is constant (stiffness matrix)
-            jac_prototype = K
-        )
-        return ODEProblem(F!, u0, tspan, p)
-    end
+    f!(du,u,p,t) = mul!(du, p[1], u) # RHS action of ODE for general matrix A stored in p[1]
+    A = ParabolicLinearMap(d) # ParabolicLinearMap returns a subtype of LinearMap which acts onto u as (M\K)*u.
+    p = (A,) # ODEProblem parameter tuple
+    return ODEProblem(f!, u0, tspan, p)
+
+    # if invertmass
+    #     # ParabolicLinearMap returns a linear operator which acts by (M\K)*u.
+    #     A = ParabolicLinearMap(d) # subtype of LinearMap
+    #     p = (DiffEqParabolicLinearMapWrapper(A),) # wrap LinearMap in an AbstractArray wrapper
+    #     F! = ODEFunction{true,true}(f!; # represents M*du/dt = K*u system
+    #         mass_matrix = I, # mass matrix
+    #         jac = (J,u,p,t) -> J, # Jacobian is constant (DiffEqParabolicLinearMapWrapper)
+    #         jac_prototype = p[1]
+    #     )
+    #     return ODEProblem(F!, u0, tspan, p)
+    # else
+    #     K, M = getstiffness(d), getmass(d)
+    #     p = (K, M)
+    #     F! = ODEFunction{true,true}(f!; # represents M*du/dt = K*u system
+    #         mass_matrix = M, # mass matrix
+    #         jac = (J,u,p,t) -> J, # Jacobian is constant (stiffness matrix)
+    #         jac_prototype = K
+    #     )
+    #     return ODEProblem(F!, u0, tspan, p)
+    # end
 end
 OrdinaryDiffEq.ODEProblem(m::MyelinDomain, u0, tspan; kwargs...) = ODEProblem(getdomain(m), u0, tspan; kwargs...)
 
@@ -164,13 +166,14 @@ abstract type AbstractExpmvAlgorithm <: OrdinaryDiffEq.OrdinaryDiffEqAlgorithm e
 
 OrdinaryDiffEq.isfsal(alg::AbstractExpmvAlgorithm) = true # NOTE: this is default; "first same as last" property
 OrdinaryDiffEq.alg_order(alg::AbstractExpmvAlgorithm) = 2 # TODO: order of expmv? used for interpolation; likely unimportant?
-OrdinaryDiffEq.alg_cache(alg::AbstractExpmvAlgorithm,u,rate_prototype,uEltypeNoUnits,uBottomEltypeNoUnits,tTypeNoUnits,uprev,uprev2,f,t,dt,reltol,p,calck,::Type{Val{true}})  = ExpmvCache(u,uprev,similar(u),zero(rate_prototype),zero(rate_prototype))
+OrdinaryDiffEq.alg_cache(alg::AbstractExpmvAlgorithm,u,rate_prototype,uEltypeNoUnits,uBottomEltypeNoUnits,tTypeNoUnits,uprev,uprev2,f,t,dt,reltol,p,calck,::Type{Val{true}})  = ExpmvCache(u,uprev,similar(u),similar(u),zero(rate_prototype),zero(rate_prototype))
 OrdinaryDiffEq.alg_cache(alg::AbstractExpmvAlgorithm,u,rate_prototype,uEltypeNoUnits,uBottomEltypeNoUnits,tTypeNoUnits,uprev,uprev2,f,t,dt,reltol,p,calck,::Type{Val{false}}) = ExpmvConstantCache()
 
 struct ExpmvCache{uType,rateType} <: OrdinaryDiffEq.OrdinaryDiffEqMutableCache
     u::uType
     uprev::uType
-    tmp::uType
+    b1::uType
+    b2::uType
     k::rateType
     fsalfirst::rateType
 end
@@ -210,7 +213,7 @@ end
     anorm::T = 1.0
     norm::F = LinearAlgebra.norm
 end
-ExpokitExpmv(A; kwargs...) = ExpokitExpmv(;kwargs..., anorm = LinearAlgebra.norm(A, Inf))
+ExpokitExpmv(A; kwargs...) = ExpokitExpmv(;kwargs..., anorm = LinearAlgebra.opnorm(A, Inf))
 
 # function OrdinaryDiffEq.perform_step!(integrator,cache::ExpokitExpmvConstantCache,repeat_step=false)
 #   @unpack t,dt,uprev,u,f,p = integrator
@@ -241,24 +244,31 @@ function OrdinaryDiffEq.perform_step!(
 end
 
 # ---------------------------------------------------------------------------- #
-# ExpokitExpmv stepper
+# ExpmV stepper
 # ---------------------------------------------------------------------------- #
 
 @with_kw struct HighamExpmv{T,F1,F2} <: AbstractExpmvAlgorithm
-    M::Matrix{T} = Matrix{T}(undef, 0, 0)
-    prec::String = "double"
+    M::Union{Nothing,Matrix{T}} = nothing
+    b_columns::Int = 1
+    precision::Symbol = :double
     shift::Bool = true
     full_term::Bool = false
     prnt::Bool = false
-    m_max::Int = 55
-    p_max::Int = 8
+    check_positive::Bool = false
     force_estm::Bool = false
     norm::F1 = LinearAlgebra.norm
     opnorm::F2 = LinearAlgebra.opnorm
+    m_max::Int = 55
+    p_max::Int = 8
 end
-HighamExpmv(A, b; kwargs...) = HighamExpmv(;kwargs..., M = _select_taylor_degree(A, b; kwargs...))
-function _select_taylor_degree(A, b; m_max = 55, p_max = 8, prec = "double", shift = false, force_estm = false, opnorm = LinearAlgebra.opnorm, kwargs...)
-    M = select_taylor_degree(A, b; m_max = m_max, p_max = p_max, prec = prec, shift = shift, force_estm = force_estm, opnorm = opnorm)[1]
+function HighamExpmv(
+        A, b_columns = 1, norm = LinearAlgebra.norm, opnorm = LinearAlgebra.opnorm;
+        precision = :double
+    )
+    M = ExpmV.select_taylor_degree(A, b_columns, opnorm; precision = precision, force_estm = true, check_positive = false, shift = true)[1]
+    return HighamExpmv(
+        M = M, b_columns = b_columns, norm = norm, opnorm = opnorm,
+        precision = precision, force_estm = true, check_positive = false, shift = true, full_term = false)
 end
 
 # function OrdinaryDiffEq.perform_step!(integrator,cache::HighamExpmvConstantCache,repeat_step=false)
@@ -280,15 +290,23 @@ function OrdinaryDiffEq.perform_step!(
     @unpack t,dt,uprev,u,f,p,alg = integrator
     A = p[1] # matrix being exponentiated
 
-    ExpmvHigham.expmv!(u, dt, A, uprev, cache.tmp;
-        M = alg.M,
-        prec = alg.prec,
+    ExpmV.expmv!(
+        u, dt, A, uprev,
+        alg.M, alg.norm, alg.opnorm, cache.b1, cache.b2;
+        precision = alg.precision,
         shift = alg.shift,
         full_term = alg.full_term,
-        prnt = alg.prnt,
-        norm = alg.norm,
-        opnorm = alg.opnorm
+        check_positive = alg.check_positive,
     )
+    # ExpmvHigham.expmv!(u, dt, A, uprev, cache.b1;
+    #     M = alg.M,
+    #     precision = alg.precision,
+    #     shift = alg.shift,
+    #     full_term = alg.full_term,
+    #     prnt = alg.prnt,
+    #     norm = alg.norm,
+    #     opnorm = alg.opnorm
+    # )
     integrator.fsallast = u
 end
 # ExpmvHigham.normAm(A::LinearMap, p::Real, t::Int = 10) = (normest1_norm(A^p, 1, t), 0) # no mv-product estimate
@@ -727,9 +745,9 @@ function _fitmwfmodel(
         cfg = ForwardDiff.JacobianConfig(wrapped_model, p0, ForwardDiff.Chunk{length(p0)}())
         jac_model(t, p) = ForwardDiff.jacobian(wrapped_model, p, cfg)
 
-        modelfit = curve_fit(model, jac_model, tdata, ydata, p0; lower = lb, upper = ub)
+        modelfit = LsqFit.curve_fit(model, jac_model, tdata, ydata, p0; lower = lb, upper = ub)
         errors = try
-            margin_error(modelfit, 0.05) # 95% confidence errors
+            LsqFit.margin_error(modelfit, 0.05) # 95% confidence errors
         catch e
             nothing
         end

@@ -2,8 +2,8 @@
 # Module path loading (do this before using Revise to ensure Revise sees them)
 # ============================================================================ #
 BTHOME = joinpath(@__DIR__, "../../..") |> realpath # assume we are in MyelinWaterOrientation folder
-BTMASTERPATH = joinpath(BTHOME, "BlochTorreyExperiments-master/") |> realpath
-MWOPATH = joinpath(BTMASTERPATH, "Experiments/MyelinWaterOrientation/") |> realpath
+BTBRANCHPATH = joinpath(@__DIR__, "../..") |> realpath
+MWOPATH = joinpath(BTBRANCHPATH, "Experiments/MyelinWaterOrientation/") |> realpath
 
 # Add paths to modules defined in folders
 (MWOPATH ∉ LOAD_PATH) && push!(LOAD_PATH, MWOPATH)

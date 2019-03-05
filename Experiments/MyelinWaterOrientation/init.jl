@@ -24,22 +24,22 @@ using MeshUtils
 using BlochTorreyUtils
 using BlochTorreySolvers
 using ExpmvHigham
+using MATLABPlots
 using MWFUtils
-using TestBlochTorrey2D
+# using TestBlochTorrey2D
 
 import EnergyCirclePacking
 import GreedyCirclePacking
 
 # Debugging packages
 using BenchmarkTools
-using Traceur
+# using Traceur
 # using ASTInterpreter2
 
 # Useful packages to have loaded
-using JuAFEM
+using JuAFEM, Tensors
 # using JuAFEM: vertices, faces, edges
 using StaticArrays
-using MATLAB
 # using DifferentialEquations
 # using DiffEqOperators
 # using OrdinaryDiffEq, Sundials
