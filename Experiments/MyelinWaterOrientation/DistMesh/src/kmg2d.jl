@@ -63,8 +63,8 @@ function kmg2d(
 
     reject_prob = DETERMINISTIC ? rand(MersenneTwister(0), T, length(p)) : rand(T, length(p))
     p = p[maximum(r0) .* reject_prob .< r0]                # Rejection method
-    p = threshunique_all(p,h0)                             # Remove (approximately) duplicate input points
-    pfix = threshunique_all(pfix,h0)                       # Remove (approximately) duplicate fixed points
+    p = gridunique_all(p,h0)                             # Remove (approximately) duplicate input points
+    pfix = gridunique_all(pfix,h0)                       # Remove (approximately) duplicate fixed points
 
     !isempty(pfix) && (p = setdiff!(p, pfix))              # Remove duplicated points between p and pfix
     p = [pfix; p]                                          # Prepend fix points
@@ -93,7 +93,7 @@ function kmg2d(
             VERBOSE && println("iter = $iter: triangulation #$tricount")
             
             old_length = length(p)
-            p = threshunique_fixed(p, union(1:length(pfix), fixed_nodes), h0) # triangulation will fail if two points are within eps() of eachother
+            p = gridunique_fixed(p, union(1:length(pfix), fixed_nodes), h0) # triangulation will fail if two points are within eps() of eachother
             !(length(p) == old_length) && (fixed_nodes = Int[]) # some points were dropped
             pold = copy(p) # Save current positions
 
@@ -307,17 +307,17 @@ function project_sub_bdry_points!(p, sub_bdry_nodes, fd, fsub, ∇fsub, GEPS)
     return p
 end
 
-function threshunique_fixed(
+function gridunique_fixed(
         p::AbstractVector{Vec{2,T}},
         ifixed::AbstractVector{Int},
         h0::T
     ) where {T}
     pfix = p[ifixed]
     unfixed = p[setdiff(1:length(p), ifixed)]
-    unfixed = threshunique_all(unfixed, h0) # ensure approximately unique unfixed points
+    unfixed = gridunique_all(unfixed, h0) # ensure approximately unique unfixed points
     unfixed = filter!(unfixed) do p
         !any(p0 -> norm(p-p0) < h0*√eps(T), pfix) # keep those which aren't too close to fixed points
     end
     return [pfix; unfixed]
 end
-threshunique_all(x::AbstractVector{Vec{2,T}}, h0::T) where {T} = threshunique(sort!(copy(x)); rtol = zero(T), atol = h0*√eps(T))
+gridunique_all(x::AbstractVector{Vec{2,T}}, h0::T) where {T} = gridunique(sort!(copy(x)); rtol = zero(T), atol = h0*√eps(T))

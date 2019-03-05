@@ -2,8 +2,9 @@
 # DistMesh helper functions
 # ---------------------------------------------------------------------------- #
 
-huniform(x::Vec{dim,T}) where {dim,T} = one(T)
-norm2(x::Vec) = x⋅x
+@inline huniform(x::Vec{dim,T}) where {dim,T} = one(T)
+@inline Tuple(v::Vec) = Tensors.get_data(v)
+@inline norm2(x::Vec) = x⋅x
 
 @inline function triangle_area(p1::Vec{2}, p2::Vec{2}, p3::Vec{2})
     d12, d13 = p2 - p1, p3 - p1
@@ -215,30 +216,24 @@ end
 
 # NOTE: Much faster than above
 function gridunique(
-        x::AbstractVector{Vec{2,T}};
+        x::AbstractVector{Vec{2,T}},
+        ::Type{Ti} = Int;
         rtol = √eps(T),
-        atol = eps(T),
-        norm = LinearAlgebra.norm
-    ) where {T}
+        atol = eps(T)
+    ) where {T,Ti}
 
-    uniqueset = T[]
-    sizehint!(uniqueset, length(x))
-    @inbounds for i in eachindex(x)
-        xi = x[i]
-        norm_xi = norm(xi)
-        isunique = true
-        for xj in uniqueset
-            norm_xj = norm(xj)
-            if norm(xi - xj) < max(rtol*max(norm_xi, norm_xj), atol)
-                isunique = false
-                break
-            end
-        end
-        isunique && push!(uniqueset, xi)
-    end
-    resize!(uniqueset, length(uniqueset))
+    exts = [extrema(x[i] for x in x) for i in 1:2]
+    mins = ntuple(i->exts[i][1], 2)
+    widths = ntuple(i->exts[i][2]-exts[i][1], 2)
+    h0 = max.(atol, rtol.*widths)
+    Ns = ceil.(Ti, widths./h0)
+    hs = widths./Ns
 
-    return uniqueset
+    to_idx(x, mins, hs) = round.(Ti, (Tuple(x).-mins)./hs)
+    to_vec(t, mins, hs) = Vec(mins .+ hs .* t)
+
+    idx = to_idx.(x, Ref(mins), Ref(hs)) |> sort! |> unique!
+    return to_vec.(idx, Ref(mins), Ref(hs))
 end
 
 function findunique(A::AbstractArray{T}) where T

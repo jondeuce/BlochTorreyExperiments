@@ -11,7 +11,7 @@ using VoronoiDelaunay # for Delaunay triangulation
 
 using RecipesBase # for plotting
 import RecipesBase: plot, plot!
-export plot, plot!, simpplot, simpplot!
+export simpplot, simpplot!
 
 export kmg2d, distmesh2d, hgeom, delaunay2, delaunay2!
 export huniform, fixmesh, boundedges, sortededges, sortededges!

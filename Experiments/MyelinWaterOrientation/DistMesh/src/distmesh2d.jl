@@ -119,7 +119,7 @@ function distmesh2d(
 
     !isempty(pfix) && (p = setdiff!(p, pfix))              # Remove duplicated nodes
     pfix = sort!(copy(pfix); by = first)
-    pfix = threshunique(pfix; rtol = √eps(T), atol = √eps(T))
+    pfix = gridunique(pfix; rtol = √eps(T), atol = √eps(T))
     nfix = length(pfix)
 
     p = vcat(pfix, p)                                      # Prepend fix points
@@ -155,7 +155,7 @@ function distmesh2d(
 
         # 3. (Re-)triangulation by the Delaunay algorithm
         if force_triangulation || (√maximum(norm2.(p.-pold)) > h0 * TTOL)      # Any large movement?    
-            p = threshunique(p; rtol = √eps(T), atol = h0*eps(T))              # Remove duplicate nodes
+            p = gridunique(p; rtol = √eps(T), atol = h0*eps(T))              # Remove duplicate nodes
             resize_buffers!(p_buffers, length(p)) # Resize buffers of length(p)
             isempty(p) && (return restart())
 
