@@ -8,10 +8,19 @@ using Test
 using BenchmarkTools
 
 # ---------------------------------------------------------------------------- #
+# Utils Testing
+# ---------------------------------------------------------------------------- #
+function utilstests(;N = 1000)
+    @testset "Distances" begin
+            
+    end
+end
+
+# ---------------------------------------------------------------------------- #
 # Geometry Testing
 # ---------------------------------------------------------------------------- #
 
-function runtests(;N = 1000)
+function geomtests(;N = 1000)
     @testset "Distances" begin
         d1, d2 = randn(N), randn(N)
         @test ddiff.(d1, d2) ≈ mxcall(:ddiff, 1, d1, d2)

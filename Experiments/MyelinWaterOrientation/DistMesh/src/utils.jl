@@ -47,12 +47,13 @@ end
 # Unique, sorting, etc.
 # ---------------------------------------------------------------------------- #
 
+# NOTE: Slow, and likely suboptimal
 function threshunique(
         x::AbstractVector{T};
         rtol = √eps(T),
         atol = eps(T),
         norm = LinearAlgebra.norm
-    ) where T
+    ) where {T}
 
     uniqueset = Vector{T}()
     sizehint!(uniqueset, length(x))
@@ -69,13 +70,63 @@ function threshunique(
                 break
             end
         end
-        isunique && push!(uniqueset, xi) # push!(idxs, i)
+        isunique && push!(uniqueset, xi)
+        # push!(idxs, i)
     end
 
     return uniqueset
 end
 
-function findunique(A)
+# NOTE: Much faster than above
+function gridunique(
+        x::AbstractVector{Vec{2,T}};
+        rtol = √eps(T),
+        atol = eps(T),
+        norm = LinearAlgebra.norm
+    ) where {T}
+
+    uniqueset = Vector{T}()
+    sizehint!(uniqueset, length(x))
+    ex = eachindex(x)
+    # idxs = Vector{eltype(ex)}()
+    for i in ex
+        xi = x[i]
+        norm_xi = norm(xi)
+        isunique = true
+        for xj in uniqueset
+            norm_xj = norm(xj)
+            if norm(xi - xj) < max(rtol*max(norm_xi, norm_xj), atol)
+                isunique = false
+                break
+            end
+        end
+        isunique && push!(uniqueset, xi)
+        # push!(idxs, i)
+    end
+
+    return uniqueset
+end
+
+function findunique(A::AbstractArray{T}) where T
+    ex = eachindex(A); Ti = eltype(ex)
+    C = unique(A) # Must preserve order
+    Cset = Set{T}(); sizehint!(Cset, length(C))
+    Cmap = Dict(zip(C, Ti(1):Ti(length(C))))
+    iA = Ti[]; sizehint!(iA, length(A))
+    iC = Ti[]; sizehint!(iC, length(C))
+    @inbounds for i in ex
+        ai = A[i]
+        push!(iC, Cmap[ai])
+        if !(ai in Cset)
+            push!(iA, i)
+            push!(Cset, ai)
+        end
+    end
+    C, iA, iC
+end
+
+# Extremely slow, conceptually simple version
+function findunique_slow(A)
     C = unique(A)
     iA = findfirst.(isequal.(C), (A,))
     iC = findfirst.(isequal.(A), (C,))
