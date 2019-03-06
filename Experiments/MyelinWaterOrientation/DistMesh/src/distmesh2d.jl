@@ -165,14 +165,8 @@ function distmesh2d(
             t = t[fd.(pmid) .< -GEPS]                                          # Keep interior triangles
 
             # 4. Describe each bar by a unique pair of nodes
-            bars = resize!(bars, 3*length(t))
-            @inbounds for (i,tt) in enumerate(t)
-                a, b, c = sorttuple(tt)
-                bars[3i-2] = (a, b)
-                bars[3i-1] = (b, c)
-                bars[3i  ] = (c, a)                                            # Interior bars duplicated
-            end
-            bars = unique!(sort!(bars))                            # Bars as node pairs
+            bars = getedges(t; sorted = true)                                  # Edges sorted individually as tuples, then as a vector
+            bars = unique!(sort!(bars))                                        # Edges then sorted together as a vector
             resize_buffers!(bars_buffers, length(bars))                        # Resize buffers of length(bars)
 
             # 5. Graphical output of the current mesh
@@ -185,7 +179,7 @@ function distmesh2d(
         # 6. Move mesh points based on bar lengths L and forces F
         @inbounds for (i, b) in enumerate(bars)
             p1, p2 = p[b[1]], p[b[2]]
-            barvec[i] = p1 - p2                               # List of bar vectors
+            barvec[i] = p2 - p1                               # List of bar vectors
             L[i] = norm(barvec[i])                            # L = Bar lengths
             hbars[i] = fh((p1+p2)/2)
         end
@@ -207,8 +201,8 @@ function distmesh2d(
         Fvec .= (F./L) .* barvec                              # Bar forces (x,y components)
         Ftot = fill!(Ftot, zero(V))
         @inbounds for (i, b) in enumerate(bars)
-            Ftot[b[1]] += Fvec[i]
-            Ftot[b[2]] -= Fvec[i]
+            Ftot[b[1]] -= Fvec[i]
+            Ftot[b[2]] += Fvec[i]
         end
         @inbounds for i in 1:length(pfix)
             Ftot[i] = zero(V)                                 # Force = 0 at fixed points
@@ -220,10 +214,10 @@ function distmesh2d(
         dterm = -T(Inf)
         @inbounds for i in eachindex(p)
             d = fd(p[i])
-            if d > zero(T)                                   # Find points outside (d>0)
+            if d > -GEPS                                     # Find points outside (d>0)
                 ∇d = ∇fd(p[i])                               # ForwardDiff gradient
                 p[i] -= ∇d * (d/(∇d⋅∇d))                     # Project
-            elseif d < -GEPS
+            else
                 d_int = DELTAT * norm(Ftot[i])/h0 #TODO sqrt(DELTAT)?
                 dterm = max(dterm, d_int)
             end

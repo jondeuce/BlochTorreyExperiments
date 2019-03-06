@@ -4,7 +4,7 @@
 
 @inline huniform(x::Vec{dim,T}) where {dim,T} = one(T)
 @inline Tuple(v::Vec) = Tensors.get_data(v)
-@inline norm2(x::Vec) = x⋅x
+@inline norm2(x::Vec) = x ⋅ x
 
 @inline function triangle_area(p1::Vec{2}, p2::Vec{2}, p3::Vec{2})
     d12, d13 = p2 - p1, p3 - p1
@@ -24,19 +24,19 @@ mesh_quality(p::AbstractVector{V}, t::AbstractVector{NTuple{3,Int}}) where {V <:
 
 function to_vec(p::AbstractMatrix{T}) where {T}
     N = size(p, 2)
-    P = reinterpret(Vec{N, T}, transpose(p)) |> vec |> copy
+    P = reinterpret(Vec{N,T}, transpose(p)) |> vec |> copy
     return P
 end
 
 function to_tuple(p::AbstractMatrix{T}) where {T}
     N = size(p, 2)
-    P = reinterpret(NTuple{N, T}, transpose(p)) |> vec |> copy
+    P = reinterpret(NTuple{N,T}, transpose(p)) |> vec |> copy
     return P
 end
 
 function to_mat(P::AbstractVector{NTuple{N,T}}) where {N,T}
     M = length(P)
-    p = reshape(reinterpret(T, P), (N, M)) |> transpose |> copy
+    p = reshape(reinterpret(T, P), (N,M)) |> transpose |> copy
     return p
 end
 to_mat(P::AbstractVector{Vec{N,T}}) where {N,T} = to_mat(reinterpret(NTuple{N,T}, P))
@@ -216,23 +216,22 @@ end
 
 # NOTE: Much faster than above
 function gridunique(
-        x::AbstractVector{Vec{2,T}},
-        ::Type{Ti} = Int;
+        x::AbstractVector{Vec{2,T}};
         rtol = √eps(T),
         atol = eps(T)
-    ) where {T,Ti}
+    ) where {T}
 
     exts = [extrema(x[i] for x in x) for i in 1:2]
-    mins = ntuple(i->exts[i][1], 2)
-    widths = ntuple(i->exts[i][2]-exts[i][1], 2)
+    mins = ntuple(i -> exts[i][1], 2)
+    widths = ntuple(i -> exts[i][2] - exts[i][1], 2)
     h0 = max.(atol, rtol.*widths)
-    Ns = ceil.(Ti, widths./h0)
+    Ns = ceil.(widths./h0)
     hs = widths./Ns
 
-    to_idx(x, mins, hs) = round.(Ti, (Tuple(x).-mins)./hs)
+    to_tup(x, mins, hs) = round.((Tuple(x) .- mins) ./ hs)
     to_vec(t, mins, hs) = Vec(mins .+ hs .* t)
 
-    idx = to_idx.(x, Ref(mins), Ref(hs)) |> sort! |> unique!
+    idx = to_tup.(x, Ref(mins), Ref(hs)) |> sort! |> unique!
     return to_vec.(idx, Ref(mins), Ref(hs))
 end
 
@@ -281,16 +280,28 @@ function sorttuple(t::NTuple{3})
 end
 
 # edges of triangle vector
-function getedges(t::AbstractVector{NTuple{3,Int}})
-    bars = Vector{NTuple{2,Int}}(undef, 3*length(t))
-    @inbounds for (i,tt) in enumerate(t)
-        a, b, c = tt
-        bars[3i-2] = (a, b)
-        bars[3i-1] = (b, c)
-        bars[3i  ] = (c, a)
+function getedges!(e::AbstractVector{NTuple{2,Int}}, t::AbstractVector{NTuple{3,Int}}; sorted = false)
+    @assert length(e) == 3*length(t)
+    if !sorted
+        # Standard "counter-clockwise" order: (a,b), (b,c), (c,a)
+        @inbounds for (i,tt) in enumerate(t)
+            a, b, c = tt
+            e[3i-2] = (a, b)
+            e[3i-1] = (b, c)
+            e[3i  ] = (c, a)
+        end
+    else
+        # Sort edge indices first, and return sorted tuples: (a,b), (b,c), (a,c)
+        @inbounds for (i,tt) in enumerate(t)
+            a, b, c = sorttuple(tt)
+            e[3i-2] = (a, b)
+            e[3i-1] = (b, c)
+            e[3i  ] = (a, c) # NOTE: not (c,a), as a <= c
+        end
     end
-    return bars
+    return e
 end
+getedges(t::AbstractVector{NTuple{3,Int}}; kwargs...) = getedges!(Vector{NTuple{2,Int}}(undef, 3*length(t)), t; kwargs...)
 
 # ---------------------------------------------------------------------------- #
 # FIXMESH  Remove duplicated/unused nodes and fix element orientation.
@@ -304,8 +315,7 @@ function fixmesh(
     ) where {T}
 
     if isempty(p) || isempty(t)
-        pix = 1:length(p)
-        return p, t, pix
+        return p, t, collect(1:length(p))
     end
 
     p_matrix(p) = reshape(reinterpret(T, p), (2, length(p))) |> transpose |> copy
@@ -316,9 +326,9 @@ function fixmesh(
     p = p_matrix(p)
     snap = maximum(maximum(p, dims=1) - minimum(p, dims=1)) * ptol
     _, ix, jx = findunique(p_vector(round.(p./snap).*snap))
-    p = p_vector(p)
-    p = p[ix]
+    p = p_vector(p)[ix]
 
+    pix = Int[]
     if !isempty(t)
         t = t_matrix(t)
         t = reshape(jx[t], size(t))
@@ -330,10 +340,8 @@ function fixmesh(
 
         t = t_vector(t)
         @inbounds for (i,tt) in enumerate(t)
-            d12 = p[tt[2]] - p[tt[1]]
-            d13 = p[tt[3]] - p[tt[1]]
-            v = (d12[1] * d13[2] - d12[2] * d13[1])/2 # simplex volume
-            v < 0 && (t[i] = (tt[2], tt[1], tt[3])) # flip if volume is negative
+            A = triangle_area(p[tt[1]], p[tt[2]], p[tt[3]])
+            A < 0 && (t[i] = (tt[2], tt[1], tt[3])) # flip if volume is negative
         end
     end
 
@@ -354,7 +362,7 @@ function boundedges(
     (isempty(p) || isempty(t)) && return NTuple{2,Int}[]
 
     # Form all edges, non-duplicates are boundary edges
-    p, t = to_mat(p), to_mat(t)
+    t = to_mat(t)
     edges = [t[:,[1,2]]; t[:,[2,3]]; t[:,[3,1]]] #NOTE changed from above, but shouldn't matter
     node3 = [t[:,3]; t[:,1]; t[:,2]]
     edges = sort(edges; dims = 2) # for finding unique edges, make sure they're ordered the same
@@ -367,31 +375,11 @@ function boundedges(
     node3 = node3[ix_unique]
     
     # Orientation
-    v12 = p[edges[:,2],:] - p[edges[:,1],:]
-    v13 = p[node3,:] - p[edges[:,1],:]
-    b_flip = v12[:,1] .* v13[:,2] .- v12[:,2] .* v13[:,1] .< zero(T) #NOTE this is different in DistMesh; they check for > 0 due to clockwise ordering
+    b_flip = triangle_area.(p[edges[:,1]], p[edges[:,2]], p[node3]) .< 0 #NOTE this is different in DistMesh; they check for > 0 due to clockwise ordering
     edges[b_flip, [1,2]] = edges[b_flip, [2,1]]
     edges = sort!(to_tuple(edges))
 
     return edges
-end
-
-function sortededges!(
-        e::AbstractVector{NTuple{2,Int}},
-        p::AbstractVector{Vec{2,T}},
-        t::AbstractVector{NTuple{3,Int}}
-    ) where {T}
-    @assert length(e) == 3*length(t)
-    @inbounds for (i,tt) in enumerate(t)
-        a, b, c = sorttuple(tt)
-        e[3i-2] = (a, b)
-        e[3i-1] = (b, c)
-        e[3i  ] = (c, a)
-    end
-    return e
-end
-function sortededges(p::AbstractVector{Vec{2,T}}, t::AbstractVector{NTuple{3,Int}}) where {T}
-    return sortededges!(Vector{NTuple{2,Int}}(undef, 3*length(t)), p, t)
 end
 
 # ---------------------------------------------------------------------------- #

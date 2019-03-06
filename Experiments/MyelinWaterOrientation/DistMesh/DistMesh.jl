@@ -14,7 +14,7 @@ import RecipesBase: plot, plot!
 export simpplot, simpplot!
 
 export kmg2d, distmesh2d, hgeom, delaunay2, delaunay2!
-export huniform, fixmesh, boundedges, sortededges, sortededges!
+export huniform, fixmesh, boundedges, edges, edges!
 export dblock, drectangle, drectangle0, dsphere, dcircle, dshell
 export ddiff, dintersect, dunion
 

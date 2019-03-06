@@ -5,9 +5,9 @@ using MeshUtils
 using BlochTorreyUtils
 
 using LinearAlgebra, Statistics, BenchmarkTools
-using StatsPlots
-# plotly(size=(800,800), legend=nothing)
-gr(size=(800,800), legend=nothing)
+# using StatsPlots
+# # plotly(size=(800,800), legend=nothing)
+# gr(size=(800,800), legend=nothing)
 
 function runbenchmarks()
     T = Float64
@@ -108,14 +108,16 @@ function runblocktorreygrid(;alpha = 0.5, PLOT = false)
     dmax = btparams.R_mu
     fh = x -> alpha + min(abs(fd(x))/dmax, one(eltype(x)))
 
-    # p, t = kmg2d(fd, [], fh, h0, bbox, 1, 0, pfix;
-    #     MAXITERS = 500,
-    #     VERBOSE = true,
-    #     DETERMINISTIC = true,
-    #     PLOT = false,
-    #     PLOTLAST = true)
-
     return fd, fsubs, fh, h0, bbox, pfix
 end
+
+fd, fsubs, fh, h0, bbox, pfix = runblocktorreygrid(alpha = 0.5);
+p, t = kmg2d(fd, [], fh, h0/2.0, bbox, 1, 0, pfix;
+    QMIN = 0.5,
+    MAXITERS = 10_000,
+    VERBOSE = true,
+    DETERMINISTIC = true,
+    PLOT = false,
+    PLOTLAST = false);
 
 nothing
