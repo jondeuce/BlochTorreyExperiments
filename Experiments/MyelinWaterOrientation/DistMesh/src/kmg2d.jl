@@ -59,7 +59,7 @@ function kmg2d(
     p = copy(pinit)
 
     # Remove points outside the region, apply the rejection method
-    p = filter!(x -> fd(x) < GEPS, p)                      # Keep only d<0 points
+    p = filter!(x -> fd(x) <= GEPS, p)                      # Keep only d<0 points
     r0 = inv.(fh.(p)).^2                                   # Probability to keep point
 
     reject_prob = DETERMINISTIC ? rand(MersenneTwister(0), T, length(p)) : rand(T, length(p))
@@ -83,7 +83,8 @@ function kmg2d(
     iter, tricount = 0, 0
     ptol, rtol, fixed_nodes = T(1.0), T(1e2), Int[]
     sub_bdry_nodes = [Int[] for _ in 1:length(fsubs)]
-    local pold, bars, bdry_nodes, int_nodes, subs_nodes
+    subs_int_bdry_nodes = Int[]
+    local pold, bars, bdry_nodes, int_nodes
     
     MESHTIME = @elapsed while iter < MAXITERS && ptol > PEPS
         iter += 1
@@ -172,6 +173,16 @@ function kmg2d(
                 velocity[i] = zero(V)
             end
         end
+
+        # Project out normal component of velocity on internal sub-boundary nodes.
+        # This prevents large movements away from sub-boundaries without having to fix the nodes.
+        if iter > min(FIXEDSUBSITERS, MP * length(p)) && !isempty(subs_int_bdry_nodes)
+            @inbounds for i in subs_int_bdry_nodes
+                ∇d = ∇fd(p[i])
+                ∇d = ∇d/norm(∇d) # NOTE: should already be a unit vector, but this covers edge cases (e.g. finite differences)
+                velocity[i] -= (velocity[i] ⋅ ∇d) * ∇d # Project out normal component of velocity
+            end
+        end
         
         # Update point positions
         p .+= DELTAT .* velocity
@@ -201,10 +212,14 @@ function kmg2d(
         if iter > min(MPITERS, MP * length(p))
             fixed_nodes = findall(dx -> norm(dx) < DELTAT * PEPS, Δp)
         end
-        if iter > min(FIXEDSUBSITERS, MP * length(p)) && !isempty(fsubs)
-            subs_nodes = reduce(vcat, findall(x -> (abs(fsub(x)) < GEPS) && !(abs(fd(x)) < GEPS), p) for fsub in fsubs)
-            subs_nodes = sort!(unique!(subs_nodes))
-            fixed_nodes = union(fixed_nodes, subs_nodes)
+        if iter > min(FIXEDSUBSITERS, MP * length(p)) && !all(isempty, sub_bdry_nodes)
+            # subs_int_bdry_nodes = reduce(vcat, findall(x -> (abs(fsub(x)) <= GEPS) && !(abs(fd(x)) <= GEPS), p) for fsub in fsubs)
+            # subs_int_bdry_nodes = sort!(unique!(subs_int_bdry_nodes))
+            # fixed_nodes = union(fixed_nodes, subs_int_bdry_nodes)
+            subs_int_bdry_nodes = reduce(vcat, sub_bdry_nodes) |> sort! |> unique!
+            if !isempty(subs_int_bdry_nodes)
+                subs_int_bdry_nodes = filter!(i -> !(abs(fd(p[i])) <= GEPS), subs_int_bdry_nodes)
+            end
         end
         
         # Check the triangle orientation & quality
@@ -271,7 +286,7 @@ function interior_triangles!(t, p, fd, GEPS)
     # Filter out triangles with midpoints outside of mesh
     t = filter!(t) do t
         @inbounds pmid = (p[t[1]] + p[t[2]] + p[t[3]])/3
-        return fd(pmid) < -GEPS
+        return fd(pmid) <= -GEPS
     end
     return t
 end
@@ -302,8 +317,9 @@ end
     # then the inner while loop will always only take one iteration, as ∇d is a unit vector
     # for a signed distance field d, and d is exactly the signed distance to the boundary
     d = fd(x)
-    while abs(d) > GEPS
+    while !(abs(d) <= GEPS)
         ∇d = ∇fd(x)
+        ∇d = ∇d/norm(∇d) # NOTE: should already be a unit vector, but this covers edge cases (e.g. finite differences)
         x -= d * ∇d
         d = fd(x)
     end

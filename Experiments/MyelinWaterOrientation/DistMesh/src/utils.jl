@@ -261,23 +261,21 @@ function findunique_slow(A)
     return C, iA, iC
 end
 
-# Simple sorting of 2-tuples
-sorttuple(t::NTuple{2}) = t[1] > t[2] ? (t[2], t[1]) : t
+# Simple sorting of 2-tuples (optimal sorting network from https://github.com/JeffreySarnoff/SortingNetworks.jl)
+@inline function sorttuple(a, b)
+    a, b = minmax(a, b)
+    return (a, b)
+end
+@inline sorttuple(t::NTuple{2}) = sorttuple(t[1], t[2])
 
-# Simple sorting of 3-tuples
-function sorttuple(t::NTuple{3})
-    a, b, c = t
-    if a > b
-        a, b = b, a
-    end
-    if b > c
-        b, c = c, b
-        if a > b
-            a, b = b, a
-        end
-    end
+# Simple sorting of 3-tuples (optimal sorting network from https://github.com/JeffreySarnoff/SortingNetworks.jl)
+function sorttuple(a, b, c)
+    b, c = minmax(b, c)
+    a, c = minmax(a, c)
+    a, b = minmax(a, b)
     return (a, b, c)
 end
+@inline sorttuple(t::NTuple{3}) = sorttuple(t[1], t[2], t[3])
 
 # edges of triangle vector
 function getedges!(e::AbstractVector{NTuple{2,Int}}, t::AbstractVector{NTuple{3,Int}}; sorted = false)
