@@ -59,13 +59,13 @@ function kmg2d(
     p = copy(pinit)
 
     # Remove points outside the region, apply the rejection method
-    p = filter!(x -> fd(x) <= GEPS, p)                      # Keep only d<0 points
+    p = filter!(x -> fd(x) <= GEPS, p)                     # Keep only d<0 points
     r0 = inv.(fh.(p)).^2                                   # Probability to keep point
 
     reject_prob = DETERMINISTIC ? rand(MersenneTwister(0), T, length(p)) : rand(T, length(p))
     p = p[maximum(r0) .* reject_prob .< r0]                # Rejection method
-    p = gridunique_all(p,h0)                             # Remove (approximately) duplicate input points
-    pfix = gridunique_all(pfix,h0)                       # Remove (approximately) duplicate fixed points
+    p = gridunique_all(p,h0)                               # Remove (approximately) duplicate input points
+    pfix = gridunique_all(pfix,h0)                         # Remove (approximately) duplicate fixed points
 
     !isempty(pfix) && (p = setdiff!(p, pfix))              # Remove duplicated points between p and pfix
     p = [pfix; p]                                          # Prepend fix points
@@ -83,7 +83,7 @@ function kmg2d(
     iter, tricount = 0, 0
     ptol, rtol, fixed_nodes = T(1.0), T(1e2), Int[]
     sub_bdry_nodes = [Int[] for _ in 1:length(fsubs)]
-    subs_int_bdry_nodes = Int[]
+    # subs_int_bdry_nodes = Int[]
     local pold, bars, bdry_nodes, int_nodes
     
     MESHTIME = @elapsed while iter < MAXITERS && ptol > PEPS
@@ -111,11 +111,11 @@ function kmg2d(
             # Resize buffers
             resize_buffers!(point_bufs, length(p))
             resize_buffers!(bars_bufs, length(bars))
-
-            # Graphical output of the current mesh
-            PLOT && display(simpplot(p,t))
         end
 
+        # Graphical output of the current mesh
+        PLOT && display(simpplot(p,t))
+        
         # Move mesh points based on bar lengths L and forces f
         @inbounds for (i, b) in enumerate(bars)
             p1, p2 = p[b[1]], p[b[2]]
@@ -176,49 +176,75 @@ function kmg2d(
 
         # Project out normal component of velocity on internal sub-boundary nodes.
         # This prevents large movements away from sub-boundaries without having to fix the nodes.
-        if iter > min(FIXEDSUBSITERS, MP * length(p)) && !isempty(subs_int_bdry_nodes)
-            @inbounds for i in subs_int_bdry_nodes
-                ∇d = ∇fd(p[i])
-                ∇d = ∇d/norm(∇d) # NOTE: should already be a unit vector, but this covers edge cases (e.g. finite differences)
-                velocity[i] -= (velocity[i] ⋅ ∇d) * ∇d # Project out normal component of velocity
+        #   NOTE: `sub_bdry_nodes[j]` may contain fixed nodes, but their velocity was
+        #         already set to zero above, so the projection has no effect
+        if iter > min(FIXEDSUBSITERS, MP * length(p)) && !all(isempty, sub_bdry_nodes)
+            for j in eachindex(fsubs)
+                ∇fsub = ∇fsubs[j]
+                @inbounds for i in sub_bdry_nodes[j]
+                    # NOTE: ∇d should already be a unit vector, but normalizing by norm2(∇d) covers edge cases (e.g. finite differences)
+                    ∇d = ∇fsub(p[i])
+                    velocity[i] -= ((velocity[i] ⋅ ∇d) / norm2(∇d)) * ∇d # Project out normal component of velocity
+                end
             end
         end
         
         # Update point positions
         p .+= DELTAT .* velocity
 
-        # Check if boundary points are far from boundary, and if so, project back
-        p = project_bdry_points!(p, bdry_nodes, fd, ∇fd, GEPS)
-        
         # Project sub-region points, restarting if duplicate points are needed
         old_length = length(p)
-        for i in eachindex(fsubs)
-            p = project_sub_bdry_points!(p, sub_bdry_nodes[i], fd, fsubs[i], ∇fsubs[i], GEPS)
+        for j in eachindex(fsubs)
+            p = project_sub_bdry_points!(p, sub_bdry_nodes[j], fd, fsubs[j], ∇fsubs[j], GEPS)
         end
         if length(p) != old_length
             ptol, rtol = T(1.0), T(1e2)
             VERBOSE && println("iter = $iter: sub-region projection, $(length(p) - old_length) new points added, now $(length(p))")
             continue
         end
-
+        
+        # Check if boundary points are far from boundary, and if so, project back
+        p = project_bdry_points!(p, bdry_nodes, fd, ∇fd, GEPS)
+                
         # Termination criterion: All interior points move less than DPTOL (scaled)
         Δp .= DELTAT .* norm.(velocity)
         
         # Use mean for approximate convergence check
-        ptol = mean(i -> Δp[i], int_nodes)/h0 #ptol = maximum(i -> Δp[i], int_nodes)/h0
-        rtol = mean(ps -> norm(ps[1] - ps[2]), zip(p, pold))/h0 #rtol = maximum(ps -> norm(ps[1] - ps[2]), zip(p, pold))/h0
+        ptol = maximum(i -> Δp[i], int_nodes)/h0
+        rtol = maximum(ps -> norm(ps[1] - ps[2]), zip(p, pold))/h0
+        _, int_node_ix = findmax(Δp[int_nodes]) #DEBUG
+        
+        if (iter > 10001)
+            #DEBUG show points after projection
+            (iter > 10001) && display(simpplot(p,t))
+            
+            #DEBUG show fixed points
+            _pfix = reinterpret(T, p[1:length(pfix)])
+            display(plot!(_pfix[1:2:end], _pfix[2:2:end]; seriestype = :scatter, markersize = 5, colour = :green))
+            
+            #DEBUG show point which is moving the most
+            x, y = p[int_nodes[int_node_ix]]
+            display(plot!([x], [y]; seriestype = :scatter, markersize = 10, colour = :red))
+        end
 
         # If points have moved sufficiently little since last iteration, fix them in place
         if iter > min(MPITERS, MP * length(p))
             fixed_nodes = findall(dx -> norm(dx) < DELTAT * PEPS, Δp)
         end
         if iter > min(FIXEDSUBSITERS, MP * length(p)) && !all(isempty, sub_bdry_nodes)
-            # subs_int_bdry_nodes = reduce(vcat, findall(x -> (abs(fsub(x)) <= GEPS) && !(abs(fd(x)) <= GEPS), p) for fsub in fsubs)
-            # subs_int_bdry_nodes = sort!(unique!(subs_int_bdry_nodes))
-            # fixed_nodes = union(fixed_nodes, subs_int_bdry_nodes)
-            subs_int_bdry_nodes = reduce(vcat, sub_bdry_nodes) |> sort! |> unique!
-            if !isempty(subs_int_bdry_nodes)
-                subs_int_bdry_nodes = filter!(i -> !(abs(fd(p[i])) <= GEPS), subs_int_bdry_nodes)
+            # Fix sub-region boundary nodes which are also on the exterior boundary
+            multi_bdry_nodes = reduce(vcat,
+                begin
+                    fsub, nodes = fsubs[j], sub_bdry_nodes[j]
+                    findall(nodes) do i
+                        @inbounds x = p[i]
+                        abs(fsub(x)) <= GEPS && abs(fd(x)) <= GEPS
+                    end
+                end
+                for j in eachindex(fsubs))
+            if !isempty(multi_bdry_nodes)
+                multi_bdry_nodes = unique!(sort!(multi_bdry_nodes))
+                fixed_nodes = union(fixed_nodes, multi_bdry_nodes)
             end
         end
         
@@ -234,17 +260,32 @@ function kmg2d(
                         pmid = mean(p[i] for i in ix) # 2 or 3 points are unfixed; this is either edge midpoint or triangle midpoint
                         deleteat!(p, ix)
                         push!(p, pmid)
-                        # fixed_nodes = update_node_order!(fixed_nodes, ix)
+                        
+                        if (iter > 10001)
+                            #DEBUG show point which is moving the most
+                            x, y = pmid
+                            display(plot!([x], [y]; seriestype = :scatter, markersize = 10, colour = :yellow))
+                            sleep(3.0)
+                        end
+                        VERBOSE && println("iter = $iter: removing triangle with Qmin = $Qmin; removed $(length(ix)) points, now $(length(p))")
+                    else
+                        if (iter > 10001)
+                            #DEBUG show point which is moving the most
+                            x, y = mean(p[i] for i in t[Qidx])
+                            display(plot!([x], [y]; seriestype = :scatter, markersize = 10, colour = :yellow))
+                            sleep(3.0)
+                        end
+                        VERBOSE && println("iter = $iter: removing triangle with Qmin = $Qmin")
                     end
+                else
+                    VERBOSE && println("iter = $iter: retriangulating (Amin = $Amin < 0)")
                 end
                 ptol, rtol, fixed_nodes = T(1.0), T(1e2), Int[]
-                # ptol, rtol = T(1.0), T(1e2)
-                VERBOSE && println("iter = $iter: removing triangle with Qmin = $Qmin")
                 continue
             end
         end
 
-        VERBOSE && println("iter = $iter: ptol = $ptol (goal: $PEPS)")
+        VERBOSE && println("iter = $iter: rtol = $rtol, ptol = $ptol (goal: $PEPS)")
     end
 
     # Plot final mesh
@@ -303,10 +344,10 @@ end
 oriented_triangles(t, p) = oriented_triangles!(copy(t), p)
 
 function update_sub_bdry_nodes!(sub_bdry_nodes, p, t, fsubs, GEPS)
-    for (i,fd) in enumerate(fsubs)
-        tsub = interior_triangles(t, p, fd, GEPS)
+    for (j,fsub) in enumerate(fsubs)
+        tsub = interior_triangles(t, p, fsub, GEPS)
         subedges = boundedges(p, tsub)
-        sub_bdry_nodes[i] = reinterpret(Int, subedges) |> copy |> sort! |> unique!
+        sub_bdry_nodes[j] = reinterpret(Int, subedges) |> copy |> sort! |> unique!
     end
     return sub_bdry_nodes
 end
@@ -336,13 +377,13 @@ end
 function project_sub_bdry_points!(p, sub_bdry_nodes, fd, fsub, ∇fsub, GEPS)
     @inbounds for (ix,i) in enumerate(sub_bdry_nodes)
         x = project_point(p[i], fsub, ∇fsub, GEPS)
-        # If the original point p[i] was on the exterior boundary, but the new projected
-        # point x no longer is, push x into p and update the corresponding node
         if abs(fd(p[i])) <= GEPS && !(abs(fd(x)) <= GEPS) #norm(x - p[i]) > GEPS
+            # If the original point p[i] was on the exterior boundary, but the new projected
+            # point x no longer is, push x into p and update the corresponding node
             push!(p, x)
-            i = lastindex(p)
-            sub_bdry_nodes[ix] = i
+            sub_bdry_nodes[ix] = lastindex(p) # x is on the sub-boundary
         else
+            # Either p[i] wasn't on the external boundary to begin with, or remained there after projection
             p[i] = x
         end
     end
@@ -362,4 +403,4 @@ function gridunique_fixed(
     end
     return [pfix; unfixed]
 end
-gridunique_all(x::AbstractVector{Vec{2,T}}, h0::T) where {T} = gridunique(sort!(copy(x)); rtol = zero(T), atol = h0*√eps(T))
+gridunique_all(x::AbstractVector{Vec{2,T}}, h0::T) where {T} = gridunique(x, h0*√eps(T))

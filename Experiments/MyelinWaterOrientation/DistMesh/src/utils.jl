@@ -2,9 +2,9 @@
 # DistMesh helper functions
 # ---------------------------------------------------------------------------- #
 
-@inline huniform(x::Vec{dim,T}) where {dim,T} = one(T)
-@inline Tuple(v::Vec) = Tensors.get_data(v)
-@inline norm2(x::Vec) = x ⋅ x
+@inline huniform(x::Vec{dim,T}) where {dim,T} = one(T)#eltype(eltype(x)))
+@inline norm2(x::Vec) = x⋅x
+@inline Base.Tuple(v::Vec) = Tensors.get_data(v)
 
 @inline function triangle_area(p1::Vec{2}, p2::Vec{2}, p3::Vec{2})
     d12, d13 = p2 - p1, p3 - p1
@@ -214,26 +214,49 @@ function threshunique(
     return uniqueset
 end
 
-# NOTE: Much faster than above
-function gridunique(
-        x::AbstractVector{Vec{2,T}};
-        rtol = √eps(T),
-        atol = eps(T)
-    ) where {T}
+# NOTE: Much faster than threshunique
+# function gridunique(
+#         x::AbstractVector{Vec{2,T}};
+#         rtol = √eps(T),
+#         atol = eps(T)
+#     ) where {T}
+# 
+#     exts = [extrema(x[i] for x in x) for i in 1:2]
+#     mins = ntuple(i -> exts[i][1], 2)
+#     widths = ntuple(i -> exts[i][2] - exts[i][1], 2)
+#     h0 = max.(atol, rtol.*widths)
+#     Ns = ceil.(widths./h0)
+#     hs = widths./Ns
+# 
+#     # to_tup(x, mins, hs) = round.((Tuple(x) .- mins) ./ hs)
+#     # to_vec(t, mins, hs) = Vec(mins .+ hs .* t)
+#     to_tup(x, hs) = round.(Tuple(x) ./ hs) #DEBUG
+#     to_vec(t, hs) = Vec(hs .* t)
+#     
+#     #DEBUG
+#     if any(isnan, first.(x)) #isnan(rtol) || isnan(ptol)
+#         println("ERROR: NaN within `gridunique` before `to_tup`")
+#     end
+# 
+#     # idx = to_tup.(x, Ref(mins), Ref(hs)) |> sort! |> unique!
+#     idx = to_tup.(x, Ref(hs)) |> sort! |> unique! #DEBUG
+# 
+#     #DEBUG
+#     if any(isnan, first.(idx)) #isnan(rtol) || isnan(ptol)
+#         @show exts
+#         @show mins
+#         @show widths
+#         @show h0
+#         @show Ns
+#         @show hs
+#         println("ERROR: NaN within `gridunique` after `to_tup`")
+#     end
+# 
+#     return to_vec.(idx, Ref(mins), Ref(hs))
+# end
 
-    exts = [extrema(x[i] for x in x) for i in 1:2]
-    mins = ntuple(i -> exts[i][1], 2)
-    widths = ntuple(i -> exts[i][2] - exts[i][1], 2)
-    h0 = max.(atol, rtol.*widths)
-    Ns = ceil.(widths./h0)
-    hs = widths./Ns
-
-    to_tup(x, mins, hs) = round.((Tuple(x) .- mins) ./ hs)
-    to_vec(t, mins, hs) = Vec(mins .+ hs .* t)
-
-    idx = to_tup.(x, Ref(mins), Ref(hs)) |> sort! |> unique!
-    return to_vec.(idx, Ref(mins), Ref(hs))
-end
+# NOTE: Much faster than threshunique
+gridunique(x::AbstractVector{Vec{2,T}}, h0::T) where {T} = map(x->Vec{2,T}(h0 .* round.(Tuple(x) ./ h0)), x)
 
 function findunique(A::AbstractArray{T}) where T
     ex = eachindex(A); Ti = eltype(ex)
@@ -407,21 +430,39 @@ end
         error("Arguments not properly parsed; expected two AbstractArray's, got: $unwrapped")
     end
     p, t = grid.p, grid.t
-    for tt in t
-        p1, p2, p3 = p[tt[1]], p[tt[2]], p[tt[3]]
-        x = [p1[1], p2[1], p3[1]]
-        y = [p1[2], p2[2], p3[2]]
-        @series begin
-            seriestype   := :shape
-            aspect_ratio := :equal
-            legend       := false
-            hover        := nothing
-            x, y
+    V = eltype(p)
+    T = eltype(V)
+
+    # Default and common attributes
+    seriestype   --> :shape
+    aspect_ratio :=  :equal
+    legend       :=  false
+    hover        :=  nothing
+
+    if plotattributes[:seriestype] == :shape
+        # Plot all shapes as a single path, using NaN's as line segment breaks
+        x = sizehint!(T[], 5*length(t))
+        y = sizehint!(T[], 5*length(t))
+        for tt in t
+            # Push the first point twice so that the `Shape` path is a closed loop
+            p1, p2, p3 = p[tt[1]], p[tt[2]], p[tt[3]]
+            push!(x, p1[1]); push!(x, p2[1]); push!(x, p3[1]); push!(x, p1[1]); push!(x, T(NaN))
+            push!(y, p1[2]); push!(y, p2[2]); push!(y, p3[2]); push!(y, p1[2]); push!(y, T(NaN))
         end
+        x, y
+    else
+        # Plot all points as a single path, using NaN's as line segment breaks
+        edges = getedges(t; sorted = true) |> sort! |> unique!
+        x = sizehint!(T[], 3*length(t))
+        y = sizehint!(T[], 3*length(t))
+        for e in edges
+            p1, p2 = p[e[1]], p[e[2]]
+            push!(x, p1[1]); push!(x, p2[1]); push!(x, T(NaN))
+            push!(y, p1[2]); push!(y, p2[2]); push!(y, T(NaN))
+        end
+        seriestype := :path
+        x, y
     end
-    # Attributes
-    aspect_ratio := :equal
-    legend       := false
 end
 
 parse_simpplot_args(g::SimpPlotGrid) = g

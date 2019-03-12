@@ -774,7 +774,7 @@ function intersection_points(
             pi = points[i]
             for j in 1:i-1
                 pj = points[j]
-                (norm(pi - pj) < ϵ * max(norm(pi), norm(pj))) && (b[i] = false; break)
+                (norm2(pi - pj) < ϵ^2 * max(norm2(pi), norm2(pj))) && (b[i] = false; break)
             end
         end
         points = points[b]
