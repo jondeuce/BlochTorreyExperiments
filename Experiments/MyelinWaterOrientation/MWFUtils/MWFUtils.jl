@@ -3,17 +3,20 @@ module MWFUtils
 using GeometryUtils
 using CirclePackingUtils
 using MeshUtils
+using DistMesh
 using BlochTorreyUtils
 using BlochTorreySolvers
 import EnergyCirclePacking
 import GreedyCirclePacking
 
 using JuAFEM
-using MATLABPlots
 using OrdinaryDiffEq, DiffEqOperators, Sundials
 using BenchmarkTools
 using Parameters: @with_kw, @unpack
 using IterableTables, DataFrames, BSON, CSV, Dates
+
+# Plotting
+using StatsPlots, MATLABPlots
 
 export packcircles, creategrids, createdomains
 export calcomegas, calcomega
@@ -64,18 +67,18 @@ function packcircles(btparams::BlochTorreyParameters{T};
             epsilon = ϵ # pack as much as possible, penalizing packing tighter than distance ϵ
         )
 
-        scaledcircles = CirclePackingUtils.scale_to_density(energycircles, η, ϵ)
+        scaledcircles, domain, _ = CirclePackingUtils.scale_to_density(energycircles, η, ϵ; MODE = :corners)
 
         println("")
         println("Distance threshold: $ϵ")
         println("Minimum myelin thickness: $(minimum(radius.(scaledcircles))*(1-btparams.g_ratio))")
         println("Minimum circles distance: $(minimum_signed_edge_distance(scaledcircles))")
         println("")
-        println("GreedyCirclePacking density:  $(estimate_density(greedycircles))")
-        println("EnergyCirclePacking density:  $(estimate_density(energycircles))")
-        println("Final scaled circles density: $(estimate_density(scaledcircles))")
+        println("GreedyCirclePacking density:  $(estimate_density(greedycircles, domain))")
+        println("EnergyCirclePacking density:  $(estimate_density(energycircles, domain))")
+        println("Final scaled circles density: $(estimate_density(scaledcircles, domain))")
         
-        η_curr = estimate_density(scaledcircles)
+        η_curr = estimate_density(scaledcircles, domain)
         (η_curr ≈ η) && (circles = scaledcircles; break)
         (η_curr > η_best) && (η_best = η_curr; circles = scaledcircles)
     end
@@ -90,39 +93,101 @@ function creategrids(btparams::BlochTorreyParameters{T};
         overlapthresh = 0.1, # overlap occurs when distance between circle edges is ≤ overlapthresh * btparams.R_mu
         maxpackiter = 10,
         outercircles = packcircles(btparams;
-            N = Ncircles, η = goaldensity, ϵ = overlapthresh * btparams.R_mu,
-            α = 1e-1, β = 1e-6, λ = 1.0, it = 100, maxiter = maxpackiter), # outer circles
-        bdry = opt_subdomain(outercircles)[1], # default boundary is automatically determined in packcircles
-        h_min = 0.5, # minimum bar length, relative to the minimum distance between outer circles 
-        h_max = 1.0, # maximum bar length, relative to the minimum distance between outer circles 
-        h_range = 2.0, # range over which bar lengths vary, relative to the minimum distance between outer circles 
-        h_rate = 1.0, # rate of increase of bar lengths; 1.0 is linear, 0.5 is sqrt, etc.
-        RESOLUTION = 1.0, # Multiplicative factor to easily uniformly increase/decrease bar lengths
+            N = Ncircles, maxiter = maxpackiter,
+            η = goaldensity, ϵ = overlapthresh * btparams.R_mu),
+        alpha = 0.5, #DEBUG
+        beta = 0.5, #DEBUG
+        RESOLUTION = 1.25, #DEBUG
         FORCEDENSITY = false, # If this flag is true, an error is thrown if the reached packing density is not goaldensity
         FORCEAREA = false, # If this flag is true, an error is thrown if the resulting grid area doesn't match the bdry area
-        CIRCLESTALLITERS = 1000, #DEBUG
-        EXTERIORSTALLITERS = 1000, #DEBUG
+        FORCEQUALITY = false, # If this flag is true, an error is thrown if the resulting grid doesn't have high enough quality
+        QMIN = 0.3, #DEBUG
+        MAXITERS = 1000, #DEBUG
+        FIXPOINTSITERS = 250, #DEBUG
+        FIXSUBSITERS = 200, #DEBUG
         PLOT = true
     ) where {T}
 
+    # Close current plot windows
+    innercircles = scale_shape.(outercircles, btparams.g_ratio)
+    allcircles = collect(Iterators.flatten(zip(outercircles, innercircles)))
+    bdry, _ = opt_subdomain(allcircles; MODE = :corners)
+    outercircles, bdry, α_best = scale_to_density(outercircles, bdry, btparams.AxonPDensity)
+    innercircles = scale_shape.(outercircles, btparams.g_ratio)
+    allcircles = collect(Iterators.flatten(zip(outercircles, innercircles)))
+    
     if FORCEDENSITY
-        density = estimate_density(outercircles)
+        density = estimate_density(outercircles, bdry)
         !(density ≈ goaldensity) && error("Packing density not reached: goal density was $goaldensity, reached $density.")
     end
+    
+    mincircdist = minimum_signed_edge_distance(outercircles)
+    h0 = mincircdist/2
+    dmax = beta * btparams.R_mu
+    bbox = [xmin(bdry) ymin(bdry); xmax(bdry) ymax(bdry)]
+    pfix = [Vec{2,T}[corners(bdry)...]; reduce(vcat, intersection_points(c,bdry) for c in allcircles)]
+    
+    # Increase resolution by a factor RESOLUTION
+    h0 /= RESOLUTION
+    alpha /= RESOLUTION
+    
+    # Signed distance function
+    fd(x) = drectangle0(x, bdry)
 
-    mindist = minimum_signed_edge_distance(outercircles)
-    h_min = T(RESOLUTION * h_min * mindist)
-    h_max = T(RESOLUTION * h_max * mindist)
-    h_range = T(RESOLUTION * h_range * mindist)
-    h_rate = T(h_rate)
+    # Relative edge length function
+    function fh(x::Vec{2,T}) where {T}
+        douter = MeshUtils.dcircles(x, outercircles)
+        dinner = MeshUtils.dcircles(x, innercircles)
+        hallcircles = min(abs(douter), abs(dinner))/T(dmax)
+        return alpha + min(hallcircles, one(T))
+    end
+    
+    # Region and sub-region definitions. Order of iterator is important, as we want to project
+    # outercircle points first, followed by inner circle points.
+    # Also, zipping the circles together allows the comprehension to be well typed.
+    fsubs = [x->dcircle(x,c) for c in allcircles]
 
-    innercircles = scale_shape.(outercircles, btparams.g_ratio)
+    p, t = kmg2d(fd, fsubs, fh, h0, bbox, 1, 0, pfix;
+        QMIN = QMIN,
+        MAXITERS = MAXITERS,
+        FIXPOINTSITERS = FIXPOINTSITERS,
+        FIXSUBSITERS = FIXSUBSITERS,
+        VERBOSE = true,
+        DETERMINISTIC = true,
+        PLOT = false,
+        PLOTLAST = false
+    );
 
-    @time exteriorgrids, torigrids, interiorgrids, parentcircleindices = disjoint_rect_mesh_with_tori(
-        bdry, innercircles, outercircles, h_min, h_max, h_range, h_rate;
-        plotgrids = PLOT, exterior_tiling = (1,1), # DEBUG
-        CIRCLESTALLITERS = CIRCLESTALLITERS, EXTERIORSTALLITERS = EXTERIORSTALLITERS
-    )
+    if FORCEQUALITY
+        Qmesh = DistMesh.mesh_quality(p,t)
+        !(Qmesh >= QMIN) && error("Grid quality not high enough; Q = $Qmesh < $QMIN.")
+    end
+
+    text  = [NTuple{3,Int}[] for _ in 1:1]
+    tint  = [NTuple{3,Int}[] for _ in 1:length(outercircles)]
+    ttori = [NTuple{3,Int}[] for _ in 1:length(outercircles)]
+    for t in t
+        @inbounds pmid = (p[t[1]] + p[t[2]] + p[t[3]])/3
+        isfound = false
+        for j in 1:length(outercircles)
+            (fsubs[2j  ](pmid) < 0) && (push!(tint[j],  t); isfound = true; break) # check interior first
+            (fsubs[2j-1](pmid) < 0) && (push!(ttori[j], t); isfound = true; break) # then tori
+        end
+        isfound && continue
+        push!(text[1], t) # otherwise, exterior
+    end
+    
+    function reorder(p, t)
+        isempty(t) && (return eltype(p)[], eltype(t)[])
+        idx = reinterpret(Int, t) |> copy |> sort! |> unique!
+        d = Dict{Int,Int}(idx .=> 1:length(idx))
+        return p[idx], [(d[t[1]], d[t[2]], d[t[3]]) for t in t]
+    end
+
+    G = Grid{2,3,T,3}
+    exteriorgrids = G[Grid(reorder(p,t)...) for t in text]
+    torigrids     = G[Grid(reorder(p,t)...) for t in ttori]
+    interiorgrids = G[Grid(reorder(p,t)...) for t in tint]
 
     grid_area = sum(area.(exteriorgrids)) + sum(area.(torigrids)) + sum(area.(interiorgrids))
     bdry_area = area(bdry)
@@ -132,13 +197,24 @@ function creategrids(btparams::BlochTorreyParameters{T};
     end
     @show cell_area_mismatch
 
-    PLOT && mxsimpplot(vcat(exteriorgrids[:], torigrids[:], interiorgrids[:]); newfigure = true, axis = mxaxis(bdry))
-    # PLOT && simpplot(vcat(exteriorgrids[:], torigrids[:], interiorgrids[:]); color = :cyan) |> display
+    if PLOT
+        fig = plot(bdry; aspectratio = :equal);
+        for c in allcircles; plot!(fig, c); end
+        display(fig)
+        (fname != nothing) && savefig(fig, fname * "__circles.pdf")
+    end
+
+    if PLOT
+        fig = simpplot(exteriorgrids; colour = :cyan)
+        simpplot!(fig, torigrids; colour = :yellow)
+        simpplot!(fig, interiorgrids; colour = :red)
+        display(fig)
+        (fname != nothing) && savefig(fig, fname * "__grid.pdf")
+    end
 
     if fname != nothing
-        PLOT && mxsavefig(fname)     
         try
-            BSON.bson(fname, Dict(
+            BSON.bson(fname * "__structs.bson", Dict(
                 :exteriorgrids => exteriorgrids,
                 :torigrids     => torigrids,
                 :interiorgrids => interiorgrids,
@@ -149,10 +225,79 @@ function creategrids(btparams::BlochTorreyParameters{T};
             @warn "Error saving geometries"
         end
     end
-
-
+    
     return exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry
 end
+
+# function creategrids(btparams::BlochTorreyParameters{T};
+#         fname = nothing, # filename for saving
+#         Ncircles = 20, # number of circles
+#         goaldensity = btparams.AxonPDensity, # goal packing density
+#         overlapthresh = 0.1, # overlap occurs when distance between circle edges is ≤ overlapthresh * btparams.R_mu
+#         maxpackiter = 10,
+#         outercircles = packcircles(btparams;
+#             N = Ncircles, η = goaldensity, ϵ = overlapthresh * btparams.R_mu,
+#             α = 1e-1, β = 1e-6, λ = 1.0, it = 100, maxiter = maxpackiter), # outer circles
+#         bdry = opt_subdomain(outercircles; MODE = :corners)[1], # default boundary is automatically determined in packcircles
+#         h_min = 0.5, # minimum bar length, relative to the minimum distance between outer circles 
+#         h_max = 1.0, # maximum bar length, relative to the minimum distance between outer circles 
+#         h_range = 2.0, # range over which bar lengths vary, relative to the minimum distance between outer circles 
+#         h_rate = 1.0, # rate of increase of bar lengths; 1.0 is linear, 0.5 is sqrt, etc.
+#         RESOLUTION = 1.0, # Multiplicative factor to easily uniformly increase/decrease bar lengths
+#         FORCEDENSITY = false, # If this flag is true, an error is thrown if the reached packing density is not goaldensity
+#         FORCEAREA = false, # If this flag is true, an error is thrown if the resulting grid area doesn't match the bdry area
+#         CIRCLESTALLITERS = 1000, #DEBUG
+#         EXTERIORSTALLITERS = 1000, #DEBUG
+#         PLOT = true
+#     ) where {T}
+# 
+#     if FORCEDENSITY
+#         density = estimate_density(outercircles; MODE = :corners)
+#         !(density ≈ goaldensity) && error("Packing density not reached: goal density was $goaldensity, reached $density.")
+#     end
+# 
+#     mindist = minimum_signed_edge_distance(outercircles)
+#     h_min = T(RESOLUTION * h_min * mindist)
+#     h_max = T(RESOLUTION * h_max * mindist)
+#     h_range = T(RESOLUTION * h_range * mindist)
+#     h_rate = T(h_rate)
+# 
+#     innercircles = scale_shape.(outercircles, btparams.g_ratio)
+# 
+#     @time exteriorgrids, torigrids, interiorgrids, parentcircleindices = disjoint_rect_mesh_with_tori(
+#         bdry, innercircles, outercircles, h_min, h_max, h_range, h_rate;
+#         plotgrids = PLOT, exterior_tiling = (1,1), # DEBUG
+#         CIRCLESTALLITERS = CIRCLESTALLITERS, EXTERIORSTALLITERS = EXTERIORSTALLITERS
+#     )
+# 
+#     grid_area = sum(area.(exteriorgrids)) + sum(area.(torigrids)) + sum(area.(interiorgrids))
+#     bdry_area = area(bdry)
+#     cell_area_mismatch = bdry_area - grid_area
+#     if FORCEAREA
+#         !(grid_area ≈ bdry_area) && error("Grid area not matched with boundary area; error is $(cell_area_mismatch).")
+#     end
+#     @show cell_area_mismatch
+# 
+#     PLOT && mxsimpplot(vcat(exteriorgrids[:], torigrids[:], interiorgrids[:]); newfigure = true, axis = mxaxis(bdry))
+#     # PLOT && simpplot(vcat(exteriorgrids[:], torigrids[:], interiorgrids[:]); color = :cyan) |> display
+# 
+#     if fname != nothing
+#         PLOT && mxsavefig(fname)     
+#         try
+#             BSON.bson(fname, Dict(
+#                 :exteriorgrids => exteriorgrids,
+#                 :torigrids     => torigrids,
+#                 :interiorgrids => interiorgrids,
+#                 :outercircles  => outercircles,
+#                 :innercircles  => innercircles,
+#                 :bdry => bdry))
+#         catch e
+#             @warn "Error saving geometries"
+#         end
+#     end
+# 
+#     return exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry
+# end
 
 function createdomains(
         btparams::BlochTorreyParameters{T},

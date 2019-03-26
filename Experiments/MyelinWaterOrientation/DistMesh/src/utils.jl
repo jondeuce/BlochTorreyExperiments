@@ -5,6 +5,7 @@
 @inline huniform(x::Vec{dim,T}) where {dim,T} = one(T)#eltype(eltype(x)))
 @inline norm2(x::Vec) = x⋅x
 @inline Base.Tuple(v::Vec) = Tensors.get_data(v)
+@inline getxy(p::AbstractVector{V}) where {V <: Vec{2}} = (x->x[1]).(p), (x->x[2]).(p)
 
 @inline function triangle_area(p1::Vec{2}, p2::Vec{2}, p3::Vec{2})
     d12, d13 = p2 - p1, p3 - p1
@@ -232,26 +233,10 @@ end
 #     # to_vec(t, mins, hs) = Vec(mins .+ hs .* t)
 #     to_tup(x, hs) = round.(Tuple(x) ./ hs) #DEBUG
 #     to_vec(t, hs) = Vec(hs .* t)
-#     
-#     #DEBUG
-#     if any(isnan, first.(x)) #isnan(rtol) || isnan(ptol)
-#         println("ERROR: NaN within `gridunique` before `to_tup`")
-#     end
 # 
 #     # idx = to_tup.(x, Ref(mins), Ref(hs)) |> sort! |> unique!
 #     idx = to_tup.(x, Ref(hs)) |> sort! |> unique! #DEBUG
-# 
-#     #DEBUG
-#     if any(isnan, first.(idx)) #isnan(rtol) || isnan(ptol)
-#         @show exts
-#         @show mins
-#         @show widths
-#         @show h0
-#         @show Ns
-#         @show hs
-#         println("ERROR: NaN within `gridunique` after `to_tup`")
-#     end
-# 
+#
 #     return to_vec.(idx, Ref(mins), Ref(hs))
 # end
 

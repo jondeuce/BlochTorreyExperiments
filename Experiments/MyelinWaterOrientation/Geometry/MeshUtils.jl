@@ -23,7 +23,9 @@ export nodevector, nodematrix, cellvector, cellmatrix, nodecellmatrices
 export mxbbox, mxaxis
 
 # DEBUG
-# export sqrtclamp, linearclamp, quadclamp, powerclamp, dcircles, dexterior, hcircles, hcircle, hshell
+export dcircles
+# export dexterior, hcircles, hcircle, hshell
+# export sqrtclamp, linearclamp, quadclamp, powerclamp
 
 # ---------------------------------------------------------------------------- #
 # Misc grid utils
@@ -42,6 +44,11 @@ function JuAFEM.Grid(
         t::AbstractVector{NTuple{N,Int}},
         M::Int = N # default guess is num faces = num nodes
     ) where {dim,N,T}
+
+    # Check for empty grid
+    if isempty(p) || isempty(t)
+        return Grid(Cell{dim,N,M}[], Node{dim,T}[])
+    end
 
     # Create initial grid
     grid = Grid(Cell{dim,N,M}.(t), Node.(Tuple.(p)))
@@ -506,12 +513,6 @@ function disjoint_rect_mesh_with_tori(
         gamma = h2/h0
         alpha = h_rate
 
-        # println("\nDEBUG...")
-        # @show radius(c_in)
-        # @show h0, h1, h2
-        # @show eta, gamma, alpha
-        # @show length(DistMesh.init_points(mxbbox(int_bdry), h0))
-
         fd = x -> dintersect(drectangle0(x, int_bdry), dcircle(x, c_in))
         fh = x -> hcircle(x, h0, eta, gamma, alpha, c_in)
 
@@ -560,12 +561,6 @@ function disjoint_rect_mesh_with_tori(
         eta = h1/h0
         gamma = h2/h0
         alpha = h_rate
-
-        # println("\nDEBUG...")
-        # @show radius(c_out) - radius(c_in)
-        # @show h0, h1, h2
-        # @show eta, gamma, alpha
-        # @show length(DistMesh.init_points(mxbbox(out_bdry), h0))
 
         fd = x -> dintersect(drectangle0(x, out_bdry), dshell(x, c_in, c_out))
         fh = x -> hshell(x, h0, eta, gamma, alpha, c_in, c_out)

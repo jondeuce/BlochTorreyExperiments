@@ -24,23 +24,38 @@ export wrap_gradient, check_density_callback
 
 function opt_subdomain(
         circles::AbstractVector{Circle{2,T}},
-        α::Real = T(0.75),
+        α0::Real = T(0.75),
         α_lb::Real = T(0.65),
-        α_ub::Real = T(0.80),
+        α_ub::Real = T(0.85),
         d_thresh::Real = T(minimum(radius, circles)/2),
-        λ_relative = T(0.1)
+        λ_relative = T(0.5);
         # λ2_relative = 50 * length(circles)
+        MODE = :scale
     ) where {T}
     
     # # Simple method
-    # opt_rectangle = scale_shape(inscribed_square(crude_bounding_circle(circles)), T(α))
+    # opt_rectangle = scale_shape(inscribed_square(crude_bounding_circle(circles)), T(α0))
     
     # Brute force search method which tries to force circle/rectangle intersection angles
     # to be as close to 90 degrees as possible, and also to maximimze the distance between
     # interior circles (within d_thresh of the boundary) and the square boundary
-    get_inscribed_rect(α) = scale_shape(inscribed_square(crude_bounding_circle(circles)), T(α))
-    function energy(α)
-        r = get_inscribed_rect(α)
+    function get_inscribed_rect(α)
+        # Simply scale the inscribed square by a constant
+        return scale_shape(inscribed_square(crude_bounding_circle(circles)), T(α))
+    end
+
+    rect0 = scale_shape(inscribed_square(crude_bounding_circle(circles)), T(α0))
+    dx0, dy0 = widths(rect0)
+    e1, e2 = basevec(Vec{2,T})
+    function get_inscribed_rect(α1, α2, α3, α4)
+        # Allow all four corners to move my relative amounts αs
+        pmin = rect0.mins + α1 * dx0 * e1 + α2 * dy0 * e2
+        pmax = rect0.maxs + α3 * dx0 * e1 + α4 * dy0 * e2
+        return Rectangle(pmin, pmax)
+    end
+
+    function energy(args...)
+        r = get_inscribed_rect(args...)
         drect(x) = min(x[1] - xmin(r), xmax(r) - x[1], x[2] - ymin(r), ymax(r) - x[2])
         
         # # This seems to be too strong of a condition
@@ -53,10 +68,19 @@ function opt_subdomain(
         #     return out
         # end
 
-        # Strongly penalize corners not being contained in circles
-        corner_energy = sum(corners(r)) do p
-            is_in_any_circle(p, circles) ? zero(T) : T(1e6)*length(circles)
-        end
+        # # Strongly penalize corners not being contained in circles
+        # corner_energy = sum(corners(r)) do p
+        #     is_in_any_circle(p, circles) ? zero(T) : T(1e6)*length(circles)
+        # end
+
+        # # Strongly penalize corners not being contained in circles
+        # corner_energy = sum(corners(r)) do p
+        #     d² = minimum(c->norm2(p-origin(c)), circles)
+        #     return d²/d_thresh^2
+        # end
+
+        # Corners don't need to be inside circles
+        corner_energy = zero(T)
 
         angle_count = 0
         angle_energy = sum(circles) do c
@@ -75,16 +99,24 @@ function opt_subdomain(
             return out
         end
         angle_energy /= max(angle_count, 1)
+        
+        # Do we need this?
+        angle_energy = zero(T)
 
         distance_count = 0
         distance_energy = sum(circles) do c
             out = zero(T)
-            if is_inside(c, r)
-                d = drect(origin(c)) - radius(c) #distance btwn circle and rect bdry
-                if d < d_thresh
-                    out += (1 - d/d_thresh)^2 # penalize away from d_thresh
-                    distance_count += 1 # count number of terms
-                end
+            # if is_inside(c, r)
+            #     d = drect(origin(c)) - radius(c) #distance btwn circle and rect bdry
+            #     if d < d_thresh
+            #         out += (1 - d/d_thresh)^2 # penalize away from d_thresh
+            #         distance_count += 1 # count number of terms
+            #     end
+            # end
+            if is_on_boundary(c, r)
+                d = drect(origin(c)) #distance btwn circle origin and rect bdry
+                out += (d/d_thresh)^2 # penalize away from zero
+                distance_count += 1 # count number of terms
             end
             return out
         end
@@ -98,10 +130,19 @@ function opt_subdomain(
         
         return total_energy
     end
-    α_range = range(T(α_lb), T(α_ub), length=151)
-    _, i_opt = findmin([energy(α) for α in α_range])
-    α = α_range[i_opt]
-    opt_rectangle = get_inscribed_rect(α)
+
+    local opt_rectangle, α
+    if MODE == :scale
+        α_range = range(T(α_lb), T(α_ub), length=151)
+        _, i_opt = findmin([energy(α) for α in α_range])
+        α = α_range[i_opt]
+        opt_rectangle = get_inscribed_rect(α)
+    else
+        α_range = range(T(α_lb - α0), T(α_ub - α0), length=5)
+        _, i_opt = findmin([energy(α...) for α in Iterators.product([α_range for _ in 1:4]...)])
+        α = [α_range[i] for i in Tuple(i_opt)]
+        opt_rectangle = get_inscribed_rect(α...)
+    end
 
     # # Energy method (not very effective)
     # starting_rectangle = bounding_box(circles)
@@ -146,43 +187,53 @@ end
 # If α is given, simply use this square. Otherwise, compute the optimal
 # subdomain using the above helper function
 function estimate_density(
-        circles::AbstractVector{Circle{2,T}},
-        α = nothing
-    ) where {T}
-
-    domain = if (α == nothing)
-        opt_subdomain(circles)[1]
-    else
+        circles::AbstractVector{C},
+        α::Union{<:Number,Nothing} = nothing;
+        MODE = :scale
+    ) where {C<:Circle{2}}
+    domain = α == nothing ?
+        opt_subdomain(circles; MODE = MODE)[1] :
         scale_shape(inscribed_square(crude_bounding_circle(circles)), α)
-    end
-
-    A = prod(maximum(domain) - minimum(domain)) # domain area
-    Σ = intersect_area(circles, domain) # total circle areas
-
-    return T(Σ/A)
+    return estimate_density(circles, domain)
 end
 
-function scale_to_density(input_circles, goaldensity, distthresh = 0)
+function estimate_density(
+        circles::AbstractVector{C},
+        domain::Rectangle{2}
+    ) where {C<:Circle{2}}
+    A = prod(maximum(domain) - minimum(domain)) # domain area
+    Σ = intersect_area(circles, domain) # total circle areas
+    return Σ/A
+end
+
+function scale_to_density(circles::Vector{C}, goaldensity, distthresh = 0; MODE = :scale) where {C<:Circle{2}}
+    domain = opt_subdomain(circles; MODE = MODE)[1]
+    packed_circles, packed_domain, α_best = scale_to_density(circles, domain, goaldensity, distthresh)
+    return packed_circles, packed_domain, α_best
+end
+
+function scale_to_density(circles::Vector{C}, domain::Rectangle{2}, goaldensity, distthresh = 0) where {C<:Circle{2}}
     # Check that desired desired packing density can be attained
-    # _, α_inner_domain = opt_subdomain(input_circles) # fix the opt_subdomain relative size
-    expand_circles = (α) -> translate_shape.(input_circles, α)
-    density = (α) -> estimate_density(expand_circles(α))#, α_inner_domain)
+    expand_circles = (α) -> translate_shape.(circles, α) # circle origins are expanded uniformly by a factor α
+    expand_domain = (α) -> scale_shape(domain, α) # domain is scaled uniformly by a factor α
+    density = (α) -> estimate_density(expand_circles(α), expand_domain(α))#, α_inner_domain)
 
     α_min = find_zero(α -> is_any_overlapping(expand_circles(α), ≤, distthresh) - 0.5, (1.0e-3, 1.0e3), Bisection())
     α_eps = 100 * eps(α_min)
-
-    if density(α_min + α_eps) ≤ goaldensity
+    α_best = α_min + α_eps
+    
+    if density(α_best) ≤ goaldensity
         # Goal density can't be reached; shrinking as much as possible
         @warn ("Density cannot be reached without overlapping circles more than distthresh = $distthresh; " *
                "shrinking as much as possible to $(density(α_min + α_eps)) < $goaldensity")
-        packed_circles = expand_circles(α_min + α_eps)
     else
         # Find α which results in the desired packing density
         α_best = find_zero(α -> density(α) - goaldensity, (α_min + α_eps, 1.0e3), Bisection())
-        packed_circles = expand_circles(α_best)
     end
-
-    return packed_circles
+    
+    packed_circles = expand_circles(α_best)
+    packed_domain = expand_domain(α_best)
+    return packed_circles, packed_domain, α_best
 end
 
 function covariance_energy(circles::Vector{Circle{DIM,T}}) where {DIM,T}
@@ -507,7 +558,7 @@ function check_density_callback(state, r, goaldensity, epsilon)
         currstate = state
     end
     circles = tocircles(currstate.metadata["x"], r)
-    return (estimate_density(circles) > goaldensity) && !is_any_overlapping(circles, ≤, epsilon)
+    return (estimate_density(circles; MODE = :corners) > goaldensity) && !is_any_overlapping(circles, ≤, epsilon)
 end
 
 end # module CirclePackingUtils

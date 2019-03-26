@@ -46,8 +46,8 @@ function pack(
     initial_circles = Circle.(T, initial_origins, radii)
 
     # Check of circles are already sufficiently densely packed
-    if estimate_density(initial_circles) ≥ goaldensity
-        packed_circles = scale_to_density(initial_circles, goaldensity, epsilon)
+    if estimate_density(initial_circles; MODE = :corners) ≥ goaldensity
+        packed_circles = scale_to_density(initial_circles, goaldensity, epsilon)[1]
         return packed_circles
     end
 
@@ -91,7 +91,7 @@ function pack(
 
     # Scale to desired density, if possible
     if goaldensity < 1
-        packed_circles = scale_to_density(packed_circles, goaldensity, epsilon)
+        packed_circles = scale_to_density(packed_circles, goaldensity, epsilon)[1]
     end
 
     return packed_circles

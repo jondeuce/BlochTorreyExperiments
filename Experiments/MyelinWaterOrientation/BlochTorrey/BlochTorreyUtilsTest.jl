@@ -160,9 +160,9 @@ function multipleaxons(
 
     rs = rand(radiidistribution(btparams), Ncircles)
     initial_circles = GreedyCirclePacking.pack(rs; iters = 100)
-    outer_circles = scale_to_density(initial_circles, 0.6)
+    outer_circles, bdry, _ = scale_to_density(initial_circles, 0.6)
     inner_circles = scale_shape.(outer_circles, btparams.g_ratio)
-    bdry, _ = opt_subdomain(outer_circles)
+    # bdry, _ = opt_subdomain(outer_circles; MODE = :corners)
 
     h0 = (1-btparams.g_ratio)/2 * minimum(rs) # fraction of size of minimum torus width
     h_min = h0 # minimum edge length

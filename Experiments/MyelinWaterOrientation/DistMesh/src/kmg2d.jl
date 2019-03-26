@@ -31,20 +31,22 @@ function kmg2d(
         dg::Int                         = 1, # Type of triangular mesh: dg=1 linear; dg=2 quadratic
         nr::Int                         = 0, # Number of refinements (nr=0, without refinement)
         pfix::AbstractVector{Vec{2,T}}  = Vec{2,T}[], # fixed points
-        pinit::AbstractVector{Vec{2,T}} = init_points(bbox, h0), # inital distribution of points (triangular grid by default)
+        pinit::AbstractVector{Vec{2,T}} = Vec{2,T}[], # inital distribution of points (fine triangular grid + rejection method by default)
         ∇fd                             = x -> Tensors.gradient(fd, x), # Gradient of distance function `fd`
         ∇fsubs                          = [x -> Tensors.gradient(fs, x) for fs in fsubs]; # gradients of sub-region distance functions
         PLOT::Bool                      = false, # plot all triangulations during evolution
         PLOTLAST::Bool                  = false, # plot resulting triangulation
         MAXITERS::Int                   = 1000, # max iterations of stalled progress
-        MPITERS::Int                    = 250, # after this number of iterations, points which haven't moved far are fixed
-        FIXEDSUBSITERS::Int             = 250, # after this number of iterations, interior region boundary points are fixed
+        FIXPOINTSITERS::Int             = 250, # iterations after which points which haven't moved far are fixed
+        FIXSUBSITERS::Int               = 150, # iterations after which interior region boundary forces are projected to be tangential
         VERBOSE::Bool                   = false, # print verbose information
         TRIANGLECTRLFREQ::Int           = 200, # period in which triangles are checked for quality
-        DENSITYCTRLFREQ::Int            = 100, # period in which points are checked for being too close
-        DENSITYRELTHRESH::T             = T(3.0), # bars are too short if DENSITYRELTHRESH times bar length is less than the desired length
+        DENSITYCTRLFREQ::Int            = 50, # period in which points are checked for being too close or too far
+        BARSPLITTHRESH::T               = T(1.5), # bars are too long if the bar length is more than BARSPLITTHRESH times the desired length
+        BARDENSITYTHRESH::T             = T(2.0), # bars are too short if BARDENSITYTHRESH times bar length is less than the desired length
         DETERMINISTIC::Bool             = false, # use deterministic pseudo-random
         MP::Int                         = 5, # equilibrium step size threshold (relative to length(p))
+        SUBEPS::T                       = 10*h0, # DEBUG
         PEPS::T                         = T(5e-3), # relative step size threshold for interior points
         REPS::T                         = T(0.5), # relative point movement threshold between iterations
         QMIN::T                         = T(0.5), # minimum triangle quality (0 < QMIN < 1)
@@ -55,21 +57,28 @@ function kmg2d(
         DELTAT::T                       = T(0.1) # relative step size
     ) where {T}
 
+    DEBUG = true #DEBUG
+    DEBUG_ITERS = 5_000
+
     # Create initial distribution in bounding box (equilateral triangles by default)
-    p = copy(pinit)
-
-    # Remove points outside the region, apply the rejection method
-    p = filter!(x -> fd(x) <= GEPS, p)                     # Keep only d<0 points
-    r0 = inv.(fh.(p)).^2                                   # Probability to keep point
-
-    reject_prob = DETERMINISTIC ? rand(MersenneTwister(0), T, length(p)) : rand(T, length(p))
-    p = p[maximum(r0) .* reject_prob .< r0]                # Rejection method
-    p = gridunique_all(p,h0)                               # Remove (approximately) duplicate input points
-    pfix = gridunique_all(pfix,h0)                         # Remove (approximately) duplicate fixed points
+    if isempty(pinit)
+        # Remove points outside the region, apply the rejection method
+        p = init_points(bbox, h0)                          # Triangular grid
+        p = filter!(x -> fd(x) <= GEPS, p)                 # Keep only d<0 points
+        
+        reject_prob = DETERMINISTIC ? rand(MersenneTwister(0), T, length(p)) : rand(T, length(p))
+        r0 = inv.(fh.(p)).^2                               # Probability to keep point
+        p = p[maximum(r0) .* reject_prob .< r0]            # Rejection method
+    else
+        p = copy(pinit)
+        p = filter!(x -> fd(x) <= GEPS, p)                 # Keep only d<0 points
+    end
+    p = gridunique_all(p, h0)                              # Remove (approximately) duplicate input points
+    pfix = gridunique_all(pfix, h0)                        # Remove (approximately) duplicate fixed points
 
     !isempty(pfix) && (p = setdiff!(p, pfix))              # Remove duplicated points between p and pfix
     p = [pfix; p]                                          # Prepend fix points
-    t = NTuple{3,Int}[]
+    t = NTuple{3,Int}[]                                    # Initial grid
 
     # Initialize buffers
     resize_buffers!(buf, len) = map!(x->resize!(x, len), buf, buf) # resize function
@@ -83,8 +92,12 @@ function kmg2d(
     iter, tricount = 0, 0
     ptol, rtol, fixed_nodes = T(1.0), T(1e2), Int[]
     sub_bdry_nodes = [Int[] for _ in 1:length(fsubs)]
-    # subs_int_bdry_nodes = Int[]
     local pold, bars, bdry_nodes, int_nodes
+    
+    # Track best grid seen
+    Qbest = T(-Inf)
+    pbest = V[]
+    tbest = NTuple{3,Int}[]
     
     MESHTIME = @elapsed while iter < MAXITERS && ptol > PEPS
         iter += 1
@@ -92,43 +105,39 @@ function kmg2d(
         # Re-triangulation by the Delaunay algorithm
         if rtol > REPS
             tricount += 1
-            VERBOSE && println("iter = $iter: triangulation #$tricount")
             
             old_length = length(p)
-            p = gridunique_fixed(p, union(1:length(pfix), fixed_nodes), h0) # triangulation will fail if two points are within eps() of eachother
+            p = gridunique_fixed(p, 1:length(pfix), h0) # triangulation will fail if two points are within eps() of eachother
             !(length(p) == old_length) && (fixed_nodes = Int[]) # some points were dropped
             pold = copy(p) # Save current positions
-
-            # Update mesh variables
+            
             t = update_mesh!(t, p, fd, GEPS)
-
             bars = getedges(t; sorted = true) |> sort! |> unique! # edges sorted individual as tuples, then as vector
             edges = boundedges(p, t)
             bdry_nodes = reinterpret(Int, edges) |> copy |> sort! |> unique! # unique boundary points of domain
             int_nodes = setdiff(1:length(p), bdry_nodes)
-            !isempty(fsubs) && update_sub_bdry_nodes!(sub_bdry_nodes, p, t, fsubs, GEPS)
-
+            !isempty(fsubs) && update_sub_bdry_nodes!(sub_bdry_nodes, p, t, fsubs, GEPS, SUBEPS)
+            
             # Resize buffers
             resize_buffers!(point_bufs, length(p))
             resize_buffers!(bars_bufs, length(bars))
-        end
 
-        # Graphical output of the current mesh
-        PLOT && display(simpplot(p,t))
+            VERBOSE && println("iter = $iter: triangulation #$tricount: $(length(t)) triangles, $(length(p)) points")
+        end
         
         # Move mesh points based on bar lengths L and forces f
         @inbounds for (i, b) in enumerate(bars)
             p1, p2 = p[b[1]], p[b[2]]
-            barvec[i] = p2-p1
+            barvec[i] = p2 - p1
             Lbars[i] = norm(barvec[i])
-            hbars[i] = fh((p1+p2)/2)
+            hbars[i] = fh((p1 + p2)/2)
         end
         ωs = FSCALE * norm(Lbars) / norm(hbars) # FSCALE times scaling factor
         L .= Lbars ./ (ωs .* hbars) # normalized bar lengths
 
         # Split edges which are too long
         if iter != MAXITERS && mod(iter, DENSITYCTRLFREQ) == 0 #iter > length(p)
-            longbars = bars[findall(ℓ -> ℓ > T(1.5), L)]
+            longbars = bars[findall(ℓ -> ℓ > BARSPLITTHRESH, L)]
             if !isempty(longbars)
                 append!(p, [(p[b[1]] + p[b[2]])/2 for b in longbars])
                 ptol, rtol = T(1.0), T(1e2)
@@ -139,14 +148,12 @@ function kmg2d(
 
         # Density control - remove points that are too close
         if iter != MAXITERS && iter > DENSITYCTRLFREQ && mod(iter - div(DENSITYCTRLFREQ,2), DENSITYCTRLFREQ) == 0
-            shortbars = bars[findall(ℓ -> ℓ < inv(DENSITYRELTHRESH), L)]
-            ix = setdiff(reinterpret(Int, shortbars), union(1:length(pfix), fixed_nodes))
+            shortbars = bars[findall(ℓ -> ℓ < inv(BARDENSITYTHRESH), L)]
+            ix = setdiff(reinterpret(Int, shortbars), 1:length(pfix))
             ix = unique!(sort!(ix))
             if !isempty(ix)
                 deleteat!(p, ix)
                 ptol, rtol, fixed_nodes = T(1.0), T(1e2), Int[]
-                # ptol, rtol = T(1.0), T(1e2)
-                # fixed_nodes = update_node_order!(fixed_nodes, ix)
                 VERBOSE && println("iter = $iter: density control, $(length(ix)) points removed, $(length(p)) remaining")
                 continue
             end
@@ -168,7 +175,7 @@ function kmg2d(
         @inbounds for i in 1:length(pfix)
             velocity[i] = zero(V)
         end
-        if iter > min(MPITERS, MP * length(p))
+        if iter > min(FIXPOINTSITERS, MP * length(p))
             @inbounds for i in fixed_nodes
                 velocity[i] = zero(V)
             end
@@ -178,7 +185,7 @@ function kmg2d(
         # This prevents large movements away from sub-boundaries without having to fix the nodes.
         #   NOTE: `sub_bdry_nodes[j]` may contain fixed nodes, but their velocity was
         #         already set to zero above, so the projection has no effect
-        if iter > min(FIXEDSUBSITERS, MP * length(p)) && !all(isempty, sub_bdry_nodes)
+        if iter > min(FIXSUBSITERS, MP * length(p)) && !all(isempty, sub_bdry_nodes)
             for j in eachindex(fsubs)
                 ∇fsub = ∇fsubs[j]
                 @inbounds for i in sub_bdry_nodes[j]
@@ -191,6 +198,9 @@ function kmg2d(
         
         # Update point positions
         p .+= DELTAT .* velocity
+        
+        # Check if boundary points are far from boundary, and if so, project back
+        p = project_bdry_points!(p, bdry_nodes, fd, ∇fd, GEPS)
 
         # Project sub-region points, restarting if duplicate points are needed
         old_length = length(p)
@@ -203,35 +213,35 @@ function kmg2d(
             continue
         end
         
-        # Check if boundary points are far from boundary, and if so, project back
-        p = project_bdry_points!(p, bdry_nodes, fd, ∇fd, GEPS)
-                
         # Termination criterion: All interior points move less than DPTOL (scaled)
         Δp .= DELTAT .* norm.(velocity)
         
         # Use mean for approximate convergence check
         ptol = maximum(i -> Δp[i], int_nodes)/h0
         rtol = maximum(ps -> norm(ps[1] - ps[2]), zip(p, pold))/h0
-        _, int_node_ix = findmax(Δp[int_nodes]) #DEBUG
         
-        if (iter > 10001)
+        # Graphical output of the current mesh
+        PLOT && display(simpplot(p,t))
+
+        if DEBUG && iter > DEBUG_ITERS
             #DEBUG show points after projection
-            (iter > 10001) && display(simpplot(p,t))
+            (iter > DEBUG_ITERS) && display(simpplot(p,t))
             
             #DEBUG show fixed points
-            _pfix = reinterpret(T, p[1:length(pfix)])
-            display(plot!(_pfix[1:2:end], _pfix[2:2:end]; seriestype = :scatter, markersize = 5, colour = :green))
+            display(plot!(getxy(p[1:length(pfix)])...; seriestype = :scatter, markersize = 5, colour = :green))
             
             #DEBUG show point which is moving the most
+            _, int_node_ix = findmax(Δp[int_nodes])
             x, y = p[int_nodes[int_node_ix]]
             display(plot!([x], [y]; seriestype = :scatter, markersize = 10, colour = :red))
         end
 
         # If points have moved sufficiently little since last iteration, fix them in place
-        if iter > min(MPITERS, MP * length(p))
-            fixed_nodes = findall(dx -> norm(dx) < DELTAT * PEPS, Δp)
+        if iter > min(FIXPOINTSITERS, MP * length(p))
+            # fixed_nodes = findall(dx -> norm(dx) < DELTAT * PEPS, Δp) #DEBUG why the DELTAT?
+            fixed_nodes = findall(dx -> norm(dx) < PEPS, Δp)
         end
-        if iter > min(FIXEDSUBSITERS, MP * length(p)) && !all(isempty, sub_bdry_nodes)
+        if iter > min(FIXSUBSITERS, MP * length(p)) && !all(isempty, sub_bdry_nodes)
             # Fix sub-region boundary nodes which are also on the exterior boundary
             multi_bdry_nodes = reduce(vcat,
                 begin
@@ -241,7 +251,8 @@ function kmg2d(
                         abs(fsub(x)) <= GEPS && abs(fd(x)) <= GEPS
                     end
                 end
-                for j in eachindex(fsubs))
+                for j in eachindex(fsubs)
+            )
             if !isempty(multi_bdry_nodes)
                 multi_bdry_nodes = unique!(sort!(multi_bdry_nodes))
                 fixed_nodes = union(fixed_nodes, multi_bdry_nodes)
@@ -254,29 +265,44 @@ function kmg2d(
             Qs = [triangle_quality(t, p) for t in t]
             Qmin, Qidx = findmin(Qs)
             if Amin < 0 || Qmin < QMIN
+                if Amin > 0 && Qmin > Qbest
+                    Qbest, pbest, tbest = Qmin, copy(p), copy(t)
+                end
                 if Qmin < QMIN
-                    ix = setdiff(t[Qidx], union(1:length(pfix), fixed_nodes)) |> sort! |> unique!
-                    if length(ix) > 1
-                        pmid = mean(p[i] for i in ix) # 2 or 3 points are unfixed; this is either edge midpoint or triangle midpoint
-                        deleteat!(p, ix)
+                    i_tri = [sorttuple(t[Qidx])...]
+                    i_unfixed = setdiff(i_tri, 1:length(pfix))
+                    i_fixed = setdiff(i_tri, i_unfixed)
+                    if length(i_unfixed) == 3
+                        # None of the triangle points are fixed points; replace triangle by it's centroid
+                        ia, ib, ic = i_unfixed
+                        pmid = (p[ia] + p[ib] + p[ic])/3
+                        deleteat!(p, i_unfixed)
                         push!(p, pmid)
-                        
-                        if (iter > 10001)
-                            #DEBUG show point which is moving the most
-                            x, y = pmid
-                            display(plot!([x], [y]; seriestype = :scatter, markersize = 10, colour = :yellow))
-                            sleep(3.0)
-                        end
-                        VERBOSE && println("iter = $iter: removing triangle with Qmin = $Qmin; removed $(length(ix)) points, now $(length(p))")
-                    else
-                        if (iter > 10001)
-                            #DEBUG show point which is moving the most
-                            x, y = mean(p[i] for i in t[Qidx])
-                            display(plot!([x], [y]; seriestype = :scatter, markersize = 10, colour = :yellow))
-                            sleep(3.0)
-                        end
-                        VERBOSE && println("iter = $iter: removing triangle with Qmin = $Qmin")
+                    elseif length(i_unfixed) == 2
+                        # One of the triangle corners is fixed. Insert a point at the midpoint of the 
+                        # opposite edge, and remove the edge endpoints if the edge is not too long
+                        ia, ib = i_unfixed
+                        pmid = (p[ia] + p[ib])/2
+                        ℓ = norm(p[ia] - p[ib]) / (ωs * fh(pmid))
+                        !(ℓ > BARSPLITTHRESH) && deleteat!(p, i_unfixed) #DEBUG
+                        push!(p, pmid)
+                    elseif length(i_unfixed) == 1
+                        # Two of the triangle corners are fixed. This likely means that the unfixed point
+                        # is too close to the edge connecting the fixed points. Remove the unfixed point
+                        # if it's too close, and insert a point between the fixed points.
+                        ia, ib = i_fixed
+                        pmid = (p[ia] + p[ib])/2
+                        ℓ = norm(p[ia] - p[ib]) / (ωs * fh(pmid))
+                        (ℓ < inv(BARDENSITYTHRESH)) && deleteat!(p, i_unfixed) #DEBUG
+                        push!(p, pmid)
                     end
+                    if DEBUG && iter > DEBUG_ITERS
+                        #DEBUG plot the centroid of the low quality triangle
+                        x, y = mean(p[i] for i in t[Qidx])
+                        display(plot!([x], [y]; seriestype = :scatter, markersize = 5, colour = :yellow))
+                        sleep(1.0)
+                    end
+                    VERBOSE && println("iter = $iter: removing triangle with Qmin = $Qmin; removed $(length(i_unfixed))/$(length(p)) points")
                 else
                     VERBOSE && println("iter = $iter: retriangulating (Amin = $Amin < 0)")
                 end
@@ -286,6 +312,11 @@ function kmg2d(
         end
 
         VERBOSE && println("iter = $iter: rtol = $rtol, ptol = $ptol (goal: $PEPS)")
+    end
+
+    # Failed to converge; return best grid
+    if iter == MAXITERS && !isempty(pbest) && !isempty(tbest)
+        p, t = pbest, tbest
     end
 
     # Plot final mesh
@@ -327,7 +358,7 @@ function interior_triangles!(t, p, fd, GEPS)
     # Filter out triangles with midpoints outside of mesh
     t = filter!(t) do t
         @inbounds pmid = (p[t[1]] + p[t[2]] + p[t[3]])/3
-        return fd(pmid) <= -GEPS
+        return !(fd(pmid) >= -GEPS)
     end
     return t
 end
@@ -343,10 +374,27 @@ function oriented_triangles!(t, p)
 end
 oriented_triangles(t, p) = oriented_triangles!(copy(t), p)
 
-function update_sub_bdry_nodes!(sub_bdry_nodes, p, t, fsubs, GEPS)
+function update_sub_bdry_nodes!(sub_bdry_nodes, p, t, fsubs, GEPS, SUBEPS)
     for (j,fsub) in enumerate(fsubs)
-        tsub = interior_triangles(t, p, fsub, GEPS)
-        subedges = boundedges(p, tsub)
+        tsub, text = NTuple{3,Int}[], NTuple{3,Int}[]
+        for t in t
+            @inbounds pmid = (p[t[1]] + p[t[2]] + p[t[3]])/3
+            d = fsub(pmid)
+            if 0 < d <= SUBEPS
+                push!(text, sorttuple(t))
+            elseif -SUBEPS <= d <= 0
+                push!(tsub, sorttuple(t))
+            end
+        end
+        subedges = boundedges(p, tsub) .|> sorttuple |> sort!
+        extedges = boundedges(p, text) .|> sorttuple |> sort!
+
+        # tsub = interior_triangles(t, p, fsub, GEPS)
+        # text = setdiff(t, tsub)
+        # subedges = boundedges(p, tsub) .|> sorttuple |> sort!
+        # extedges = boundedges(p, text) .|> sorttuple |> sort!
+
+        subedges = intersect!(subedges, extedges)
         sub_bdry_nodes[j] = reinterpret(Int, subedges) |> copy |> sort! |> unique!
     end
     return sub_bdry_nodes
@@ -377,30 +425,88 @@ end
 function project_sub_bdry_points!(p, sub_bdry_nodes, fd, fsub, ∇fsub, GEPS)
     @inbounds for (ix,i) in enumerate(sub_bdry_nodes)
         x = project_point(p[i], fsub, ∇fsub, GEPS)
-        if abs(fd(p[i])) <= GEPS && !(abs(fd(x)) <= GEPS) #norm(x - p[i]) > GEPS
-            # If the original point p[i] was on the exterior boundary, but the new projected
-            # point x no longer is, push x into p and update the corresponding node
-            push!(p, x)
-            sub_bdry_nodes[ix] = lastindex(p) # x is on the sub-boundary
-        else
-            # Either p[i] wasn't on the external boundary to begin with, or remained there after projection
-            p[i] = x
-        end
+        # if abs(fd(p[i])) <= GEPS && !(abs(fd(x)) <= GEPS)
+        #     # If the original point p[i] was on the exterior boundary, but the new projected
+        #     # point x no longer is, push x into p and update the corresponding node
+        #     push!(p, x)
+        #     sub_bdry_nodes[ix] = lastindex(p) # x is on the sub-boundary
+        # else
+        #     # Either p[i] wasn't on the external boundary to begin with, or remained there after projection
+        #     p[i] = x
+        # end
+        p[i] = x #DEBUG I don't think we need to check anymore with the new way to find subregion boundaries?
     end
     return p
 end
+
+# using Roots #DEBUG
+# function append_bar_crossing_points!(p, bars, fd, fsub, ∇fsub, GEPS)
+#     if iter > min(FIXSUBSITERS, MP * length(p)) && !all(isempty, sub_bdry_nodes)
+#         old_length = length(p)
+#         i_remove = Int[]
+#         i_middle = Int[]
+#         for j in eachindex(fsubs)
+#             # p = append_bar_crossing_points!(p, bars, fd, fsubs[j], ∇fsubs[j], GEPS)
+#             
+#             fsub, ∇fsub = fsubs[j], ∇fsubs[j]
+#             @inbounds for b in bars
+#                 # (b[1] ∈ sub_bdry_nodes[j] || b[2] ∈ sub_bdry_nodes[j]) && continue
+#                 p1, p2 = p[b[1]], p[b[2]]
+#                 d1, d2 = fsub(p1), fsub(p2)
+#                 if abs(d1) > GEPS && abs(d2) > GEPS && sign(d1) != sign(d2)
+#                     # Points lie on opposite sides of the sub-region boundary, and neither is on the boundary; insert a point in the middle
+#                     
+#                     # fopt(alpha) = fsub(p1 + alpha * (p2 - p1))
+#                     # alpha = fzero(fopt, (zero(d1), one(d1)))
+#                     # pmid = p1 + alpha * (p2 - p1)
+#                     # push!(p, pmid)
+#                     
+#                     # pmid = (p1 + p2)/2
+#                     # push!(p, pmid)
+#                     # push!(i_middle, length(p))
+#                     # imid = [length(p)]
+#                     # p = project_sub_bdry_points!(p, imid, fd, fsub, ∇fsub, GEPS)
+#                     # imid = imid[1]
+# 
+#                     # ℓ = norm(p[imid] - p1) / (ωs * fh((p[imid] + p1)/2))
+#                     # (ℓ < inv(BARDENSITYTHRESH)) && push!(i_remove, b[1])
+#                     # ℓ = norm(p[imid] - p2) / (ωs * fh((p[imid] + p2)/2))
+#                     # (ℓ < inv(BARDENSITYTHRESH)) && push!(i_remove, b[2])
+#                 end
+#             end
+#         end
+#         if !(length(p) == old_length) || !isempty(i_remove)
+#             i_remove = unique!(sort!(i_remove))
+#             num_crossing_points = length(p) - old_length
+#             !isempty(i_remove) && deleteat!(p, i_remove)
+#             ptol, rtol, fixed_nodes = T(1.0), T(1e2), Int[]
+#             VERBOSE && println("iter = $iter: triangulation #$tricount: appending $num_crossing_points points on sub-region crossing bars")
+#             continue
+#         end
+#     end
+#     return p
+# end
 
 function gridunique_fixed(
         p::AbstractVector{Vec{2,T}},
         ifixed::AbstractVector{Int},
         h0::T
     ) where {T}
+    thresh = gridunique_thresh(p, h0)
     pfix = p[ifixed]
     unfixed = p[setdiff(1:length(p), ifixed)]
     unfixed = gridunique_all(unfixed, h0) # ensure approximately unique unfixed points
     unfixed = filter!(unfixed) do p
-        !any(p0 -> norm(p-p0) < h0*√eps(T), pfix) # keep those which aren't too close to fixed points
+        !any(p0 -> norm(p-p0) < thresh, pfix) # keep those which aren't too close to fixed points
     end
     return [pfix; unfixed]
 end
-gridunique_all(x::AbstractVector{Vec{2,T}}, h0::T) where {T} = gridunique(x, h0*√eps(T))
+gridunique_all(x::AbstractVector{Vec{2,T}}, h0::T) where {T} = gridunique(x, gridunique_thresh(x, h0))
+
+function gridunique_thresh(x::AbstractVector{Vec{2,T}}, h0::T) where {T}
+    a, b = VoronoiDelaunay.min_coord + sqrt(eps(Float64)), VoronoiDelaunay.max_coord - sqrt(eps(Float64))
+    xmin, xmax = minimum(x->x[1], x), maximum(x->x[1], x)
+    ymin, ymax = minimum(x->x[2], x), maximum(x->x[2], x)
+    max_slope = (b - a) / min(xmax - xmin, ymax - ymin)
+    return √eps(h0) * max_slope
+end

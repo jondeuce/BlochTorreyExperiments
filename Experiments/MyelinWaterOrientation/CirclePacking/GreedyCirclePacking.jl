@@ -30,11 +30,11 @@ function pack(r::AbstractVector{T}; iters::Int = 1, goaldensity = one(T)) where 
 
     if iters > 1
         rshuf = copy(r)
-        η_best = estimate_density(c)
+        η_best = estimate_density(c; MODE = :corners)
         for i = 2:iters
             shuffle!(rshuf)
             cshuf = _pack(rshuf)
-            η = estimate_density(cshuf)
+            η = estimate_density(cshuf; MODE = :corners)
             (η > η_best) && (η_best = η; copyto!(c, cshuf))
             (η_best >= goaldensity) && break
         end

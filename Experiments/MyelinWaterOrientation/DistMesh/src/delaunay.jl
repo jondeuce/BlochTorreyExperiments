@@ -42,8 +42,8 @@ Base.eltype(tess::DelaunayTessellation2D{P}) where {P} = VoronoiDelaunay.Delauna
 # ---------------------------------------------------------------------------- #
 
 function delaunay_scale!(P::AbstractVector{Float64})
-    Pmin, Pmax = minimum(P), maximum(P)
     a, b = VoronoiDelaunay.min_coord + sqrt(eps(Float64)), VoronoiDelaunay.max_coord - sqrt(eps(Float64))
+    Pmin, Pmax = minimum(P), maximum(P)
     P .= a .+ ((b - a)/(Pmax - Pmin)) .* (P .- Pmin)
     P = clamp!(P, a, b) # to be safe
     return P
