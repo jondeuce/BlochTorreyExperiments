@@ -1,5 +1,6 @@
 module MWFUtils
 
+using LinearAlgebra, Statistics
 using GeometryUtils
 using CirclePackingUtils
 using MeshUtils
@@ -97,6 +98,7 @@ function creategrids(btparams::BlochTorreyParameters{T};
             η = goaldensity, ϵ = overlapthresh * btparams.R_mu),
         alpha = 0.5, #DEBUG
         beta = 0.5, #DEBUG
+        gamma = 1.0, #DEBUG
         RESOLUTION = 1.25, #DEBUG
         FORCEDENSITY = false, # If this flag is true, an error is thrown if the reached packing density is not goaldensity
         FORCEAREA = false, # If this flag is true, an error is thrown if the resulting grid area doesn't match the bdry area
@@ -108,13 +110,15 @@ function creategrids(btparams::BlochTorreyParameters{T};
         PLOT = true
     ) where {T}
 
-    # Close current plot windows
+    # Initial set of circles
     innercircles = scale_shape.(outercircles, btparams.g_ratio)
-    allcircles = collect(Iterators.flatten(zip(outercircles, innercircles)))
+    allcircles = collect(Iterators.flatten(zip(innercircles, outercircles)))
+    
+    # Optimize the rectangular subdomain 
     bdry, _ = opt_subdomain(allcircles; MODE = :corners)
     outercircles, bdry, α_best = scale_to_density(outercircles, bdry, btparams.AxonPDensity)
     innercircles = scale_shape.(outercircles, btparams.g_ratio)
-    allcircles = collect(Iterators.flatten(zip(outercircles, innercircles)))
+    allcircles = collect(Iterators.flatten(zip(innercircles, outercircles)))
     
     if FORCEDENSITY
         density = estimate_density(outercircles, bdry)
@@ -122,7 +126,7 @@ function creategrids(btparams::BlochTorreyParameters{T};
     end
     
     mincircdist = minimum_signed_edge_distance(outercircles)
-    h0 = mincircdist/2
+    h0 = gamma * mincircdist
     dmax = beta * btparams.R_mu
     bbox = [xmin(bdry) ymin(bdry); xmax(bdry) ymax(bdry)]
     pfix = [Vec{2,T}[corners(bdry)...]; reduce(vcat, intersection_points(c,bdry) for c in allcircles)]
@@ -142,9 +146,9 @@ function creategrids(btparams::BlochTorreyParameters{T};
         return alpha + min(hallcircles, one(T))
     end
     
-    # Region and sub-region definitions. Order of iterator is important, as we want to project
-    # outercircle points first, followed by inner circle points.
-    # Also, zipping the circles together allows the comprehension to be well typed.
+    # Region and sub-region definitions. Order of `allcircles` is important, as we want to project
+    # inner circle points first, followed by outer circle points. Note also that zipping the circles
+    # together allows for the anonymous function in the comprehension to be well typed.
     fsubs = [x->dcircle(x,c) for c in allcircles]
 
     p, t = kmg2d(fd, fsubs, fh, h0, bbox, 1, 0, pfix;
@@ -193,9 +197,22 @@ function creategrids(btparams::BlochTorreyParameters{T};
     bdry_area = area(bdry)
     cell_area_mismatch = bdry_area - grid_area
     if FORCEAREA
-        !(grid_area ≈ bdry_area) && error("Grid area not matched with boundary area; error is $(cell_area_mismatch).")
+        !(grid_area ≈ bdry_area) && error("Grid area is not matched with boundary area; error is $(cell_area_mismatch).")
+        dA_max = maximum(1:length(innercircles)) do i
+            gin, gout = interiorgrids[i], torigrids[i]
+            Ain, Aout = area(gin), area(gout)
+            cin, cout = innercircles[i], outercircles[i]
+            NCin, NCout = getncells(gin), getncells(gout)
+            ain0 = NCin == 0 ? zero(T) : mean(c->area(gin,c), 1:NCin)
+            aout0 = NCout == 0 ? zero(T) : mean(c->area(gout,c), 1:NCout)
+            Ain0 = intersect_area(cin, bdry)
+            Aout0 = intersect_area(cout, bdry) - Ain0
+            dAin = ain0 ≈ 0 ? Ain0/(h0^2/2) : (Ain-Ain0)/ain0
+            dAout = aout0 ≈ 0 ? Aout0/(h0^2/2) : (Aout-Aout0)/aout0
+            return max(abs(dAin), abs(dAout))
+        end
+        !(dA_max < one(T)) && error("Grid subregion areas are not close to analytical circle areas; error relative to average triangle area is $(dA_max).")
     end
-    @show cell_area_mismatch
 
     if PLOT
         fig = plot(bdry; aspectratio = :equal);
@@ -205,9 +222,12 @@ function creategrids(btparams::BlochTorreyParameters{T};
     end
 
     if PLOT
+        numtri = sum(JuAFEM.getncells, exteriorgrids) + sum(JuAFEM.getncells, torigrids) + sum(JuAFEM.getncells, interiorgrids)
+        numpts = sum(JuAFEM.getnnodes, exteriorgrids) + sum(JuAFEM.getnnodes, torigrids) + sum(JuAFEM.getnnodes, interiorgrids)
         fig = simpplot(exteriorgrids; colour = :cyan)
         simpplot!(fig, torigrids; colour = :yellow)
         simpplot!(fig, interiorgrids; colour = :red)
+        title!("Disjoint Grids: $numtri total triangles, $numpts total points")
         display(fig)
         (fname != nothing) && savefig(fig, fname * "__grid.pdf")
     end

@@ -1,22 +1,19 @@
 include(joinpath(@__DIR__, "init.jl")) # call "init.jl", located in the same directory as this file
-mxcall(:cd, 0, pwd()) # change MATLAB path to current path for saving outputs
 
 using BSON, Dates, Printf
-# using MATLABPlots
 using StatsPlots
 gr(size=(1200,1200), leg = false, grid = false, labels = nothing) #xticks = nothing, yticks = nothing
 
 function generate_and_save_geometry(btparams; kwargs...)
     exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = creategrids(btparams; kwargs...)
-    # mxcall(:close, 0, "all") # close all figures
     return exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry
 end
 
 function main()
     default_btparams = BlochTorreyParameters{Float64}()
-    numreps = 3 # number of grids per parameter set
+    numreps = 1 # number of grids per parameter set
 
-    numfibres = 10:5:50
+    numfibres = 10:10:50
     g_ratios = [0.75, 0.78, 0.80, default_btparams.g_ratio]
     packing_densities = [0.7, 0.75, 0.8, default_btparams.AxonPDensity]
     # numfibres = [20]
@@ -44,6 +41,7 @@ function main()
                     overlapthresh = 0.05, # overlap relative to btparams.R_mu
                     alpha = 0.5,
                     beta = 0.5,
+                    gamma = 1.0,
                     QMIN = 0.3,
                     RESOLUTION = 1.0,
                     MAXITERS = 1000,
@@ -56,7 +54,7 @@ function main()
                 )
             catch e
                 @warn "error generating grid with param string: " * paramstr
-                @warn e
+                @warn sprint(showerror, e, catch_backtrace())
             end
         end
     end
