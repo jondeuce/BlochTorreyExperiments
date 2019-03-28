@@ -1,5 +1,3 @@
-module BlochTorreyUtilsTest
-
 using BlochTorreyUtils
 using GeometryUtils
 using CirclePackingUtils
@@ -221,7 +219,5 @@ function multipleaxontests(
     end
 
 end
-
-end # module BlochTorreyUtilsTest
 
 nothing

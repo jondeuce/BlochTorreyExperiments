@@ -4,7 +4,6 @@
 
 @inline huniform(x::Vec{dim,T}) where {dim,T} = one(T)#eltype(eltype(x)))
 @inline norm2(x::Vec) = x⋅x
-@inline Base.Tuple(v::Vec) = Tensors.get_data(v)
 @inline getxy(p::AbstractVector{V}) where {V <: Vec{2}} = (x->x[1]).(p), (x->x[2]).(p)
 
 @inline function triangle_area(p1::Vec{2}, p2::Vec{2}, p3::Vec{2})
@@ -229,9 +228,9 @@ end
 #     Ns = ceil.(widths./h0)
 #     hs = widths./Ns
 # 
-#     # to_tup(x, mins, hs) = round.((Tuple(x) .- mins) ./ hs)
+#     # to_tup(x, mins, hs) = round.((Tensors.get_data(x) .- mins) ./ hs)
 #     # to_vec(t, mins, hs) = Vec(mins .+ hs .* t)
-#     to_tup(x, hs) = round.(Tuple(x) ./ hs) #DEBUG
+#     to_tup(x, hs) = round.(Tensors.get_data(x) ./ hs) #DEBUG
 #     to_vec(t, hs) = Vec(hs .* t)
 # 
 #     # idx = to_tup.(x, Ref(mins), Ref(hs)) |> sort! |> unique!
@@ -241,7 +240,7 @@ end
 # end
 
 # NOTE: Much faster than threshunique
-gridunique(x::AbstractVector{Vec{2,T}}, h0::T) where {T} = map(x->Vec{2,T}(h0 .* round.(Tuple(x) ./ h0)), x)
+gridunique(x::AbstractVector{Vec{2,T}}, h0::T) where {T} = map(x->Vec{2,T}(h0 .* round.(Tensors.get_data(x) ./ h0)), x)
 
 function findunique(A::AbstractArray{T}) where T
     ex = eachindex(A); Ti = eltype(ex)

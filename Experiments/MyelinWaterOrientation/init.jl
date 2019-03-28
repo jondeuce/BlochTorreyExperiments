@@ -23,7 +23,6 @@ using CirclePackingUtils
 using MeshUtils
 using BlochTorreyUtils
 using BlochTorreySolvers
-using ExpmvHigham
 using MATLABPlots
 using MWFUtils
 # using TestBlochTorrey2D
@@ -33,8 +32,8 @@ import GreedyCirclePacking
 
 # Debugging packages
 using BenchmarkTools
+using Debugger
 # using Traceur
-# using ASTInterpreter2
 
 # Useful packages to have loaded
 using JuAFEM, Tensors
