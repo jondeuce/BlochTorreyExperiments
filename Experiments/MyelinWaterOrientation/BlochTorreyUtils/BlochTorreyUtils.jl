@@ -38,21 +38,11 @@ export testproblem
 # Exported Types
 # ---------------------------------------------------------------------------- #
 
-export BlochTorreyParameters,
-       AbstractParabolicProblem,
-       MyelinProblem,
-       BlochTorreyProblem,
-       AbstractDomain,
-       ParabolicDomain,
-       MyelinDomain,
-       AbstractRegion,
-       AbstractRegionUnion,
-       AxonRegion,
-       MyelinRegion,
-       TissueRegion,
-       PermeableInterfaceRegion,
-       ParabolicLinearMap,
-       DiffEqParabolicLinearMapWrapper
+export BlochTorreyParameters
+export AbstractParabolicProblem, MyelinProblem, BlochTorreyProblem
+export AbstractDomain, ParabolicDomain, MyelinDomain, TriangularMyelinDomain, TriangularGrid
+export AbstractRegion, AbstractRegionUnion, AxonRegion, MyelinRegion, TissueRegion, PermeableInterfaceRegion
+export ParabolicLinearMap, DiffEqParabolicLinearMapWrapper
 
 include("src/types.jl")
 include("src/btparams.jl")

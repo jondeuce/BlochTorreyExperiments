@@ -60,41 +60,19 @@ function plotSEcorr(sols, btparams, myelindomains; fname = nothing)
     ts = tspan[1]:TE:tspan[2] # signal after each echo
     Stotal = calcsignal(sols, ts, myelindomains)
 
-    MWImaps, MWIdist, MWIpart = fitmwfmodel(Stotal, NNLSRegression();
-        T2Range = [8e-3, 2.0],
-        spwin = [8e-3, 24.75e-3],
-        mpwin = [25.25e-3, 200e-3],
-        nT2 = 32,
-        RefConAngle = 165.0,
-        PLOTDIST = true
-    )
-
+    MWImaps, MWIdist, MWIpart = fitmwfmodel(Stotal, NNLSRegression(); PLOTDIST = true)
     !(fname == nothing) && mxsavefig(fname)
 
     return MWImaps, MWIdist, MWIpart
 end
 
 # Save plot
-function mxsavefig(fname; fig = true, png = true, pdf = true, eps = true)
+function mxsavefig(fname; close = true, fig = true, png = true, pdf = false, eps = false)
+    flags = String[]
+    png && push!(flags, "-png")
+    pdf && push!(flags, "-pdf")
+    eps && push!(flags, "-eps")
+    !isempty(flags) && mxcall(:export_fig, 0, fname, flags...)
     fig && mxcall(:savefig, 0, fname * ".fig")
-    png && mxcall(:export_fig, 0, fname, "-png")
-    pdf && mxcall(:export_fig, 0, fname, "-dpdf")
-    eps && mxcall(:export_fig, 0, fname, "-eps")
-    mxcall(:close, 0)
-end
-
-function compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry)
-    tspan = (0.0, 320.0e-3)
-    TE = 10e-3
-    ts = tspan[1]:TE:tspan[2] # signal after each echo
-    Stotal = calcsignal(sols, ts, myelindomains)
-
-    mwfvalues = Dict(
-        :exact => getmwf(outercircles, innercircles, bdry),
-        :TwoPoolMagnToMagn => getmwf(Stotal, TwoPoolMagnToMagn(); TE = TE, fitmethod = :local),
-        :ThreePoolMagnToMagn => getmwf(Stotal, ThreePoolMagnToMagn(); TE = TE, fitmethod = :local),
-        :ThreePoolCplxToMagn => getmwf(Stotal, ThreePoolCplxToMagn(); TE = TE, fitmethod = :local),
-        :ThreePoolCplxToCplx => getmwf(Stotal, ThreePoolCplxToCplx(); TE = TE, fitmethod = :local)
-    )
-    return mwfvalues
+    close && mxcall(:close, 0)
 end

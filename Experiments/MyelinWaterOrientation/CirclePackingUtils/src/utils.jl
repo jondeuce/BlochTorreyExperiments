@@ -204,8 +204,9 @@ function scale_to_density(circles::Vector{C}, domain::Rectangle{2}, goaldensity,
     
     if density(α_best) ≤ goaldensity
         # Goal density can't be reached; shrinking as much as possible
-        @warn ("Density cannot be reached without overlapping circles more than distthresh = $distthresh; " *
-               "shrinking as much as possible to $(density(α_min + α_eps)) < $goaldensity")
+        msg = "Density cannot be reached without overlapping circles more than distthresh = $distthresh; " *
+              "shrinking as much as possible to $(density(α_min + α_eps)) < $goaldensity"
+        @warn msg
     else
         # Find α which results in the desired packing density
         α_best = find_zero(α -> density(α) - goaldensity, (α_min + α_eps, 1.0e3), Bisection())

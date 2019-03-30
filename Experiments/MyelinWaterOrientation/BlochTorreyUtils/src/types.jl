@@ -3,10 +3,10 @@ const MyelinBoundary{gDim,T} = Union{<:Circle{gDim,T}, <:Rectangle{gDim,T}, <:El
 const VectorOfVectors{T} = AbstractVector{<:AbstractVector{T}}
 const MaybeSymmSparseMatrixCSC{T} = Union{<:SparseMatrixCSC{T}, <:Symmetric{T,<:SparseMatrixCSC{T}}}
 # const MaybeNothingFactorization{T} = Union{Nothing, <:Factorization{T}}
-
 const MassType{T} = MaybeSymmSparseMatrixCSC{T}
 # const MassFactType{T} = Factorization{T}
 const StiffnessType{T} = SparseMatrixCSC{T}
+const TriangularGrid{T} = Grid{2,3,T,3}
 
 # Struct of BlochTorreyParameters. T is the float type.
 @with_kw struct BlochTorreyParameters{T}

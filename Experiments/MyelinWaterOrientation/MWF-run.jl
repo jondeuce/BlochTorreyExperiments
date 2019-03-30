@@ -3,36 +3,38 @@ mxcall(:cd, 0, pwd()) # change MATLAB path to current path for saving outputs
 
 using BSON, CSV, Dates, Printf
 using Plots, MATLABPlots
-gr(size=(1200,1200), leg = false, grid = false, xticks = nothing, yticks = nothing)
+gr(size=(1200,1200))
+# gr(size=(1200,1200), leg = false, grid = false, xticks = nothing, yticks = nothing)
 
-function load_geometry(fname)
-    d = BSON.load(fname)
-    G = Grid{2,3,Float64,3} # 2D triangular grid
-    C = Circle{2,Float64}
-    R = Rectangle{2,Float64}
-
-    # Ensure proper typing of grids
-    return convert(Vector{G}, d[:exteriorgrids][:]),
-           convert(Vector{G}, d[:torigrids][:]),
-           convert(Vector{G}, d[:interiorgrids][:]),
-           convert(Vector{C}, d[:outercircles][:]),
-           convert(Vector{C}, d[:innercircles][:]),
-           convert(R, d[:bdry])
-end
+# Precomputed geometries
+# geomfilename = joinpath(
+#     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/kmg_geom_sweep_3",
+#     "2019-03-28-T-15-24-11-877__N-10_g-0.7500_p-0.7500__structs.bson" # 1.3k triangles, 1.2k points, Qmin = 0.3
+#     # "2019-03-28-T-15-26-44-544__N-10_g-0.8000_p-0.8300__structs.bson" # 4.7k triangles, 3.2k points, Qmin = 0.3
+#     # "2019-03-28-T-15-27-56-042__N-20_g-0.7500_p-0.7000__structs.bson" # 3.1k triangles, 2.6k points, Qmin = 0.3
+#     # "2019-03-28-T-15-33-59-628__N-20_g-0.8000_p-0.8000__structs.bson" #13.3k triangles, 9.2k points, Qmin = 0.3
+# )
+# geomfilename = joinpath(
+#     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/kmg_geom_sweep_4",
+#     "2019-03-28-T-16-19-20-218__N-40_g-0.7500_p-0.8000__structs.bson" # 11.0k triangles, 8.6k points, Qmin = 0.3
+# )
+geomfilename = joinpath(
+    "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/kmg_geom_sweep_6",
+    # "2019-03-29-T-10-47-05-945__N-40_g-0.7500_p-0.7000__structs.bson" #10k triangles,  8k points, Qmin = 0.4
+    # "2019-03-29-T-12-19-17-694__N-40_g-0.8370_p-0.7500__structs.bson" #13k triangles, 10k points, Qmin = 0.4
+    "2019-03-29-T-12-15-03-265__N-40_g-0.8000_p-0.8300__structs.bson" #28k triangles, 19k points, Qmin = 0.4
+)
+geomfilename = cp(geomfilename, getnow() * "__geom.bson")
 
 function MWF!(
         results, domains, omegas, # modified in-place
-        params,
-        exteriorgrids,
-        torigrids,
-        interiorgrids,
-        outercircles,
-        innercircles,
-        bdry
+        params, geom
     )
     # save current parameters
     push!(results.params, params)
 
+    # unpack geometry and create myelin domains
+    exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
     myelinprob, myelinsubdomains, myelindomains = createdomains(params, exteriorgrids, torigrids, interiorgrids, outercircles, innercircles)
     domain = (myelinprob = myelinprob, myelinsubdomains = myelinsubdomains, myelindomains = myelindomains)
     push!(domains, domain)
@@ -59,15 +61,17 @@ end
 
 function main()
     # Load geometries
-    fname = "2019-02-15-T-14-57-53-542__N-20_g-0.8000_p-0.7500__grids.bson"
-    exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = load_geometry(fname)
-    numfibres = length(outercircles)
-
-    # Default parameters
+    geom = loadgeometry(geomfilename)
+    
+    # Params to sweep over
     thetarange = range(0.0, stop = π/2, length = 5)
-    Krange = [0.1, 0.5, 1.0]
-    Drange = [100.0, 500.0]
-
+    Krange = [0.05, 0.1, 0.5, 1.0]
+    Drange = [100.0, 500.0, 1000.0]
+    # thetarange = range(0.0, stop = π/2, length = 3)
+    # Krange = [0.1]
+    # Drange = [50.0]
+    
+    # Default parameters
     default_btparams = BlochTorreyParameters{Float64}(
         theta = π/2,
         AxonPDensity = 0.8,
@@ -77,13 +81,14 @@ function main()
         D_Axon = 500.0, #0.5, # [μm²/s]
         K_perm = 1.0 #0.0 # [μm/s]
     )
-
+    
     # Labels
+    numfibres = length(geom.innercircles)
     to_str(x) = @sprintf "%.4f" x
-    params_to_str(θ,κ,D) = "N-$(numfibres)_alpha-$(to_str(rad2deg(θ)))_K-$(to_str(κ))_D-$(to_str(D))"
+    params_to_str(θ,κ,D) = "N-$(numfibres)_theta-$(to_str(rad2deg(θ)))_K-$(to_str(κ))_D-$(to_str(D))"
 
     # Parameter sweep
-    results = MWFResults{Float64}(metadata = Dict(:TE => 10e-3))
+    results = MWFResults{Float64}()
     domains = []
     omegas = []
 
@@ -103,32 +108,34 @@ function main()
                 D_Sheath = D/10,
                 D_Axon = D
             )
-            MWF!(results, domains, omegas, btparams, exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry)
+            MWF!(results, domains, omegas, btparams, geom)
 
             BSON.bson(getnow() * "__" * paramstr * "__btparams.bson", Dict(:btparams => btparams))
             CSV.write(results, count)
         catch e
-            @warn "error running simulation $count/$(length(paramlist))"; @warn e
+            if e isa InterruptException
+                @warn "Parameter sweep interrupted by user. Breaking out of loop and saving current results..."
+                break
+            else    
+                @warn "Error running simulation $count/$(length(paramlist))"
+                @warn sprint(showerror, e, catch_backtrace())
+            end
         end
     end
 
-    all_results = Dict(
-        :results => results,
-        :domains => domains,
-        :omegas => omegas,
-        :numfibres => numfibres,
-        :thetarange => thetarange,
-        :Krange => Krange,
-        :Drange => Drange,
-        :exteriorgrids => exteriorgrids,
-        :torigrids => torigrids,
-        :interiorgrids => interiorgrids,
-        :outercircles => outercircles,
-        :innercircles => innercircles,
-        :bdry => bdry
-    )
+    # Update MWFResults and save
+    results.metadata[:geom]       = geom
+    results.metadata[:TE]         = 10e-3
+    results.metadata[:domains]    = domains
+    results.metadata[:omegas]     = omegas
+    results.metadata[:numfibres]  = numfibres
+    results.metadata[:thetarange] = thetarange
+    results.metadata[:Krange]     = Krange
+    results.metadata[:Drange]     = Drange
 
-    return all_results
+    BSON.bson(getnow() * "__results.bson", Dict(:results => results))
+
+    return results
 end
 
-out = main()
+results = main()

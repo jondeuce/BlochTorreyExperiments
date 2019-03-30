@@ -150,9 +150,10 @@ function pack_circles(radii::AbstractVector, ::Type{Val{DIM}} = Val{2};
     α_min = find_zero(α -> is_any_overlapping(expand_circles(α)) - 0.5, (0.01, 100.0), Bisection())
     ϵ = 100*eps(α_min)
     if density(α_min + ϵ) ≤ goaldensity
-        @warn ("Density cannot be reached without overlapping circles; can " *
-               "only reach $(density(α_min + ϵ)) < $goaldensity. Decrease " *
-               "density goal, or adjust mutual distance penalty weight.")
+        msg = "Density cannot be reached without overlapping circles; can " *
+              "only reach $(density(α_min + ϵ)) < $goaldensity. Decrease " *
+              "density goal, or adjust mutual distance penalty weight."
+        @warn msg
         packed_circles = expand_circles(α_min + ϵ)
     else
         # Find α which results in the desired packing density

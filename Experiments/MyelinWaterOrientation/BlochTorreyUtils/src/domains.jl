@@ -1,4 +1,11 @@
 # ---------------------------------------------------------------------------- #
+# Grid methods
+# ---------------------------------------------------------------------------- #
+
+# JuAFEM doesn't define show methods without ::MIME"text/plain", and this gives verbose outputs for e.g. arrays of Grid's
+Base.show(io::IO, grid::JuAFEM.Grid) = print(io, "$(typeof(grid)) with $(JuAFEM.getncells(grid)) $(JuAFEM.celltypes[eltype(grid.cells)]) cells and $(JuAFEM.getnnodes(grid)) nodes")
+
+# ---------------------------------------------------------------------------- #
 # AbstractDomain methods
 # ---------------------------------------------------------------------------- #
 

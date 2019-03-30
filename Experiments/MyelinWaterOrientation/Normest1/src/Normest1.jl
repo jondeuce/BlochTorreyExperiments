@@ -130,7 +130,7 @@ function normest1(
    end
 
    #error(message("MATLAB:normest1:WrongColNum", int2str( t )))
-   (size(X,2) != t) && error("normest1: wrong number of columns; size(X,2) = $(size(X,2)), not $t")
+   (size(X,2) != t) && error("Number of columns of X must match t = $t, but size(X,2) = $(size(X,2)).")
 
    itmax = 5  # Maximum number of iterations.
    it = 0

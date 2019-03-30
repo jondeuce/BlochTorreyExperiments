@@ -284,7 +284,7 @@ function kmg2d(
                         ia, ib = i_unfixed
                         pmid = (p[ia] + p[ib])/2
                         ℓ = norm(p[ia] - p[ib]) / (ωs * fh(pmid))
-                        !(ℓ > BARSPLITTHRESH) && deleteat!(p, i_unfixed) #DEBUG
+                        !(ℓ > BARSPLITTHRESH) ? deleteat!(p, i_unfixed) : i_unfixed = Int[] #DEBUG
                         push!(p, pmid)
                     elseif length(i_unfixed) == 1
                         # Two of the triangle corners are fixed. This likely means that the unfixed point
@@ -293,7 +293,7 @@ function kmg2d(
                         ia, ib = i_fixed
                         pmid = (p[ia] + p[ib])/2
                         ℓ = norm(p[ia] - p[ib]) / (ωs * fh(pmid))
-                        (ℓ < inv(BARDENSITYTHRESH)) && deleteat!(p, i_unfixed) #DEBUG
+                        (ℓ < inv(BARDENSITYTHRESH)) ? deleteat!(p, i_unfixed) : i_unfixed = Int[] #DEBUG
                         push!(p, pmid)
                     end
                     if DEBUG && iter > DEBUG_ITERS
@@ -302,7 +302,7 @@ function kmg2d(
                         display(plot!([x], [y]; seriestype = :scatter, markersize = 5, colour = :yellow))
                         sleep(1.0)
                     end
-                    VERBOSE && println("iter = $iter: removing triangle with Qmin = $Qmin; removed $(length(i_unfixed))/$(length(p)) points")
+                    VERBOSE && println("iter = $iter: removing 1/$(length(t)) triangle with Qmin = $Qmin and $(length(i_unfixed))/$(length(p)) points; current Qbest = $Qbest")
                 else
                     VERBOSE && println("iter = $iter: retriangulating (Amin = $Amin < 0)")
                 end

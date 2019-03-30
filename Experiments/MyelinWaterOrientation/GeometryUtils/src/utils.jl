@@ -6,6 +6,7 @@
 @inline Base.Tuple(v::Vec) = Tensors.get_data(v)
 
 @inline norm2(x::Vec) = dot(x,x)
+@inline Base.complex(x::Vec{2}) = complex(x[1], x[2])
 @inline Base.angle(x::Vec{2}) = atan(x[2], x[1])
 @inline Base.sincos(x::Vec{2}) = (r = norm(x); sinθ = x[2]/r; cosθ = x[1]/r; return (sinθ, cosθ))
 @inline function rotmat(x::Vec{2,T}) where {T}

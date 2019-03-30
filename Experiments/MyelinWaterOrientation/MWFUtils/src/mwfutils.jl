@@ -49,7 +49,7 @@ function packcircles(btparams::BlochTorreyParameters{T};
     return circles
 end
 
-function creategrids(btparams::BlochTorreyParameters{T};
+function creategeometry(btparams::BlochTorreyParameters{T};
         fname = nothing, # filename for saving
         Ncircles = 20, # number of circles
         goaldensity = btparams.AxonPDensity, # goal packing density
@@ -97,7 +97,7 @@ function creategrids(btparams::BlochTorreyParameters{T};
 
     # Increase resolution by a factor RESOLUTION
     h0 /= RESOLUTION
-    alpha /= RESOLUTION
+    beta /= RESOLUTION
 
     # Signed distance function
     fd(x) = drectangle0(x, bdry)
@@ -207,10 +207,27 @@ function creategrids(btparams::BlochTorreyParameters{T};
                 :bdry => bdry))
         catch e
             @warn "Error saving geometries"
+            @warn sprint(showerror, e, catch_backtrace())
         end
     end
 
     return exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry
+end
+
+function loadgeometry(fname)
+    d = BSON.load(fname)
+    G = Grid{2,3,Float64,3} # 2D triangular grid
+    C = Circle{2,Float64}
+    R = Rectangle{2,Float64}
+
+    # Ensure proper typing of grids, and return NamedTuple of data
+    out = ( exteriorgrids = convert(Vector{G}, d[:exteriorgrids][:]),
+            torigrids     = convert(Vector{G}, d[:torigrids][:]),
+            interiorgrids = convert(Vector{G}, d[:interiorgrids][:]),
+            outercircles  = convert(Vector{C}, d[:outercircles][:]),
+            innercircles  = convert(Vector{C}, d[:innercircles][:]),
+            bdry          = convert(R, d[:bdry]) )
+    return out
 end
 
 function createdomains(
@@ -231,9 +248,6 @@ function createdomains(
     @time combinedmyelindomain = MyelinDomain(PermeableInterfaceRegion(), myelinprob, myelinsubdomains)
     @time factorize!(combinedmyelindomain)
     myelindomains = [combinedmyelindomain]
-
-    # error("breakpoint10")
-    # error("breakpoint15")
 
     return myelinprob, myelinsubdomains, myelindomains
 end

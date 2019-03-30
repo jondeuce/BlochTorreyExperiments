@@ -4,46 +4,57 @@
 using Revise
 include(joinpath(@__DIR__, "initpaths.jl"))
 
+#####
+##### Packages moved out of base for v0.7.0+
+#####
 @static if VERSION >= v"0.7.0"
-    # Packages moved out of base for v0.7.0+
     using Statistics
     using StatsBase
     using Printf
     using SparseArrays
+    using SuiteSparse
     using LinearAlgebra
-    using Arpack
     using Profile
     using Random
-    using Distributed
+    # using Arpack
+    # using Distributed
 end
 
-# My files and modules to load
+#####
+##### My files and modules to load
+#####
 using GeometryUtils
 using CirclePackingUtils
 using MeshUtils
+using DistMesh
 using BlochTorreyUtils
 using BlochTorreySolvers
 using MATLABPlots
 using MWFUtils
-# using TestBlochTorrey2D
 
 import EnergyCirclePacking
 import GreedyCirclePacking
 
-# Debugging packages
+#####
+##### Debugging packages
+#####
 using BenchmarkTools
 using Debugger
-# using Traceur
 
-# Useful packages to have loaded
+#####
+##### Misc. useful packages
+#####
 using JuAFEM, Tensors
 # using JuAFEM: vertices, faces, edges
 using StaticArrays
+using DiffEqBase, OrdinaryDiffEq
 # using DifferentialEquations
 # using DiffEqOperators
-# using OrdinaryDiffEq, Sundials
+# using Sundials
 
-# # Other packages
+#####
+##### Other
+#####
 # using Interpolations
 # using LsqFit
 # using Expokit

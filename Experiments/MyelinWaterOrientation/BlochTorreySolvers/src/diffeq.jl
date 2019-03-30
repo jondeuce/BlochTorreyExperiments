@@ -6,7 +6,10 @@
 #   du/dt = (M\K)*u   [invertmass = true], or
 #   M*du/dt = K*u     [invertmass = false]
 function OrdinaryDiffEq.ODEProblem(d::ParabolicDomain, u0, tspan; invertmass = true)
-    !invertmass && error("invertmass must be true for now")
+    if !invertmass
+        @warn "invertmass = false not yet supported; setting invertmass = true."
+        invertmass = true
+    end
 
     f!(du,u,p,t) = mul!(du, p[1], u) # RHS action of ODE for general matrix A stored in p[1]
     A = ParabolicLinearMap(d) # ParabolicLinearMap returns a subtype of LinearMap which acts onto u as (M\K)*u.

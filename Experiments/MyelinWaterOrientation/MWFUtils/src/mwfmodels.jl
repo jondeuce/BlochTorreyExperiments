@@ -2,20 +2,6 @@
 # Myelin water fraction calculation
 # ---------------------------------------------------------------------------- #
 
-abstract type AbstractMWIFittingModel end
-struct NNLSRegression <: AbstractMWIFittingModel end
-struct TwoPoolMagnToMagn <: AbstractMWIFittingModel end
-struct ThreePoolMagnToMagn <: AbstractMWIFittingModel end
-struct ThreePoolCplxToMagn <: AbstractMWIFittingModel end
-struct ThreePoolCplxToCplx <: AbstractMWIFittingModel end
-const TwoPoolMagnData = TwoPoolMagnToMagn
-const TwoPoolModel = TwoPoolMagnToMagn
-const ThreePoolMagnData = Union{ThreePoolMagnToMagn, ThreePoolCplxToMagn}
-const ThreePoolModel = Union{ThreePoolMagnToMagn, ThreePoolCplxToMagn, ThreePoolCplxToCplx}
-
-# Convenience conversion between a Vec{2} and a complex number
-@inline Base.complex(x::Vec{2}) = complex(x[1], x[2])
-
 # Calculate exact mwf from grid
 function getmwf(outer::VecOfCircles{2}, inner::VecOfCircles{2}, bdry::Rectangle)
     myelin_area = intersect_area(outer, bdry) - intersect_area(inner, bdry)
@@ -32,7 +18,8 @@ function getmwf(
     try
         _getmwf(modeltype, fitmwfmodel(signals, modeltype; kwargs...)...)
     catch e
-        @warn "error computing the myelin water fraction"; @warn e
+        @warn "Error computing the myelin water fraction"
+        @warn sprint(showerror, e, catch_backtrace())
         NaN
     end
 end
@@ -46,7 +33,8 @@ function fitmwfmodel(
     try
         _fitmwfmodel(signals, modeltype; kwargs...)
     catch e
-        @warn "error fitting $modeltype model to signal."; @warn e
+        @warn "Error fitting $modeltype model to signal."
+        @warn sprint(showerror, e, catch_backtrace())
         nothing
     end
 end
@@ -62,12 +50,12 @@ function _fitmwfmodel(
         modeltype::NNLSRegression;
         TE = 10e-3, # First time point
         nTE = 32, # Number of echos
-        T2Range = [15e-3, 2.0], # Min and Max T2 values used during fitting (typical for in-vivo)
+        T2Range = [8e-3, 2.0], # Min and Max T2 values used during fitting (typical for in-vivo)
         nT2 = 40, # Number of T2 bins used during fitting process, spaced logarithmically in `T2Range`
         Threshold = 0.0, # First echo intensity cutoff for empty voxels
-        RefConAngle = 165.0, # Refocusing Pulse Control Angle (TODO: check value from scanner)
-        spwin = [1.5*TE, 40e-3], # short peak window (typically 1.5X echospacing to 40ms)
-        mpwin = [40e-3, 200e-3], # middle peak window
+        RefConAngle = 180.0, # Refocusing Pulse Control Angle (TODO: check value from scanner; old default is 165.0)
+        spwin = [8e-3, 25e-3], # short peak window (typically 1.5X echospacing to 40ms)
+        mpwin = [25e-3, 200e-3], # middle peak window
         PLOTDIST = false # plot resulting T2-distribution
     ) where {V <: Vec{2}}
 
@@ -305,4 +293,29 @@ end
 function _getmwf(modeltype::TwoPoolModel, modelfit, errors)
     A_my, A_ex = modelfit.param[1:2]
     return A_my/(A_my + A_ex)
+end
+
+function compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry)
+    tspan = (0.0, 320.0e-3)
+    TE = 10e-3
+    ts = tspan[1]:TE:tspan[2] # signal after each echo
+    Stotal = calcsignal(sols, ts, myelindomains)
+
+    mwfvalues = Dict(
+        :exact => getmwf(outercircles, innercircles, bdry),
+        :NNLSRegression => getmwf(Stotal, NNLSRegression(); TE = TE),
+        :TwoPoolMagnToMagn => getmwf(Stotal, TwoPoolMagnToMagn(); TE = TE, fitmethod = :local),
+        :ThreePoolMagnToMagn => getmwf(Stotal, ThreePoolMagnToMagn(); TE = TE, fitmethod = :local),
+        :ThreePoolCplxToMagn => getmwf(Stotal, ThreePoolCplxToMagn(); TE = TE, fitmethod = :local),
+        :ThreePoolCplxToCplx => getmwf(Stotal, ThreePoolCplxToCplx(); TE = TE, fitmethod = :local)
+    )
+
+    return mwfvalues
+end
+
+function compareMWFmethods(results::MWFResults)
+    @unpack outercircles, innercircles, bdry = results.metadata[:geom]
+    domains = results.metadata[:domains]
+    sols = results.sols
+    return [compareMWFmethods(sols[i], domains[i].myelindomains, outercircles, innercircles, bdry) for i in 1:length(sols)]
 end
