@@ -17,4 +17,4 @@ end
 
 # Might need to define this environment variable
 # ENV["MATLAB_HOME"] = "/usr/local/MATLAB/R2017b"#/bin/matlab" # curie (don't need it)
-# ENV["MATLAB_HOME"] = "C:\\Users\\Jonathan\\Downloads\\Mathworks Matlab R2016a\\R2016a"
+# ENV["MATLAB_HOME"] = "C:\\Program Files\\MATLAB\\R2018b\\"

@@ -20,7 +20,8 @@ import LsqFit
 import BlackBoxOptim
 
 # Plotting
-using StatsPlots, MATLABPlots
+using StatsPlots
+using MATLABPlots
 
 export packcircles
 export creategeometry, loadgeometry
