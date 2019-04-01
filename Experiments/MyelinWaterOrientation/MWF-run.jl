@@ -144,7 +144,12 @@ function main()
     results.metadata[:Krange]     = Krange
     results.metadata[:Drange]     = Drange
 
-    BSON.bson(getnow() * "__results.bson", Dict(:results => results))
+    try
+        BSON.bson(getnow() * "__results.bson", Dict(:results => results))
+    catch e
+        @warn "Error saving results!"
+        @warn sprint(showerror, e, catch_backtrace())
+    end
 
     return results
 end
