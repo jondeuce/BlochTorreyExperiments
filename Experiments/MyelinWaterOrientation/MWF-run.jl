@@ -43,14 +43,12 @@ else
     "geom.bson"
 end
 
-function MWF!(
-        results, domains, omegas, # modified in-place
-        params, geom
-    )
+function MWF!(results, params, geom)
     # save current parameters
     push!(results.params, params)
 
     # unpack geometry and create myelin domains
+    domains, omegas = results.metadata[:domains], results.metadata[:omegas]
     exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
     myelinprob, myelinsubdomains, myelindomains = createdomains(params, exteriorgrids, torigrids, interiorgrids, outercircles, innercircles)
     domain = (myelinprob = myelinprob, myelinsubdomains = myelinsubdomains, myelindomains = myelindomains)
@@ -106,8 +104,14 @@ function main(geomfilename = "geom.bson")
 
     # Parameter sweep
     results = MWFResults{Float64}()
-    domains = []
-    omegas = []
+    results.metadata[:geom]       = geom
+    results.metadata[:domains]    = []
+    results.metadata[:omegas]     = []
+    results.metadata[:TE]         = 10e-3
+    results.metadata[:numfibres]  = numfibres
+    results.metadata[:thetarange] = thetarange
+    results.metadata[:Krange]     = Krange
+    results.metadata[:Drange]     = Drange
 
     paramlist = Iterators.product(thetarange, Krange, Drange)
     for (count,params) in enumerate(paramlist)
@@ -125,7 +129,7 @@ function main(geomfilename = "geom.bson")
                 D_Sheath = D/10,
                 D_Axon = D
             )
-            MWF!(results, domains, omegas, btparams, geom)
+            MWF!(results, btparams, geom)
 
             BSON.bson(getnow() * "__" * paramstr * "__btparams.bson", Dict(:btparams => btparams))
             CSV.write(results, count)
@@ -140,18 +144,9 @@ function main(geomfilename = "geom.bson")
         end
     end
 
-    # Update MWFResults and save
-    results.metadata[:geom]       = geom
-    results.metadata[:TE]         = 10e-3
-    results.metadata[:domains]    = domains
-    results.metadata[:omegas]     = omegas
-    results.metadata[:numfibres]  = numfibres
-    results.metadata[:thetarange] = thetarange
-    results.metadata[:Krange]     = Krange
-    results.metadata[:Drange]     = Drange
-
+    # Save results
     try
-        BSON.bson(getnow() * "__results.bson", Dict(:results => results))
+        BSON.bson(getnow() * "__results.bson", Dict(:results => deepcopy(results)))
     catch e
         @warn "Error saving results!"
         @warn sprint(showerror, e, catch_backtrace())

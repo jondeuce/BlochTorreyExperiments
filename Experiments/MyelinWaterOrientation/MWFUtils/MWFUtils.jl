@@ -12,7 +12,8 @@ using JuAFEM
 using OrdinaryDiffEq, DiffEqOperators, Sundials
 using BenchmarkTools
 using Parameters: @with_kw, @unpack
-using IterableTables, DataFrames, BSON, CSV, Dates
+using IterableTables, DataFrames
+import BSON, CSV, Dates
 
 # MWF Calculation
 import ForwardDiff
@@ -39,6 +40,7 @@ export MWFResults
 
 include("src/mwftypes.jl")
 include("src/mwfutils.jl")
+include("src/mwfresults.jl")
 include("src/mwfmodels.jl")
 include("src/mwfplotutils.jl")
 

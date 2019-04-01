@@ -312,10 +312,3 @@ function compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry
 
     return mwfvalues
 end
-
-function compareMWFmethods(results::MWFResults)
-    @unpack outercircles, innercircles, bdry = results.metadata[:geom]
-    domains = results.metadata[:domains]
-    sols = results.sols
-    return [compareMWFmethods(sols[i], domains[i].myelindomains, outercircles, innercircles, bdry) for i in 1:length(sols)]
-end

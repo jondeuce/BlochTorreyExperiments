@@ -1,3 +1,7 @@
+# Standard date format
+getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
+
+# Pack circles
 function packcircles(btparams::BlochTorreyParameters{T};
         N = 20, # number of circles
         η = btparams.AxonPDensity, # goal packing density
