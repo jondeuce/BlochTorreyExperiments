@@ -1,11 +1,14 @@
-include(joinpath(@__DIR__, "init.jl")) # call "init.jl", located in the same directory as this file
-include(joinpath(@__DIR__, "make_reproduce.jl")) # creating backup
-open("reproduce.jl", "a") do io
-    str =
-        """
-        include("BlochTorreyExperiments/Experiments/MyelinWaterOrientation/GenerateGrids-run.jl")
-        """
-    write(io, str)
+# Initialize packages, and create backup file
+include(joinpath(@__DIR__, "init.jl"))
+if !isfile("reproduce.jl")
+    include(joinpath(@__DIR__, "make_reproduce.jl"))
+    open("reproduce.jl", "a") do io
+        str =
+            """
+            include("BlochTorreyExperiments/Experiments/MyelinWaterOrientation/GenerateGrids-run.jl")
+            """
+        write(io, str)
+    end
 end
 
 using BSON, Dates, Printf
