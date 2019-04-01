@@ -7,7 +7,7 @@ include(joinpath(@__DIR__, "make_reproduce.jl"))
 open("reproduce.jl", "a") do io
     str =
         """
-        include("MWF-run.jl")
+        include("BlochTorreyExperiments/Experiments/MyelinWaterOrientation/MWF-run.jl")
         """
     write(io, str)
 end
@@ -35,7 +35,7 @@ geomfilename = joinpath(
 #     # "2019-03-29-T-12-19-17-694__N-40_g-0.8370_p-0.7500__structs.bson" #13k triangles, 10k points, Qmin = 0.4
 #     "2019-03-29-T-12-15-03-265__N-40_g-0.8000_p-0.8300__structs.bson" #28k triangles, 19k points, Qmin = 0.4
 # )
-geomfilename = cp(geomfilename, getnow() * "__geom.bson")
+geomfilename = cp(geomfilename, "geom.bson")
 
 function MWF!(
         results, domains, omegas, # modified in-place
@@ -70,17 +70,17 @@ function MWF!(
     return nothing
 end
 
-function main()
+function main(geomfilename = "geom.bson")
     # Load geometries
     geom = loadgeometry(geomfilename)
     
     # Params to sweep over
-    thetarange = range(0.0, stop = π/2, length = 5)
-    Krange = [0.05, 0.1, 0.5, 1.0]
-    Drange = [100.0, 500.0, 1000.0]
-    # thetarange = range(0.0, stop = π/2, length = 3)
-    # Krange = [0.1]
-    # Drange = [50.0]
+    # thetarange = range(0.0, stop = π/2, length = 5)
+    # Krange = [0.05, 0.1, 0.5, 1.0]
+    # Drange = [100.0, 500.0, 1000.0]
+    thetarange = range(0.0, stop = π/2, length = 3)
+    Krange = [0.1]
+    Drange = [50.0]
     
     # Default parameters
     default_btparams = BlochTorreyParameters{Float64}(
@@ -154,4 +154,4 @@ function main()
     return results
 end
 
-results = main()
+results = main(geomfilename)
