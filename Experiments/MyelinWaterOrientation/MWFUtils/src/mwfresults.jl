@@ -30,7 +30,28 @@ function mwfresults_from_csv(;
         timefirstrow = true,
         save = true
     )
-    
+    resultsdict = resultsdict_from_csv(
+        basedir = basedir, geomfilename = geomfilename, timefirstrow = timefirstrow, save = save);
+    results = MWFResults{Float64}(
+        Dict{Symbol,Any}(
+            :geom             => resultsdict[:geom],
+            :params           => resultsdict[:params],
+            :omegas           => resultsdict[:omegas],
+            :domains          => [(myelinprobs=p, myelinsubdomains=s, myelindomains=d) for (p,s,d) in zip(resultsdict[:myelinprobs], resultsdict[:myelinsubdomains], resultsdict[:myelindomains])]
+        ),
+        resultsdict[:params],
+        resultsdict[:sols],
+        resultsdict[:mwfvalues]
+    )
+    return results
+end
+
+function resultsdict_from_csv(;
+        basedir = ".",
+        geomfilename = "geom.bson",
+        timefirstrow = true,
+        save = true
+    )
     # Load geometry
     geom = loadgeometry(geomfilename)
 
@@ -39,25 +60,29 @@ function mwfresults_from_csv(;
     solfiles = filter(s -> endswith(s, ".csv"), readdir(basedir))
     numregions = length(solfiles) ÷ length(paramfiles)
     
-    # Create initial 
-    results = MWFResults{Float64}()
+    # Initialize results
     allparams = [convert(BlochTorreyParameters{Float64}, BSON.load(pfile)[:btparams]) for pfile in paramfiles]
-    domains = []
-    omegas = []
+    results = Dict{Symbol,Any}(
+        :geom             => geom,
+        :params           => [],
+        :myelinprobs      => [],
+        :myelinsubdomains => [],
+        :myelindomains    => [],
+        :omegas           => [],
+        :sols             => [],
+        :mwfvalues        => []
+    )
 
     # unpack geometry and create myelin domains
     for (params, solfilebatch) in zip(allparams, Iterators.partition(solfiles, numregions))
-        push!(results.params, params)
-
+        
         @info "Recreating myelin domains"
         myelinprob, myelinsubdomains, myelindomains = createdomains(params, geom.exteriorgrids, geom.torigrids, geom.interiorgrids, geom.outercircles, geom.innercircles)
-        domain = (myelinprob = myelinprob, myelinsubdomains = myelinsubdomains, myelindomains = myelindomains)
-        push!(domains, domain)
-
+        
         @info "Recreating frenquency fields"
         omega = calcomega(myelinprob, myelinsubdomains)
-        push!(omegas, omega)
         
+        @info "Creating solutions from .csv files"
         sols = []
         for (myelindomain, solfile) in zip(myelindomains, solfilebatch)
             @info "Reading solution file: " * solfile
@@ -88,18 +113,18 @@ function mwfresults_from_csv(;
             sol = DiffEqBase.build_solution(prob, alg, t, u)
             push!(sols, sol)
         end
-        push!(results.sols, sols)
 
         @info "Computing MWF values"
         mwfvalues = compareMWFmethods(sols, myelindomains, geom.outercircles, geom.innercircles, geom.bdry)
-        push!(results.mwfvalues, mwfvalues)
+        
+        push!(results[:params], params)
+        push!(results[:myelinprobs], myelinprob)
+        push!(results[:myelinsubdomains], myelinsubdomains)
+        push!(results[:myelindomains], myelindomains)
+        push!(results[:omegas], omega)
+        push!(results[:sols], sols)
+        push!(results[:mwfvalues], mwfvalues)
     end
-
-    # Update MWFResults and save
-    results.metadata[:geom]       = geom
-    results.metadata[:TE]         = 10e-3
-    results.metadata[:domains]    = domains
-    results.metadata[:omegas]     = omegas
 
     @info "Saving new MWFResults structure"
     if save

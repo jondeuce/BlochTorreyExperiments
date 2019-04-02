@@ -19,62 +19,38 @@ using Plots, MATLABPlots
 gr(size=(1200,1200))
 # gr(size=(1200,1200), leg = false, grid = false, xticks = nothing, yticks = nothing)
 
-# Precomputed geometries
-geomfilename = if !isfile("geom.bson")
-    joinpath(
-        "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/kmg_geom_sweep_3",
-        "2019-03-28-T-15-24-11-877__N-10_g-0.7500_p-0.7500__structs.bson" # 1.3k triangles, 1.2k points, Qmin = 0.3
-        # "2019-03-28-T-15-26-44-544__N-10_g-0.8000_p-0.8300__structs.bson" # 4.7k triangles, 3.2k points, Qmin = 0.3
-        # "2019-03-28-T-15-27-56-042__N-20_g-0.7500_p-0.7000__structs.bson" # 3.1k triangles, 2.6k points, Qmin = 0.3
-        # "2019-03-28-T-15-33-59-628__N-20_g-0.8000_p-0.8000__structs.bson" #13.3k triangles, 9.2k points, Qmin = 0.3
-    )
-    # geomfilename = joinpath(
-    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/kmg_geom_sweep_4",
-    #     "2019-03-28-T-16-19-20-218__N-40_g-0.7500_p-0.8000__structs.bson" # 11.0k triangles, 8.6k points, Qmin = 0.3
-    # )
-    # geomfilename = joinpath(
-    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/kmg_geom_sweep_6",
-    #     # "2019-03-29-T-10-47-05-945__N-40_g-0.7500_p-0.7000__structs.bson" #10k triangles,  8k points, Qmin = 0.4
-    #     # "2019-03-29-T-12-19-17-694__N-40_g-0.8370_p-0.7500__structs.bson" #13k triangles, 10k points, Qmin = 0.4
-    #     "2019-03-29-T-12-15-03-265__N-40_g-0.8000_p-0.8300__structs.bson" #28k triangles, 19k points, Qmin = 0.4
-    # )
-    geomfilename = cp(geomfilename, "geom.bson")
-else
-    "geom.bson"
-end
-
 function MWF!(results, params, geom)
-    # save current parameters
-    push!(results.params, params)
-
-    # unpack geometry and create myelin domains
-    domains, omegas = results.metadata[:domains], results.metadata[:omegas]
+    # Unpack geometry, create myelin domains, and create omegafield
     exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
     myelinprob, myelinsubdomains, myelindomains = createdomains(params, exteriorgrids, torigrids, interiorgrids, outercircles, innercircles)
-    domain = (myelinprob = myelinprob, myelinsubdomains = myelinsubdomains, myelindomains = myelindomains)
-    push!(domains, domain)
-
     omega = calcomega(myelinprob, myelinsubdomains)
-    push!(omegas, omega)
-
-    # mxsimpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = omega)
-
+    
+    # Solve Bloch-Torrey equation and plot
     sols = solveblochtorrey(myelinprob, myelindomains)
-    push!(results.sols, sols)
-
-    titleparamstr = "theta = $(rad2deg(params.theta)) deg, D = $(params.D_Tissue) um2/s, K = $(params.K_perm) um/s"
+    
     curr_date = getnow()
+    titleparamstr = "theta = $(rad2deg(params.theta)) deg, D = $(params.D_Tissue) um2/s, K = $(params.K_perm) um/s"
     plotmagnitude(sols, params, myelindomains, bdry; titlestr = "Magnitude: " * titleparamstr, fname = "$(curr_date)__magnitude")
     plotSEcorr(sols, params, myelindomains, fname = "$(curr_date)__SEcorr")
     plotbiexp(sols, params, myelindomains, outercircles, innercircles, bdry; titlestr = "Signal: " * titleparamstr, fname = "$(curr_date)__signal")
-
+    # mxsimpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = omega)
+    
+    # Compute MWF values
     mwfvalues = compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry)
-    push!(results.mwfvalues, mwfvalues)
+    
+    # Update results struct and return
+    push!(results[:params], params)
+    push!(results[:myelinprobs], myelinprob)
+    push!(results[:myelinsubdomains], myelinsubdomains)
+    push!(results[:myelindomains], myelindomains)
+    push!(results[:omegas], omega)
+    push!(results[:sols], sols)
+    push!(results[:mwfvalues], mwfvalues)
 
-    return nothing
+    return results
 end
 
-function main(geomfilename = "geom.bson")
+function main(geomfilename = "geom.bson"; saveresultsdict = false)
     # Load geometries
     geom = loadgeometry(geomfilename)
     
@@ -102,17 +78,34 @@ function main(geomfilename = "geom.bson")
     to_str(x) = @sprintf "%.4f" x
     params_to_str(θ,κ,D) = "N-$(numfibres)_theta-$(to_str(rad2deg(θ)))_K-$(to_str(κ))_D-$(to_str(D))"
 
+    # Save metadata
+    metadata = Dict{Symbol,Any}(
+        :TE         => 10e-3,
+        :numfibres  => numfibres,
+        :thetarange => thetarange,
+        :Krange     => Krange,
+        :Drange     => Drange
+    )
+    try
+        BSON.bson(getnow() * "__metadata.bson", Dict(:metadata => deepcopy(metadata)))
+    catch e
+        @warn "Error saving metadata!"
+        @warn sprint(showerror, e, catch_backtrace())
+    end
+    
+    # Initialize results
+    results = Dict{Symbol,Any}(
+        :geom             => geom,
+        :params           => [],
+        :myelinprobs      => [],
+        :myelinsubdomains => [],
+        :myelindomains    => [],
+        :omegas           => [],
+        :sols             => [],
+        :mwfvalues        => []
+    )
+    
     # Parameter sweep
-    results = MWFResults{Float64}()
-    results.metadata[:geom]       = geom
-    results.metadata[:domains]    = []
-    results.metadata[:omegas]     = []
-    results.metadata[:TE]         = 10e-3
-    results.metadata[:numfibres]  = numfibres
-    results.metadata[:thetarange] = thetarange
-    results.metadata[:Krange]     = Krange
-    results.metadata[:Drange]     = Drange
-
     paramlist = Iterators.product(thetarange, Krange, Drange)
     for (count,params) in enumerate(paramlist)
         theta, K, D = params
@@ -131,8 +124,11 @@ function main(geomfilename = "geom.bson")
             )
             MWF!(results, btparams, geom)
 
-            BSON.bson(getnow() * "__" * paramstr * "__btparams.bson", Dict(:btparams => btparams))
-            CSV.write(results, count)
+            curr_date = getnow()
+            BSON.bson(curr_date * "__" * paramstr * "__btparams.bson", Dict(:btparams => btparams))
+            for (i,sol) in enumerate(results[:sols][end])
+                BSON.bson(curr_date * "__sol_$(count)__region_$(i)__odesolution.bson", Dict(:sol => deepcopy(sol)))
+            end
         catch e
             if e isa InterruptException
                 @warn "Parameter sweep interrupted by user. Breaking out of loop and saving current results..."
@@ -144,15 +140,42 @@ function main(geomfilename = "geom.bson")
         end
     end
 
-    # Save results
-    try
-        BSON.bson(getnow() * "__results.bson", Dict(:results => deepcopy(results)))
-    catch e
-        @warn "Error saving results!"
-        @warn sprint(showerror, e, catch_backtrace())
+    # Save results dict. Note that by default this is not done since the dict could be very large,
+    # and all information except for the solutions field can be reproduced at will, and the solutions
+    # will have already been saved.
+    if saveresultsdict
+        try
+            BSON.bson(getnow() * "__results.bson", Dict(:results => deepcopy(results)))
+        catch e
+            @warn "Error saving results!"
+            @warn sprint(showerror, e, catch_backtrace())
+        end
     end
 
     return results
 end
 
+# Load precomputed geometry and run parameter sweep
+geomfilename = if !isfile("geom.bson")
+    # storedgeomfile = joinpath(
+    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/kmg_geom_sweep_3",
+    #     "2019-03-28-T-15-24-11-877__N-10_g-0.7500_p-0.7500__structs.bson" # 1.3k triangles, 1.2k points, Qmin = 0.3
+    #     # "2019-03-28-T-15-26-44-544__N-10_g-0.8000_p-0.8300__structs.bson" # 4.7k triangles, 3.2k points, Qmin = 0.3
+    #     # "2019-03-28-T-15-27-56-042__N-20_g-0.7500_p-0.7000__structs.bson" # 3.1k triangles, 2.6k points, Qmin = 0.3
+    #     # "2019-03-28-T-15-33-59-628__N-20_g-0.8000_p-0.8000__structs.bson" #13.3k triangles, 9.2k points, Qmin = 0.3
+    # )
+    # storedgeomfile = joinpath(
+    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/kmg_geom_sweep_4",
+    #     "2019-03-28-T-16-19-20-218__N-40_g-0.7500_p-0.8000__structs.bson" # 11.0k triangles, 8.6k points, Qmin = 0.3
+    # )
+    storedgeomfile = joinpath(
+        "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/kmg_geom_sweep_6",
+        "2019-03-29-T-10-47-05-945__N-40_g-0.7500_p-0.7000__structs.bson" #10k triangles,  8k points, Qmin = 0.4
+        # "2019-03-29-T-12-19-17-694__N-40_g-0.8370_p-0.7500__structs.bson" #13k triangles, 10k points, Qmin = 0.4
+        # "2019-03-29-T-12-15-03-265__N-40_g-0.8000_p-0.8300__structs.bson" #28k triangles, 19k points, Qmin = 0.4
+    )
+    geomfilename = cp(storedgeomfile, "geom.bson")
+else
+    "geom.bson"
+end
 results = main(geomfilename)

@@ -66,6 +66,49 @@ function plotSEcorr(sols, btparams, myelindomains; fname = nothing)
     return MWImaps, MWIdist, MWIpart
 end
 
+function plotMWF(results; fname = nothing)
+    floattype(::BlochTorreyParameters{T}) where {T} = T
+    T = floattype(results[:params][1])
+
+    @unpack params, mwfvalues = results # Dict of results
+    params = convert(Vector{BlochTorreyParameters{T}}, results[:params])
+    groups, groupindices = partitionby(params, :theta)
+
+    theta = [[p.theta for p in g] for g in groups]
+    MWF = [[mwfvalues[i][:NNLSRegression] for i in gi] for gi in groupindices]
+
+    return theta, MWF
+end
+
+function partitionby(s::AbstractVector{S}, field) where {S}
+    # vals = [getfield(s,f) for s in s]
+    # uniqueset = Set(unique(vals)...)
+    seenindices = Set{Int}()
+    groups, groupindices = [], []
+    while length(seenindices) < length(s)
+        for i in 1:length(s)
+            i ∈ seenindices && continue
+            el1 = s[i]
+            idx = Int[i]
+            group = S[el1]
+            for j in 1:length(s)
+                ((i == j) || (j ∈ seenindices)) && continue
+                el = s[j]
+                if all(f -> (f == field) || (getfield(el1,f) == getfield(el,f)), fieldnames(S))
+                    push!(idx, j)
+                    push!(group, el)
+                end
+            end
+            for k in idx
+                push!(seenindices, k)
+            end
+            push!(groupindices, sort!(idx))
+            push!(groups, sort!(group; by = el -> getfield(el, field)))
+        end
+    end
+    return groups, groupindices
+end
+
 # Save plot
 function mxsavefig(fname; close = true, fig = true, png = true, pdf = false, eps = false)
     flags = String[]
