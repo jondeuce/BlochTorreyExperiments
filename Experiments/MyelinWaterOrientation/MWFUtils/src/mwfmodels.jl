@@ -48,18 +48,12 @@ mwimodeldata(modeltype::TwoPoolMagnData, S::Vector{V}) where {V <: Vec{2}} = nor
 function _fitmwfmodel(
         signals::Vector{V},
         modeltype::NNLSRegression;
-        TE = 10e-3, # First time point
-        nTE = 32, # Number of echos
-        T2Range = [8e-3, 2.0], # Min and Max T2 values used during fitting (typical for in-vivo)
-        nT2 = 40, # Number of T2 bins used during fitting process, spaced logarithmically in `T2Range`
-        Threshold = 0.0, # First echo intensity cutoff for empty voxels
-        RefConAngle = 180.0, # Refocusing Pulse Control Angle (TODO: check value from scanner; old default is 165.0)
-        spwin = [8e-3, 25e-3], # short peak window (typically 1.5X echospacing to 40ms)
-        mpwin = [25e-3, 200e-3], # middle peak window
         PLOTDIST = false # plot resulting T2-distribution
     ) where {V <: Vec{2}}
 
-    @assert length(signals) == nTE+1
+    @unpack TE, nTE, nT2, Threshold, RefConAngle, T2Range, SPWin, MPWin = modeltype
+
+    @assert length(signals) == nTE + 1
     mag = norm.(signals[2:end]) # magnitude signal, discarding t=0 signal
     mag = reshape(mag, (1,1,1,length(mag))) # T2map_SEcorr expects 4D input
 
@@ -76,24 +70,25 @@ function _fitmwfmodel(
     )
     MWIpart = mxcall(:T2part_SEcorr, 1, MWIdist,
         "T2Range", T2Range,
-        "spwin", spwin,
-        "mpwin", mpwin
+        "spwin", SPWin,
+        "mpwin", MPWin
     )
 
     if PLOTDIST
-        logspace(start,stop,length) = exp10.(range(log10(start), stop=log10(stop), length=length))
-        mwf = _getmwf(NNLSRegression(), MWImaps, MWIdist, MWIpart)
+        T2Vals = 1000 .* get_T2vals(modeltype)
+        mwf = _getmwf(modeltype, MWImaps, MWIdist, MWIpart)
 
         mxcall(:figure, 0)
-        mxcall(:semilogx, 0, 1e3 .* logspace(T2Range..., nT2), MWIdist[:])
+        mxcall(:semilogx, 0, 1e3 .* T2Vals, MWIdist[:])
         mxcall(:axis, 0, "on")
-        mxcall(:xlim, 0, 1e3 .* [T2Range...])
+        mxcall(:xlim, 0, 1e3 .* T2Range)
         mxcall(:xlabel, 0, "T2 [ms]")
         mxcall(:title, 0, "T2 Distribution: nT2 = $nT2, mwf = $(round(mwf; digits=4))")
         mxcall(:hold, 0, "on")
+        
         ylim = mxcall(:ylim, 1)
-        for s in spwin; mxcall(:semilogx, 0, 1e3 .* [s,s], ylim, "r--"); end
-        for m in mpwin; mxcall(:semilogx, 0, 1e3 .* [m,m], ylim, "g-."); end
+        for s in SPWin; mxcall(:semilogx, 0, 1e3 .* [s,s], ylim, "r--"); end
+        for m in MPWin; mxcall(:semilogx, 0, 1e3 .* [m,m], ylim, "g-."); end
     end
 
     MWImaps, MWIdist, MWIpart
@@ -240,22 +235,21 @@ end
 # Fitting of general AbstractMWIFittingModel
 function _fitmwfmodel(
         signals::Vector{V}, # signal vectors
-        modeltype::AbstractMWIFittingModel = ThreePoolCplxToCplx();
-        TE = 10e-3, # echo spacing
-        fitmethod = :local
+        modeltype::AbstractMWIFittingModel = ThreePoolCplxToCplx()
     ) where {V <: Vec{2}}
 
-    nTE = length(signals)-1 # S[1] is t=0 point
-    ts = TE.*(0:nTE) |> collect
+    @assert length(signals) == modeltype.nTE + 1 # S[1] is t=0 point
+
+    ts = get_tpoints(modeltype)
     ydata = mwimodeldata(modeltype, signals) # model data
     tdata = ts[2:end] # ydata time points (first point is dropped)
     p0, lb, ub = initialparams(modeltype, ts, signals)
+    model = (t, p) -> mwimodel(modeltype, t, p)
 
-    model(t, p) = mwimodel(modeltype, t, p)
-
-    return if fitmethod == :global
+    local modelfit, errors
+    if modeltype.fitmethod == :global
         # global optimization
-        loss(p) = sum(abs2, ydata .- model(tdata, p))
+        loss = (p) -> sum(abs2, ydata .- model(tdata, p))
         global_result = BlackBoxOptim.bboptimize(loss;
             SearchRange = collect(zip(lb, ub)),
             NumDimensions = length(p0),
@@ -266,13 +260,11 @@ function _fitmwfmodel(
 
         modelfit = (param = global_xbest,)
         errors = nothing
-
-        modelfit, errors
     else
         # default to local optimization
-        wrapped_model(p) = model(tdata, p)
+        wrapped_model = (p) -> model(tdata, p)
         cfg = ForwardDiff.JacobianConfig(wrapped_model, p0, ForwardDiff.Chunk{length(p0)}())
-        jac_model(t, p) = ForwardDiff.jacobian(wrapped_model, p, cfg)
+        jac_model = (t, p) -> ForwardDiff.jacobian(wrapped_model, p, cfg)
 
         modelfit = LsqFit.curve_fit(model, jac_model, tdata, ydata, p0; lower = lb, upper = ub)
         errors = try
@@ -280,9 +272,9 @@ function _fitmwfmodel(
         catch e
             nothing
         end
-
-        modelfit, errors
     end
+
+    return (modelfit = modelfit, errors = errors)
 end
 
 function _getmwf(modeltype::ThreePoolModel, modelfit, errors)
@@ -296,19 +288,14 @@ function _getmwf(modeltype::TwoPoolModel, modelfit, errors)
 end
 
 function compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry)
-    tspan = (0.0, 320.0e-3)
-    TE = 10e-3
-    ts = tspan[1]:TE:tspan[2] # signal after each echo
-    signals = calcsignal(sols, ts, myelindomains)
-
+    signals = calcsignal(sols, get_tpoints(NNLSRegression()), myelindomains)
     mwfvalues = Dict(
         :exact => getmwf(outercircles, innercircles, bdry),
-        :NNLSRegression => getmwf(signals, NNLSRegression(); TE = TE),
-        :TwoPoolMagnToMagn => getmwf(signals, TwoPoolMagnToMagn(); TE = TE, fitmethod = :local),
-        :ThreePoolMagnToMagn => getmwf(signals, ThreePoolMagnToMagn(); TE = TE, fitmethod = :local),
-        :ThreePoolCplxToMagn => getmwf(signals, ThreePoolCplxToMagn(); TE = TE, fitmethod = :local),
-        :ThreePoolCplxToCplx => getmwf(signals, ThreePoolCplxToCplx(); TE = TE, fitmethod = :local)
+        :NNLSRegression => getmwf(signals, NNLSRegression()),
+        :TwoPoolMagnToMagn => getmwf(signals, TwoPoolMagnToMagn()),
+        :ThreePoolMagnToMagn => getmwf(signals, ThreePoolMagnToMagn()),
+        :ThreePoolCplxToMagn => getmwf(signals, ThreePoolCplxToMagn()),
+        :ThreePoolCplxToCplx => getmwf(signals, ThreePoolCplxToCplx())
     )
-
     return (mwfvalues = mwfvalues, signals = signals)
 end

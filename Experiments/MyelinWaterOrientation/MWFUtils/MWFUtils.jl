@@ -37,7 +37,7 @@ export mxsavefig, getnow
 
 export AbstractMWIFittingModel, NNLSRegression, TwoPoolMagnToMagn, ThreePoolMagnToMagn, ThreePoolCplxToMagn, ThreePoolCplxToCplx
 export getmwf, fitmwfmodel, mwimodel, initialparams, compareMWFmethods
-export blank_results_dict
+export blank_results_dict, load_results_dict
 
 include("src/mwftypes.jl")
 include("src/mwfutils.jl")

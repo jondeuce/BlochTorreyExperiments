@@ -1,27 +1,15 @@
 # Standard date format
 getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
 
-# Blank dictionary for storing results
-blank_results_dict() = Dict{Symbol,Any}(
-        :geom             => [],
-        :params           => [],
-        :myelinprobs      => [],
-        :myelinsubdomains => [],
-        :myelindomains    => [],
-        :omegas           => [],
-        :sols             => [],
-        :signals          => [],
-        :mwfvalues        => []
-    )
-
 function load_results_dict(;
         geomfilename = "geom.bson",
         basedir = ".", # directory to load from (default is current)
         save = false # save reconstructed results
     )
     # Load geometry
+    @info "Loading geometry from file: " * geomfilename
     geom = loadgeometry(geomfilename)
-    @unpack exteriorgrids, torigrids, interiorgrids, outercircles, innercircles = geom
+    @unpack exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
 
     # Find btparam filenames and solution filenames
     paramfiles = filter(s -> endswith(s, "btparams.bson"), readdir(basedir))
@@ -32,6 +20,7 @@ function load_results_dict(;
     allparams = [BSON.load(pfile)[:btparams] for pfile in paramfiles]
     allparams = convert.(typeof(allparams[1]), allparams)
     results = blank_results_dict()
+    results[:geom] = geom
 
     # unpack geometry and create myelin domains
     for (params, solfilebatch) in zip(allparams, Iterators.partition(solfiles, numregions))
@@ -349,7 +338,7 @@ function solveblochtorrey(myelinprob, myelindomains, algfun = default_algfun();
         u0 = Vec{2}((0.0, 1.0)), # initial π/2 pulse
         cb = MultiSpinEchoCallback(tspan; TE = TE),
         reltol = 1e-4,
-        abstol = 1e-12,
+        abstol = 1e-12
     )
     probs = [ODEProblem(m, interpolate(u0, m), tspan) for m in myelindomains]
     sols = Vector{ODESolution}()

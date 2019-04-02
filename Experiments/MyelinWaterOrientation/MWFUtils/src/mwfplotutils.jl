@@ -2,23 +2,16 @@ function plotmagnitude(sols, btparams, myelindomains, bdry; titlestr = "Magnitud
     Umagn = reduce(vcat, norm.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
     mxsimpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = Umagn)
     mxcall(:title, 0, titlestr)
-
-    # allgrids = vcat(exteriorgrids[:], torigrids[:], interiorgrids[:])
-    # mxsimpplot(allgrids; newfigure = true, axis = mxaxis(bdry))
-
     !(fname == nothing) && mxsavefig(fname)
-
-    nothing
+    return nothing
 end
 
 function plotphase(sols, btparams, myelindomains, bdry; titlestr = "Phase", fname = nothing)
     Uphase = reduce(vcat, angle.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
     mxsimpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = Uphase)
     mxcall(:title, 0, titlestr)
-
     !(fname == nothing) && mxsavefig(fname)
-
-    nothing
+    return nothing
 end
 
 function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bdry;
@@ -26,11 +19,10 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
         disp = false,
         fname = nothing
     )
-
-    tspan = (0.0, 320.0e-3)
-    TE = 10e-3
-    ts = tspan[1]:TE:tspan[2] # signal after each echo
-    Stotal = calcsignal(sols, ts, myelindomains)
+    opts = NNLSRegression()
+    tspan = get_tspan(opts)
+    ts = get_tpoints(opts)
+    signals = calcsignal(sols, ts, myelindomains)
 
     myelin_area = intersect_area(outercircles, bdry) - intersect_area(innercircles, bdry)
     total_area = area(bdry)
@@ -47,10 +39,10 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
     y_biexp = @. ext_area * exp(-ts * btparams.R2_lp) + myelin_area * exp(-ts * btparams.R2_sp)
 
     if AVOID_MAT_PLOTS
-        fig = plot(1000 .* ts, [norm.(Stotal), y_biexp];
+        fig = plot(1000 .* ts, [norm.(signals), y_biexp];
             linewidth = 5, marker = :circle, markersize =10,
-            grid = true, legend = :topright,
-            xlims = 1000 .* tspan,
+            grid = true, minorgrid = true, legend = :topright,
+            xticks = 1000 .* ts, xrotation = -60, xlims = 1000 .* tspan,
             labels = ["Simulated", "Bi-Exponential"],
             ylabel = "S(t) Magnitude", xlabel = "Time [ms]",
             title = titlestr)
@@ -62,7 +54,7 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
         disp && display(fig)
     else
         mxcall(:figure, 0)
-        mxcall(:plot, 0, collect(1000.0.*ts), [norm.(Stotal) y_biexp])
+        mxcall(:plot, 0, collect(1000.0.*ts), [norm.(signals) y_biexp])
         mxcall(:legend, 0, "Simulated", "Bi-Exponential")
         mxcall(:title, 0, titlestr)
         mxcall(:xlabel, 0, "Time [ms]")
@@ -71,41 +63,41 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
         !(fname == nothing) && mxsavefig(fname)
     end
 
-    nothing
+    return nothing
 end
 
-function plotSEcorr(sols, btparams, myelindomains; disp = false, fname = nothing)
-    tspan = (0.0, 320.0e-3)
-    TE = 10e-3
-    nTE = 32
-    ts = tspan[1]:TE:tspan[2] # signal after each echo
-    Stotal = calcsignal(sols, ts, myelindomains)
+function plotSEcorr(
+        sols, btparams, myelindomains;
+        opts::NNLSRegression = NNLSRegression(),
+        disp = false,
+        fname = nothing
+    )
+    tspan = get_tspan(opts)
+    ts = get_tpoints(opts)
+    signals = calcsignal(sols, ts, myelindomains)
 
     PLOTDIST = !AVOID_MAT_PLOTS
-    T2Range = [8e-3, 2.0]
-    spwin = [8e-3, 25e-3]
-    mpwin = [25e-3, 200e-3]
-    nT2 = 40
-    MWImaps, MWIdist, MWIpart = fitmwfmodel(Stotal, NNLSRegression();
-        TE = TE, nTE = nTE,
-        T2Range = T2Range, nT2 = nT2, spwin = spwin, mpwin = mpwin,
-        PLOTDIST = PLOTDIST)
-    
-    if AVOID_MAT_PLOTS
-        mwf = _getmwf(NNLSRegression(), MWImaps, MWIdist, MWIpart)
-        T2vals = 1000 .* exp10.(range(log10(T2Range[1]), stop=log10(T2Range[2]), length=nT2))
+    MWImaps, MWIdist, MWIpart = fitmwfmodel(signals, opts; PLOTDIST = PLOTDIST)
 
-        fig = plot(T2vals, MWIdist[:];
+    if AVOID_MAT_PLOTS
+        mwf = _getmwf(opts, MWImaps, MWIdist, MWIpart)
+        T2Vals = 1000 .* get_T2vals(opts)
+        xtickvals = length(T2Vals) <= 40 ? T2Vals :
+                    length(T2Vals) <= 80 ? T2Vals[1:2:end] :
+                    T2Vals[1:3:end] # length cannot be more than 120
+
+        fig = plot(T2Vals, MWIdist[:];
+            seriestype = :sticks,
             xscale = :log10,
             linewidth = 5, markersize = 5, marker = :circle,
-            legend = :none,    
-            xlim = 1000 .* T2Range,
-            seriestype = :sticks,
-            xticks = T2vals, formatter = x -> string(round(x; sigdigits = 3)), xrotation = -60,
+            grid = true, minorgrid = true, legend = :none,    
+            xticks = xtickvals, formatter = x -> string(round(x; sigdigits = 3)), xrotation = -60,
+            xlim = 1000 .* opts.T2Range,
             xlabel = "T2 [ms]",
-            title = "T2 Distribution: nT2 = $nT2, mwf = $(round(mwf; digits=4))"
+            title = "T2 Distribution: nT2 = $(opts.nT2), mwf = $(round(mwf; digits=4))"
         )
-        vline!(fig, 1000 .* [spwin..., mpwin...]; xscale = :log10, linewidth = 5, linestyle = :dot, color = :red)
+        vline!(fig, 1000 .* [opts.SPWin; opts.MPWin];
+            xscale = :log10, linewidth = 5, linestyle = :dot, color = :red)
         
         if !(fname == nothing)
             savefig(fig, fname * ".pdf")
@@ -130,7 +122,8 @@ function plotMWF(params, mwfvalues; disp = false, fname = nothing)
 
     true_mwf = 100 * mwfvalues[1][:exact]
     fig = plot(theta, MWF;
-        linewidth = 5, marker = :circle, markersize =10, legend = :none,
+        linewidth = 5, marker = :circle, markersize =10,
+        grid = true, minorgrid = true, legend = :none,
         ylabel = "MWF [%]", xlabel = "Angle [degrees]",
         title = "Measured MWF vs. Angle: True MWF = $(round(true_mwf; sigdigits=4))%")
     

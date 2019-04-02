@@ -1,6 +1,7 @@
 # Initialization of packages
 include(joinpath(@__DIR__, "init.jl")) # call "init.jl", located in the same directory as this file
 mxcall(:cd, 0, pwd()) # change MATLAB path to current path for saving outputs
+mxcall(:figure, 0) # bring up MATLAB figure gui
 make_reproduce( # Creating backup file
     """
     include("BlochTorreyExperiments/Experiments/MyelinWaterOrientation/MWF-run.jl")
@@ -91,6 +92,7 @@ function main(
     
     # Initialize results
     results = blank_results_dict()
+    results[:geom] = geom
     
     # Parameter sweep
     paramlist = Iterators.product(thetarange, Krange, Drange)
