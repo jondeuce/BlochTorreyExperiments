@@ -55,12 +55,12 @@ function main(geomfilename = "geom.bson"; saveresultsdict = false)
     geom = loadgeometry(geomfilename)
     
     # Params to sweep over
-    # thetarange = range(0.0, stop = π/2, length = 5)
-    # Krange = [0.05, 0.1, 0.5, 1.0]
-    # Drange = [100.0, 500.0, 1000.0]
-    thetarange = range(0.0, stop = π/2, length = 3)
-    Krange = [0.1]
-    Drange = [50.0]
+    thetarange = range(0.0, stop = π/2, length = 5)
+    Krange = [0.05, 0.1, 0.5, 1.0]
+    Drange = [100.0, 500.0, 1000.0]
+    # thetarange = range(0.0, stop = π/2, length = 3)
+    # Krange = [0.1]
+    # Drange = [50.0]
     
     # Default parameters
     default_btparams = BlochTorreyParameters{Float64}(
