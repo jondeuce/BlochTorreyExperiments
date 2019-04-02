@@ -1,19 +1,13 @@
 # Initialize packages, and create backup file
 include(joinpath(@__DIR__, "init.jl"))
-if !isfile("reproduce.jl")
-    include(joinpath(@__DIR__, "make_reproduce.jl"))
-    open("reproduce.jl", "a") do io
-        str =
-            """
-            include("BlochTorreyExperiments/Experiments/MyelinWaterOrientation/GenerateGrids-run.jl")
-            """
-        write(io, str)
-    end
-end
+make_reproduce( # Creating backup file
+    """
+    include("BlochTorreyExperiments/Experiments/MyelinWaterOrientation/GenerateGrids-run.jl")
+    """)
 
 using BSON, Dates, Printf
 using StatsPlots
-gr(size=(1200,1200), leg = false, grid = false, labels = nothing) #xticks = nothing, yticks = nothing
+gr(size=(1200,900), leg = false, grid = false, labels = nothing) #xticks = nothing, yticks = nothing
 
 function main()
     default_btparams = BlochTorreyParameters{Float64}()

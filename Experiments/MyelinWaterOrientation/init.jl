@@ -23,6 +23,7 @@ end
 #####
 ##### My files and modules to load
 #####
+using GlobalUtils
 using GeometryUtils
 using CirclePackingUtils
 using MeshUtils
@@ -44,6 +45,7 @@ using Debugger
 #####
 ##### Misc. useful packages
 #####
+using Parameters
 using JuAFEM, Tensors
 # using JuAFEM: vertices, faces, edges
 using StaticArrays
@@ -53,7 +55,7 @@ using DiffEqBase, OrdinaryDiffEq
 # using Sundials
 
 #####
-##### Other
+##### Other packages
 #####
 # using Interpolations
 # using LsqFit

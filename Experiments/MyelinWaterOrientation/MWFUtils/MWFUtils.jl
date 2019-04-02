@@ -24,6 +24,8 @@ import BlackBoxOptim
 using StatsPlots
 using MATLABPlots
 
+const AVOID_MAT_PLOTS = true # avoid external matlab calls, if possible
+
 export packcircles
 export creategeometry, loadgeometry
 export createdomains
@@ -35,14 +37,16 @@ export mxsavefig, getnow
 
 export AbstractMWIFittingModel, NNLSRegression, TwoPoolMagnToMagn, ThreePoolMagnToMagn, ThreePoolCplxToMagn, ThreePoolCplxToCplx
 export getmwf, fitmwfmodel, mwimodel, initialparams, compareMWFmethods
-
-export MWFResults
+export blank_results_dict
 
 include("src/mwftypes.jl")
 include("src/mwfutils.jl")
-include("src/mwfresults.jl")
 include("src/mwfmodels.jl")
 include("src/mwfplotutils.jl")
+
+# TODO: deprecate MWFResults
+export MWFResults
+include("src/mwfresults.jl")
 
 end # module MWFUtils
 

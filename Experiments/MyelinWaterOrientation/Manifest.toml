@@ -26,9 +26,9 @@ version = "0.1.0"
 
 [[Atom]]
 deps = ["Base64", "CodeTools", "CodeTracking", "DocSeeker", "HTTP", "Hiccup", "InteractiveUtils", "JSON", "JuliaInterpreter", "Juno", "LNR", "Lazy", "Logging", "MacroTools", "Markdown", "Media", "Pkg", "Profile", "REPL", "Reexport", "Requires", "Sockets", "Test", "Traceur", "TreeViews", "WebIO", "WebSockets"]
-git-tree-sha1 = "2b9d70c08dcdda793fb1122a279d53b77eea07e3"
+git-tree-sha1 = "610e554dd26dddd0d89f0f96565836df34818add"
 uuid = "c52e3926-4ff0-5f6e-af25-54175e0327b1"
-version = "0.8.2"
+version = "0.8.3"
 
 [[AxisAlgorithms]]
 deps = ["Compat", "WoodburyMatrices"]
@@ -278,9 +278,9 @@ uuid = "ade2ca70-3891-5945-98fb-dc099432e06a"
 
 [[Debugger]]
 deps = ["CodeTracking", "Crayons", "Highlights", "InteractiveUtils", "JuliaInterpreter", "Markdown", "REPL", "Test"]
-git-tree-sha1 = "15332eb3019aa7c8a3028e58408370c7312a9c38"
+git-tree-sha1 = "b04d5f2ebc8d98d6a336665e92a5c5e10da50e4f"
 uuid = "31a5f54b-26ea-5ae9-a837-f05ce5417438"
-version = "0.2.2"
+version = "0.3.0"
 
 [[DelimitedFiles]]
 deps = ["Mmap"]
@@ -634,10 +634,10 @@ uuid = "30d91d44-8115-11e8-1d28-c19a5ac16de8"
 version = "0.2.0"
 
 [[JuliaInterpreter]]
-deps = ["CodeTracking", "Dates", "Distributed", "InteractiveUtils", "Random", "SHA", "Test", "UUIDs"]
-git-tree-sha1 = "126d66c97171e676c3446f643ea159966d3ab10b"
+deps = ["CodeTracking", "Dates", "Distributed", "InteractiveUtils", "Mmap", "Random", "SHA", "Test", "UUIDs"]
+git-tree-sha1 = "9234d36f3837f0071e209ed338a01e48b1423940"
 uuid = "aa1ae85d-cabe-5617-a682-6adf51b2e16a"
-version = "0.3.2"
+version = "0.4.1"
 
 [[Juno]]
 deps = ["Base64", "Logging", "Media", "Profile", "Test"]
@@ -923,15 +923,15 @@ version = "0.3.0"
 
 [[PlotUtils]]
 deps = ["Colors", "Dates", "Printf", "Random", "Reexport", "Test"]
-git-tree-sha1 = "fd28f30a294a38ec847de95d8ac7ac916ccd7c06"
+git-tree-sha1 = "c93a471a55fe44e8e6ef5c750769fee15334bccf"
 uuid = "995b91a9-d308-5afd-9ec6-746e21dbc043"
-version = "0.5.5"
+version = "0.5.6"
 
 [[Plots]]
 deps = ["Base64", "Contour", "Dates", "FixedPointNumbers", "GR", "JSON", "LinearAlgebra", "Measures", "NaNMath", "Pkg", "PlotThemes", "PlotUtils", "Printf", "REPL", "Random", "RecipesBase", "Reexport", "Requires", "Showoff", "SparseArrays", "StaticArrays", "Statistics", "StatsBase", "Test", "UUIDs"]
-git-tree-sha1 = "30ba6839fca563b9753f6e77085b408265b36598"
+git-tree-sha1 = "5bcc6dbc8b7fe0823d9a63dde87d7d4542149693"
 uuid = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
-version = "0.23.2"
+version = "0.24.0"
 
 [[PolynomialRoots]]
 deps = ["Test"]
@@ -1041,9 +1041,9 @@ version = "0.5.2"
 
 [[Revise]]
 deps = ["CodeTracking", "Distributed", "FileWatching", "InteractiveUtils", "JuliaInterpreter", "LibGit2", "LoweredCodeUtils", "OrderedCollections", "Pkg", "REPL", "Random", "Test", "UUIDs", "Unicode"]
-git-tree-sha1 = "0af69424c7bfb3aaa3a7f31671f2c4d02facdf38"
+git-tree-sha1 = "23adc270ef08dfbd60a55abfef2f33eb865bdd60"
 uuid = "295af30f-e4ad-537b-8983-00126c2a3abe"
-version = "2.0.4"
+version = "2.0.5"
 
 [[Rmath]]
 deps = ["BinaryProvider", "Libdl", "Random", "Statistics", "Test"]
@@ -1299,9 +1299,9 @@ version = "1.5.2"
 
 [[Widgets]]
 deps = ["Colors", "Dates", "Observables", "OrderedCollections", "Test"]
-git-tree-sha1 = "843a440fc2e715ace09adcbfc765018c43cd828d"
+git-tree-sha1 = "9c65a62fa26d9e10752db0b828db460855fdc6e4"
 uuid = "cc8bc4a8-27d6-5769-a93b-9d913e69aa62"
-version = "0.5.1"
+version = "0.6.0"
 
 [[WinRPM]]
 deps = ["BinDeps", "Compat", "HTTPClient", "LibExpat", "Libdl", "Libz", "URIParser"]

@@ -31,7 +31,7 @@ function testbtfinelem2D(opts::BlochTorreyParameters{T};
         # plotSEcorr(sols, opts, myelindomains, fname = "SEcorr")
         # plotbiexp(sols, opts, myelindomains, outercircles, innercircles, bdry; titlestr = "Signal: " * paramstr, fname = "signal")
     end
-    # mwfvalues = compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry)
+    # mwfvalues, signals = compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry)
 
     # Return a named tupled of geometry structures
     geom = (

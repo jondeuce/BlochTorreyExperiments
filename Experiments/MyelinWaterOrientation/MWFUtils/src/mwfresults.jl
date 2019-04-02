@@ -62,16 +62,7 @@ function resultsdict_from_csv(;
     
     # Initialize results
     allparams = [convert(BlochTorreyParameters{Float64}, BSON.load(pfile)[:btparams]) for pfile in paramfiles]
-    results = Dict{Symbol,Any}(
-        :geom             => geom,
-        :params           => [],
-        :myelinprobs      => [],
-        :myelinsubdomains => [],
-        :myelindomains    => [],
-        :omegas           => [],
-        :sols             => [],
-        :mwfvalues        => []
-    )
+    results = blank_results_dict()
 
     # unpack geometry and create myelin domains
     for (params, solfilebatch) in zip(allparams, Iterators.partition(solfiles, numregions))
@@ -115,7 +106,7 @@ function resultsdict_from_csv(;
         end
 
         @info "Computing MWF values"
-        mwfvalues = compareMWFmethods(sols, myelindomains, geom.outercircles, geom.innercircles, geom.bdry)
+        mwfvalues, signals = compareMWFmethods(sols, myelindomains, geom.outercircles, geom.innercircles, geom.bdry)
         
         push!(results[:params], params)
         push!(results[:myelinprobs], myelinprob)
@@ -123,6 +114,7 @@ function resultsdict_from_csv(;
         push!(results[:myelindomains], myelindomains)
         push!(results[:omegas], omega)
         push!(results[:sols], sols)
+        push!(results[:signals], signals)
         push!(results[:mwfvalues], mwfvalues)
     end
 

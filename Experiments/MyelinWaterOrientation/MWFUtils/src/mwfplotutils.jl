@@ -21,7 +21,12 @@ function plotphase(sols, btparams, myelindomains, bdry; titlestr = "Phase", fnam
     nothing
 end
 
-function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bdry; titlestr = "Signal Magnitude vs. Time", fname = nothing)
+function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bdry;
+        titlestr = "Signal Magnitude vs. Time",
+        disp = false,
+        fname = nothing
+    )
+
     tspan = (0.0, 320.0e-3)
     TE = 10e-3
     ts = tspan[1]:TE:tspan[2] # signal after each echo
@@ -41,44 +46,103 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
     # their separate regions and experience their compartment R2 only
     y_biexp = @. ext_area * exp(-ts * btparams.R2_lp) + myelin_area * exp(-ts * btparams.R2_sp)
 
-    mxcall(:figure, 0)
-    mxcall(:plot, 0, collect(1000.0.*ts), [norm.(Stotal) y_biexp])
-    mxcall(:legend, 0, "Simulated", "Bi-Exponential")
-    mxcall(:title, 0, titlestr)
-    mxcall(:xlabel, 0, "Time [ms]")
-    mxcall(:xlim, 0, 1000.0 .* [tspan...])
-    mxcall(:ylabel, 0, "S(t) Magnitude")
-
-    !(fname == nothing) && mxsavefig(fname)
+    if AVOID_MAT_PLOTS
+        fig = plot(1000 .* ts, [norm.(Stotal), y_biexp];
+            linewidth = 5, marker = :circle, markersize =10,
+            grid = true, legend = :topright,
+            xlims = 1000 .* tspan,
+            labels = ["Simulated", "Bi-Exponential"],
+            ylabel = "S(t) Magnitude", xlabel = "Time [ms]",
+            title = titlestr)
+        
+        if !(fname == nothing)
+            savefig(fig, fname * ".pdf")
+            savefig(fig, fname * ".png")
+        end
+        disp && display(fig)
+    else
+        mxcall(:figure, 0)
+        mxcall(:plot, 0, collect(1000.0.*ts), [norm.(Stotal) y_biexp])
+        mxcall(:legend, 0, "Simulated", "Bi-Exponential")
+        mxcall(:title, 0, titlestr)
+        mxcall(:xlabel, 0, "Time [ms]")
+        mxcall(:xlim, 0, 1000.0 .* [tspan...])
+        mxcall(:ylabel, 0, "S(t) Magnitude")
+        !(fname == nothing) && mxsavefig(fname)
+    end
 
     nothing
 end
 
-function plotSEcorr(sols, btparams, myelindomains; fname = nothing)
+function plotSEcorr(sols, btparams, myelindomains; disp = false, fname = nothing)
     tspan = (0.0, 320.0e-3)
     TE = 10e-3
+    nTE = 32
     ts = tspan[1]:TE:tspan[2] # signal after each echo
     Stotal = calcsignal(sols, ts, myelindomains)
 
-    MWImaps, MWIdist, MWIpart = fitmwfmodel(Stotal, NNLSRegression(); PLOTDIST = true)
-    !(fname == nothing) && mxsavefig(fname)
+    PLOTDIST = !AVOID_MAT_PLOTS
+    T2Range = [8e-3, 2.0]
+    spwin = [8e-3, 25e-3]
+    mpwin = [25e-3, 200e-3]
+    nT2 = 40
+    MWImaps, MWIdist, MWIpart = fitmwfmodel(Stotal, NNLSRegression();
+        TE = TE, nTE = nTE,
+        T2Range = T2Range, nT2 = nT2, spwin = spwin, mpwin = mpwin,
+        PLOTDIST = PLOTDIST)
+    
+    if AVOID_MAT_PLOTS
+        mwf = _getmwf(NNLSRegression(), MWImaps, MWIdist, MWIpart)
+        T2vals = 1000 .* exp10.(range(log10(T2Range[1]), stop=log10(T2Range[2]), length=nT2))
+
+        fig = plot(T2vals, MWIdist[:];
+            xscale = :log10,
+            linewidth = 5, markersize = 5, marker = :circle,
+            legend = :none,    
+            xlim = 1000 .* T2Range,
+            seriestype = :sticks,
+            xticks = T2vals, formatter = x -> string(round(x; sigdigits = 3)), xrotation = -60,
+            xlabel = "T2 [ms]",
+            title = "T2 Distribution: nT2 = $nT2, mwf = $(round(mwf; digits=4))"
+        )
+        vline!(fig, 1000 .* [spwin..., mpwin...]; xscale = :log10, linewidth = 5, linestyle = :dot, color = :red)
+        
+        if !(fname == nothing)
+            savefig(fig, fname * ".pdf")
+            savefig(fig, fname * ".png")
+        end
+        disp && display(fig)
+    else
+        (PLOTDIST && !(fname == nothing)) && mxsavefig(fname)
+    end
 
     return MWImaps, MWIdist, MWIpart
 end
 
-function plotMWF(results; fname = nothing)
-    floattype(::BlochTorreyParameters{T}) where {T} = T
-    T = floattype(results[:params][1])
-
-    @unpack params, mwfvalues = results # Dict of results
-    params = convert(Vector{BlochTorreyParameters{T}}, results[:params])
+function plotMWF(params, mwfvalues; disp = false, fname = nothing)
+    params = convert(Vector{typeof(params[1])}, params) # Ensure proper typing for partitionby
     groups, groupindices = partitionby(params, :theta)
 
     theta = [[p.theta for p in g] for g in groups]
     MWF = [[mwfvalues[i][:NNLSRegression] for i in gi] for gi in groupindices]
+    theta = broadcast!(θ -> θ .= rad2deg.(θ), theta, theta) # change units to degrees
+    MWF = broadcast!(mwf -> mwf .= 100 .* mwf, MWF, MWF) # change units to percentages
+
+    true_mwf = 100 * mwfvalues[1][:exact]
+    fig = plot(theta, MWF;
+        linewidth = 5, marker = :circle, markersize =10, legend = :none,
+        ylabel = "MWF [%]", xlabel = "Angle [degrees]",
+        title = "Measured MWF vs. Angle: True MWF = $(round(true_mwf; sigdigits=4))%")
+    
+    if !(fname == nothing)
+        savefig(fig, fname * ".pdf")
+        savefig(fig, fname * ".png")
+    end
+    disp && display(fig)
 
     return theta, MWF
 end
+plotMWF(results::Dict; kwargs...) = plotMWF(results[:params], results[:mwfvalues]; kwargs...)
 
 function partitionby(s::AbstractVector{S}, field) where {S}
     # vals = [getfield(s,f) for s in s]

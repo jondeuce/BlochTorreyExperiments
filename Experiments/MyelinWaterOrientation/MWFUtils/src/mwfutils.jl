@@ -1,6 +1,75 @@
 # Standard date format
 getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
 
+# Blank dictionary for storing results
+blank_results_dict() = Dict{Symbol,Any}(
+        :geom             => [],
+        :params           => [],
+        :myelinprobs      => [],
+        :myelinsubdomains => [],
+        :myelindomains    => [],
+        :omegas           => [],
+        :sols             => [],
+        :signals          => [],
+        :mwfvalues        => []
+    )
+
+function load_results_dict(;
+        geomfilename = "geom.bson",
+        basedir = ".", # directory to load from (default is current)
+        save = false # save reconstructed results
+    )
+    # Load geometry
+    geom = loadgeometry(geomfilename)
+    @unpack exteriorgrids, torigrids, interiorgrids, outercircles, innercircles = geom
+
+    # Find btparam filenames and solution filenames
+    paramfiles = filter(s -> endswith(s, "btparams.bson"), readdir(basedir))
+    solfiles = filter(s -> endswith(s, "odesolution.bson"), readdir(basedir))
+    numregions = length(solfiles) ÷ length(paramfiles)
+
+    # Initialize results
+    allparams = [BSON.load(pfile)[:btparams] for pfile in paramfiles]
+    allparams = convert.(typeof(allparams[1]), allparams)
+    results = blank_results_dict()
+
+    # unpack geometry and create myelin domains
+    for (params, solfilebatch) in zip(allparams, Iterators.partition(solfiles, numregions))
+        @info "Recreating myelin domains"
+        myelinprob, myelinsubdomains, myelindomains = createdomains(params, exteriorgrids, torigrids, interiorgrids, outercircles, innercircles)
+        
+        @info "Recreating frenquency fields"
+        omega = calcomega(myelinprob, myelinsubdomains)
+        
+        @info "Loading ODE solutions"
+        sols = [BSON.load(solfile)[:sol] for solfile in solfilebatch]
+
+        @info "Computing MWF values"
+        mwfvalues, signals = compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry)
+        
+        push!(results[:params], params)
+        push!(results[:myelinprobs], myelinprob)
+        push!(results[:myelinsubdomains], myelinsubdomains)
+        push!(results[:myelindomains], myelindomains)
+        push!(results[:omegas], omega)
+        push!(results[:sols], sols)
+        push!(results[:signals], signals)
+        push!(results[:mwfvalues], mwfvalues)
+    end
+
+    if save
+        @info "Saving reconstructed dictionary"
+        try
+            BSON.bson(getnow() * "__results.bson", Dict(:results => deepcopy(results)))
+        catch e
+            @warn "Error saving results!"
+            @warn sprint(showerror, e, catch_backtrace())
+        end
+    end
+
+    return results
+end
+
 # Pack circles
 function packcircles(btparams::BlochTorreyParameters{T};
         N = 20, # number of circles

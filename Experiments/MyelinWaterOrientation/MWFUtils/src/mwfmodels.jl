@@ -299,16 +299,16 @@ function compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry
     tspan = (0.0, 320.0e-3)
     TE = 10e-3
     ts = tspan[1]:TE:tspan[2] # signal after each echo
-    Stotal = calcsignal(sols, ts, myelindomains)
+    signals = calcsignal(sols, ts, myelindomains)
 
     mwfvalues = Dict(
         :exact => getmwf(outercircles, innercircles, bdry),
-        :NNLSRegression => getmwf(Stotal, NNLSRegression(); TE = TE),
-        :TwoPoolMagnToMagn => getmwf(Stotal, TwoPoolMagnToMagn(); TE = TE, fitmethod = :local),
-        :ThreePoolMagnToMagn => getmwf(Stotal, ThreePoolMagnToMagn(); TE = TE, fitmethod = :local),
-        :ThreePoolCplxToMagn => getmwf(Stotal, ThreePoolCplxToMagn(); TE = TE, fitmethod = :local),
-        :ThreePoolCplxToCplx => getmwf(Stotal, ThreePoolCplxToCplx(); TE = TE, fitmethod = :local)
+        :NNLSRegression => getmwf(signals, NNLSRegression(); TE = TE),
+        :TwoPoolMagnToMagn => getmwf(signals, TwoPoolMagnToMagn(); TE = TE, fitmethod = :local),
+        :ThreePoolMagnToMagn => getmwf(signals, ThreePoolMagnToMagn(); TE = TE, fitmethod = :local),
+        :ThreePoolCplxToMagn => getmwf(signals, ThreePoolCplxToMagn(); TE = TE, fitmethod = :local),
+        :ThreePoolCplxToCplx => getmwf(signals, ThreePoolCplxToCplx(); TE = TE, fitmethod = :local)
     )
 
-    return mwfvalues
+    return (mwfvalues = mwfvalues, signals = signals)
 end
