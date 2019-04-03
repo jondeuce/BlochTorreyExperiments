@@ -137,9 +137,8 @@ function plotMWF(params, mwfvalues; disp = false, fname = nothing)
 end
 plotMWF(results::Dict; kwargs...) = plotMWF(results[:params], results[:mwfvalues]; kwargs...)
 
+
 function partitionby(s::AbstractVector{S}, field) where {S}
-    # vals = [getfield(s,f) for s in s]
-    # uniqueset = Set(unique(vals)...)
     seenindices = Set{Int}()
     groups, groupindices = [], []
     while length(seenindices) < length(s)
@@ -151,7 +150,7 @@ function partitionby(s::AbstractVector{S}, field) where {S}
             for j in 1:length(s)
                 ((i == j) || (j ∈ seenindices)) && continue
                 el = s[j]
-                if all(f -> (f == field) || (getfield(el1,f) == getfield(el,f)), fieldnames(S))
+                if all(f -> (f == field) || (getfield(el1, f) == getfield(el, f)), fieldnames(S))
                     push!(idx, j)
                     push!(group, el)
                 end

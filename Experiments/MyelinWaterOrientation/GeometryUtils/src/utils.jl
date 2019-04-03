@@ -1,15 +1,25 @@
 # ---------------------------------------------------------------------------- #
 # Misc. utilities for Vec type from Tensors.jl
 # ---------------------------------------------------------------------------- #
+
+# Convenience shorthands (Vec2d = Vec{2,Float64}, Vec3f = Vec{3,Float32}, etc.)
+for (dim, tup) in Iterators.product(1:3, zip([:d,:f], [Float64,Float32]))
+    label, T = tup
+    @eval const $(Symbol(:Vec, dim, label)) = Vec{$dim, $T}
+end
+
+# Conversion to Tuple and SVector
 @inline Base.convert(::Type{Vec{dim,T1}}, x::SVector{dim,T2}) where {dim,T1,T2} = Vec{dim,promote_type(T1,T2)}(Tuple(x))
 @inline Base.convert(::Type{SVector{dim,T1}}, x::Vec{dim,T2}) where {dim,T1,T2} = SVector{dim,promote_type(T1,T2)}(Tuple(x))
 @inline Base.Tuple(v::Vec) = Tensors.get_data(v)
 
-Base.@pure Tensors.n_components(::Type{<:Vec{dim}}) where {dim} = dim
-Base.@pure Tensors.n_components(::Vec{dim}) where {dim} = dim
-Base.@pure Tensors.n_components(::Type{<:Complex}) = 1
-Base.@pure Tensors.n_components(::Complex) = 1
-@inline vecdim(x) = Tensors.n_components(x)
+# Dimension of underlying field. Treat complex values are scalars, rather than 2D vectors
+@inline fielddim(::Type{<:Vec{dim}}) where {dim} = dim
+@inline fielddim(::Vec{dim}) where {dim} = dim
+@inline fielddim(::Type{<:Complex}) = 1
+@inline fielddim(::Complex) = 1
+@inline fielddim(::Type{<:Real}) = 1
+@inline fielddim(::Real) = 1
 
 @inline norm2(x::Vec) = dot(x,x)
 @inline Base.complex(x::Vec{2}) = complex(x[1], x[2])

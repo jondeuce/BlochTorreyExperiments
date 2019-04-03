@@ -32,7 +32,7 @@ export createdomains
 export calcomegas, calcomega
 export calcsignals, calcsignal
 export solveblochtorrey, default_algfun, get_algfun
-export plotmagnitude, plotphase, plotSEcorr, plotbiexp
+export plotmagnitude, plotphase, plotSEcorr, plotbiexp, plotMWF
 export mxsavefig, getnow
 
 export AbstractMWIFittingModel, NNLSRegression, TwoPoolMagnToMagn, ThreePoolMagnToMagn, ThreePoolCplxToMagn, ThreePoolCplxToCplx

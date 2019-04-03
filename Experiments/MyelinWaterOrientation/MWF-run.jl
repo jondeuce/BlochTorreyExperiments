@@ -20,8 +20,9 @@ function MWF!(results, params, geom)
     # Solve Bloch-Torrey equation and plot
     sols = solveblochtorrey(myelinprob, myelindomains)
     
+    to_str = (x) -> @sprintf "%.4f" round(x, sigdigits=4)
     curr_date = getnow()
-    titleparamstr = "theta = $(rad2deg(params.theta)) deg, D = $(params.D_Tissue) um2/s, K = $(params.K_perm) um/s"
+    titleparamstr = "theta = $(to_str(rad2deg(params.theta))) deg, D = $(to_str(params.D_Tissue)) um2/s, K = $(to_str(params.K_perm)) um/s"
     plotmagnitude(sols, params, myelindomains, bdry; titlestr = "Magnitude: " * titleparamstr, fname = "$(curr_date)__magnitude")
     plotSEcorr(sols, params, myelindomains, fname = "$(curr_date)__SEcorr")
     plotbiexp(sols, params, myelindomains, outercircles, innercircles, bdry; titlestr = "Signal: " * titleparamstr, fname = "$(curr_date)__signal")
@@ -45,35 +46,40 @@ end
 
 function main(
         geomfilename = "geom.bson";
-        saveresultsdict = false, # Save whole results dict, which includes copies of solutions
-        savemeasurables = true # Save measurables only (total signal, mwf values, etc.) along with parameters
+        savemeasurables = true, # Save measurables only (total signal, mwf values, etc.) along with parameters
+        savemwfplot = true, # Save mwf values plot
+        saveresultsdict = false # Save whole results dict, including copies of solutions and domains (not recommended; can be reproduced)
     )
     # Load geometries
     geom = loadgeometry(geomfilename)
     
     # Params to sweep over
-    thetarange = range(0.0, stop = π/2, length = 7)
-    Krange = [0, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
-    Drange = [100.0, 500.0]
-    # thetarange = range(0.0, stop = π/2, length = 3)
-    # Krange = [0.1]
-    # Drange = [50.0]
+    # thetarange = range(0.0, stop = π/2, length = 7)
+    # Krange = [0, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
+    # Drange = [100.0, 500.0]
+    thetarange = range(0.0, stop = π/2, length = 5)
+    Krange = [0, 0.1, 0.5, 1.0]
+    Drange = [10.0]
     
     # Default parameters
     default_btparams = BlochTorreyParameters{Float64}(
         theta = π/2,
         AxonPDensity = 0.8,
         g_ratio = 0.8,
-        D_Tissue = 500.0, #0.5, # [μm²/s]
-        D_Sheath = 50.0, #0.5, # [μm²/s]
-        D_Axon = 500.0, #0.5, # [μm²/s]
-        K_perm = 1.0 #0.0 # [μm/s]
+        D_Tissue = 500.0, # [μm²/s]
+        D_Sheath = 500.0, # [μm²/s]
+        D_Axon = 500.0, # [μm²/s]
+        K_perm = 0.5 # [μm/s]
+    )
+    default_btparams = BlochTorreyParameters(default_btparams;
+        ChiI = 100 * default_btparams.ChiI, # drastically amplify myelin susceptibility for testing
+        ChiA = 100 * default_btparams.ChiA  # drastically amplify myelin susceptibility for testing
     )
     
     # Labels
     numfibres = length(geom.innercircles)
-    to_str(x) = @sprintf "%.4f" x
-    params_to_str(θ,κ,D) = "N-$(numfibres)_theta-$(to_str(rad2deg(θ)))_K-$(to_str(κ))_D-$(to_str(D))"
+    to_str = (x) -> @sprintf "%.4f" round(x, sigdigits=4)
+    params_to_str = (θ,κ,D) -> "N-$(numfibres)_theta-$(to_str(rad2deg(θ)))_K-$(to_str(κ))_D-$(to_str(D))"
 
     # Save metadata
     metadata = Dict{Symbol,Any}(
@@ -108,7 +114,7 @@ function main(
                 theta = theta,
                 K_perm = K,
                 D_Tissue = D,
-                D_Sheath = D/10,
+                D_Sheath = D,
                 D_Axon = D
             )
             MWF!(results, btparams, geom)
@@ -126,6 +132,16 @@ function main(
                 @warn "Error running simulation $count/$(length(paramlist))"
                 @warn sprint(showerror, e, catch_backtrace())
             end
+        end
+    end
+
+    # Plot and save mwf
+    if savemwfplot
+        try
+            plotMWF(results; disp = false, fname = getnow() * "__mwfplot")
+        catch e
+            @warn "Error plotting MWF."
+            @warn sprint(showerror, e, catch_backtrace())
         end
     end
 
