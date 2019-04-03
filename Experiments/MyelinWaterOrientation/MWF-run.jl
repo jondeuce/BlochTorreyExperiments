@@ -57,8 +57,8 @@ function main(
     # thetarange = range(0.0, stop = π/2, length = 7)
     # Krange = [0, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
     # Drange = [100.0, 500.0]
-    thetarange = range(0.0, stop = π/2, length = 5)
-    Krange = [0, 0.1, 0.5, 1.0]
+    thetarange = range(0.0, stop = π/2, length = 19)
+    Krange = [0.1]
     Drange = [10.0]
     
     # Default parameters
