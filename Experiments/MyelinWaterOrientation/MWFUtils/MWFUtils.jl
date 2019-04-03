@@ -21,10 +21,9 @@ import LsqFit
 import BlackBoxOptim
 
 # Plotting
+const AVOID_MAT_PLOTS = true # avoid external matlab calls, if possible
 using StatsPlots
 using MATLABPlots
-
-const AVOID_MAT_PLOTS = true # avoid external matlab calls, if possible
 
 export packcircles
 export creategeometry, loadgeometry
@@ -32,7 +31,7 @@ export createdomains
 export calcomegas, calcomega
 export calcsignals, calcsignal
 export solveblochtorrey, default_algfun, get_algfun
-export plotmagnitude, plotphase, plotSEcorr, plotbiexp, plotMWF
+export plotomega, plotmagnitude, plotphase, plotSEcorr, plotbiexp, plotMWF
 export mxsavefig, getnow
 
 export AbstractMWIFittingModel, NNLSRegression, TwoPoolMagnToMagn, ThreePoolMagnToMagn, ThreePoolCplxToMagn, ThreePoolCplxToCplx

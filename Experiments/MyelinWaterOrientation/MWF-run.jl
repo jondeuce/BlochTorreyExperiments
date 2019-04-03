@@ -23,10 +23,10 @@ function MWF!(results, params, geom)
     to_str = (x) -> @sprintf "%.4f" round(x, sigdigits=4)
     curr_date = getnow()
     titleparamstr = "theta = $(to_str(rad2deg(params.theta))) deg, D = $(to_str(params.D_Tissue)) um2/s, K = $(to_str(params.K_perm)) um/s"
-    plotmagnitude(sols, params, myelindomains, bdry; titlestr = "Magnitude: " * titleparamstr, fname = "$(curr_date)__magnitude")
-    plotSEcorr(sols, params, myelindomains, fname = "$(curr_date)__SEcorr")
-    plotbiexp(sols, params, myelindomains, outercircles, innercircles, bdry; titlestr = "Signal: " * titleparamstr, fname = "$(curr_date)__signal")
-    # mxsimpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = omega)
+    plotmagnitude(sols, params, myelindomains, bdry; titlestr = "Field Magnitude (" * titleparamstr * ")", fname = curr_date * "__magnitude")
+    plotSEcorr(sols, params, myelindomains, fname = curr_date * "__SEcorr")
+    plotbiexp(sols, params, myelindomains, outercircles, innercircles, bdry; titlestr = "Signal Magnitude: (" * titleparamstr * ")", fname = curr_date * "__signal")
+    plotomega(myelinprob, myelindomains, myelinsubdomains, bdry; titlestr = "Frequency Map (theta = $(to_str(rad2deg(params.theta))) deg)", fname = curr_date * "__omega")
     
     # Compute MWF values
     mwfvalues, signals = compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry)
@@ -52,15 +52,15 @@ function main(
     )
     # Load geometries
     geom = loadgeometry(geomfilename)
-    
+
     # Params to sweep over
     # thetarange = range(0.0, stop = π/2, length = 7)
     # Krange = [0, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
     # Drange = [100.0, 500.0]
-    thetarange = range(0.0, stop = π/2, length = 19)
+    thetarange = range(0.0, stop = π/2, length = 37)
     Krange = [0.1]
-    Drange = [10.0]
-    
+    Drange = [50.0]
+
     # Default parameters
     default_btparams = BlochTorreyParameters{Float64}(
         theta = π/2,
@@ -75,7 +75,7 @@ function main(
         ChiI = 100 * default_btparams.ChiI, # drastically amplify myelin susceptibility for testing
         ChiA = 100 * default_btparams.ChiA  # drastically amplify myelin susceptibility for testing
     )
-    
+
     # Labels
     numfibres = length(geom.innercircles)
     to_str = (x) -> @sprintf "%.4f" round(x, sigdigits=4)
@@ -95,17 +95,16 @@ function main(
         @warn "Error saving metadata!"
         @warn sprint(showerror, e, catch_backtrace())
     end
-    
+
     # Initialize results
     results = blank_results_dict()
     results[:geom] = geom
-    
+
     # Parameter sweep
     paramlist = Iterators.product(thetarange, Krange, Drange)
     for (count,params) in enumerate(paramlist)
         theta, K, D = params
         paramstr = params_to_str(theta,K,D)
-
         try
             println("\n\n---- SIMULATION $count/$(length(paramlist)): $(Dates.now()): $paramstr ----\n\n")
 

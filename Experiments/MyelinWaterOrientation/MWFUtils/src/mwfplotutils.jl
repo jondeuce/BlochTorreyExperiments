@@ -1,3 +1,11 @@
+function plotomega(myelinprob, myelindomains, myelinsubdomains, bdry; titlestr = "Omega", fname = nothing)
+    omega = calcomega(myelinprob, myelinsubdomains)
+    mxsimpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = omega)
+    mxcall(:title, 0, titlestr)
+    !(fname == nothing) && mxsavefig(fname)
+    return nothing
+end
+
 function plotmagnitude(sols, btparams, myelindomains, bdry; titlestr = "Magnitude", fname = nothing)
     Umagn = reduce(vcat, norm.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
     mxsimpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = Umagn)
@@ -111,21 +119,21 @@ function plotSEcorr(
     return MWImaps, MWIdist, MWIpart
 end
 
-function plotMWF(params, mwfvalues; disp = false, fname = nothing)
-    params = convert(Vector{typeof(params[1])}, params) # Ensure proper typing for partitionby
+function plotMWF(params, mwf, mwftrue = nothing; disp = false, fname = nothing)
     groups, groupindices = partitionby(params, :theta)
 
     theta = [[p.theta for p in g] for g in groups]
-    MWF = [[mwfvalues[i][:NNLSRegression] for i in gi] for gi in groupindices]
+    MWF = [[mwf[i] for i in gi] for gi in groupindices]
     theta = broadcast!(θ -> θ .= rad2deg.(θ), theta, theta) # change units to degrees
     MWF = broadcast!(mwf -> mwf .= 100 .* mwf, MWF, MWF) # change units to percentages
 
-    true_mwf = 100 * mwfvalues[1][:exact]
+    title_str = "Measured MWF vs. Angle"
+    !(mwftrue == nothing) && (title_str *= " (True MWF = $(round(mwftrue; sigdigits=4))%)")
+    
     fig = plot(theta, MWF;
         linewidth = 5, marker = :circle, markersize =10,
         grid = true, minorgrid = true, legend = :none,
-        ylabel = "MWF [%]", xlabel = "Angle [degrees]",
-        title = "Measured MWF vs. Angle: True MWF = $(round(true_mwf; sigdigits=4))%")
+        ylabel = "MWF [%]", xlabel = "Angle [degrees]", title = title_str)
     
     if !(fname == nothing)
         savefig(fig, fname * ".pdf")
@@ -133,10 +141,23 @@ function plotMWF(params, mwfvalues; disp = false, fname = nothing)
     end
     disp && display(fig)
 
-    return theta, MWF
+    return fig
 end
-plotMWF(results::Dict; kwargs...) = plotMWF(results[:params], results[:mwfvalues]; kwargs...)
+function plotMWF(results::Dict; disp = false, fname = nothing)
+    # mwfvalues is an array of Dict{Symbol,T}'s, and params is an array of BlochTorreyParameters{T}'s
+    @unpack params, mwfvalues = results
+    (isempty(params) || isempty(mwfvalues)) && return nothing
 
+    params = convert(Vector{typeof(params[1])}, params) # force proper typing of params
+    mwftrue = get(mwfvalues[1], :exact, nothing) # get mwftrue, or nothing if the key doesn't exist
+    for key in keys(mwfvalues[1])
+        key == :exact && continue # skip plotting horizontal lines of exact value
+        mwf = [d[key] for d in mwfvalues]
+        fname_appended = fname == nothing ? nothing : fname * "__" * string(key)
+        plotMWF(params, mwf, mwftrue; disp = disp, fname = fname_appended)
+    end
+    return nothing
+end
 
 function partitionby(s::AbstractVector{S}, field) where {S}
     seenindices = Set{Int}()
