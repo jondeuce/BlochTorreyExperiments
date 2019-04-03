@@ -370,7 +370,9 @@ version = "0.7.18"
 
 [[ExpmV]]
 deps = ["LinearAlgebra", "SparseArrays"]
-path = "/home/jdoucette/.julia/dev/ExpmV"
+git-tree-sha1 = "96586ede94349238548bf38b35834476ee426409"
+repo-rev = "master"
+repo-url = "https://github.com/jondeuce/ExpmV.jl"
 uuid = "e7fedf88-7a0b-11e8-3562-f39b41888c88"
 version = "0.1.3"
 
@@ -431,9 +433,9 @@ uuid = "9fa8497b-333b-5362-9e8d-4d0656e87820"
 
 [[GR]]
 deps = ["Base64", "DelimitedFiles", "LinearAlgebra", "Pkg", "Printf", "Random", "Serialization", "Sockets", "Test"]
-git-tree-sha1 = "41bd911efffb56957b45366770eaaa443de3f782"
+git-tree-sha1 = "08c4fc28ae58479f93616d5df164ab6b73541f2d"
 uuid = "28b8d3ca-fb5f-59d9-8090-bfdbd6d07a71"
-version = "0.38.1"
+version = "0.39.0"
 
 [[GenericSVD]]
 deps = ["LinearAlgebra", "Random", "Test"]
@@ -923,9 +925,9 @@ version = "0.3.0"
 
 [[PlotUtils]]
 deps = ["Colors", "Dates", "Printf", "Random", "Reexport", "Test"]
-git-tree-sha1 = "c93a471a55fe44e8e6ef5c750769fee15334bccf"
+git-tree-sha1 = "5da9a79a138db46558e6e08f649865b4c1f1ce93"
 uuid = "995b91a9-d308-5afd-9ec6-746e21dbc043"
-version = "0.5.6"
+version = "0.5.7"
 
 [[Plots]]
 deps = ["Base64", "Contour", "Dates", "FixedPointNumbers", "GR", "JSON", "LinearAlgebra", "Measures", "NaNMath", "Pkg", "PlotThemes", "PlotUtils", "Printf", "REPL", "Random", "RecipesBase", "Reexport", "Requires", "Showoff", "SparseArrays", "StaticArrays", "Statistics", "StatsBase", "Test", "UUIDs"]
@@ -1269,7 +1271,9 @@ version = "1.1.3"
 
 [[VoronoiDelaunay]]
 deps = ["Colors", "GeometricalPredicates", "Random", "Test"]
-path = "/home/jdoucette/.julia/dev/VoronoiDelaunay"
+git-tree-sha1 = "2914d0085a001036d70edb9525458b3589fd11fe"
+repo-rev = "master"
+repo-url = "https://github.com/jondeuce/VoronoiDelaunay.jl"
 uuid = "72f80fcb-8c52-57d9-aff0-40c1a3526986"
 version = "0.3.1+"
 

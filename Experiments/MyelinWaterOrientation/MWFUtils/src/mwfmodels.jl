@@ -254,8 +254,7 @@ function _fitmwfmodel(
             SearchRange = collect(zip(lb, ub)),
             NumDimensions = length(p0),
             MaxSteps = 1e5,
-            TraceMode = :silent
-        )
+            TraceMode = :silent)
         global_xbest = BlackBoxOptim.best_candidate(global_result)
 
         modelfit = (param = global_xbest,)

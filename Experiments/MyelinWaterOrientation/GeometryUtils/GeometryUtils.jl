@@ -20,7 +20,7 @@ using RecipesBase
 export Ellipse, Circle, Rectangle, VecOfCircles, VecOfEllipses, VecOfRectangles
 export norm2, hadamardproduct, ⊙, skewprod, ⊠
 export origin, radius, radii, widths, corners, geta, getb, getc, getF1, getF2, rotmat
-export dimension, floattype, xmin, ymin, xmax, ymax, area, volume
+export vecdim, dimension, floattype, xmin, ymin, xmax, ymax, area, volume
 export scale_shape, translate_shape, inscribed_square
 export signed_edge_distance, minimum_signed_edge_distance
 export bounding_box, bounding_circle, crude_bounding_circle, opt_bounding_ellipse, opt_bounding_circle, intersect_area, intersection_points, tile_rectangle

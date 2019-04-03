@@ -5,6 +5,12 @@
 @inline Base.convert(::Type{SVector{dim,T1}}, x::Vec{dim,T2}) where {dim,T1,T2} = SVector{dim,promote_type(T1,T2)}(Tuple(x))
 @inline Base.Tuple(v::Vec) = Tensors.get_data(v)
 
+Base.@pure Tensors.n_components(::Type{<:Vec{dim}}) where {dim} = dim
+Base.@pure Tensors.n_components(::Vec{dim}) where {dim} = dim
+Base.@pure Tensors.n_components(::Type{<:Complex}) = 1
+Base.@pure Tensors.n_components(::Complex) = 1
+@inline vecdim(x) = Tensors.n_components(x)
+
 @inline norm2(x::Vec) = dot(x,x)
 @inline Base.complex(x::Vec{2}) = complex(x[1], x[2])
 @inline Base.angle(x::Vec{2}) = atan(x[2], x[1])
