@@ -76,7 +76,7 @@ end
 
 function plotSEcorr(
         sols, btparams, myelindomains;
-        opts::NNLSRegression = NNLSRegression(),
+        opts::NNLSRegression = NNLSRegression(PlotDist = !AVOID_MAT_PLOTS),
         disp = false,
         fname = nothing
     )
@@ -84,15 +84,12 @@ function plotSEcorr(
     ts = get_tpoints(opts)
     signals = calcsignal(sols, ts, myelindomains)
 
-    PLOTDIST = !AVOID_MAT_PLOTS
-    MWImaps, MWIdist, MWIpart = fitmwfmodel(signals, opts; PLOTDIST = PLOTDIST)
+    MWImaps, MWIdist, MWIpart = fitmwfmodel(signals, opts)
 
     if AVOID_MAT_PLOTS
         mwf = _getmwf(opts, MWImaps, MWIdist, MWIpart)
         T2Vals = 1000 .* get_T2vals(opts)
-        xtickvals = length(T2Vals) <= 40 ? T2Vals :
-                    length(T2Vals) <= 80 ? T2Vals[1:2:end] :
-                    T2Vals[1:3:end] # length cannot be more than 120
+        xtickvals = length(T2Vals) <= 60 ? T2Vals : T2Vals[1:2:end] # length cannot be more than 120
 
         fig = plot(T2Vals, MWIdist[:];
             seriestype = :sticks,
@@ -112,8 +109,8 @@ function plotSEcorr(
             savefig(fig, fname * ".png")
         end
         disp && display(fig)
-    else
-        (PLOTDIST && !(fname == nothing)) && mxsavefig(fname)
+    elseif opts.PlotDist
+        !(fname == nothing) && mxsavefig(fname)
     end
 
     return MWImaps, MWIdist, MWIpart

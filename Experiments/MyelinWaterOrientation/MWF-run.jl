@@ -23,10 +23,19 @@ function MWF!(results, params, geom)
     to_str = (x) -> @sprintf "%.4f" round(x, sigdigits=4)
     curr_date = getnow()
     titleparamstr = "theta = $(to_str(rad2deg(params.theta))) deg, D = $(to_str(params.D_Tissue)) um2/s, K = $(to_str(params.K_perm)) um/s"
-    plotmagnitude(sols, params, myelindomains, bdry; titlestr = "Field Magnitude (" * titleparamstr * ")", fname = curr_date * "__magnitude")
-    plotSEcorr(sols, params, myelindomains, fname = curr_date * "__SEcorr")
-    plotbiexp(sols, params, myelindomains, outercircles, innercircles, bdry; titlestr = "Signal Magnitude: (" * titleparamstr * ")", fname = curr_date * "__signal")
-    plotomega(myelinprob, myelindomains, myelinsubdomains, bdry; titlestr = "Frequency Map (theta = $(to_str(rad2deg(params.theta))) deg)", fname = curr_date * "__omega")
+    
+    mkpath("mag"); mkpath("t2dist"); mkpath("sig"); mkpath("omega")
+    plotmagnitude(sols, params, myelindomains, bdry;
+        titlestr = "Field Magnitude (" * titleparamstr * ")",
+        fname = "mag/" * curr_date * "__magnitude")
+    plotSEcorr(sols, params, myelindomains;
+        fname = "t2dist/" * curr_date * "__SEcorr")
+    plotbiexp(sols, params, myelindomains, outercircles, innercircles, bdry;
+        titlestr = "Signal Magnitude: (" * titleparamstr * ")",
+        fname = "sig/" * curr_date * "__signal")
+    plotomega(myelinprob, myelindomains, myelinsubdomains, bdry;
+        titlestr = "Frequency Map (theta = $(to_str(rad2deg(params.theta))) deg)",
+        fname = "omega/" * curr_date * "__omega")
     
     # Compute MWF values
     mwfvalues, signals = compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry)
@@ -46,8 +55,6 @@ end
 
 function main(
         geomfilename = "geom.bson";
-        savemeasurables = true, # Save measurables only (total signal, mwf values, etc.) along with parameters
-        savemwfplot = true, # Save mwf values plot
         saveresultsdict = false # Save whole results dict, including copies of solutions and domains (not recommended; can be reproduced)
     )
     # Load geometries
@@ -57,9 +64,9 @@ function main(
     # thetarange = range(0.0, stop = π/2, length = 7)
     # Krange = [0, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
     # Drange = [100.0, 500.0]
-    thetarange = range(0.0, stop = π/2, length = 37)
-    Krange = [0.1]
-    Drange = [500.0]
+    thetarange = range(0.0, stop = π/2, length = 19)
+    Krange = [0.05]
+    Drange = [50.0]
 
     # Default parameters
     default_btparams = BlochTorreyParameters{Float64}(
@@ -118,10 +125,11 @@ function main(
             )
             MWF!(results, btparams, geom)
 
+            mkpath("sol")
             curr_date = getnow()
-            BSON.bson(curr_date * "__" * paramstr * "__btparams.bson", Dict(:btparams => btparams))
+            BSON.bson("sol/" * curr_date * "__" * paramstr * "__btparams.bson", Dict(:btparams => btparams))
             for (i,sol) in enumerate(results[:sols][end])
-                BSON.bson(curr_date * "__sol_$(count)__region_$(i)__odesolution.bson", Dict(:sol => deepcopy(sol)))
+                BSON.bson("sol/" * curr_date * "__sol_$(count)__region_$(i)__odesolution.bson", Dict(:sol => deepcopy(sol)))
             end
         catch e
             if e isa InterruptException
@@ -135,13 +143,22 @@ function main(
     end
 
     # Plot and save mwf
-    if savemwfplot
-        try
-            plotMWF(results; disp = false, fname = getnow() * "__mwfplot")
-        catch e
-            @warn "Error plotting MWF."
-            @warn sprint(showerror, e, catch_backtrace())
-        end
+    try
+        mkpath("mwfplots")
+        plotMWF(results; disp = false, fname = "mwfplots/" * getnow() * "__mwfplot")
+    catch e
+        @warn "Error plotting MWF."
+        @warn sprint(showerror, e, catch_backtrace())
+    end
+
+    # Save measurable quantities and params
+    try
+        @unpack params, signals, mwfvalues = results
+        BSON.bson(getnow() * "__params.bson", Dict(:params => params))
+        BSON.bson(getnow() * "__measurables.bson", Dict(:signals => signals, :mwfvalues => mwfvalues))
+    catch e
+        @warn "Error saving results!"
+        @warn sprint(showerror, e, catch_backtrace())
     end
 
     # Save results dict. Note that by default this is not done since the dict could be very large,
@@ -150,17 +167,6 @@ function main(
     if saveresultsdict
         try
             BSON.bson(getnow() * "__results.bson", Dict(:results => deepcopy(results)))
-        catch e
-            @warn "Error saving results!"
-            @warn sprint(showerror, e, catch_backtrace())
-        end
-    end
-
-    # Save measurable quantities
-    if savemeasurables
-        try
-            @unpack params, signals, mwfvalues = results
-            BSON.bson(getnow() * "__measurables.bson", Dict(:params => params, :signals => signals, :mwfvalues => mwfvalues))
         catch e
             @warn "Error saving results!"
             @warn sprint(showerror, e, catch_backtrace())
@@ -185,8 +191,8 @@ geomfilename = if !isfile("geom.bson")
     # )
     storedgeomfile = joinpath(
         "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/kmg_geom_sweep_6",
-        # "2019-03-29-T-10-47-05-945__N-40_g-0.7500_p-0.7000__structs.bson" #10k triangles,  8k points, Qmin = 0.4
-        "2019-03-29-T-12-19-17-694__N-40_g-0.8370_p-0.7500__structs.bson" #13k triangles, 10k points, Qmin = 0.4
+        "2019-03-29-T-10-47-05-945__N-40_g-0.7500_p-0.7000__structs.bson" #10k triangles,  8k points, Qmin = 0.4
+        # "2019-03-29-T-12-19-17-694__N-40_g-0.8370_p-0.7500__structs.bson" #13k triangles, 10k points, Qmin = 0.4
         # "2019-03-29-T-12-15-03-265__N-40_g-0.8000_p-0.8300__structs.bson" #28k triangles, 19k points, Qmin = 0.4
     )
     geomfilename = cp(storedgeomfile, "geom.bson")
@@ -196,3 +202,8 @@ end
 
 # Run sweep
 results = main(geomfilename)
+
+# Unpack for convenience in repl
+@unpack sols, myelindomains, params, signals, mwfvalues, geom, myelinsubdomains, myelinprobs, omegas = results
+@unpack exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
+results

@@ -12,8 +12,9 @@ function load_results_dict(;
     @unpack exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
 
     # Find btparam filenames and solution filenames
-    paramfiles = filter(s -> endswith(s, "btparams.bson"), readdir(basedir))
-    solfiles = filter(s -> endswith(s, "odesolution.bson"), readdir(basedir))
+    soldir = isdir(joinpath(basedir, "sol")) ? joinpath(basedir, "sol") : basedir
+    paramfiles = filter(s -> endswith(s, "btparams.bson"), joinpath.(soldir, readdir(soldir)))
+    solfiles = filter(s -> endswith(s, "odesolution.bson"), joinpath.(soldir, readdir(soldir)))
     numregions = length(solfiles) ÷ length(paramfiles)
 
     # Initialize results

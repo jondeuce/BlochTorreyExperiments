@@ -47,8 +47,7 @@ mwimodeldata(modeltype::TwoPoolMagnData, S::Vector{V}) where {V <: Vec{2}} = nor
 # NNLSRegression model
 function _fitmwfmodel(
         signals::Vector{V},
-        modeltype::NNLSRegression;
-        PLOTDIST = false # plot resulting T2-distribution
+        modeltype::NNLSRegression
     ) where {V <: Vec{2}}
 
     @unpack TE, nTE, nT2, Threshold, RefConAngle, T2Range, SPWin, MPWin = modeltype
@@ -74,18 +73,18 @@ function _fitmwfmodel(
         "mpwin", MPWin
     )
 
-    if PLOTDIST
-        T2Vals = 1000 .* get_T2vals(modeltype)
+    if modeltype.PlotDist
+        T2Vals = get_T2vals(modeltype)
         mwf = _getmwf(modeltype, MWImaps, MWIdist, MWIpart)
 
         mxcall(:figure, 0)
         mxcall(:semilogx, 0, 1e3 .* T2Vals, MWIdist[:])
+        mxcall(:hold, 0, "on")
         mxcall(:axis, 0, "on")
         mxcall(:xlim, 0, 1e3 .* T2Range)
         mxcall(:xlabel, 0, "T2 [ms]")
         mxcall(:title, 0, "T2 Distribution: nT2 = $nT2, mwf = $(round(mwf; digits=4))")
-        mxcall(:hold, 0, "on")
-        
+
         ylim = mxcall(:ylim, 1)
         for s in SPWin; mxcall(:semilogx, 0, 1e3 .* [s,s], ylim, "r--"); end
         for m in MPWin; mxcall(:semilogx, 0, 1e3 .* [m,m], ylim, "g-."); end
@@ -286,15 +285,24 @@ function _getmwf(modeltype::TwoPoolModel, modelfit, errors)
     return A_my/(A_my + A_ex)
 end
 
-function compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry)
-    signals = calcsignal(sols, get_tpoints(NNLSRegression()), myelindomains)
+function compareMWFmethods(
+        sols, myelindomains, outercircles, innercircles, bdry;
+        models::Vector{<:AbstractMWIFittingModel} =
+            [NNLSRegression(), TwoPoolMagnToMagn(), ThreePoolMagnToMagn(), ThreePoolCplxToMagn(), ThreePoolCplxToCplx()]
+    )
+    if isempty(models)
+        return (mwfvalues = nothing, signals = nothing)
+    end
+    signals = calcsignal(sols, get_tpoints(models[1]), myelindomains)
     mwfvalues = Dict(
         :exact => getmwf(outercircles, innercircles, bdry),
-        :NNLSRegression => getmwf(signals, NNLSRegression()),
-        :TwoPoolMagnToMagn => getmwf(signals, TwoPoolMagnToMagn()),
-        :ThreePoolMagnToMagn => getmwf(signals, ThreePoolMagnToMagn()),
-        :ThreePoolCplxToMagn => getmwf(signals, ThreePoolCplxToMagn()),
-        :ThreePoolCplxToCplx => getmwf(signals, ThreePoolCplxToCplx())
+        [Symbol(typeof(m)) => getmwf(signals, m) for m in models]...
     )
+    #     :NNLSRegression => getmwf(signals, NNLSRegression()),
+    #     :TwoPoolMagnToMagn => getmwf(signals, TwoPoolMagnToMagn()),
+    #     :ThreePoolMagnToMagn => getmwf(signals, ThreePoolMagnToMagn()),
+    #     :ThreePoolCplxToMagn => getmwf(signals, ThreePoolCplxToMagn()),
+    #     :ThreePoolCplxToCplx => getmwf(signals, ThreePoolCplxToCplx())
+    # )
     return (mwfvalues = mwfvalues, signals = signals)
 end

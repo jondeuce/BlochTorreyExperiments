@@ -31,9 +31,10 @@ end
     nT2::Int                 = 120              # Number of T2 bins used during fitting process, spaced logarithmically in `T2Range`
     Threshold::Float64       = 0.0              # First echo intensity cutoff for empty voxels
     RefConAngle::Float64     = 180.0            # Refocusing Pulse Control Angle (TODO: check value from scanner; old default is 165.0)
-    T2Range::Vector{Float64} = [8e-3, 2.0]      # Min and Max T2 values used during fitting (typical for in-vivo)
-    SPWin::Vector{Float64}   = [8e-3, 25e-3]    # short peak window (typically 1.5X echospacing to 40ms)
-    MPWin::Vector{Float64}   = [25e-3, 200e-3]  # middle peak window
+    T2Range::Vector{Float64} = [5e-3, 2.0]      # Min and Max T2 values used during fitting (typical for in-vivo)
+    SPWin::Vector{Float64}   = [10e-3, 40e-3]   # Short peak window (typically 1.5X echospacing to 40ms)
+    MPWin::Vector{Float64}   = [40e-3, 200e-3]  # Middle peak window
+    PlotDist::Bool           = false            # Plot resulting T2 distribution
 end
 
 const TwoPoolMagnData = TwoPoolMagnToMagn

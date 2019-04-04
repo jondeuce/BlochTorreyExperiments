@@ -18,8 +18,12 @@ end
 @inline fielddim(::Vec{dim}) where {dim} = dim
 @inline fielddim(::Type{<:Complex}) = 1
 @inline fielddim(::Complex) = 1
-@inline fielddim(::Type{<:Real}) = 1
-@inline fielddim(::Real) = 1
+
+# Underlying floating point type of field
+@inline floattype(::Type{Vec{dim,T}}) where {dim,T} = T
+@inline floattype(::Vec{dim,T}) where {dim,T} = T
+@inline floattype(::Type{Complex{T}}) where {T} = T
+@inline floattype(::Complex{T}) where {T} = T
 
 @inline norm2(x::Vec) = dot(x,x)
 @inline Base.complex(x::Vec{2}) = complex(x[1], x[2])

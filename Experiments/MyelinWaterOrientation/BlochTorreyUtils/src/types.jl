@@ -74,7 +74,9 @@ const VectorOfDomains{uDim,gDim,T,Nd,Nf} = AbstractVector{<:AbstractDomain{uDim,
 
 # ParabolicDomain: generic domain type which holds this information necessary to
 # solve a parabolic FEM problem M*du/dt = K*u
-mutable struct ParabolicDomain{uDim,gDim,T,Nd,Nf,MType<:MassType{T},KType<:StiffnessType{T}} <: AbstractDomain{uDim,gDim,T,Nd,Nf}
+mutable struct ParabolicDomain{
+        uDim, gDim, T, Nd, Nf, MType <: MassType{T}, MfactType <: Factorization{T}, KType <: StiffnessType{T}
+        } <: AbstractDomain{uDim,gDim,T,Nd,Nf}
     grid::Grid{gDim,Nd,T,Nf}
     dh::DofHandler{gDim,Nd,T,Nf}
     cellvalues::CellValues{gDim,T}
@@ -84,7 +86,7 @@ mutable struct ParabolicDomain{uDim,gDim,T,Nd,Nf,MType<:MassType{T},KType<:Stiff
     funcinterporder::Int
     geominterporder::Int
     M::MType
-    Mfact::Union{Nothing,<:Factorization}
+    Mfact::Union{Nothing,MfactType}
     K::KType
     w::Vector{T}
 end
@@ -129,14 +131,17 @@ function ParabolicDomain(
         renumber!(dh, perm)
     end
 
-    # Mass matrix, inverse mass matrix, stiffness matrix, and weights vector
+    # Mass and stiffness matrices, and weights vector
     M = create_sparsity_pattern(dh)
     # M = create_symmetric_sparsity_pattern(dh)
     K = create_sparsity_pattern(dh)
     w = zeros(T, ndofs(dh))
-    Mfact = nothing
 
-    ParabolicDomain{uDim,gDim,T,Nd,Nf,typeof(M),typeof(K)}(
+    # Initialize Mfact to nothing
+    Mfact = nothing
+    MfactType = SuiteSparse.CHOLMOD.Factor{T}
+
+    ParabolicDomain{uDim,gDim,T,Nd,Nf,typeof(M),MfactType,typeof(K)}(
         grid, dh, cellvalues, facevalues,
         refshape, quadorder, funcinterporder, geominterporder,
         M, Mfact, K, w
@@ -218,14 +223,13 @@ end
 # ParabolicLinearMap: create a LinearMaps subtype which wrap the action of
 # Mfact\K in a LinearMap object. Does not make copies of M, Mfact, or K;
 # simply is a light wrapper for them
-struct ParabolicLinearMap{T,MType<:AbstractMatrix{T},KType<:AbstractMatrix{T}} <: LinearMap{T}
+struct ParabolicLinearMap{T, MType<:AbstractMatrix{T}, MfactType <: Factorization{T}, KType<:AbstractMatrix{T}} <: LinearMap{T}
     M::MType
-    Mfact::Union{Nothing,<:Factorization}
+    Mfact::MfactType
     K::KType
-    function ParabolicLinearMap(M::AbstractMatrix{T}, Mfact::Union{Nothing,<:Factorization}, K::AbstractMatrix{T}) where {T}
-        @assert (size(M) == size(K)) && (size(M,1) == size(M,2))
-        # @assert (size(M) == size(Mfact) || size(M) == 2 .* size(Mfact)) # for factoring only M[1:2:end,1:2:end]
-        new{T,typeof(M),typeof(K)}(M, Mfact, K)
+    function ParabolicLinearMap(M::AbstractMatrix{T}, Mfact::Factorization{T}, K::AbstractMatrix{T}) where {T}
+        @assert (size(M) == size(Mfact) == size(K)) && (size(M,1) == size(M,2))
+        new{T, typeof(M), typeof(Mfact), typeof(K)}(M, Mfact, K)
     end
 end
 ParabolicLinearMap(d::ParabolicDomain) = ParabolicLinearMap(getmass(d), getmassfact(d), getstiffness(d))
