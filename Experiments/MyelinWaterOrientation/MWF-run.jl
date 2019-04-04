@@ -59,7 +59,7 @@ function main(
     # Drange = [100.0, 500.0]
     thetarange = range(0.0, stop = π/2, length = 37)
     Krange = [0.1]
-    Drange = [50.0]
+    Drange = [500.0]
 
     # Default parameters
     default_btparams = BlochTorreyParameters{Float64}(

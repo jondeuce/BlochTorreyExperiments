@@ -359,8 +359,8 @@ function doassemble!(
             coords_qp = spatial_coordinate(getcellvalues(domain), q_point, coords)
 
             # calculate the heat conductivity and heat source at point `coords_qp`
-            R = prob.Rdecay(coords_qp)
             D = prob.Dcoeff(coords_qp)
+            R = prob.Rdecay(coords_qp)
             ω = prob.Omega(coords_qp)
 
             # For each quadrature point we loop over all the (local) shape functions.
@@ -384,42 +384,6 @@ function doassemble!(
         assemble!(assembler_K, celldofs(cell), Ke, we)
         assemble!(assembler_M, celldofs(cell), Me)
     end
-
-    # # Now, allocate local interface element matrices.
-    # n_basefuncs = getnbasefunctions(getfacevalues(domain))
-    # Se = zeros(T, 2*n_basefuncs, 2*n_basefuncs)
-    # @show size(Se)
-    #
-    # # Loop over the edges of the cell for interface contributions to `Ke`.
-    # # For example, if "Neumann Boundary" is a subset of boundary points, use:
-    # #   `onboundary(cell, face) && (cellid(cell), face) ∈ getfaceset(grid, "Neumann Boundary")`
-    # for face in 1:nfaces(cell) && (cellid(cell), face) ∈ getfaceset(grid, "Interface")
-    #     if onboundary(cell, face)
-    #         # Initialize face values
-    #         JuAFEM.reinit!(getfacevalues(domain), cell, face)
-    #
-    #         for q_point in 1:getnquadpoints(facevalues)
-    #             dΓ = getdetJdV(facevalues, q_point)
-    #             coords_qp = spatial_coordinate(facevalues, q_point, coords)
-    #
-    #             # calculate the heat conductivity and heat source at point `coords_qp`
-    #             f = func(coords_qp)
-    #             fdΓ = f * dΓ
-    #
-    #             for i in 1:getnbasefunctions(facevalues)
-    #                 n = getnormal(facevalues, q_point)
-    #                 v = shape_value(facevalues, q_point, i)
-    #                 vfdΓ = v * fdΓ
-    #                 for j in 1:n_basefuncs
-    #                     ∇u = shape_gradient(facevalues, q_point, j)
-    #                     Ke[i,j] += (∇u⋅n) * vfdΓ
-    #                 end
-    #             end
-    #         end
-    #     end
-    # end
-    # function surface_integral!(Ke, facevalues::FaceVectorValues, cell, q_point, coords, func::Function)
-    # end
 
     return domain
 end
@@ -463,13 +427,13 @@ function addquadweights!(domain::ParabolicDomain{uDim,gDim,T}) where {uDim,gDim,
     end
 
     return domain
-    end
+end
 
-    # Assemble the standard mass and stiffness matrices on the ParabolicDomain
-    # `domain`. The resulting system is $M u_t = K u$ and is equivalent to the weak
-    # form of the heat equation $u_t = k Δu$ with k = 1. `M` is positive definite,
-    # and `K` is negative definite.
-    function doassemble!(domain::ParabolicDomain{uDim,gDim,T}) where {uDim,gDim,T}
+# Assemble the standard mass and stiffness matrices on the ParabolicDomain
+# `domain`. The resulting system is $M u_t = K u$ and is equivalent to the weak
+# form of the heat equation $u_t = k Δu$ with k = 1. `M` is positive definite,
+# and `K` is negative definite.
+function doassemble!(domain::ParabolicDomain{uDim,gDim,T}) where {uDim,gDim,T}
     # This assembly function is only for CellVectorValues
     @assert typeof(getcellvalues(domain)) <: CellVectorValues
 
@@ -536,23 +500,29 @@ end
 # Example loop for evaluating surface/boundary integrals
 # ---------------------------------------------------------------------------- #
 
-# Loop over the edges of the cell for contributions to `Ke`. For example, if
-# "Neumann Boundary" is a subset of boundary points, use:
-#     `onboundary(cell, face) && (cellid(cell), face) ∈ getfaceset(grid, "Neumann Boundary")`
-function surface_integral!(Ke, facevalues::FaceVectorValues, cell, q_point, coords, func::Function)
-    for face in 1:nfaces(cell)
-        if !onboundary(cell, face)
-            # Initialize face values
-            reinit!(facevalues, cell, face)
+# Loop over the edges of a cell to add interface contributions to `Ke`
+function add_interface!(Ke, facevalues::FaceVectorValues, cell)#, q_point, coords, func::Function)
+    # TODO: make this a working function
+    @warn "Function add_interface! is only a sketch of an implementation; returning Ke"
+    return Ke
 
+    # Allocate local interface element matrices.
+    n_basefuncs = getnbasefunctions(getfacevalues(domain))
+    Se = zeros(T, 2*n_basefuncs, 2*n_basefuncs)
+    
+    for face in 1:nfaces(cell)
+        if onboundary(cell, face) && (cellid(cell), face) ∈ getfaceset(grid, "Interface")
+            # Initialize face values
+            JuAFEM.reinit!(getfacevalues(domain), cell, face)
+    
             for q_point in 1:getnquadpoints(facevalues)
                 dΓ = getdetJdV(facevalues, q_point)
                 coords_qp = spatial_coordinate(facevalues, q_point, coords)
-
+    
                 # calculate the heat conductivity and heat source at point `coords_qp`
                 f = func(coords_qp)
                 fdΓ = f * dΓ
-
+    
                 for i in 1:getnbasefunctions(facevalues)
                     n = getnormal(facevalues, q_point)
                     v = shape_value(facevalues, q_point, i)
