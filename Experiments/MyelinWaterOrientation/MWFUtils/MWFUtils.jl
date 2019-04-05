@@ -48,5 +48,3 @@ export MWFResults
 include("src/mwfresults.jl")
 
 end # module MWFUtils
-
-nothing

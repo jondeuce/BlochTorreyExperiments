@@ -9,5 +9,3 @@ include("src/expmv_fun.jl")
 export expmv, expmv!, select_taylor_degree
 
 end # module
-
-nothing

@@ -294,16 +294,22 @@ function loadgeometry(fname)
 end
 
 function createdomains(
-        btparams::BlochTorreyParameters{T},
+        btparams::BlochTorreyParameters{Tu},
         exteriorgrids::AbstractArray{G},
         torigrids::AbstractArray{G},
         interiorgrids::AbstractArray{G},
         outercircles::AbstractArray{C},
-        innercircles::AbstractArray{C}
-    ) where {T, G<:JuAFEM.Grid{2}, C<:Circle{2,T}}
+        innercircles::AbstractArray{C},
+        ferritins::AbstractArray{V} = Vec{3,T}[], #Default to geometry float type
+        ::Type{uType} = Vec{2,Tu}; #Default btparams float type
+        kwargs...
+    ) where {T, G<:TriangularGrid{T}, C<:Circle{2,T}, V<:Vec{3,T}, Tu, uType<:FieldType{Tu}}
 
     myelinprob = MyelinProblem(btparams)
-    myelinsubdomains = createmyelindomains(exteriorgrids[:], torigrids[:], interiorgrids[:], outercircles[:], innercircles[:])
+    myelinsubdomains = createmyelindomains(
+        vec(exteriorgrids), vec(torigrids), vec(interiorgrids),
+        vec(outercircles), vec(innercircles), vec(ferritins),
+        uType; kwargs...)
 
     println("Assembling...")
     @time doassemble!.(myelinsubdomains, Ref(myelinprob))

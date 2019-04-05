@@ -76,26 +76,28 @@ const VectorOfDomains{Tu,uType,gDim,T,Nd,Nf} = AbstractVector{<:AbstractDomain{T
 mutable struct ParabolicDomain{
         Tu, uType <: FieldType{Tu},
         gDim, T, Nd, Nf,
+        S <: JuAFEM.AbstractRefShape, CV <: CellValues{gDim,T,S}, FV <: FaceValues{gDim,T,S},
         MType <: MassType{T}, MfactType <: MassFactType{T}, KType <: StiffnessType{T}
         } <: AbstractDomain{Tu,uType,gDim,T,Nd,Nf}
     grid::Grid{gDim,Nd,T,Nf}
     dh::DofHandler{gDim,Nd,T,Nf}
-    cellvalues::CellValues{gDim,T}
-    facevalues::FaceValues{gDim,T}
-    refshape::Type{<:JuAFEM.AbstractRefShape}
+    refshape::S
+    cellvalues::CV
+    facevalues::FV
     quadorder::Int
     funcinterporder::Int
     geominterporder::Int
     M::MType
     Mfact::Union{Nothing,MfactType}
     K::KType
-    w::Vector{Tu}
+    metadata::Dict{Any,Any}
+    # w::Vector{Tu}
 end
 
 function ParabolicDomain(
         grid::Grid{gDim,Nd,T,Nf},
         ::Type{uType} = Vec{2,T}; #Default to same float type as grid
-        refshape = RefTetrahedron,
+        refshape::JuAFEM.AbstractRefShape = RefTetrahedron(),
         quadorder::Int = 3,
         funcinterporder::Int = 1,
         geominterporder::Int = 1
@@ -105,10 +107,10 @@ function ParabolicDomain(
     @assert uDim == 2 #TODO: where is this assumption? likely, assume dim(u) == dim(grid) somewhere
 
     # Quadrature and interpolation rules and corresponding cellvalues/facevalues
-    func_interp = Lagrange{gDim, refshape, funcinterporder}()
-    geom_interp = Lagrange{gDim, refshape, geominterporder}()
-    quadrule = QuadratureRule{gDim, refshape}(quadorder)
-    quadrule_face = QuadratureRule{gDim-1, refshape}(quadorder)
+    func_interp = Lagrange{gDim, typeof(refshape), funcinterporder}()
+    geom_interp = Lagrange{gDim, typeof(refshape), geominterporder}()
+    quadrule = QuadratureRule{gDim, typeof(refshape)}(quadorder)
+    quadrule_face = QuadratureRule{gDim-1, typeof(refshape)}(quadorder)
     cellvalues = CellVectorValues(T, quadrule, func_interp, geom_interp)
     facevalues = FaceVectorValues(T, quadrule_face, func_interp, geom_interp)
     # cellvalues = CellScalarValues(T, quadrule, func_interp, geom_interp)
@@ -137,16 +139,17 @@ function ParabolicDomain(
     M = create_sparsity_pattern(dh)
     # M = create_symmetric_sparsity_pattern(dh)
     K = create_sparsity_pattern(dh)
-    w = zeros(T, ndofs(dh))
+    # w = zeros(T, ndofs(dh))
 
     # Initialize Mfact to nothing
     Mfact = nothing
     MfactType = SuiteSparse.CHOLMOD.Factor{T}
 
-    ParabolicDomain{Tu,uType,gDim,T,Nd,Nf,typeof(M),MfactType,typeof(K)}(
-        grid, dh, cellvalues, facevalues,
-        refshape, quadorder, funcinterporder, geominterporder,
-        M, Mfact, K, w
+    ParabolicDomain{Tu,uType,gDim,T,Nd,Nf,typeof(refshape),typeof(cellvalues),typeof(facevalues),typeof(M),MfactType,typeof(K)}(
+        grid, dh,
+        refshape, cellvalues, facevalues,
+        quadorder, funcinterporder, geominterporder,
+        M, Mfact, K, Dict{Any,Any}() #w
     )
 end
 

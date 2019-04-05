@@ -5,9 +5,6 @@ using BenchmarkTools
 
 using GeometryUtils
 using CirclePackingUtils
-using GreedyCirclePacking
-using EnergyCirclePacking
-using ManifoldCirclePacking
 
 using Distributions
 using LinearAlgebra

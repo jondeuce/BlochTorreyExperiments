@@ -14,7 +14,7 @@ using TimerOutputs
     function getintegral(f; cellshape = Triangle, refshape = RefTetrahedron, qorder = 1, forder = 1, gorder = 1, N = 20)
         grid = generate_grid(cellshape, (N, N))
         domain = ParabolicDomain(grid; refshape = refshape, quadorder = qorder, funcinterporder = forder, geominterporder = gorder)
-        addquadweights!(domain)
+        # addquadweights!(domain)
         u = BlochTorreyUtils.interpolate(f, domain)
         I = BlochTorreyUtils.integrate(u, domain)
         return I

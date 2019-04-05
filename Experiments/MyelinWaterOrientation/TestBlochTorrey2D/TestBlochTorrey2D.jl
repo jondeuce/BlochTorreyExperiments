@@ -18,9 +18,6 @@ using BlochTorreySolvers
 using ExpmvHigham
 using MWFUtils
 
-import EnergyCirclePacking
-import GreedyCirclePacking
-
 export lap, testbtfindiff2D, testbtfinelem2D, testblochtorrey2D
 
 include("src/testneumannfindiff.jl")

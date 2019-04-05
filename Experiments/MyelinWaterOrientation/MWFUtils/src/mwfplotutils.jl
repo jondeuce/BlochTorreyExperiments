@@ -1,6 +1,7 @@
 function plotomega(myelinprob, myelindomains, myelinsubdomains, bdry; titlestr = "Omega", fname = nothing)
     omega = calcomega(myelinprob, myelinsubdomains)
-    mxsimpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = omega)
+    mxsimpplot(getgrid.(myelindomains); newfigure = true, facecol = omega,
+        axis = Float64[mxaxis(bdry)...])
     mxcall(:title, 0, titlestr)
     !(fname == nothing) && mxsavefig(fname)
     return nothing
@@ -8,7 +9,10 @@ end
 
 function plotmagnitude(sols, btparams, myelindomains, bdry; titlestr = "Magnitude", fname = nothing)
     Umagn = reduce(vcat, norm.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
-    mxsimpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = Umagn)
+    @unpack R2_sp, R2_lp, R2_Tissue = btparams
+    caxis = (0.0, exp(-min(R2_sp, R2_lp, R2_Tissue) * sols[1].t[end]))
+    mxsimpplot(getgrid.(myelindomains); newfigure = true, facecol = Umagn,
+        axis = Float64[mxaxis(bdry)...], caxis = Float64[caxis...])
     mxcall(:title, 0, titlestr)
     !(fname == nothing) && mxsavefig(fname)
     return nothing
@@ -16,7 +20,8 @@ end
 
 function plotphase(sols, btparams, myelindomains, bdry; titlestr = "Phase", fname = nothing)
     Uphase = reduce(vcat, angle.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
-    mxsimpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = Uphase)
+    mxsimpplot(getgrid.(myelindomains); newfigure = true, facecol = Uphase,
+        axis = Float64[mxaxis(bdry)...])
     mxcall(:title, 0, titlestr)
     !(fname == nothing) && mxsavefig(fname)
     return nothing

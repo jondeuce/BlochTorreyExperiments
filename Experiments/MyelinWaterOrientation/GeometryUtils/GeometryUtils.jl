@@ -31,5 +31,3 @@ include("src/types.jl")
 include("src/utils.jl")
 
 end # module GeometryUtils
-
-nothing

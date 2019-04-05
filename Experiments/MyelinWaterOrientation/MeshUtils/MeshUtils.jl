@@ -21,5 +21,3 @@ export mxbbox, mxaxis
 include("src/utils.jl")
 
 end # module MeshUtils
-
-nothing

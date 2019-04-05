@@ -22,5 +22,3 @@ include("src/GreedyCirclePacking.jl")
 include("src/EnergyCirclePacking.jl")
 
 end # module CirclePackingUtils
-
-nothing

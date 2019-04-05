@@ -27,10 +27,10 @@ import Lazy
 # Exported Methods
 # ---------------------------------------------------------------------------- #
 export normest1_norm, radiidistribution
-export doassemble!, addquadweights!, factorize!, interpolate, interpolate!, integrate
+export doassemble!, factorize!, interpolate, interpolate!, integrate #, addquadweights
 export getgrid, getdomain, numfibres, createmyelindomains, omegamap
 export getdofhandler, getcellvalues, getfacevalues,
-       getmass, getmassfact, getstiffness, getquadweights,
+       getmass, getmassfact, getstiffness, # getquadweights
        getregion, getoutercircles, getinnercircles, getoutercircle, getinnercircle, getouterradius, getinnerradius
 export testproblem
 
@@ -52,5 +52,3 @@ include("src/linearmaps.jl")
 include("src/frequencyfields.jl")
 
 end # module BlochTorreyUtils
-
-nothing

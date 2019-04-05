@@ -33,9 +33,6 @@ using BlochTorreySolvers
 using MATLABPlots
 using MWFUtils
 
-import EnergyCirclePacking
-import GreedyCirclePacking
-
 #####
 ##### Debugging packages
 #####

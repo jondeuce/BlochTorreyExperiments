@@ -21,5 +21,3 @@ export ExpokitExpmv, HighamExpmv
 include("src/diffeq.jl")
 
 end # module BlochTorreySolvers
-
-nothing

@@ -25,5 +25,3 @@ include("src/distmesh2d.jl")
 include("src/kmg2d.jl")
 
 end # module DistMesh
-
-nothing
