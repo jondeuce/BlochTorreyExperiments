@@ -64,9 +64,9 @@ function main(
     # thetarange = range(0.0, stop = π/2, length = 7)
     # Krange = [0, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
     # Drange = [100.0, 500.0]
-    thetarange = range(0.0, stop = π/2, length = 3)
-    Krange = [0.05]
-    Drange = [50.0]
+    thetarange = range(0.0, stop = π/2, length = 10)
+    Krange = [0.01, 0.05]
+    Drange = [10.0, 50.0, 100.0]
 
     # Default parameters
     default_btparams = BlochTorreyParameters{Float64}(
@@ -78,10 +78,10 @@ function main(
         D_Axon = 500.0, # [μm²/s]
         K_perm = 0.5 # [μm/s]
     )
-    # default_btparams = BlochTorreyParameters(default_btparams;
-    #     ChiI = 100 * default_btparams.ChiI, # drastically amplify myelin susceptibility for testing
-    #     ChiA = 100 * default_btparams.ChiA  # drastically amplify myelin susceptibility for testing
-    # )
+    default_btparams = BlochTorreyParameters(default_btparams;
+        ChiI = 10 * default_btparams.ChiI, # drastically amplify myelin susceptibility for testing
+        ChiA = 10 * default_btparams.ChiA  # drastically amplify myelin susceptibility for testing
+    )
 
     # Labels
     numfibres = length(geom.innercircles)
@@ -178,23 +178,23 @@ end
 
 # Load precomputed geometry and run parameter sweep
 geomfilename = if !isfile("geom.bson")
-    storedgeomfile = joinpath(
-        "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/kmg_geom_sweep_3",
-        "2019-03-28-T-15-24-11-877__N-10_g-0.7500_p-0.7500__structs.bson" # 1.3k triangles, 1.2k points, Qmin = 0.3
-        # "2019-03-28-T-15-26-44-544__N-10_g-0.8000_p-0.8300__structs.bson" # 4.7k triangles, 3.2k points, Qmin = 0.3
-        # "2019-03-28-T-15-27-56-042__N-20_g-0.7500_p-0.7000__structs.bson" # 3.1k triangles, 2.6k points, Qmin = 0.3
-        # "2019-03-28-T-15-33-59-628__N-20_g-0.8000_p-0.8000__structs.bson" #13.3k triangles, 9.2k points, Qmin = 0.3
-    )
+    # storedgeomfile = joinpath(
+    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/kmg_geom_sweep_3",
+    #     "2019-03-28-T-15-24-11-877__N-10_g-0.7500_p-0.7500__structs.bson" # 1.3k triangles, 1.2k points, Qmin = 0.3
+    #     # "2019-03-28-T-15-26-44-544__N-10_g-0.8000_p-0.8300__structs.bson" # 4.7k triangles, 3.2k points, Qmin = 0.3
+    #     # "2019-03-28-T-15-27-56-042__N-20_g-0.7500_p-0.7000__structs.bson" # 3.1k triangles, 2.6k points, Qmin = 0.3
+    #     # "2019-03-28-T-15-33-59-628__N-20_g-0.8000_p-0.8000__structs.bson" #13.3k triangles, 9.2k points, Qmin = 0.3
+    # )
     # storedgeomfile = joinpath(
     #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/kmg_geom_sweep_4",
     #     "2019-03-28-T-16-19-20-218__N-40_g-0.7500_p-0.8000__structs.bson" # 11.0k triangles, 8.6k points, Qmin = 0.3
     # )
-    # storedgeomfile = joinpath(
-    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/kmg_geom_sweep_6",
-    #     "2019-03-29-T-10-47-05-945__N-40_g-0.7500_p-0.7000__structs.bson" #10k triangles,  8k points, Qmin = 0.4
-    #     # "2019-03-29-T-12-19-17-694__N-40_g-0.8370_p-0.7500__structs.bson" #13k triangles, 10k points, Qmin = 0.4
-    #     # "2019-03-29-T-12-15-03-265__N-40_g-0.8000_p-0.8300__structs.bson" #28k triangles, 19k points, Qmin = 0.4
-    # )
+    storedgeomfile = joinpath(
+        "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/kmg_geom_sweep_6",
+        # "2019-03-29-T-10-47-05-945__N-40_g-0.7500_p-0.7000__structs.bson" #10k triangles,  8k points, Qmin = 0.4
+        "2019-03-29-T-12-19-17-694__N-40_g-0.8370_p-0.7500__structs.bson" #13k triangles, 10k points, Qmin = 0.4
+        # "2019-03-29-T-12-15-03-265__N-40_g-0.8000_p-0.8300__structs.bson" #28k triangles, 19k points, Qmin = 0.4
+    )
     geomfilename = cp(storedgeomfile, "geom.bson")
 else
     "geom.bson"

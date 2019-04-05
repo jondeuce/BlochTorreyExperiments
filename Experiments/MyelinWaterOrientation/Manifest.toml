@@ -166,9 +166,9 @@ version = "0.6.4"
 
 [[CodeTracking]]
 deps = ["InteractiveUtils", "Test", "UUIDs"]
-git-tree-sha1 = "6ea33cc752fd5d92caa9f374f32840e6a99ddc34"
+git-tree-sha1 = "fd9c4a8cf1c51516145b686981ee689524bcb458"
 uuid = "da1fd8a2-8d9e-5ec2-8556-3022fb5608a2"
-version = "0.5.2"
+version = "0.5.4"
 
 [[CodecZlib]]
 deps = ["BinaryProvider", "Libdl", "Test", "TranscodingStreams"]
@@ -722,9 +722,9 @@ uuid = "56ddb016-857b-54e1-b83d-db4d58db5568"
 
 [[LoweredCodeUtils]]
 deps = ["JuliaInterpreter", "Test"]
-git-tree-sha1 = "51e3d512848f96e0017338e1e7e3485ee2730e6e"
+git-tree-sha1 = "6ab4d4f1c2ee5db423ada97ca7bec3081641321a"
 uuid = "6f1432cf-f94c-5a45-995e-cdbf5db27b0b"
-version = "0.3.0"
+version = "0.3.1"
 
 [[LsqFit]]
 deps = ["Distributions", "LinearAlgebra", "NLSolversBase", "OptimBase", "Random", "StatsBase", "Test"]
@@ -1013,9 +1013,9 @@ version = "0.3.1"
 
 [[Rebugger]]
 deps = ["CodeTracking", "HeaderREPLs", "InteractiveUtils", "JuliaInterpreter", "Pkg", "REPL", "Revise", "Test", "UUIDs"]
-git-tree-sha1 = "627b37f9fdee3c10b649ff61974f3e746b5e7b53"
+git-tree-sha1 = "c1105eadc6cb7d9db600737a026e06cae88fe6cf"
 uuid = "ee283ea6-eecd-56e3-beb3-83eb4d3c31e9"
-version = "0.3.0"
+version = "0.3.1"
 
 [[RecipesBase]]
 deps = ["Random", "Test"]
