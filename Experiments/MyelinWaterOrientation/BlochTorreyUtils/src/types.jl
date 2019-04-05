@@ -1,12 +1,11 @@
 # Convenience definitions
-const MyelinBoundary{gDim,T} = Union{<:Circle{gDim,T}, <:Rectangle{gDim,T}, <:Ellipse{gDim,T}}
-const VectorOfVectors{T} = AbstractVector{<:AbstractVector{T}}
-const MaybeSymmSparseMatrixCSC{T} = Union{<:SparseMatrixCSC{T}, <:Symmetric{T,<:SparseMatrixCSC{T}}}
-# const MaybeNothingFactorization{T} = Union{Nothing, <:Factorization{T}}
-const MassType{T} = MaybeSymmSparseMatrixCSC{T}
-# const MassFactType{T} = Factorization{T}
+const FieldType{T} = Union{<:Vec{dim,T} where dim, Complex{T}} where {T<:Real}
+const MassType{T} = Union{<:SparseMatrixCSC{T}, <:Symmetric{T,<:SparseMatrixCSC{T}}}
+const MassFactType{T} = Factorization{T}
 const StiffnessType{T} = SparseMatrixCSC{T}
 const TriangularGrid{T} = Grid{2,3,T,3}
+const VectorOfVectors{T} = AbstractVector{<:AbstractVector{T}}
+const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{gDim,T}}
 
 # Struct of BlochTorreyParameters. T is the float type.
 @with_kw struct BlochTorreyParameters{T}
@@ -64,19 +63,21 @@ struct BlochTorreyProblem{T,D,R,W} <: AbstractParabolicProblem{T}
 end
 
 # Abstract domain type. The type parameters are:
-#   `uDim`:  Dimension of `u`
+#   `uType`:  Dimension of `u`
 #   `gDim`:  Spatial dimension of domain
 #   `T`:    Float type used
 #   `Nd`:   Number of nodes per finite element
 #   `Nf`:   Number of faces per finite element
-abstract type AbstractDomain{uDim,gDim,T,Nd,Nf} end
-const VectorOfDomains{uDim,gDim,T,Nd,Nf} = AbstractVector{<:AbstractDomain{uDim,gDim,T,Nd,Nf}}
+abstract type AbstractDomain{Tu,uType,gDim,T,Nd,Nf} end
+const VectorOfDomains{Tu,uType,gDim,T,Nd,Nf} = AbstractVector{<:AbstractDomain{Tu,uType,gDim,T,Nd,Nf}}
 
 # ParabolicDomain: generic domain type which holds this information necessary to
 # solve a parabolic FEM problem M*du/dt = K*u
 mutable struct ParabolicDomain{
-        uDim, gDim, T, Nd, Nf, MType <: MassType{T}, MfactType <: Factorization{T}, KType <: StiffnessType{T}
-        } <: AbstractDomain{uDim,gDim,T,Nd,Nf}
+        Tu, uType <: FieldType{Tu},
+        gDim, T, Nd, Nf,
+        MType <: MassType{T}, MfactType <: MassFactType{T}, KType <: StiffnessType{T}
+        } <: AbstractDomain{Tu,uType,gDim,T,Nd,Nf}
     grid::Grid{gDim,Nd,T,Nf}
     dh::DofHandler{gDim,Nd,T,Nf}
     cellvalues::CellValues{gDim,T}
@@ -88,18 +89,19 @@ mutable struct ParabolicDomain{
     M::MType
     Mfact::Union{Nothing,MfactType}
     K::KType
-    w::Vector{T}
+    w::Vector{Tu}
 end
 
 function ParabolicDomain(
         grid::Grid{gDim,Nd,T,Nf},
-        uDim::Int = 2;
+        ::Type{uType} = Vec{2,T}; #Default to same float type as grid
         refshape = RefTetrahedron,
         quadorder::Int = 3,
         funcinterporder::Int = 1,
         geominterporder::Int = 1
-    ) where {gDim,Nd,T,Nf}
+    ) where {gDim,Nd,T,Nf,Tu,uType<:FieldType{Tu}}
 
+    uDim = fielddim(uType)
     @assert uDim == 2 #TODO: where is this assumption? likely, assume dim(u) == dim(grid) somewhere
 
     # Quadrature and interpolation rules and corresponding cellvalues/facevalues
@@ -141,7 +143,7 @@ function ParabolicDomain(
     Mfact = nothing
     MfactType = SuiteSparse.CHOLMOD.Factor{T}
 
-    ParabolicDomain{uDim,gDim,T,Nd,Nf,typeof(M),MfactType,typeof(K)}(
+    ParabolicDomain{Tu,uType,gDim,T,Nd,Nf,typeof(M),MfactType,typeof(K)}(
         grid, dh, cellvalues, facevalues,
         refshape, quadorder, funcinterporder, geominterporder,
         M, Mfact, K, w
@@ -166,7 +168,7 @@ struct PermeableInterfaceRegion <: AbstractRegionUnion end
 # or in close proximity to myelin. The complete domain is represented as a
 # ParabolicDomain, which stores the underlying grid, mass matrix M, stiffness
 # matrix K, etc.
-mutable struct MyelinDomain{R<:AbstractRegion,uDim,gDim,T,Nd,Nf,DType<:ParabolicDomain{uDim,gDim,T,Nd,Nf}} <: AbstractDomain{uDim,gDim,T,Nd,Nf}
+mutable struct MyelinDomain{R<:AbstractRegion,Tu,uType,gDim,T,Nd,Nf,DType<:ParabolicDomain{Tu,uType,gDim,T,Nd,Nf}} <: AbstractDomain{Tu,uType,gDim,T,Nd,Nf}
     region::R
     domain::DType
     outercircles::Vector{Circle{2,T}}
@@ -178,7 +180,7 @@ end
 #   grid dimension `gDim` = 2
 #   number of nodes per elem `Nd` = 3
 #   number of faces per elem `Nf` = 3
-const TriangularMyelinDomain{R,uDim,T,DType} = MyelinDomain{R,uDim,2,T,3,3,DType}
+const TriangularMyelinDomain{R,Tu,uType,T,DType} = MyelinDomain{R,Tu,uType,2,T,3,3,DType}
 
 # Constructor given a `Grid` and kwargs in place of a `ParabolicDomain`
 function MyelinDomain(
@@ -187,12 +189,12 @@ function MyelinDomain(
         outercircles::Vector{Circle{2,T}},
         innercircles::Vector{Circle{2,T}},
         ferritins::Vector{Vec{3,T}} = Vec{3,T}[],
-        uDim::Int = 2; #::Val{uDim} = Val(2);
+        ::Type{uType} = Vec{2,T}; #Default to same float type as grid
         kwargs...
-    ) where {R,gDim,T,Nd,Nf} #{R,uDim,gDim,T,Nd,Nf}
+    ) where {R,gDim,T,Nd,Nf,Tu,uType<:FieldType{Tu}}
 
-    domain = ParabolicDomain(grid, uDim; kwargs...)
-    return MyelinDomain{R,uDim,gDim,T,Nd,Nf,typeof(domain)}(
+    domain = ParabolicDomain(grid, uType; kwargs...)
+    return MyelinDomain{R,Tu,uType,gDim,T,Nd,Nf,typeof(domain)}(
         region, domain, outercircles, innercircles, ferritins
     )
 end
@@ -223,11 +225,11 @@ end
 # ParabolicLinearMap: create a LinearMaps subtype which wrap the action of
 # Mfact\K in a LinearMap object. Does not make copies of M, Mfact, or K;
 # simply is a light wrapper for them
-struct ParabolicLinearMap{T, MType<:AbstractMatrix{T}, MfactType <: Factorization{T}, KType<:AbstractMatrix{T}} <: LinearMap{T}
+struct ParabolicLinearMap{T, MType<:AbstractMatrix{T}, MfactType <: MassFactType{T}, KType<:AbstractMatrix{T}} <: LinearMap{T}
     M::MType
     Mfact::MfactType
     K::KType
-    function ParabolicLinearMap(M::AbstractMatrix{T}, Mfact::Factorization{T}, K::AbstractMatrix{T}) where {T}
+    function ParabolicLinearMap(M::AbstractMatrix{T}, Mfact::MassFactType{T}, K::AbstractMatrix{T}) where {T}
         @assert (size(M) == size(Mfact) == size(K)) && (size(M,1) == size(M,2))
         new{T, typeof(M), typeof(Mfact), typeof(K)}(M, Mfact, K)
     end

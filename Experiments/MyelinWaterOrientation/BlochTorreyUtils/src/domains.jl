@@ -14,45 +14,49 @@ Base.show(io::IO, grid::JuAFEM.Grid) = print(io, "$(typeof(grid)) with $(JuAFEM.
 # slow and wasteful, and there is almost definitely a better way to implement
 # this, but it just isn't a bottleneck and this is easy.
 function interpolate!(
-        u::AbstractVector{T},
+        u::AbstractVector{Tu},
         f::Function,
-        domain::AbstractDomain{uDim,gDim,T}
-    ) where {uDim,gDim,T}
-
+        domain::AbstractDomain{Tu,uType}
+    ) where {Tu, uType<:FieldType{Tu}}
+    
     ch = ConstraintHandler(getdofhandler(domain))
     ∂Ω = getfaces(getgrid(domain))
-    dbc = JuAFEM.Dirichlet(:u, ∂Ω, (x,t) -> f(x), collect(1:uDim))
+    uDim = fielddim(uType)
+    dbc = JuAFEM.Dirichlet(:u, ∂Ω, (x,t) -> f(x), [1:uDim;])
     add!(ch, dbc)
     close!(ch)
-    update!(ch, zero(T)) # time zero
+    update!(ch, zero(Tu)) # time zero
     apply!(u, ch)
 
     return u
 end
-interpolate(f::Function, domain::AbstractDomain) = interpolate!(zeros(ndofs(getdofhandler(domain))), f, domain)
+function interpolate(f::Function, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}}
+    return interpolate!(zeros(Tu, ndofs(getdofhandler(domain))), f, domain)
+end
 
 # Optimization for when we can guarantee that the degrees of freedom `u` are
 # purely nodal and we just want to assign a constant vector `u0` to each node
-function interpolate!(u::AbstractVector{T}, u0::Vec{uDim,T}, domain::AbstractDomain{uDim}) where {uDim,T}
+function interpolate!(u::AbstractVector{Tu}, u0::uType, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}}
     # Check that `u` has the correct length
     @assert length(u) == ndofs(getdofhandler(domain))
-    if length(u) == uDim * getnnodes(getgrid(domain))
+    if length(u) == fielddim(uType) * getnnodes(getgrid(domain))
         # degrees of freedom are nodal; can efficiently assign directly
-        u = reinterpret(Vec{uDim,T}, u)
-        u .= Ref(u0)
-        u = copy(reinterpret(T, u))
+        _u = reinterpret(uType, u) # rename is important - allows to return u below with original type
+        _u .= Ref(u0)
     else
         # degrees of freedom are not nodal; call general projection
         interpolate!(u, x->u0, domain)
     end
     return u
 end
-interpolate(u0::Vec, domain::AbstractDomain) = interpolate!(zeros(ndofs(getdofhandler(domain))), u0, domain)
+function interpolate(u0::uType, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}}
+    return interpolate!(zeros(Tu, ndofs(getdofhandler(domain))), u0, domain)
+end
 
-function integrate(u::AbstractVector{Tu}, domain::AbstractDomain{uDim,gDim,T}) where {Tu,uDim,gDim,T}
+function integrate(u::AbstractVector{Tu}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}}
     @assert length(u) == ndofs(getdofhandler(domain))
-    u = reinterpret(Vec{uDim,Tu}, u)
-    w = reinterpret(Vec{uDim,T}, getquadweights(domain))
+    u = reinterpret(uType, u)
+    w = reinterpret(uType, getquadweights(domain))
     # Integrate. ⊙ == hadamardproduct is the Hadamard product of the Vec's.
     S = u[1] ⊙ w[1]
     @inbounds for i in 2:length(u)
@@ -63,10 +67,12 @@ end
 
 # "Vectorized" versions of functions for convenience
 integrate(U::VectorOfVectors, domains::VectorOfDomains) = sum(map((u,d) -> integrate(u,d), U, domains))
+
 interpolate!(U::VectorOfVectors, f::Function, domains::VectorOfDomains) = map!((u,d) -> interpolate!(u, f, d), U, U, domains)
-interpolate!(U::VectorOfVectors, u0::Vec{uDim}, domains::VectorOfDomains{uDim}) where {uDim} = map!((u,d) -> interpolate!(u, u0, d), U, U, domains)
-interpolate(f::Function, domains::VectorOfDomains) = map(d -> interpolate!(zeros(ndofs(d)), f, d), domains)
-interpolate(u0::Vec{uDim}, domains::VectorOfDomains{uDim}) where {uDim} = map(d -> interpolate!(zeros(ndofs(d)), u0, d), domains)
+interpolate(f::Function, domains::VectorOfDomains{Tu}) where {Tu} = interpolate!(VectorOfVectors{Tu}[zeros(Tu, ndofs(d)) for d in domains], f, domains)
+
+interpolate!(U::VectorOfVectors, u0::uType, domains::VectorOfDomains{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = map!((u,d) -> interpolate!(u, u0, d), U, U, domains)
+interpolate(u0::uType, domains::VectorOfDomains{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = interpolate!(VectorOfVectors{Tu}[zeros(Tu, ndofs(d)) for d in domains], u0, domains)
 
 # ---------------------------------------------------------------------------- #
 # ParabolicDomain methods
@@ -97,7 +103,7 @@ factorize!(d::ParabolicDomain) = (d.Mfact = cholesky(getmass(d)); return d)
 LinearAlgebra.norm(u, domain::ParabolicDomain) = √dot(u, getmass(domain) * u)
 
 # GeometryUtils.area(d::ParabolicDomain{uDim}) where {uDim} = sum(@views getquadweights(d)[1:uDim:end]) # summing the quad weights for one component gives area
-GeometryUtils.area(d::ParabolicDomain{uDim}) where {uDim} = area(getgrid(d)) # just calculate area of grid directly
+GeometryUtils.area(d::ParabolicDomain{Tu,uType,2}) where {Tu,uType} = area(getgrid(d)) # calculate area of 2D grid directly
 
 # Show methods
 function _compact_show_sparse(io, S::SparseMatrixCSC)
@@ -165,30 +171,30 @@ function createmyelindomains(
         outercircles::AbstractVector{Circle{2,T}},
         innercircles::AbstractVector{Circle{2,T}},
         ferritins::AbstractVector{Vec{3,T}} = Vec{3,T}[],
-        ::Val{uDim} = Val(2); #uDim::Int = 2;
+        ::Type{uType} = Vec{2,T}; #Default to same float type as grid
         kwargs...
-    ) where {uDim,gDim,T,Nd,Nf} #{gDim,T,Nd,Nf}
+    ) where {gDim,T,Nd,Nf,Tu,uType<:FieldType{Tu}}
 
     @assert length(outercircles) == length(innercircles) == length(myelingrids) == length(axongrids)
 
     isgridempty(g::Grid) = (getnnodes(g) == 0 || getncells(g) == 0)
 
-    Mtype = MyelinDomain{R,uDim,gDim,T,Nd,Nf} where {R}
+    Mtype = MyelinDomain{R,Tu,uType,gDim,T,Nd,Nf} where {R}
     ms = Vector{Mtype}()
 
     for (i, a) in enumerate(axongrids)
         isgridempty(a) && continue
-        push!(ms, MyelinDomain(AxonRegion(i), a, outercircles, innercircles, ferritins, uDim; kwargs...))
+        push!(ms, MyelinDomain(AxonRegion(i), a, outercircles, innercircles, ferritins, uType; kwargs...))
     end
 
     for (i, m) in enumerate(myelingrids)
         isgridempty(m) && continue
-        push!(ms, MyelinDomain(MyelinRegion(i), m, outercircles, innercircles, ferritins, uDim; kwargs...))
+        push!(ms, MyelinDomain(MyelinRegion(i), m, outercircles, innercircles, ferritins, uType; kwargs...))
     end
 
     for t in tissuegrids
         isgridempty(t) && continue
-        push!(ms, MyelinDomain(TissueRegion(), t, outercircles, innercircles, ferritins, uDim; kwargs...))
+        push!(ms, MyelinDomain(TissueRegion(), t, outercircles, innercircles, ferritins, uType; kwargs...))
     end
 
     return ms
@@ -197,12 +203,12 @@ end
 # Create interface domain from vector of MyelinDomain's which are all assumed
 # to have the same outercircles, innercircles, and ferritins
 function MyelinDomain(
-    region::PermeableInterfaceRegion,
-    prob::MyelinProblem,
-    ms::AbstractVector{<:TriangularMyelinDomain{R,uDim,T} where R}
-) where {uDim,T}
+        region::PermeableInterfaceRegion,
+        prob::MyelinProblem,
+        ms::AbstractVector{<:TriangularMyelinDomain{R,Tu,uType,T} where R}
+    ) where {Tu,uType,T}
     domain = ParabolicDomain(region, prob, ms)
-    myelindomain = TriangularMyelinDomain{PermeableInterfaceRegion,uDim,T,typeof(domain)}(
+    myelindomain = TriangularMyelinDomain{PermeableInterfaceRegion,Tu,uType,T,typeof(domain)}(
         PermeableInterfaceRegion(),
         domain,
         ms[1].outercircles, # assume these are the same for all domains
@@ -215,13 +221,13 @@ end
 function ParabolicDomain(
         region::PermeableInterfaceRegion,
         prob::MyelinProblem,
-        ms::AbstractVector{<:TriangularMyelinDomain{R,uDim,T} where {R}}
-    ) where {uDim,T}
+        ms::AbstractVector{<:TriangularMyelinDomain{R,Tu,uType,T} where {R}}
+    ) where {Tu,uType,T}
 
     # Construct one large ParabolicDomain containing all grids
     gDim, Nd, Nf = 2, 3, 3 # Triangular 2D domain
     grid = Grid(getgrid.(ms)) # combine grids into single large grid
-    domain = ParabolicDomain(grid, uDim;
+    domain = ParabolicDomain(grid, uType;
         refshape = getrefshape(ms[1]), # assume these are the same for all domains
         quadorder = getquadorder(ms[1]), # assume these are the same for all domains
         funcinterporder = getfuncinterporder(ms[1]), # assume these are the same for all domains
@@ -233,9 +239,9 @@ function ParabolicDomain(
 
     # Find interface pairs
     cells, nodes = getcells(getgrid(domain)), getnodes(getgrid(domain))
-    boundaryfaceset = getfaceset(getgrid(domain), "boundary")
-    nodepairs = NTuple{gDim,Int}[JuAFEM.faces(cells[f[1]])[f[2]] for f in boundaryfaceset] # pairs of node indices
-    nodecoordpairs = NTuple{gDim,Vec{uDim,T}}[(getcoordinates(nodes[n[1]]), getcoordinates(nodes[n[2]])) for n in nodepairs] # pairs of node coordinates
+    boundaryfaceset = getfaceset(getgrid(domain), "boundary") # set of 2-tuples of (cellid, faceid)
+    nodepairs = NTuple{2,Int}[JuAFEM.faces(cells[f[1]])[f[2]] for f in boundaryfaceset] # pairs of node indices
+    nodecoordpairs = NTuple{2,Vec{gDim,T}}[(getcoordinates(nodes[n[1]]), getcoordinates(nodes[n[2]])) for n in nodepairs] # pairs of node coordinates
 
     # Sort pairs by midpoints and read off pairs
     bymidpoint = (np) -> (mid = (np[1] + np[2])/2; return norm2(mid), angle(mid))
@@ -272,20 +278,21 @@ function ParabolicDomain(
 
     # Local permeability interaction matrix, unscaled by length
     κ = prob.params.K_perm
-    Se = T(-κ/6) .* T[ 2  1 -1 -2   # Minus sign in front since we build the negative stiffness matrix
-                       1  2 -2 -1   # `Se` represents the local stiffness matrix of a zero volume (line segment) interface element
-                      -1 -2  2  1   # The segment interfaces between the pairs of nodes (A1,B1) and (A2,B2), where A nodes and B nodes have the same coordinates
-                      -2 -1  1  2 ] # `Se` is ordered such that it acts on [A1,B1,B2,A2]
+    Se = Tu(-κ/6) .* Tu[ 2  1 -1 -2   # Minus sign in front since we build the negative stiffness matrix
+                         1  2 -2 -1   # `Se` represents the local stiffness matrix of a zero volume (line segment) interface element
+                        -1 -2  2  1   # The segment interfaces between the pairs of nodes (A1,B1) and (A2,B2), where A nodes and B nodes have the same coordinates
+                        -2 -1  1  2 ] # `Se` is ordered such that it acts on [A1,B1,B2,A2]
     _Se = similar(Se) # temp matrix for storing ck * Se
 
     # S matrix global indices
-    Is, Js, Ss = Vector{Int}(), Vector{Int}(), Vector{T}()
+    Is, Js, Ss = Vector{Int}(), Vector{Int}(), Vector{Tu}()
+    uDim = fielddim(uType)
     sizehint!(Is, length(Se) * uDim * length(interfaceindices))
     sizehint!(Js, length(Se) * uDim * length(interfaceindices))
     sizehint!(Ss, length(Se) * uDim * length(interfaceindices))
 
     for idx in interfaceindices
-        ck = norm(getcoordinates(nodes[idx[1]]) - getcoordinates(nodes[idx[2]])) # length of edge segment
+        ck = Tu(norm(getcoordinates(nodes[idx[1]]) - getcoordinates(nodes[idx[2]]))) # length of edge segment
         _Se .= ck .* Se
         dof = uDim .* idx .- (uDim-1) # node indices --> first dof indices (i.e. 1st component of u)
         for (j,dof_j) in enumerate(dof)
@@ -313,9 +320,9 @@ end
 
 # Assemble the `BlochTorreyProblem` system $M u_t = K u$ on the domain `domain`.
 function doassemble!(
-        domain::ParabolicDomain{uDim,gDim,T,Nd,Nf},
-        prob::BlochTorreyProblem{T}
-    ) where {uDim,gDim,T,Nd,Nf}
+        domain::ParabolicDomain{Tu,uType},
+        prob::BlochTorreyProblem{Tu}
+    ) where {Tu,uType}
 
     # This assembly function is only for CellVectorValues
     @assert typeof(getcellvalues(domain)) <: CellVectorValues
@@ -330,9 +337,9 @@ function doassemble!(
     # just once before looping over all the cells instead of allocating
     # them every time in the loop.
     n_basefuncs = getnbasefunctions(getcellvalues(domain))
-    Ke = zeros(T, n_basefuncs, n_basefuncs)
-    Me = zeros(T, n_basefuncs, n_basefuncs)
-    we = zeros(T, n_basefuncs)
+    Ke = zeros(Tu, n_basefuncs, n_basefuncs)
+    Me = zeros(Tu, n_basefuncs, n_basefuncs)
+    we = zeros(Tu, n_basefuncs)
 
     # It is now time to loop over all the cells in our grid. We do this by iterating
     # over a `CellIterator`. The iterator caches some useful things for us, for example
@@ -340,9 +347,9 @@ function doassemble!(
     @inbounds for cell in CellIterator(getdofhandler(domain))
         # Always remember to reset the element stiffness matrix and
         # element mass matrix since we reuse them for all elements.
-        fill!(Ke, zero(T))
-        fill!(Me, zero(T))
-        fill!(we, zero(T))
+        fill!(Ke, zero(Tu))
+        fill!(Me, zero(Tu))
+        fill!(we, zero(Tu))
 
         # Get the coordinates of the cell
         coords = getcoordinates(cell)
@@ -402,17 +409,17 @@ end
 # ---------------------------------------------------------------------------- #
 
 # Assembly quadrature weights for the parabolic domain `domain`.
-function addquadweights!(domain::ParabolicDomain{uDim,gDim,T}) where {uDim,gDim,T}
+function addquadweights!(domain::ParabolicDomain{Tu,uType}) where {Tu,uType}
     # This assembly function is only for CellVectorValues
     @assert typeof(getcellvalues(domain)) <: CellVectorValues
 
     n_basefuncs = getnbasefunctions(getcellvalues(domain))
-    we = zeros(T, n_basefuncs)
-    fill!(getquadweights(domain), zero(T))
+    we = zeros(Tu, n_basefuncs)
+    fill!(getquadweights(domain), zero(Tu))
 
     @inbounds for cell in CellIterator(getdofhandler(domain))
         # Reset element residual and reinit cellvalues
-        fill!(we, zero(T))
+        fill!(we, zero(Tu))
         JuAFEM.reinit!(getcellvalues(domain), cell)
         # Integrate all components of shape function `v` and add to weights vector
         for q_point in 1:getnquadpoints(getcellvalues(domain))
@@ -433,7 +440,7 @@ end
 # `domain`. The resulting system is $M u_t = K u$ and is equivalent to the weak
 # form of the heat equation $u_t = k Δu$ with k = 1. `M` is positive definite,
 # and `K` is negative definite.
-function doassemble!(domain::ParabolicDomain{uDim,gDim,T}) where {uDim,gDim,T}
+function doassemble!(domain::ParabolicDomain{Tu,uType}) where {Tu,uType}
     # This assembly function is only for CellVectorValues
     @assert typeof(getcellvalues(domain)) <: CellVectorValues
 
@@ -441,9 +448,9 @@ function doassemble!(domain::ParabolicDomain{uDim,gDim,T}) where {uDim,gDim,T}
     # just once before looping over all the cells instead of allocating
     # them every time in the loop.
     n_basefuncs = getnbasefunctions(getcellvalues(domain))
-    Ke = zeros(T, n_basefuncs, n_basefuncs)
-    Me = zeros(T, n_basefuncs, n_basefuncs)
-    we = zeros(T, n_basefuncs)
+    Ke = zeros(Tu, n_basefuncs, n_basefuncs)
+    Me = zeros(Tu, n_basefuncs, n_basefuncs)
+    we = zeros(Tu, n_basefuncs)
 
     # Next we create assemblers for the stiffness matrix `K` and the mass
     # matrix `M`. The assemblers are just thin wrappers around `K` and `M`
@@ -457,9 +464,9 @@ function doassemble!(domain::ParabolicDomain{uDim,gDim,T}) where {uDim,gDim,T}
     @inbounds for cell in CellIterator(getdofhandler(domain))
         # Always remember to reset the element stiffness matrix and
         # element mass matrix since we reuse them for all elements.
-        fill!(Ke, zero(T))
-        fill!(Me, zero(T))
-        fill!(we, zero(T))
+        fill!(Ke, zero(Tu))
+        fill!(Me, zero(Tu))
+        fill!(we, zero(Tu))
 
         # For each cell we also need to reinitialize the cached values in `cellvalues`.
         JuAFEM.reinit!(getcellvalues(domain), cell)
@@ -501,14 +508,14 @@ end
 # ---------------------------------------------------------------------------- #
 
 # Loop over the edges of a cell to add interface contributions to `Ke`
-function add_interface!(Ke, facevalues::FaceVectorValues, cell)#, q_point, coords, func::Function)
+function add_interface!(Ke::AbstractMatrix{Tu}, facevalues::FaceVectorValues, cell) where {Tu}#, q_point, coords, func::Function)
     # TODO: make this a working function
     @warn "Function add_interface! is only a sketch of an implementation; returning Ke"
     return Ke
 
     # Allocate local interface element matrices.
     n_basefuncs = getnbasefunctions(getfacevalues(domain))
-    Se = zeros(T, 2*n_basefuncs, 2*n_basefuncs)
+    Se = zeros(Tu, 2*n_basefuncs, 2*n_basefuncs)
     
     for face in 1:nfaces(cell)
         if onboundary(cell, face) && (cellid(cell), face) ∈ getfaceset(grid, "Interface")

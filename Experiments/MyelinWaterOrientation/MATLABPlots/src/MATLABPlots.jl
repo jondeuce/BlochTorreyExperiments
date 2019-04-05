@@ -14,6 +14,7 @@ function mxsimpplot(p::AbstractMatrix, t::AbstractMatrix;
         xlim = nothing,
         ylim = nothing,
         axis = nothing,
+        caxis = nothing,
         expr = Float64[],
         bcol = [0.8, 0.9, 1.0],
         icol = [0.0, 0.0, 0.0],
@@ -36,6 +37,7 @@ function mxsimpplot(p::AbstractMatrix, t::AbstractMatrix;
     !(xlim == nothing) && mxcall(:xlim, 0, xlim)
     !(ylim == nothing) && mxcall(:ylim, 0, ylim)
     !(axis == nothing) && mxcall(:axis, 0, axis)
+    !(caxis == nothing) && mxcall(:caxis, 0, caxis)
 
     return nothing
 end
