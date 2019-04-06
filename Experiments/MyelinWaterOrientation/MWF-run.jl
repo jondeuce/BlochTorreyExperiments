@@ -68,8 +68,8 @@ function main(
     # Krange = [0.01, 0.05]
     # Drange = [10.0, 50.0, 100.0]
     thetarange = [pi/2]
-    Krange = [0.0]
-    Drange = [10]
+    Krange = [1.0]
+    Drange = [10.0]
 
     # Default parameters
     default_btparams = BlochTorreyParameters{Float64}(

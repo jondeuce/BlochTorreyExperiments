@@ -428,9 +428,9 @@ function doassemble!(
     local assembler_D, assembler_R, assembler_W
     local De, Re, We
     if DEBUG
-        domain.metadata[:D] = similar(getstiffness(domain)); assembler_D = start_assemble(domain.metadata[:D])
-        domain.metadata[:R] = similar(getstiffness(domain)); assembler_R = start_assemble(domain.metadata[:R])
-        domain.metadata[:W] = similar(getstiffness(domain)); assembler_W = start_assemble(domain.metadata[:W])
+        domain.metadata[:D] = similar(getmass(domain)); assembler_D = start_assemble(domain.metadata[:D])
+        domain.metadata[:R] = similar(getmass(domain)); assembler_R = start_assemble(domain.metadata[:R])
+        domain.metadata[:W] = similar(getmass(domain)); assembler_W = start_assemble(domain.metadata[:W])
         De = zeros(Tu, n_basefuncs, n_basefuncs)
         Re = zeros(Tu, n_basefuncs, n_basefuncs)
         We = zeros(Tu, n_basefuncs, n_basefuncs)
@@ -485,7 +485,109 @@ function doassemble!(
                     if DEBUG
                         De[i,j] += (D * (∇v ⊡ ∇u)) * dΩ
                         Re[i,j] += (R * (v ⋅ u)) * dΩ
-                        We[i,j] += (ω * (v ⊠ u)) * dΩ
+                        We[i,j] -= (ω * (v ⊠ u)) * dΩ
+                    end
+                end
+            end
+        end
+
+        # The last step in the element loop is to assemble `Ke` and `Me`
+        # into the global `K` and `M` with `assemble!`.
+        assemble!(assembler_K, celldofs(cell), Ke)#, we)
+        assemble!(assembler_M, celldofs(cell), Me)
+        if DEBUG
+            assemble!(assembler_D, celldofs(cell), De)
+            assemble!(assembler_R, celldofs(cell), Re)
+            assemble!(assembler_W, celldofs(cell), We)
+        end
+    end
+
+    return domain
+end
+
+# Assemble the `BlochTorreyProblem` system $M u_t = K u$ on the domain `domain`.
+function doassemble!(
+        domain::ParabolicDomain{Tu,uType},
+        prob::BlochTorreyProblem{Tu}
+    ) where {Tu,uType<:Complex{Tu}}
+
+    # This assembly function is only for CellScalarValues
+    @assert typeof(getcellvalues(domain)) <: CellScalarValues
+
+    # First, we create assemblers for the stiffness matrix `K` and the mass
+    # matrix `M`. The assemblers are just thin wrappers around `K` and `M`
+    # and some extra storage to make the assembling faster.
+    assembler_K = start_assemble(getstiffness(domain), uType[])
+    assembler_M = start_assemble(getmass(domain), Tu[])
+
+    # Next, we allocate the element stiffness matrix and element mass matrix
+    # just once before looping over all the cells instead of allocating
+    # them every time in the loop.
+    n_basefuncs = getnbasefunctions(getcellvalues(domain))
+    Ke = zeros(uType, n_basefuncs, n_basefuncs)
+    Me = zeros(Tu, n_basefuncs, n_basefuncs)
+    # we = zeros(Tu, n_basefuncs)
+
+    DEBUG = true
+    local assembler_D, assembler_R, assembler_W
+    local De, Re, We
+    if DEBUG
+        domain.metadata[:D] = similar(getmass(domain)); assembler_D = start_assemble(domain.metadata[:D])
+        domain.metadata[:R] = similar(getmass(domain)); assembler_R = start_assemble(domain.metadata[:R])
+        domain.metadata[:W] = similar(getmass(domain)); assembler_W = start_assemble(domain.metadata[:W])
+        De = zeros(Tu, n_basefuncs, n_basefuncs)
+        Re = zeros(Tu, n_basefuncs, n_basefuncs)
+        We = zeros(Tu, n_basefuncs, n_basefuncs)
+    end
+
+    # It is now time to loop over all the cells in our grid. We do this by iterating
+    # over a `CellIterator`. The iterator caches some useful things for us, for example
+    # the nodal coordinates for the cell, and the local degrees of freedom.
+    @inbounds for cell in CellIterator(getdofhandler(domain))
+        # Always remember to reset the element stiffness matrix and
+        # element mass matrix since we reuse them for all elements.
+        fill!(Ke, zero(uType))
+        fill!(Me, zero(Tu))
+        if DEBUG
+            fill!(De, zero(Tu))
+            fill!(Re, zero(Tu))
+            fill!(We, zero(Tu))
+        end
+
+        # Get the coordinates of the cell
+        coords = getcoordinates(cell)
+
+        # For each cell we also need to reinitialize the cached values in `cellvalues`.
+        JuAFEM.reinit!(getcellvalues(domain), cell)
+
+        # It is now time to loop over all the quadrature points in the cell and
+        # assemble the contribution to `Ke` and `Me`. The integration weight
+        # can be queried from `cellvalues` by `getdetJdV`, and the quadrature
+        # coordinate can be queried from `cellvalues` by `spatial_coordinate`
+        for q_point in 1:getnquadpoints(getcellvalues(domain))
+            dΩ = getdetJdV(getcellvalues(domain), q_point)
+            coords_qp = spatial_coordinate(getcellvalues(domain), q_point, coords)
+
+            # calculate the heat conductivity and heat source at point `coords_qp`
+            D = prob.Dcoeff(coords_qp)
+            R = prob.Rdecay(coords_qp)
+            ω = prob.Omega(coords_qp)
+
+            # For each quadrature point we loop over all the (local) shape functions.
+            # We need the value and gradient of the testfunction `v` and also the gradient
+            # of the trial function `u`. We get all of these from `cellvalues`.
+            for i in 1:n_basefuncs
+                v  = shape_value(getcellvalues(domain), q_point, i)
+                ∇v = shape_gradient(getcellvalues(domain), q_point, i)
+                for j in 1:n_basefuncs
+                    u = shape_value(getcellvalues(domain), q_point, j)
+                    ∇u = shape_gradient(getcellvalues(domain), q_point, j)
+                    Ke[i,j] -= complex(D * (∇v ⋅ ∇u) + R * (v * u), ω * (v * u)) * dΩ
+                    Me[i,j] += (v * u) * dΩ
+                    if DEBUG
+                        De[i,j] += (D * (∇v ⋅ ∇u)) * dΩ
+                        Re[i,j] += (R * (v * u)) * dΩ
+                        We[i,j] += (ω * (v * u)) * dΩ
                     end
                 end
             end

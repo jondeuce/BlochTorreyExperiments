@@ -2,7 +2,7 @@
 const FieldType{T} = Union{<:Vec{dim,T} where dim, Complex{T}} where {T<:Real}
 const MassType{T} = Union{<:SparseMatrixCSC{T}, <:Symmetric{T,<:SparseMatrixCSC{T}}}
 const MassFactType{T} = Factorization{T}
-const StiffnessType{T} = SparseMatrixCSC{T}
+const StiffnessType{T} = SparseMatrixCSC{Tc} where {Tc<:Union{T,Complex{T}}}
 const TriangularGrid{T} = Grid{2,3,T,3}
 const VectorOfVectors{T} = AbstractVector{<:AbstractVector{T}}
 const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{gDim,T}}
@@ -77,8 +77,8 @@ mutable struct ParabolicDomain{
         Tu, uType <: FieldType{Tu},
         gDim, T, Nd, Nf,
         S <: JuAFEM.AbstractRefShape, CV <: CellValues{gDim,T,S}, FV <: FaceValues{gDim,T,S},
-        MType <: MassType{T}, MfactType <: MassFactType{T}, KType <: StiffnessType{T}
-        } <: AbstractDomain{Tu,uType,gDim,T,Nd,Nf}
+        MType <: MassType{Tu}, MfactType <: MassFactType{Tu}, KType <: StiffnessType{Tu}
+    } <: AbstractDomain{Tu,uType,gDim,T,Nd,Nf}
     grid::Grid{gDim,Nd,T,Nf}
     dh::DofHandler{gDim,Nd,T,Nf}
     refshape::S
@@ -104,18 +104,20 @@ function ParabolicDomain(
     ) where {gDim,Nd,T,Nf,Tu,uType<:FieldType{Tu}}
 
     uDim = fielddim(uType)
-    @assert uDim == 2 #TODO: where is this assumption? likely, assume dim(u) == dim(grid) somewhere
+    # @assert uDim == 2 #TODO: where is this assumption? likely, assume dim(u) == dim(grid) somewhere
 
     # Quadrature and interpolation rules and corresponding cellvalues/facevalues
     func_interp = Lagrange{gDim, typeof(refshape), funcinterporder}()
     geom_interp = Lagrange{gDim, typeof(refshape), geominterporder}()
     quadrule = QuadratureRule{gDim, typeof(refshape)}(quadorder)
     quadrule_face = QuadratureRule{gDim-1, typeof(refshape)}(quadorder)
-    cellvalues = CellVectorValues(T, quadrule, func_interp, geom_interp)
-    facevalues = FaceVectorValues(T, quadrule_face, func_interp, geom_interp)
-    # cellvalues = CellScalarValues(T, quadrule, func_interp, geom_interp)
-    # facevalues = FaceScalarValues(T, quadrule_face, func_interp, geom_interp)
-
+    if uDim == 1
+        cellvalues = CellScalarValues(Tu, quadrule, func_interp, geom_interp)
+        facevalues = FaceScalarValues(Tu, quadrule_face, func_interp, geom_interp)
+    else
+        cellvalues = CellVectorValues(Tu, quadrule, func_interp, geom_interp)
+        facevalues = FaceVectorValues(Tu, quadrule_face, func_interp, geom_interp)
+    end
     # Degree of freedom handler
     dh = DofHandler(grid)
     push!(dh, :u, uDim, func_interp)
@@ -138,12 +140,14 @@ function ParabolicDomain(
     # Mass and stiffness matrices, and weights vector
     M = create_sparsity_pattern(dh)
     # M = create_symmetric_sparsity_pattern(dh)
-    K = create_sparsity_pattern(dh)
-    # w = zeros(T, ndofs(dh))
+    K = uType <: Complex ?
+        complex(create_sparsity_pattern(dh)) :
+        create_sparsity_pattern(dh)
+    # w = zeros(Tu, ndofs(dh))
 
     # Initialize Mfact to nothing
     Mfact = nothing
-    MfactType = SuiteSparse.CHOLMOD.Factor{T}
+    MfactType = SuiteSparse.CHOLMOD.Factor{Tu}
 
     ParabolicDomain{Tu,uType,gDim,T,Nd,Nf,typeof(refshape),typeof(cellvalues),typeof(facevalues),typeof(M),MfactType,typeof(K)}(
         grid, dh,

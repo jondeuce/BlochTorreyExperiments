@@ -318,7 +318,9 @@ function createdomains(
     @time factorize!(combinedmyelindomain)
     myelindomains = [combinedmyelindomain]
 
-    return myelinprob, myelinsubdomains, myelindomains
+    return (myelinprob = myelinprob,
+            myelinsubdomains = myelinsubdomains,
+            myelindomains = myelindomains)
 end
 
 calcomegas(myelinprob, myelinsubdomains) = omegamap.(Ref(myelinprob), myelinsubdomains)
