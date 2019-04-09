@@ -1,5 +1,7 @@
 # Convenience definitions
 const FieldType{T} = Union{<:Vec{dim,T} where dim, Complex{T}} where {T<:Real}
+const DofType{T} = Union{T, <:FieldType{T}} where {T<:Real}
+const AbstractMaybeCplxMat{T} = AbstractMatrix{Tc} where {Tc<:Union{T,Complex{T}}}
 const MassType{T} = Union{<:SparseMatrixCSC{T}, <:Symmetric{T,<:SparseMatrixCSC{T}}}
 const MassFactType{T} = Factorization{T}
 const StiffnessType{T} = SparseMatrixCSC{Tc} where {Tc<:Union{T,Complex{T}}}
@@ -232,12 +234,13 @@ end
 # ParabolicLinearMap: create a LinearMaps subtype which wrap the action of
 # Mfact\K in a LinearMap object. Does not make copies of M, Mfact, or K;
 # simply is a light wrapper for them
-struct ParabolicLinearMap{T, MType<:AbstractMatrix{T}, MfactType <: MassFactType{T}, KType<:AbstractMatrix{T}} <: LinearMap{T}
+struct ParabolicLinearMap{T, MType<:AbstractMatrix, MfactType <: MassFactType, KType<:AbstractMatrix} <: LinearMap{T}
     M::MType
     Mfact::MfactType
     K::KType
-    function ParabolicLinearMap(M::AbstractMatrix{T}, Mfact::MassFactType{T}, K::AbstractMatrix{T}) where {T}
+    function ParabolicLinearMap(M::AbstractMatrix{T1}, Mfact::MassFactType{T1}, K::AbstractMatrix{T2}) where {T1,T2}
         @assert (size(M) == size(Mfact) == size(K)) && (size(M,1) == size(M,2))
+        T = promote_type(T1, T2)
         new{T, typeof(M), typeof(Mfact), typeof(K)}(M, Mfact, K)
     end
 end

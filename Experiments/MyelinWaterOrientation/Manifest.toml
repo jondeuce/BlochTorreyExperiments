@@ -166,9 +166,9 @@ version = "0.6.4"
 
 [[CodeTracking]]
 deps = ["InteractiveUtils", "Test", "UUIDs"]
-git-tree-sha1 = "fd9c4a8cf1c51516145b686981ee689524bcb458"
+git-tree-sha1 = "f1800ddb104f045b30cbe24a50085b3cc1b9db05"
 uuid = "da1fd8a2-8d9e-5ec2-8556-3022fb5608a2"
-version = "0.5.4"
+version = "0.5.6"
 
 [[CodecZlib]]
 deps = ["BinaryProvider", "Libdl", "Test", "TranscodingStreams"]
@@ -981,9 +981,9 @@ version = "1.91.1"
 
 [[PyPlot]]
 deps = ["Colors", "LaTeXStrings", "PyCall", "Sockets", "Test", "VersionParsing"]
-git-tree-sha1 = "a8d4bca4efe9c45c66b900f0a17b40398e581d6f"
+git-tree-sha1 = "3ea391c3211f799df20396d256cee5c8bd755605"
 uuid = "d330b81b-6aea-500a-939a-2ce795aea3ee"
-version = "2.8.0"
+version = "2.8.1"
 
 [[QuadGK]]
 deps = ["DataStructures", "LinearAlgebra", "Test"]
@@ -1043,9 +1043,9 @@ version = "0.5.2"
 
 [[Revise]]
 deps = ["CodeTracking", "Distributed", "FileWatching", "InteractiveUtils", "JuliaInterpreter", "LibGit2", "LoweredCodeUtils", "OrderedCollections", "Pkg", "REPL", "Random", "Test", "UUIDs", "Unicode"]
-git-tree-sha1 = "b5ce22a031ee94e36d15eec6f4688db276f59b3a"
+git-tree-sha1 = "cdf9eba89e1ea2c312db1aa426adebb27431a4bd"
 uuid = "295af30f-e4ad-537b-8983-00126c2a3abe"
-version = "2.0.6"
+version = "2.1.0"
 
 [[Rmath]]
 deps = ["BinaryProvider", "Libdl", "Random", "Statistics", "Test"]

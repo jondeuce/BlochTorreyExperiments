@@ -43,9 +43,12 @@ OrdinaryDiffEq.ODEProblem(m::MyelinDomain, u0, tspan; kwargs...) = ODEProblem(ge
 # SpinEchoCallback
 # ---------------------------------------------------------------------------- #
 
+# Apply pi-pulse to u
+pi_pulse!(u::AbstractVector) = (@views u[2:2:end] .= -u[2:2:end]; return u) # This assumes u represents an array of Vec{2}'s
+pi_pulse!(u::AbstractVector{Tc}) where {Tc<:Complex} = (u .= conj.(u); return u)
+
 # NOTE: This constructor works and is more robust than the below version, but
 #       requires callbacks to be initialized, which Sundials doesn't support.
-
 function MultiSpinEchoCallback(
         tspan::NTuple{2,T};
         TE::T = (tspan[2] - tspan[1]), # default to single echo
@@ -68,7 +71,7 @@ function MultiSpinEchoCallback(
     time_choice(integrator) = isempty(tstops) ? typemax(T) : popfirst!(tstops)
     function user_affect!(integrator)
         verbose && println("π-pulse at t = $(1000*integrator.t) ms")
-        @views integrator.u[2:2:end] .= -integrator.u[2:2:end]
+        pi_pulse!(integrator.u)
         return integrator
     end
 
@@ -111,7 +114,7 @@ end
 #     # Apply π-pulse
 #     function apply_pulse!(integrator)
 #         verbose && println("π-pulse at t = $(1000*integrator.t) ms")
-#         @views integrator.u[2:2:end] .= -integrator.u[2:2:end]
+#         pi_pulse!(integrator.u)
 #         return integrator
 #     end
 # 

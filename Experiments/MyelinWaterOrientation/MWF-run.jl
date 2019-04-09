@@ -148,7 +148,7 @@ function main(
     # Plot and save mwf
     try
         mkpath("mwfplots")
-        plotMWF(results; disp = false, fname = "mwfplots/" * getnow() * "__mwfplot")
+        plotMWF(results; disp = false, fname = "mwfplots/" * getnow())
     catch e
         @warn "Error plotting MWF."
         @warn sprint(showerror, e, catch_backtrace())

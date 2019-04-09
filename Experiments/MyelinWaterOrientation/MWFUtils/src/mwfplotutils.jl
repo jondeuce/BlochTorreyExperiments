@@ -121,31 +121,66 @@ function plotSEcorr(
     return MWImaps, MWIdist, MWIpart
 end
 
-function plotMWF(params, mwf, mwftrue = nothing; disp = false, fname = nothing)
-    groups, groupindices = partitionby(params, :theta)
+function plotMWF(params, mwf, mwftrue = nothing;
+        plottypes = [:mwf, :mwferror],
+        disp = false,
+        mwfmethod = nothing,
+        fname = nothing
+    )
+    mwfplottypes = [:mwf, :mwfplot]
+    errorplottypes = [:mwferror, :mwferrorplot, :error, :errorplot]
 
+    # Split params into groups where all fields of params are the same except for :theta
+    groups, groupindices = partitionby(params, :theta)
     theta = [[p.theta for p in g] for g in groups]
     MWF = [[mwf[i] for i in gi] for gi in groupindices]
     theta = broadcast!(θ -> θ .= rad2deg.(θ), theta, theta) # change units to degrees
     MWF = broadcast!(mwf -> mwf .= 100 .* mwf, MWF, MWF) # change units to percentages
+    
+    figs = []
+    default_kwargs = Dict(
+        :linewidth => 5, :marker => :circle, :markersize => 10,
+        :grid => true, :minorgrid => true, :legend => :none,
+        :ylabel => "MWF [%]", :xlabel => "Angle [degrees]", :title => "MWF vs. Angle"
+    )
+    
+    for plottype in plottypes
+        xdata, ydata = theta, MWF
+        props = deepcopy(default_kwargs)
+        if plottype ∈ errorplottypes
+            if (mwftrue == nothing)
+                @warn "MWF error plot requested but true mwf value not given; skipping plottype = $plottype"
+                continue
+            end
+            ydata = map(mwf -> mwf .- (100*mwftrue), MWF)
+            props[:title] = "MWF Error vs. Angle"
+            props[:ylabel] = "MWF Error [%]"
+        else
+            if !(plottype ∈ mwfplottypes)
+                @warn "Skipping unknown plottype $plottype"
+                continue
+            end
+        end
+        !(mwfmethod == nothing) && (props[:title] = string(mwfmethod) * " " * props[:title])
+        !(mwftrue == nothing) && (props[:title] *= " (True MWF = $(round(100*mwftrue; sigdigits=4))%)")
 
-    title_str = "Measured MWF vs. Angle"
-    !(mwftrue == nothing) && (title_str *= " (True MWF = $(round(mwftrue; sigdigits=4))%)")
-    
-    fig = plot(theta, MWF;
-        linewidth = 5, marker = :circle, markersize =10,
-        grid = true, minorgrid = true, legend = :none,
-        ylabel = "MWF [%]", xlabel = "Angle [degrees]", title = title_str)
-    
-    if !(fname == nothing)
-        savefig(fig, fname * ".pdf")
-        savefig(fig, fname * ".png")
+        fig = plot(xdata, ydata; props...)
+        push!(figs, fig)
+        
+        if !(fname == nothing)
+            _fname = fname
+            (mwfmethod != nothing) && (_fname *= "__" * string(mwfmethod))
+            (plottype ∈ errorplottypes) ? (_fname *= "__" * "MWFErrorPlot") : (_fname *= "__" * "MWFPlot")
+            savefig(fig, _fname * ".pdf")
+            savefig(fig, _fname * ".png")
+        end
+        disp && display(fig)
     end
-    disp && display(fig)
 
-    return fig
+    return figs
 end
-function plotMWF(results::Dict; disp = false, fname = nothing)
+
+function plotMWF(results::Dict; plottypes = [:mwf, :mwferror], disp = false, fname = nothing)
     # mwfvalues is an array of Dict{Symbol,T}'s, and params is an array of BlochTorreyParameters{T}'s
     @unpack params, mwfvalues = results
     (isempty(params) || isempty(mwfvalues)) && return nothing
@@ -155,8 +190,8 @@ function plotMWF(results::Dict; disp = false, fname = nothing)
     for key in keys(mwfvalues[1])
         key == :exact && continue # skip plotting horizontal lines of exact value
         mwf = [d[key] for d in mwfvalues]
-        fname_appended = fname == nothing ? nothing : fname * "__" * string(key)
-        plotMWF(params, mwf, mwftrue; disp = disp, fname = fname_appended)
+        plotMWF(params, mwf, mwftrue;
+            plottypes = plottypes, mwfmethod = key, disp = disp, fname = fname)
     end
     return nothing
 end

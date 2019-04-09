@@ -17,10 +17,9 @@ Base.show(io::IO, grid::JuAFEM.Grid) = print(io, "$(typeof(grid)) with $(JuAFEM.
 # face of the domain and applying it to the vector `u`. This is really quite
 # slow and wasteful, and there is almost definitely a better way to implement
 # this, but it just isn't a bottleneck and this is easy.
-function interpolate!(u::AbstractVector{Tu}, f::Function, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}}
-    uDim = fielddim(uType)
-    ch = ConstraintHandler(getdofhandler(domain))
-    ∂Ω = getfaces(getgrid(domain))
+function _interpolate!(u::AbstractVector{Tu}, f::Function, dh::DofHandler, uDim::Int) where {Tu}
+    ch = ConstraintHandler(dh)
+    ∂Ω = getfaces(dh.grid)
     dbc = Dirichlet(:u, ∂Ω, (x,t) -> f(x), [1:uDim;])
     add!(ch, dbc)
     close!(ch)
@@ -28,21 +27,20 @@ function interpolate!(u::AbstractVector{Tu}, f::Function, domain::AbstractDomain
     apply!(u, ch)
     return u
 end
-function interpolate(f::Function, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}}
-    return interpolate!(zeros(Tu, ndofs(getdofhandler(domain))), f, domain)
-end
 
+function interpolate!(u::AbstractVector{Tu}, f::Function, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}}
+    return _interpolate!(u, f, getdofhandler(domain), fielddim(uType))
+end
 function interpolate!(u::AbstractVector{uType}, f::Function, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:Complex{Tu}}
     # Treat Complex{Tu} as two systems of Vec{1,Tu}
-    _u = reinterpret(Tu, u)
-    @views _uR, _uI = _u[1:2:end], _u[2:2:end]
-    interpolate!(_uR, x->real(f(x)), domain)
-    interpolate!(_uI, x->imag(f(x)), domain)
+    dh, uDim = getdofhandler(domain), fielddim(uType)
+    _uR = _interpolate!(zeros(Tu, ndofs(dh)), x->real(f(x)), dh, uDim)
+    _uI = _interpolate!(zeros(Tu, ndofs(dh)), x->imag(f(x)), dh, uDim)
+    u .= complex.(_uR, _uI)
     return u
 end
-function interpolate(f::Function, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:Complex{Tu}}
-    return interpolate!(zeros(uType, ndofs(getdofhandler(domain))), f, domain)
-end
+interpolate(f::Function, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = interpolate!(zeros(Tu, ndofs(getdofhandler(domain))), f, domain)
+interpolate(f::Function, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:Complex{Tu}} = interpolate!(zeros(uType, ndofs(getdofhandler(domain))), f, domain)
 
 ####
 #### Nodal interpolation
@@ -82,53 +80,61 @@ end
 ####
 #### Integration
 ####
-
-function integrate_direct(u::AbstractVector{Tu}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}}
+function _integrate(u::AbstractVector{Te}, domain::AbstractDomain{Tu,uType}) where {Te, Tu, uType<:FieldType{Tu}}
     cv = getcellvalues(domain)
     n_basefuncs = getnbasefunctions(cv)
+    ubuf = zeros(Te, n_basefuncs)
     S = zero(uType)
     @inbounds for cell in CellIterator(getdofhandler(domain))
         JuAFEM.reinit!(cv, cell)
-        dofs = celldofs(cell)
-        for j in 1:n_basefuncs
-            uj = u[dofs[j]]
-            for q_point in 1:getnquadpoints(cv)
-                dΩ = getdetJdV(cv, q_point)
-                vj = shape_value(cv, q_point, j)
-                S += uj * vj * dΩ
-            end
+        for (i,j) in enumerate(celldofs(cell))
+            ubuf[i] = u[j]
+        end
+        for q_point in 1:getnquadpoints(cv)
+            uq = function_value(cv, q_point, ubuf)
+            dΩ = getdetJdV(cv, q_point)
+            S += uq * dΩ
         end
     end
     return S
 end
+integrate(u::AbstractVector{Tu}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = _integrate(u, domain)
+integrate(u::AbstractVector{uType}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = _integrate(u, domain)
 
-function integrate_direct(u::AbstractVector{uType}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:Complex{Tu}}
-    cv = getcellvalues(domain)
-    n_basefuncs = getnbasefunctions(cv)
-    S = zero(uType)
-    @inbounds for cell in CellIterator(getdofhandler(domain))
-        JuAFEM.reinit!(cv, cell)
-        dofs = celldofs(cell)
-        for j in 1:n_basefuncs
-            uj = u[dofs[j]]
-            for q_point in 1:getnquadpoints(cv)
-                dΩ = getdetJdV(cv, q_point)
-                vj = shape_value(cv, q_point, j)
-                S += uj * vj * dΩ
-            end
-        end
-    end
-    return S
-end
+# function integrate_threaded(u::AbstractVector{Tu}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}}
+#     nt = Threads.nthreads()
+#     _cv = [deepcopy(getcellvalues(domain)) for _ in 1:nt]
+#     _ubuf = [zeros(Tu, getnbasefunctions(_cv[1])) for _ in 1:nt]
+#     _cell = [CellIterator(getdofhandler(domain)) for _ in 1:nt]
+#     _S = [zero(uType) for _ in 1:nt]
+#     # @inbounds
+#     Threads.@threads for c in 1:getncells(getgrid(domain))
+#         tid = Threads.threadid()
+#         cell, cv, ubuf, S = _cell[tid], _cv[tid], _ubuf[tid], _S[tid]
+#         JuAFEM.reinit!(cell, c)
+#         JuAFEM.reinit!(cv, cell)
+#         for (i,j) in enumerate(celldofs(cell))
+#             ubuf[i] = u[j]
+#         end
+#         for q_point in 1:getnquadpoints(cv)
+#             uq = function_value(cv, q_point, ubuf)
+#             dΩ = getdetJdV(cv, q_point)
+#             S += uq * dΩ
+#         end
+#         _S[tid] = S
+#     end
+#     S = sum(_S)
+#     return S
+# end
 
-function integrate(u::AbstractVector{Tu}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}}
-    @assert length(u) == ndofs(getdofhandler(domain))
-    return sum(reinterpret(uType, getmass(domain) * u))
-end
-function integrate(u::AbstractVector{uType}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:Complex{Tu}}
-    @assert length(u) == ndofs(getdofhandler(domain))
-    return sum(getmass(domain) * u)
-end
+# function integrate(u::AbstractVector{Tu}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}}
+#     @assert length(u) == ndofs(getdofhandler(domain))
+#     return sum(reinterpret(uType, getmass(domain) * u))
+# end
+# function integrate(u::AbstractVector{uType}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:Complex{Tu}}
+#     @assert length(u) == ndofs(getdofhandler(domain))
+#     return sum(getmass(domain) * u)
+# end
 
 # function integrate(u::AbstractVector{Tu}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}}
 #     @assert length(u) == ndofs(getdofhandler(domain))
@@ -538,6 +544,9 @@ function doassemble!(
         De = zeros(Tu, n_basefuncs, n_basefuncs)
         Re = zeros(Tu, n_basefuncs, n_basefuncs)
         We = zeros(Tu, n_basefuncs, n_basefuncs)
+        domain.metadata[:Gamma] = interpolate(domain) do x
+            return complex(prob.Rdecay(x), prob.Omega(x))
+        end
     end
 
     # It is now time to loop over all the cells in our grid. We do this by iterating
@@ -572,6 +581,7 @@ function doassemble!(
             D = prob.Dcoeff(coords_qp)
             R = prob.Rdecay(coords_qp)
             ω = prob.Omega(coords_qp)
+            Γ = R + im * ω
 
             # For each quadrature point we loop over all the (local) shape functions.
             # We need the value and gradient of the testfunction `v` and also the gradient
@@ -582,7 +592,7 @@ function doassemble!(
                 for j in 1:n_basefuncs
                     u = shape_value(getcellvalues(domain), q_point, j)
                     ∇u = shape_gradient(getcellvalues(domain), q_point, j)
-                    Ke[i,j] -= complex(D * (∇v ⋅ ∇u) + R * (v * u), ω * (v * u)) * dΩ
+                    Ke[i,j] -= (D * (∇v ⋅ ∇u) + Γ * (v * u)) * dΩ
                     Me[i,j] += (v * u) * dΩ
                     if DEBUG
                         De[i,j] += (D * (∇v ⋅ ∇u)) * dΩ

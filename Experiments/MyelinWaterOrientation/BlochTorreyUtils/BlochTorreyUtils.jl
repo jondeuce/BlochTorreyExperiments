@@ -39,7 +39,7 @@ export testproblem
 # ---------------------------------------------------------------------------- #
 
 export BlochTorreyParameters
-export FieldType, MassType, MassFactType, StiffnessType, MyelinBoundary
+export FieldType, DofType, MassType, MassFactType, StiffnessType, MyelinBoundary
 export AbstractParabolicProblem, MyelinProblem, BlochTorreyProblem
 export AbstractDomain, ParabolicDomain, MyelinDomain, TriangularMyelinDomain, TriangularGrid
 export AbstractRegion, AbstractRegionUnion, AxonRegion, MyelinRegion, TissueRegion, PermeableInterfaceRegion
