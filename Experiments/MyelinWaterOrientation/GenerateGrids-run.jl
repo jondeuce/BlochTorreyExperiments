@@ -1,9 +1,10 @@
 # Initialize packages, and create backup file
 include(joinpath(@__DIR__, "init.jl"))
-make_reproduce( # Creating backup file
+make_reproduce(
     """
     include("BlochTorreyExperiments/Experiments/MyelinWaterOrientation/GenerateGrids-run.jl")
-    """)
+    """
+)
 
 using BSON, Dates, Printf
 using StatsPlots
@@ -13,9 +14,12 @@ function main()
     default_btparams = BlochTorreyParameters{Float64}()
     numreps = 1 # number of grids per parameter set
 
-    numfibres = 40:10:50
-    g_ratios = [0.75, 0.78, 0.80, default_btparams.g_ratio]
-    packing_densities = [0.7, 0.75, 0.8, default_btparams.AxonPDensity]
+    # numfibres = 40:10:50
+    # g_ratios = [0.75, 0.78, 0.80, default_btparams.g_ratio]
+    # packing_densities = [0.7, 0.75, 0.8, default_btparams.AxonPDensity]
+    numfibres = [10]
+    g_ratios = [0.75]
+    packing_densities = [0.7]
 
     to_str(x) = @sprintf "%.4f" x
     params_to_str(p,g,n) = "N-$(n)_g-$(to_str(g))_p-$(to_str(p))"

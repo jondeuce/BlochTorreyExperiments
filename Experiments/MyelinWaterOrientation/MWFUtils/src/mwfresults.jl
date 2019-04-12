@@ -99,7 +99,7 @@ function resultsdict_from_csv(;
             end
             
             prob = ODEProblem(myelindomain, u[1], (t[1], t[end]))
-            alg = default_algfun()(prob)
+            alg = default_algorithm()(prob)
 
             sol = DiffEqBase.build_solution(prob, alg, t, u)
             push!(sols, sol)

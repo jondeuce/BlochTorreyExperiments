@@ -5,11 +5,20 @@ const AbstractMaybeCplxMat{T} = AbstractMatrix{Tc} where {Tc<:Union{T,Complex{T}
 const MassType{T} = Union{<:SparseMatrixCSC{T}, <:Symmetric{T,<:SparseMatrixCSC{T}}}
 const MassFactType{T} = Factorization{T}
 const StiffnessType{T} = SparseMatrixCSC{Tc} where {Tc<:Union{T,Complex{T}}}
-const TriangularGrid{T} = Grid{2,3,T,3}
 const VectorOfVectors{T} = AbstractVector{<:AbstractVector{T}}
 const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{gDim,T}}
 
-# Struct of BlochTorreyParameters. T is the float type.
+# For convenience, define a 2D triangular grid and myelin domain types:
+#   grid dimension `gDim` = 2
+#   number of nodes per elem `Nd` = 3
+#   number of faces per elem `Nf` = 3
+const TriangularGrid{T} = Grid{2,3,T,3}
+const TriangularMyelinDomain{R,Tu,uType,T,DType} = MyelinDomain{R,Tu,uType,2,T,3,3,DType}
+
+# ---------------------------------------------------------------------------- #
+# BlochTorreyParameters
+#   Physical parameters needed for Bloch-Torrey simulations
+# ---------------------------------------------------------------------------- #
 @with_kw struct BlochTorreyParameters{T}
     B0::T             =    T(-3.0)          # External magnetic field (z-direction) [T]
     gamma::T          =    T(2.67515255e8)  # Gyromagnetic ratio [rad/s/T]
@@ -47,7 +56,11 @@ const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{
     Rho_Iron::T       =    T(7.874)         # Iron density [g/cm^3]
 end
 
-# AbstractParabolicProblem type
+# ---------------------------------------------------------------------------- #
+# AbstractParabolicProblem
+#   Subtypes of this abstract type hold all necessary information to solve a
+#   given problem on a corresponding AbstractDomain.
+# ---------------------------------------------------------------------------- #
 abstract type AbstractParabolicProblem{T} end
 
 # MyelinProblem: holds a `BlochTorreyParameters` set of parameters
@@ -64,12 +77,24 @@ struct BlochTorreyProblem{T,D,R,W} <: AbstractParabolicProblem{T}
     BlochTorreyProblem{T}(d::D,r::R,w::W) where {T,D,R,W} = new{T,D,R,W}(d,r,w)
 end
 
-# Abstract domain type. The type parameters are:
-#   `uType`:  Dimension of `u`
-#   `gDim`:  Spatial dimension of domain
-#   `T`:    Float type used
-#   `Nd`:   Number of nodes per finite element
-#   `Nf`:   Number of faces per finite element
+# Create BlochTorreyProblem from a MyelinProblem and a MyelinDomain
+function BlochTorreyProblem(p::MyelinProblem{T}, m::MyelinDomain) where {T}
+    @inline Dcoeff(x...) = dcoeff(x..., p, m) # Dcoeff function
+    @inline Rdecay(x...) = rdecay(x..., p, m) # R2 function
+    @inline Omega(x...) = omega(x..., p, m) # Omega function
+    return BlochTorreyProblem{T}(Dcoeff, Rdecay, Omega)
+end
+
+# ---------------------------------------------------------------------------- #
+# AbstractDomain
+#   Abstract type with the most generic information on the underlying problem:
+#       Tu:     Bottom float type used for underlying function, e.g. Float64
+#       uType:  Vector type of unknown function, e.g. Vec{2,Tu}, Complex{Tu}
+#       gDim:   Spatial dimension of domain
+#       T:      Float type used for geometry
+#       Nd:     Number of nodes per finite element
+#       Nf:     Number of faces per finite element
+# ---------------------------------------------------------------------------- #
 abstract type AbstractDomain{Tu,uType,gDim,T,Nd,Nf} end
 const VectorOfDomains{Tu,uType,gDim,T,Nd,Nf} = AbstractVector{<:AbstractDomain{Tu,uType,gDim,T,Nd,Nf}}
 
@@ -159,6 +184,11 @@ function ParabolicDomain(
     )
 end
 
+# ---------------------------------------------------------------------------- #
+# AbstractRegion
+#   Along with it's subtypes, allows for dispatching on the different regions
+#   which an underlying grid, function, etc. may be represented on
+# ---------------------------------------------------------------------------- #
 abstract type AbstractRegion end
 abstract type AbstractRegionUnion <: AbstractRegion end
 
@@ -171,12 +201,14 @@ end
 struct TissueRegion <: AbstractRegion end
 struct PermeableInterfaceRegion <: AbstractRegionUnion end
 
-# MyelinDomain:
-# Generic domain type which holds the information necessary to solve a parabolic
-# FEM problem M*du/dt = K*u on a domain which represents a region containing
-# or in close proximity to myelin. The complete domain is represented as a
-# ParabolicDomain, which stores the underlying grid, mass matrix M, stiffness
-# matrix K, etc.
+# ---------------------------------------------------------------------------- #
+# MyelinDomain <: AbstractDomain
+#   Generic domain type which holds the information necessary to solve a
+#   parabolic FEM problem M*du/dt = K*u on a domain which represents a region
+#   containing or in close proximity to myelin. The complete domain is
+#   represented as a ParabolicDomain, which stores the underlying grid, mass
+#   matrix M, stiffness matrix K, etc.
+# ---------------------------------------------------------------------------- #
 mutable struct MyelinDomain{R<:AbstractRegion,Tu,uType,gDim,T,Nd,Nf,DType<:ParabolicDomain{Tu,uType,gDim,T,Nd,Nf}} <: AbstractDomain{Tu,uType,gDim,T,Nd,Nf}
     region::R
     domain::DType
@@ -184,12 +216,6 @@ mutable struct MyelinDomain{R<:AbstractRegion,Tu,uType,gDim,T,Nd,Nf,DType<:Parab
     innercircles::Vector{Circle{2,T}}
     ferritins::Vector{Vec{3,T}}
 end
-
-# For convenience, define a 2D triangular myelin domain type:
-#   grid dimension `gDim` = 2
-#   number of nodes per elem `Nd` = 3
-#   number of faces per elem `Nf` = 3
-const TriangularMyelinDomain{R,Tu,uType,T,DType} = MyelinDomain{R,Tu,uType,2,T,3,3,DType}
 
 # Constructor given a `Grid` and kwargs in place of a `ParabolicDomain`
 function MyelinDomain(
@@ -208,32 +234,11 @@ function MyelinDomain(
     )
 end
 
-# # Copy constructor for new ParabolicDomain keyword arguments
-# function MyelinDomain(m::MyelinDomain; kwargs...)
-#     return MyelinDomain(
-#         m.region,
-#         getgrid(m.domain),
-#         m.outercircles,
-#         m.innercircles,
-#         m.ferritins;
-#         kwargs...
-#     )
-# end
-
-# Create BlochTorreyProblem from a MyelinProblem and a MyelinDomain
-function BlochTorreyProblem(p::MyelinProblem{T}, m::MyelinDomain) where {T}
-    @inline Dcoeff(x...) = dcoeff(x..., p, m) # Dcoeff function
-    @inline Rdecay(x...) = rdecay(x..., p, m) # R2 function
-    @inline Omega(x...) = omega(x..., p, m) # Omega function
-    return BlochTorreyProblem{T}(Dcoeff, Rdecay, Omega)
-end
-
-# Copy constructor for creating a ParabolicDomain from a MyelinDomain
-# ParabolicDomain(m::MyelinDomain) = deepcopy(m.domain)
-
-# ParabolicLinearMap: create a LinearMaps subtype which wrap the action of
-# Mfact\K in a LinearMap object. Does not make copies of M, Mfact, or K;
-# simply is a light wrapper for them
+# ---------------------------------------------------------------------------- #
+# ParabolicLinearMap <: LinearMap
+#   Lightweight wrapper over mass matrix M, factorized mass matrix Mfact, and
+#   stiffness matrix K. Acts on vectors and matrices as Mfact\K.
+# ---------------------------------------------------------------------------- #
 struct ParabolicLinearMap{T, MType<:AbstractMatrix, MfactType <: MassFactType, KType<:AbstractMatrix} <: LinearMap{T}
     M::MType
     Mfact::MfactType
@@ -245,3 +250,13 @@ struct ParabolicLinearMap{T, MType<:AbstractMatrix, MfactType <: MassFactType, K
     end
 end
 ParabolicLinearMap(d::ParabolicDomain) = ParabolicLinearMap(getmass(d), getmassfact(d), getstiffness(d))
+
+# ---------------------------------------------------------------------------- #
+# LinearOperatorWrapper <: AbstractMatrix
+#   Effectively a simplified LinearMap, but subtypes AbstractMatrix so that it
+#   can be passed on to DiffEq* solvers, etc.
+# ---------------------------------------------------------------------------- #
+struct LinearOperatorWrapper{T,Atype} <: AbstractMatrix{T}
+    A::Atype
+    LinearOperatorWrapper(A::Atype) where {Atype} = new{eltype(A), Atype}(A)
+end

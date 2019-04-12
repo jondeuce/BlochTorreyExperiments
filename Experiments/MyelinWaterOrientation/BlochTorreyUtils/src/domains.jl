@@ -217,20 +217,6 @@ function Base.show(io::IO, ::MIME"text/plain", d::ParabolicDomain)
 end
 Base.show(io::IO, d::ParabolicDomain) = print(io, "$(typeof(d)) with $(ndofs(d)) degrees of freedom")
 
-# function Base.show(io::IO, d::ParabolicDomain)
-#     compact = get(io, :compact, false)
-#     if compact
-#         print(io, "$(typeof(d)) with $(ndofs(d)) degrees of freedom")
-#     else
-#         print(io, "$(typeof(d)) with:")
-#         print(io, "\n  grid: "); show(io, getgrid(d))
-#         print(io, "\n     M: "); _compact_show_sparse(io, getmass(d))
-#         print(io, "\n Mfact: "); _compact_show_factorization(io, getmassfact(d))
-#         print(io, "\n     K: "); _compact_show_sparse(io, getstiffness(d))
-#         # print(io, "\n     w: ", length(getquadweights(d)), "-element ", typeof(getquadweights(d)))
-#     end
-# end
-
 # ---------------------------------------------------------------------------- #
 # MyelinDomain methods
 # ---------------------------------------------------------------------------- #
@@ -258,20 +244,6 @@ function Base.show(io::IO, ::MIME"text/plain", m::MyelinDomain)
     # print(io, "\n     w: ", length(getquadweights(m)), "-element ", typeof(getquadweights(m)))
 end
 Base.show(io::IO, m::MyelinDomain) = print(io, "$(typeof(m)) with $(ndofs(m)) degrees of freedom and $(numfibres(m)) fibres")
-
-# function Base.show(io::IO, m::MyelinDomain)
-#     compact = get(io, :compact, false)
-#     if compact
-#         print(io, "$(typeof(m)) with $(ndofs(m)) degrees of freedom and $(numfibres(m)) fibres")
-#     else
-#         print(io, "$(typeof(m)) with $(numfibres(m)) fibres and:")
-#         print(io, "\n  grid: "); show(io, getgrid(m))
-#         print(io, "\n     M: "); _compact_show_sparse(io, getmass(m))
-#         print(io, "\n Mfact: "); _compact_show_factorization(io, getmassfact(m))
-#         print(io, "\n     K: "); _compact_show_sparse(io, getstiffness(m))
-#         # print(io, "\n     w: ", length(getquadweights(m)), "-element ", typeof(getquadweights(m)))
-#     end
-# end
 
 function createmyelindomains(
         tissuegrids::AbstractVector{G},#{Grid{gDim,Nd,T,Nf}},

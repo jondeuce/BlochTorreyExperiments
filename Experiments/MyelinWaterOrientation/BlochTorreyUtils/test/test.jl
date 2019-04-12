@@ -1,10 +1,10 @@
 using BlochTorreyUtils
-using GeometryUtils
+# using GeometryUtils
 using CirclePackingUtils
-using GreedyCirclePacking
-using MeshUtils
-using Tensors
-using JuAFEM
+# using GreedyCirclePacking
+# using MeshUtils
+# using Tensors
+# using JuAFEM
 using MATLABPlots
 
 using BlochTorreyUtils: omega_tissue, omega_myelin, omega_axon, omega, omegamap, dcoeff, rdecay

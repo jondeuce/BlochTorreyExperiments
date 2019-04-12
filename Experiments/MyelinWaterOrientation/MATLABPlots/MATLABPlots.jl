@@ -1,9 +1,10 @@
 module MATLABPlots
 
+# using DistMesh
+# using MeshUtils
+# using JuAFEM
+using GeometryUtils
 using Reexport
-using DistMesh
-using MeshUtils
-using JuAFEM
 @reexport using MATLAB
 
 export mxsimpplot

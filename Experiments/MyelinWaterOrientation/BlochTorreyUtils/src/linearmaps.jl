@@ -37,17 +37,18 @@ LinearAlgebra.mul!(Y::AbstractMatrix, A::LinearMaps.TransposeMap{T, <:ParabolicL
 LinearAlgebra.mul!(Y::AbstractVector, A::LinearMaps.AdjointMap{T, <:ParabolicLinearMap{T}}, X::AbstractVector) where {T} = Kc_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
 LinearAlgebra.mul!(Y::AbstractMatrix, A::LinearMaps.AdjointMap{T, <:ParabolicLinearMap{T}}, X::AbstractMatrix) where {T} = Kc_Minv_mul_u!(Y, X, A.lmap.K, A.lmap.Mfact)
 
-function Base.show(io::IO, d::ParabolicLinearMap)
-    compact = get(io, :compact, false)
-    if compact
-        print(io, size(d,1), "×", size(d,2), " ", typeof(d))
-    else
-        print(io, "$(typeof(d)) with:")
-        print(io, "\n     M: "); _compact_show_sparse(io, d.M)
-        print(io, "\n Mfact: "); _compact_show_factorization(io, d.Mfact)
-        print(io, "\n     K: "); _compact_show_sparse(io, d.K)
-    end
+# Make ParabolicLinearMap's callable (for direct use within ODEProblem's)
+(A::ParabolicLinearMap{T,MType,MfactType,KType})(du,u) where {T,MType,MfactType,KType} = mul!(du,A,u)
+(A::ParabolicLinearMap{T,MType,MfactType,KType})(du,u,p) where {T,MType,MfactType,KType} = mul!(du,A,u)
+(A::ParabolicLinearMap{T,MType,MfactType,KType})(du,u,p,t) where {T,MType,MfactType,KType} = mul!(du,A,u)
+
+function Base.show(io::IO, ::MIME"text/plain", d::ParabolicLinearMap)
+    print(io, "$(typeof(d)) with:")
+    print(io, "\n     M: "); _compact_show_sparse(io, d.M)
+    print(io, "\n Mfact: "); _compact_show_factorization(io, d.Mfact)
+    print(io, "\n     K: "); _compact_show_sparse(io, d.K)
 end
+Base.show(io::IO, d::ParabolicLinearMap) = print(io, size(d,1), "×", size(d,2), " ", typeof(d))
 
 # ---------------------------------------------------------------------------- #
 # LinearMap methods: helper functions for LinearMap's
@@ -56,63 +57,66 @@ end
 # For taking literal powers of LinearMaps, e.g. A^2
 Base.to_power_type(A::Union{<:LinearMaps.AdjointMap, <:LinearMaps.TransposeMap, <:LinearMap}) = A
 
-# For making FunctionMap's callable (for direct use within ODEProblem's)
+# Make LinearMaps.FunctionMap's callable (for direct use within ODEProblem's)
 (A::LinearMaps.FunctionMap{T,F1,F2})(du,u) where {T,F1,F2} = mul!(du,A,u)
 (A::LinearMaps.FunctionMap{T,F1,F2})(du,u,p) where {T,F1,F2} = mul!(du,A,u)
 (A::LinearMaps.FunctionMap{T,F1,F2})(du,u,p,t) where {T,F1,F2} = mul!(du,A,u)
 
-function LinearAlgebra.tr(A::LinearMap{T}, t::Int = 10) where {T}
+function LinearAlgebra.tr(A::LinearMap{T}, t::Int = 10, deterministic::Bool = true) where {T}
     # Approximate trace using mat-vec's with basis vectors
     N = size(A, 2)
     t = min(t, N)
     x = zeros(T, N)
     y = similar(x)
     est = zero(T)
+    
+    # Trace estimate is pseudo-random; by default, return a deterministic estimate
+    rng = Random.GLOBAL_RNG
+    deterministic && Random.seed!(0)
     for ix in StatsBase.sample(1:N, t; replace = false)
         x[ix] = one(T)
         y = mul!(y, A, x)
         est += y[ix]
         x[ix] = zero(T)
     end
+    deterministic && Random.seed!(rng)
+
     return N * (est/t)
 end
 
-function expmv_opnorm(A, p)
-    if p == 1
-        return ExpmV.norm1est(A, 1)
-    elseif p == Inf
-        return ExpmV.norm1est(A', 1)
-    else
+function expmv_opnorm(A, p, deterministic::Bool = true)
+    if !(p == 1 || p == Inf)
         error("p=1 or p=Inf required; got p=$p")
     end
+    
+    # 1-norm estimate is pseudo-random; by default, return a deterministic estimate
+    rng = Random.GLOBAL_RNG
+    deterministic && Random.seed!(0)
+    anorm = (p == 1) ? ExpmV.norm1est(A, 1) : ExpmV.norm1est(A', 1)
+    deterministic && Random.seed!(rng)
+
+    return anorm
 end
 
 # Default to p = 2 for consistency with Base, even though it would throw an error
 LinearAlgebra.opnorm(A::LinearMap, p::Real = 2) = expmv_opnorm(A, p)
 # LinearAlgebra.opnorm(A::LinearMap, p::Real = 2, t::Int = 10) = normest1_norm(A, p, t)
-# LinearAlgebra.norm(A::LinearMap, p::Real = 2, t::Int = 10) = normest1_norm(A, p, t)
 
 # ---------------------------------------------------------------------------- #
-# DiffEqParabolicLinearMapWrapper methods: Effectively a simplified LinearMap,
-# but subtypes AbstractMatrix so that it can be passed to DiffEq* solvers
+# LinearOperatorWrapper methods
 # ---------------------------------------------------------------------------- #
 
-struct DiffEqParabolicLinearMapWrapper{T,Atype} <: AbstractMatrix{T}
-    A::Atype
-    DiffEqParabolicLinearMapWrapper(A::Atype) where {Atype} = new{eltype(A), Atype}(A)
-end
-LinearAlgebra.adjoint(A::DiffEqParabolicLinearMapWrapper) = DiffEqParabolicLinearMapWrapper(A.A')
-LinearAlgebra.transpose(A::DiffEqParabolicLinearMapWrapper) = DiffEqParabolicLinearMapWrapper(transpose(A.A))
+LinearAlgebra.adjoint(A::LinearOperatorWrapper) = LinearOperatorWrapper(A.A')
+LinearAlgebra.transpose(A::LinearOperatorWrapper) = LinearOperatorWrapper(transpose(A.A))
 
 # NOTE: purposefully not forwarding getindex; wrapper type should behave like a LinearMap
-Lazy.@forward DiffEqParabolicLinearMapWrapper.A (Base.size, LinearAlgebra.tr, LinearAlgebra.issymmetric, LinearAlgebra.ishermitian, LinearAlgebra.isposdef)
+Lazy.@forward LinearOperatorWrapper.A (Base.size, LinearAlgebra.tr, LinearAlgebra.issymmetric, LinearAlgebra.ishermitian, LinearAlgebra.isposdef)
 
 # TODO: Lazy.@forward gives ambiguity related errors when trying to forward these methods: mul!, norm, opnorm
-LinearAlgebra.mul!(Y::AbstractVector, A::DiffEqParabolicLinearMapWrapper, X::AbstractVector) = mul!(Y, A.A, X)
-LinearAlgebra.mul!(Y::AbstractMatrix, A::DiffEqParabolicLinearMapWrapper, X::AbstractMatrix) = mul!(Y, A.A, X)
-LinearAlgebra.opnorm(A::DiffEqParabolicLinearMapWrapper, p::Real) = expmv_opnorm(A.A, p)
-# LinearAlgebra.opnorm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A.A, p, t)
-# LinearAlgebra.norm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A.A, p, t)
+LinearAlgebra.mul!(Y::AbstractVector, A::LinearOperatorWrapper, X::AbstractVector) = mul!(Y, A.A, X)
+LinearAlgebra.mul!(Y::AbstractMatrix, A::LinearOperatorWrapper, X::AbstractMatrix) = mul!(Y, A.A, X)
+LinearAlgebra.opnorm(A::LinearOperatorWrapper, p::Real) = expmv_opnorm(A.A, p)
+# LinearAlgebra.opnorm(A::LinearOperatorWrapper, p::Real, t::Int = 10) = normest1_norm(A.A, p, t)
 
-Base.show(io::IO, A::DiffEqParabolicLinearMapWrapper) = print(io, "$(typeof(A))")
-Base.show(io::IO, ::MIME"text/plain", A::DiffEqParabolicLinearMapWrapper) = print(io, "$(size(A,1)) × $(size(A,2)) $(typeof(A))")
+Base.show(io::IO, A::LinearOperatorWrapper) = print(io, "$(typeof(A))")
+Base.show(io::IO, ::MIME"text/plain", A::LinearOperatorWrapper) = print(io, "$(size(A,1)) × $(size(A,2)) $(typeof(A))")

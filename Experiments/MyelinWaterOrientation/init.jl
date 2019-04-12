@@ -24,14 +24,14 @@ end
 ##### My files and modules to load
 #####
 using GlobalUtils
-using GeometryUtils
-using CirclePackingUtils
-using MeshUtils
-using DistMesh
-using BlochTorreyUtils
-using BlochTorreySolvers
-using MATLABPlots
 using MWFUtils
+# using GeometryUtils
+# using CirclePackingUtils
+# using MeshUtils
+# using DistMesh
+# using BlochTorreyUtils
+# using BlochTorreySolvers
+# using MATLABPlots
 
 #####
 ##### Debugging packages
@@ -42,11 +42,11 @@ using Debugger
 #####
 ##### Misc. useful packages
 #####
-using Parameters
-using JuAFEM, Tensors
+# using Parameters
+# using JuAFEM, Tensors
 # using JuAFEM: vertices, faces, edges
-using StaticArrays
-using DiffEqBase, OrdinaryDiffEq
+# using StaticArrays
+# using DiffEqBase, OrdinaryDiffEq
 # using DifferentialEquations
 # using DiffEqOperators
 # using Sundials

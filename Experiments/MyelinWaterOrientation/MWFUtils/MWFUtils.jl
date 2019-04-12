@@ -1,21 +1,26 @@
 module MWFUtils
 
-using LinearAlgebra, Statistics
-using GeometryUtils
-using CirclePackingUtils
-using MeshUtils
-using DistMesh
-using BlochTorreyUtils
-using BlochTorreySolvers
+# using LinearAlgebra, Statistics
+# using GeometryUtils
+# using MeshUtils
+# using DistMesh
+# using BlochTorreyUtils
+# using BlochTorreySolvers
 
-using JuAFEM
-using OrdinaryDiffEq, DiffEqOperators, Sundials
+# using JuAFEM
+# using OrdinaryDiffEq, DiffEqOperators, Sundials
+# using Parameters: @with_kw, @unpack
+
+using Reexport
+@reexport using BlochTorreyUtils
+@reexport using CirclePackingUtils
+@reexport using MATLAB
+
 using BenchmarkTools
-using Parameters: @with_kw, @unpack
 using IterableTables, DataFrames
 import BSON, CSV, Dates
 
-# MWF Calculation
+# For curve fitting/optimization in calculating MWF
 import ForwardDiff
 import LsqFit
 import BlackBoxOptim
@@ -30,7 +35,7 @@ export creategeometry, loadgeometry
 export createdomains
 export calcomegas, calcomega
 export calcsignals, calcsignal
-export solveblochtorrey, default_algfun, get_algfun
+export solveblochtorrey, default_algorithm
 export plotomega, plotmagnitude, plotphase, plotSEcorr, plotbiexp, plotMWF
 export mxsavefig, getnow
 
@@ -44,7 +49,7 @@ include("src/mwfmodels.jl")
 include("src/mwfplotutils.jl")
 
 # TODO: deprecate MWFResults
-export MWFResults
-include("src/mwfresults.jl")
+# export MWFResults
+# include("src/mwfresults.jl")
 
 end # module MWFUtils

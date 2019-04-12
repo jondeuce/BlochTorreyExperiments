@@ -167,8 +167,8 @@ function creategeometry(btparams::BlochTorreyParameters{T};
 
     # Relative edge length function
     function fh(x::Vec{2,T}) where {T}
-        douter = MeshUtils.dcircles(x, outercircles)
-        dinner = MeshUtils.dcircles(x, innercircles)
+        douter = dcircles(x, outercircles)
+        dinner = dcircles(x, innercircles)
         hallcircles = min(abs(douter), abs(dinner))/T(dmax)
         return alpha + min(hallcircles, one(T))
     end
@@ -353,18 +353,22 @@ function OrdinaryDiffEq.ODEProblem(d::ParabolicDomain, u0, tspan; invertmass = t
         invertmass = true
     end
 
-    f!(du,u,p,t) = mul!(du, p[1], u) # RHS action of ODE for general matrix A stored in p[1]
-    A = ParabolicLinearMap(d) # ParabolicLinearMap returns a subtype of LinearMap which acts onto u as (M\K)*u.
-    p = (A,) # ODEProblem parameter tuple
-    return ODEProblem(f!, u0, tspan, p)
+    A = ParabolicLinearMap(d)
+    f = ODEFunction(A)
+    return ODEProblem(f, u0, tspan)
+
+    # f!(du,u,p,t) = mul!(du, p[1], u) # RHS action of ODE for general matrix A stored in p[1]
+    # A = ParabolicLinearMap(d) # ParabolicLinearMap returns a subtype of LinearMap which acts onto u as (M\K)*u.
+    # p = (A,) # ODEProblem parameter tuple
+    # return ODEProblem(f!, u0, tspan, p)
 
     # if invertmass
     #     # ParabolicLinearMap returns a linear operator which acts by (M\K)*u.
     #     A = ParabolicLinearMap(d) # subtype of LinearMap
-    #     p = (DiffEqParabolicLinearMapWrapper(A),) # wrap LinearMap in an AbstractArray wrapper
+    #     p = (LinearOperatorWrapper(A),) # wrap LinearMap in an AbstractArray wrapper
     #     F! = ODEFunction{true,true}(f!; # represents M*du/dt = K*u system
     #         mass_matrix = I, # mass matrix
-    #         jac = (J,u,p,t) -> J, # Jacobian is constant (DiffEqParabolicLinearMapWrapper)
+    #         jac = (J,u,p,t) -> J, # Jacobian is constant (LinearOperatorWrapper)
     #         jac_prototype = p[1]
     #     )
     #     return ODEProblem(F!, u0, tspan, p)
@@ -381,7 +385,7 @@ function OrdinaryDiffEq.ODEProblem(d::ParabolicDomain, u0, tspan; invertmass = t
 end
 OrdinaryDiffEq.ODEProblem(m::MyelinDomain, u0, tspan; kwargs...) = ODEProblem(getdomain(m), u0, tspan; kwargs...)
 
-function solveblochtorrey(myelinprob, myelindomains, algfun = default_algfun();
+function solveblochtorrey(myelinprob, myelindomains, alg = default_algorithm();
         tspan = (0.0, 320.0e-3),
         TE = 10e-3,
         ts = tspan[1]:TE/2:tspan[2], # tstops, which includes π-pulse times
@@ -395,7 +399,6 @@ function solveblochtorrey(myelinprob, myelindomains, algfun = default_algfun();
 
     @time for (i,prob) in enumerate(probs)
         println("i = $i/$(length(probs)): ")
-        alg = algfun(prob)
         sol = @time solve(prob, alg;
             dense = false, # don't save all intermediate time steps
             saveat = ts, # timepoints to save solution at
@@ -411,20 +414,25 @@ function solveblochtorrey(myelinprob, myelindomains, algfun = default_algfun();
     return sols
 end
 
-function get_algfun(algtype = :ExpokitExpmv)
-    algfun = if algtype isa DiffEqBase.AbstractODEAlgorithm
-        prob -> algtype # given an DiffEqBase.AbstractODEAlgorithm algorithm directly
-    elseif algtype == :CVODE_BDF
-        prob -> CVODE_BDF(;method = :Functional)
-    elseif algtype == :ExpokitExpmv
-        expokit_algfun()
-    elseif algtype == :HighamExpmV
-        higham_algfun()
-    else
-        default_algfun()
-    end
-    return algfun
-end
-expokit_algfun() = prob -> ExpokitExpmv(prob.p[1]; m = 30) # first parameter is A in du/dt = A*u
-higham_algfun() = prob -> HighamExpmv(prob.p[1]) # first parameter is A in du/dt = A*u
-default_algfun() = expokit_algfun()
+default_cvode_bdf() = CVODE_BDF(method = :Functional)
+default_expokit() = ExpokitExpmv(m = 30)
+default_higham() = HighamExpmv(precision = :single)
+default_algorithm() = default_expokit()
+
+# function get_algfun(algtype = :ExpokitExpmv)
+#     algfun = if algtype isa DiffEqBase.AbstractODEAlgorithm
+#         prob -> algtype # given an DiffEqBase.AbstractODEAlgorithm algorithm directly
+#     elseif algtype == :CVODE_BDF
+#         prob -> CVODE_BDF(;method = :Functional)
+#     elseif algtype == :ExpokitExpmv
+#         expokit_algfun()
+#     elseif algtype == :HighamExpmV
+#         higham_algfun()
+#     else
+#         default_algfun()
+#     end
+#     return algfun
+# end
+# expokit_algfun() = prob -> ExpokitExpmv(prob.p[1]; m = 30) # first parameter is A in du/dt = A*u
+# higham_algfun() = prob -> HighamExpmv(prob.p[1]) # first parameter is A in du/dt = A*u
+# default_algfun() = expokit_algfun()

@@ -1,9 +1,10 @@
 include(realpath(joinpath(@__DIR__,"../../initpaths.jl")))
 using Test, BenchmarkTools
-using SparseArrays, LinearAlgebra, Statistics
-using BlochTorreyUtils, BlochTorreySolvers, MWFUtils
-using GeometryUtils, JuAFEM # needed for loading grids
-using OrdinaryDiffEq, Sundials
+# using SparseArrays, LinearAlgebra, Statistics
+# using BlochTorreyUtils, BlochTorreySolvers, MWFUtils
+# using GeometryUtils, JuAFEM # needed for loading grids
+# using OrdinaryDiffEq, Sundials
+using MWFUtils
 import BSON
 import ExpmV, Expokit
 
