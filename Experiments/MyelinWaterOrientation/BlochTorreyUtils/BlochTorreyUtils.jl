@@ -8,7 +8,6 @@ module BlochTorreyUtils
 # Dependencies
 # ---------------------------------------------------------------------------- #
 
-using Normest1
 using GeometryUtils
 using MeshUtils
 using DistMesh
@@ -18,6 +17,9 @@ using SparseArrays
 using SuiteSparse # need to define ldiv! for SuiteSparse.CHOLMOD.Factor
 using StatsBase
 using LinearMaps
+# using Normest1
+import ExpmV
+
 using Parameters: @with_kw, @unpack
 
 import Distributions

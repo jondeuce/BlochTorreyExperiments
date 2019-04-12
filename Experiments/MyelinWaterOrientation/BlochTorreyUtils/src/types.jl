@@ -105,14 +105,13 @@ function ParabolicDomain(
         geominterporder::Int = 1
     ) where {gDim,Nd,T,Nf,Tu,uType<:FieldType{Tu}}
 
-    uDim = fielddim(uType)
-    # @assert uDim == 2 #TODO: where is this assumption? likely, assume dim(u) == dim(grid) somewhere
-
     # Quadrature and interpolation rules and corresponding cellvalues/facevalues
     func_interp = Lagrange{gDim, typeof(refshape), funcinterporder}()
     geom_interp = Lagrange{gDim, typeof(refshape), geominterporder}()
     quadrule = QuadratureRule{gDim, typeof(refshape)}(quadorder)
     quadrule_face = QuadratureRule{gDim-1, typeof(refshape)}(quadorder)
+    
+    uDim = fielddim(uType)
     if uDim == 1
         cellvalues = CellScalarValues(Tu, quadrule, func_interp, geom_interp)
         facevalues = FaceScalarValues(Tu, quadrule_face, func_interp, geom_interp)
@@ -120,6 +119,7 @@ function ParabolicDomain(
         cellvalues = CellVectorValues(Tu, quadrule, func_interp, geom_interp)
         facevalues = FaceVectorValues(Tu, quadrule_face, func_interp, geom_interp)
     end
+
     # Degree of freedom handler
     dh = DofHandler(grid)
     push!(dh, :u, uDim, func_interp)

@@ -340,14 +340,55 @@ end
 # Sum signals over all domains
 calcsignal(sols, ts, myelindomains) = sum(calcsignals(sols, ts, myelindomains))
 
+# ---------------------------------------------------------------------------- #
+# ODEProblem constructor and solver for ParabolicDomain's and MyelinDomain's
+# ---------------------------------------------------------------------------- #
+
+# Create an `ODEProblem` from a `ParabolicDomain` representing either
+#   du/dt = (M\K)*u   [invertmass = true], or
+#   M*du/dt = K*u     [invertmass = false]
+function OrdinaryDiffEq.ODEProblem(d::ParabolicDomain, u0, tspan; invertmass = true)
+    if !invertmass
+        @warn "invertmass = false not yet supported; setting invertmass = true."
+        invertmass = true
+    end
+
+    f!(du,u,p,t) = mul!(du, p[1], u) # RHS action of ODE for general matrix A stored in p[1]
+    A = ParabolicLinearMap(d) # ParabolicLinearMap returns a subtype of LinearMap which acts onto u as (M\K)*u.
+    p = (A,) # ODEProblem parameter tuple
+    return ODEProblem(f!, u0, tspan, p)
+
+    # if invertmass
+    #     # ParabolicLinearMap returns a linear operator which acts by (M\K)*u.
+    #     A = ParabolicLinearMap(d) # subtype of LinearMap
+    #     p = (DiffEqParabolicLinearMapWrapper(A),) # wrap LinearMap in an AbstractArray wrapper
+    #     F! = ODEFunction{true,true}(f!; # represents M*du/dt = K*u system
+    #         mass_matrix = I, # mass matrix
+    #         jac = (J,u,p,t) -> J, # Jacobian is constant (DiffEqParabolicLinearMapWrapper)
+    #         jac_prototype = p[1]
+    #     )
+    #     return ODEProblem(F!, u0, tspan, p)
+    # else
+    #     K, M = getstiffness(d), getmass(d)
+    #     p = (K, M)
+    #     F! = ODEFunction{true,true}(f!; # represents M*du/dt = K*u system
+    #         mass_matrix = M, # mass matrix
+    #         jac = (J,u,p,t) -> J, # Jacobian is constant (stiffness matrix)
+    #         jac_prototype = K
+    #     )
+    #     return ODEProblem(F!, u0, tspan, p)
+    # end
+end
+OrdinaryDiffEq.ODEProblem(m::MyelinDomain, u0, tspan; kwargs...) = ODEProblem(getdomain(m), u0, tspan; kwargs...)
+
 function solveblochtorrey(myelinprob, myelindomains, algfun = default_algfun();
         tspan = (0.0, 320.0e-3),
         TE = 10e-3,
         ts = tspan[1]:TE/2:tspan[2], # tstops, which includes π-pulse times
         u0 = Vec{2}((0.0, 1.0)), # initial π/2 pulse
         cb = MultiSpinEchoCallback(tspan; TE = TE),
-        reltol = 1e-4,
-        abstol = 1e-12
+        reltol = 1e-8,
+        abstol = 0.0
     )
     probs = [ODEProblem(m, interpolate(u0, m), tspan) for m in myelindomains]
     sols = Vector{ODESolution}()

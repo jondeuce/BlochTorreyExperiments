@@ -56,6 +56,11 @@ end
 # For taking literal powers of LinearMaps, e.g. A^2
 Base.to_power_type(A::Union{<:LinearMaps.AdjointMap, <:LinearMaps.TransposeMap, <:LinearMap}) = A
 
+# For making FunctionMap's callable (for direct use within ODEProblem's)
+(A::LinearMaps.FunctionMap{T,F1,F2})(du,u) where {T,F1,F2} = mul!(du,A,u)
+(A::LinearMaps.FunctionMap{T,F1,F2})(du,u,p) where {T,F1,F2} = mul!(du,A,u)
+(A::LinearMaps.FunctionMap{T,F1,F2})(du,u,p,t) where {T,F1,F2} = mul!(du,A,u)
+
 function LinearAlgebra.tr(A::LinearMap{T}, t::Int = 10) where {T}
     # Approximate trace using mat-vec's with basis vectors
     N = size(A, 2)
@@ -72,8 +77,19 @@ function LinearAlgebra.tr(A::LinearMap{T}, t::Int = 10) where {T}
     return N * (est/t)
 end
 
+function expmv_opnorm(A, p)
+    if p == 1
+        return ExpmV.norm1est(A, 1)
+    elseif p == Inf
+        return ExpmV.norm1est(A', 1)
+    else
+        error("p=1 or p=Inf required; got p=$p")
+    end
+end
+
 # Default to p = 2 for consistency with Base, even though it would throw an error
-LinearAlgebra.opnorm(A::LinearMap, p::Real = 2, t::Int = 10) = normest1_norm(A, p, t)
+LinearAlgebra.opnorm(A::LinearMap, p::Real = 2) = expmv_opnorm(A, p)
+# LinearAlgebra.opnorm(A::LinearMap, p::Real = 2, t::Int = 10) = normest1_norm(A, p, t)
 # LinearAlgebra.norm(A::LinearMap, p::Real = 2, t::Int = 10) = normest1_norm(A, p, t)
 
 # ---------------------------------------------------------------------------- #
@@ -94,7 +110,8 @@ Lazy.@forward DiffEqParabolicLinearMapWrapper.A (Base.size, LinearAlgebra.tr, Li
 # TODO: Lazy.@forward gives ambiguity related errors when trying to forward these methods: mul!, norm, opnorm
 LinearAlgebra.mul!(Y::AbstractVector, A::DiffEqParabolicLinearMapWrapper, X::AbstractVector) = mul!(Y, A.A, X)
 LinearAlgebra.mul!(Y::AbstractMatrix, A::DiffEqParabolicLinearMapWrapper, X::AbstractMatrix) = mul!(Y, A.A, X)
-LinearAlgebra.opnorm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A.A, p, t)
+LinearAlgebra.opnorm(A::DiffEqParabolicLinearMapWrapper, p::Real) = expmv_opnorm(A.A, p)
+# LinearAlgebra.opnorm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A.A, p, t)
 # LinearAlgebra.norm(A::DiffEqParabolicLinearMapWrapper, p::Real, t::Int = 10) = normest1_norm(A.A, p, t)
 
 Base.show(io::IO, A::DiffEqParabolicLinearMapWrapper) = print(io, "$(typeof(A))")

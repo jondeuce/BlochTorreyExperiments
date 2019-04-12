@@ -4,20 +4,19 @@
 
 module BlochTorreySolvers
 
-using BlochTorreyUtils, GeometryUtils # MeshUtils
+using BlochTorreyUtils
 import ExpmV
 import Expokit
 
 using LinearAlgebra, SparseArrays, JuAFEM, Tensors
 using Parameters: @with_kw, @pack, @unpack
-using DiffEqBase, OrdinaryDiffEq, DiffEqCallbacks # DiffEqOperators, Sundials
-# using MATLAB
-using TimerOutputs
-# using LinearMaps
+using DiffEqBase, OrdinaryDiffEq, DiffEqCallbacks, DiffEqOperators#, Sundials
+using LinearMaps
 
 export MultiSpinEchoCallback
 export ExpokitExpmv, HighamExpmv
 
-include("src/diffeq.jl")
+include("src/algorithms.jl")
+include("src/callbacks.jl")
 
 end # module BlochTorreySolvers

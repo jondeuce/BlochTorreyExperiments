@@ -34,9 +34,9 @@ end
 function interpolate!(u::AbstractVector{uType}, f::Function, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:Complex{Tu}}
     # Treat Complex{Tu} as two systems of Vec{1,Tu}
     dh, uDim = getdofhandler(domain), fielddim(uType)
-    _uR = _interpolate!(zeros(Tu, ndofs(dh)), x->real(f(x)), dh, uDim)
-    _uI = _interpolate!(zeros(Tu, ndofs(dh)), x->imag(f(x)), dh, uDim)
-    u .= complex.(_uR, _uI)
+    uR = _interpolate!(zeros(Tu, ndofs(dh)), x->real(f(x)), dh, uDim)
+    uI = _interpolate!(zeros(Tu, ndofs(dh)), x->imag(f(x)), dh, uDim)
+    u .= complex.(uR, uI)
     return u
 end
 interpolate(f::Function, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = interpolate!(zeros(Tu, ndofs(getdofhandler(domain))), f, domain)
@@ -198,27 +198,38 @@ function _compact_show_sparse(io, S::SparseMatrixCSC)
     print(io, S.m, "×", S.n, " ", typeof(S), " with ", nnz(S), " stored ", nnz(S) == 1 ? "entry" : "entries")
 end
 function _compact_show_sparse(io, A::Symmetric{T,<:SparseMatrixCSC{T}}) where {T}
-    S = A.data; xnnz = nnz(S)
-    print(io, S.m, "×", S.n, " ", typeof(A), " with ", xnnz, " stored ", xnnz == 1 ? "entry" : "entries")
+    S = A.data
+    print(io, S.m, "×", S.n, " ", typeof(A), " with ", nnz(S), " stored ", nnz(S) == 1 ? "entry" : "entries")
 end
 function _compact_show_factorization(io, F::Union{Nothing, <:Factorization})
     F == nothing && (show(io, F); return)
     m, n = size(F)
     print(io, m, "×", n, " ", typeof(F), " with ", nnz(F), " stored ", nnz(F) == 1 ? "entry" : "entries")
 end
-function Base.show(io::IO, d::ParabolicDomain)
-    compact = get(io, :compact, false)
-    if compact
-        print(io, "$(typeof(d)) with $(ndofs(d)) degrees of freedom")
-    else
-        print(io, "$(typeof(d)) with:")
-        print(io, "\n  grid: "); show(io, getgrid(d))
-        print(io, "\n     M: "); _compact_show_sparse(io, getmass(d))
-        print(io, "\n Mfact: "); _compact_show_factorization(io, getmassfact(d))
-        print(io, "\n     K: "); _compact_show_sparse(io, getstiffness(d))
-        # print(io, "\n     w: ", length(getquadweights(d)), "-element ", typeof(getquadweights(d)))
-    end
+
+function Base.show(io::IO, ::MIME"text/plain", d::ParabolicDomain)
+    print(io, "$(typeof(d)) with:")
+    print(io, "\n  grid: "); show(io, getgrid(d))
+    print(io, "\n     M: "); _compact_show_sparse(io, getmass(d))
+    print(io, "\n Mfact: "); _compact_show_factorization(io, getmassfact(d))
+    print(io, "\n     K: "); _compact_show_sparse(io, getstiffness(d))
+    # print(io, "\n     w: ", length(getquadweights(d)), "-element ", typeof(getquadweights(d)))
 end
+Base.show(io::IO, d::ParabolicDomain) = print(io, "$(typeof(d)) with $(ndofs(d)) degrees of freedom")
+
+# function Base.show(io::IO, d::ParabolicDomain)
+#     compact = get(io, :compact, false)
+#     if compact
+#         print(io, "$(typeof(d)) with $(ndofs(d)) degrees of freedom")
+#     else
+#         print(io, "$(typeof(d)) with:")
+#         print(io, "\n  grid: "); show(io, getgrid(d))
+#         print(io, "\n     M: "); _compact_show_sparse(io, getmass(d))
+#         print(io, "\n Mfact: "); _compact_show_factorization(io, getmassfact(d))
+#         print(io, "\n     K: "); _compact_show_sparse(io, getstiffness(d))
+#         # print(io, "\n     w: ", length(getquadweights(d)), "-element ", typeof(getquadweights(d)))
+#     end
+# end
 
 # ---------------------------------------------------------------------------- #
 # MyelinDomain methods
@@ -238,19 +249,29 @@ Lazy.@forward MyelinDomain.domain (getgrid, getdofhandler, getcellvalues, getfac
 Lazy.@forward MyelinDomain.domain (factorize!,)# addquadweights!)
 Lazy.@forward MyelinDomain.domain (JuAFEM.ndofs, LinearAlgebra.norm, GeometryUtils.area)
 
-function Base.show(io::IO, m::MyelinDomain)
-    compact = get(io, :compact, false)
-    if compact
-        print(io, "$(typeof(m)) with $(ndofs(m)) degrees of freedom and $(numfibres(m)) fibres")
-    else
-        print(io, "$(typeof(m)) with $(numfibres(m)) fibres and:")
-        print(io, "\n  grid: "); show(io, getgrid(m))
-        print(io, "\n     M: "); _compact_show_sparse(io, getmass(m))
-        print(io, "\n Mfact: "); _compact_show_factorization(io, getmassfact(m))
-        print(io, "\n     K: "); _compact_show_sparse(io, getstiffness(m))
-        # print(io, "\n     w: ", length(getquadweights(m)), "-element ", typeof(getquadweights(m)))
-    end
+function Base.show(io::IO, ::MIME"text/plain", m::MyelinDomain)
+    print(io, "$(typeof(m)) with $(numfibres(m)) fibres and:")
+    print(io, "\n  grid: "); show(io, getgrid(m))
+    print(io, "\n     M: "); _compact_show_sparse(io, getmass(m))
+    print(io, "\n Mfact: "); _compact_show_factorization(io, getmassfact(m))
+    print(io, "\n     K: "); _compact_show_sparse(io, getstiffness(m))
+    # print(io, "\n     w: ", length(getquadweights(m)), "-element ", typeof(getquadweights(m)))
 end
+Base.show(io::IO, m::MyelinDomain) = print(io, "$(typeof(m)) with $(ndofs(m)) degrees of freedom and $(numfibres(m)) fibres")
+
+# function Base.show(io::IO, m::MyelinDomain)
+#     compact = get(io, :compact, false)
+#     if compact
+#         print(io, "$(typeof(m)) with $(ndofs(m)) degrees of freedom and $(numfibres(m)) fibres")
+#     else
+#         print(io, "$(typeof(m)) with $(numfibres(m)) fibres and:")
+#         print(io, "\n  grid: "); show(io, getgrid(m))
+#         print(io, "\n     M: "); _compact_show_sparse(io, getmass(m))
+#         print(io, "\n Mfact: "); _compact_show_factorization(io, getmassfact(m))
+#         print(io, "\n     K: "); _compact_show_sparse(io, getstiffness(m))
+#         # print(io, "\n     w: ", length(getquadweights(m)), "-element ", typeof(getquadweights(m)))
+#     end
+# end
 
 function createmyelindomains(
         tissuegrids::AbstractVector{G},#{Grid{gDim,Nd,T,Nf}},
