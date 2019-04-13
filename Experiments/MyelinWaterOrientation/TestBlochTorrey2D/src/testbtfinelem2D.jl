@@ -18,7 +18,7 @@ function testbtfinelem2D(opts::BlochTorreyParameters{T};
     solve(ms) = solveblochtorrey(myelinprob, ms;
         tspan = (zero(T), Time),
         TE = Time,
-        cb = nothing
+        callback = nothing
     )
     sols = solve(myelindomains)
     # sols = solve(myelinsubdomains)

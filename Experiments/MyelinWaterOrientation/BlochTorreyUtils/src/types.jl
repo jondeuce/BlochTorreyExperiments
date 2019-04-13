@@ -6,14 +6,8 @@ const MassType{T} = Union{<:SparseMatrixCSC{T}, <:Symmetric{T,<:SparseMatrixCSC{
 const MassFactType{T} = Factorization{T}
 const StiffnessType{T} = SparseMatrixCSC{Tc} where {Tc<:Union{T,Complex{T}}}
 const VectorOfVectors{T} = AbstractVector{<:AbstractVector{T}}
-const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{gDim,T}}
-
-# For convenience, define a 2D triangular grid and myelin domain types:
-#   grid dimension `gDim` = 2
-#   number of nodes per elem `Nd` = 3
-#   number of faces per elem `Nf` = 3
 const TriangularGrid{T} = Grid{2,3,T,3}
-const TriangularMyelinDomain{R,Tu,uType,T,DType} = MyelinDomain{R,Tu,uType,2,T,3,3,DType}
+const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{gDim,T}}
 
 # ---------------------------------------------------------------------------- #
 # BlochTorreyParameters
@@ -63,11 +57,6 @@ end
 # ---------------------------------------------------------------------------- #
 abstract type AbstractParabolicProblem{T} end
 
-# MyelinProblem: holds a `BlochTorreyParameters` set of parameters
-struct MyelinProblem{T} <: AbstractParabolicProblem{T}
-    params::BlochTorreyParameters{T}
-end
-
 # BlochTorreyProblem: holds the only parameters necessary to solve the Bloch-
 # Torrey equation, naming the Dcoeff, Rdecay, and Omega functions of position
 struct BlochTorreyProblem{T,D,R,W} <: AbstractParabolicProblem{T}
@@ -77,12 +66,9 @@ struct BlochTorreyProblem{T,D,R,W} <: AbstractParabolicProblem{T}
     BlochTorreyProblem{T}(d::D,r::R,w::W) where {T,D,R,W} = new{T,D,R,W}(d,r,w)
 end
 
-# Create BlochTorreyProblem from a MyelinProblem and a MyelinDomain
-function BlochTorreyProblem(p::MyelinProblem{T}, m::MyelinDomain) where {T}
-    @inline Dcoeff(x...) = dcoeff(x..., p, m) # Dcoeff function
-    @inline Rdecay(x...) = rdecay(x..., p, m) # R2 function
-    @inline Omega(x...) = omega(x..., p, m) # Omega function
-    return BlochTorreyProblem{T}(Dcoeff, Rdecay, Omega)
+# MyelinProblem: holds a `BlochTorreyParameters` set of parameters
+struct MyelinProblem{T} <: AbstractParabolicProblem{T}
+    params::BlochTorreyParameters{T}
 end
 
 # ---------------------------------------------------------------------------- #
@@ -121,6 +107,82 @@ mutable struct ParabolicDomain{
     # w::Vector{Tu}
 end
 
+# ---------------------------------------------------------------------------- #
+# AbstractRegion
+#   Along with it's subtypes, allows for dispatching on the different regions
+#   which an underlying grid, function, etc. may be represented on
+# ---------------------------------------------------------------------------- #
+abstract type AbstractRegion end
+abstract type AbstractRegionUnion <: AbstractRegion end
+
+struct AxonRegion <: AbstractRegion
+    parent_circle_idx::Int
+end
+struct MyelinRegion <: AbstractRegion
+    parent_circle_idx::Int
+end
+struct TissueRegion <: AbstractRegion end
+struct PermeableInterfaceRegion <: AbstractRegionUnion end
+
+# ---------------------------------------------------------------------------- #
+# MyelinDomain <: AbstractDomain
+#   Generic domain type which holds the information necessary to solve a
+#   parabolic FEM problem M*du/dt = K*u on a domain which represents a region
+#   containing or in close proximity to myelin. The complete domain is
+#   represented as a ParabolicDomain, which stores the underlying grid, mass
+#   matrix M, stiffness matrix K, etc.
+# ---------------------------------------------------------------------------- #
+mutable struct MyelinDomain{R<:AbstractRegion,Tu,uType,gDim,T,Nd,Nf,DType<:ParabolicDomain{Tu,uType,gDim,T,Nd,Nf}} <: AbstractDomain{Tu,uType,gDim,T,Nd,Nf}
+    region::R
+    domain::DType
+    outercircles::Vector{Circle{2,T}}
+    innercircles::Vector{Circle{2,T}}
+    ferritins::Vector{Vec{3,T}}
+end
+
+# TriangularMyelinDomain is a MyelinDomain with grid dimension gDim = 2,
+# nodes per finite element Nd = 3, and faces per finite element Nf = 2
+const TriangularMyelinDomain{R,Tu,uType,T,DType} = MyelinDomain{R,Tu,uType,2,T,3,3,DType}
+
+# ---------------------------------------------------------------------------- #
+# ParabolicLinearMap <: LinearMap
+#   Lightweight wrapper over mass matrix M, factorized mass matrix Mfact, and
+#   stiffness matrix K. Acts on vectors and matrices as Mfact\K.
+# ---------------------------------------------------------------------------- #
+struct ParabolicLinearMap{T, MType<:AbstractMatrix, MfactType <: MassFactType, KType<:AbstractMatrix} <: LinearMap{T}
+    M::MType
+    Mfact::MfactType
+    K::KType
+    function ParabolicLinearMap(M::AbstractMatrix{T1}, Mfact::MassFactType{T1}, K::AbstractMatrix{T2}) where {T1,T2}
+        @assert (size(M) == size(Mfact) == size(K)) && (size(M,1) == size(M,2))
+        T = promote_type(T1, T2)
+        new{T, typeof(M), typeof(Mfact), typeof(K)}(M, Mfact, K)
+    end
+end
+
+# ---------------------------------------------------------------------------- #
+# LinearOperatorWrapper <: AbstractMatrix
+#   Effectively a simplified LinearMap, but subtypes AbstractMatrix so that it
+#   can be passed on to DiffEq* solvers, etc.
+# ---------------------------------------------------------------------------- #
+struct LinearOperatorWrapper{T,Atype} <: AbstractMatrix{T}
+    A::Atype
+    LinearOperatorWrapper(A::Atype) where {Atype} = new{eltype(A), Atype}(A)
+end
+
+# ---------------------------------------------------------------------------- #
+# Constructors
+# ---------------------------------------------------------------------------- #
+
+# Create BlochTorreyProblem from a MyelinProblem and a MyelinDomain
+function BlochTorreyProblem(p::MyelinProblem{T}, m::MyelinDomain) where {T}
+    @inline Dcoeff(x...) = dcoeff(x..., p, m) # Dcoeff function
+    @inline Rdecay(x...) = rdecay(x..., p, m) # R2 function
+    @inline Omega(x...) = omega(x..., p, m) # Omega function
+    return BlochTorreyProblem{T}(Dcoeff, Rdecay, Omega)
+end
+
+# Construct a ParabolicDomain from a Grid and interpolation/integration settings
 function ParabolicDomain(
         grid::Grid{gDim,Nd,T,Nf},
         ::Type{uType} = Vec{2,T}; #Default to same float type as grid
@@ -135,7 +197,7 @@ function ParabolicDomain(
     geom_interp = Lagrange{gDim, typeof(refshape), geominterporder}()
     quadrule = QuadratureRule{gDim, typeof(refshape)}(quadorder)
     quadrule_face = QuadratureRule{gDim-1, typeof(refshape)}(quadorder)
-    
+
     uDim = fielddim(uType)
     if uDim == 1
         cellvalues = CellScalarValues(Tu, quadrule, func_interp, geom_interp)
@@ -180,44 +242,12 @@ function ParabolicDomain(
         grid, dh,
         refshape, cellvalues, facevalues,
         quadorder, funcinterporder, geominterporder,
-        M, Mfact, K, Dict{Any,Any}() #w
+        M, Mfact, K, Dict{Any,Any}() # w
     )
 end
 
-# ---------------------------------------------------------------------------- #
-# AbstractRegion
-#   Along with it's subtypes, allows for dispatching on the different regions
-#   which an underlying grid, function, etc. may be represented on
-# ---------------------------------------------------------------------------- #
-abstract type AbstractRegion end
-abstract type AbstractRegionUnion <: AbstractRegion end
-
-struct AxonRegion <: AbstractRegion
-    parent_circle_idx::Int
-end
-struct MyelinRegion <: AbstractRegion
-    parent_circle_idx::Int
-end
-struct TissueRegion <: AbstractRegion end
-struct PermeableInterfaceRegion <: AbstractRegionUnion end
-
-# ---------------------------------------------------------------------------- #
-# MyelinDomain <: AbstractDomain
-#   Generic domain type which holds the information necessary to solve a
-#   parabolic FEM problem M*du/dt = K*u on a domain which represents a region
-#   containing or in close proximity to myelin. The complete domain is
-#   represented as a ParabolicDomain, which stores the underlying grid, mass
-#   matrix M, stiffness matrix K, etc.
-# ---------------------------------------------------------------------------- #
-mutable struct MyelinDomain{R<:AbstractRegion,Tu,uType,gDim,T,Nd,Nf,DType<:ParabolicDomain{Tu,uType,gDim,T,Nd,Nf}} <: AbstractDomain{Tu,uType,gDim,T,Nd,Nf}
-    region::R
-    domain::DType
-    outercircles::Vector{Circle{2,T}}
-    innercircles::Vector{Circle{2,T}}
-    ferritins::Vector{Vec{3,T}}
-end
-
-# Constructor given a `Grid` and kwargs in place of a `ParabolicDomain`
+# Construct MyelinDomain from a Region and Grid. Internally, a ParabolicDomain
+# is constructed, and so keyword arguments are forwarded to that constructor
 function MyelinDomain(
         region::R,
         grid::Grid{gDim,Nd,T,Nf},
@@ -234,29 +264,8 @@ function MyelinDomain(
     )
 end
 
-# ---------------------------------------------------------------------------- #
-# ParabolicLinearMap <: LinearMap
-#   Lightweight wrapper over mass matrix M, factorized mass matrix Mfact, and
-#   stiffness matrix K. Acts on vectors and matrices as Mfact\K.
-# ---------------------------------------------------------------------------- #
-struct ParabolicLinearMap{T, MType<:AbstractMatrix, MfactType <: MassFactType, KType<:AbstractMatrix} <: LinearMap{T}
-    M::MType
-    Mfact::MfactType
-    K::KType
-    function ParabolicLinearMap(M::AbstractMatrix{T1}, Mfact::MassFactType{T1}, K::AbstractMatrix{T2}) where {T1,T2}
-        @assert (size(M) == size(Mfact) == size(K)) && (size(M,1) == size(M,2))
-        T = promote_type(T1, T2)
-        new{T, typeof(M), typeof(Mfact), typeof(K)}(M, Mfact, K)
-    end
-end
+# Construct a ParabolicLinearMap from a ParabolicDomain
 ParabolicLinearMap(d::ParabolicDomain) = ParabolicLinearMap(getmass(d), getmassfact(d), getstiffness(d))
 
-# ---------------------------------------------------------------------------- #
-# LinearOperatorWrapper <: AbstractMatrix
-#   Effectively a simplified LinearMap, but subtypes AbstractMatrix so that it
-#   can be passed on to DiffEq* solvers, etc.
-# ---------------------------------------------------------------------------- #
-struct LinearOperatorWrapper{T,Atype} <: AbstractMatrix{T}
-    A::Atype
-    LinearOperatorWrapper(A::Atype) where {Atype} = new{eltype(A), Atype}(A)
-end
+# Construct a LinearOperatorWrapper from a ParabolicDomain
+LinearOperatorWrapper(d::ParabolicDomain) = LinearOperatorWrapper(ParabolicLinearMap(d))

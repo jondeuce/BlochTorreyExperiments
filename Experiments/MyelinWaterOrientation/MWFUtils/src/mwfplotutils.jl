@@ -29,10 +29,10 @@ end
 
 function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bdry;
         titlestr = "Signal Magnitude vs. Time",
+        opts = NNLSRegression(PlotDist = !AVOID_MAT_PLOTS),
         disp = false,
         fname = nothing
     )
-    opts = NNLSRegression()
     tspan = get_tspan(opts)
     ts = get_tpoints(opts)
     signals = calcsignal(sols, ts, myelindomains)

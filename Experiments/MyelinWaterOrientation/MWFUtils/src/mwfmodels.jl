@@ -11,7 +11,7 @@ end
 
 # Abstract interface for calculating mwf from measured signals
 function getmwf(
-        signals::Vector{V},
+        signals::AbstractVector{V},
         modeltype::AbstractMWIFittingModel;
         kwargs...
     ) where {V <: Vec{2}}
@@ -23,10 +23,11 @@ function getmwf(
         NaN
     end
 end
+getmwf(signals::AbstractVector{Complex{T}}, modeltype::AbstractMWIFittingModel; kwargs...) where {T} = getmwf(copy(reinterpret(Vec{2,T}, signals)), modeltype; kwargs...)
 
 # Abstract interface
 function fitmwfmodel(
-        signals::Vector{V},
+        signals::AbstractVector{V},
         modeltype::AbstractMWIFittingModel;
         kwargs...
     ) where {V <: Vec{2}}
@@ -38,15 +39,22 @@ function fitmwfmodel(
         nothing
     end
 end
+fitmwfmodel(signals::AbstractVector{Complex{T}}, modeltype::AbstractMWIFittingModel; kwargs...) where {T} = fitmwfmodel(copy(reinterpret(Vec{2,T}, signals)), modeltype; kwargs...)
+
+initialparams(modeltype::AbstractMWIFittingModel, ts::AbstractVector{T}, S::AbstractVector{Vec{2,T}}) where {T} = _initialparams(modeltype, ts, S)
+initialparams(modeltype::AbstractMWIFittingModel, ts::AbstractVector{T}, S::AbstractVector{Complex{T}}) where {T} = _initialparams(modeltype, ts, copy(reinterpret(Vec{2,T}, S)))
 
 # MWI model data
-mwimodeldata(modeltype::ThreePoolCplxToCplx, S::Vector{Vec{2,T}}) where {T} = copy(reinterpret(T, S[2:end]))
-mwimodeldata(modeltype::ThreePoolMagnData, S::Vector{V}) where {V <: Vec{2}} = norm.(S[2:end])
-mwimodeldata(modeltype::TwoPoolMagnData, S::Vector{V}) where {V <: Vec{2}} = norm.(S[2:end])
+mwimodeldata(modeltype::AbstractMWIFittingModel, S::AbstractVector{Vec{2,T}}) where {T} = _mwimodeldata(modeltype, S)
+mwimodeldata(modeltype::AbstractMWIFittingModel, S::AbstractVector{Complex{T}}) where {T} = _mwimodeldata(modeltype, copy(reinterpret(Vec{2,T}, S)))
+_mwimodeldata(modeltype::ThreePoolCplxToCplx, S::AbstractVector{Vec{2,T}}) where {T} = copy(reinterpret(T, S[2:end]))
+_mwimodeldata(modeltype::ThreePoolMagnData, S::AbstractVector{V}) where {V <: Vec{2}} = norm.(S[2:end])
+_mwimodeldata(modeltype::TwoPoolMagnData, S::AbstractVector{V}) where {V <: Vec{2}} = norm.(S[2:end])
+
 
 # NNLSRegression model
 function _fitmwfmodel(
-        signals::Vector{V},
+        signals::AbstractVector{V},
         modeltype::NNLSRegression
     ) where {V <: Vec{2}}
 
@@ -98,7 +106,7 @@ _getmwf(modeltype::NNLSRegression, MWImaps, MWIdist, MWIpart) = MWIpart["sfr"]
 # ----------------------- #
 # ThreePoolCplxToCplx model
 # ----------------------- #
-function initialparams(modeltype::ThreePoolCplxToCplx, ts::AbstractVector{T}, S::Vector{Vec{2,T}}) where {T}
+function _initialparams(modeltype::ThreePoolCplxToCplx, ts::AbstractVector{T}, S::AbstractVector{Vec{2,T}}) where {T}
     S1, S2, SN = complex.(S[[2,3,end]]) # initial/final complex signals (S[1] is t=0 point)
     A1, AN, ϕ1, ϕ2 = abs(S1), abs(SN), angle(S1), angle(S2)
     t1, t2, tN = ts[2], ts[3], ts[end] # time points/differences
@@ -124,7 +132,7 @@ function initialparams(modeltype::ThreePoolCplxToCplx, ts::AbstractVector{T}, S:
     return p, lb, ub
 end
 
-function mwimodel(modeltype::ThreePoolCplxToCplx, t::AbstractVector, p::Vector)
+function mwimodel(modeltype::ThreePoolCplxToCplx, t::AbstractVector, p::AbstractVector)
     # A_my, A_ax, A_ex, T2_my, T2_ax, T2_ex, Δf_bg_my, Δf_bg_ax, Δf_bg_ex, θ = p
     # Γ_my, Γ_ax, Γ_ex = complex(1/T2_my, 2*pi*Δf_bg_my), complex(1/T2_ax, 2*pi*Δf_bg_ax), complex(1/T2_ex, 2*pi*Δf_bg_ex)
 
@@ -138,7 +146,7 @@ function mwimodel(modeltype::ThreePoolCplxToCplx, t::AbstractVector, p::Vector)
 end
 
 # ThreePoolCplxToMagn model
-function initialparams(modeltype::ThreePoolCplxToMagn, ts::AbstractVector{T}, S::Vector{Vec{2,T}}) where {T}
+function _initialparams(modeltype::ThreePoolCplxToMagn, ts::AbstractVector{T}, S::AbstractVector{Vec{2,T}}) where {T}
     A1, AN = norm(S[2]), norm(S[end]) # initial/final signal magnitudes (S[1] is t=0 point)
     t1, t2, tN = ts[2], ts[3], ts[end] # time points/differences
     Δt, ΔT = t2 - t1, tN - t1
@@ -160,7 +168,7 @@ function initialparams(modeltype::ThreePoolCplxToMagn, ts::AbstractVector{T}, S:
     return p, lb, ub
 end
 
-function mwimodel(modeltype::ThreePoolCplxToMagn, t::AbstractVector, p::Vector)
+function mwimodel(modeltype::ThreePoolCplxToMagn, t::AbstractVector, p::AbstractVector)
     # A_my, A_ax, A_ex, T2_my, T2_ax, T2_ex, Δf_my_ex, Δf_ax_ex = p
     # Γ_my, Γ_ax, Γ_ex = complex(1/T2_my, 2*pi*Δf_my_ex), complex(1/T2_ax, 2*pi*Δf_ax_ex), 1/T2_ex
 
@@ -172,7 +180,7 @@ function mwimodel(modeltype::ThreePoolCplxToMagn, t::AbstractVector, p::Vector)
 end
 
 # ThreePoolMagnToMagn model
-function initialparams(modeltype::ThreePoolMagnToMagn, ts::AbstractVector{T}, S::Vector{Vec{2,T}}) where {T}
+function _initialparams(modeltype::ThreePoolMagnToMagn, ts::AbstractVector{T}, S::AbstractVector{Vec{2,T}}) where {T}
     A1, AN = norm(S[2]), norm(S[end]) # initial/final signal magnitudes (S[1] is t=0 point)
     t1, t2, tN = ts[2], ts[3], ts[end] # time points/differences
     Δt, ΔT = t2 - t1, tN - t1
@@ -193,7 +201,7 @@ function initialparams(modeltype::ThreePoolMagnToMagn, ts::AbstractVector{T}, S:
     return p, lb, ub
 end
 
-function mwimodel(modeltype::ThreePoolMagnToMagn, t::AbstractVector, p::Vector)
+function mwimodel(modeltype::ThreePoolMagnToMagn, t::AbstractVector, p::AbstractVector)
     # A_my, A_ax, A_ex, T2_my, T2_ax, T2_ex = p
     # Γ_my, Γ_ax, Γ_ex = 1/T2_my, 1/T2_ax, 1/T2_ex
     A_my, A_ax, A_ex, Γ_my, Γ_ax, Γ_ex = p
@@ -202,7 +210,7 @@ function mwimodel(modeltype::ThreePoolMagnToMagn, t::AbstractVector, p::Vector)
 end
 
 # TwoPoolMagnToMagn model
-function initialparams(modeltype::TwoPoolMagnToMagn, ts::AbstractVector{T}, S::Vector{Vec{2,T}}) where {T}
+function _initialparams(modeltype::TwoPoolMagnToMagn, ts::AbstractVector{T}, S::AbstractVector{Vec{2,T}}) where {T}
     A1, AN = norm(S[2]), norm(S[end]) # initial/final signal magnitudes (S[1] is t=0 point)
     t1, t2, tN = ts[2], ts[3], ts[end] # time points/differences
     Δt, ΔT = t2 - t1, tN - t1
@@ -223,7 +231,7 @@ function initialparams(modeltype::TwoPoolMagnToMagn, ts::AbstractVector{T}, S::V
     return p, lb, ub
 end
 
-function mwimodel(modeltype::TwoPoolMagnToMagn, t::AbstractVector, p::Vector)
+function mwimodel(modeltype::TwoPoolMagnToMagn, t::AbstractVector, p::AbstractVector)
     # A_my, A_ax, A_ex, T2_my, T2_ax, T2_ex = p
     # Γ_my, Γ_ax, Γ_ex = 1/T2_my, 1/T2_ax, 1/T2_ex
     A_my, A_ex, Γ_my, Γ_ex = p
@@ -233,7 +241,7 @@ end
 
 # Fitting of general AbstractMWIFittingModel
 function _fitmwfmodel(
-        signals::Vector{V}, # signal vectors
+        signals::AbstractVector{V}, # signal vectors
         modeltype::AbstractMWIFittingModel = ThreePoolCplxToCplx()
     ) where {V <: Vec{2}}
 
@@ -287,22 +295,16 @@ end
 
 function compareMWFmethods(
         sols, myelindomains, outercircles, innercircles, bdry;
-        models::Vector{<:AbstractMWIFittingModel} =
-            [NNLSRegression(), TwoPoolMagnToMagn(), ThreePoolMagnToMagn(), ThreePoolCplxToMagn(), ThreePoolCplxToCplx()]
+        models::AbstractVector{<:AbstractMWIFittingModel} = [NNLSRegression(PlotDist = false), TwoPoolMagnToMagn(), ThreePoolMagnToMagn(), ThreePoolCplxToMagn(), ThreePoolCplxToCplx()]
     )
     if isempty(models)
         return (mwfvalues = nothing, signals = nothing)
     end
-    signals = calcsignal(sols, get_tpoints(models[1]), myelindomains)
+
+    signals = [calcsignal(sols, get_tpoints(m), myelindomains) for m in models]
     mwfvalues = Dict(
         :exact => getmwf(outercircles, innercircles, bdry),
-        [Symbol(typeof(m)) => getmwf(signals, m) for m in models]...
+        [Symbol(typeof(m)) => getmwf(s, m) for (s,m) in zip(signals, models)]...
     )
-    #     :NNLSRegression => getmwf(signals, NNLSRegression()),
-    #     :TwoPoolMagnToMagn => getmwf(signals, TwoPoolMagnToMagn()),
-    #     :ThreePoolMagnToMagn => getmwf(signals, ThreePoolMagnToMagn()),
-    #     :ThreePoolCplxToMagn => getmwf(signals, ThreePoolCplxToMagn()),
-    #     :ThreePoolCplxToCplx => getmwf(signals, ThreePoolCplxToCplx())
-    # )
     return (mwfvalues = mwfvalues, signals = signals)
 end

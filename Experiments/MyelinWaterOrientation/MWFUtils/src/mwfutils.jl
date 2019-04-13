@@ -311,11 +311,11 @@ function createdomains(
         vec(outercircles), vec(innercircles), vec(ferritins),
         uType; kwargs...)
 
-    println("Assembling...")
-    @time doassemble!.(myelinsubdomains, Ref(myelinprob))
-    @time factorize!.(getdomain.(myelinsubdomains))
-    @time combinedmyelindomain = MyelinDomain(PermeableInterfaceRegion(), myelinprob, myelinsubdomains)
-    @time factorize!(combinedmyelindomain)
+    @info "Assembling MyelinDomain from subdomains"
+    print("    Assemble subdomains   "); @time doassemble!.(myelinsubdomains, Ref(myelinprob))
+    print("    Factorize subdomains  "); @time factorize!.(getdomain.(myelinsubdomains))
+    print("    Assemble combined     "); @time combinedmyelindomain = MyelinDomain(PermeableInterfaceRegion(), myelinprob, myelinsubdomains)
+    print("    Factorize combined    "); @time factorize!(combinedmyelindomain)
     myelindomains = [combinedmyelindomain]
 
     return (myelinprob = myelinprob,
@@ -385,32 +385,40 @@ function OrdinaryDiffEq.ODEProblem(d::ParabolicDomain, u0, tspan; invertmass = t
 end
 OrdinaryDiffEq.ODEProblem(m::MyelinDomain, u0, tspan; kwargs...) = ODEProblem(getdomain(m), u0, tspan; kwargs...)
 
-function solveblochtorrey(myelinprob, myelindomains, alg = default_algorithm();
-        tspan = (0.0, 320.0e-3),
-        TE = 10e-3,
-        ts = tspan[1]:TE/2:tspan[2], # tstops, which includes π-pulse times
+function solveblochtorrey(
+        myelinprob::MyelinProblem, myelindomain::MyelinDomain, alg = default_algorithm(), args...;
         u0 = Vec{2}((0.0, 1.0)), # initial π/2 pulse
-        cb = MultiSpinEchoCallback(tspan; TE = TE),
+        TE = 10e-3, # 10ms echotime
+        tspan = TE .* (0, 32), # 32 echoes by default
+        saveat = tspan[1]:TE/2:tspan[2], # save every TE/2 by default
+        tstops = tspan[1]:TE/2:tspan[2], # default extra points which the integrator must step to; match saveat by default
+        callback = MultiSpinEchoCallback(tspan; TE = TE),
         reltol = 1e-8,
-        abstol = 0.0
+        abstol = 0.0,
+        kwargs...
     )
-    probs = [ODEProblem(m, interpolate(u0, m), tspan) for m in myelindomains]
+    prob = ODEProblem(myelindomain, interpolate(u0, myelindomain), tspan)
+    sol = solve(prob, alg, args...;
+        dense = false, # don't save all intermediate time steps
+        saveat = tstops, # timepoints to save solution at
+        tstops = tstops, # ensure stopping at all tstops points
+        dt = TE, reltol = reltol, abstol = abstol, callback = callback, kwargs...)
+    return sol
+end
+
+function solveblochtorrey(myelinprob::MyelinProblem, myelindomains::Vector{<:MyelinDomain}, args...; kwargs...)
     sols = Vector{ODESolution}()
-
-    @time for (i,prob) in enumerate(probs)
-        println("i = $i/$(length(probs)): ")
-        sol = @time solve(prob, alg;
-            dense = false, # don't save all intermediate time steps
-            saveat = ts, # timepoints to save solution at
-            tstops = ts, # ensure stopping at all ts points
-            dt = TE,
-            reltol = reltol,
-            abstol = abstol,
-            callback = cb
-        )
+    if length(myelindomains) == 1
+        @info "Solving MyelinProblem"
+        @time sol = solveblochtorrey(myelinprob, myelindomains[1], args...; kwargs...)
         push!(sols, sol)
+    else
+        @time for (i,myedom) in enumerate(myelindomains)
+            @info "Solving MyelinProblem $i/$(length(myelindomains))"
+            @time sol = solveblochtorrey(myelinprob, myedom, args...; kwargs...)
+            push!(sols, sol)
+        end
     end
-
     return sols
 end
 
@@ -418,21 +426,3 @@ default_cvode_bdf() = CVODE_BDF(method = :Functional)
 default_expokit() = ExpokitExpmv(m = 30)
 default_higham() = HighamExpmv(precision = :single)
 default_algorithm() = default_expokit()
-
-# function get_algfun(algtype = :ExpokitExpmv)
-#     algfun = if algtype isa DiffEqBase.AbstractODEAlgorithm
-#         prob -> algtype # given an DiffEqBase.AbstractODEAlgorithm algorithm directly
-#     elseif algtype == :CVODE_BDF
-#         prob -> CVODE_BDF(;method = :Functional)
-#     elseif algtype == :ExpokitExpmv
-#         expokit_algfun()
-#     elseif algtype == :HighamExpmV
-#         higham_algfun()
-#     else
-#         default_algfun()
-#     end
-#     return algfun
-# end
-# expokit_algfun() = prob -> ExpokitExpmv(prob.p[1]; m = 30) # first parameter is A in du/dt = A*u
-# higham_algfun() = prob -> HighamExpmv(prob.p[1]) # first parameter is A in du/dt = A*u
-# default_algfun() = expokit_algfun()
