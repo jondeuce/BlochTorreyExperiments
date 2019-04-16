@@ -9,6 +9,7 @@ module PeriodicCirclePacking
 # ---------------------------------------------------------------------------- #
 
 using ..CirclePackingUtils
+using ..CirclePackingUtils: d², ∇d², ∇²d², barrier, ∇barrier, ∇²barrier
 using GeometryUtils
 using LinearAlgebra, Statistics
 using DiffResults, Optim, LineSearches, ForwardDiff
@@ -38,14 +39,19 @@ function pack(
 
     # Initial unknowns
     Rmax = maximum(radii)
-    xmin, xmax = extrema((x->x[1]).(initial_origins))
-    ymin, ymax = extrema((x->x[2]).(initial_origins))
-    W0, H0 = (xmax - xmin) + 2*Rmax, (ymax - ymin) + 2*Rmax
-    x0 = [reinterpret(eltype(V), initial_origins .- Ref(V((xmin, ymin)))); W0; H0]
+    xmin, xmax = extrema(x[1] for x in initial_origins)
+    ymin, ymax = extrema(x[2] for x in initial_origins)
+    W0, H0 = (xmax - xmin) + 2*Rmax, (ymax - ymin) + 2*Rmax # initial width/height of box
+    os = initial_origins .- Ref(V((xmin - Rmax, ymin - Rmax))) # ensure all circles are in box
+    x0 = [reinterpret(eltype(V), os); W0; H0] # initial unknowns
 
     # Create energy function and gradient/hessian
-    energy = barrier_energy(radii, epsilon)
-    # energy, ∇energy!, ∇²energy! = barrier_energy(radii, epsilon)
+    local energy, ∇energy!, ∇²energy!
+    if autodiff
+        energy = autodiff_barrier_energy(radii, epsilon)
+    else
+        energy, ∇energy!, ∇²energy! = barrier_energy(radii, epsilon)
+    end
 
     # Form (*)Differentiable object
     if autodiff
@@ -83,37 +89,48 @@ function pack(c::AbstractVector{Circle{2,T}}; kwargs...) where {T}
     return pack(r; initial_origins = o, kwargs...)
 end
 
-# function barrier_energy(r::AbstractVector, ϵ::Real)
-#     # Mutual distance and overlap distance squared functions, gradients, and hessians
-#     @inline b(o1,o2,r1,r2)   = CirclePackingUtils.d²(o1,o2,r1,r2,ϵ) + CirclePackingUtils.barrier(o1,o2,r1,r2,ϵ)
-#     @inline ∇b(o1,o2,r1,r2)  = CirclePackingUtils.∇d²(o1,o2,r1,r2,ϵ) + CirclePackingUtils.∇barrier(o1,o2,r1,r2,ϵ)
-#     @inline ∇²b(o1,o2,r1,r2) = CirclePackingUtils.∇²d²(o1,o2,r1,r2,ϵ) + CirclePackingUtils.∇²barrier(o1,o2,r1,r2,ϵ)
-# 
-#     # Energy function/gradient/hessian
-#     energy(x) = pairwise_sum(b, x, r)
-#     ∇energy!(g, x) = pairwise_grad!(g, ∇b, x, r)
-#     ∇²energy!(h, x) = pairwise_hess!(h, ∇²b, x, r)
-# 
-#     return energy, ∇energy!, ∇²energy!
+# @inline function dx_periodic(x1::Number, x2::Number, P::Number)
+#     T = promote_type(typeof(x1), typeof(x2), typeof(P))
+#     dx = x1 - x2
+#     return T(dx > P/2 ? dx - P : dx < -P/2 ? dx + P : dx)
 # end
-
-function dx_periodic(x1::Vec{2}, x2::Vec{2}, P::Vec{2})
-    dx = x1 - x2
-    dx = Vec{2}((
-        min(abs(dx[1]), abs(dx[1] + P[1]), abs(dx[1] - P[1])),
-        min(abs(dx[2]), abs(dx[2] + P[2]), abs(dx[2] - P[2]))
-    ))
-    return dx
-end
+@inline dx_periodic(x1::Number, x2::Number, P::Number) = mod(x1 - x2 + P/2, P) - P/2
+@inline dx_periodic(x1::Vec{2}, x2::Vec{2}, P::Vec{2}) = Vec{2}((dx_periodic(x1[1],x2[1],P[1]), dx_periodic(x1[2],x2[2],P[2])))
 
 function barrier_energy(r::AbstractVector, ϵ::Real)
+    # Mutual distance and overlap distance squared functions, gradients, and hessians
+    @inline get_b(P) = (o1,o2,r1,r2) -> (dx = dx_periodic(o1,o2,P); d²(dx,r1,r2,ϵ) + barrier(dx,r1,r2,ϵ))
+    @inline get_∇b(P) = (o1,o2,r1,r2) -> (dx = dx_periodic(o1,o2,P); ∇d²(dx,r1,r2,ϵ) + ∇barrier(dx,r1,r2,ϵ))
+    @inline get_∇²b(P) = (o1,o2,r1,r2) -> (dx = dx_periodic(o1,o2,P); ∇²d²(dx,r1,r2,ϵ) + ∇²barrier(dx,r1,r2,ϵ))
+
+    # Energy function/gradient/hessian
+    function energy(x)
+        o, P = @views(x[1:end-2]), Vec{2}((x[end-1], x[end]))
+        return pairwise_sum(get_b(P), o, r)
+    end
+
+    function ∇energy!(g, x)
+        o, P = @views(x[1:end-2]), Vec{2}((x[end-1], x[end]))
+        pairwise_grad!(@views(g[1:end-2]), get_∇b(P), o, r)
+        @views g[end-1:end] .= Tensors.gradient(P -> pairwise_sum(get_b(P), o, r), P)
+        return g
+    end
+
+    function ∇²energy!(h, x)
+        o, P = @views(x[1:end-2]), Vec{2}((x[end-1], x[end]))
+        pairwise_hess!(@views(h[1:end-2, 1:end-2]), get_∇²b(P), o, r)
+        @views h[end-1:end, end-1:end] .= Tensors.hessian(P -> pairwise_sum(get_b(P), o, r), P)
+        return h
+    end
+
+    return energy, ∇energy!, ∇²energy!
+end
+
+function autodiff_barrier_energy(r::AbstractVector, ϵ::Real)
+    @inline get_b(P) = (o1,o2,r1,r2) -> (dx = dx_periodic(o1,o2,P); d²(dx,r1,r2,ϵ) + barrier(dx,r1,r2,ϵ))
     function energy(x)
         P = Vec{2}((x[end-1], x[end]))
-        @inline function b(o1,o2,r1,r2)
-            dx = dx_periodic(o1,o2,P)
-            CirclePackingUtils.d²(dx,r1,r2,ϵ) + CirclePackingUtils.barrier(dx,r1,r2,ϵ)
-        end
-        pairwise_sum(b, @views(x[1:end-2]), r)
+        return pairwise_sum(get_b(P), @views(x[1:end-2]), r)
     end
 end
 

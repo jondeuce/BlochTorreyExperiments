@@ -378,9 +378,9 @@ version = "0.1.3"
 
 [[Expokit]]
 deps = ["LinearAlgebra", "SparseArrays", "Test"]
-path = "/home/jdoucette/.julia/dev/Expokit"
+git-tree-sha1 = "b0313f5f1825aabb1adb186c837e0d339d02f351"
 uuid = "a1e7a1ef-7a5d-5822-a38c-be74e1bb89f4"
-version = "0.2.0+"
+version = "0.2.0"
 
 [[ExponentialUtilities]]
 deps = ["LinearAlgebra", "Printf", "Random", "SparseArrays", "Test"]
@@ -1112,12 +1112,6 @@ git-tree-sha1 = "0b45dc2e45ed77f445617b99ff2adf0f5b0f23ea"
 uuid = "276daf66-3868-5448-9aa4-cd146d93841b"
 version = "0.7.2"
 
-[[StatPlots]]
-deps = ["Clustering", "DataStructures", "DataValues", "Distributions", "IterableTables", "KernelDensity", "Observables", "Plots", "RecipesBase", "Reexport", "StatsBase", "TableTraits", "TableTraitsUtils", "Test", "Widgets"]
-git-tree-sha1 = "245c50f8a6534bb16ada031e064363f8298b61b9"
-uuid = "60ddc479-9b66-56df-82fc-76a74619b69c"
-version = "0.9.2"
-
 [[StaticArrays]]
 deps = ["InteractiveUtils", "LinearAlgebra", "Random", "Statistics", "Test"]
 git-tree-sha1 = "3841b39ed5f047db1162627bf5f80a9cd3e39ae2"
@@ -1139,6 +1133,12 @@ deps = ["Rmath", "SpecialFunctions", "Test"]
 git-tree-sha1 = "b3a4e86aa13c732b8a8c0ba0c3d3264f55e6bb3e"
 uuid = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 version = "0.8.0"
+
+[[StatsPlots]]
+deps = ["Clustering", "DataStructures", "DataValues", "Distributions", "IterableTables", "KernelDensity", "Observables", "Plots", "RecipesBase", "Reexport", "StatsBase", "TableTraits", "TableTraitsUtils", "Test", "Widgets"]
+git-tree-sha1 = "d722a2d4293ded61124654aae6696c68d7946a95"
+uuid = "f3b207a7-027a-5e70-b257-86293d7955fd"
+version = "0.10.2"
 
 [[StringDistances]]
 deps = ["Distances", "IterTools", "Test"]
