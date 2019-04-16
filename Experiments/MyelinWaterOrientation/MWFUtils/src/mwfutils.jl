@@ -64,7 +64,7 @@ end
 function packcircles(btparams::BlochTorreyParameters{T};
         N = 20, # number of circles
         η = btparams.AxonPDensity, # goal packing density
-        ϵ = 0.1 * btparams.R_mu, # overlap occurs when distance between circle edges is ≤ ϵ
+        ϵ = 0.05 * btparams.R_mu, # overlap occurs when distance between circle edges is ≤ ϵ
         α = 1e-1, # covariance penalty weight (enforces circular distribution)
         β = 1e-6, # mutual distance penalty weight
         λ = 1.0, # overlap penalty weight (or lagrange multiplier for constrained version)
@@ -72,7 +72,7 @@ function packcircles(btparams::BlochTorreyParameters{T};
         maxiter = 5 # maximum attempts for sampling radii + greedy packing + energy packing
     ) where {T}
     
-    local circles
+    local circles, domain
     η_best = 0.0
     
     for i in 1:maxiter
@@ -82,45 +82,57 @@ function packcircles(btparams::BlochTorreyParameters{T};
         print("GreedyCirclePacking: ")
         @time greedycircles = GreedyCirclePacking.pack(rs; goaldensity = 1.0, iters = it)
 
-        print("EnergyCirclePacking: ")
-        @time energycircles = EnergyCirclePacking.pack(greedycircles;
+        # print("EnergyCirclePacking: ")
+        # @time energycircles = EnergyCirclePacking.pack(greedycircles;
+        #     autodiff = false,
+        #     secondorder = false,
+        #     setcallback = false,
+        #     goaldensity = 1.0, #η # pack as much as possible, scale to goal density after
+        #     distancescale = btparams.R_mu,
+        #     weights = [α, β, λ],
+        #     epsilon = ϵ # pack as much as possible, penalizing packing tighter than distance ϵ
+        # )
+        # scaledcircles, domain, _ = CirclePackingUtils.scale_to_density(energycircles, η, ϵ; MODE = :corners)
+        # η_curr = estimate_density(scaledcircles, domain)
+        # 
+        # println("GreedyCirclePacking density:  $(estimate_density(greedycircles, domain))")
+        # println("EnergyCirclePacking density:  $(estimate_density(energycircles, domain))")
+        # println("Final scaled circles density: $(estimate_density(scaledcircles, domain))")
+
+        print("PeriodicCirclePacking: ")
+        @time periodiccircles, initialdomain = PeriodicCirclePacking.pack(greedycircles;
             autodiff = false,
             secondorder = false,
-            setcallback = false,
-            goaldensity = 1.0, #η # pack as much as possible, scale to goal density after
             distancescale = btparams.R_mu,
-            weights = [α, β, λ],
             epsilon = ϵ # pack as much as possible, penalizing packing tighter than distance ϵ
         )
-
-        scaledcircles, domain, _ = CirclePackingUtils.scale_to_density(energycircles, η, ϵ; MODE = :corners)
+        scaledcircles, scaleddomain, _ = periodic_scale_to_density(periodiccircles, initialdomain, η, ϵ)
+        finaldomain, _ = periodic_subdomain(scaledcircles, scaleddomain)
+        finalcircles = periodic_circles(scaledcircles, finaldomain)
+        η_max = periodic_density(periodiccircles, initialdomain)
+        η_curr = periodic_density(finalcircles, finaldomain)
 
         println("")
         println("Distance threshold: $ϵ")
-        println("Minimum myelin thickness: $(minimum(radius.(scaledcircles))*(1-btparams.g_ratio))")
-        println("Minimum circles distance: $(minimum_signed_edge_distance(scaledcircles))")
+        println("Minimum myelin thickness: $(minimum(radius.(finalcircles))*(1-btparams.g_ratio))")
+        println("Minimum circles distance: $(minimum_signed_edge_distance(finalcircles))")
         println("")
-        println("GreedyCirclePacking density:  $(estimate_density(greedycircles, domain))")
-        println("EnergyCirclePacking density:  $(estimate_density(energycircles, domain))")
-        println("Final scaled circles density: $(estimate_density(scaledcircles, domain))")
+        println("Periodic circles density: $η_max")
+        println("Final scaled circles density: $η_curr")
         
-        η_curr = estimate_density(scaledcircles, domain)
-        (η_curr ≈ η) && (circles = scaledcircles; break)
-        (η_curr > η_best) && (η_best = η_curr; circles = scaledcircles)
+        (η_curr ≈ η) && (circles = finalcircles; domain = finaldomain; break)
+        (η_curr > η_best) && (η_best = η_curr; circles = finalcircles; domain = finaldomain)
     end
 
-    return circles
+    return circles, domain
 end
 
 function creategeometry(btparams::BlochTorreyParameters{T};
         fname = nothing, # filename for saving
         Ncircles = 20, # number of circles
         goaldensity = btparams.AxonPDensity, # goal packing density
-        overlapthresh = 0.1, # overlap occurs when distance between circle edges is ≤ overlapthresh * btparams.R_mu
+        overlapthresh = 0.05, # overlap occurs when distance between circle edges is ≤ overlapthresh * btparams.R_mu
         maxpackiter = 10,
-        outercircles = packcircles(btparams;
-            N = Ncircles, maxiter = maxpackiter,
-            η = goaldensity, ϵ = overlapthresh * btparams.R_mu),
         alpha = 0.5, #DEBUG
         beta = 0.5, #DEBUG
         gamma = 1.0, #DEBUG
@@ -136,14 +148,23 @@ function creategeometry(btparams::BlochTorreyParameters{T};
     ) where {T}
 
     # Initial set of circles
+    outercircles, initialbdry = packcircles(btparams;
+        N = Ncircles, maxiter = maxpackiter,
+        η = goaldensity, ϵ = overlapthresh * btparams.R_mu)
     innercircles = scale_shape.(outercircles, btparams.g_ratio)
     allcircles = collect(Iterators.flatten(zip(outercircles, innercircles)))
 
-    # Optimize the rectangular subdomain 
-    bdry, _ = opt_subdomain(allcircles; MODE = :corners)
-    outercircles, bdry, α_best = scale_to_density(outercircles, bdry, btparams.AxonPDensity)
+    # Optimize the rectangular subdomain to account for innercircles
+    bdry, _ = periodic_subdomain(allcircles, initialbdry)
+    outercircles = periodic_circles(outercircles, bdry)
     innercircles = scale_shape.(outercircles, btparams.g_ratio)
     allcircles = collect(Iterators.flatten(zip(outercircles, innercircles)))
+
+    # # Optimize the rectangular subdomain 
+    # bdry, _ = opt_subdomain(allcircles; MODE = :corners)
+    # outercircles, bdry, α_best = scale_to_density(outercircles, bdry, btparams.AxonPDensity)
+    # innercircles = scale_shape.(outercircles, btparams.g_ratio)
+    # allcircles = collect(Iterators.flatten(zip(outercircles, innercircles)))
 
     if FORCEDENSITY
         density = estimate_density(outercircles, bdry)

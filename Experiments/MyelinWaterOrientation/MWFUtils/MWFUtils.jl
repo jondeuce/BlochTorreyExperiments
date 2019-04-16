@@ -14,9 +14,11 @@ module MWFUtils
 using Reexport
 @reexport using BlochTorreyUtils
 @reexport using CirclePackingUtils
-@reexport using MATLAB
 
-using BenchmarkTools
+const AVOID_MAT_PLOTS = true # avoid external matlab calls, if possible
+using MATLABPlots
+
+using StatsPlots
 using IterableTables, DataFrames
 import BSON, CSV, Dates
 
@@ -24,11 +26,6 @@ import BSON, CSV, Dates
 import ForwardDiff
 import LsqFit
 import BlackBoxOptim
-
-# Plotting
-const AVOID_MAT_PLOTS = true # avoid external matlab calls, if possible
-using StatsPlots
-using MATLABPlots
 
 export packcircles
 export creategeometry, loadgeometry

@@ -54,7 +54,7 @@ function runblocktorreygrid(;alpha = 0.5, beta = 0.5, Ncircles = 10, PLOT = fals
     V = Vec{2,T}
     btparams = BlochTorreyParameters{T}(AxonPDensity = 0.75, g_ratio = 0.78)
     
-    outercircles = packcircles(btparams;
+    outercircles, _ = packcircles(btparams;
         N = Ncircles, # number of circles
         ϵ = 0.1 * btparams.R_mu, # overlap occurs when distance between circle edges is ≤ ϵ
         maxiter = 10 # maximum attempts for sampling radii + greedy packing + energy packing

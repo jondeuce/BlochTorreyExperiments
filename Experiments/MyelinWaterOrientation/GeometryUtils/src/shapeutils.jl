@@ -537,12 +537,9 @@ end
 
 # Check if circle is outside rectangle
 # NOTE: defaults to lt = <, i.e. only returns true if `c` is strictly outside `r`
-@inline function is_outside(c::Circle{dim}, r::Rectangle{dim}, lt = <) where {dim}
-    cmin, cmax, rmin, rmax = minimum(c), maximum(c), minimum(r), maximum(r)
-    @inbounds for i in 1:dim
-        (lt(cmax[i], rmin[i]) || lt(rmax[i], cmin[i])) && return true
-    end
-    return false
+@inline function is_outside(c::Circle{2}, r::Rectangle{2}, lt = <)
+    dmin = drectangle0(origin(c), r) # distance between circle origin and rectangle, accounting for corners
+    return lt(radius(c), dmin)
 end
 
 # Check if circle is on rectangle boundary

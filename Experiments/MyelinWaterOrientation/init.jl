@@ -25,12 +25,6 @@ end
 #####
 using GlobalUtils
 using MWFUtils
-# using GeometryUtils
-# using CirclePackingUtils
-# using MeshUtils
-# using DistMesh
-# using BlochTorreyUtils
-# using BlochTorreySolvers
 # using MATLABPlots
 
 #####

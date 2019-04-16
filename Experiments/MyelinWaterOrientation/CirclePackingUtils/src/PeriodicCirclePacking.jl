@@ -50,23 +50,15 @@ function pack(
     if autodiff
         energy = autodiff_barrier_energy(radii, epsilon)
     else
-        energy, ∇energy!, ∇²energy! = barrier_energy(radii, epsilon)
+        energy, ∇energy!, _ = barrier_energy(radii, epsilon)
     end
 
     # Form (*)Differentiable object
-    if autodiff
-        # Forward mode automatic differentiation
-        if secondorder
-            opt_obj = TwiceDifferentiable(energy, x0; autodiff = :forward)
-        else
-            opt_obj = OnceDifferentiable(energy, x0; autodiff = :forward)
-        end
+    opt_obj = if autodiff
+        secondorder ? TwiceDifferentiable(energy, x0; autodiff = :forward) : OnceDifferentiable(energy, x0; autodiff = :forward)
     else
-        if secondorder
-            opt_obj = TwiceDifferentiable(energy, ∇energy!, ∇²energy!, x0)
-        else
-            opt_obj = OnceDifferentiable(energy, ∇energy!, x0)
-        end
+        secondorder && @warn "Hessian not implemented; set autodiff = true for second order. Defaulting to first order."
+        OnceDifferentiable(energy, ∇energy!, x0)
     end
 
     # Optimize and get results
@@ -74,11 +66,11 @@ function pack(
 
     # Extract results
     x = copy(Optim.minimizer(result))
-    packed_circles = tocircles(x[1:end-2], radii)
-
-    centre = mean(origin, packed_circles)
-    widths = Vec{2}((x[end-1], x[end]))
-    boundary_rectangle = Rectangle(centre - widths/2, centre + widths/2)
+    widths = V((x[end-1], x[end]))
+    origins = reinterpret(V, x[1:end-2]) |> copy
+    origins .= periodic_mod.(origins, Ref(widths)) # force origins to be contained in [0,W] x [0,H]
+    packed_circles = Circle.(origins, radii)
+    boundary_rectangle = Rectangle(zero(V), widths)
 
     return packed_circles, boundary_rectangle
 end
@@ -89,19 +81,11 @@ function pack(c::AbstractVector{Circle{2,T}}; kwargs...) where {T}
     return pack(r; initial_origins = o, kwargs...)
 end
 
-# @inline function dx_periodic(x1::Number, x2::Number, P::Number)
-#     T = promote_type(typeof(x1), typeof(x2), typeof(P))
-#     dx = x1 - x2
-#     return T(dx > P/2 ? dx - P : dx < -P/2 ? dx + P : dx)
-# end
-@inline dx_periodic(x1::Number, x2::Number, P::Number) = mod(x1 - x2 + P/2, P) - P/2
-@inline dx_periodic(x1::Vec{2}, x2::Vec{2}, P::Vec{2}) = Vec{2}((dx_periodic(x1[1],x2[1],P[1]), dx_periodic(x1[2],x2[2],P[2])))
-
 function barrier_energy(r::AbstractVector, ϵ::Real)
     # Mutual distance and overlap distance squared functions, gradients, and hessians
-    @inline get_b(P) = (o1,o2,r1,r2) -> (dx = dx_periodic(o1,o2,P); d²(dx,r1,r2,ϵ) + barrier(dx,r1,r2,ϵ))
-    @inline get_∇b(P) = (o1,o2,r1,r2) -> (dx = dx_periodic(o1,o2,P); ∇d²(dx,r1,r2,ϵ) + ∇barrier(dx,r1,r2,ϵ))
-    @inline get_∇²b(P) = (o1,o2,r1,r2) -> (dx = dx_periodic(o1,o2,P); ∇²d²(dx,r1,r2,ϵ) + ∇²barrier(dx,r1,r2,ϵ))
+    @inline get_b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + barrier(dx,r1,r2,ϵ))
+    @inline get_∇b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇d²(dx,r1,r2,ϵ) + ∇barrier(dx,r1,r2,ϵ))
+    @inline get_∇²b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇²d²(dx,r1,r2,ϵ) + ∇²barrier(dx,r1,r2,ϵ))
 
     # Energy function/gradient/hessian
     function energy(x)
@@ -120,6 +104,8 @@ function barrier_energy(r::AbstractVector, ϵ::Real)
         o, P = @views(x[1:end-2]), Vec{2}((x[end-1], x[end]))
         pairwise_hess!(@views(h[1:end-2, 1:end-2]), get_∇²b(P), o, r)
         @views h[end-1:end, end-1:end] .= Tensors.hessian(P -> pairwise_sum(get_b(P), o, r), P)
+        @views h[1:end-2, end-1:end] .= 0 #TODO this is an incorrect assumption
+        @views h[end-1:end, 1:end-2] .= 0 #TODO this is an incorrect assumption
         return h
     end
 
@@ -127,7 +113,7 @@ function barrier_energy(r::AbstractVector, ϵ::Real)
 end
 
 function autodiff_barrier_energy(r::AbstractVector, ϵ::Real)
-    @inline get_b(P) = (o1,o2,r1,r2) -> (dx = dx_periodic(o1,o2,P); d²(dx,r1,r2,ϵ) + barrier(dx,r1,r2,ϵ))
+    @inline get_b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + barrier(dx,r1,r2,ϵ))
     function energy(x)
         P = Vec{2}((x[end-1], x[end]))
         return pairwise_sum(get_b(P), @views(x[1:end-2]), r)
