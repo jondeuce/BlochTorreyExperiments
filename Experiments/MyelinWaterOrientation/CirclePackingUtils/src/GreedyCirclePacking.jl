@@ -10,8 +10,8 @@ export pack
 # Dependencies
 # ---------------------------------------------------------------------------- #
 
+using ..CirclePackingUtils
 using GeometryUtils
-using CirclePackingUtils
 
 using Random
 using Tensors

@@ -8,13 +8,11 @@ module EnergyCirclePacking
 # Dependencies
 # ---------------------------------------------------------------------------- #
 
+using ..CirclePackingUtils
 using GeometryUtils
-using CirclePackingUtils
 using LinearAlgebra, Statistics
 using DiffResults, Optim, LineSearches, ForwardDiff, Roots
 using Tensors
-# using Parameters: @with_kw
-# using JuAFEM
 
 export pack
 
@@ -59,7 +57,8 @@ function pack(
     scalefactor = inv(Npairs * distancescale^2)
 
     # Create energy function and gradient/hessian
-    energy, ∇energy!, ∇²energy! = create_energy(radii; w = weights, ϵ = epsilon, β = scalefactor)
+    energy, ∇energy!, ∇²energy! = barrier_energy(radii, epsilon)
+    # energy, ∇energy!, ∇²energy! = create_energy(radii; w = weights, ϵ = epsilon, β = scalefactor)
 
     # Form (*)Differentiable object
     if autodiff
@@ -181,6 +180,20 @@ function create_energy(
         !(w[3] ≈ zero(Tx)) && (h = up_h!(h, h_overlap!, x, β * w[3]))
         return h
     end
+
+    return energy, ∇energy!, ∇²energy!
+end
+
+function barrier_energy(r::AbstractVector, ϵ::Real)
+    # Mutual distance and overlap distance squared functions, gradients, and hessians
+    @inline b(o1,o2,r1,r2)    = CirclePackingUtils.d²(o1,o2,r1,r2,ϵ) + CirclePackingUtils.barrier(o1,o2,r1,r2,ϵ)
+    @inline ∇b(o1,o2,r1,r2)   = CirclePackingUtils.∇d²(o1,o2,r1,r2,ϵ) + CirclePackingUtils.∇barrier(o1,o2,r1,r2,ϵ)
+    @inline ∇²b(o1,o2,r1,r2)  = CirclePackingUtils.∇²d²(o1,o2,r1,r2,ϵ) + CirclePackingUtils.∇²barrier(o1,o2,r1,r2,ϵ)
+
+    # Energy function/gradient/hessian
+    energy(x) = pairwise_sum(b, x, r)
+    ∇energy!(g, x) = pairwise_grad!(g, ∇b, x, r)
+    ∇²energy!(h, x) = pairwise_hess!(h, ∇²b, x, r)
 
     return energy, ∇energy!, ∇²energy!
 end

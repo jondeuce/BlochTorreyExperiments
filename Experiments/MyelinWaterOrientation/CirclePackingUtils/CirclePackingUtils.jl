@@ -14,11 +14,13 @@ export tocircles, tocircles!, tovectors, tovectors!, initialize_origins
 export pairwise_sum, pairwise_grad!, pairwise_hess!
 export wrap_gradient, check_density_callback
 
-export GreedyCirclePacking
-export EnergyCirclePacking
+export GreedyCirclePacking, EnergyCirclePacking, PeriodicCirclePacking
 
 include("src/utils.jl")
+include("src/pairwise_gradient.jl")
+include("src/density_estimation.jl")
 include("src/GreedyCirclePacking.jl")
 include("src/EnergyCirclePacking.jl")
+include("src/PeriodicCirclePacking.jl")
 
 end # module CirclePackingUtils

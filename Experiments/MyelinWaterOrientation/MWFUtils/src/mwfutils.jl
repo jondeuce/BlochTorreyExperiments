@@ -84,7 +84,7 @@ function packcircles(btparams::BlochTorreyParameters{T};
 
         print("EnergyCirclePacking: ")
         @time energycircles = EnergyCirclePacking.pack(greedycircles;
-            autodiff = true,
+            autodiff = false,
             secondorder = false,
             setcallback = false,
             goaldensity = 1.0, #η # pack as much as possible, scale to goal density after
