@@ -99,12 +99,18 @@ function packcircles(btparams::BlochTorreyParameters{T};
         # println("EnergyCirclePacking density:  $(estimate_density(energycircles, domain))")
         # println("Final scaled circles density: $(estimate_density(scaledcircles, domain))")
 
+        # Scale greedycircles apart before using as initial guess for PeriodicCirclePacking,
+        # otherwise circles tend to get caught in local minima where they are close to tangent,
+        # but we want to to encourage them to be as evenly packed as possible. This ensures
+        # circles don't start out as tangent
+        scaledgreedycircles = translate_shape.(greedycircles, 1.2)
+
         print("PeriodicCirclePacking: ")
-        @time periodiccircles, initialdomain = PeriodicCirclePacking.pack(greedycircles;
+        @time periodiccircles, initialdomain = PeriodicCirclePacking.pack(scaledgreedycircles;
             autodiff = false,
             secondorder = false,
             distancescale = btparams.R_mu,
-            epsilon = ϵ # pack as much as possible, penalizing packing tighter than distance ϵ
+            epsilon = 0.02 * btparams.R_mu # pack as much as possible
         )
         scaledcircles, scaleddomain, _ = periodic_scale_to_density(periodiccircles, initialdomain, η, ϵ)
         finaldomain, _ = periodic_subdomain(scaledcircles, scaleddomain)

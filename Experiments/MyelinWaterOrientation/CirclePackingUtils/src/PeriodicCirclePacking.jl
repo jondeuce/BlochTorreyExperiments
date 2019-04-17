@@ -46,20 +46,23 @@ function pack(
     x0 = [reinterpret(eltype(V), os); W0; H0] # initial unknowns
 
     # Create energy function and gradient/hessian
-    local energy, ∇energy!, ∇²energy!
+    if !autodiff && secondorder
+        @warn "Hessian not implemented; set autodiff = true for second order. Defaulting to first order."
+        secondorder = false
+    end
+
     if autodiff
         energy = autodiff_barrier_energy(radii, epsilon)
+        ∇energy! = nothing
     else
         energy, ∇energy!, _ = barrier_energy(radii, epsilon)
     end
 
     # Form (*)Differentiable object
-    opt_obj = if autodiff
-        secondorder ? TwiceDifferentiable(energy, x0; autodiff = :forward) : OnceDifferentiable(energy, x0; autodiff = :forward)
-    else
-        secondorder && @warn "Hessian not implemented; set autodiff = true for second order. Defaulting to first order."
+    opt_obj =
+        (autodiff && secondorder) ? TwiceDifferentiable(energy, x0; autodiff = :forward) :
+        (autodiff && !secondorder) ? OnceDifferentiable(energy, x0; autodiff = :forward) :
         OnceDifferentiable(energy, ∇energy!, x0)
-    end
 
     # Optimize and get results
     result = optimize(opt_obj, x0, Alg, Opts)
