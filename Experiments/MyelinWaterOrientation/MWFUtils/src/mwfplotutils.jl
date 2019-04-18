@@ -30,8 +30,8 @@ end
 function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bdry;
         titlestr = "Signal Magnitude vs. Time",
         opts = NNLSRegression(PlotDist = !AVOID_MAT_PLOTS),
-        disp = false,
-        fname = nothing
+        fname = nothing,
+        disp = !(fname == nothing)
     )
     tspan = get_tspan(opts)
     ts = get_tpoints(opts)
@@ -82,8 +82,8 @@ end
 function plotSEcorr(
         sols, btparams, myelindomains;
         opts::NNLSRegression = NNLSRegression(PlotDist = !AVOID_MAT_PLOTS),
-        disp = false,
-        fname = nothing
+        fname = nothing,
+        disp = !(fname == nothing)
     )
     tspan = get_tspan(opts)
     ts = get_tpoints(opts)
@@ -123,9 +123,9 @@ end
 
 function plotMWF(params, mwf, mwftrue = nothing;
         plottypes = [:mwf, :mwferror],
-        disp = false,
         mwfmethod = nothing,
-        fname = nothing
+        fname = nothing,
+        disp = !(fname == nothing)
     )
     mwfplottypes = [:mwf, :mwfplot]
     errorplottypes = [:mwferror, :mwferrorplot, :error, :errorplot]
@@ -180,7 +180,11 @@ function plotMWF(params, mwf, mwftrue = nothing;
     return figs
 end
 
-function plotMWF(results::Dict; plottypes = [:mwf, :mwferror], disp = false, fname = nothing)
+function plotMWF(results::Dict;
+        plottypes = [:mwf, :mwferror],
+        fname = nothing,
+        disp = !(fname == nothing)
+    )
     # mwfvalues is an array of Dict{Symbol,T}'s, and params is an array of BlochTorreyParameters{T}'s
     @unpack params, mwfvalues = results
     (isempty(params) || isempty(mwfvalues)) && return nothing

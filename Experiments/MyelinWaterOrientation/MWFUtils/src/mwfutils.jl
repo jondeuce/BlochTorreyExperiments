@@ -61,38 +61,40 @@ function load_results_dict(;
 end
 
 # Pack circles
-function packcircles(btparams::BlochTorreyParameters{T};
-        N = 20, # number of circles
-        η = btparams.AxonPDensity, # goal packing density
-        ϵ = 0.05 * btparams.R_mu, # overlap occurs when distance between circle edges is ≤ ϵ
-        α = 1e-1, # covariance penalty weight (enforces circular distribution)
-        β = 1e-6, # mutual distance penalty weight
-        λ = 1.0, # overlap penalty weight (or lagrange multiplier for constrained version)
-        it = 100, # maximum iterations for greedy packing
-        maxiter = 5 # maximum attempts for sampling radii + greedy packing + energy packing
-    ) where {T}
-    
-    local circles, domain
-    η_best = 0.0
-    
-    for i in 1:maxiter
-        println("\nPacking... (attempt $i/$maxiter)\n")
-        rs = rand(radiidistribution(btparams), N) # Initial radii distribution
+function packcircles(btparams::BlochTorreyParameters = BlochTorreyParameters{Float64}();
+        Ncircles    = 20, # number of circles
+        goaldensity = btparams.AxonPDensity, # goal packing density
+        distthresh  = 0.05 * btparams.R_mu, # overlap occurs when distance between circle edges is ≤ distthresh
+        epsilon     = 0.01 * btparams.R_mu, # pack more than necessary by default
+        alpha       = 1e-1, # covariance penalty weight (enforces circular distribution)
+        beta        = 1e-6, # mutual distance penalty weight
+        lambda      = 1.0, # overlap penalty weight (or lagrange multiplier for constrained version)
+        greedyiters = 100, # maximum iterations for greedy packing
+        maxattempts = 5 # maximum attempts for sampling radii + greedy packing + energy packing
+    )
+
+    # Initialize
+    circles, domain, η_best = nothing, nothing, 0
+    @info "epsilon = $epsilon"
+
+    for i in 1:maxattempts
+        println("\nPacking... (attempt $i/$maxattempts)\n")
+        rs = rand(radiidistribution(btparams), Ncircles) # Initial radii distribution
         
         print("GreedyCirclePacking: ")
-        @time greedycircles = GreedyCirclePacking.pack(rs; goaldensity = 1.0, iters = it)
+        @time greedycircles = GreedyCirclePacking.pack(rs; goaldensity = 1.0, iters = greedyiters)
 
         # print("EnergyCirclePacking: ")
         # @time energycircles = EnergyCirclePacking.pack(greedycircles;
         #     autodiff = false,
         #     secondorder = false,
         #     setcallback = false,
-        #     goaldensity = 1.0, #η # pack as much as possible, scale to goal density after
+        #     goaldensity = 1.0, #goaldensity # pack as much as possible, scale to goal density after
         #     distancescale = btparams.R_mu,
-        #     weights = [α, β, λ],
-        #     epsilon = ϵ # pack as much as possible, penalizing packing tighter than distance ϵ
+        #     weights = [alpha, beta, lambda],
+        #     epsilon = distthresh # pack as much as possible, penalizing packing tighter than distance distthresh
         # )
-        # scaledcircles, domain, _ = CirclePackingUtils.scale_to_density(energycircles, η, ϵ; MODE = :corners)
+        # scaledcircles, domain, _ = CirclePackingUtils.scale_to_density(energycircles, goaldensity, distthresh; MODE = :corners)
         # η_curr = estimate_density(scaledcircles, domain)
         # 
         # println("GreedyCirclePacking density:  $(estimate_density(greedycircles, domain))")
@@ -103,38 +105,42 @@ function packcircles(btparams::BlochTorreyParameters{T};
         # otherwise circles tend to get caught in local minima where they are close to tangent,
         # but we want to to encourage them to be as evenly packed as possible. This ensures
         # circles don't start out as tangent
-        scaledgreedycircles = translate_shape.(greedycircles, 1.2)
+        scaledgreedycircles = translate_shape.(greedycircles, 1.1)
 
         print("PeriodicCirclePacking: ")
         @time periodiccircles, initialdomain = PeriodicCirclePacking.pack(scaledgreedycircles;
             autodiff = false,
             secondorder = false,
             distancescale = btparams.R_mu,
-            epsilon = 0.02 * btparams.R_mu # pack as much as possible
+            epsilon = epsilon
         )
-        scaledcircles, scaleddomain, _ = periodic_scale_to_density(periodiccircles, initialdomain, η, ϵ)
+        scaledcircles, scaleddomain, _ = periodic_scale_to_density(periodiccircles, initialdomain, goaldensity, distthresh)
         finaldomain, _ = periodic_subdomain(scaledcircles, scaleddomain)
         finalcircles = periodic_circles(scaledcircles, finaldomain)
         η_max = periodic_density(periodiccircles, initialdomain)
         η_curr = periodic_density(finalcircles, finaldomain)
 
         println("")
-        println("Distance threshold: $ϵ")
+        println("Distance threshold: $distthresh")
         println("Minimum myelin thickness: $(minimum(radius.(finalcircles))*(1-btparams.g_ratio))")
         println("Minimum circles distance: $(minimum_signed_edge_distance(finalcircles))")
         println("")
         println("Periodic circles density: $η_max")
         println("Final scaled circles density: $η_curr")
         
-        (η_curr ≈ η) && (circles = finalcircles; domain = finaldomain; break)
+        (η_curr ≈ goaldensity) && (circles = finalcircles; domain = finaldomain; break)
         (η_curr > η_best) && (η_best = η_curr; circles = finalcircles; domain = finaldomain)
     end
 
-    return circles, domain
+    # Return named tuple of best results
+    out = (circles = circles, domain = domain)
+
+    return out
 end
 
-function creategeometry(btparams::BlochTorreyParameters{T};
+function creategeometry(btparams::BlochTorreyParameters{T} = BlochTorreyParameters{Float64}();
         fname = nothing, # filename for saving
+        disp = !(fname == nothing), # display figure
         Ncircles = 20, # number of circles
         goaldensity = btparams.AxonPDensity, # goal packing density
         overlapthresh = 0.05, # overlap occurs when distance between circle edges is ≤ overlapthresh * btparams.R_mu
@@ -142,21 +148,21 @@ function creategeometry(btparams::BlochTorreyParameters{T};
         alpha = 0.5, #DEBUG
         beta = 0.5, #DEBUG
         gamma = 1.0, #DEBUG
-        RESOLUTION = 1.25, #DEBUG
-        FORCEDENSITY = false, # If this flag is true, an error is thrown if the reached packing density is not goaldensity
-        FORCEAREA = false, # If this flag is true, an error is thrown if the resulting grid area doesn't match the bdry area
-        FORCEQUALITY = false, # If this flag is true, an error is thrown if the resulting grid doesn't have high enough quality
-        QMIN = 0.3, #DEBUG
+        QMIN = 0.4, #DEBUG
+        RESOLUTION = 1.0, #DEBUG
         MAXITERS = 1000, #DEBUG
         FIXPOINTSITERS = 250, #DEBUG
         FIXSUBSITERS = 200, #DEBUG
+        FORCEDENSITY = false, # If this flag is true, an error is thrown if the reached packing density is not goaldensity
+        FORCEAREA = false, # If this flag is true, an error is thrown if the resulting grid area doesn't match the bdry area
+        FORCEQUALITY = false, # If this flag is true, an error is thrown if the resulting grid doesn't have high enough quality
         PLOT = true
     ) where {T}
 
     # Initial set of circles
     outercircles, initialbdry = packcircles(btparams;
-        N = Ncircles, maxiter = maxpackiter,
-        η = goaldensity, ϵ = overlapthresh * btparams.R_mu)
+        Ncircles = Ncircles, maxattempts = maxpackiter,
+        goaldensity = goaldensity, distthresh = overlapthresh * btparams.R_mu)
     innercircles = scale_shape.(outercircles, btparams.g_ratio)
     allcircles = collect(Iterators.flatten(zip(outercircles, innercircles)))
 
@@ -269,9 +275,9 @@ function creategeometry(btparams::BlochTorreyParameters{T};
     end
 
     if PLOT
-        fig = plot(bdry; aspectratio = :equal);
-        for c in allcircles; plot!(fig, c); end
-        display(fig)
+        fig = plot(allcircles; aspectratio = :equal)
+        fig = plot!(fig, bdry; aspectratio = :equal)
+        disp && display(fig)
         (fname != nothing) && savefig(fig, fname * "__circles.pdf")
     end
 
@@ -282,7 +288,7 @@ function creategeometry(btparams::BlochTorreyParameters{T};
         simpplot!(fig, torigrids; colour = :yellow)
         simpplot!(fig, interiorgrids; colour = :red)
         title!("Disjoint Grids: $numtri total triangles, $numpts total points")
-        display(fig)
+        disp && display(fig)
         (fname != nothing) && savefig(fig, fname * "__grid.pdf")
     end
 
@@ -301,7 +307,17 @@ function creategeometry(btparams::BlochTorreyParameters{T};
         end
     end
 
-    return exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry
+    # Return named tuple of results
+    geom = (
+        exteriorgrids = exteriorgrids, 
+        torigrids = torigrids, 
+        interiorgrids = interiorgrids, 
+        outercircles = outercircles, 
+        innercircles = innercircles, 
+        bdry = bdry
+    )
+    
+    return geom
 end
 
 function loadgeometry(fname)

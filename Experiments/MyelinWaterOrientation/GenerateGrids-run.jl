@@ -43,7 +43,7 @@ function main()
                     gamma = 1.0,
                     QMIN = 0.4,
                     RESOLUTION = 1.0,
-                    MAXITERS = 2000,
+                    MAXITERS = 1000,
                     FIXPOINTSITERS = 250,
                     FIXSUBSITERS = 200,
                     FORCEDENSITY = true, # error if desired density isn't reached

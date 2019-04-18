@@ -75,7 +75,10 @@ function pack(
     packed_circles = Circle.(origins, radii)
     boundary_rectangle = Rectangle(zero(V), widths)
 
-    return packed_circles, boundary_rectangle
+    # Return named tuple
+    geom = (circles = packed_circles, domain = boundary_rectangle)
+
+    return geom
 end
 
 function pack(c::AbstractVector{Circle{2,T}}; kwargs...) where {T}
@@ -118,11 +121,30 @@ end
 function autodiff_barrier_energy(r::AbstractVector, ϵ::Real)
     @inline get_b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + barrier(dx,r1,r2,ϵ))
     function energy(x)
-        P = Vec{2}((x[end-1], x[end]))
-        return pairwise_sum(get_b(P), @views(x[1:end-2]), r)
+        o, P = @views(x[1:end-2]), Vec{2}((x[end-1], x[end]))
+        return pairwise_sum(get_b(P), o, r)
     end
 end
 
 end # module PeriodicCirclePacking
 
-nothing
+# # Testing BlackBoxOptim
+# function test()
+#     function getgeom(x,r)
+#         circles = Circle.(Vec{2}.(tuple.(x[1:2:end-2], x[2:2:end-2])), r)
+#         domain = Rectangle(zero(Vec{2}), Vec{2}((x[end-1],x[end])))
+#         geom = (circles = periodic_circles(circles, domain), domain = domain)
+#         return geom
+#     end
+#     Ncircles = 50;
+#     r = rand(radiidistribution(btparams), Ncircles);
+#     ϵ = 0.01 * btparams.R_mu;
+#     SearchRange = [(0.0, 10.0) for _ in 1:2*length(r)+2];
+#     energy = PeriodicCirclePacking.autodiff_barrier_energy(r,ϵ);
+#     opt_energy = (x) -> energy(x) + 100 * div(length(x)-2,2)^2 * x[end-1]*x[end];
+#     res = bboptimize(opt_energy; SearchRange = SearchRange, NumDimensions = 2*length(r)+2, TraceMode = :silent, MaxTime = 5.0);
+#     geom0 = getgeom(best_candidate(res), r);
+#     geom = PeriodicCirclePacking.pack(geom0.circles);
+#     fig = plot(periodic_circles(geom...)); plot!(fig, geom.domain); display(fig)
+#     @show periodic_density(geom...)
+# end

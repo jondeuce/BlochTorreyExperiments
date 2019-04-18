@@ -219,32 +219,33 @@ end
 #### Exponential barrier function
 ####
 
-# Exponential barrier which satisfies the following (where μ = r1 + r2):
-#   f(μ - 1ϵ) = μ^2
-#   f(μ + 0ϵ) = μ^2 * (ϵ/μ)^2 = ϵ^2
-#   f(μ + 1ϵ) = μ^2 * (ϵ/μ)^4 = ϵ^2 * (ϵ/μ)^2
+# Exponential barrier which satisfies the following (where μ = r1 + r2 and Δ = |dx| - μ):
+#   f(Δ = -1ϵ) = μ^2 * (μ/ϵ)^2 >> μ^2
+#   f(Δ =  0ϵ) = μ^2
+#   f(Δ = +1ϵ) = ϵ^2
 @inline function barrier(dx::Vec, r1::Real, r2::Real, ϵ::Real)
     μ = r1 + r2
-    α = -2 * log(ϵ/μ)
-    e = μ^2 * exp(-(α/ϵ) * d(dx,r1,r2,ϵ))
-    e = max(e, eps(typeof(e))) # avoid subnormals
-    e = min(e, inv(eps(typeof(e)))) # avoid overflow
-    return e
+    α = -2 * log(ϵ/μ) / ϵ # decay rate
+    Δ = d(dx,r1,r2,ϵ) + ϵ # signed edge distance: Δ = d + ϵ = |dx| - μ
+    b = μ^2 * exp(-α * Δ) # exponential barrier
+    b = max(b, eps(typeof(b))) # avoid subnormals
+    b = min(b, inv(eps(typeof(b)))) # avoid overflow
+    return b
 end
 @inline barrier(o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = barrier(o1 - o2, r1, r2, ϵ)
 
 # Gradient w.r.t `o1`
 @inline function ∇barrier(dx::Vec, r1::Real, r2::Real, ϵ::Real)
     μ = r1 + r2
-    α = -2 * log(ϵ/μ)
-    return barrier(dx,r1,r2,ϵ) * (-α/ϵ) * ∇d(dx,r1,r2,ϵ)
+    α = -2 * log(ϵ/μ) / ϵ
+    return barrier(dx,r1,r2,ϵ) * (-α * ∇d(dx,r1,r2,ϵ))
 end
 @inline ∇barrier(o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = ∇barrier(o1 - o2, r1, r2, ϵ)
 
 # Hessian w.r.t `o1`, i.e. ∂²d/∂o1²
 @inline function ∇²barrier(dx::Vec, r1::Real, r2::Real, ϵ::Real)
     μ = r1 + r2
-    α = -2 * log(ϵ/μ)
-    return barrier(dx,r1,r2,ϵ) * ((-α/ϵ) * ∇²d(dx,r1,r2,ϵ) + (α/ϵ)^2 * otimes(∇d(dx,r1,r2,ϵ)))
+    α = -2 * log(ϵ/μ) / ϵ
+    return barrier(dx,r1,r2,ϵ) * (α^2 * otimes(∇d(dx,r1,r2,ϵ)) - α * ∇²d(dx,r1,r2,ϵ))
 end
 @inline ∇²barrier(o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = ∇²barrier(o1 - o2, r1, r2, ϵ)
