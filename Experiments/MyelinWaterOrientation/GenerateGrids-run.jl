@@ -13,9 +13,9 @@ gr(size=(1200,900), leg = false, grid = false, labels = nothing) #xticks = nothi
 
 function main()
     default_btparams = BlochTorreyParameters{Float64}()
-    numreps = 3 # number of grids per parameter set
+    numreps = 5 # number of grids per parameter set
 
-    numfibres = 10:10:40
+    numfibres = 10:10:50
     g_ratios = [0.75, 0.78, 0.80, default_btparams.g_ratio]
     packing_densities = [0.7, 0.75, 0.8, default_btparams.AxonPDensity]
 

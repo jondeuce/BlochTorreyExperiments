@@ -228,8 +228,8 @@ end
     α = -2 * log(ϵ/μ) / ϵ # decay rate
     Δ = d(dx,r1,r2,ϵ) + ϵ # signed edge distance: Δ = d + ϵ = |dx| - μ
     b = μ^2 * exp(-α * Δ) # exponential barrier
-    b = max(b, eps(typeof(b))) # avoid subnormals
-    b = min(b, inv(eps(typeof(b)))) # avoid overflow
+    # b = max(b, eps(typeof(b))) # avoid subnormals
+    # b = min(b, inv(eps(typeof(b)))) # avoid overflow
     return b
 end
 @inline barrier(o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = barrier(o1 - o2, r1, r2, ϵ)
@@ -249,3 +249,36 @@ end
     return barrier(dx,r1,r2,ϵ) * (α^2 * otimes(∇d(dx,r1,r2,ϵ)) - α * ∇²d(dx,r1,r2,ϵ))
 end
 @inline ∇²barrier(o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = ∇²barrier(o1 - o2, r1, r2, ϵ)
+
+####
+#### Softplus barrier function
+####
+
+# Softplus barrier which satisfies the following (where μ = r1 + r2 and Δ = |dx| - μ):
+#   f(Δ = 0)   = μ^2
+#   f(Δ = ϵ/2) = ϵ^2
+#   f(Δ = ϵ)   ≈ 0
+@inline function softplusbarrier(dx::Vec, r1::Real, r2::Real, ϵ::Real)
+    μ = r1 + r2
+    Δ = d(dx,r1,r2,ϵ) + ϵ # signed edge distance: Δ = d + ϵ = |dx| - μ
+    A = ϵ^2 / logtwo
+    α = (10 * μ^2 / (ϵ/2)) / A
+    # z = -α * (Δ - ϵ/2)
+    # b = z > invsoftplus(eps(inv(A))) ? A*softplus(z) : zero(z)
+    b = A * softplus(-α * (Δ - ϵ/2))
+    # b = max(b, eps(typeof(b)))
+    return b
+end
+@inline softplusbarrier(o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = softplusbarrier(o1 - o2, r1, r2, ϵ)
+
+# Gradient w.r.t `o1`
+@inline function ∇softplusbarrier(dx::Vec, r1::Real, r2::Real, ϵ::Real)
+    μ = r1 + r2
+    Δ = d(dx,r1,r2,ϵ) + ϵ # signed edge distance: Δ = d + ϵ = |dx| - μ
+    A = ϵ^2 / logtwo
+    α = (10 * μ^2 / (ϵ/2)) / A
+    ∂b = A * logistic(-α * (Δ - ϵ/2))
+    # ∂b = max(∂b, eps(typeof(∂b)))
+    return ∂b * (-α * ∇d(dx,r1,r2,ϵ))
+end
+@inline ∇softplusbarrier(o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = ∇softplusbarrier(o1 - o2, r1, r2, ϵ)

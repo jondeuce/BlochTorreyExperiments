@@ -9,7 +9,7 @@ module PeriodicCirclePacking
 # ---------------------------------------------------------------------------- #
 
 using ..CirclePackingUtils
-using ..CirclePackingUtils: d², ∇d², ∇²d², barrier, ∇barrier, ∇²barrier
+using ..CirclePackingUtils: d², ∇d², ∇²d², softplusbarrier, ∇softplusbarrier#, ∇²softplusbarrier
 using GeometryUtils
 using LinearAlgebra, Statistics
 using DiffResults, Optim, LineSearches, ForwardDiff
@@ -89,9 +89,9 @@ end
 
 function barrier_energy(r::AbstractVector, ϵ::Real)
     # Mutual distance and overlap distance squared functions, gradients, and hessians
-    @inline get_b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + barrier(dx,r1,r2,ϵ))
-    @inline get_∇b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇d²(dx,r1,r2,ϵ) + ∇barrier(dx,r1,r2,ϵ))
-    @inline get_∇²b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇²d²(dx,r1,r2,ϵ) + ∇²barrier(dx,r1,r2,ϵ))
+    @inline get_b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + softplusbarrier(dx,r1,r2,ϵ))
+    @inline get_∇b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇d²(dx,r1,r2,ϵ) + ∇softplusbarrier(dx,r1,r2,ϵ))
+    # @inline get_∇²b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇²d²(dx,r1,r2,ϵ) + ∇²softplusbarrier(dx,r1,r2,ϵ))
 
     # Energy function/gradient/hessian
     function energy(x)
@@ -106,20 +106,21 @@ function barrier_energy(r::AbstractVector, ϵ::Real)
         return g
     end
 
-    function ∇²energy!(h, x)
-        o, P = @views(x[1:end-2]), Vec{2}((x[end-1], x[end]))
-        pairwise_hess!(@views(h[1:end-2, 1:end-2]), get_∇²b(P), o, r)
-        @views h[end-1:end, end-1:end] .= Tensors.hessian(P -> pairwise_sum(get_b(P), o, r), P)
-        @views h[1:end-2, end-1:end] .= 0 #TODO this is an incorrect assumption
-        @views h[end-1:end, 1:end-2] .= 0 #TODO this is an incorrect assumption
-        return h
-    end
+    # function ∇²energy!(h, x)
+    #     o, P = @views(x[1:end-2]), Vec{2}((x[end-1], x[end]))
+    #     pairwise_hess!(@views(h[1:end-2, 1:end-2]), get_∇²b(P), o, r)
+    #     @views h[end-1:end, end-1:end] .= Tensors.hessian(P -> pairwise_sum(get_b(P), o, r), P)
+    #     @views h[1:end-2, end-1:end] .= 0 #TODO this is an incorrect assumption
+    #     @views h[end-1:end, 1:end-2] .= 0 #TODO this is an incorrect assumption
+    #     return h
+    # end
+    ∇²energy! = nothing #TODO
 
     return energy, ∇energy!, ∇²energy!
 end
 
 function autodiff_barrier_energy(r::AbstractVector, ϵ::Real)
-    @inline get_b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + barrier(dx,r1,r2,ϵ))
+    @inline get_b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + softplusbarrier(dx,r1,r2,ϵ))
     function energy(x)
         o, P = @views(x[1:end-2]), Vec{2}((x[end-1], x[end]))
         return pairwise_sum(get_b(P), o, r)

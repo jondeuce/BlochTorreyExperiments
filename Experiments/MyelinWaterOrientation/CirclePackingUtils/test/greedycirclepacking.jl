@@ -1,11 +1,5 @@
-module GreedyCirclePackingTest
-
-using GeometryUtils
-using GreedyCirclePacking
-
+using CirclePackingUtils
 using Test
-using LinearAlgebra
-using Tensors: Vec
 
 # ---------------------------------------------------------------------------- #
 # Geometry Testing
@@ -63,7 +57,5 @@ function runtests()
     end
     nothing
 end
-
-end # module GreedyCirclePackingTest
 
 nothing

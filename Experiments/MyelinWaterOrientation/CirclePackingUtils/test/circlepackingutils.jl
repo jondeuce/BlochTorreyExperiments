@@ -1,14 +1,10 @@
-using GeometryUtils
 using CirclePackingUtils
 using CirclePackingUtils: d, ∇d, ∇²d, d², ∇d², ∇²d², d²_overlap, ∇d²_overlap, ∇²d²_overlap
-using CirclePackingUtils: barrier, ∇barrier, ∇²barrier
+using CirclePackingUtils: barrier, ∇barrier, ∇²barrier, softplusbarrier, ∇softplusbarrier
 
+import ForwardDiff
 using Test
 using BenchmarkTools
-
-import Tensors
-import ForwardDiff
-using ForwardDiff: GradientConfig, HessianConfig, Chunk
 
 # ---------------------------------------------------------------------------- #
 # Geometry Testing
@@ -66,16 +62,24 @@ function runtests()
         wrap(f, ϵ) = (x...) -> f(x..., ϵ)
         D, ∇D, ∇²D = wrap(d, ϵ), wrap(∇d, ϵ), wrap(∇²d, ϵ)
         b, ∇b, ∇²b = wrap(barrier, ϵ), wrap(∇barrier, ϵ), wrap(∇²barrier, ϵ)
+        s, ∇s = wrap(softplusbarrier, ϵ), wrap(∇softplusbarrier, ϵ)
         
-        for (f,∇f,∇²f) in [(b,∇b,∇²b), (d,∇d,∇²d), (D,∇D,∇²D), (d²,∇d²,∇²d²), (d²_overlap,∇d²_overlap,∇²d²_overlap)]
+        # Gradient tests
+        for (f,∇f) in [(b,∇b), (s,∇s), (d,∇d), (D,∇D), (d²,∇d²), (d²_overlap,∇d²_overlap)]
             for r in [fill(R1-ϵ, N), fill(R1+ϵ, N)]
                 # Test `pairwise_sum` gradient
                 F = x -> pairwise_sum(f, x, r)
                 gfwd = ForwardDiff.gradient(F, x1)
                 gpair = copy(pairwise_grad!(g, ∇f, x1, r))
                 @test gfwd ≈ gpair
+            end
+        end
 
+        # Hessian tests
+        for (f,∇²f) in [(b,∇²b), (d,∇²d), (D,∇²D), (d²,∇²d²), (d²_overlap,∇²d²_overlap)]
+            for r in [fill(R1-ϵ, N), fill(R1+ϵ, N)]
                 # Test `pairwise_sum` Hessian
+                F = x -> pairwise_sum(f, x, r)
                 Hfwd = ForwardDiff.hessian(F, x1)
                 Hpair = copy(pairwise_hess!(H, ∇²f, x1, r))
                 @test Hfwd ≈ Hpair
@@ -89,14 +93,14 @@ function runtests()
         # display(@benchmark $F($x1))
         #
         # println("\nForwardDiff Gradient (N = $N circles):\n");
-        # cfg = GradientConfig(F, x1, Chunk{min(20,N)}())
+        # cfg = ForwardDiff.GradientConfig(F, x1, ForwardDiff.Chunk{min(20,N)}())
         # display(@benchmark ForwardDiff.gradient!($g, $F, $x1, $cfg))
         #
         # println("\nManual Gradient (N = $N circles):\n");
         # display(@benchmark pairwise_grad!($g, $∇d, $x1, $r))
         #
         # println("\nForwardDiff Hessian (N = $N circles):\n");
-        # cfg = HessianConfig(F, x1, Chunk{min(20,N)}())
+        # cfg = ForwardDiff.HessianConfig(F, x1, ForwardDiff.Chunk{min(20,N)}())
         # display(@benchmark ForwardDiff.hessian!($H, $F, $x1, $cfg))
         #
         # println("\nManual Hessian (N = $N circles):\n");

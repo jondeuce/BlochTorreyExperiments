@@ -4,10 +4,11 @@ module CirclePackingUtils
 # Dependencies
 # ---------------------------------------------------------------------------- #
 
-using GeometryUtils
-using LinearAlgebra, Statistics
+using Reexport
+@reexport using GeometryUtils
+
+using LinearAlgebra, Statistics, StatsFuns
 using DiffResults, Optim, LineSearches, ForwardDiff, Roots
-using Tensors
 
 export estimate_density, opt_subdomain, scale_to_density, covariance_energy
 export tocircles, tocircles!, tovectors, tovectors!, initialize_origins
