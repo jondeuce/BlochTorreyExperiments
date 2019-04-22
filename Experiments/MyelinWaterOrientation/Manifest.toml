@@ -1316,10 +1316,10 @@ uuid = "efce3f68-66dc-5838-9240-27a6d6f5f9b6"
 version = "0.4.1"
 
 [[WriteVTK]]
-deps = ["Base64", "CodecZlib", "LightXML", "Printf", "Random", "SHA", "Test", "TranscodingStreams"]
-git-tree-sha1 = "9aa900089a09fdb7af6cc02f70bc6ae9d78f57d2"
+deps = ["Base64", "CodecZlib", "LightXML", "Printf", "TranscodingStreams"]
+git-tree-sha1 = "f7c7fb5fb3c7d47b17b3490256105d8186477c7c"
 uuid = "64499a7a-5c06-52f2-abe2-ccb03c286192"
-version = "1.0.1"
+version = "1.0.2"
 
 [[YAML]]
 deps = ["Codecs", "Compat"]

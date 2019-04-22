@@ -186,9 +186,9 @@ end
 
 function barrier_energy(r::AbstractVector, ϵ::Real)
     # Mutual distance and overlap distance squared functions, gradients, and hessians
-    @inline b(o1,o2,r1,r2)    = CirclePackingUtils.d²(o1,o2,r1,r2,ϵ) + CirclePackingUtils.barrier(o1,o2,r1,r2,ϵ)
-    @inline ∇b(o1,o2,r1,r2)   = CirclePackingUtils.∇d²(o1,o2,r1,r2,ϵ) + CirclePackingUtils.∇barrier(o1,o2,r1,r2,ϵ)
-    @inline ∇²b(o1,o2,r1,r2)  = CirclePackingUtils.∇²d²(o1,o2,r1,r2,ϵ) + CirclePackingUtils.∇²barrier(o1,o2,r1,r2,ϵ)
+    @inline b(o1,o2,r1,r2)    = CirclePackingUtils.d²(o1,o2,r1,r2,ϵ) + CirclePackingUtils.expbarrier(o1,o2,r1,r2,ϵ)
+    @inline ∇b(o1,o2,r1,r2)   = CirclePackingUtils.∇d²(o1,o2,r1,r2,ϵ) + CirclePackingUtils.∇expbarrier(o1,o2,r1,r2,ϵ)
+    @inline ∇²b(o1,o2,r1,r2)  = CirclePackingUtils.∇²d²(o1,o2,r1,r2,ϵ) + CirclePackingUtils.∇²expbarrier(o1,o2,r1,r2,ϵ)
 
     # Energy function/gradient/hessian
     energy(x) = pairwise_sum(b, x, r)

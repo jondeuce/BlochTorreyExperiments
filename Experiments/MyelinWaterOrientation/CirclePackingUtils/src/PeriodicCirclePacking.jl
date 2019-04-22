@@ -9,7 +9,10 @@ module PeriodicCirclePacking
 # ---------------------------------------------------------------------------- #
 
 using ..CirclePackingUtils
-using ..CirclePackingUtils: d², ∇d², ∇²d², softplusbarrier, ∇softplusbarrier#, ∇²softplusbarrier
+using ..CirclePackingUtils: d², ∇d², ∇²d²
+using ..CirclePackingUtils: expbarrier, ∇expbarrier, ∇²expbarrier
+using ..CirclePackingUtils: softplusbarrier, ∇softplusbarrier#, ∇²softplusbarrier
+using ..CirclePackingUtils: genericbarrier, ∇genericbarrier, ∇²genericbarrier
 using GeometryUtils
 using LinearAlgebra, Statistics
 using DiffResults, Optim, LineSearches, ForwardDiff
@@ -69,7 +72,7 @@ function pack(
 
     # Extract results
     x = copy(Optim.minimizer(result))
-    widths = V((x[end-1], x[end]))
+    widths = V((abs(x[end-1]), abs(x[end])))
     origins = reinterpret(V, x[1:end-2]) |> copy
     origins .= periodic_mod.(origins, Ref(widths)) # force origins to be contained in [0,W] x [0,H]
     packed_circles = Circle.(origins, radii)
@@ -89,20 +92,49 @@ end
 
 function barrier_energy(r::AbstractVector, ϵ::Real)
     # Mutual distance and overlap distance squared functions, gradients, and hessians
-    @inline get_b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + softplusbarrier(dx,r1,r2,ϵ))
-    @inline get_∇b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇d²(dx,r1,r2,ϵ) + ∇softplusbarrier(dx,r1,r2,ϵ))
+
+    # @info "expbarrier"
+    # @inline get_b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + expbarrier(dx,r1,r2,ϵ))
+    # @inline get_∇b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇d²(dx,r1,r2,ϵ) + ∇expbarrier(dx,r1,r2,ϵ))
+    # @inline get_∇²b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇²d²(dx,r1,r2,ϵ) + ∇²expbarrier(dx,r1,r2,ϵ))
+
+    # @info "softplusbarrier"
+    # @inline get_b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + softplusbarrier(dx,r1,r2,ϵ))
+    # @inline get_∇b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇d²(dx,r1,r2,ϵ) + ∇softplusbarrier(dx,r1,r2,ϵ))
     # @inline get_∇²b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇²d²(dx,r1,r2,ϵ) + ∇²softplusbarrier(dx,r1,r2,ϵ))
 
+    # @info "log genericbarrier"
+    # α = 1e-6 * (ϵ/maximum(r))^2
+    # b   = d -> d > 0 ? -α * log(d/ϵ) : typeof(d)(Inf)
+    # ∂b  = d -> d > 0 ? -α / d        : typeof(d)(0)#(-Inf)
+    # ∂²b = d -> d > 0 ?  α / d^2      : typeof(d)(0)#(Inf)
+    
+    # @info "exp genericbarrier"
+    μ = 2 * maximum(r)
+    α = -2 * log(ϵ/μ) / ϵ
+    b = d -> μ^2 * exp(-α * (d + ϵ))
+    ∂b = d -> -α * μ^2 * exp(-α * (d + ϵ))
+    ∂²b = d -> α^2 * μ^2 * exp(-α * (d + ϵ))
+
+    @inline get_b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + genericbarrier(b,dx,r1,r2,ϵ))
+    @inline get_∇b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇d²(dx,r1,r2,ϵ) + ∇genericbarrier(∂b,dx,r1,r2,ϵ))
+    @inline get_∇²b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇²d²(dx,r1,r2,ϵ) + ∇²genericbarrier(∂b,∂²b,dx,r1,r2,ϵ))
+
     # Energy function/gradient/hessian
+    N = length(r)
+    λ = 0.0 * N*(N+1)/2
+
     function energy(x)
-        o, P = @views(x[1:end-2]), Vec{2}((x[end-1], x[end]))
-        return pairwise_sum(get_b(P), o, r)
+        o, P = @views(x[1:end-2]), Vec{2}((abs(x[end-1]), abs(x[end])))
+        F = pairwise_sum(get_b(P), o, r) # mutual distance penalty term
+        F += λ * P[1] * P[2] # box area penalty term
     end
 
     function ∇energy!(g, x)
-        o, P = @views(x[1:end-2]), Vec{2}((x[end-1], x[end]))
-        pairwise_grad!(@views(g[1:end-2]), get_∇b(P), o, r)
-        @views g[end-1:end] .= Tensors.gradient(P -> pairwise_sum(get_b(P), o, r), P)
+        o, P = @views(x[1:end-2]), Vec{2}((abs(x[end-1]), abs(x[end])))
+        @views pairwise_grad!(g[1:end-2], get_∇b(P), o, r)
+        p = Vec{2}((x[end-1], x[end]))
+        @views g[end-1:end] .= Tensors.gradient(p -> (P = Vec{2}((abs(p[1]), abs(p[2]))); pairwise_sum(get_b(P), o, r) + λ * P[1] * P[2]), p)
         return g
     end
 

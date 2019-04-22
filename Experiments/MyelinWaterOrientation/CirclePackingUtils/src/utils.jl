@@ -51,7 +51,7 @@ function initialize_origins(radii::AbstractVector{T};
     # Initialize with random origins
     Ncircles = length(radii)
     Rmax = maximum(radii)
-    mesh_scale = T(2*Rmax*sqrt(Ncircles))
+    mesh_scale = T(1.25 * 2Rmax * sqrt(Ncircles))
 
     if distribution == :random
         # Randomly distributed origins

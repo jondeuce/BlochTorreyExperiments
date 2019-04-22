@@ -1,6 +1,9 @@
 using CirclePackingUtils
-using CirclePackingUtils: d, ∇d, ∇²d, d², ∇d², ∇²d², d²_overlap, ∇d²_overlap, ∇²d²_overlap
-using CirclePackingUtils: barrier, ∇barrier, ∇²barrier, softplusbarrier, ∇softplusbarrier
+using CirclePackingUtils: d, ∇d, ∇²d, d², ∇d², ∇²d²
+using CirclePackingUtils: d²_overlap, ∇d²_overlap, ∇²d²_overlap
+using CirclePackingUtils: expbarrier, ∇expbarrier, ∇²expbarrier
+using CirclePackingUtils: softplusbarrier, ∇softplusbarrier
+using CirclePackingUtils: genericbarrier, ∇genericbarrier, ∇²genericbarrier
 
 import ForwardDiff
 using Test
@@ -57,55 +60,79 @@ function runtests()
         R1 = abs(z[2]-z[1])/2 # half-distance between each pair of closest points
         x1 = reinterpret(Float64, z) |> copy
         ϵ = 0.1 * R1 # overlap thresh
-        g, H = zeros(2N), zeros(2N, 2N)
+        G, H = zeros(2N), zeros(2N, 2N)
         
-        wrap(f, ϵ) = (x...) -> f(x..., ϵ)
-        D, ∇D, ∇²D = wrap(d, ϵ), wrap(∇d, ϵ), wrap(∇²d, ϵ)
-        b, ∇b, ∇²b = wrap(barrier, ϵ), wrap(∇barrier, ϵ), wrap(∇²barrier, ϵ)
-        s, ∇s = wrap(softplusbarrier, ϵ), wrap(∇softplusbarrier, ϵ)
+        # Form gradient triples for testing
+        wrap(f, ϵ) = f == nothing ? nothing : (x...) -> f(x..., ϵ)
+        test_triples = []
         
-        # Gradient tests
-        for (f,∇f) in [(b,∇b), (s,∇s), (d,∇d), (D,∇D), (d²,∇d²), (d²_overlap,∇d²_overlap)]
-            for r in [fill(R1-ϵ, N), fill(R1+ϵ, N)]
-                # Test `pairwise_sum` gradient
-                F = x -> pairwise_sum(f, x, r)
-                gfwd = ForwardDiff.gradient(F, x1)
-                gpair = copy(pairwise_grad!(g, ∇f, x1, r))
-                @test gfwd ≈ gpair
-            end
+        # Handwritten gradients with default ϵ=0 methods
+        for triples in [(d, ∇d, ∇²d), (d², ∇d², ∇²d²),
+                        (d²_overlap, ∇d²_overlap, ∇²d²_overlap)]
+            push!(test_triples, triples)
+            push!(test_triples, map(f -> wrap(f, ϵ), triples))
         end
 
-        # Hessian tests
-        for (f,∇²f) in [(b,∇²b), (d,∇²d), (D,∇²D), (d²,∇²d²), (d²_overlap,∇²d²_overlap)]
-            for r in [fill(R1-ϵ, N), fill(R1+ϵ, N)]
-                # Test `pairwise_sum` Hessian
-                F = x -> pairwise_sum(f, x, r)
-                Hfwd = ForwardDiff.hessian(F, x1)
-                Hpair = copy(pairwise_hess!(H, ∇²f, x1, r))
-                @test Hfwd ≈ Hpair
-            end
+        # Handwritten gradients which must be wrapped
+        for triples in [(expbarrier, ∇expbarrier, ∇²expbarrier),
+                        (softplusbarrier, ∇softplusbarrier, nothing)]
+            push!(test_triples, map(f -> wrap(f, ϵ), triples))
         end
 
-        # # Benchmarks
-        # F = x -> pairwise_sum(d, x, r)
-        #
-        # println("\nFunction Call (N = $N circles):\n");
-        # display(@benchmark $F($x1))
-        #
-        # println("\nForwardDiff Gradient (N = $N circles):\n");
-        # cfg = ForwardDiff.GradientConfig(F, x1, ForwardDiff.Chunk{min(20,N)}())
-        # display(@benchmark ForwardDiff.gradient!($g, $F, $x1, $cfg))
-        #
-        # println("\nManual Gradient (N = $N circles):\n");
-        # display(@benchmark pairwise_grad!($g, $∇d, $x1, $r))
-        #
-        # println("\nForwardDiff Hessian (N = $N circles):\n");
-        # cfg = ForwardDiff.HessianConfig(F, x1, ForwardDiff.Chunk{min(20,N)}())
-        # display(@benchmark ForwardDiff.hessian!($H, $F, $x1, $cfg))
-        #
-        # println("\nManual Hessian (N = $N circles):\n");
-        # display(@benchmark pairwise_hess!($H, $∇²d, $x1, $r))
+        # Generic gradients
+        for triples in [(sin, cos, x -> -sin(x)),
+                        (x -> x^3, x -> 3x^2, x -> 6x)]
+            b, ∂b, ∂²b = triples
+            f = (o1, o2, r1, r2) -> genericbarrier(b, o1, o2, r1, r2, ϵ)
+            ∇f = (o1, o2, r1, r2) -> ∇genericbarrier(∂b, o1, o2, r1, r2, ϵ)
+            ∇²f = (o1, o2, r1, r2) -> ∇²genericbarrier(∂b, ∂²b, o1, o2, r1, r2, ϵ)
+            push!(test_triples, (f, ∇f, ∇²f))
+        end
+        
+        for r in [fill(R1-ϵ, N), fill(R1+ϵ, N)]
+            for triples in test_triples
+                f, ∇f, ∇²f = triples
+                F = x -> pairwise_sum(f, x, r)
+                
+                if !(∇f == nothing)
+                    # Test `pairwise_sum` gradient
+                    gfwd = ForwardDiff.gradient(F, x1)
+                    gpair = copy(pairwise_grad!(G, ∇f, x1, r))
+                    @test gfwd ≈ gpair
+                end
+
+                if !(∇²f == nothing)
+                    # Test `pairwise_sum` Hessian
+                    Hfwd = ForwardDiff.hessian(F, x1)
+                    Hpair = copy(pairwise_hess!(H, ∇²f, x1, r))
+                    @test Hfwd ≈ Hpair
+                end
+            end
+        end
     end
+    nothing
+end
+
+function runbenchmarks()
+    # Benchmarks
+    F = x -> pairwise_sum(d, x, r)
+    
+    println("\nFunction Call (N = $N circles):\n");
+    display(@benchmark $F($x1))
+    
+    println("\nForwardDiff Gradient (N = $N circles):\n");
+    cfg = ForwardDiff.GradientConfig(F, x1, ForwardDiff.Chunk{min(20,N)}())
+    display(@benchmark ForwardDiff.gradient!($G, $F, $x1, $cfg))
+    
+    println("\nManual Gradient (N = $N circles):\n");
+    display(@benchmark pairwise_grad!($G, $∇d, $x1, $r))
+    
+    println("\nForwardDiff Hessian (N = $N circles):\n");
+    cfg = ForwardDiff.HessianConfig(F, x1, ForwardDiff.Chunk{min(20,N)}())
+    display(@benchmark ForwardDiff.hessian!($H, $F, $x1, $cfg))
+    
+    println("\nManual Hessian (N = $N circles):\n");
+    display(@benchmark pairwise_hess!($H, $∇²d, $x1, $r))
     nothing
 end
 

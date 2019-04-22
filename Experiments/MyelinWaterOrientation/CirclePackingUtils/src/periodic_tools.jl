@@ -55,7 +55,7 @@ function periodic_density(cs::AbstractVector{C}, bdry::Rectangle{2}) where {C <:
     return A2
 end
 
-function periodic_scale_to_density(cs::Vector{C}, bdry::Rectangle{2}, goaldensity, distthresh = zero(floattype(C))) where {C <: Circle{2}}
+function periodic_scale_to_threshold(cs::Vector{C}, bdry::Rectangle{2}, distthresh = zero(floattype(C))) where {C <: Circle{2}}
     # Minimum distance between circles must be positive
     @assert distthresh >= 0
 
@@ -74,6 +74,22 @@ function periodic_scale_to_density(cs::Vector{C}, bdry::Rectangle{2}, goaldensit
     # Expand initial circles once to α_min to ensure non-overlapping circles
     α = α_min
     cs, bdry = expand_geom(α_min, cs, bdry)
+    return cs, bdry, α_min
+end
+
+function periodic_scale_to_density(cs::Vector{C}, bdry::Rectangle{2}, goaldensity, distthresh = zero(floattype(C))) where {C <: Circle{2}}
+    # Minimum distance between circles must be positive
+    @assert distthresh >= 0
+
+    function expand_geom(α, cs, bdry)
+        x0 = minimum(bdry)
+        cs = translate_shape.(cs, Ref(x0), α) # circle origins are expanded uniformly by a factor α away from x0
+        bdry = scale_shape(bdry, x0, α) # domain is scaled uniformly by a factor α away from x0
+        return cs, bdry
+    end
+
+    # Expand initial circles once to ensure non-overlapping circles
+    cs, bdry, α = periodic_scale_to_threshold(cs, bdry, distthresh)
     η = periodic_density(cs, bdry)
 
     # Check if goal density cannot be reached, otherwise scale

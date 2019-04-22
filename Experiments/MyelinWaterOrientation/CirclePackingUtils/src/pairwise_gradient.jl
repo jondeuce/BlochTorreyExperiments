@@ -223,7 +223,7 @@ end
 #   f(Δ = -1ϵ) = μ^2 * (μ/ϵ)^2 >> μ^2
 #   f(Δ =  0ϵ) = μ^2
 #   f(Δ = +1ϵ) = ϵ^2
-@inline function barrier(dx::Vec, r1::Real, r2::Real, ϵ::Real)
+@inline function expbarrier(dx::Vec, r1::Real, r2::Real, ϵ::Real)
     μ = r1 + r2
     α = -2 * log(ϵ/μ) / ϵ # decay rate
     Δ = d(dx,r1,r2,ϵ) + ϵ # signed edge distance: Δ = d + ϵ = |dx| - μ
@@ -232,23 +232,23 @@ end
     # b = min(b, inv(eps(typeof(b)))) # avoid overflow
     return b
 end
-@inline barrier(o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = barrier(o1 - o2, r1, r2, ϵ)
+@inline expbarrier(o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = expbarrier(o1 - o2, r1, r2, ϵ)
 
 # Gradient w.r.t `o1`
-@inline function ∇barrier(dx::Vec, r1::Real, r2::Real, ϵ::Real)
+@inline function ∇expbarrier(dx::Vec, r1::Real, r2::Real, ϵ::Real)
     μ = r1 + r2
     α = -2 * log(ϵ/μ) / ϵ
-    return barrier(dx,r1,r2,ϵ) * (-α * ∇d(dx,r1,r2,ϵ))
+    return expbarrier(dx,r1,r2,ϵ) * (-α * ∇d(dx,r1,r2,ϵ))
 end
-@inline ∇barrier(o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = ∇barrier(o1 - o2, r1, r2, ϵ)
+@inline ∇expbarrier(o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = ∇expbarrier(o1 - o2, r1, r2, ϵ)
 
 # Hessian w.r.t `o1`, i.e. ∂²d/∂o1²
-@inline function ∇²barrier(dx::Vec, r1::Real, r2::Real, ϵ::Real)
+@inline function ∇²expbarrier(dx::Vec, r1::Real, r2::Real, ϵ::Real)
     μ = r1 + r2
     α = -2 * log(ϵ/μ) / ϵ
-    return barrier(dx,r1,r2,ϵ) * (α^2 * otimes(∇d(dx,r1,r2,ϵ)) - α * ∇²d(dx,r1,r2,ϵ))
+    return expbarrier(dx,r1,r2,ϵ) * (α^2 * otimes(∇d(dx,r1,r2,ϵ)) - α * ∇²d(dx,r1,r2,ϵ))
 end
-@inline ∇²barrier(o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = ∇²barrier(o1 - o2, r1, r2, ϵ)
+@inline ∇²expbarrier(o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = ∇²expbarrier(o1 - o2, r1, r2, ϵ)
 
 ####
 #### Softplus barrier function
@@ -282,3 +282,16 @@ end
     return ∂b * (-α * ∇d(dx,r1,r2,ϵ))
 end
 @inline ∇softplusbarrier(o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = ∇softplusbarrier(o1 - o2, r1, r2, ϵ)
+
+####
+#### Generic barrier function
+####
+
+@inline genericbarrier(b::Function, dx::Vec, r1::Real, r2::Real, ϵ::Real) = b(d(dx,r1,r2,ϵ))
+@inline genericbarrier(b::Function, o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = genericbarrier(b, o1 - o2, r1, r2, ϵ)
+
+@inline ∇genericbarrier(∂b::Function, dx::Vec, r1::Real, r2::Real, ϵ::Real) = ∂b(d(dx,r1,r2,ϵ)) * ∇d(dx,r1,r2,ϵ)
+@inline ∇genericbarrier(∂b::Function, o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = ∇genericbarrier(∂b, o1 - o2, r1, r2, ϵ)
+
+@inline ∇²genericbarrier(∂b::Function, ∂²b::Function, dx::Vec, r1::Real, r2::Real, ϵ::Real) = (δ = d(dx,r1,r2,ϵ); return ∂²b(δ) * otimes(∇d(dx,r1,r2,ϵ)) + ∂b(δ) * ∇²d(dx,r1,r2,ϵ))
+@inline ∇²genericbarrier(∂b::Function, ∂²b::Function, o1::Vec, o2::Vec, r1::Real, r2::Real, ϵ::Real) = ∇²genericbarrier(∂b, ∂²b, o1 - o2, r1, r2, ϵ)
