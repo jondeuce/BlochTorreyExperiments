@@ -32,13 +32,17 @@ function pack(
         autodiff::Bool = false,
         chunksize::Int = 10,
         secondorder::Bool = false,
-        Alg = secondorder ? Newton(linesearch = LineSearches.BackTracking(order=3))
-                          : LBFGS(linesearch = LineSearches.BackTracking(order=3)),
+        linesearch = LineSearches.BackTracking(order=3),
+        Alg = secondorder ? Newton(linesearch = linesearch)
+                          : BFGS(linesearch = linesearch),
+                          #: ConjugateGradient(linesearch = linesearch),
         Opts = Optim.Options(iterations = 100_000,
                              x_tol = 1e-6*distancescale,
                              g_tol = 1e-12,
-                             allow_f_increases = true)
-    ) where {V <: Vec{2}}
+                             allow_f_increases = false)
+    ) where {T, V <: Vec{2,T}}
+
+    # @info "Alg = $(typeof(Alg).name)" #DEBUG
 
     # Initial unknowns
     Rmax = maximum(radii)
@@ -46,7 +50,7 @@ function pack(
     ymin, ymax = extrema(x[2] for x in initial_origins)
     W0, H0 = (xmax - xmin) + 2*Rmax, (ymax - ymin) + 2*Rmax # initial width/height of box
     os = initial_origins .- Ref(V((xmin - Rmax, ymin - Rmax))) # ensure all circles are in box
-    x0 = [reinterpret(eltype(V), os); W0; H0] # initial unknowns
+    x0 = [reinterpret(T, os); W0; H0] # initial unknowns
 
     # Create energy function and gradient/hessian
     if !autodiff && secondorder
@@ -68,11 +72,18 @@ function pack(
         OnceDifferentiable(energy, ∇energy!, x0)
 
     # Optimize and get results
-    result = optimize(opt_obj, x0, Alg, Opts)
+    lower = [fill(T(-Inf), length(x0)-2); zeros(T,2)]
+    upper = [fill(T(+Inf), length(x0)-2); W0 + √eps(T); H0 + √eps(T)]
+    # lower = zeros(T, length(x0))
+    # upper = [isodd(i) ? W0 + √eps(T) : H0 + √eps(T) for i in 1:length(x0)]
+    result = optimize(opt_obj, lower, upper, x0, Fminbox(Alg), Opts)
+    # result = optimize(opt_obj, x0, Alg, Opts)
+    
+    # display(result) #DEBUG
 
     # Extract results
     x = copy(Optim.minimizer(result))
-    widths = V((abs(x[end-1]), abs(x[end])))
+    widths = V((x[end-1], x[end]))
     origins = reinterpret(V, x[1:end-2]) |> copy
     origins .= periodic_mod.(origins, Ref(widths)) # force origins to be contained in [0,W] x [0,H]
     packed_circles = Circle.(origins, radii)
@@ -93,15 +104,15 @@ end
 function barrier_energy(r::AbstractVector, ϵ::Real)
     # Mutual distance and overlap distance squared functions, gradients, and hessians
 
-    # @info "expbarrier"
-    # @inline get_b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + expbarrier(dx,r1,r2,ϵ))
-    # @inline get_∇b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇d²(dx,r1,r2,ϵ) + ∇expbarrier(dx,r1,r2,ϵ))
-    # @inline get_∇²b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇²d²(dx,r1,r2,ϵ) + ∇²expbarrier(dx,r1,r2,ϵ))
+    # @info "expbarrier (ϵ = $ϵ)"
+    # @inline get_e(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + expbarrier(dx,r1,r2,ϵ))
+    # @inline get_∇e(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇d²(dx,r1,r2,ϵ) + ∇expbarrier(dx,r1,r2,ϵ))
+    # @inline get_∇²e(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇²d²(dx,r1,r2,ϵ) + ∇²expbarrier(dx,r1,r2,ϵ))
 
-    # @info "softplusbarrier"
-    # @inline get_b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + softplusbarrier(dx,r1,r2,ϵ))
-    # @inline get_∇b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇d²(dx,r1,r2,ϵ) + ∇softplusbarrier(dx,r1,r2,ϵ))
-    # @inline get_∇²b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇²d²(dx,r1,r2,ϵ) + ∇²softplusbarrier(dx,r1,r2,ϵ))
+    # @info "softplusbarrier (ϵ = $ϵ)"
+    # @inline get_e(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + softplusbarrier(dx,r1,r2,ϵ))
+    # @inline get_∇e(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇d²(dx,r1,r2,ϵ) + ∇softplusbarrier(dx,r1,r2,ϵ))
+    # @inline get_∇²e(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇²d²(dx,r1,r2,ϵ) + ∇²softplusbarrier(dx,r1,r2,ϵ))
 
     # @info "log genericbarrier"
     # α = 1e-6 * (ϵ/maximum(r))^2
@@ -109,39 +120,52 @@ function barrier_energy(r::AbstractVector, ϵ::Real)
     # ∂b  = d -> d > 0 ? -α / d        : typeof(d)(0)#(-Inf)
     # ∂²b = d -> d > 0 ?  α / d^2      : typeof(d)(0)#(Inf)
     
-    # @info "exp genericbarrier"
-    μ = 2 * maximum(r)
+    # @info "1/d genericbarrier (ϵ = $ϵ)"
+    # α = (ϵ/maximum(r))^2
+    # b   = d -> d > 0 ?  α * ϵ / d   : typeof(d)(Inf)
+    # ∂b  = d -> d > 0 ? -α * ϵ / d^2 : typeof(d)(0)#(-Inf)
+    # ∂²b = d -> d > 0 ? 2α * ϵ / d^3 : typeof(d)(0)#(Inf)
+    
+    # @info "1/d^2 genericbarrier (ϵ = $ϵ)"
+    # α = (ϵ/maximum(r))^2
+    # b   = d -> d > 0 ?   α * ϵ^2 / d^2 : typeof(d)(Inf)
+    # ∂b  = d -> d > 0 ? -2α * ϵ^2 / d^3 : typeof(d)(0)#(-Inf)
+    # ∂²b = d -> d > 0 ?  6α * ϵ^2 / d^4 : typeof(d)(0)#(Inf)
+    
+    # @info "exp genericbarrier (ϵ = $ϵ)"
+    μ = maximum(r)
     α = -2 * log(ϵ/μ) / ϵ
-    b = d -> μ^2 * exp(-α * (d + ϵ))
-    ∂b = d -> -α * μ^2 * exp(-α * (d + ϵ))
-    ∂²b = d -> α^2 * μ^2 * exp(-α * (d + ϵ))
+    b = d -> μ^2 * exp(-α * d)
+    ∂b = d -> -α * μ^2 * exp(-α * d)
+    ∂²b = d -> α^2 * μ^2 * exp(-α * d)
 
-    @inline get_b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + genericbarrier(b,dx,r1,r2,ϵ))
-    @inline get_∇b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇d²(dx,r1,r2,ϵ) + ∇genericbarrier(∂b,dx,r1,r2,ϵ))
-    @inline get_∇²b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); ∇²d²(dx,r1,r2,ϵ) + ∇²genericbarrier(∂b,∂²b,dx,r1,r2,ϵ))
+    # Total mutual energy function between two circles is the sum of the squared displacement,
+    # weighted by the product of the relative circle masses, and the barrier energy
+    @inline get_e(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); (r1^2 * r2^2 / μ^4) * d²(dx,r1,r2,ϵ) + genericbarrier(b,dx,r1,r2,ϵ))
+    @inline get_∇e(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); (r1^2 * r2^2 / μ^4) * ∇d²(dx,r1,r2,ϵ) + ∇genericbarrier(∂b,dx,r1,r2,ϵ))
+    @inline get_∇²e(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); (r1^2 * r2^2 / μ^4) * ∇²d²(dx,r1,r2,ϵ) + ∇²genericbarrier(∂b,∂²b,dx,r1,r2,ϵ))
 
     # Energy function/gradient/hessian
     N = length(r)
-    λ = 0.0 * N*(N+1)/2
+    λ = max((N*(N+1))÷4, 1)
 
     function energy(x)
-        o, P = @views(x[1:end-2]), Vec{2}((abs(x[end-1]), abs(x[end])))
-        F = pairwise_sum(get_b(P), o, r) # mutual distance penalty term
+        o, P = @views(x[1:end-2]), Vec{2}((x[end-1], x[end]))
+        F = pairwise_sum(get_e(P), o, r) # mutual distance penalty term
         F += λ * P[1] * P[2] # box area penalty term
     end
 
     function ∇energy!(g, x)
-        o, P = @views(x[1:end-2]), Vec{2}((abs(x[end-1]), abs(x[end])))
-        @views pairwise_grad!(g[1:end-2], get_∇b(P), o, r)
-        p = Vec{2}((x[end-1], x[end]))
-        @views g[end-1:end] .= Tensors.gradient(p -> (P = Vec{2}((abs(p[1]), abs(p[2]))); pairwise_sum(get_b(P), o, r) + λ * P[1] * P[2]), p)
+        o, P = @views(x[1:end-2]), Vec{2}((x[end-1], x[end]))
+        @views pairwise_grad!(g[1:end-2], get_∇e(P), o, r)
+        @views g[end-1:end] .= Tensors.gradient(P -> pairwise_sum(get_e(P), o, r) + λ * P[1] * P[2], P)
         return g
     end
 
     # function ∇²energy!(h, x)
     #     o, P = @views(x[1:end-2]), Vec{2}((x[end-1], x[end]))
-    #     pairwise_hess!(@views(h[1:end-2, 1:end-2]), get_∇²b(P), o, r)
-    #     @views h[end-1:end, end-1:end] .= Tensors.hessian(P -> pairwise_sum(get_b(P), o, r), P)
+    #     pairwise_hess!(@views(h[1:end-2, 1:end-2]), get_∇²e(P), o, r)
+    #     @views h[end-1:end, end-1:end] .= Tensors.hessian(P -> pairwise_sum(get_e(P), o, r), P)
     #     @views h[1:end-2, end-1:end] .= 0 #TODO this is an incorrect assumption
     #     @views h[end-1:end, 1:end-2] .= 0 #TODO this is an incorrect assumption
     #     return h
@@ -152,10 +176,10 @@ function barrier_energy(r::AbstractVector, ϵ::Real)
 end
 
 function autodiff_barrier_energy(r::AbstractVector, ϵ::Real)
-    @inline get_b(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + softplusbarrier(dx,r1,r2,ϵ))
+    @inline get_e(P) = (o1,o2,r1,r2) -> (dx = periodic_diff(o1,o2,P); d²(dx,r1,r2,ϵ) + softplusbarrier(dx,r1,r2,ϵ))
     function energy(x)
         o, P = @views(x[1:end-2]), Vec{2}((x[end-1], x[end]))
-        return pairwise_sum(get_b(P), o, r)
+        return pairwise_sum(get_e(P), o, r)
     end
 end
 

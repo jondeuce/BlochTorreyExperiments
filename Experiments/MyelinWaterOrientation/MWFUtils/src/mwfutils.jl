@@ -116,7 +116,7 @@ function packcircles(btparams::BlochTorreyParameters = BlochTorreyParameters{Flo
         )
         scaledcircles, scaleddomain, _ = periodic_scale_to_density(periodiccircles, initialdomain, goaldensity, distthresh)
         finaldomain, _ = periodic_subdomain(scaledcircles, scaleddomain)
-        finalcircles = periodic_circles(scaledcircles, finaldomain)
+        finalcircles = periodic_circle_repeat(scaledcircles, finaldomain; Nrepeat = 1)
         η_max = periodic_density(periodiccircles, initialdomain)
         η_curr = periodic_density(finalcircles, finaldomain)
 

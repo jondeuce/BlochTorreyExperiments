@@ -105,9 +105,6 @@ git-tree-sha1 = "bdaf1b7ecf8eb6fb3843a1b0d3fccc5f727a49fd"
 uuid = "a9c8d775-2e2e-55fc-8582-045d282d599e"
 version = "0.1.0"
 
-[[CRC32c]]
-uuid = "8bf52ea8-c179-5cab-976a-9e18b702a9bc"
-
 [[CSTParser]]
 deps = ["LibGit2", "Test", "Tokenize"]
 git-tree-sha1 = "437c93bc191cd55957b3f8dee7794b6131997c56"
@@ -368,6 +365,12 @@ git-tree-sha1 = "0adca7017ef5356aedfc57be3c513c9d51ebc1b5"
 uuid = "497a8b3b-efae-58df-a0af-a86822472b78"
 version = "0.7.21"
 
+[[DrWatson]]
+deps = ["FileIO", "LibGit2", "Pkg", "Requires"]
+git-tree-sha1 = "b0ab5d91aeb621890c464e3367ee9b91b76713bc"
+uuid = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
+version = "0.2.0"
+
 [[ExpmV]]
 deps = ["LinearAlgebra", "SparseArrays"]
 git-tree-sha1 = "96586ede94349238548bf38b35834476ee426409"
@@ -458,10 +461,10 @@ uuid = "a2bd30eb-e257-5431-a919-1863eab51364"
 version = "0.4.0"
 
 [[HDF5]]
-deps = ["BinDeps", "Blosc", "CRC32c", "Distributed", "Homebrew", "Libdl", "LinearAlgebra", "Mmap", "Pkg", "Test", "WinRPM"]
-git-tree-sha1 = "dd83e1e9c72e44e3a156438b552cf75dbdda722f"
+deps = ["BinDeps", "Blosc", "Homebrew", "Libdl", "Mmap", "WinRPM"]
+git-tree-sha1 = "e6f0c154d01faef0d0831d075aa8f279f95946da"
 uuid = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
-version = "0.11.0"
+version = "0.11.1"
 
 [[HTTP]]
 deps = ["Base64", "Dates", "Distributed", "IniFile", "MbedTLS", "Random", "Sockets", "Test"]
@@ -723,10 +726,10 @@ version = "2.3.0"
 uuid = "56ddb016-857b-54e1-b83d-db4d58db5568"
 
 [[LoweredCodeUtils]]
-deps = ["JuliaInterpreter", "Test"]
-git-tree-sha1 = "6ab4d4f1c2ee5db423ada97ca7bec3081641321a"
+deps = ["JuliaInterpreter"]
+git-tree-sha1 = "3251345c2e6a672566a5d92f9d54d5de55586321"
 uuid = "6f1432cf-f94c-5a45-995e-cdbf5db27b0b"
-version = "0.3.1"
+version = "0.3.3"
 
 [[LsqFit]]
 deps = ["Distributions", "LinearAlgebra", "NLSolversBase", "OptimBase", "Random", "StatsBase", "Test"]
@@ -1038,10 +1041,10 @@ uuid = "ae029012-a4dd-5104-9daa-d747884805df"
 version = "0.5.2"
 
 [[Revise]]
-deps = ["CodeTracking", "Distributed", "FileWatching", "InteractiveUtils", "JuliaInterpreter", "LibGit2", "LoweredCodeUtils", "OrderedCollections", "Pkg", "REPL", "Random", "Test", "UUIDs", "Unicode"]
-git-tree-sha1 = "a7ebe7fe509094c58aaa03c613c6162ac8490bc8"
+deps = ["CodeTracking", "Distributed", "FileWatching", "JuliaInterpreter", "LibGit2", "LoweredCodeUtils", "OrderedCollections", "Pkg", "REPL", "UUIDs", "Unicode"]
+git-tree-sha1 = "84f29e1b3670ade5c1b4f6fc80eac166bd37bb59"
 uuid = "295af30f-e4ad-537b-8983-00126c2a3abe"
-version = "2.1.2"
+version = "2.1.3"
 
 [[Rmath]]
 deps = ["BinaryProvider", "Libdl", "Random", "Statistics", "Test"]
@@ -1125,10 +1128,10 @@ deps = ["LinearAlgebra", "SparseArrays"]
 uuid = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
 [[StatsBase]]
-deps = ["DataStructures", "DelimitedFiles", "LinearAlgebra", "Missings", "Printf", "Random", "SortingAlgorithms", "SparseArrays", "Statistics", "Test"]
-git-tree-sha1 = "435707791dc85a67d98d671c1c3fcf1b20b00f94"
+deps = ["DataStructures", "LinearAlgebra", "Missings", "Printf", "Random", "SortingAlgorithms", "SparseArrays", "Statistics"]
+git-tree-sha1 = "8a0f4b09c7426478ab677245ab2b0b68552143c7"
 uuid = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
-version = "0.29.0"
+version = "0.30.0"
 
 [[StatsFuns]]
 deps = ["Rmath", "SpecialFunctions", "Test"]
@@ -1143,10 +1146,10 @@ uuid = "f3b207a7-027a-5e70-b257-86293d7955fd"
 version = "0.10.2"
 
 [[StringDistances]]
-deps = ["Distances", "IterTools", "Test"]
-git-tree-sha1 = "2d9e7e22e842da878744331de6895c504124021d"
+deps = ["Distances", "IterTools", "Random", "Test"]
+git-tree-sha1 = "125d06646183f1822849e852e45177710e700686"
 uuid = "88034a9c-02f8-509d-84a9-84ec65e18404"
-version = "0.3.1"
+version = "0.3.2"
 
 [[SuiteSparse]]
 deps = ["Libdl", "LinearAlgebra", "SparseArrays"]
@@ -1178,9 +1181,9 @@ version = "0.4.0"
 
 [[Tables]]
 deps = ["IteratorInterfaceExtensions", "LinearAlgebra", "Requires", "TableTraits", "Test"]
-git-tree-sha1 = "719d5be11e89ae29d79b469c4238b63b53544d38"
+git-tree-sha1 = "4129c340d3960a49c0c5dbe71df2b3784bdc11c0"
 uuid = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
-version = "0.1.18"
+version = "0.1.19"
 
 [[Tensors]]
 deps = ["ForwardDiff", "LinearAlgebra", "Random", "SIMD", "Statistics", "Test"]

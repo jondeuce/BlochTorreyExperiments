@@ -55,6 +55,18 @@ function periodic_density(cs::AbstractVector{C}, bdry::Rectangle{2}) where {C <:
     return A2
 end
 
+function periodic_circle_repeat(cs::AbstractVector{C}, bdry::Rectangle{2}; Nrepeat = 1) where {C <: Circle{2}}
+    cs = periodic_unique_circles(cs, bdry)
+    w = widths(bdry)
+    cs_out = C[]
+    for i in -Nrepeat:Nrepeat, j in -Nrepeat:Nrepeat
+        dx = Vec{2}((i*w[1], j*w[2]))
+        cs_shifted = (c -> Circle(origin(c) + dx, radius(c))).(cs)
+        append!(cs_out, cs_shifted)
+    end
+    return cs_out
+end
+
 function periodic_scale_to_threshold(cs::Vector{C}, bdry::Rectangle{2}, distthresh = zero(floattype(C))) where {C <: Circle{2}}
     # Minimum distance between circles must be positive
     @assert distthresh >= 0

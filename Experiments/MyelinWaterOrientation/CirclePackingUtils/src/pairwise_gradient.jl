@@ -262,7 +262,7 @@ end
     μ = r1 + r2
     Δ = d(dx,r1,r2,ϵ) + ϵ # signed edge distance: Δ = d + ϵ = |dx| - μ
     A = ϵ^2 / logtwo
-    α = (10 * μ^2 / (ϵ/2)) / A
+    α = (μ^2 / (ϵ/2)) / A
     # z = -α * (Δ - ϵ/2)
     # b = z > invsoftplus(eps(inv(A))) ? A*softplus(z) : zero(z)
     b = A * softplus(-α * (Δ - ϵ/2))
@@ -276,7 +276,7 @@ end
     μ = r1 + r2
     Δ = d(dx,r1,r2,ϵ) + ϵ # signed edge distance: Δ = d + ϵ = |dx| - μ
     A = ϵ^2 / logtwo
-    α = (10 * μ^2 / (ϵ/2)) / A
+    α = (μ^2 / (ϵ/2)) / A
     ∂b = A * logistic(-α * (Δ - ϵ/2))
     # ∂b = max(∂b, eps(typeof(∂b)))
     return ∂b * (-α * ∇d(dx,r1,r2,ϵ))
