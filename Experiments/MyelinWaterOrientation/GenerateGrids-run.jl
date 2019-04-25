@@ -20,7 +20,7 @@ function runcreategeometry(params)
     @unpack numfibres, gratio, density = params
     btparams = BlochTorreyParameters{Float64}(AxonPDensity = density, g_ratio = gratio)
     
-    numreps = 3 # number of grid generation attempts per parameter set
+    numreps = 5 # number of grid generation attempts per parameter set
     for _ in 1:numreps
         try
             geom = creategeometry(btparams;
@@ -61,13 +61,13 @@ end
 
 function main()
     # Make relevant folders
-    mkpath.(["plots", "geom"])
+    mkpath.(("plots", "geom"))
 
     # Parameters to sweep over
     general_params = Dict{Symbol,Any}(
-        :numfibres  => [5:5:40;],
+        :numfibres  => [5:5:50;],
         :gratio     => [0.75, 0.78],
-        :density    => [0.75, 0.8]
+        :density    => [0.78, 0.8]
     )
 
     all_params = DrWatson.dict_list(general_params)
