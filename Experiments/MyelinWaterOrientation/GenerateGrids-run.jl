@@ -16,7 +16,6 @@ DrWatson.default_prefix(c) = MWFUtils.getnow()
 gitdir() = realpath(joinpath(DrWatson.projectdir(), "../..")) * "/"
 
 function runcreategeometry(params)
-    fname = DrWatson.savename(params)
     @unpack numfibres, gratio, density = params
     btparams = BlochTorreyParameters{Float64}(AxonPDensity = density, g_ratio = gratio)
     
@@ -39,6 +38,9 @@ function runcreategeometry(params)
                 FORCEQUALITY = true, #DEBUG # error if the resulting grid area have high enough quality
             )
 
+            # Common filename without suffix
+            fname = DrWatson.savename(params)
+            
             # Plot circles and grid
             plotcircles([geom.innercircles; geom.outercircles], geom.bdry; fname = "plots/" * fname * ".circles")
             plotgrids(geom.exteriorgrids, geom.torigrids, geom.interiorgrids; fname = "plots/" * fname * ".grids")
