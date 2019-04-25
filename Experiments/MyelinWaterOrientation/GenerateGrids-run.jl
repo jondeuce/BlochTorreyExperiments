@@ -9,9 +9,10 @@ make_reproduce(
 
 using BSON, Dates, Printf
 using MWFUtils, StatsPlots
-gr(size=(1200,900), leg = false, grid = false, labels = nothing) #xticks = nothing, yticks = nothing
+gr(size=(1200,900), leg = false, grid = false, labels = nothing)
 
 import DrWatson
+using DrWatson: @dict, @ntuple
 DrWatson.default_prefix(c) = MWFUtils.getnow()
 gitdir() = realpath(joinpath(DrWatson.projectdir(), "../..")) * "/"
 
@@ -62,7 +63,7 @@ function runcreategeometry(params)
 end
 
 function main()
-    # Make relevant folders
+    # Make subfolders
     mkpath.(("plots", "geom"))
 
     # Parameters to sweep over
@@ -75,7 +76,7 @@ function main()
     all_params = DrWatson.dict_list(general_params)
     for (i,params) in enumerate(all_params)
         params = convert(Dict{Symbol,Any}, params)
-        @info "Generating geometry $i/$(length(all_params)), $(Dates.now()): $(DrWatson.savename("", params))"
+        @info "Generating geometry $i/$(length(all_params)) at $(Dates.now()): $(DrWatson.savename("", params))"
         runcreategeometry(params)
     end
 

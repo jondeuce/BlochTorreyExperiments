@@ -106,6 +106,7 @@ end
 function plotSEcorr(
         sols, btparams, myelindomains;
         opts::NNLSRegression = NNLSRegression(PlotDist = !AVOID_MAT_PLOTS),
+        mwftrue = nothing,
         fname = nothing,
         disp = (fname == nothing)
     )
@@ -119,17 +120,20 @@ function plotSEcorr(
         mwf = _getmwf(opts, MWImaps, MWIdist, MWIpart)
         T2Vals = 1000 .* get_T2vals(opts)
         xtickvals = length(T2Vals) <= 60 ? T2Vals : T2Vals[1:2:end] # length cannot be more than 120
-
-        fig = plot(T2Vals, MWIdist[:];
-            seriestype = :sticks,
-            xscale = :log10,
-            linewidth = 5, markersize = 5, marker = :circle,
-            grid = true, minorgrid = true, legend = :none,    
-            xticks = xtickvals, formatter = x -> string(round(x; sigdigits = 3)), xrotation = -60,
-            xlim = 1000 .* opts.T2Range,
-            xlabel = "T2 [ms]",
-            title = "T2 Distribution: nT2 = $(opts.nT2), mwf = $(round(mwf; digits=4))"
+        
+        props = Dict(
+            :seriestype => :sticks, :xscale => :log10,
+            :linewidth => 5, :markersize => 5, :marker => :circle,
+            :grid => true, :minorgrid => true, :legend => :none,
+            :xticks => xtickvals, :xrotation => -60,
+            :formatter => x -> string(round(x; sigdigits = 3)),
+            :xlim => 1000 .* opts.T2Range,
+            :xlabel => "T2 [ms]",
+            :title => "T2 Distribution: nT2 = $(opts.nT2), MWF = $(round(100*mwf; sigdigits=4))%"
         )
+        !(mwftrue == nothing) && (props[:title] *= " (True MWF = $(round(100*mwftrue; sigdigits=4))%)")
+
+        fig = plot(T2Vals, MWIdist[:]; props...)
         vline!(fig, 1000 .* [opts.SPWin; opts.MPWin];
             xscale = :log10, linewidth = 5, linestyle = :dot, color = :red)
         

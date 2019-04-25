@@ -16,7 +16,7 @@ using Reexport
 @reexport using CirclePackingUtils
 
 const AVOID_MAT_PLOTS = true # avoid external matlab calls, if possible
-using MATLABPlots
+@reexport using MATLABPlots
 
 using StatsPlots
 using IterableTables, DataFrames

@@ -1262,6 +1262,12 @@ git-tree-sha1 = "b8e58d4390ccebfa4f3bf502a45e08066eec3bf9"
 uuid = "b8865327-cd53-5732-bb35-84acbb429228"
 version = "1.1.0"
 
+[[Unitful]]
+deps = ["LinearAlgebra", "Random", "Test"]
+git-tree-sha1 = "94736a38908c6b43d22e1abffc4f72ab19dabbc1"
+uuid = "1986cc42-f94f-5a68-af5c-568840ba703d"
+version = "0.15.0"
+
 [[VersionParsing]]
 deps = ["Compat"]
 git-tree-sha1 = "c9d5aa108588b978bd859554660c8a5c4f2f7669"

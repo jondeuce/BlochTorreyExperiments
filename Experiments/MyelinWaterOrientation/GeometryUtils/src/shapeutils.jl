@@ -54,6 +54,20 @@ end
 const ⊠ = skewprod # Denote the skewproduct using `\boxtimes`
 
 # ---------------------------------------------------------------------------- #
+# Methods for Shape's
+# ---------------------------------------------------------------------------- #
+
+# Underlying floattype of a shape
+@inline floattype(s::Shape) = floattype(typeof(s))
+@inline floattype(::Type{Ellipse{dim,T}}) where {dim,T} = floattype(T)
+@inline floattype(::Type{Circle{dim,T}}) where {dim,T} = floattype(T)
+@inline floattype(::Type{Rectangle{dim,T}}) where {dim,T} = floattype(T)
+
+# Dimension of a shape
+@inline dimension(s::Shape) = dimension(typeof(s))
+@inline dimension(::Type{<:Shape{dim}}) where {dim} = dim
+
+# ---------------------------------------------------------------------------- #
 # Ellipse based on Vec type from Tensors.jl (code based on GeometryTypes.jl)
 # ---------------------------------------------------------------------------- #
 @inline getF1(e::Ellipse) = e.F1
@@ -190,11 +204,6 @@ end
 function Base.isapprox(c1::Circle, c2::Circle; kwargs...)
     return isapprox(radius(c1), radius(c2); kwargs...) && isapprox(origin(c1), origin(c2); kwargs...)
 end
-
-dimension(c::Circle) = dimension(typeof(c))
-floattype(c::Circle) = floattype(typeof(c))
-dimension(::Type{Circle{dim,T}}) where {dim,T} = dim
-floattype(::Type{Circle{dim,T}}) where {dim,T} = T
 
 radius(c::Circle) = c.r
 origin(c::Circle) = c.center
