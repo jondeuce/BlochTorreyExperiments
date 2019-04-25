@@ -11,51 +11,70 @@ using BSON, Dates, Printf
 using MWFUtils, StatsPlots
 gr(size=(1200,900), leg = false, grid = false, labels = nothing) #xticks = nothing, yticks = nothing
 
-function main()
-    default_btparams = BlochTorreyParameters{Float64}()
-    numreps = 5 # number of grids per parameter set
+import DrWatson
+DrWatson.default_prefix(c) = MWFUtils.getnow()
+gitdir() = realpath(joinpath(DrWatson.projectdir(), "../..")) * "/"
 
-    numfibres = 10:10:50
-    g_ratios = [0.75, 0.78, 0.80, default_btparams.g_ratio]
-    packing_densities = [0.7, 0.75, 0.8, default_btparams.AxonPDensity]
+function runcreategeometry(params)
+    fname = DrWatson.savename(params)
+    @unpack numfibres, gratio, density = params
+    btparams = BlochTorreyParameters{Float64}(AxonPDensity = density, g_ratio = gratio)
+    
+    numreps = 3 # number of grid generation attempts per parameter set
+    for _ in 1:numreps
+        try
+            geom = creategeometry(btparams;
+                Ncircles = numfibres, # number of fibres to pack (resulting grid will have less due to cropping)
+                maxpackiter = 10, # number of radii distributions to attempt packing
+                overlapthresh = 0.05, # overlap relative to btparams.R_mu
+                alpha = 0.4,
+                beta = 0.5,
+                gamma = 1.0,
+                QMIN = 0.4, #DEBUG
+                MAXITERS = 1000, #DEBUG
+                FIXPOINTSITERS = 250,
+                FIXSUBSITERS = 200,
+                FORCEDENSITY = true, #DEBUG # error if desired density isn't reached
+                FORCEAREA = true, #DEBUG # error if the resulting grid area doesn't match the bdry area
+                FORCEQUALITY = true, #DEBUG # error if the resulting grid area have high enough quality
+            )
 
-    to_str(x) = @sprintf "%.4f" x
-    params_to_str(p,g,n) = "N-$(n)_g-$(to_str(g))_p-$(to_str(p))"
+            # Plot circles and grid
+            plotcircles([geom.innercircles; geom.outercircles], geom.bdry; fname = "plots/" * fname * ".circles")
+            plotgrids(geom.exteriorgrids, geom.torigrids, geom.interiorgrids; fname = "plots/" * fname * ".grids")
 
-    paramlist = Iterators.product(packing_densities, g_ratios, numfibres)
-
-    for (i,params) in enumerate(paramlist)
-        p, g, n = params
-        paramstr = params_to_str(p,g,n)
-        
-        println(""); @info "Generating geometry $i/$(length(paramlist)), $(Dates.now()): $paramstr"
-
-        btparams = BlochTorreyParameters(default_btparams; AxonPDensity = p, g_ratio = g)
-        for _ in 1:numreps
-            try
-                creategeometry(btparams;
-                    fname = getnow() * "__" * paramstr, # filename for saving MATLAB figure
-                    Ncircles = n, # number of fibres to pack (resulting grid will have less due to cropping)
-                    maxpackiter = 10, # number of radii distributions to attempt packing
-                    overlapthresh = 0.05, # overlap relative to btparams.R_mu
-                    alpha = 0.4,
-                    beta = 0.5,
-                    gamma = 1.0,
-                    QMIN = 0.4,
-                    RESOLUTION = 1.0,
-                    MAXITERS = 1000,
-                    FIXPOINTSITERS = 250,
-                    FIXSUBSITERS = 200,
-                    FORCEDENSITY = true, # error if desired density isn't reached
-                    FORCEAREA = true, # error if the resulting grid area doesn't match the bdry area
-                    FORCEQUALITY = true, # error if the resulting grid area have high enough quality
-                    PLOT = true
-                )
-            catch e
-                @warn "Error generating grid with param string: " * paramstr
-                @warn sprint(showerror, e, catch_backtrace())
-            end
+            # Save generated geometry, tagging file with git commit
+            DrWatson.@tagsave(
+                "geom/" * fname * ".geom.bson",
+                Dict(pairs(geom)),
+                true, # safe saving (don't overwrite existing files)
+                gitdir()
+            )
+        catch e
+            @warn "Error generating grid with param string: " * DrWatson.savename("", params)
+            @warn sprint(showerror, e, catch_backtrace())
         end
+    end
+
+    return nothing
+end
+
+function main()
+    # Make relevant folders
+    mkpath.(["plots", "geom"])
+
+    # Parameters to sweep over
+    general_params = Dict{Symbol,Any}(
+        :numfibres  => [5:5:40;],
+        :gratio     => [0.75, 0.78],
+        :density    => [0.75, 0.8]
+    )
+
+    all_params = DrWatson.dict_list(general_params)
+    for (i,params) in enumerate(all_params)
+        params = convert(Dict{Symbol,Any}, params)
+        @info "Generating geometry $i/$(length(all_params)), $(Dates.now()): $(DrWatson.savename("", params))"
+        runcreategeometry(params)
     end
 
     return nothing

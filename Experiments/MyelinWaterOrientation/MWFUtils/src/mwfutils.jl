@@ -75,7 +75,7 @@ function packcircles(btparams::BlochTorreyParameters = BlochTorreyParameters{Flo
 
     # Initialize
     circles, domain, η_best = nothing, nothing, 0
-    @info "epsilon = $epsilon"
+    # @info "epsilon = $epsilon" #DEBUG
 
     for i in 1:maxattempts
         println("\nPacking... (attempt $i/$maxattempts)\n")
@@ -139,8 +139,6 @@ function packcircles(btparams::BlochTorreyParameters = BlochTorreyParameters{Flo
 end
 
 function creategeometry(btparams::BlochTorreyParameters{T} = BlochTorreyParameters{Float64}();
-        fname = nothing, # filename for saving
-        disp = !(fname == nothing), # display figure
         Ncircles = 20, # number of circles
         goaldensity = btparams.AxonPDensity, # goal packing density
         overlapthresh = 0.05, # overlap occurs when distance between circle edges is ≤ overlapthresh * btparams.R_mu
@@ -155,8 +153,7 @@ function creategeometry(btparams::BlochTorreyParameters{T} = BlochTorreyParamete
         FIXSUBSITERS = 200, #DEBUG
         FORCEDENSITY = false, # If this flag is true, an error is thrown if the reached packing density is not goaldensity
         FORCEAREA = false, # If this flag is true, an error is thrown if the resulting grid area doesn't match the bdry area
-        FORCEQUALITY = false, # If this flag is true, an error is thrown if the resulting grid doesn't have high enough quality
-        PLOT = true
+        FORCEQUALITY = false # If this flag is true, an error is thrown if the resulting grid doesn't have high enough quality
     ) where {T}
 
     # Initial set of circles
@@ -168,7 +165,7 @@ function creategeometry(btparams::BlochTorreyParameters{T} = BlochTorreyParamete
 
     # Optimize the rectangular subdomain to account for innercircles
     bdry, _ = periodic_subdomain(allcircles, initialbdry)
-    outercircles = periodic_circles(outercircles, bdry)
+    outercircles = periodic_circle_repeat(outercircles, bdry)
     innercircles = scale_shape.(outercircles, btparams.g_ratio)
     allcircles = collect(Iterators.flatten(zip(outercircles, innercircles)))
 
@@ -272,39 +269,6 @@ function creategeometry(btparams::BlochTorreyParameters{T} = BlochTorreyParamete
             return max(abs(dAin), abs(dAout))
         end
         !(dA_max < one(T)) && error("Grid subregion areas are not close to analytical circle areas; error relative to average triangle area is $(dA_max).")
-    end
-
-    if PLOT
-        fig = plot(allcircles; aspectratio = :equal)
-        fig = plot!(fig, bdry; aspectratio = :equal)
-        disp && display(fig)
-        (fname != nothing) && savefig(fig, fname * "__circles.pdf")
-    end
-
-    if PLOT
-        numtri = sum(JuAFEM.getncells, exteriorgrids) + sum(JuAFEM.getncells, torigrids) + sum(JuAFEM.getncells, interiorgrids)
-        numpts = sum(JuAFEM.getnnodes, exteriorgrids) + sum(JuAFEM.getnnodes, torigrids) + sum(JuAFEM.getnnodes, interiorgrids)
-        fig = simpplot(exteriorgrids; colour = :cyan)
-        simpplot!(fig, torigrids; colour = :yellow)
-        simpplot!(fig, interiorgrids; colour = :red)
-        title!("Disjoint Grids: $numtri total triangles, $numpts total points")
-        disp && display(fig)
-        (fname != nothing) && savefig(fig, fname * "__grid.pdf")
-    end
-
-    if fname != nothing
-        try
-            BSON.bson(fname * "__structs.bson", Dict(
-                :exteriorgrids => exteriorgrids,
-                :torigrids     => torigrids,
-                :interiorgrids => interiorgrids,
-                :outercircles  => outercircles,
-                :innercircles  => innercircles,
-                :bdry => bdry))
-        catch e
-            @warn "Error saving geometries"
-            @warn sprint(showerror, e, catch_backtrace())
-        end
     end
 
     # Return named tuple of results

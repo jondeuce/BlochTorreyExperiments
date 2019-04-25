@@ -1,4 +1,31 @@
-function plotomega(myelinprob, myelindomains, myelinsubdomains, bdry; titlestr = "Omega", fname = nothing)
+function default_savefigs(fig, fname, exts = [".png", ".pdf"])
+    for ext in exts
+        savefig(fig, fname * ext)
+    end
+    return fig
+end
+
+function plotcircles(circles, bdry = nothing; fname = nothing, disp = (fname == nothing))
+    fig = plot(circles; aspectratio = :equal)
+    !(bdry == nothing) && plot!(fig, bdry; aspectratio = :equal)
+    disp && display(fig)
+    !(fname == nothing) && default_savefigs(fig, fname)
+    return fig
+end
+
+function plotgrids(exteriorgrids, torigrids, interiorgrids; fname = nothing, disp = (fname == nothing))
+    numtri = sum(JuAFEM.getncells, exteriorgrids) + sum(JuAFEM.getncells, torigrids) + sum(JuAFEM.getncells, interiorgrids)
+    numpts = sum(JuAFEM.getnnodes, exteriorgrids) + sum(JuAFEM.getnnodes, torigrids) + sum(JuAFEM.getnnodes, interiorgrids)
+    fig = simpplot(exteriorgrids; colour = :cyan)
+    simpplot!(fig, torigrids; colour = :yellow)
+    simpplot!(fig, interiorgrids; colour = :red)
+    title!("Disjoint Grids: $numtri total triangles, $numpts total points")
+    disp && display(fig)
+    !(fname == nothing) && default_savefigs(fig, fname)
+    return fig
+end
+
+function mxplotomega(myelinprob, myelindomains, myelinsubdomains, bdry; titlestr = "Omega", fname = nothing)
     omega = calcomega(myelinprob, myelinsubdomains)
     mxsimpplot(getgrid.(myelindomains); newfigure = true, facecol = omega,
         axis = Float64[mxaxis(bdry)...])
@@ -7,7 +34,7 @@ function plotomega(myelinprob, myelindomains, myelinsubdomains, bdry; titlestr =
     return nothing
 end
 
-function plotmagnitude(sols, btparams, myelindomains, bdry; titlestr = "Magnitude", fname = nothing)
+function mxplotmagnitude(sols, btparams, myelindomains, bdry; titlestr = "Magnitude", fname = nothing)
     Umagn = reduce(vcat, norm.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
     @unpack R2_sp, R2_lp, R2_Tissue = btparams
     caxis = (0.0, exp(-min(R2_sp, R2_lp, R2_Tissue) * sols[1].t[end]))
@@ -18,7 +45,7 @@ function plotmagnitude(sols, btparams, myelindomains, bdry; titlestr = "Magnitud
     return nothing
 end
 
-function plotphase(sols, btparams, myelindomains, bdry; titlestr = "Phase", fname = nothing)
+function mxplotphase(sols, btparams, myelindomains, bdry; titlestr = "Phase", fname = nothing)
     Uphase = reduce(vcat, angle.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
     mxsimpplot(getgrid.(myelindomains); newfigure = true, facecol = Uphase,
         axis = Float64[mxaxis(bdry)...])
@@ -31,7 +58,7 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
         titlestr = "Signal Magnitude vs. Time",
         opts = NNLSRegression(PlotDist = !AVOID_MAT_PLOTS),
         fname = nothing,
-        disp = !(fname == nothing)
+        disp = (fname == nothing)
     )
     tspan = get_tspan(opts)
     ts = get_tpoints(opts)
@@ -60,10 +87,7 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
             ylabel = "S(t) Magnitude", xlabel = "Time [ms]",
             title = titlestr)
         
-        if !(fname == nothing)
-            savefig(fig, fname * ".pdf")
-            savefig(fig, fname * ".png")
-        end
+        !(fname == nothing) && default_savefigs(fig, fname)
         disp && display(fig)
     else
         mxcall(:figure, 0)
@@ -83,7 +107,7 @@ function plotSEcorr(
         sols, btparams, myelindomains;
         opts::NNLSRegression = NNLSRegression(PlotDist = !AVOID_MAT_PLOTS),
         fname = nothing,
-        disp = !(fname == nothing)
+        disp = (fname == nothing)
     )
     tspan = get_tspan(opts)
     ts = get_tpoints(opts)
@@ -109,10 +133,7 @@ function plotSEcorr(
         vline!(fig, 1000 .* [opts.SPWin; opts.MPWin];
             xscale = :log10, linewidth = 5, linestyle = :dot, color = :red)
         
-        if !(fname == nothing)
-            savefig(fig, fname * ".pdf")
-            savefig(fig, fname * ".png")
-        end
+        !(fname == nothing) && default_savefigs(fig, fname)
         disp && display(fig)
     elseif opts.PlotDist
         !(fname == nothing) && mxsavefig(fname)
@@ -125,7 +146,7 @@ function plotMWF(params, mwf, mwftrue = nothing;
         plottypes = [:mwf, :mwferror],
         mwfmethod = nothing,
         fname = nothing,
-        disp = !(fname == nothing)
+        disp = (fname == nothing)
     )
     mwfplottypes = [:mwf, :mwfplot]
     errorplottypes = [:mwferror, :mwferrorplot, :error, :errorplot]
@@ -171,8 +192,7 @@ function plotMWF(params, mwf, mwftrue = nothing;
             _fname = fname
             (mwfmethod != nothing) && (_fname *= "__" * string(mwfmethod))
             (plottype ∈ errorplottypes) ? (_fname *= "__" * "MWFErrorPlot") : (_fname *= "__" * "MWFPlot")
-            savefig(fig, _fname * ".pdf")
-            savefig(fig, _fname * ".png")
+            default_savefigs(fig, _fname)
         end
         disp && display(fig)
     end
@@ -183,7 +203,7 @@ end
 function plotMWF(results::Dict;
         plottypes = [:mwf, :mwferror],
         fname = nothing,
-        disp = !(fname == nothing)
+        disp = (fname == nothing)
     )
     # mwfvalues is an array of Dict{Symbol,T}'s, and params is an array of BlochTorreyParameters{T}'s
     @unpack params, mwfvalues = results
@@ -228,7 +248,7 @@ function partitionby(s::AbstractVector{S}, field) where {S}
 end
 
 # Save plot
-function mxsavefig(fname; close = true, fig = true, png = true, pdf = false, eps = false)
+function mxsavefig(fname; close = true, fig = false, png = true, pdf = false, eps = false)
     flags = String[]
     png && push!(flags, "-png")
     pdf && push!(flags, "-pdf")

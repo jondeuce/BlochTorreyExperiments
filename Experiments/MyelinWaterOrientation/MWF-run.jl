@@ -33,10 +33,10 @@ function MWF!(results, params, solverparams, mwfmodels, geom)
     # Ensure folders exist for saving
     mkpath.(("mag", "t2dist", "sig", "omega"))
     
-    plotomega(myelinprob, myelindomains, myelinsubdomains, bdry;
+    mxplotomega(myelinprob, myelindomains, myelinsubdomains, bdry;
         titlestr = "Frequency Map (theta = $(to_str(rad2deg(params.theta))) deg)",
         fname = "omega/" * curr_date * "__omega")
-    plotmagnitude(sols, params, myelindomains, bdry;
+    mxplotmagnitude(sols, params, myelindomains, bdry;
         titlestr = "Field Magnitude (" * titleparamstr * ")",
         fname = "mag/" * curr_date * "__magnitude")
     
