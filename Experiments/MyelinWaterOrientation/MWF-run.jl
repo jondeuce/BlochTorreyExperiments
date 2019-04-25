@@ -210,6 +210,7 @@ function main()
     results[:geom] = geom
 
     all_params = DrWatson.dict_list(general_params)
+    all_params = sort(all_params; by = d -> (d[:D], d[:K], d[:theta]))
     for (i,params) in enumerate(all_params)
         params = convert(Dict{Symbol,Any}, params)
         try

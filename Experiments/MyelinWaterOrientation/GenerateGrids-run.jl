@@ -74,6 +74,7 @@ function main()
     )
 
     all_params = DrWatson.dict_list(general_params)
+    all_params = sort(all_params; by = d -> (d[:numfibres], d[:gratio], d[:density]))
     for (i,params) in enumerate(all_params)
         params = convert(Dict{Symbol,Any}, params)
         @info "Generating geometry $i/$(length(all_params)) at $(Dates.now()): $(DrWatson.savename("", params))"
