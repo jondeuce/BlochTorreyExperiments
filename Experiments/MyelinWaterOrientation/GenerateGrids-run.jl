@@ -8,7 +8,7 @@ make_reproduce(
 )
 
 using BSON, Dates
-using MWFUtils, StatsPlots
+using StatsPlots
 pyplot(size=(1200,900), leg = false, grid = false, labels = nothing)
 
 import DrWatson

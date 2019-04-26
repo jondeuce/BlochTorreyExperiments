@@ -9,8 +9,9 @@ make_reproduce( # Creating backup file
 )
 
 using BSON, Dates
-using StatsPlots, MATLABPlots
+using StatsPlots
 pyplot(size=(800,600), leg = false, grid = false, labels = nothing)
+using MATLABPlots # NOTE: must use MATLABPlots AFTER loading pyplot backend
 
 import DrWatson
 using DrWatson: @dict, @ntuple

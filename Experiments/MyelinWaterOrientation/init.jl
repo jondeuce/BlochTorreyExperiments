@@ -25,7 +25,7 @@ end
 #####
 using GlobalUtils
 using MWFUtils
-# using MATLABPlots
+# using MATLABPlots #NOTE: must use pyplot() backend before using MATLABPlots
 
 #####
 ##### Debugging packages
