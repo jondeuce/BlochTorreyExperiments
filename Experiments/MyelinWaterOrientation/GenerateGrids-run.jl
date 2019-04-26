@@ -1,4 +1,8 @@
-# Initialize packages, and create backup file
+# NOTE: must load pyplot backend BEFORE loading MATLAB in init.jl
+using StatsPlots, BSON, Dates
+pyplot(size=(1200,900), leg = false, grid = false, labels = nothing)
+
+# Initialize project packages
 include(joinpath(@__DIR__, "init.jl"))
 make_reproduce(
     """
@@ -6,10 +10,6 @@ make_reproduce(
     main()
     """
 )
-
-using BSON, Dates
-using StatsPlots
-pyplot(size=(1200,900), leg = false, grid = false, labels = nothing)
 
 import DrWatson
 using DrWatson: @dict, @ntuple

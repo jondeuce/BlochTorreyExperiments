@@ -1,24 +1,16 @@
 module MWFUtils
 
-# using LinearAlgebra, Statistics
-# using GeometryUtils
-# using MeshUtils
-# using DistMesh
-# using BlochTorreyUtils
-# using BlochTorreySolvers
-
-# using JuAFEM
 # using OrdinaryDiffEq, DiffEqOperators, Sundials
 # using Parameters: @with_kw, @unpack
+
+const AVOID_MAT_PLOTS = true # avoid external matlab calls, if possible
 
 using Reexport
 @reexport using BlochTorreyUtils
 @reexport using CirclePackingUtils
-
-const AVOID_MAT_PLOTS = true # avoid external matlab calls, if possible
 @reexport using MATLABPlots
+@reexport using StatsPlots
 
-using StatsPlots
 using IterableTables, DataFrames
 import BSON, CSV, Dates
 
