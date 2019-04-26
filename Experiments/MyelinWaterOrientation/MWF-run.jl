@@ -8,14 +8,24 @@ make_reproduce( # Creating backup file
     """
 )
 
-using BSON, CSV, Dates, Printf
+using BSON, Dates
 using StatsPlots, MATLABPlots
-gr(size=(800,600), leg = false, grid = false, labels = nothing)
+pyplot(size=(800,600), leg = false, grid = false, labels = nothing)
 
 import DrWatson
 using DrWatson: @dict, @ntuple
 DrWatson.default_prefix(c) = MWFUtils.getnow()
 gitdir() = realpath(joinpath(DrWatson.projectdir(), "../..")) * "/"
+
+####
+#### Parameters to sweep over
+####
+
+const sweepparams = Dict{Symbol,Any}(
+    :theta => Vector(range(0.0, 90.0, length = 7)),
+    :K     => [0, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0],
+    :D     => [10.0, 50.0, 100.0, 500.0]
+)
 
 ####
 #### Load geometries
@@ -42,11 +52,17 @@ if !isfile(geomfile)
     #     # "2019-03-29-T-12-19-17-694__N-40_g-0.8370_p-0.7500__structs.bson" #13k triangles, 10k points, Qmin = 0.4
     #     "2019-03-29-T-12-15-03-265__N-40_g-0.8000_p-0.8300__structs.bson" #28k triangles, 19k points, Qmin = 0.4
     # )
+    # storedgeomfile = joinpath(
+    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/drwatson_geom_sweep_1/geom",
+    #     "2019-04-24-T-18-33-57-731_density=0.75_gratio=0.78_numfibres=20.geom.bson" #12.8k triangles, 9.6k points, Qmin = 0.4
+    #     # "2019-04-24-T-21-16-38-329_density=0.75_gratio=0.78_numfibres=35.geom.bson" #36.7k triangles, 25.3k points, Qmin = 0.4
+    #     # "2019-04-24-T-17-54-24-004_density=0.75_gratio=0.78_numfibres=5.geom.bson" #3.4k triangles, 2.5k points, Qmin = 0.4
+    # )
     storedgeomfile = joinpath(
-        "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/drwatson_geom_sweep_1/geom",
-        "2019-04-24-T-18-33-57-731_density=0.75_gratio=0.78_numfibres=20.geom.bson" #12.8k triangles, 9.6k points, Qmin = 0.4
-        # "2019-04-24-T-21-16-38-329_density=0.75_gratio=0.78_numfibres=35.geom.bson" #36.7k triangles, 25.3k points, Qmin = 0.4
-        # "2019-04-24-T-17-54-24-004_density=0.75_gratio=0.78_numfibres=5.geom.bson" #3.4k triangles, 2.5k points, Qmin = 0.4
+        "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/drwatson_geom_sweep_2/geom",
+        # "2019-04-25-T-11-05-25-221_density=0.78_gratio=0.78_numfibres=10.geom.bson" #11.4k triangles, 7.8k points, Qmin = 0.4
+        # "2019-04-25-T-11-59-59-400_density=0.78_gratio=0.75_numfibres=20.geom.bson" #20.8k triangles, 14.5k points, Qmin = 0.4
+        "2019-04-25-T-15-13-27-738_density=0.78_gratio=0.75_numfibres=30.geom.bson" #38.7k triangles, 25.9k points, Qmin = 0.4
     )
     geomfile = cp(storedgeomfile, "geom.bson")
 end
@@ -57,8 +73,8 @@ const geom = loadgeometry(geomfile);
 #### Solver parameters and MWF models
 ####
 
-const TE = 8e-3; # Echotime
-const nTE = 40; # Number of echoes
+const TE = 10e-3; # Echotime
+const nTE = 32; # Number of echoes
 const solverparams = Dict(
     :u0     => 1.0im,                   # Initial π/2 pulse (Default: Vec{2}((0.0,1.0)))
     :TE     => TE,                      # Echotime for MultiSpinEchoCallback (Default: 10e-3)
@@ -88,7 +104,7 @@ const mwfmodels = [
 #### Default BlochTorreyParameters
 ####
 
-const default_btparams = BlochTorreyParameters{Float64}(
+const defaultbtparams = BlochTorreyParameters{Float64}(
     theta = π/2,
     AxonPDensity = 0.8,
     g_ratio = 0.8,
@@ -106,7 +122,7 @@ const default_btparams = BlochTorreyParameters{Float64}(
 
 DrWatson.@tagsave(
     MWFUtils.getnow() * ".metadata.bson",
-    deepcopy(@dict(TE, nTE, storedgeomfile, solverparams, nnlsparams, mwfmodels, default_btparams)),
+    deepcopy(@dict(sweepparams, defaultbtparams, storedgeomfile, TE, nTE, solverparams, nnlsparams, mwfmodels)),
     true, gitdir())
 
 ####
@@ -130,12 +146,10 @@ end
 
 function runsimulation!(results, params)
     @unpack theta, K, D = params
-    btparams = BlochTorreyParameters(default_btparams;
+    btparams = BlochTorreyParameters(defaultbtparams;
         theta = deg2rad(theta),
         K_perm = K,
-        D_Tissue = D,
-        D_Sheath = D,
-        D_Axon = D)
+        D_Tissue = D, D_Sheath = D, D_Axon = D)
     sols, myelinprob, myelinsubdomains, myelindomains = runsolve(btparams)
 
     # Common filename without suffix
@@ -143,39 +157,28 @@ function runsimulation!(results, params)
     titleparamstr = DrWatson.savename("", params; connector = ", ")
     
     # Save btparams and ode solutions
-    DrWatson.@tagsave(
-        "sol/" * fname * ".btparams.bson",
-        deepcopy(@dict(btparams)),
-        true, gitdir())
+    try
+        DrWatson.@tagsave(
+            "sol/" * fname * ".btparams.bson",
+            deepcopy(@dict(btparams)),
+            true, gitdir())
+    catch e
+        @warn "Error saving BlochTorreyParameters"
+        @warn sprint(showerror, e, catch_backtrace())
+    end
 
     for (i,sol) in enumerate(sols)
-        DrWatson.@tagsave(
-            "sol/" * fname * ".region$(i).odesolution.bson",
-            deepcopy(@dict(sol)),
-            true, gitdir())
+        try
+            DrWatson.@tagsave(
+                "sol/" * fname * ".region$(i).odesolution.bson",
+                deepcopy(@dict(sol)),
+                true, gitdir())
+        catch e
+            @warn "Error saving ODE solution in region #$(i)"
+            @warn sprint(showerror, e, catch_backtrace())
+        end
     end
 
-    # Plot and save various figures
-    mxplotomega(myelinprob, myelindomains, myelinsubdomains, geom.bdry;
-        titlestr = "Frequency Map (theta = $(round(theta; digits=3)) deg)",
-        fname = "omega/" * fname * ".omega")
-    mxplotmagnitude(sols, btparams, myelindomains, geom.bdry;
-        titlestr = "Field Magnitude (" * titleparamstr * ")",
-        fname = "mag/" * fname * ".magnitude")
-    
-    nnlsindex = findfirst(m->m isa NNLSRegression, mwfmodels)
-    if !(nnlsindex == nothing)
-        plotSEcorr(sols, btparams, myelindomains;
-            mwftrue = getmwf(geom.outercircles, geom.innercircles, geom.bdry),
-            opts = mwfmodels[nnlsindex], fname = "t2dist/" * fname * ".t2dist.SEcorr")
-    end
-    if !isempty(mwfmodels)
-        plotbiexp(sols, btparams, myelindomains,
-            geom.outercircles, geom.innercircles, geom.bdry;
-            titlestr = "Signal Magnitude (" * titleparamstr * ")",
-            opts = mwfmodels[1], fname = "sig/" * fname * ".signalmag")
-    end
-    
     # Compute MWF values
     mwfvalues, signals = compareMWFmethods(sols, myelindomains,
         geom.outercircles, geom.innercircles, geom.bdry;
@@ -191,6 +194,49 @@ function runsimulation!(results, params)
     push!(results[:signals], signals)
     push!(results[:mwfvalues], mwfvalues)
 
+    # Plot and save various figures
+    try
+        mxplotomega(myelinprob, myelindomains, myelinsubdomains, geom.bdry;
+            titlestr = "Frequency Map (theta = $(round(theta; digits=3)) deg)",
+            fname = "omega/" * fname * ".omega")
+    catch e
+        @warn "Error plotting omega"
+        @warn sprint(showerror, e, catch_backtrace())
+    end
+
+    try
+        mxplotmagnitude(sols, btparams, myelindomains, geom.bdry;
+            titlestr = "Field Magnitude (" * titleparamstr * ")",
+            fname = "mag/" * fname * ".magnitude")
+    catch e
+        @warn "Error plotting magnetization magnitude"
+        @warn sprint(showerror, e, catch_backtrace())
+    end
+    
+    try
+        nnlsindex = findfirst(m->m isa NNLSRegression, mwfmodels)
+        if !(nnlsindex == nothing)
+            plotSEcorr(sols, btparams, myelindomains;
+                mwftrue = getmwf(geom.outercircles, geom.innercircles, geom.bdry),
+                opts = mwfmodels[nnlsindex], fname = "t2dist/" * fname * ".t2dist.SEcorr")
+        end
+    catch e
+        @warn "Error plotting SEcorr T2 distribution"
+        @warn sprint(showerror, e, catch_backtrace())
+    end
+
+    try
+        if !isempty(mwfmodels)
+            plotbiexp(sols, btparams, myelindomains,
+                geom.outercircles, geom.innercircles, geom.bdry;
+                titlestr = "Signal Magnitude (" * titleparamstr * ")",
+                opts = mwfmodels[1], fname = "sig/" * fname * ".signalmag")
+        end
+    catch e
+        @warn "Error plotting biexponential"
+        @warn sprint(showerror, e, catch_backtrace())
+    end
+
     return results
 end
 
@@ -198,18 +244,11 @@ function main()
     # Make subfolders
     mkpath.(("mag", "t2dist", "sig", "omega", "mwfplots", "sol"))
 
-    # Parameters to sweep over
-    general_params = Dict{Symbol,Any}(
-        :theta => Vector(range(0.0, 90.0, length = 7)),
-        :K     => [0, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0],
-        :D     => [50.0, 100.0, 500.0]
-    )
-
     # Initialize results
     results = blank_results_dict()
     results[:geom] = geom
 
-    all_params = DrWatson.dict_list(general_params)
+    all_params = DrWatson.dict_list(sweepparams)
     all_params = sort(all_params; by = d -> (d[:D], d[:K], d[:theta]))
     for (i,params) in enumerate(all_params)
         params = convert(Dict{Symbol,Any}, params)
@@ -220,7 +259,7 @@ function main()
             if e isa InterruptException
                 @warn "Parameter sweep interrupted by user. Breaking out of loop and returning current results..."
                 break
-            else    
+            else
                 @warn "Error running simulation $i/$(length(all_params))"
                 @warn sprint(showerror, e, catch_backtrace())
             end

@@ -250,10 +250,10 @@ uuid = "dc8bdbbb-1ca9-579f-8c36-e416f6a65cce"
 version = "0.2.0"
 
 [[DataFrames]]
-deps = ["CategoricalArrays", "CodecZlib", "Compat", "DataStreams", "Dates", "InteractiveUtils", "IteratorInterfaceExtensions", "LinearAlgebra", "Missings", "Printf", "Random", "Reexport", "SortingAlgorithms", "Statistics", "StatsBase", "TableTraits", "Tables", "Test", "TranscodingStreams", "Unicode", "WeakRefStrings"]
-git-tree-sha1 = "9cfed75401d25d281076eb5d82de148ac2933f9e"
+deps = ["CategoricalArrays", "Compat", "IteratorInterfaceExtensions", "Missings", "PooledArrays", "Printf", "REPL", "Reexport", "SortingAlgorithms", "Statistics", "StatsBase", "TableTraits", "Tables", "Unicode"]
+git-tree-sha1 = "61528683a3ef43e203adb300958ef89a91492cab"
 uuid = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
-version = "0.17.1"
+version = "0.18.0"
 
 [[DataStreams]]
 deps = ["Dates", "Missings", "Test", "WeakRefStrings"]
@@ -367,9 +367,9 @@ version = "0.7.21"
 
 [[DrWatson]]
 deps = ["FileIO", "LibGit2", "Pkg", "Requires"]
-git-tree-sha1 = "b0ab5d91aeb621890c464e3367ee9b91b76713bc"
+git-tree-sha1 = "19c43563e7f11207b1e3574bf9dd2dbb83e430fa"
 uuid = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
-version = "0.2.0"
+version = "0.2.1"
 
 [[ExpmV]]
 deps = ["LinearAlgebra", "SparseArrays"]

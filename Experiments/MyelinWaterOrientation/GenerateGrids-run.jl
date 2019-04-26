@@ -7,9 +7,9 @@ make_reproduce(
     """
 )
 
-using BSON, Dates, Printf
+using BSON, Dates
 using MWFUtils, StatsPlots
-gr(size=(1200,900), leg = false, grid = false, labels = nothing)
+pyplot(size=(1200,900), leg = false, grid = false, labels = nothing)
 
 import DrWatson
 using DrWatson: @dict, @ntuple
@@ -67,13 +67,13 @@ function main()
     mkpath.(("plots", "geom"))
 
     # Parameters to sweep over
-    general_params = Dict{Symbol,Any}(
+    sweep_params = Dict{Symbol,Any}(
         :numfibres  => [5:5:50;],
         :gratio     => [0.75, 0.78],
         :density    => [0.78, 0.8]
     )
 
-    all_params = DrWatson.dict_list(general_params)
+    all_params = DrWatson.dict_list(sweep_params)
     all_params = sort(all_params; by = d -> (d[:numfibres], d[:gratio], d[:density]))
     for (i,params) in enumerate(all_params)
         params = convert(Dict{Symbol,Any}, params)
