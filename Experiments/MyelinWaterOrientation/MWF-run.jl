@@ -23,7 +23,7 @@ gitdir() = realpath(joinpath(DrWatson.projectdir(), "../..")) * "/"
 
 const sweepparams = Dict{Symbol,Any}(
     :theta => Vector(range(0.0, 90.0, length = 7)),
-    :K     => [0, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0],
+    :K     => [0.0, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0],
     :D     => [10.0, 50.0, 100.0, 500.0]
 )
 

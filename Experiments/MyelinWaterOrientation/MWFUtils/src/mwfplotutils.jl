@@ -79,14 +79,14 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
     y_biexp = @. ext_area * exp(-ts * btparams.R2_lp) + myelin_area * exp(-ts * btparams.R2_sp)
 
     if AVOID_MAT_PLOTS
-        fig = plot(1000 .* ts, [norm.(signals), y_biexp];
-            linewidth = 5, marker = :circle, markersize =10,
-            grid = true, minorgrid = true, legend = :topright,
-            xticks = 1000 .* ts, xrotation = -60, xlims = 1000 .* tspan,
-            labels = ["Simulated", "Bi-Exponential"],
-            ylabel = "S(t) Magnitude", xlabel = "Time [ms]",
-            title = titlestr)
-        
+        props = Dict{Symbol,Any}(
+            :linewidth => 5, :marker => :circle, :markersize => 10,
+            :grid => true, :minorgrid => true, :legend => :topright,
+            :xticks => 1000 .* ts, :xrotation => -60, :xlims => 1000 .* tspan,
+            :labels => ["Simulated" "Bi-Exponential"],
+            :ylabel => "S(t) Magnitude", :xlabel => "Time [ms]",
+            :title => titlestr)
+        fig = plot(1000 .* ts, [norm.(signals) y_biexp]; props...)        
         !(fname == nothing) && default_savefigs(fig, fname)
         disp && display(fig)
     else
@@ -121,7 +121,7 @@ function plotSEcorr(
         T2Vals = 1000 .* get_T2vals(opts)
         xtickvals = length(T2Vals) <= 60 ? T2Vals : T2Vals[1:2:end] # length cannot be more than 120
         
-        props = Dict(
+        props = Dict{Symbol,Any}(
             :seriestype => :sticks, :xscale => :log10,
             :linewidth => 5, :markersize => 5, :marker => :circle,
             :grid => true, :minorgrid => true, :legend => :none,
@@ -163,7 +163,7 @@ function plotMWF(params, mwf, mwftrue = nothing;
     MWF = broadcast!(mwf -> mwf .= 100 .* mwf, MWF, MWF) # change units to percentages
     
     figs = []
-    default_kwargs = Dict(
+    default_kwargs = Dict{Symbol,Any}(
         :linewidth => 5, :marker => :circle, :markersize => 10,
         :grid => true, :minorgrid => true, :legend => :none,
         :ylabel => "MWF [%]", :xlabel => "Angle [degrees]", :title => "MWF vs. Angle"

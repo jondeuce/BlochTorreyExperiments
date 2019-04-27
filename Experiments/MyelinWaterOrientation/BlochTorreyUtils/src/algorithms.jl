@@ -61,7 +61,7 @@ function OrdinaryDiffEq.perform_step!(
         repeat_step = false
     ) where {Alg <: ExpokitExpmv, Cache <: ExpokitExpmvCache}
 
-    @unpack t,dt,uprev,u,f,p = integrator
+    @unpack t, dt, uprev, u, f, p = integrator
     @unpack tmp, anorm = cache
     A = f.f # assume f to be an ODEFunction wrapped around a linear operator
 
@@ -163,7 +163,7 @@ function OrdinaryDiffEq.perform_step!(
         repeat_step = false
     ) where {Alg <: HighamExpmv, Cache <: HighamExpmvCache}
 
-    @unpack t,dt,uprev,u,f,p,alg = integrator
+    @unpack t, dt, uprev, u, f, p, alg = integrator
     @unpack norm, opnorm, precision, shift, full_term, check_positive = alg
     @unpack tmp, b1, b2, M = cache
     A = f.f # assume f to be an ODEFunction wrapped around a linear operator
