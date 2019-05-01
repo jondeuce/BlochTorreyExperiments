@@ -14,9 +14,7 @@ using ..CirclePackingUtils: expbarrier, ∇expbarrier, ∇²expbarrier
 using ..CirclePackingUtils: softplusbarrier, ∇softplusbarrier#, ∇²softplusbarrier
 using ..CirclePackingUtils: genericbarrier, ∇genericbarrier, ∇²genericbarrier
 using GeometryUtils
-using LinearAlgebra, Statistics
 using DiffResults, Optim, LineSearches, ForwardDiff
-using Tensors
 
 export pack
 

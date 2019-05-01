@@ -18,7 +18,7 @@ export periodic_scale_to_threshold, periodic_scale_to_density, periodic_subdomai
 export pairwise_sum, pairwise_grad!, pairwise_hess!
 export wrap_gradient, check_density_callback
 
-export GreedyCirclePacking, EnergyCirclePacking, PeriodicCirclePacking
+export GreedyCirclePacking, EnergyCirclePacking, PeriodicCirclePacking, NBodyCirclePacking
 
 include("src/utils.jl")
 include("src/pairwise_gradient.jl")
@@ -27,5 +27,6 @@ include("src/periodic_tools.jl")
 include("src/GreedyCirclePacking.jl")
 include("src/EnergyCirclePacking.jl")
 include("src/PeriodicCirclePacking.jl")
+include("src/NBodyCirclePacking.jl")
 
 end # module CirclePackingUtils
