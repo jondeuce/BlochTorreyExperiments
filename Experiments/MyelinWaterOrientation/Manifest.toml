@@ -1159,9 +1159,9 @@ version = "0.10.2"
 
 [[SteadyStateDiffEq]]
 deps = ["Compat", "DiffEqBase", "DiffEqCallbacks", "LinearAlgebra", "NLsolve", "Reexport", "Test"]
-git-tree-sha1 = "fe9852d18c3e30f384003da50d6049e5fbc97071"
+path = "/home/jdoucette/.julia/dev/SteadyStateDiffEq"
 uuid = "9672c7b4-1e72-59bd-8a11-6ac3964bc41f"
-version = "1.4.0"
+version = "1.4.0+"
 
 [[StringDistances]]
 deps = ["Distances", "IterTools", "Random", "Test"]
