@@ -13,9 +13,11 @@ prec        =   'double';
 
 % MAJOR_GAP   =   max(G.VoxelSize)/sqrt(G.Nmajor) - 2 * max(G.r0); % Approx. average distance between major vessels
 MAJOR_GAP   =   Inf;
-for ii = 2:G.Nmajor; for jj = 1:ii-1
-    MAJOR_GAP = min(MAJOR_GAP, norm(G.p0(:,ii) - G.p0(:,jj)));
-end; end
+for ii = 2:G.Nmajor
+    for jj = 1:ii-1
+        MAJOR_GAP = min(MAJOR_GAP, norm(G.p0(:,ii) - G.p0(:,jj)));
+    end
+end
 MAJOR_GAP   =   MAJOR_GAP - 2*G.Rmajor;
 P0_FACT     =   0.03 * MAJOR_GAP / G.SubVoxSize; % Allow vessels to move about 3% from where they started
 

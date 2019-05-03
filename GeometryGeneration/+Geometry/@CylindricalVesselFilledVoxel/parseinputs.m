@@ -372,7 +372,7 @@ G.InitGuesses = struct( ...
 [G.P,G.Vx,G.Vy,G.Vz] = deal(zeros(3,G.InitGuesses.N));
 
 Rmajor = G.InitGuesses.Rmajor; % unpack so that RmajorFun doesn't close over G
-G.RmajorFun = @(varargin) Rmajor * ones(varargin{:});
+G.RmajorFun = @(varargin) Rmajor .* ones(varargin{:});
 G.R = G.RmajorFun(1, G.InitGuesses.N);
 
 end
