@@ -27,21 +27,27 @@ end
 # Distance field for a rectangle with bounds [x1, x2] x [y1, y2]; more accurate
 # version which accounts for corners
 @inline function drectangle0(p::Vec{2}, x1, x2, y1, y2)
-    d1 =   y1 - p[2]
-    d2 = p[2] - y2
-    d3 =   x1 - p[1]
-    d4 = p[1] - x2
+    d1 = y1 - p[2] # distance from bottom edge
+    d2 = p[2] - y2 # distance from top edge
+    d3 = x1 - p[1] # distance from left edge
+    d4 = p[1] - x2 # distance from right edge
+    
+    # Most common case: all distances are negative, point is inside rectangle
+    dmax = max(d1, d2, d3, d4)
+    if dmax <= 0
+        return dmax
+    end
 
-    d = if d1 > zero(d1) && d3 > zero(d3)
-        sqrt(d1^2 + d3^2)
-    elseif d1 > zero(d1) && d4 > zero(d4)
-        sqrt(d1^2 + d4^2)
-    elseif d2 > zero(d2) && d3 > zero(d3)
-        sqrt(d2^2 + d3^2)
-    elseif d2 > zero(d2) && d4 > zero(d4)
-        sqrt(d2^2 + d4^2)
+    d = if d1 > 0 && d3 > 0
+        sqrt(d1^2 + d3^2) # bottom-left corner
+    elseif d1 > 0 && d4 > 0
+        sqrt(d1^2 + d4^2) # bottom-right corner
+    elseif d2 > 0 && d3 > 0
+        sqrt(d2^2 + d3^2) # top-left corner
+    elseif d2 > 0 && d4 > 0
+        sqrt(d2^2 + d4^2) # top-right corner
     else
-        max(d1, d2, d3, d4) # equivalent to -min(-d1, -d2, -d3, -d4)
+        dmax # one of four remaining sides (note that in this case, exactly one of d1,...,d4 is positive, and so d == dmax)
     end
 
     return d

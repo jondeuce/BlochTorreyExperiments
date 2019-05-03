@@ -10,7 +10,7 @@ function testbtfinelem2D(opts::BlochTorreyParameters{T};
     bdry = Rectangle(Vec{2,T}((a,a)), Vec{2,T}((b,b)))
     outercircles = [Circle{2,T}(zero(Vec{2,T}), Router)]
     exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry =
-        creategrids(opts; outercircles = outercircles, bdry = bdry, RESOLUTION = Resolution)
+        creategeometry(opts; outercircles = outercircles, bdry = bdry, RESOLUTION = Resolution)
 
     myelinprob, myelinsubdomains, myelindomains = createdomains(opts, exteriorgrids, torigrids, interiorgrids, outercircles, innercircles)
     omega = calcomega(myelinprob, myelinsubdomains)
@@ -18,7 +18,7 @@ function testbtfinelem2D(opts::BlochTorreyParameters{T};
     solve(ms) = solveblochtorrey(myelinprob, ms;
         tspan = (zero(T), Time),
         TE = Time,
-        cb = nothing
+        callback = nothing
     )
     sols = solve(myelindomains)
     # sols = solve(myelinsubdomains)
@@ -26,12 +26,12 @@ function testbtfinelem2D(opts::BlochTorreyParameters{T};
     if Plot
         paramstr = "theta = $(rad2deg(opts.theta)) deg, D = $(opts.D_Tissue) um2/s, K = $(opts.K_perm) um/s"
         mxsimpplot(getgrid.(myelindomains); newfigure = true, axis = mxaxis(bdry), facecol = omega)
-        plotmagnitude(sols, opts, myelindomains, bdry; titlestr = "Magnitude: " * paramstr)
-        plotphase(sols, opts, myelindomains, bdry; titlestr = "Phase: " * paramstr)
+        mxplotmagnitude(sols, opts, myelindomains, bdry; titlestr = "Magnitude: " * paramstr)
+        mxplotphase(sols, opts, myelindomains, bdry; titlestr = "Phase: " * paramstr)
         # plotSEcorr(sols, opts, myelindomains, fname = "SEcorr")
         # plotbiexp(sols, opts, myelindomains, outercircles, innercircles, bdry; titlestr = "Signal: " * paramstr, fname = "signal")
     end
-    # mwfvalues = compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry)
+    # mwfvalues, signals = compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry)
 
     # Return a named tupled of geometry structures
     geom = (

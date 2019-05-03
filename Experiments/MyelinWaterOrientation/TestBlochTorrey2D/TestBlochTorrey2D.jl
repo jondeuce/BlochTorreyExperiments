@@ -1,25 +1,22 @@
 module TestBlochTorrey2D
 
 # Packages to load
-using LinearAlgebra
+# using LinearAlgebra
 using BenchmarkTools
 using MATLAB
-using JuAFEM
-using LinearMaps
-using OrdinaryDiffEq, DiffEqOperators, Sundials
+# using JuAFEM
+# using LinearMaps
+# using OrdinaryDiffEq, DiffEqOperators, Sundials
 using Expokit
 
 # My files and modules to load
-using GeometryUtils
-using CirclePackingUtils
-using MeshUtils
-using BlochTorreyUtils
-using BlochTorreySolvers
+# using GeometryUtils
+# using MeshUtils
+# # using BlochTorreyUtils
+# using BlochTorreySolvers
+# using CirclePackingUtils
 using ExpmvHigham
 using MWFUtils
-
-import EnergyCirclePacking
-import GreedyCirclePacking
 
 export lap, testbtfindiff2D, testbtfinelem2D, testblochtorrey2D
 

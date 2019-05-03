@@ -81,7 +81,7 @@ function _expmv!(
     elseif prec == "half"
         T(2)^(-10)
     else prec == "double"
-        !(prec == "double") && @warn "prec must be \"double\", \"single\", or \"half\"; got $prec. Defaulting to \"double\"."
+        !(prec == "double") && @warn "Prec must be \"double\", \"single\", or \"half\"; got $prec. Defaulting to \"double\"."
         prec = "double"
         T(2)^(-53)
     end
