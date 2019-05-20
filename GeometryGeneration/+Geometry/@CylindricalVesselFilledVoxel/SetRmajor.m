@@ -5,6 +5,7 @@ function [ G ] = SetRmajor(G, Rmajor)
 % this function does not do it by default:
 %   G = Uncompress(G);
 
+Rmajor = reshape(Rmajor, 1, []); % force to row vector
 G.Rmajor = Rmajor;
 G.RmajorFun = @(varargin) Rmajor .* ones(varargin{:});
 G.r0 = Rmajor .* ones(1, G.Nmajor);

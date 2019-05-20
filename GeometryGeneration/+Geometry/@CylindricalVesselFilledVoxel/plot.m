@@ -12,17 +12,47 @@ fig = figure;
 hold on
 
 if plotminor
-    col = 'b';
     alpha = 0.1;
-    fig = plot_cylinders_in_box( G.p, G.vz, G.r, ...
-        G.VoxelSize, G.VoxelCenter, titlestr, fig, col, alpha, verb );
+    
+    if G.MinorArterialFrac > 0
+        ArtInds = G.MinorArteries;
+        VenInds = setdiff(1:G.Nminor, ArtInds);
+        col = 'r';
+        fig = plot_cylinders_in_box( G.p(:,ArtInds), G.vz(:,ArtInds), G.r(:,ArtInds), ...
+            G.VoxelSize, G.VoxelCenter, titlestr, fig, col, alpha, verb );
+        col = 'b';
+        fig = plot_cylinders_in_box( G.p(:,VenInds), G.vz(:,VenInds), G.r(:,VenInds), ...
+            G.VoxelSize, G.VoxelCenter, titlestr, fig, col, alpha, verb );
+    else
+        col = 'b';
+        fig = plot_cylinders_in_box( G.p, G.vz, G.r, ...
+            G.VoxelSize, G.VoxelCenter, titlestr, fig, col, alpha, verb );
+    end
 end
 
 if plotmajor
-    col = 'r';
     alpha = 0.5;
-    fig = plot_cylinders_in_box( G.p0, G.vz0, G.r0, ...
-        G.VoxelSize, G.VoxelCenter, titlestr, fig, col, alpha, false );
+    
+    if G.NumMajorArteries > 0
+        ArtInds = G.MajorArteries;
+        VenInds = setdiff(1:G.Nmajor, ArtInds);
+        col = 'r';
+        fig = plot_cylinders_in_box( G.p0(:,ArtInds), G.vz0(:,ArtInds), G.r0(:,ArtInds), ...
+            G.VoxelSize, G.VoxelCenter, titlestr, fig, col, alpha, false );
+        col = 'b';
+        fig = plot_cylinders_in_box( G.p0(:,VenInds), G.vz0(:,VenInds), G.r0(:,VenInds), ...
+            G.VoxelSize, G.VoxelCenter, titlestr, fig, col, alpha, false );
+    else
+        col = 'b';
+        fig = plot_cylinders_in_box( G.p0, G.vz0, G.r0, ...
+            G.VoxelSize, G.VoxelCenter, titlestr, fig, col, alpha, false );
+    end
+    
+    if G.VRSRelativeRad ~= 1
+        col = 'g';
+        fig = plot_cylinders_in_box( G.p0, G.vz0, G.VRSRelativeRad .* G.r0, ...
+            G.VoxelSize, G.VoxelCenter, titlestr, fig, col, alpha, false );
+    end
 end
 
 % Set oblique viewing angle
