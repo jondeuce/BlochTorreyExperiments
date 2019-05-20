@@ -13,6 +13,7 @@ classdef BTSplitStepper
         b % Exponential step coefficients (vector of length N)
         allowPreCompConvKernels
         allowPreCompExpArrays
+        useGaussianKernels
     end
     
     properties (GetAccess = public, SetAccess = private)
@@ -60,6 +61,8 @@ classdef BTSplitStepper
         
         % ----- Kernel Methods ----- %
         function V = computeKernels(V,Dcoeff)
+            % V = computeKernels(V,Dcoeff)
+            
             % GaussianKernel objects handle their own precomputation, so we
             % can create lightweight un-precomputed objects first which
             % will function with or without precomputation
@@ -68,11 +71,15 @@ classdef BTSplitStepper
                 M = length(V.a);
                 V.ConvKernels = cell(M,1);
                 for n = 1:M
-                    % Standard deviation of kernel (unitful, possibly complex)
-                    sigma = sqrt(2*(V.a(n)*Dcoeff)*V.TimeStep);
-                    
-                    % Create GaussianKernel object
-                    V.ConvKernels{n} = Geometry.GaussianKernel(sigma,V.GridSize,V.VoxelSize);
+                    dt = V.a(n) * V.TimeStep;
+                    if V.useGaussianKernels
+                        % Create GaussianKernel object
+                        sigma = sqrt(2 * Dcoeff * dt); % Standard deviation of kernel (unitful, possibly complex)
+                        V.ConvKernels{n} = Geometry.GaussianKernel(sigma, V.GridSize, V.VoxelSize);
+                    else
+                        % Create KroneckerPropagator object
+                        V.ConvKernels{n} = Geometry.KroneckerPropagator.laplacianPropagator(Dcoeff, dt, V.GridSize, V.VoxelSize);
+                    end
                 end
             end
             
