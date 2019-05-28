@@ -30,6 +30,7 @@ if plotminor
     end
 end
 
+verb = false; % not necessary for major vessels; they're fast
 if plotmajor
     alpha = 0.5;
     

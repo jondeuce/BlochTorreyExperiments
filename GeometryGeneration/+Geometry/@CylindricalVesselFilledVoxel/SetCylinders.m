@@ -30,7 +30,7 @@ G = NormalizeCylinderVecs(G);
 
 G = CalculateVasculatureMap( G );
 G.BVF = sum(G.VasculatureMap(:))/prod(G.GridSize);
-G.aBVF = sum(G.VasculatureMap(G.idx0{:}))/prod(G.GridSize);
+G.aBVF = sum(G.VasculatureMap(cat(1,G.idx0{:})))/prod(G.GridSize);
 G.iBVF = G.BVF - G.aBVF;
 G.iRBVF = G.iBVF/G.BVF;
 G.aRBVF = G.aBVF/G.BVF;
