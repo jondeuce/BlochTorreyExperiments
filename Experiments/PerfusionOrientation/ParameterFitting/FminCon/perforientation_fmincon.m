@@ -1,7 +1,7 @@
 %PERFORIENTATION_FMINCON
 
 %Save current repository information
-saverepostatus('BlochTorreyExperiments-master')
+saverepostatus('BlochTorreyExperiments-temp1')
 
 %Save a copy of this script in the directory of the caller
 backupscript  = sprintf('%s__%s.m',datestr(now,30),mfilename);
@@ -38,7 +38,7 @@ alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
 
 % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
 lb  = [ 3.0000,          1.2000/100,         0.5000/100 ];
-CA0 =   3.8500;  iBVF0 = 1.5000/100; aBVF0 = 1.0000/100;
+CA0 =   3.8500;  iBVF0 = 1.5000/100; aBVF0 = 0.9000/100;
 ub  = [ 6.0000,          2.0000/100,         1.0000/100 ];
 
 % % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
