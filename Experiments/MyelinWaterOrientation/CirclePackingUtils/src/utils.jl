@@ -51,10 +51,10 @@ function initialize_origins(radii::AbstractVector{T};
     # Initialize with random origins
     Ncircles = length(radii)
     Rmax = maximum(radii)
-    mesh_scale = T(1.25 * 2Rmax * sqrt(Ncircles))
-
+    
     if distribution == :random
         # Randomly distributed origins
+        mesh_scale = T(1.25 * 2Rmax * sqrt(Ncircles))
         initial_origins = mesh_scale .* (T(2.0).*rand(T,2*Ncircles).-one(T))
         initial_origins = reinterpret(Vec{2,T}, initial_origins)
         # initial_origins .-= [initial_origins[1]] # shift such that initial_origins[1] is at the origin
@@ -69,11 +69,24 @@ function initialize_origins(radii::AbstractVector{T};
             (ix += 1) > Ncircles && break
             initial_origins[ix] = Vec{2,T}((2*Rmax*i, 2*Rmax*j))
         end
+        initial_origins .-= Ref(mean(initial_origins))
+        initial_origins .*= T(1.1)
     else
         error("Unknown initial origins distribution: $distribution.")
     end
 
     return initial_origins
+end
+
+function initialize_domain(
+        radii::AbstractVector{T},
+        origins::AbstractVector{V} = initialize_origins(radii; distribution = :uniformsquare)
+    ) where {T, V <: Vec{2,T}}
+    Rmax = maximum(radii)
+    xmin, xmax = extrema(x[1] for x in origins)
+    ymin, ymax = extrema(x[2] for x in origins)
+    domain = Rectangle(V((xmin - Rmax, ymin - Rmax)), V((xmax + Rmax, ymax + Rmax)))
+    return domain
 end
 
 # ---------------------------------------------------------------------------- #
