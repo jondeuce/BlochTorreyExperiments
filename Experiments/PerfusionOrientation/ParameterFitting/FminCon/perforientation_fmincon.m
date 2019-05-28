@@ -1,7 +1,7 @@
 %PERFORIENTATION_FMINCON
 
 %Save current repository information
-saverepostatus('BlochTorreyExperiments-master')
+saverepostatus('BlochTorreyExperiments-temp1')
 
 %Save a copy of this script in the directory of the caller
 backupscript  = sprintf('%s__%s.m',datestr(now,30),mfilename);
