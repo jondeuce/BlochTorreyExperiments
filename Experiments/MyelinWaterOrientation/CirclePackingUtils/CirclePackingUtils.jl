@@ -11,7 +11,7 @@ using LinearAlgebra, Statistics, StatsFuns
 using DiffResults, Optim, LineSearches, ForwardDiff, Roots
 
 export estimate_density, opt_subdomain, scale_to_density, covariance_energy
-export tocircles, tocircles!, tovectors, tovectors!, initialize_origins
+export tocircles, tocircles!, tovectors, tovectors!, initialize_origins, initialize_domain
 export periodic_diff, periodic_mod
 export periodic_circles, periodic_unique_circles, periodic_circle_repeat, periodic_density
 export periodic_scale_to_threshold, periodic_scale_to_density, periodic_subdomain

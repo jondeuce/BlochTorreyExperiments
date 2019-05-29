@@ -86,7 +86,7 @@ function periodic_scale_to_threshold(cs::Vector{C}, bdry::Rectangle{2}, distthre
     # Expand initial circles once to α_min to ensure non-overlapping circles
     α = α_min
     cs, bdry = expand_geom(α_min, cs, bdry)
-    return cs, bdry, α_min
+    return (circles = cs, domain = bdry, parameter = α_min)
 end
 
 function periodic_scale_to_density(cs::Vector{C}, bdry::Rectangle{2}, goaldensity, distthresh = zero(floattype(C))) where {C <: Circle{2}}
@@ -116,7 +116,7 @@ function periodic_scale_to_density(cs::Vector{C}, bdry::Rectangle{2}, goaldensit
         α *= α_opt
     end
 
-    return cs, bdry, α
+    return (circles = cs, domain = bdry, parameter = α)
 end
 
 function periodic_subdomain(
@@ -153,5 +153,5 @@ function periodic_subdomain(
     dX = Vec{2}((xs[i_opt[1]], ys[i_opt[2]]))
     opt_bdry = translate_shape(bdry, dX)
 
-    return opt_bdry, dX
+    return (domain = opt_bdry, parameter = dX)
 end
