@@ -24,22 +24,32 @@ G.Rmajor = G.InitGuesses.Rmajor;
 % Initial guess for minor cylinders
 %-------------------------------------------------------------------------%
 
-% Minor vessel radii
-G.r = G.RminorFun(1,G.InitGuesses.Nminor,'double');
-
+LEGACY = false;
 PlotCyls = false;
-if G.opts.AllowMinorSelfIntersect
-    if G.opts.AllowMinorMajorIntersect
-        [p,vz,r] = addIntersectingCylinders( G.VoxelSize(:), G.VoxelCenter(:), G.r, ...
-            G.InitGuesses.Nminor, G.opts.MinorOrientation, PlotCyls, [], [], [], G.Targets.BVF );
-        [G.P,G.Vz,G.R] = deal([G.p0, p], [G.vz0, vz], [G.r0, r]);
+
+if ~LEGACY
+    SphereRadius = 0.75 * norm(G.VoxelSize(:)); % Sphere diameter should be at least voxel diagonal
+    SphereCenter = G.VoxelCenter(:);
+    [p, vz, r] = randomCylindersInSphere( ...
+        SphereRadius, SphereCenter, G.RminorFun, G.Targets.BVF, true, PlotCyls );
+    [G.P, G.Vz, G.R] = deal([G.p0, p], [G.vz0, vz], [G.r0, r]);
+else
+    % Minor vessel radii
+    G.r = G.RminorFun(1,G.InitGuesses.Nminor,'double');
+    
+    if G.opts.AllowMinorSelfIntersect
+        if G.opts.AllowMinorMajorIntersect
+            [p,vz,r] = addIntersectingCylinders( G.VoxelSize(:), G.VoxelCenter(:), G.r, ...
+                G.InitGuesses.Nminor, G.opts.MinorOrientation, PlotCyls, [], [], [], G.Targets.BVF );
+            [G.P,G.Vz,G.R] = deal([G.p0, p], [G.vz0, vz], [G.r0, r]);
+        else
+            [G.P,G.Vz,G.R] = addIntersectingCylinders( G.VoxelSize(:), G.VoxelCenter(:), G.r, ...
+                G.InitGuesses.Nminor, G.opts.MinorOrientation, PlotCyls, G.p0, G.vz0, G.r0, G.Targets.BVF );
+        end
     else
-        [G.P,G.Vz,G.R] = addIntersectingCylinders( G.VoxelSize(:), G.VoxelCenter(:), G.r, ...
+        [G.P,G.Vz,G.R] = nonIntersectingCylinders( G.VoxelSize(:), G.VoxelCenter(:), G.r, ...
             G.InitGuesses.Nminor, G.opts.MinorOrientation, PlotCyls, G.p0, G.vz0, G.r0, G.Targets.BVF );
     end
-else
-    [G.P,G.Vz,G.R] = nonIntersectingCylinders( G.VoxelSize(:), G.VoxelCenter(:), G.r, ...
-        G.InitGuesses.Nminor, G.opts.MinorOrientation, PlotCyls, G.p0, G.vz0, G.r0, G.Targets.BVF );
 end
 
 [G.Vx,G.Vy,G.Vz] = nullVectors3D( G.Vz );
