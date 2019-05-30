@@ -144,8 +144,8 @@ switch upper(OptVariables)
     case 'CA_IBVF_ABVF'
         Geom = []; % Geom is created inside perforientation_fun
     case 'CA_RMAJOR_MINOREXPANSION'
-        GeomArgs.ImproveMajorBVF = false;
-        GeomArgs.ImproveMinorBVF = false;
+        GeomArgs.ImproveMajorBVF = true;
+        GeomArgs.ImproveMinorBVF = true;
         
         % Generate geometry for contraction
         GeomArgs.iBVF = ub(2);
