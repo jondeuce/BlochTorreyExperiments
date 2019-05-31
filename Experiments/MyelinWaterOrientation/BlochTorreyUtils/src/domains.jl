@@ -316,7 +316,7 @@ function ParabolicDomain(
     )
     domain.M = blockdiag(getmass.(ms)...)
     domain.K = blockdiag(getstiffness.(ms)...)
-    domain.metadata[:subdomains] = [getdomain(m).metadata for m in ms]
+    domain.metadata[:subdomains] = [deepcopy(getdomain(m).metadata) for m in ms]
     # domain.w = reduce(vcat, getquadweights.(ms))
 
     # Find interface pairs

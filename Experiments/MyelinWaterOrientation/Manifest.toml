@@ -301,9 +301,9 @@ version = "2.5.2"
 
 [[DiffEqDiffTools]]
 deps = ["LinearAlgebra"]
-git-tree-sha1 = "07991282c76bcd9331f96f786acbeb1775f1f8d5"
+git-tree-sha1 = "14c4ec4f8796e71ba034f5089b6186876574a49d"
 uuid = "01453d9d-ee7c-5054-8395-0335cb756afa"
-version = "0.10.0"
+version = "0.10.1"
 
 [[DiffEqOperators]]
 deps = ["DiffEqBase", "ForwardDiff", "LinearAlgebra", "SparseArrays", "StaticArrays", "SuiteSparse"]
@@ -361,15 +361,15 @@ version = "0.7.0"
 
 [[DoubleFloats]]
 deps = ["GenericSVD", "GenericSchur", "LinearAlgebra", "Polynomials", "Quadmath", "Random"]
-git-tree-sha1 = "a1e82c58531c88b82a0a658a44bd38f208435a17"
+git-tree-sha1 = "a51ea1538dd2722800a01af577d0e1c944a7b7fa"
 uuid = "497a8b3b-efae-58df-a0af-a86822472b78"
-version = "0.8.2"
+version = "0.8.3"
 
 [[DrWatson]]
 deps = ["FileIO", "LibGit2", "Pkg", "Random", "Requires"]
-git-tree-sha1 = "7cacf218e63bc9f49599e55706da221996a4fc03"
+git-tree-sha1 = "b741c55749b4a3478f9324aab2c046d0da83f66c"
 uuid = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
-version = "0.5.0"
+version = "0.5.2"
 
 [[ExpmV]]
 deps = ["LinearAlgebra", "SparseArrays"]
@@ -437,9 +437,9 @@ uuid = "9fa8497b-333b-5362-9e8d-4d0656e87820"
 
 [[GR]]
 deps = ["Base64", "DelimitedFiles", "LinearAlgebra", "Pkg", "Printf", "Random", "Serialization", "Sockets", "Test"]
-git-tree-sha1 = "537b61986d8a5fd21e577541f8f0735e481eb3ed"
+git-tree-sha1 = "9dff2d231311da78648abfa3287e3458a578d2f8"
 uuid = "28b8d3ca-fb5f-59d9-8090-bfdbd6d07a71"
-version = "0.39.1"
+version = "0.40.0"
 
 [[GenericSVD]]
 deps = ["LinearAlgebra", "Random", "Test"]
@@ -478,10 +478,10 @@ uuid = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
 version = "0.11.1"
 
 [[HTTP]]
-deps = ["Base64", "Dates", "Distributed", "IniFile", "MbedTLS", "Random", "Sockets", "Test"]
-git-tree-sha1 = "25db0e3f27bd5715814ca7e4ad22025fdcf5cc6e"
+deps = ["Base64", "Dates", "IniFile", "MbedTLS", "Sockets"]
+git-tree-sha1 = "854fad2a2b9cc6678f70ed15a65fc7e572056d39"
 uuid = "cd3eb016-35fb-5094-929b-558a96fad6f3"
-version = "0.8.0"
+version = "0.8.2"
 
 [[HTTPClient]]
 deps = ["Compat", "LibCURL"]
@@ -563,9 +563,9 @@ version = "0.7.0"
 
 [[ImageMorphology]]
 deps = ["Colors", "FixedPointNumbers", "ImageCore"]
-git-tree-sha1 = "b0520a35f11221ef426000332976dc5f863e2af1"
+git-tree-sha1 = "2ea6e55a36166321ca735b8eaf74936180e2ad5d"
 uuid = "787d08f9-d448-5407-9aad-5290dd7ab264"
-version = "0.2.3"
+version = "0.2.4"
 
 [[ImageShow]]
 deps = ["Base64", "ColorTypes", "Colors", "FileIO", "FixedPointNumbers", "ImageCore", "OffsetArrays", "Requires"]
