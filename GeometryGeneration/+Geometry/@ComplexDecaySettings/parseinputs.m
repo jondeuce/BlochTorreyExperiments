@@ -2,7 +2,7 @@ function [ GammaSettings ] = parseinputs(GammaSettings, varargin)
 %PARSEINPUTS [ GammaSettings ] = parseinputs(GammaSettings, varargin)
 
 DefaultArgs   =   struct(...
-    'isKspaceDipoleKernel', true,           ... % Use kspace dipole kernel (true), or image space (false)
+    'isKspaceDipoleKernel', false,          ... % Use kspace dipole kernel (true), or image space (false)
     'Dimension',            3,              ... % Dimension of simulation
     'GyroMagRatio',         2.67515255e8,   ... % Gyromagnetic ratio [rad/(T*s)]
     'Angle_Deg',            90,             ... % Angle of B0 w.r.t. z-axis [deg]

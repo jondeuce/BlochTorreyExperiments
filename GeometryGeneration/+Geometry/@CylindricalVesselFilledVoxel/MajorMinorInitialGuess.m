@@ -29,7 +29,7 @@ PlotCyls = false;
 
 if ~LEGACY
     % Initial cylinder guess
-    SphereRadius = 1.0 * norm(G.VoxelSize(:)); % Sphere diameter should be at least voxel diagonal
+    SphereRadius = 1.0 * norm(G.VoxelSize(:)); % Sphere diameter should be at least voxel diagonal, preferably more
     SphereCenter = G.VoxelCenter(:);
     [p, vz, r] = randomCylindersInSphere( ...
         SphereRadius, SphereCenter, G.RminorFun, G.Targets.BVF, true, PlotCyls );
@@ -40,7 +40,6 @@ if ~LEGACY
     G = expandminorvessels(G, SpaceFactor);
     G = CalculateVasculatureMap( G );
     if G.opts.AllowInitialMinorPruning
-        %[tmin, tmax, Lmin, Lmax, Lmid, Pmin, Pmax] = rayBoxIntersection( G.p, G.vz, G.VoxelSize(:), G.VoxelCenter(:) );
         b = ~cellfun(@isempty, G.idx);
         [G.P, G.Vz, G.R] = deal([G.p0, G.p(:,b)], [G.vz0, G.vz(:,b)], [G.r0, G.r(:,b)]);
         G = CalculateVasculatureMap( G );
