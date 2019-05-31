@@ -68,6 +68,10 @@ addParameter(p,'AllowMinorMajorIntersect',true,@(x)VA(x,{'logical'},{'scalar'}))
 addParameter(p,'ImproveMajorBVF',true,@(x)VA(x,{'logical'},{'scalar'}));
 addParameter(p,'ImproveMinorBVF',true,@(x)VA(x,{'logical'},{'scalar'}));
 
+% Allow pruning of initial minor cylinders, i.e. if minor cylinders don't
+% intersect with the voxel, remove them
+addParameter(p,'AllowInitialMinorPruning',true,@(x)VA(x,{'logical'},{'scalar'}));
+
 % Minor vessel orientation
 expectedinterptype = {'RANDOM','ALIGNED','PERIODIC'};
 addParameter(p,'MinorOrientation','RANDOM',@(x) any(VS(x,expectedinterptype)));

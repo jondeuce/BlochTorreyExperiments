@@ -41,9 +41,9 @@ if ~isempty(Geom.ArterialIndices)
 end
 
 % convolve the (scaled) dChi map with the dipole kernel
-d_kspace = Geometry.dipole(Geom.GridSize, Geom.VoxelSize, BDir);
+d_fourier = Geometry.dipole(Geom.GridSize, Geom.VoxelSize, BDir, 'double', GammaSettings.isKspaceDipoleKernel);
 tmp = fftn(tmp); % fft("scaled_dChi")
-tmp = tmp .* d_kspace; % fft("scaled_dChi") .* fft_dipole (mult. in kspace)
+tmp = tmp .* d_fourier; % fft("scaled_dChi") .* fft_dipole (mult. in kspace)
 clear d_kspace
 
 dw = real(ifftn(tmp)); % ifft back to complete the convolution

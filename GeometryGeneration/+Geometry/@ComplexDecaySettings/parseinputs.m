@@ -2,16 +2,17 @@ function [ GammaSettings ] = parseinputs(GammaSettings, varargin)
 %PARSEINPUTS [ GammaSettings ] = parseinputs(GammaSettings, varargin)
 
 DefaultArgs   =   struct(...
-    'Dimension',         3,              ... % Dimension of simulation
-    'GyroMagRatio',      2.67515255e8,   ... % Gyromagnetic ratio [rad/(T*s)]
-    'Angle_Deg',         90,             ... % Angle of B0 w.r.t. z-axis [deg]
-    'B0',               -3.0,            ... % External magnetic field [T]
-	'Hct',               0.44,           ... % Hematocrit fraction [fraction]
-    'Y',                 0.61,           ... % Venous Blood Oxygenation [fraction]
-    'CA',                0.0,            ... % Contrast Agent concentration [mM]
-    'dR2_CA_per_mM',     5.2,            ... % Relaxation constant of the CA [Hz/mM]
-    'dChi_CA_per_mM',    0.3393e-6,      ... % Susceptibility CA [[T/T]/mM]
-    'Ya',                0.98            ... % Arterial Blood Oxygenation [fraction] Ref: Zhao et al., 2007, MRM, Oxygenation and hematocrit dependence of transverse relaxation rates of blood at 3T
+    'isKspaceDipoleKernel', true,           ... % Use kspace dipole kernel (true), or image space (false)
+    'Dimension',            3,              ... % Dimension of simulation
+    'GyroMagRatio',         2.67515255e8,   ... % Gyromagnetic ratio [rad/(T*s)]
+    'Angle_Deg',            90,             ... % Angle of B0 w.r.t. z-axis [deg]
+    'B0',                  -3.0,            ... % External magnetic field [T]
+	'Hct',                  0.44,           ... % Hematocrit fraction [fraction]
+    'Y',                    0.61,           ... % Venous Blood Oxygenation [fraction]
+    'CA',                   0.0,            ... % Contrast Agent concentration [mM]
+    'dR2_CA_per_mM',        5.2,            ... % Relaxation constant of the CA [Hz/mM]
+    'dChi_CA_per_mM',       0.3393e-6,      ... % Susceptibility CA [[T/T]/mM]
+    'Ya',                   0.98            ... % Arterial Blood Oxygenation [fraction] Ref: Zhao et al., 2007, MRM, Oxygenation and hematocrit dependence of transverse relaxation rates of blood at 3T
     );
 
 p = getParser(DefaultArgs);
