@@ -28,6 +28,7 @@ classdef ComplexDecaySettings
         R2_CSF
         Y
         Ya
+        isKspaceDipoleKernel
     end
     
     methods

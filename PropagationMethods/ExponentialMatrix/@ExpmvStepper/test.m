@@ -8,11 +8,16 @@ alpha_range = 2.5:5.0:87.5;
 
 type = 'GRE';
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize, BinCounts] = get_GRE_data(alpha_range);
+
 % TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [150,150,150];
-% TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [150,150,150];
+% TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [250,250,250];
 TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
 % TE = 40e-3; VoxelSize = [1750,1750,4000]; VoxelCenter = [0,0,0]; GridSize = [350,350,800];
 Weights = BinCounts / sum(BinCounts(:));
+
+REP = [1,1,2];
+VoxelSizeREP = VoxelSize .* REP;
+GridSizeREP = GridSize .* REP;
 
 %% BLOCH-TORREY SETTINGS
 
@@ -81,24 +86,38 @@ GeomArgs = struct( 'iBVF', iBVF, 'aBVF', aBVF, ...
     'Rminor_mu', Rminor_mu, 'Rminor_sig', Rminor_sig, ...
     'VRSRelativeRad', VRSRelativeRad, ...
     'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', true, ...
-    'ImproveMajorBVF', false, 'ImproveMinorBVF', true, ... % for speed
+    'ImproveMajorBVF', true, 'ImproveMinorBVF', true, ... % for speed
     'PopulateIdx', true, 'seed', seed );
 
 GeomNameValueArgs = struct2arglist(GeomArgs);
 Geom = Geometry.CylindricalVesselFilledVoxel( GeomNameValueArgs{:} );
 
+GeomArgsREP = GeomArgs;
+GeomArgsREP.VoxelSize = VoxelSizeREP;
+GeomArgsREP.GridSize = GridSizeREP;
+GeomNameValueArgsREP = struct2arglist(GeomArgsREP);
+GeomREP = Geometry.CylindricalVesselFilledVoxel( GeomNameValueArgsREP{:} );
+
+if mod(GeomREP.GridSize(3), 4) == 0
+    GeomMID = Geom;
+    GeomMID = SetCylinders(GeomMID, GeomREP);
+end
 
 %% Parameter Sweep
 
+% Geom_sweep = Geom;
+Geom_sweep = GeomREP;
+% Geom_sweep = GeomMID;
+
 CA_sweep = [0.0, CA];
-alpha_sweep = [0.0];
-D_Tissue_sweep = [1000, 1500, 2000];
+alpha_sweep = [0.0];%, 90.0];
+D_Tissue_sweep = [1000];%, 1500, 2000];
 [CA_sweep, alpha_sweep, D_Tissue_sweep] = ndgrid(CA_sweep, alpha_sweep, D_Tissue_sweep);
 params_sweep = [CA_sweep(:), alpha_sweep(:), D_Tissue_sweep(:)];
 
 blank_u = struct('u', [], 'G', [], 'D', [], 'M', [], 'alpha', [], 'CA', [], 'D_Tissue', [], ...
     'MaskType', MaskType, 'VRSRelativeRad', VRSRelativeRad);
-u0 = 1i * ones(Geom.GridSize);
+u0 = 1i * ones(Geom_sweep.GridSize);
 u = repmat(blank_u, size(params_sweep, 1), 1);
 
 for ii = 1:size(params_sweep, 1)
@@ -113,13 +132,13 @@ for ii = 1:size(params_sweep, 1)
     
     % Stepper
     dt = TE; % Propagation time
-    GammaSettings = Geometry.ComplexDecaySettings('Angle_Deg', u(ii).alpha, 'B0', B0, 'CA', u(ii).CA);
-    G = CalculateComplexDecay( GammaSettings, Geom );
-    D = CalculateDiffusionMap( Geom, u(ii).D_Tissue, D_Blood, D_VRS );
-    M = GetMask(Geom, MaskType);
+    GammaSettings = Geometry.ComplexDecaySettings('Angle_Deg', u(ii).alpha, 'B0', B0, 'CA', u(ii).CA, 'isKspaceDipoleKernel', false);
+    G = CalculateComplexDecay( GammaSettings, Geom_sweep );
+    D = CalculateDiffusionMap( Geom_sweep, u(ii).D_Tissue, D_Blood, D_VRS );
+    M = GetMask(Geom_sweep, MaskType);
     isGamma = true; % Input is Gamma = R2 + i*dw itself, not the operator diagonal
-    A = BlochTorreyOp(G, D, Geom.GridSize, Geom.VoxelSize, ~isGamma, M);
-    V = ExpmvStepper(dt, A, Geom.GridSize, Geom.VoxelSize, ...
+    A = BlochTorreyOp(G, D, Geom_sweep.GridSize, Geom_sweep.VoxelSize, ~isGamma, M);
+    V = ExpmvStepper(dt, A, Geom_sweep.GridSize, Geom_sweep.VoxelSize, ...
         'prec', StepperArgs.prec, ...
         'full_term', StepperArgs.full_term, ...
         'prnt', StepperArgs.prnt, ...
@@ -130,13 +149,13 @@ for ii = 1:size(params_sweep, 1)
     u(ii).G = G;
     u(ii).D = D;
     u(ii).M = M;
-    phase = unwrapLap(angle(u(ii).u));
     
     title_str = sprintf('$\\alpha = %.1f$, $CA = %.4f$, $D_{Tissue} = %.0f$', u(ii).alpha, u(ii).CA, u(ii).D_Tissue);
-    %     figure, imagesc(imag(u(ii).G(:,:,end/2))), axis image, title(['Gamma: ', title_str])
-    %     figure, imagesc(u(ii).M(:,:,end/2)), axis image, title(['Mask: ', title_str])
-    figure, imagesc(abs(u(ii).u(:,:,end/2)), [0.0,1.0]), axis image, title(['$|u|$: ', title_str])
-    %     figure, imagesc(phase(:,:,end/2)), axis image, title(['$\phi$: ', title_str])
+    figure, imagesc(imag(u(ii).G(:,:,end/2))), axis image, title(['$\omega$: ', title_str]), colorbar
+    %     figure, imagesc(u(ii).M(:,:,end/2)), axis image, title(['Mask: ', title_str]), colorbar
+    figure, imagesc(abs(u(ii).u(:,:,end/2)), [0.0,1.0]), axis image, title(['$|u|$: ', title_str]), colorbar
+    %     phase = unwrapLap(angle(u(ii).u));
+    %     figure, imagesc(phase(:,:,end/2)), axis image, title(['$\phi$: ', title_str]), colorbar
     drawnow;
     
     toc;
@@ -149,9 +168,52 @@ for ii = 2:2:length(u)
     fprintf('Delta R2*: %.4f\n', dR2);
 end
 
+% u_Geom = u;
+% u_GeomREP = u;
+% u_GeomMID = u;
+u_GeomREP_Image = u;
+% u_GeomMID_Image = u;
+
+%% Plot side-by-side slices
+% u1 = u_Geom;
+% u1 = u_GeomMID;
+u1 = u_GeomMID_Image;
+% u2 = u_GeomREP;
+% u2 = u_GeomMID_Image;
+u2 = u_GeomREP_Image;
+
+Geom1 = GeomMID;
+Geom2 = GeomREP;
+
+for ii = 1:2
+    for num_slices = 1:2
+        title_str = sprintf('$\\alpha = %.1f$, $CA = %.4f$, $D_{Tissue} = %.0f$', u(ii).alpha, u(ii).CA, u(ii).D_Tissue);
+        idx1 = randi(Geom1.GridSize(3));
+        if isequal(size(Geom1.GridSize), size(Geom2.GridSize))
+            %idx2 = randi(Geom2.GridSize(3));
+            idx2 = idx1;
+        else
+            idx2 = round(Geom2.GridSize(3)/4) + idx1;
+        end
+        
+        Wslice1 = imag(u1(ii).G(:,:,idx1));
+        Wslice2 = imag(u2(ii).G(:,:,idx2));
+        SlabSize = max(1, ceil(Geom1.GridSize(2)/15));
+        SlabMag = max(maximum(vec(Wslice1)), maximum(vec(Wslice2)));
+        Wslice = [Wslice1, SlabMag * ones(size(Wslice1, 1), SlabSize), Wslice2];
+        figure, imagesc(Wslice, SlabMag*[-1,1]), axis image, title(['$\omega$: ', title_str]), colorbar
+        
+        Uslice1 = abs(u1(ii).u(:,:,idx1));
+        Uslice2 = abs(u2(ii).u(:,:,idx2));
+        SlabSize = max(1, ceil(Geom1.GridSize(2)/15));
+        SlabMag = 1; % Magnitude is normalized
+        Uslice = [Uslice1, SlabMag * ones(size(Wslice1, 1), SlabSize), Uslice2];
+        figure, imagesc(Uslice, SlabMag*[0,1]), axis image, title(['$|u|$: ', title_str]), colorbar
+    end
+end
+
 %% Voxel Stacking
 
-REP = [1,1,2];
 U0 = repmat(u0, REP);
 U = repmat(blank_u, size(params_sweep, 1), 1);
 for ii = 1:length(u)
