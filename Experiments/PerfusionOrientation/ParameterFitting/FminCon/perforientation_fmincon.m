@@ -27,8 +27,10 @@ end
 % alpha_range = 7.5:20.0:87.5;
 % alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
 % alpha_range = [37.5, 52.5, 72.5, 17.5, 87.5];
-alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
+alpha_range = [2.5, 12.5, 22.5, 32.5, 47.5, 57.5, 67.5, 77.5, 87.5];
+% alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 
+%%
 % =============================== DATA ================================== %
 
 % % ---- GRE w/ Diffusion Initial Guess (large minor) ---- %
@@ -50,9 +52,11 @@ x0 = [CA0, iBVF0, aBVF0];
 
 type = 'GRE';
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize, BinCounts] = get_GRE_data(alpha_range);
+TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [500,500,500];
 % TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
-TE = 40e-3; VoxelSize = [1750,1750,4000]; VoxelCenter = [0,0,0]; GridSize = [350,350,800];
-Weights = BinCounts / sum(BinCounts(:));
+% TE = 40e-3; VoxelSize = [1750,1750,4000]; VoxelCenter = [0,0,0]; GridSize = [350,350,800];
+Weights = sqrt(BinCounts); % BinCounts;
+Weights = Weights / sum(vec(Weights));
 
 % % ---- SE w/ Diffusion Initial Guess ---- %
 % lb  = [ 1.0000,          0.5000/100,         0.5000/100 ];
@@ -68,7 +72,7 @@ Weights = BinCounts / sum(BinCounts(:));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 4;
+Nmajor = 1;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
