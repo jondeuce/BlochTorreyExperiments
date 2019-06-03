@@ -58,6 +58,9 @@ addParameter(p,'aBVF',  []);
 
 addParameter(p,'Rmajor',[]);
 addParameter(p,'VRSRelativeRad',[]);
+
+addParameter(p,'MediumVessels', []);
+addParameter(p,'MediumVesselRadiusThresh', 0.0);
         
 %-------------------------------------------------------------------------%
 % Optional parameters
@@ -87,8 +90,11 @@ end
 function G = setParsedArgs(G,p)
 
 NamedArgs = {'VoxelSize','VoxelCenter','GridSize','Nmajor','MajorAngle',...
-    'NumMajorArteries','MinorArterialFrac','MinorDilation','Rmajor',...
-    'Rminor_mu','Rminor_sig','VRSRelativeRad','Verbose','seed'};
+    'NumMajorArteries','MinorArterialFrac',...
+    'MediumVessels','MediumVesselRadiusThresh',...
+    'Rmajor','Rminor_mu','Rminor_sig',...
+    'VRSRelativeRad','MinorDilation',...
+    'Verbose','seed'};
 TargetArgs = {'BVF','iRBVF','aRBVF','iBVF','aBVF'};
 
 for f = NamedArgs; G.(f{1}) = p.Results.(f{1}); end

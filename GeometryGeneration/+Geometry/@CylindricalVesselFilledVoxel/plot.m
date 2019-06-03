@@ -51,7 +51,8 @@ if plotmajor
     
     if G.VRSRelativeRad ~= 1
         col = 'g';
-        fig = plot_cylinders_in_box( G.p0, G.vz0, G.VRSRelativeRad .* G.r0, ...
+        [p, r, ~, ~, vz] = GetVRSCylinders(G);
+        fig = plot_cylinders_in_box( p, vz, r, ...
             G.VoxelSize, G.VoxelCenter, titlestr, fig, col, alpha, false );
     end
 end

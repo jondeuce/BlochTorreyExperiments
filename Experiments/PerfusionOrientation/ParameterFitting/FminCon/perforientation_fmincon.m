@@ -72,11 +72,12 @@ Weights = Weights / sum(vec(Weights));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 9;
+Nmajor = 4;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
 % Rminor_sig = 2.1;
+Rmedium_thresh = 0.0;
 
 % ---- With Diffusion ---- %
 % D_Tissue = 2000; %[um^2/s]
@@ -139,6 +140,7 @@ GeomArgs = struct( ...% 'iBVF', iBVF, 'aBVF', aBVF, ... % these are set below
     'NumMajorArteries', NumMajorArteries, 'MinorArterialFrac', MinorArterialFrac, ...
     'Rminor_mu', Rminor_mu, 'Rminor_sig', Rminor_sig, ...
     'VRSRelativeRad', VRSRelativeRad, ...
+    'MediumVesselRadiusThresh', Rmedium_thresh, 'AllowInitialMinorPruning', true, ...
     'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', true, ...
     'ImproveMajorBVF', true, 'ImproveMinorBVF', true, ...
     'PopulateIdx', true, 'seed', seed );

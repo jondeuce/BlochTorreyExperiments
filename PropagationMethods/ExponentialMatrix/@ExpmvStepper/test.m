@@ -9,9 +9,9 @@ alpha_range = 2.5:5.0:87.5;
 type = 'GRE';
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize, BinCounts] = get_GRE_data(alpha_range);
 
-% TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [150,150,150];
+TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [150,150,150];
 % TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [250,250,250];
-TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
+% TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
 % TE = 40e-3; VoxelSize = [1750,1750,4000]; VoxelCenter = [0,0,0]; GridSize = [350,350,800];
 Weights = BinCounts / sum(BinCounts(:));
 
@@ -19,17 +19,19 @@ REP = [1,1,2];
 VoxelSizeREP = VoxelSize .* REP;
 GridSizeREP = GridSize .* REP;
 
+
 %% BLOCH-TORREY SETTINGS
 
 CA   = 3.8418;
 iBVF = 1.4920/100;
 aBVF = 0.9306/100;
 
-Nmajor = 1;
-Rminor_mu = 7.0;
-Rminor_sig = 0.0;
-% Rminor_mu = 13.7;
-% Rminor_sig = 2.1;
+Nmajor = 4;
+% Rminor_mu = 7.0;
+% Rminor_sig = 0.0;
+Rminor_mu = 13.7;
+Rminor_sig = 2.1;
+Rmedium_thresh = 13.7;
 
 % ---- With Diffusion ---- %
 % D_Tissue = 2000; %[um^2/s]
@@ -64,8 +66,8 @@ rng('default'); seed = rng; % for consistent geometries between sims.
 Navgs = 1; % for now, if geom seed is 'default', there is no point doing > 1 averages
 RotateGeom = false; % geometry is fixed; dipole rotates
 MajorAngle = 0.0; % major vessel angle w.r.t z-axis [degrees]
-NumMajorArteries = 0;
-MinorArterialFrac = 0.0;
+NumMajorArteries = 1;
+MinorArterialFrac = 1/3;
 
 % Radius of Virchow-Robin space relative to major vessel radius [unitless];
 % VRS space volume is approx (relrad^2-1)*BVF, so e.g. sqrt(2X radius) => 1X volume
@@ -76,7 +78,7 @@ MinorArterialFrac = 0.0;
 VRSRelativeRad = 2; % 2X => 3X volume
 
 
-%% GEOMETRY
+%% Geometry
 
 % Fixed Geometry Arguments
 GeomArgs = struct( 'iBVF', iBVF, 'aBVF', aBVF, ...
@@ -85,12 +87,16 @@ GeomArgs = struct( 'iBVF', iBVF, 'aBVF', aBVF, ...
     'NumMajorArteries', NumMajorArteries, 'MinorArterialFrac', MinorArterialFrac, ...
     'Rminor_mu', Rminor_mu, 'Rminor_sig', Rminor_sig, ...
     'VRSRelativeRad', VRSRelativeRad, ...
+    'MediumVesselRadiusThresh', Rmedium_thresh, 'AllowInitialMinorPruning', true, ...
     'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', true, ...
     'ImproveMajorBVF', true, 'ImproveMinorBVF', true, ... % for speed
     'PopulateIdx', true, 'seed', seed );
 
 GeomNameValueArgs = struct2arglist(GeomArgs);
 Geom = Geometry.CylindricalVesselFilledVoxel( GeomNameValueArgs{:} );
+
+
+%% "Repeated" geometries
 
 GeomArgsREP = GeomArgs;
 GeomArgsREP.VoxelSize = VoxelSizeREP;
@@ -103,10 +109,11 @@ if mod(GeomREP.GridSize(3), 4) == 0
     GeomMID = SetCylinders(GeomMID, GeomREP);
 end
 
+
 %% Parameter Sweep
 
-% Geom_sweep = Geom;
-Geom_sweep = GeomREP;
+Geom_sweep = Geom;
+% Geom_sweep = GeomREP;
 % Geom_sweep = GeomMID;
 
 CA_sweep = [0.0, CA];
@@ -152,10 +159,10 @@ for ii = 1:size(params_sweep, 1)
     
     title_str = sprintf('$\\alpha = %.1f$, $CA = %.4f$, $D_{Tissue} = %.0f$', u(ii).alpha, u(ii).CA, u(ii).D_Tissue);
     figure, imagesc(imag(u(ii).G(:,:,end/2))), axis image, title(['$\omega$: ', title_str]), colorbar
-    %     figure, imagesc(u(ii).M(:,:,end/2)), axis image, title(['Mask: ', title_str]), colorbar
+    figure, imagesc(u(ii).M(:,:,end/2)), axis image, title(['Mask: ', title_str]), colorbar
     figure, imagesc(abs(u(ii).u(:,:,end/2)), [0.0,1.0]), axis image, title(['$|u|$: ', title_str]), colorbar
-    %     phase = unwrapLap(angle(u(ii).u));
-    %     figure, imagesc(phase(:,:,end/2)), axis image, title(['$\phi$: ', title_str]), colorbar
+    phase = unwrapLap(angle(u(ii).u));
+    figure, imagesc(phase(:,:,end/2)), axis image, title(['$\phi$: ', title_str]), colorbar
     drawnow;
     
     toc;
@@ -168,11 +175,12 @@ for ii = 2:2:length(u)
     fprintf('Delta R2*: %.4f\n', dR2);
 end
 
-% u_Geom = u;
+u_Geom = u;
 % u_GeomREP = u;
 % u_GeomMID = u;
-u_GeomREP_Image = u;
+% u_GeomREP_Image = u;
 % u_GeomMID_Image = u;
+
 
 %% Plot side-by-side slices
 % u1 = u_Geom;
@@ -211,6 +219,7 @@ for ii = 1:2
         figure, imagesc(Uslice, SlabMag*[0,1]), axis image, title(['$|u|$: ', title_str]), colorbar
     end
 end
+
 
 %% Voxel Stacking
 
