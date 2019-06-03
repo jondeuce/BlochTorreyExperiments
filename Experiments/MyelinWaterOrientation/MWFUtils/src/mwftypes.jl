@@ -46,6 +46,14 @@ get_tspan(opts::AbstractMWIFittingModel) = opts.TE .* (0, opts.nTE)
 get_tpoints(opts::AbstractMWIFittingModel) = opts.TE .* (0:opts.nTE)
 get_T2vals(opts::NNLSRegression) = exp10.(range(log10(opts.T2Range[1]), stop=log10(opts.T2Range[2]), length=opts.nT2))
 
+# Construction to/from dictionary
+Base.Dict(m::AbstractMWIFittingModel) = Dict{Symbol,Any}(f => getfield(m,f) for f in fieldnames(typeof(m)))
+TwoPoolMagnToMagn(d::Dict{Symbol,Any})   = TwoPoolMagnToMagn(;d...)
+ThreePoolMagnToMagn(d::Dict{Symbol,Any}) = ThreePoolMagnToMagn(;d...)
+ThreePoolCplxToMagn(d::Dict{Symbol,Any}) = ThreePoolCplxToMagn(;d...)
+ThreePoolCplxToCplx(d::Dict{Symbol,Any}) = ThreePoolCplxToCplx(;d...)
+NNLSRegression(d::Dict{Symbol,Any})      = NNLSRegression(;d...)
+
 # Blank dictionary for storing results
 blank_results_dict() = Dict{Symbol,Any}(
         :geom             => [],

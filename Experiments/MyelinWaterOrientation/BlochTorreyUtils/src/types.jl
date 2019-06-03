@@ -22,12 +22,14 @@ const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{
     R2_lp::T          =    T(inv(63e-3))    # #TODO (play with these?) 1st attempt was 63E-3. 2nd attempt 76 ms
     R2_Tissue::T      =    T(inv(63e-3))    # #TODO (was 14.5Hz; changed to match R2_lp) Relaxation rate of tissue [s^-1]
     R2_water::T       =    T(inv(2.2))      # Relaxation rate of pure water
+    D_Water::T        =    T(3037.0)        # Diffusion coefficient in water [um^2/s]
+    D_Blood::T        =    T(3037.0)        # Diffusion coefficient in blood [um^2/s]
     D_Tissue::T       =    T(1500.0)        # #TODO (reference?) Diffusion coefficient in tissue [um^2/s]
     D_Sheath::T       =    T(250.0)         # #TODO (reference?) Diffusion coefficient in myelin sheath [um^2/s]
     D_Axon::T         =    T(2000.0)        # #TODO (reference?) Diffusion coefficient in axon interior [um^2/s]
-    D_Blood::T        =    T(3037.0)        # Diffusion coefficient in blood [um^2/s]
-    D_Water::T        =    T(3037.0)        # Diffusion coefficient in water [um^2/s]
     K_perm            =    T(1.0e-3)        # #TODO (reference?) Interface permeability constant [um/s]
+    K_Axon_Sheath     =    T(K_perm)        # Axon-Myelin interface permeability [um/s]
+    K_Tissue_Sheath   =    T(K_perm)        # Tissue-Myelin interface permeability [um/s]
     R_mu::T           =    T(0.46)          # Axon mean radius [um] ; this is taken to be outer radius.
     R_shape::T        =    T(5.7)           # Axon shape parameter for Gamma distribution (Xu et al. 2017)
     R_scale::T        =    T(0.46/5.7)      # Axon scale parameter for Gamma distribution (Xu et al. 2017)
@@ -48,6 +50,25 @@ const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{
     ChiFeUnit::T      =    T(1.4e-9)        # Susceptibility of iron per ppm/ (ug/g) weight fraction of iron.
     ChiFeFull::T      =    T(520.0e-6)      # Susceptibility of iron for ferritin particle FULLY loaded with 4500 iron atoms. (use volume of FULL spheres) (from Contributions to magnetic susceptibility)
     Rho_Iron::T       =    T(7.874)         # Iron density [g/cm^3]
+end
+
+Base.Dict(p::BlochTorreyParameters{T}) where {T} = Dict{Symbol,T}(f => getfield(p,f) for f in fieldnames(typeof(p)))
+function BlochTorreyParameters(d::Dict{Symbol,T}) where {T}
+    d_ = deepcopy(d)
+    f = fieldnames(BlochTorreyParameters)
+    for (k, v) ∈ zip(collect(keys(d_)), collect(values(d_)))
+        # Deprecations
+        # if k == :K_perm
+        #     delete!(d_, k)
+        #     d_[:K_Axon_Sheath] = v
+        #     d_[:K_Tissue_Sheath] = v
+        # end
+        if k ∉ f
+            delete!(d_, k)
+            @warn "Key $k not found a field of BlochTorreyParameters"
+        end
+    end
+    return BlochTorreyParameters{T}(;d_...)
 end
 
 # ---------------------------------------------------------------------------- #
