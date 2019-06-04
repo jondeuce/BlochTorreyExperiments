@@ -3,7 +3,7 @@ using StatsPlots, BSON, Dates
 pyplot(size=(1200,900), leg = false, grid = false, labels = nothing)
 
 # Initialize project packages
-include(joinpath(@__DIR__, "init.jl"))
+include(joinpath(@__DIR__, "../init.jl"))
 make_reproduce(
     """
     include("BlochTorreyExperiments/MyelinWaterTools/scripts/GenerateGrids-run.jl")
