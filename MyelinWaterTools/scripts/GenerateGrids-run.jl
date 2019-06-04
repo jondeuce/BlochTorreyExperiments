@@ -6,7 +6,7 @@ pyplot(size=(1200,900), leg = false, grid = false, labels = nothing)
 include(joinpath(@__DIR__, "init.jl"))
 make_reproduce(
     """
-    include("BlochTorreyExperiments/Experiments/MyelinWaterOrientation/GenerateGrids-run.jl")
+    include("BlochTorreyExperiments/MyelinWaterTools/scripts/GenerateGrids-run.jl")
     main()
     """
 )
@@ -14,7 +14,7 @@ make_reproduce(
 import DrWatson
 using DrWatson: @dict, @ntuple
 DrWatson.default_prefix(c) = MWFUtils.getnow()
-gitdir() = realpath(joinpath(DrWatson.projectdir(), "../..")) * "/"
+gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
 
 function runcreategeometry(params)
     @unpack numfibres, gratio, density = params

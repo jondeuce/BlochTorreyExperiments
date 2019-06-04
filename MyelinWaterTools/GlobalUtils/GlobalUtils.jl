@@ -7,7 +7,7 @@ function make_reproduce(
         appending_lines = "";
         force = false
     )
-    repo = LibGit2.GitRepo(joinpath(@__DIR__, "../../.."))
+    repo = LibGit2.GitRepo(joinpath(@__DIR__, "../.."))
     hash = LibGit2.GitHash(repo, "HEAD")
 
     exists = isfile("reproduce.jl")
@@ -26,7 +26,7 @@ function make_reproduce(
                         "https://github.com/jondeuce/BlochTorreyExperiments/",
                         "BlochTorreyExperiments")
                     LibGit2.checkout!(repo, "$(string(hash))")
-                    Pkg.activate("BlochTorreyExperiments/Experiments/MyelinWaterOrientation/")
+                    Pkg.activate("BlochTorreyExperiments/MyelinWaterTools/")
                     Pkg.instantiate()
                 end
                 """

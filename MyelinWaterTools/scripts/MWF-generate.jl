@@ -8,14 +8,14 @@ mxcall(:cd, 0, pwd()) # change MATLAB path to current path for saving outputs
 mxcall(:figure, 0) # bring up MATLAB figure gui
 make_reproduce( # Creating backup file
     """
-    include("BlochTorreyExperiments/Experiments/MyelinWaterOrientation/MWF-run.jl")
+    include("BlochTorreyExperiments/MyelinWaterTools/scripts/MWF-generate.jl")
     """
 )
 
 import DrWatson
 using DrWatson: @dict, @ntuple
 DrWatson.default_prefix(c) = MWFUtils.getnow()
-gitdir() = realpath(joinpath(DrWatson.projectdir(), "../..")) * "/"
+gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
 
 ####
 #### Parameters to sweep over
