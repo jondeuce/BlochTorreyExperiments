@@ -13,7 +13,7 @@ make_reproduce(
 
 import DrWatson
 using DrWatson: @dict, @ntuple
-DrWatson.default_prefix(c) = MWFUtils.getnow()
+DrWatson.default_prefix(c) = MWFUtils.getnow() #TODO
 gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
 
 function runcreategeometry(params)

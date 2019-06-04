@@ -25,7 +25,7 @@ export createdomains
 export calcomegas, calcomega
 export calcsignals, calcsignal
 export solveblochtorrey, default_algorithm
-export plotcircles, plotgrids, plotSEcorr, plotbiexp, plotMWF
+export plotcircles, plotgrids, plotSEcorr, plotbiexp, plotMWFvsAngle, plotMWFvsMethod
 export mxplotomega, mxplotmagnitude, mxplotphase
 export mxsavefig, getnow
 

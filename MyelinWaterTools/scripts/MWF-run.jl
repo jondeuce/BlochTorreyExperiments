@@ -14,7 +14,7 @@ make_reproduce( # Creating backup file
 
 import DrWatson
 using DrWatson: @dict, @ntuple
-DrWatson.default_prefix(c) = MWFUtils.getnow()
+DrWatson.default_prefix(c) = MWFUtils.getnow() #TODO
 gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
 
 ####
@@ -282,7 +282,7 @@ results = main();
 ####
 
 try
-    plotMWF(results; disp = false, fname = "mwfplots/" * MWFUtils.getnow() * ".mwf")
+    plotMWFvsAngle(results; disp = false, fname = "mwfplots/" * MWFUtils.getnow() * ".mwf")
 catch e
     @warn "Error plotting MWF."
     @warn sprint(showerror, e, catch_backtrace())

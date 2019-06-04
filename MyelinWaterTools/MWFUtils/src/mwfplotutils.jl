@@ -146,7 +146,7 @@ function plotSEcorr(
     return MWImaps, MWIdist, MWIpart
 end
 
-function plotMWF(params, mwf, mwftrue = nothing;
+function plotMWFvsAngle(params, mwf, mwftrue = nothing;
         plottypes = [:mwf, :mwferror],
         mwfmethod = nothing,
         fname = nothing,
@@ -204,12 +204,14 @@ function plotMWF(params, mwf, mwftrue = nothing;
     return figs
 end
 
-function plotMWF(results::Dict;
+function plotMWFvsAngle(results::Dict;
         plottypes = [:mwf, :mwferror],
         fname = nothing,
         disp = (fname == nothing)
     )
-    # mwfvalues is an array of Dict{Symbol,T}'s, and params is an array of BlochTorreyParameters{T}'s
+    # results[:mwfvalues] is an array of Dict{Symbol,T}'s, and results[:params]
+    # is an array of BlochTorreyParameters{T}'s
+    #   NOTE: assumes all results correspond to same geometry, i.e. same MWF
     @unpack params, mwfvalues = results
     (isempty(params) || isempty(mwfvalues)) && return nothing
 
@@ -218,9 +220,48 @@ function plotMWF(results::Dict;
     for key in keys(mwfvalues[1])
         key == :exact && continue # skip plotting horizontal lines of exact value
         mwf = [d[key] for d in mwfvalues]
-        plotMWF(params, mwf, mwftrue;
+        plotMWFvsAngle(params, mwf, mwftrue;
             plottypes = plottypes, mwfmethod = key, disp = disp, fname = fname)
     end
+    return nothing
+end
+
+function plotMWFvsMethod(results::Dict;
+        fname = nothing,
+        disp = (fname == nothing)
+    )
+    # results[:mwfvalues] is an array of Dict{Symbol,T}'s, and results[:params]
+    # is an array of BlochTorreyParameters{T}'s
+    @unpack params, mwfvalues = results
+    (isempty(params) || isempty(mwfvalues)) && return nothing
+    params = convert(Vector{typeof(params[1])}, params) # force proper typing
+    mwfvalues = convert(Vector{typeof(mwfvalues[1])}, mwfvalues)
+
+    allmethods = reduce(union, keys(m) for m in mwfvalues)
+    data = Dict(k => [get(m, k, nothing) for m in mwfvalues] for k in allmethods)
+    methods = filter(m -> m !== :exact, allmethods)
+
+    nmethods = length(keys(data)) - 1 # one is :exact
+    markers = [:circle]
+    # :diamond, :circle, :star5, :dtriangle, :pentagon, :utriangle, :star4,
+    # :octagon, :heptagon, :hexagon, :rtriangle, :ltriangle,
+    # :star6, :star7, :star8,
+    # :none, :auto, :rect, :cross, :xcross, :vline, :hline, :+, :x,
+    props = Dict{Symbol,Any}(
+        :seriestype => :scatter, :ratio => :equal,
+        :markersize => 5, :marker => markers[mod1.((1:nmethods)', length(markers))],
+        :grid => true, :minorgrid => true, :xrotation => -60,
+        :label => reduce(hcat, string(m) for m in methods), :legend => :bottomright,
+        :xlabel => "Exact MWF [%]", :ylabel => "Computed MWF [%]", :title => "Computed vs. Exact MWF"
+    )
+    xdata = 100 .* data[:exact]
+    ydata = 100 .* reduce(hcat, data[m] for m in methods)
+    fig = plot(xdata, ydata; props...)
+    plot!(fig, [extrema(xdata)...], [extrema(xdata)...]; lw = 4, ls = :dash, lc = :red, lab = "")
+
+    !(fname == nothing) && default_savefigs(fig, fname)
+    disp && display(fig)
+
     return nothing
 end
 
