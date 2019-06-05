@@ -1,7 +1,6 @@
 # NOTE: must load pyplot backend BEFORE loading MATLAB in init.jl
 using StatsPlots, BSON, Dates
 pyplot(size=(1200,900))
-# gr(size=(1200,900)) #TODO
 
 # Initialize project packages
 include(joinpath(@__DIR__, "../init.jl")) # call "init.jl", located in the same directory as this file
@@ -104,7 +103,7 @@ const default_nnlsparams_dict = Dict(
     :PlotDist    => false);          # Plot resulting distribution in MATLAB
 
 const default_mwfmodels = [
-    #NNLSRegression(;default_nnlsparams_dict...),
+    # NNLSRegression(;default_nnlsparams_dict...),
     TwoPoolMagnToMagn(TE = default_TE, nTE = default_nTE, fitmethod = :local),
     ThreePoolMagnToMagn(TE = default_TE, nTE = default_nTE, fitmethod = :local),
     ThreePoolCplxToMagn(TE = default_TE, nTE = default_nTE, fitmethod = :local),
@@ -274,6 +273,9 @@ function runsimulation!(results, params, geom)
                 titlestr = "Signal Magnitude (" * titleparamstr * ")",
                 opts = mwfmodels[1], fname = "sig/" * fname * ".signalmag")
         end
+        plotsignal(tpoints, signals;
+            titlestr = "Complex Signal (" * titleparamstr * ")",
+            opts = mwfmodels[1], fname = "sig/" * fname * ".signalcplx")
     catch e
         @warn "Error plotting biexponential"
         @warn sprint(showerror, e, catch_backtrace())

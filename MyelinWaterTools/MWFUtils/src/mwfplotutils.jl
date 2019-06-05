@@ -68,37 +68,57 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
     total_area = area(bdry)
     ext_area = total_area - myelin_area
 
-    # In the high diffusion & highly permeable membrane limit, spins are equally
+    # In the high diffusion & high permeability limit, spins are equally
     # likely to be anywhere on the grid, hence experience a decay rate R2_mono
     # on the average, where R2_mono is the area averaged R2 of each compartment
     R2_mono = (btparams.R2_sp * myelin_area + btparams.R2_lp * ext_area) / total_area
     y_monoexp = @. total_area * exp(-ts * R2_mono)
 
-    # In the low diffusion OR impermeable membrane limit, spins are confined to
+    # In the high diffusion & low permeability limit, spins are confined to
     # their separate regions and experience their compartment R2 only
     y_biexp = @. ext_area * exp(-ts * btparams.R2_lp) + myelin_area * exp(-ts * btparams.R2_sp)
 
-    if AVOID_MAT_PLOTS
-        props = Dict{Symbol,Any}(
-            :linewidth => 5, :marker => :circle, :markersize => 10,
-            :grid => true, :minorgrid => true, :legend => :topright,
-            :xticks => 1000 .* ts, :xrotation => -60, :xlims => 1000 .* tspan,
-            :labels => ["Simulated" "Bi-Exponential"],
-            :ylabel => "S(t) Magnitude", :xlabel => "Time [ms]",
-            :title => titlestr)
-        fig = plot(1000 .* ts, [norm.(signals) y_biexp]; props...)        
-        !(fname == nothing) && default_savefigs(fig, fname)
-        disp && display(fig)
-    else
-        mxcall(:figure, 0)
-        mxcall(:plot, 0, collect(1000.0.*ts), [norm.(signals) y_biexp])
-        mxcall(:legend, 0, "Simulated", "Bi-Exponential")
-        mxcall(:title, 0, titlestr)
-        mxcall(:xlabel, 0, "Time [ms]")
-        mxcall(:xlim, 0, 1000.0 .* [tspan...])
-        mxcall(:ylabel, 0, "S(t) Magnitude")
-        !(fname == nothing) && mxsavefig(fname)
-    end
+    props = Dict{Symbol,Any}(
+        :linewidth => 5, :marker => :circle, :markersize => 10,
+        :grid => true, :minorgrid => true, :legend => :topright,
+        :xticks => 1000 .* ts, :xrotation => -60, :xlims => 1000 .* tspan,
+        :labels => ["Simulated" "Bi-Exponential"],
+        :ylabel => "S(t) Magnitude", :xlabel => "Time [ms]",
+        :title => titlestr)
+    fig = plot(1000 .* ts, [norm.(signals) y_biexp]; props...)        
+    !(fname == nothing) && default_savefigs(fig, fname)
+    disp && display(fig)
+
+    return nothing
+end
+
+function plotsignal(tpoints, signals;
+        titlestr = "Complex Signal vs. Time",
+        fname = nothing,
+        disp = (fname == nothing)
+    )
+
+    props = Dict{Symbol,Any}(
+        :linewidth => 5, :marker => :circle, :markersize => 10,
+        :grid => true, :minorgrid => true, :legend => :topright,
+        :xticks => 1000 .* tpoints, :xrotation => -60, :xlims => 1000 .* extrema(tpoints),
+        :formatter => x -> string(round(x; sigdigits = 3)),
+        :labels => "Magnitude", :ylabel => "S(t) Magnitude", :xlabel => "Time [ms]",
+        :title => titlestr)
+    mag_fig = plot(1000 .* tpoints, norm.(signals); props...)
+
+    props = Dict{Symbol,Any}(
+        :linetype => :steppost, :m => :square, :ms => 5, :lw => 1, :ls => :solid, :lc => :red, :ytick => -180:30:180,
+        :grid => true, :minorgrid => true, :legend => :right,
+        :xticks => 1000 .* tpoints, :xrotation => -60, :xlims => 1000 .* extrema(tpoints),
+        :formatter => x -> string(round(x; sigdigits = 3)),
+        :labels => "Phase", :ylabel => "S(t) Phase")
+    pha_fig = plot(1000 .* tpoints, rad2deg.(angle.(signals)); props...)
+
+    fig = plot(mag_fig, pha_fig; layout = (2,1))
+
+    !(fname == nothing) && default_savefigs(fig, fname)
+    disp && display(fig)
 
     return nothing
 end

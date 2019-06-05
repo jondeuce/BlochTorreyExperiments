@@ -5,33 +5,37 @@ using Revise
 include(joinpath(@__DIR__, "initpaths.jl"))
 
 #####
-##### Packages moved out of base for v0.7.0+
+##### Standard library packages
 #####
-@static if VERSION >= v"0.7.0"
-    using Statistics
-    using StatsBase
-    using Printf
-    using SparseArrays
-    using SuiteSparse
-    using LinearAlgebra
-    using Profile
-    using Random
-    # using Arpack
-    # using Distributed
-end
+using Statistics
+using StatsBase
+using Printf
+using SparseArrays
+using SuiteSparse
+using LinearAlgebra
+using Random
+using BenchmarkTools
+using Profile
+# using Arpack
+# using Distributed
+
+#####
+##### Debugging
+#####
+# using Debugger
+
+#####
+##### Plotting
+#####
+# NOTE: Must use pyplot() backend before using MATLAB (on some versions of Matlab);
+#       MATLAB is loaded within MWFUTils below, so it is best to invoke pyplot() now
+using StatsPlots; pyplot()
 
 #####
 ##### My files and modules to load
 #####
 using GlobalUtils
 using MWFUtils
-# using MATLABPlots #NOTE: must use pyplot() backend before using MATLABPlots
-
-#####
-##### Debugging packages
-#####
-using BenchmarkTools
-using Debugger
 
 #####
 ##### Misc. useful packages
