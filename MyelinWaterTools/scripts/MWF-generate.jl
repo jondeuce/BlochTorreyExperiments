@@ -5,7 +5,7 @@ pyplot(size=(1200,900))
 # Initialize project packages
 include(joinpath(@__DIR__, "../init.jl")) # call "init.jl", located in the same directory as this file
 mxcall(:cd, 0, pwd()) # change MATLAB path to current path for saving outputs
-mxcall(:figure, 0) # bring up MATLAB figure gui
+# mxcall(:figure, 0) # bring up MATLAB figure gui #TODO
 make_reproduce( # Creating backup file
     """
     include("BlochTorreyExperiments/MyelinWaterTools/scripts/MWF-generate.jl")
@@ -62,16 +62,20 @@ geomfiles = vcat(
     )
 )
 
-function copy_and_load_geomfiles(storedgeomfilenames)
+function copy_and_load_geomfiles(geomfilenames)
     mkpath("geom")
     geoms = []
-    for (i,geomfile) in enumerate(storedgeomfilenames)
+    storedgeomfilenames = filter(s->endswith(s, ".bson"), readdir("geom"))
+
+    for (i,geomfile) in enumerate(geomfilenames)
         # load geom file and store locally
         geom = loadgeometry(geomfile)
-        DrWatson.@tagsave(
-            "geom/" * MWFUtils.getnow() * ".geom$i.bson",
-            deepcopy(@dict(geomfile, geom)),
-            true, gitdir())
+        if basename(geomfile) ∉ storedgeomfilenames
+            DrWatson.@tagsave(
+                "geom/" * basename(geomfile),
+                deepcopy(@dict(geomfile, geom)),
+                true, gitdir())
+        end
         push!(geoms, geom)
     end
     return geoms
@@ -132,7 +136,7 @@ unitrangesampler(a,b) = rand(a:b)
 log10sampler(a,b) = 10^linearsampler(log10(a), log10(b))
 acossampler() = rad2deg(acos(rand()))
 
-const paramsampler_settings = Dict{Symbol,Any}(
+const sweepparamsampler_settings = Dict{Symbol,Any}(
     :theta => (sampler = :acossampler,      args = ()),
     :K     => (sampler = :log10sampler,     args = (lb = 1e-3, ub = 1.0)),#0.05)),
     :Dtiss => (sampler = :log10sampler,     args = (lb = 10.0, ub = 500.0)),#25.0)),
@@ -141,9 +145,9 @@ const paramsampler_settings = Dict{Symbol,Any}(
     :TE    => (sampler = :linearsampler,    args = (lb = 5e-3, ub = 15e-3)),
     :nTE   => (sampler = :unitrangesampler, args = (lb = 24,   ub = 48)),
 )
-paramsampler() = Dict{Symbol,Union{Float64,Int}}(
+sweepparamsampler() = Dict{Symbol,Union{Float64,Int}}(
     k => eval(Expr(:call, v.sampler, v.args...))
-    for (k,v) in paramsampler_settings)
+    for (k,v) in sweepparamsampler_settings)
 
 ####
 #### Save metadata
@@ -151,21 +155,19 @@ paramsampler() = Dict{Symbol,Union{Float64,Int}}(
 
 DrWatson.@tagsave(
     MWFUtils.getnow() * ".metadata.bson",
-    deepcopy(@dict(paramsampler_settings, geomfiles, default_mwfmodels_dict, default_btparams_dict, default_solverparams_dict, default_nnlsparams_dict, default_TE, default_nTE)),
+    deepcopy(@dict(sweepparamsampler_settings, geomfiles, default_mwfmodels_dict, default_btparams_dict, default_solverparams_dict, default_nnlsparams_dict, default_TE, default_nTE)),
     true, gitdir())
 
 ####
 #### Simulation functions
 ####
 
-function runsolve(btparams, params, geom)
+function runsolve(btparams, sweepparams, geom)
     # Unpack solver settings
     solverparams_dict = copy(default_solverparams_dict)
-    solverparams_dict[:TE] = params[:TE]
-    solverparams_dict[:nTE] = params[:nTE]
-    solverparams_dict[:tspan] = params[:TE] .* (0, params[:nTE])
-    
-    # @show solverparams_dict #TODO
+    solverparams_dict[:TE] = sweepparams[:TE]
+    solverparams_dict[:nTE] = sweepparams[:nTE]
+    solverparams_dict[:tspan] = sweepparams[:TE] .* (0, sweepparams[:nTE])
 
     # Unpack geometry, create myelin domains, and create omegafield
     exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
@@ -181,12 +183,10 @@ function runsolve(btparams, params, geom)
     return @ntuple(sols, myelinprob, myelinsubdomains, myelindomains)
 end
 
-function runsimulation!(results, params, geom)
-    @unpack theta, K, Dtiss, Dmye, Dax = params
+function runsimulation!(results, sweepparams, geom)
+    @unpack theta, K, Dtiss, Dmye, Dax = sweepparams
     density = intersect_area(geom.outercircles, geom.bdry) / area(geom.bdry)
     gratio = radius(geom.innercircles[1]) / radius(geom.outercircles[1])
-
-    # @show density, gratio #TODO
 
     btparams = BlochTorreyParameters(default_btparams;
         theta = deg2rad(theta),
@@ -197,20 +197,19 @@ function runsimulation!(results, params, geom)
         AxonPDensity = density,
         g_ratio = gratio,
     )
-    sols, myelinprob, myelinsubdomains, myelindomains = runsolve(btparams, params, geom)
-    tpoints = collect(params[:TE] .* (0:params[:nTE]))
+    sols, myelinprob, myelinsubdomains, myelindomains = runsolve(btparams, sweepparams, geom)
+    
+    @unpack TE, nTE = sweepparams
+    tpoints = collect(TE .* (0:nTE))
     signals = calcsignal(sols, tpoints, myelindomains)
 
-    # @show params #TODO
-    # @show sols[1].t ./ params[:TE] #TODO
-
     # Common filename without suffix
-    fname = DrWatson.savename(MWFUtils.getnow(), params)
-    titleparamstr = DrWatson.savename("", params; connector = ", ")
+    fname = DrWatson.savename(MWFUtils.getnow(), sweepparams)
+    titleparamstr = DrWatson.savename("", sweepparams; connector = ", ")
     
     # Compute MWF values
     mwfmodels = map(default_mwfmodels) do model
-        typeof(model)(model; TE = params[:TE], nTE = params[:nTE])
+        typeof(model)(model; TE = TE, nTE = nTE)
     end
     mwfvalues, _ = compareMWFmethods(sols, myelindomains,
         geom.outercircles, geom.innercircles, geom.bdry;
@@ -218,7 +217,7 @@ function runsimulation!(results, params, geom)
 
     # Update results struct and return
     push!(results[:btparams], btparams)
-    push!(results[:params], params)
+    push!(results[:sweepparams], sweepparams)
     push!(results[:tpoints], tpoints)
     push!(results[:signals], signals)
     push!(results[:mwfvalues], mwfvalues)
@@ -228,7 +227,7 @@ function runsimulation!(results, params, geom)
         btparams_dict = Dict(btparams)
         DrWatson.@tagsave(
             "measurables/" * fname * ".measurables.bson",
-            deepcopy(@dict(btparams_dict, params, tpoints, signals, mwfvalues)),
+            deepcopy(@dict(btparams_dict, sweepparams, tpoints, signals, mwfvalues)),
             true, gitdir())
     catch e
         @warn "Error saving measurables"
@@ -245,14 +244,14 @@ function runsimulation!(results, params, geom)
     #     @warn sprint(showerror, e, catch_backtrace())
     # end
 
-    try
-        mxplotmagnitude(sols, btparams, myelindomains, geom.bdry;
-            titlestr = "Field Magnitude (" * titleparamstr * ")",
-            fname = "mag/" * fname * ".magnitude")
-    catch e
-        @warn "Error plotting magnetization magnitude"
-        @warn sprint(showerror, e, catch_backtrace())
-    end
+    # try
+    #     mxplotmagnitude(sols, btparams, myelindomains, geom.bdry;
+    #         titlestr = "Field Magnitude (" * titleparamstr * ")",
+    #         fname = "mag/" * fname * ".magnitude")
+    # catch e
+    #     @warn "Error plotting magnetization magnitude"
+    #     @warn sprint(showerror, e, catch_backtrace())
+    # end
     
     try
         nnlsindex = findfirst(m->m isa NNLSRegression, mwfmodels)
@@ -275,9 +274,10 @@ function runsimulation!(results, params, geom)
         end
         plotsignal(tpoints, signals;
             titlestr = "Complex Signal (" * titleparamstr * ")",
+            apply_pi_correction = true,
             fname = "sig/" * fname * ".signalcplx")
     catch e
-        @warn "Error plotting biexponential"
+        @warn "Error plotting signal"
         @warn sprint(showerror, e, catch_backtrace())
     end
 
@@ -290,26 +290,26 @@ function main(;iters::Int = typemax(Int))
 
     # Initialize results
     results = Dict{Symbol,Any}(
-        :params    => [],
-        :btparams  => [],
-        :tpoints   => [],
-        :signals   => [],
-        :mwfvalues => [])
+        :sweepparams => [],
+        :btparams    => [],
+        :tpoints     => [],
+        :signals     => [],
+        :mwfvalues   => [])
 
-    all_params = (paramsampler() for _ in 1:iters)
-    for (i,params) in enumerate(all_params)
-        params = convert(Dict{Symbol,Any}, params)
-
-        # geomnumber = 1 #TODO
+    all_sweepparams = (sweepparamsampler() for _ in 1:iters)
+    for (i,sweepparams) in enumerate(all_sweepparams)
         geomnumber = rand(1:length(geometries))
         geom = geometries[geomnumber]
         try
-            @info "Running simulation $i/$(length(all_params)) at $(Dates.now()):"
-            @info "    Sweep parameters:  " * DrWatson.savename("", params; connector = ", ")
-            @info "    Geometry info:     Geom #$geomnumber - " * geomfiles[geomnumber]
+            println("\n")
+            @info "Running simulation $i/$(length(all_sweepparams)) at $(Dates.now()):"
+            @info "    Sweep parameters:    " * DrWatson.savename("", sweepparams; connector = ", ")
+            @info "    Geometry info:       Geom #$geomnumber - " * geomfiles[geomnumber]
+            @info "    Simulation timespan: (0.0 ms, $(round(1000 .* sweepparams[:nTE] .* sweepparams[:TE]; digits=3)) ms)"
+            println("\n")
             
             tic = Dates.now()
-            runsimulation!(results, params, geom)
+            runsimulation!(results, sweepparams, geom)
             toc = Dates.now()
             Δt = Dates.canonicalize(Dates.CompoundPeriod(toc - tic))
 
@@ -319,7 +319,7 @@ function main(;iters::Int = typemax(Int))
                 @warn "Parameter sweep interrupted by user. Breaking out of loop and returning current results..."
                 break
             else
-                @warn "Error running simulation $i/$(length(all_params))"
+                @warn "Error running simulation $i/$(length(all_sweepparams))"
                 @warn sprint(showerror, e, catch_backtrace())
             end
         end
@@ -333,23 +333,22 @@ end
 ####
 
 results = main(); #iters = 25 TODO
-@unpack sols, myelindomains, params, signals, mwfvalues, geom, myelinsubdomains, myelinprobs, omegas = results;
+@unpack sweepparams, btparams, tpoints, signals, mwfvalues = results;
+btparams_dict = Dict.(btparams)
 
 ####
 #### Plot and save derived quantities from results
 ####
 
 try
-    @unpack params = results
-    BSON.bson(MWFUtils.getnow() * ".allbtparams.bson", deepcopy(@dict(params)))
+    BSON.bson(MWFUtils.getnow() * ".allparams.bson", deepcopy(@dict(sweepparams, btparams_dict)))
 catch e
     @warn "Error saving all BlochTorreyParameter's"
     @warn sprint(showerror, e, catch_backtrace())
 end
 
 try
-    @unpack signals, mwfvalues = results
-    BSON.bson(MWFUtils.getnow() * ".measurables.bson", deepcopy(@dict(signals, mwfvalues)))
+    BSON.bson(MWFUtils.getnow() * ".allmeasurables.bson", deepcopy(@dict(tpoints, signals, mwfvalues)))
 catch e
     @warn "Error saving measurables"
     @warn sprint(showerror, e, catch_backtrace())

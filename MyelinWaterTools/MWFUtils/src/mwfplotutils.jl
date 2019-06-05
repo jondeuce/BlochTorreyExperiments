@@ -94,6 +94,7 @@ end
 
 function plotsignal(tpoints, signals;
         titlestr = "Complex Signal vs. Time",
+        apply_pi_correction = true,
         fname = nothing,
         disp = (fname == nothing)
     )
@@ -103,17 +104,26 @@ function plotsignal(tpoints, signals;
         :grid => true, :minorgrid => true, :legend => :topright,
         :xticks => 1000 .* tpoints, :xrotation => -60, :xlims => 1000 .* extrema(tpoints),
         :formatter => x -> string(round(x; sigdigits = 3)),
-        :labels => "Magnitude", :ylabel => "S(t) Magnitude", :xlabel => "Time [ms]",
+        :labels => "Magnitude", :ylabel => L"$S(t)$ Magnitude", :xlabel => "Time [ms]",
         :title => titlestr)
-    mag_fig = plot(1000 .* tpoints, norm.(signals); props...)
+    xdata, ydata = 1000 .* tpoints, norm.(signals)
+    mag_fig = plot(xdata, ydata; props...)
 
     props = Dict{Symbol,Any}(
         :linetype => :steppost, :m => :square, :ms => 5, :lw => 1, :ls => :solid, :lc => :red, :ytick => -180:30:180,
         :grid => true, :minorgrid => true, :legend => :right,
         :xticks => 1000 .* tpoints, :xrotation => -60, :xlims => 1000 .* extrema(tpoints),
         :formatter => x -> string(round(x; sigdigits = 3)),
-        :labels => "Phase", :ylabel => "S(t) Phase")
-    pha_fig = plot(1000 .* tpoints, rad2deg.(angle.(signals)); props...)
+        :labels => "Phase (deg)", :ylabel => L"$S(t)$ Phase (deg)", :xlabel => "Time [ms]")
+    xdata, ydata = 1000 .* tpoints, rad2deg.(angle.(signals))
+    if apply_pi_correction
+        phase_corrections = ifelse.(isodd.(1:length(ydata)), -90, 90)
+        ydata = ydata .+ phase_corrections
+        props = Dict(props...,
+            :ytick => :auto, #:linetype => :line,
+            :labels => L"$\pi$-corrected Phase (deg)", :ylabel => L"$S(t)$ $\pi$-corrected Phase (deg)")
+    end
+    pha_fig = plot(xdata, ydata; props...)
 
     fig = plot(mag_fig, pha_fig; layout = (2,1))
 
@@ -121,6 +131,10 @@ function plotsignal(tpoints, signals;
     disp && display(fig)
 
     return nothing
+end
+function plotsignal(results::Dict; kwargs...)
+    @unpack tpoints, signals = results
+    return plotsignal(tpoints, signals; kwargs...)
 end
 
 function plotSEcorr(
@@ -246,17 +260,14 @@ function plotMWFvsAngle(results::Dict;
     return nothing
 end
 
-function plotMWFvsMethod(results::Dict;
+function plotMWFvsMethod(mwfvalues::AbstractArray{D};
         fname = nothing,
         disp = (fname == nothing)
-    )
-    # results[:mwfvalues] is an array of Dict{Symbol,T}'s, and results[:params]
-    # is an array of BlochTorreyParameters{T}'s
-    @unpack params, mwfvalues = results
-    (isempty(params) || isempty(mwfvalues)) && return nothing
-    params = convert(Vector{typeof(params[1])}, params) # force proper typing
-    mwfvalues = convert(Vector{typeof(mwfvalues[1])}, mwfvalues)
-
+    ) where {D <: Dict{Symbol}}
+    # Check if empty
+    isempty(mwfvalues) && return nothing
+    
+    # Extract data
     allmethods = reduce(union, keys(m) for m in mwfvalues)
     data = Dict(k => [get(m, k, nothing) for m in mwfvalues] for k in allmethods)
     methods = filter(m -> m !== :exact, allmethods)
@@ -268,21 +279,30 @@ function plotMWFvsMethod(results::Dict;
     # :star6, :star7, :star8,
     # :none, :auto, :rect, :cross, :xcross, :vline, :hline, :+, :x,
     props = Dict{Symbol,Any}(
-        :seriestype => :scatter, :ratio => :equal,
-        :markersize => 5, :marker => markers[mod1.((1:nmethods)', length(markers))],
+        :seriestype => :scatter, # :ratio => :equal,
+        :markersize => 7, :marker => markers[mod1.((1:nmethods)', length(markers))],
         :grid => true, :minorgrid => true, :xrotation => -60,
-        :label => reduce(hcat, string(m) for m in methods), :legend => :bottomright,
+        :label => reduce(hcat, string(m) for m in methods), :legend => :topleft,
         :xlabel => "Exact MWF [%]", :ylabel => "Computed MWF [%]", :title => "Computed vs. Exact MWF"
     )
     xdata = 100 .* data[:exact]
     ydata = 100 .* reduce(hcat, data[m] for m in methods)
-    fig = plot(xdata, ydata; props...)
+    fig = vline(xdata; lw = 1, ls = :dot, lc = :blue, lab = "")
     plot!(fig, [extrema(xdata)...], [extrema(xdata)...]; lw = 4, ls = :dash, lc = :red, lab = "")
+    plot!(fig, xdata, ydata; props...)
+    xext, yext = extrema(xdata), extrema(ydata)
+    xlims!(fig, xext .+ (-0.5, 0.5))
+    ylims!(fig, (min(xext[1], yext[1]), max(xext[2], yext[2])) .+ (-0.5, 0.5) )
 
     !(fname == nothing) && default_savefigs(fig, fname)
     disp && display(fig)
 
     return nothing
+end
+function plotMWFvsMethod(results::Dict; kwargs...)
+    @unpack mwfvalues = results
+    mwfvalues = convert(Vector{typeof(mwfvalues[1])}, mwfvalues)
+    return plotMWFvsMethod(mwfvalues; kwargs...)
 end
 
 function partitionby(s::AbstractVector{S}, field) where {S}

@@ -10,6 +10,7 @@ using Reexport
 @reexport using CirclePackingUtils
 @reexport using MATLABPlots
 @reexport using StatsPlots
+using LaTeXStrings
 
 using IterableTables, DataFrames
 import BSON, CSV, Dates
