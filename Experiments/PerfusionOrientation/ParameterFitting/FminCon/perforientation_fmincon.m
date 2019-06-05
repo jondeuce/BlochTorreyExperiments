@@ -72,7 +72,7 @@ Weights = Weights / sum(vec(Weights));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 9;
+Nmajor = 1;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
