@@ -275,7 +275,7 @@ function runsimulation!(results, params, geom)
         end
         plotsignal(tpoints, signals;
             titlestr = "Complex Signal (" * titleparamstr * ")",
-            opts = mwfmodels[1], fname = "sig/" * fname * ".signalcplx")
+            fname = "sig/" * fname * ".signalcplx")
     catch e
         @warn "Error plotting biexponential"
         @warn sprint(showerror, e, catch_backtrace())
