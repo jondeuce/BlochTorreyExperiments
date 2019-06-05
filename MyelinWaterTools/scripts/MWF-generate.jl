@@ -6,10 +6,14 @@ pyplot(size=(1200,900))
 include(joinpath(@__DIR__, "../init.jl")) # call "init.jl", located in the same directory as this file
 mxcall(:cd, 0, pwd()) # change MATLAB path to current path for saving outputs
 # mxcall(:figure, 0) # bring up MATLAB figure gui #TODO
+const SIM_START_TIME = MWFUtils.getnow()
+
+# Create reproduce file
 make_reproduce( # Creating backup file
     """
     include("BlochTorreyExperiments/MyelinWaterTools/scripts/MWF-generate.jl")
-    """
+    """;
+    fname = SIM_START_TIME * ".reproduce.jl"
 )
 
 import DrWatson
@@ -154,7 +158,7 @@ sweepparamsampler() = Dict{Symbol,Union{Float64,Int}}(
 ####
 
 DrWatson.@tagsave(
-    MWFUtils.getnow() * ".metadata.bson",
+    SIM_START_TIME * ".metadata.bson",
     deepcopy(@dict(sweepparamsampler_settings, geomfiles, default_mwfmodels_dict, default_btparams_dict, default_solverparams_dict, default_nnlsparams_dict, default_TE, default_nTE)),
     true, gitdir())
 
@@ -341,21 +345,21 @@ btparams_dict = Dict.(btparams)
 ####
 
 try
-    BSON.bson(MWFUtils.getnow() * ".allparams.bson", deepcopy(@dict(sweepparams, btparams_dict)))
+    BSON.bson(SIM_START_TIME * ".allparams.bson", deepcopy(@dict(sweepparams, btparams_dict)))
 catch e
     @warn "Error saving all BlochTorreyParameter's"
     @warn sprint(showerror, e, catch_backtrace())
 end
 
 try
-    BSON.bson(MWFUtils.getnow() * ".allmeasurables.bson", deepcopy(@dict(tpoints, signals, mwfvalues)))
+    BSON.bson(SIM_START_TIME * ".allmeasurables.bson", deepcopy(@dict(tpoints, signals, mwfvalues)))
 catch e
     @warn "Error saving measurables"
     @warn sprint(showerror, e, catch_backtrace())
 end
 
 try
-    plotMWFvsMethod(results; disp = false, fname = "mwfplots/" * MWFUtils.getnow() * ".mwf")
+    plotMWFvsMethod(results; disp = false, fname = "mwfplots/" * SIM_START_TIME * ".mwf")
 catch e
     @warn "Error plotting MWF."
     @warn sprint(showerror, e, catch_backtrace())

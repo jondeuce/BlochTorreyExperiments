@@ -5,19 +5,20 @@ export make_reproduce
 
 function make_reproduce(
         appending_lines = "";
+        fname = "reproduce.jl",
         force = false
     )
     repo = LibGit2.GitRepo(joinpath(@__DIR__, "../.."))
     hash = LibGit2.GitHash(repo, "HEAD")
 
-    exists = isfile("reproduce.jl")
+    exists = isfile(fname)
     if force || !exists
         if force && exists
             @info "Overwriting existing reproduce.jl file"
         else
             @info "Creating reproduce.jl file"
         end
-        open("reproduce.jl", "w") do io
+        open(fname, "w") do io
             str =
                 """
                 import Pkg, LibGit2
@@ -34,7 +35,7 @@ function make_reproduce(
             write(io, str)
         end
     else
-        @info "File reproduce.jl exists and will not be overwritten"
+        @info "File $fname exists and will not be overwritten"
     end
 
     return nothing
