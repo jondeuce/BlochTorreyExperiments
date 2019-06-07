@@ -1,0 +1,22 @@
+prec    = 32
+gpu     = false
+name    = "MWF_Model1"
+dir     = "."
+
+[data]
+train_data  = "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/learning_test1/train"
+test_data   = "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/learning_test1/test"
+batch_size  = 50
+test_size   = 250
+alpha       = 0.05 # Tikhonov regularization parameter
+sigma       = 0.0 # Additive random noise
+T2Range     = [0.001, 2.0] # T2 distribution range
+nT2         = 120 # Number of exponentials in T2 distribution
+
+[optimizer]
+epochs  = 1000
+savemod = 1
+testmod = 1
+[optimizer.ADAM]
+lr      = 0.001
+beta    = [0.9, 0.999]

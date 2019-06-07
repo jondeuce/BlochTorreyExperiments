@@ -1,4 +1,7 @@
-# NOTE: must load pyplot backend BEFORE loading MATLAB in init.jl
+# Activate project and load packages for this script
+#   NOTE: must load pyplot backend BEFORE loading MATLAB in init.jl
+import Pkg
+Pkg.activate(joinpath(@__DIR__, ".."))
 using StatsPlots, BSON, Dates
 pyplot(size=(1200,900))
 
@@ -16,6 +19,7 @@ make_reproduce( # Creating backup file
     fname = SIM_START_TIME * ".reproduce.jl"
 )
 
+# DrWatson package for tagged saving
 import DrWatson
 using DrWatson: @dict, @ntuple
 gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
@@ -45,7 +49,7 @@ geomfiles = vcat(
         [
             "2019-03-29-T-10-47-05-945__N-40_g-0.7500_p-0.7000__structs.bson" #10k triangles, 8k points, Qmin = 0.4
             "2019-03-29-T-12-19-17-694__N-40_g-0.8370_p-0.7500__structs.bson" #13k triangles, 10k points, Qmin = 0.4
-            # "2019-03-29-T-12-15-03-265__N-40_g-0.8000_p-0.8300__structs.bson" #28k triangles, 19k points, Qmin = 0.4
+            "2019-03-29-T-12-15-03-265__N-40_g-0.8000_p-0.8300__structs.bson" #28k triangles, 19k points, Qmin = 0.4
         ]
     ),
     joinpath.(
@@ -141,13 +145,16 @@ log10sampler(a,b) = 10^linearsampler(log10(a), log10(b))
 acossampler() = rad2deg(acos(rand()))
 
 const sweepparamsampler_settings = Dict{Symbol,Any}(
-    :theta => (sampler = :acossampler,      args = ()),
-    :K     => (sampler = :log10sampler,     args = (lb = 1e-3, ub = 1.0)),#0.05)),
-    :Dtiss => (sampler = :log10sampler,     args = (lb = 10.0, ub = 500.0)),#25.0)),
-    :Dmye  => (sampler = :log10sampler,     args = (lb = 10.0, ub = 500.0)),#25.0)),
-    :Dax   => (sampler = :log10sampler,     args = (lb = 10.0, ub = 500.0)),#25.0)),
-    :TE    => (sampler = :linearsampler,    args = (lb = 5e-3, ub = 15e-3)),
-    :nTE   => (sampler = :unitrangesampler, args = (lb = 24,   ub = 48)),
+    :theta  => (sampler = :acossampler,      args = ()),
+    :K      => (sampler = :log10sampler,     args = (lb = 1e-3,  ub = 1.0)),   #Test value: 0.05
+    :Dtiss  => (sampler = :log10sampler,     args = (lb = 10.0,  ub = 500.0)), #Test value: 25.0
+    :Dmye   => (sampler = :log10sampler,     args = (lb = 10.0,  ub = 500.0)), #Test value: 25.0
+    :Dax    => (sampler = :log10sampler,     args = (lb = 10.0,  ub = 500.0)), #Test value: 25.0
+    :TE     => (sampler = :linearsampler,    args = (lb = 5e-3,  ub = 15e-3)),
+    :nTE    => (sampler = :unitrangesampler, args = (lb = 24,    ub = 60)),
+    :T2sp   => (sampler = :linearsampler,    args = (lb = 10e-3, ub = 20e-3)), #Default: 15e-3
+    :T2lp   => (sampler = :linearsampler,    args = (lb = 50e-3, ub = 80e-3)), #Default: 63e-3
+    :T2tiss => (sampler = :linearsampler,    args = (lb = 50e-3, ub = 80e-3)), #Default: 63e-3
 )
 sweepparamsampler() = Dict{Symbol,Union{Float64,Int}}(
     k => eval(Expr(:call, v.sampler, v.args...))
@@ -188,7 +195,7 @@ function runsolve(btparams, sweepparams, geom)
 end
 
 function runsimulation!(results, sweepparams, geom)
-    @unpack theta, K, Dtiss, Dmye, Dax = sweepparams
+    @unpack theta, K, Dtiss, Dmye, Dax, TE, nTE, T2sp, T2lp, T2tiss = sweepparams
     density = intersect_area(geom.outercircles, geom.bdry) / area(geom.bdry)
     gratio = radius(geom.innercircles[1]) / radius(geom.outercircles[1])
 
@@ -198,12 +205,14 @@ function runsimulation!(results, sweepparams, geom)
         D_Tissue = Dtiss,
         D_Sheath = Dmye,
         D_Axon = Dax,
+        R2_sp = inv(T2sp),
+        R2_lp = inv(T2lp),
+        R2_Tissue = inv(T2tiss),
         AxonPDensity = density,
         g_ratio = gratio,
     )
     sols, myelinprob, myelinsubdomains, myelindomains = runsolve(btparams, sweepparams, geom)
     
-    @unpack TE, nTE = sweepparams
     tpoints = collect(TE .* (0:nTE))
     signals = calcsignal(sols, tpoints, myelindomains)
 
@@ -257,33 +266,33 @@ function runsimulation!(results, sweepparams, geom)
     #     @warn sprint(showerror, e, catch_backtrace())
     # end
     
-    try
-        nnlsindex = findfirst(m->m isa NNLSRegression, mwfmodels)
-        if !(nnlsindex == nothing)
-            plotSEcorr(sols, btparams, myelindomains;
-                mwftrue = getmwf(geom.outercircles, geom.innercircles, geom.bdry),
-                opts = mwfmodels[nnlsindex], fname = "t2dist/" * fname * ".t2dist.SEcorr")
-        end
-    catch e
-        @warn "Error plotting SEcorr T2 distribution"
-        @warn sprint(showerror, e, catch_backtrace())
-    end
+    # try
+    #     nnlsindex = findfirst(m->m isa NNLSRegression, mwfmodels)
+    #     if !(nnlsindex == nothing)
+    #         plotSEcorr(sols, btparams, myelindomains;
+    #             mwftrue = getmwf(geom.outercircles, geom.innercircles, geom.bdry),
+    #             opts = mwfmodels[nnlsindex], fname = "t2dist/" * fname * ".t2dist.SEcorr")
+    #     end
+    # catch e
+    #     @warn "Error plotting SEcorr T2 distribution"
+    #     @warn sprint(showerror, e, catch_backtrace())
+    # end
 
-    try
-        if !isempty(mwfmodels)
-            plotbiexp(sols, btparams, myelindomains,
-                geom.outercircles, geom.innercircles, geom.bdry;
-                titlestr = "Signal Magnitude (" * titleparamstr * ")",
-                opts = mwfmodels[1], fname = "sig/" * fname * ".signalmag")
-        end
-        plotsignal(tpoints, signals;
-            titlestr = "Complex Signal (" * titleparamstr * ")",
-            apply_pi_correction = true,
-            fname = "sig/" * fname * ".signalcplx")
-    catch e
-        @warn "Error plotting signal"
-        @warn sprint(showerror, e, catch_backtrace())
-    end
+    # try
+    #     if !isempty(mwfmodels)
+    #         plotbiexp(sols, btparams, myelindomains,
+    #             geom.outercircles, geom.innercircles, geom.bdry;
+    #             titlestr = "Signal Magnitude (" * titleparamstr * ")",
+    #             opts = mwfmodels[1], fname = "sig/" * fname * ".signalmag")
+    #     end
+    #     plotsignal(tpoints, signals;
+    #         titlestr = "Complex Signal (" * titleparamstr * ")",
+    #         apply_pi_correction = true,
+    #         fname = "sig/" * fname * ".signalcplx")
+    # catch e
+    #     @warn "Error plotting signal"
+    #     @warn sprint(showerror, e, catch_backtrace())
+    # end
 
     return results
 end
@@ -308,9 +317,8 @@ function main(;iters::Int = typemax(Int))
             println("\n")
             @info "Running simulation $i/$(length(all_sweepparams)) at $(Dates.now()):"
             @info "    Sweep parameters:    " * DrWatson.savename("", sweepparams; connector = ", ")
-            @info "    Geometry info:       Geom #$geomnumber - " * geomfiles[geomnumber]
+            @info "    Geometry info:       Geom #$geomnumber - " * basename(geomfiles[geomnumber])
             @info "    Simulation timespan: (0.0 ms, $(round(1000 .* sweepparams[:nTE] .* sweepparams[:TE]; digits=3)) ms)"
-            println("\n")
             
             tic = Dates.now()
             runsimulation!(results, sweepparams, geom)
@@ -338,7 +346,7 @@ end
 
 results = main(); #iters = 25 TODO
 @unpack sweepparams, btparams, tpoints, signals, mwfvalues = results;
-btparams_dict = Dict.(btparams)
+btparams_dict = Dict.(btparams);
 
 ####
 #### Plot and save derived quantities from results

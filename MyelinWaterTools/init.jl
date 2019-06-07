@@ -36,6 +36,7 @@ using StatsPlots; pyplot()
 #####
 using GlobalUtils
 using MWFUtils
+using MWFLearning
 
 #####
 ##### Misc. useful packages

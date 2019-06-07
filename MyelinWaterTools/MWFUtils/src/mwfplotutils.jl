@@ -264,10 +264,9 @@ function plotMWFvsMethod(mwfvalues::AbstractArray{D};
         fname = nothing,
         disp = (fname == nothing)
     ) where {D <: Dict{Symbol}}
-    # Check if empty
-    isempty(mwfvalues) && return nothing
     
     # Extract data
+    isempty(mwfvalues) && return nothing
     allmethods = reduce(union, keys(m) for m in mwfvalues)
     data = Dict(k => [get(m, k, nothing) for m in mwfvalues] for k in allmethods)
     methods = filter(m -> m !== :exact, allmethods)
@@ -301,6 +300,7 @@ function plotMWFvsMethod(mwfvalues::AbstractArray{D};
 end
 function plotMWFvsMethod(results::Dict; kwargs...)
     @unpack mwfvalues = results
+    isempty(mwfvalues) && return nothing
     mwfvalues = convert(Vector{typeof(mwfvalues[1])}, mwfvalues)
     return plotMWFvsMethod(mwfvalues; kwargs...)
 end
