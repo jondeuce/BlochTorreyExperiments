@@ -40,7 +40,7 @@ alpha_range = [2.5, 12.5, 22.5, 32.5, 47.5, 57.5, 67.5, 77.5, 87.5];
 
 % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
 lb  = [ 3.0000,          1.0000/100,         0.5000/100 ];
-CA0 =   3.8418;  iBVF0 = 1.4920/100; aBVF0 = 0.9306/100;
+CA0 =   4.6320;  iBVF0 = 1.1765/100; aBVF0 = 0.7176/100;
 ub  = [ 6.0000,          2.0000/100,         1.5000/100 ];
 
 % % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
@@ -72,7 +72,7 @@ Weights = Weights / sum(vec(Weights));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 4;
+Nmajor = 7;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
