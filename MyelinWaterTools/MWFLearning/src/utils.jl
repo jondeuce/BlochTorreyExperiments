@@ -14,22 +14,6 @@ to_float_type_T(T, x::AbstractMatrix) = convert(Matrix{T}, x)
 to_float_type_T(T, x::AbstractVector{C}) where {C <: Complex} = convert(Vector{Complex{T}}, x)
 to_float_type_T(T, x::AbstractMatrix{C}) where {C <: Complex} = convert(Matrix{Complex{T}}, x)
 
-"""
-Normalize input complex signal data `z` is sampled at (0, TE, ..., nTE*TE).
-The magnitude sampled at (TE, 2*TE, ..., nTE*TE), is returned, normalized
-to have the first point equal to 1.
-"""
-function normalize_signal(z::AbstractVector{C}) where {C <: Complex}
-    x = abs.(z[2:end])
-    x ./= x[1]
-    return x
-end
-function normalize_signal(z::AbstractMatrix{C}) where {C <: Complex}
-    x = abs.(z[2:end, :])
-    x ./= x[1, :]
-    return x
-end
-
 function prepare_data(settings::Dict)
     training_data_dicts = BSON.load.(joinpath.(settings["data"]["train_data"], readdir(settings["data"]["train_data"])))
     testing_data_dicts = BSON.load.(joinpath.(settings["data"]["test_data"], readdir(settings["data"]["test_data"])))
@@ -44,6 +28,7 @@ function prepare_data(settings::Dict)
     testing_data = reduce(hcat, init_data(settings, d) for d in testing_data_dicts)
     training_data = reshape(training_data, :, 1, size(training_data, 2))
     testing_data = reshape(testing_data, :, 1, size(testing_data, 2))
+    
     T = settings["prec"] == 32 ? Float32 : Float64
     training_data, testing_data, training_labels, testing_labels = map(
         x -> to_float_type_T(T, x),
@@ -59,16 +44,29 @@ prepare_data(settings_file::String) = prepare_data(TOML.parsefile(settings_file)
 function init_data(settings::Dict, d::Dict)
     @unpack signals = d
     @unpack TE = d[:sweepparams]
-    @unpack alpha, sigma, T2Range, nT2 = settings["data"]
+    @unpack alpha, T2Range, nT2 = settings["data"]
     
-    x = normalize_signal(signals)
-    if sigma > 0
-        x .+= sigma .* randn(eltype(x), size(x))
-    end
+    x = init_signal(signals)
     T2 = log10range(T2Range...; length = nT2);
     y = project_onto_exp(x, T2, TE, alpha)
 
     return y
+end
+
+"""
+Normalize input complex signal data `z` is sampled at (0, TE, ..., nTE*TE).
+The magnitude sampled at (TE, 2*TE, ..., nTE*TE), is returned, normalized
+to have the first point equal to 1.
+"""
+function init_signal(z::AbstractVector{C}) where {C <: Complex}
+    x = abs.(z[2:end])
+    x ./= x[1]
+    return x
+end
+function init_signal(z::AbstractMatrix{C}) where {C <: Complex}
+    x = abs.(z[2:end, :])
+    x ./= x[1, :]
+    return x
 end
 
 log10range(a, b; length = 10) = 10 .^ range(log10(a); stop = log10(b), length = length)
