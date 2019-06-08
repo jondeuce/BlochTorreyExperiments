@@ -10,6 +10,7 @@ using Reexport
 @reexport using CirclePackingUtils
 @reexport using MATLABPlots
 @reexport using StatsPlots
+using LaTeXStrings
 
 using IterableTables, DataFrames
 import BSON, CSV, Dates
@@ -25,7 +26,7 @@ export createdomains
 export calcomegas, calcomega
 export calcsignals, calcsignal
 export solveblochtorrey, default_algorithm
-export plotcircles, plotgrids, plotSEcorr, plotbiexp, plotMWF
+export plotcircles, plotgrids, plotSEcorr, plotbiexp, plotsignal, plotMWFvsAngle, plotMWFvsMethod
 export mxplotomega, mxplotmagnitude, mxplotphase
 export mxsavefig, getnow
 

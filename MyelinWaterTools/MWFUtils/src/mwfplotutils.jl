@@ -68,39 +68,73 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
     total_area = area(bdry)
     ext_area = total_area - myelin_area
 
-    # In the high diffusion & highly permeable membrane limit, spins are equally
+    # In the high diffusion & high permeability limit, spins are equally
     # likely to be anywhere on the grid, hence experience a decay rate R2_mono
     # on the average, where R2_mono is the area averaged R2 of each compartment
     R2_mono = (btparams.R2_sp * myelin_area + btparams.R2_lp * ext_area) / total_area
     y_monoexp = @. total_area * exp(-ts * R2_mono)
 
-    # In the low diffusion OR impermeable membrane limit, spins are confined to
+    # In the high diffusion & low permeability limit, spins are confined to
     # their separate regions and experience their compartment R2 only
     y_biexp = @. ext_area * exp(-ts * btparams.R2_lp) + myelin_area * exp(-ts * btparams.R2_sp)
 
-    if AVOID_MAT_PLOTS
-        props = Dict{Symbol,Any}(
-            :linewidth => 5, :marker => :circle, :markersize => 10,
-            :grid => true, :minorgrid => true, :legend => :topright,
-            :xticks => 1000 .* ts, :xrotation => -60, :xlims => 1000 .* tspan,
-            :labels => ["Simulated" "Bi-Exponential"],
-            :ylabel => "S(t) Magnitude", :xlabel => "Time [ms]",
-            :title => titlestr)
-        fig = plot(1000 .* ts, [norm.(signals) y_biexp]; props...)        
-        !(fname == nothing) && default_savefigs(fig, fname)
-        disp && display(fig)
-    else
-        mxcall(:figure, 0)
-        mxcall(:plot, 0, collect(1000.0.*ts), [norm.(signals) y_biexp])
-        mxcall(:legend, 0, "Simulated", "Bi-Exponential")
-        mxcall(:title, 0, titlestr)
-        mxcall(:xlabel, 0, "Time [ms]")
-        mxcall(:xlim, 0, 1000.0 .* [tspan...])
-        mxcall(:ylabel, 0, "S(t) Magnitude")
-        !(fname == nothing) && mxsavefig(fname)
-    end
+    props = Dict{Symbol,Any}(
+        :linewidth => 5, :marker => :circle, :markersize => 10,
+        :grid => true, :minorgrid => true, :legend => :topright,
+        :xticks => 1000 .* ts, :xrotation => -60, :xlims => 1000 .* tspan,
+        :labels => ["Simulated" "Bi-Exponential"],
+        :ylabel => "S(t) Magnitude", :xlabel => "Time [ms]",
+        :title => titlestr)
+    fig = plot(1000 .* ts, [norm.(signals) y_biexp]; props...)        
+    !(fname == nothing) && default_savefigs(fig, fname)
+    disp && display(fig)
 
     return nothing
+end
+
+function plotsignal(tpoints, signals;
+        titlestr = "Complex Signal vs. Time",
+        apply_pi_correction = true,
+        fname = nothing,
+        disp = (fname == nothing)
+    )
+
+    props = Dict{Symbol,Any}(
+        :linewidth => 5, :marker => :circle, :markersize => 10,
+        :grid => true, :minorgrid => true, :legend => :topright,
+        :xticks => 1000 .* tpoints, :xrotation => -60, :xlims => 1000 .* extrema(tpoints),
+        :formatter => x -> string(round(x; sigdigits = 3)),
+        :labels => "Magnitude", :ylabel => L"$S(t)$ Magnitude", :xlabel => "Time [ms]",
+        :title => titlestr)
+    xdata, ydata = 1000 .* tpoints, norm.(signals)
+    mag_fig = plot(xdata, ydata; props...)
+
+    props = Dict{Symbol,Any}(
+        :linetype => :steppost, :m => :square, :ms => 5, :lw => 1, :ls => :solid, :lc => :red, :ytick => -180:30:180,
+        :grid => true, :minorgrid => true, :legend => :right,
+        :xticks => 1000 .* tpoints, :xrotation => -60, :xlims => 1000 .* extrema(tpoints),
+        :formatter => x -> string(round(x; sigdigits = 3)),
+        :labels => "Phase (deg)", :ylabel => L"$S(t)$ Phase (deg)", :xlabel => "Time [ms]")
+    xdata, ydata = 1000 .* tpoints, rad2deg.(angle.(signals))
+    if apply_pi_correction
+        phase_corrections = ifelse.(isodd.(1:length(ydata)), -90, 90)
+        ydata = ydata .+ phase_corrections
+        props = Dict(props...,
+            :ytick => :auto, #:linetype => :line,
+            :labels => L"$\pi$-corrected Phase (deg)", :ylabel => L"$S(t)$ $\pi$-corrected Phase (deg)")
+    end
+    pha_fig = plot(xdata, ydata; props...)
+
+    fig = plot(mag_fig, pha_fig; layout = (2,1))
+
+    !(fname == nothing) && default_savefigs(fig, fname)
+    disp && display(fig)
+
+    return nothing
+end
+function plotsignal(results::Dict; kwargs...)
+    @unpack tpoints, signals = results
+    return plotsignal(tpoints, signals; kwargs...)
 end
 
 function plotSEcorr(
@@ -146,7 +180,7 @@ function plotSEcorr(
     return MWImaps, MWIdist, MWIpart
 end
 
-function plotMWF(params, mwf, mwftrue = nothing;
+function plotMWFvsAngle(params, mwf, mwftrue = nothing;
         plottypes = [:mwf, :mwferror],
         mwfmethod = nothing,
         fname = nothing,
@@ -204,12 +238,14 @@ function plotMWF(params, mwf, mwftrue = nothing;
     return figs
 end
 
-function plotMWF(results::Dict;
+function plotMWFvsAngle(results::Dict;
         plottypes = [:mwf, :mwferror],
         fname = nothing,
         disp = (fname == nothing)
     )
-    # mwfvalues is an array of Dict{Symbol,T}'s, and params is an array of BlochTorreyParameters{T}'s
+    # results[:mwfvalues] is an array of Dict{Symbol,T}'s, and results[:params]
+    # is an array of BlochTorreyParameters{T}'s
+    #   NOTE: assumes all results correspond to same geometry, i.e. same MWF
     @unpack params, mwfvalues = results
     (isempty(params) || isempty(mwfvalues)) && return nothing
 
@@ -218,10 +254,55 @@ function plotMWF(results::Dict;
     for key in keys(mwfvalues[1])
         key == :exact && continue # skip plotting horizontal lines of exact value
         mwf = [d[key] for d in mwfvalues]
-        plotMWF(params, mwf, mwftrue;
+        plotMWFvsAngle(params, mwf, mwftrue;
             plottypes = plottypes, mwfmethod = key, disp = disp, fname = fname)
     end
     return nothing
+end
+
+function plotMWFvsMethod(mwfvalues::AbstractArray{D};
+        fname = nothing,
+        disp = (fname == nothing)
+    ) where {D <: Dict{Symbol}}
+    
+    # Extract data
+    isempty(mwfvalues) && return nothing
+    allmethods = reduce(union, keys(m) for m in mwfvalues)
+    data = Dict(k => [get(m, k, nothing) for m in mwfvalues] for k in allmethods)
+    methods = filter(m -> m !== :exact, allmethods)
+
+    nmethods = length(keys(data)) - 1 # one is :exact
+    markers = [:circle]
+    # :diamond, :circle, :star5, :dtriangle, :pentagon, :utriangle, :star4,
+    # :octagon, :heptagon, :hexagon, :rtriangle, :ltriangle,
+    # :star6, :star7, :star8,
+    # :none, :auto, :rect, :cross, :xcross, :vline, :hline, :+, :x,
+    props = Dict{Symbol,Any}(
+        :seriestype => :scatter, # :ratio => :equal,
+        :markersize => 7, :marker => markers[mod1.((1:nmethods)', length(markers))],
+        :grid => true, :minorgrid => true, :xrotation => -60,
+        :label => reduce(hcat, string(m) for m in methods), :legend => :topleft,
+        :xlabel => "Exact MWF [%]", :ylabel => "Computed MWF [%]", :title => "Computed vs. Exact MWF"
+    )
+    xdata = 100 .* data[:exact]
+    ydata = 100 .* reduce(hcat, data[m] for m in methods)
+    fig = vline(xdata; lw = 1, ls = :dot, lc = :blue, lab = "")
+    plot!(fig, [extrema(xdata)...], [extrema(xdata)...]; lw = 4, ls = :dash, lc = :red, lab = "")
+    plot!(fig, xdata, ydata; props...)
+    xext, yext = extrema(xdata), extrema(ydata)
+    xlims!(fig, xext .+ (-0.5, 0.5))
+    ylims!(fig, (min(xext[1], yext[1]), max(xext[2], yext[2])) .+ (-0.5, 0.5) )
+
+    !(fname == nothing) && default_savefigs(fig, fname)
+    disp && display(fig)
+
+    return nothing
+end
+function plotMWFvsMethod(results::Dict; kwargs...)
+    @unpack mwfvalues = results
+    isempty(mwfvalues) && return nothing
+    mwfvalues = convert(Vector{typeof(mwfvalues[1])}, mwfvalues)
+    return plotMWFvsMethod(mwfvalues; kwargs...)
 end
 
 function partitionby(s::AbstractVector{S}, field) where {S}

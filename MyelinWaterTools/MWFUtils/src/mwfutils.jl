@@ -396,7 +396,8 @@ function solveblochtorrey(
         myelinprob::MyelinProblem, myelindomain::MyelinDomain, alg = default_algorithm(), args...;
         u0 = Vec{2}((0.0, 1.0)), # initial π/2 pulse
         TE = 10e-3, # 10ms echotime
-        tspan = TE .* (0, 32), # 32 echoes by default
+        nTE = 32, # 32 echoes by default
+        tspan = TE .* (0, nTE), # time span for ode solution
         saveat = tspan[1]:TE/2:tspan[2], # save every TE/2 by default
         tstops = tspan[1]:TE/2:tspan[2], # default extra points which the integrator must step to; match saveat by default
         callback = MultiSpinEchoCallback(tspan; TE = TE),
@@ -404,6 +405,12 @@ function solveblochtorrey(
         abstol = 0.0,
         kwargs...
     )
+
+    # @show TE, nTE, tspan #TODO
+    # @show saveat./TE #TODO
+    # @show tstops./TE #TODO
+    # @show kwargs #TODO
+
     prob = ODEProblem(myelindomain, interpolate(u0, myelindomain), tspan)
     sol = solve(prob, alg, args...;
         dense = false, # don't save all intermediate time steps
