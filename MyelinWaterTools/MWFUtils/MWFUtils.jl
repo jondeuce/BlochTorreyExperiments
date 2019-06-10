@@ -8,7 +8,7 @@ const AVOID_MAT_PLOTS = true # avoid external matlab calls, if possible
 using Reexport
 @reexport using BlochTorreyUtils
 @reexport using CirclePackingUtils
-@reexport using MATLABPlots
+# @reexport using MATLABPlots
 @reexport using StatsPlots
 using LaTeXStrings
 

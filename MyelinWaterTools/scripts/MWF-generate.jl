@@ -7,7 +7,7 @@ pyplot(size=(1200,900))
 
 # Initialize project packages
 include(joinpath(@__DIR__, "../init.jl")) # call "init.jl", located in the same directory as this file
-mxcall(:cd, 0, pwd()) # change MATLAB path to current path for saving outputs
+# mxcall(:cd, 0, pwd()) # change MATLAB path to current path for saving outputs
 # mxcall(:figure, 0) # bring up MATLAB figure gui #TODO
 const SIM_START_TIME = MWFUtils.getnow()
 
