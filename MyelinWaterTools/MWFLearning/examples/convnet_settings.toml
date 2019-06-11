@@ -1,20 +1,35 @@
 prec    = 32
 gpu     = false
-name    = "MWF_Model1"
 dir     = "."
 
 [data]
-train_data  = "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/learning_test1/train"
-test_data   = "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/learning_test1/test"
-batch_size  = 50
-test_size   = 250
-alpha       = 0.05 # Tikhonov regularization parameter
-sigma       = 0.0 # Additive random noise
+train_data  = "./train"
+test_data   = "./test"
+batch_size  = 100
+test_size   = 500
+channels    = 1 # Number of data channels
+labels      = ["mwf", "ief"] # Target labels
+scale       = [1.0, 1.0] # Scale output parameters to (0,1)
+weights     = [1.0, 0.2] # Weights for loss function
+SNR         = [0.0] # Additive random noise
 T2Range     = [0.001, 2.0] # T2 distribution range
 nT2         = 120 # Number of exponentials in T2 distribution
+alpha       = 0.05 # Tikhonov regularization parameter
+
+[model]
+name    = "TestModel1"
+loss    = "crossent"
+act     = "leakyrelu"
+dropout = false
+softmax = true
+Nf1     = 4 # num features (conv layer 1)
+Nf2     = 8 # num features (conv layer 2)
+Npool   = 4 # max/mean pooling size
+Nkern   = 5 # kernel size
+Nout    = 2 # number of output labels
 
 [optimizer]
-epochs  = 1000
+epochs  = 100
 savemod = 1
 testmod = 1
 [optimizer.ADAM]
