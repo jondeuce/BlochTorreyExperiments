@@ -7,31 +7,49 @@ train_data  = "./train"
 test_data   = "./test"
 batch_size  = 100
 test_size   = 500
+height      = "auto" # Data length; default will be nT2, unless e.g. PCA is performed
 channels    = 1 # Number of data channels
-labels      = ["mwf", "ief"] # Target labels
-scale       = [1.0, 1.0] # Scale output parameters to (0,1)
-weights     = [1.0, 0.2] # Weights for loss function
+# labels      = ["mwf"] # Target labels
+# weights     = [1.0] # Weights for loss function
+# labels      = ["mwf", "iewf"] # Target labels
+# weights     = [1.0, 1.0] # Weights for loss function
+# labels      = ["mwf", "iewf", "K"] # Target labels
+# weights     = [1.0, 0.3, 0.2] # Weights for loss function
+labels      = ["mwf", "iewf", "T2iew", "T2mw"] # Target labels
+weights     = [2.0, 2.0, 1.0, 1.0] # Weights for loss function
 SNR         = [0.0] # Additive random noise
 T2Range     = [0.001, 2.0] # T2 distribution range
-nT2         = 120 # Number of exponentials in T2 distribution
-alpha       = 0.05 # Tikhonov regularization parameter
+nT2         = 36 # Number of exponentials in T2 distribution
+alpha       = 0.02 # Tikhonov regularization parameter
+PCA         = true # Apply PCA transform to data
+
+[plot]
+scale     = [100.0, 100.0, 1000.0, 1000.0] # scale labels before plotting
+units     = ["%", "%", "ms", "ms"] # label units, after scaling
 
 [model]
-name    = "TestModel1"
-loss    = "crossent"
-act     = "leakyrelu"
-dropout = false
-softmax = true
-Nf1     = 4 # num features (conv layer 1)
-Nf2     = 8 # num features (conv layer 2)
-Npool   = 4 # max/mean pooling size
-Nkern   = 5 # kernel size
-Nout    = 2 # number of output labels
+name      = "TestModel2"
+loss      = "mse"
+act       = "leakyrelu"
+dropout   = false
+softmax   = false
+batchnorm = true
+scale     = "auto"
+Nf1       = 4 # num features (conv layer 1)
+Nf2       = 8 # num features (conv layer 2)
+Nf3       = 8 # num features (conv layer 3)
+Nds       = [50, 100, 100, 50, 20]
+Npool     = 3 # pooling size
+Nkern     = 5 # kernel size
+# Nout      = 1 # number of output labels
+# Nout      = 2 # number of output labels
+# Nout      = 3 # number of output labels
+Nout      = 4 # number of output labels
 
 [optimizer]
-epochs  = 100
+epochs  = 10000
 savemod = 1
 testmod = 1
 [optimizer.ADAM]
-lr      = 0.001
+lr      = 0.001 #TODO
 beta    = [0.9, 0.999]

@@ -23,6 +23,29 @@ channelsize(x::AbstractMatrix) = 1
 channelsize(x::AbstractArray{T,N}) where {T,N} = size(x, N-1)
 
 """
+    DenseResize()
+
+Non-learnable layer which resizes input arguments `x` to be a matrix with batchsize(x) columns.
+"""
+struct DenseResize end
+Flux.@treelike DenseResize
+(l::DenseResize)(x::AbstractArray) = reshape(x, :, batchsize(x))
+Base.show(io::IO, l::DenseResize) = print(io, "DenseResize()")
+
+"""
+    DenseResize(s::AbstractArray)
+
+Non-learnable layer which scales input `x` by array `s`
+"""
+struct Scale{V}
+    s::V
+end
+Scale(s::Flux.TrackedArray) = Scale(Flux.data(s)) # Layer is not learnable
+Flux.@treelike Scale
+(l::Scale)(x::AbstractArray) = x .* l.s
+Base.show(io::IO, l::Scale) = print(io, "Scale(", length(l.s), ")")
+
+"""
     log10range(a, b; length = 10)
 
 Returns a `length`-element vector with log-linearly spaced data
@@ -42,24 +65,54 @@ to_float_type_T(T, x::AbstractMatrix) = convert(Matrix{T}, x)
 to_float_type_T(T, x::AbstractVector{C}) where {C <: Complex} = convert(Vector{Complex{T}}, x)
 to_float_type_T(T, x::AbstractMatrix{C}) where {C <: Complex} = convert(Matrix{Complex{T}}, x)
 
-function prepare_data(settings::Dict)
+function prepare_data(settings::Dict, model_settings = settings["model"])
     training_data_dicts = BSON.load.(joinpath.(settings["data"]["train_data"], readdir(settings["data"]["train_data"])))
     testing_data_dicts = BSON.load.(joinpath.(settings["data"]["test_data"], readdir(settings["data"]["test_data"])))
 
     training_labels = init_labels(settings, training_data_dicts)
     testing_labels = init_labels(settings, testing_data_dicts)
+    @assert size(training_labels, 1) == size(testing_labels, 1)
+    
     training_data = init_data(settings, training_data_dicts)
     testing_data = init_data(settings, testing_data_dicts)
     
+    if settings["data"]["PCA"] == true
+        training_data = reshape(training_data, :, batchsize(training_data))
+        testing_data = reshape(testing_data, :, batchsize(testing_data))
+        
+        MVS = MultivariateStats
+        M = MVS.fit(MVS.PCA, training_data; maxoutdim = size(training_data, 1))
+        training_data = MVS.transform(M, training_data)
+        testing_data = MVS.transform(M, testing_data)
+        
+        training_data = reshape(training_data, :, 1, batchsize(training_data))
+        testing_data = reshape(testing_data, :, 1, batchsize(testing_data))
+    end
+
+    @assert size(training_data, 1) == size(testing_data, 1)
+
+    labels_scale = init_labels_scale(settings, hcat(training_labels, testing_labels))
+    # training_labels .*= labels_scale
+    # testing_labels .*= labels_scale
+
     T = settings["prec"] == 32 ? Float32 : Float64
     training_data, testing_data, training_labels, testing_labels = map(
         x -> to_float_type_T(T, x),
         (training_data, testing_data, training_labels, testing_labels))
+    
+    if settings["data"]["height"] == "auto"
+        settings["data"]["height"] = size(training_data, 1) :: Int
+    end
+
+    if model_settings["scale"] == "auto"
+        model_settings["scale"] = convert(Vector{T}, labels_scale)
+    end
 
     return @dict(
         training_data_dicts, testing_data_dicts,
         training_data, testing_data,
-        training_labels, testing_labels)
+        training_labels, testing_labels,
+        labels_scale)
 end
 prepare_data(settings_file::String) = prepare_data(TOML.parsefile(settings_file))
 
@@ -68,7 +121,6 @@ function init_data(settings::Dict, ds::AbstractVector{<:Dict})
     alpha   = settings["data"]["alpha"] :: T
     T2Range = settings["data"]["T2Range"] :: VT
     nT2     = settings["data"]["nT2"] :: Int
-
     nTEs    = unique(d[:sweepparams][:nTE] for d in ds) :: Vector{Int}
     bufs    = [(A = zeros(T, nTE, nT2), B = zeros(T, nT2, nT2), y = zeros(T, nT2)) for nTE in nTEs]
     bufdict = Dict(nTEs .=> bufs)
@@ -77,10 +129,9 @@ function init_data(settings::Dict, ds::AbstractVector{<:Dict})
         signals = d[:signals] :: VC
         TE      = d[:sweepparams][:TE] :: T
         nTE     = d[:sweepparams][:nTE] :: Int
-
-        x   = init_signal(signals) :: VT
-        T2  = log10range(T2Range...; length = nT2) :: VT
-        y   = project_onto_exp!(bufdict[nTE], x, T2, TE, alpha) :: VT
+        x       = init_signal(signals) :: VT
+        T2      = log10range(T2Range...; length = nT2) :: VT
+        y       = project_onto_exp!(bufdict[nTE], x, T2, TE, alpha) :: VT
         copy(y)
     end for d in ds)
     
@@ -88,14 +139,20 @@ function init_data(settings::Dict, ds::AbstractVector{<:Dict})
 end
 
 function label_fun(s::String, d::Dict)::Float64
-    if s == "mwf" # myelin water fraction
+    if s == "mwf" # myelin (small pool) water fraction
         d[:mwfvalues][:exact]
-    elseif s == "ief" # intra/extra-cellular water fraction
+    elseif s == "iewf" # intra/extra-cellular water fraction
         1 - d[:mwfvalues][:exact]
-    elseif s == "lpf" # large pool (extra-cellular) water fraction
+    elseif s == "ewf" # extra-cellular (tissue) water fraction
         1 - d[:btparams_dict][:AxonPDensity]
-    elseif s == "spf" # small pool (intra-cellular) water fraction
+    elseif s == "iwf" # intra-cellular (large pool) water fraction
         d[:btparams_dict][:AxonPDensity] - d[:mwfvalues][:exact]
+    elseif s == "T2iew" # inverse of area-averaged R2 for intra/extra-cellular water
+        iwf, ewf = label_fun("iwf", d), label_fun("ewf", d) # area fractions
+        R2iew = (iwf * d[:btparams_dict][:R2_lp] + ewf * d[:btparams_dict][:R2_Tissue]) / (iwf + ewf) # area-weighted average
+        inv(R2iew) # R2iew -> T2iew
+    elseif s == "T2mw" # myelin-water T2
+        inv(d[:btparams_dict][:R2_sp])
     else
         k = Symbol(s)
         if k ∈ keys(d[:sweepparams]) # From sweep parameters
@@ -118,6 +175,14 @@ function init_labels(settings::Dict, ds::AbstractVector{<:Dict})
         end
     end
     return labels
+end
+
+function init_labels_scale(settings::Dict, labels::AbstractMatrix)
+    if settings["model"]["scale"] == "auto"
+        inv.(vec(maximum(labels; dims = 2))) :: Vector{Float64}
+    else
+        settings["model"]["scale"] :: Vector{Float64}
+    end
 end
 
 """
