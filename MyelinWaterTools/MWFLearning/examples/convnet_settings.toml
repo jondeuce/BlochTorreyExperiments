@@ -15,40 +15,41 @@ channels    = 1 # Number of data channels
 # weights     = [1.0, 1.0] # Weights for loss function
 # labels      = ["mwf", "iewf", "K"] # Target labels
 # weights     = [1.0, 1.0, 0.2] # Weights for loss function
-labels      = ["mwf", "iewf", "T2iew", "T2mw"] # Target labels
-weights     = [2.0, 2.0, 1.0, 1.0] # Weights for loss function
+# labels      = ["mwf", "iewf", "T2iew", "T2mw"] # Target labels
+# weights     = [2.0, 2.0, 1.0, 1.0] # Weights for loss function
+labels      = ["mwf", "iewf", "T2iew", "T2mw", "Dax"] # Target labels
+weights     = [2.0, 2.0, 1.0, 1.0, 0.5] # Weights for loss function
+# labels      = ["mwf", "iewf", "T2iew", "T2mw", "Dav", "K"] # Target labels
+# weights     = [2.0, 2.0, 1.0, 1.0, 0.5, 0.5] # Weights for loss function
 SNR         = [0.0] # Additive random noise
 T2Range     = [0.001, 2.0] # T2 distribution range
 nT2         = 40 # Number of exponentials in T2 distribution
 alpha       = 0.02 # Tikhonov regularization parameter
-PCA         = true # Apply PCA transform to data
+PCA         = false # Apply PCA transform to data
 
 [plot]
 # scale     = [100.0, 100.0] # scale labels before plotting
 # units     = ["%", "%"] # label units, after scaling
-# scale     = [100.0, 100.0, 1.0, 1.0] # scale labels before plotting
-# units     = ["%", "%", "um/s", "um/s"] # label units, after scaling
-scale     = [100.0, 100.0, 1000.0, 1000.0] # scale labels before plotting
-units     = ["%", "%", "ms", "ms"] # label units, after scaling
+# scale     = [100.0, 100.0, 1000.0, 1000.0] # scale labels before plotting
+# units     = ["%", "%", "ms", "ms"] # label units, after scaling
+scale     = [100.0, 100.0, 1000.0, 1000.0, 1.0] # scale labels before plotting
+units     = ["%", "%", "ms", "ms", "um^2/s"] # label units, after scaling
+# scale     = [100.0, 100.0, 1000.0, 1000.0, 1.0, 1.0] # scale labels before plotting
+# units     = ["%", "%", "ms", "ms", "um^2/s", "um/s"] # label units, after scaling
 
 [model]
-name      = "TestModel2"
-loss      = "mse"
+name      = "TestModel1"
+loss      = "l2"
 act       = "elu"
 dropout   = false
 softmax   = false
 batchnorm = true
 scale     = "auto"
-# Nf1       = 4 # num features (conv layer 1)
-# Nf2       = 8 # num features (conv layer 2)
-# Nf3       = 8 # num features (conv layer 3)
-Nds       = [25, 25, 25, 25, 25]
-# Npool     = 3 # pooling size
-# Nkern     = 5 # kernel size
-# Nout      = 1 # number of output labels
-# Nout      = 2 # number of output labels
-# Nout      = 3 # number of output labels
-Nout      = 4 # number of output labels
+Nf        = [4, 8, 8] # num features for conv layers
+# Nd        = [25, 25, 25, 25, 25]
+Npool     = 3 # pooling size
+Nkern     = 5 # kernel size
+Nout      = 5 # number of output labels
 
 [optimizer]
 epochs  = 10000

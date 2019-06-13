@@ -14,9 +14,10 @@ export Flux,      NNlib,      Tracker,      Optimise, DrWatson, BSON, TOML, Date
 
 using DrWatson: @dict, @ntuple
 using Parameters: @unpack
-export @dict, @ntuple, @unpack
+using LegibleLambdas: @λ
+export @dict, @ntuple, @unpack, @λ
 
-export model_summary, get_model, get_activation
+export verify_settings, model_summary, get_model, get_activation
 export heightsize, batchsize, channelsize, log10range
 export prepare_data, label_fun, init_data, init_labels, init_signal
 export project_onto_exp, project_onto_exp!

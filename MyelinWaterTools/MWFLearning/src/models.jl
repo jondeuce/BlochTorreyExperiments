@@ -10,7 +10,8 @@ get_activation(str::String) =
     str == "leakyrelu" ? NNlib.leakyrelu :
     str == "elu"       ? NNlib.elu :
     str == "swish"     ? NNlib.swish :
-    (@warn("Unkown activation function $str; defaulting to relu"); NNlib.relu)
+    str == "softplus"  ? NNlib.softplus :
+    (@warn("Unkown activation function $str; defaulting to softplus"); NNlib.softplus)
 
 """
 See "Sequence classification with 1D convolutions" at the following url:
@@ -84,9 +85,9 @@ function test_model_1(settings, model_settings = settings["model"])
         Flux.Dense(Ndense, Ndense ÷ 2, actfun),
         model_settings["batchnorm"] ? Flux.BatchNorm(Ndense ÷ 2, actfun) : identity,
 
-        # Dense / batchnorm layer, but last actfun must be relu since outputs are positive
-        model_settings["batchnorm"] ? Flux.Dense(Ndense ÷ 2, Nout, actfun) : Flux.Dense(Ndense ÷ 2, Nout, NNlib.relu),
-        model_settings["batchnorm"] ? Flux.BatchNorm(Nout, NNlib.relu) : identity,
+        # Dense / batchnorm layer, but last actfun must be softplus since outputs are positive
+        model_settings["batchnorm"] ? Flux.Dense(Ndense ÷ 2, Nout, actfun) : Flux.Dense(Ndense ÷ 2, Nout, NNlib.softplus),
+        model_settings["batchnorm"] ? Flux.BatchNorm(Nout, NNlib.softplus) : identity,
 
         # Softmax
         model_settings["softmax"] ? NNlib.softmax : identity,
@@ -102,27 +103,27 @@ function test_model_2(settings, model_settings = settings["model"])
     H = settings["data"]["height"] # data height
     C = settings["data"]["channels"] # number of channels
 
-    @unpack Nout, act, Nds = model_settings
+    @unpack Nout, act, Nd = model_settings
     actfun = get_activation(act)
 
     model = Flux.Chain(
         DenseResize(),
-        Flux.Dense(H * C, Nds[1], actfun),
-        # model_settings["batchnorm"] ? Flux.BatchNorm(Nds[1], actfun) : identity,
+        Flux.Dense(H * C, Nd[1], actfun),
+        # model_settings["batchnorm"] ? Flux.BatchNorm(Nd[1], actfun) : identity,
         
         reduce(vcat, [
-            Flux.Dense(Nds[i], Nds[i+1], actfun),
-            # model_settings["batchnorm"] ? Flux.BatchNorm(Nds[i+1], actfun) : identity
-        ] for i in 1:length(Nds)-1)...,
+            Flux.Dense(Nd[i], Nd[i+1], actfun),
+            # model_settings["batchnorm"] ? Flux.BatchNorm(Nd[i+1], actfun) : identity
+        ] for i in 1:length(Nd)-1)...,
 
-        Flux.Dense(Nds[end], Nout, actfun),
+        Flux.Dense(Nd[end], Nout, actfun),
         model_settings["batchnorm"] ? Flux.BatchNorm(Nout, actfun) : identity,
 
         # Softmax
         model_settings["softmax"] ? NNlib.softmax : identity,
         
-        # Swish to ensure positivity, unless softmax has already been applied
-        model_settings["softmax"] ? identity : x -> NNlib.swish.(x),
+        # Softplus to ensure positivity, unless softmax has already been applied
+        model_settings["softmax"] ? identity : @λ(x -> NNlib.softplus.(x)),
 
         # Scale from (0,1) back to model parameter range
         model_settings["scale"] == false ? identity : Scale(model_settings["scale"]),
@@ -131,12 +132,19 @@ function test_model_2(settings, model_settings = settings["model"])
     return model
 end
 
-function model_summary(model)
+function model_summary(io::IO, model, filename = nothing)
     @info "Model summary..."
+    (filename != nothing) && open(filename, "w") do file
+        _model_summary(file, model)
+    end
+    _model_summary(io, model)
+end
+model_summary(model, filename = nothing) = model_summary(stdout, model, filename)
+
+function _model_summary(io::IO, model)
     for layer in model
         if layer != identity
-            print("        ")
-            println(layer)
+            println(io, layer)
         end
     end
 end

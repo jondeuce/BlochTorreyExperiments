@@ -19,17 +19,18 @@ savebson(filename, data::Dict) = @elapsed BSON.bson(filename, data) # TODO getno
 
 # Settings
 const settings_file = "settings.toml"
-const settings = TOML.parsefile(settings_file)
+const settings = verify_settings(TOML.parsefile(settings_file))
 const model_settings = settings["model"]
 
-const FILE_PREFIX = DrWatson.savename(model_settings) * "."
-const T  = settings["prec"] == 32 ? Float32 : Float64
-const VT = Vector{T}
-const MT = Matrix{T}
+const FILE_PREFIX = getnow() * "." * DrWatson.savename(model_settings) * "."
+const GPU = settings["gpu"] :: Bool
+const T   = settings["prec"] == 32 ? Float32 : Float64
+const VT  = Vector{T}
+const MT  = Matrix{T}
 
 const savefoldernames = ["settings", "models", "weights", "log", "plots"]
 const savefolders = Dict{String,String}(savefoldernames .=> mkpath.(joinpath.(settings["dir"], savefoldernames)))
-cp(settings_file, joinpath(savefolders["settings"], FILE_PREFIX * "settings.toml"); force = true)
+cp(settings_file, joinpath(savefolders["settings"], FILE_PREFIX * "settings.toml"); force = true) # TODO getnow()
 clearsavefolders(folders = savefolders) = for (k,f) in folders; rm.(joinpath.(f, readdir(f))); end
 
 # Load and prepare signal data
@@ -117,7 +118,7 @@ savefig(plot_random_data_samples(), "plots/" * FILE_PREFIX * "datasamples.png")
 # Construct model
 @info "Constructing model..."
 model = MWFLearning.get_model(settings, model_settings)
-model_summary(model)
+model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"))
 
 # Compute parameter density, defined as the number of Flux.params / number of training label datapoints
 const param_density = sum(length, Flux.params(model)) / sum(b -> length(b[2]), train_set)
@@ -125,14 +126,12 @@ const param_density = sum(length, Flux.params(model)) / sum(b -> length(b[2]), t
 
 # Loss and accuracy function
 unitsum(x) = x ./ sum(x)
-get_label_weights()::Union{Vector{Float32},Vector{Float64}} =
-    unitsum(convert(settings["prec"] == 32 ? Vector{Float32} : Vector{Float64},
-        model_settings["scale"] .* settings["data"]["weights"]))
+get_label_weights()::VT = VT(inv.(model_settings["scale"]) .* unitsum(settings["data"]["weights"]))
 
-l2(x,y) = sum((get_label_weights() .* (model(x) .- y)).^2)
-mse(x,y) = l2(x,y) * 1 // length(y)
-crossent(x,y) = Flux.crossentropy(model(x), y)
-mincrossent(y) = -sum(y.*log.(y))
+l2 = @λ (x,y) -> sum((get_label_weights() .* (model(x) .- y)).^2)
+mse = @λ (x,y) -> l2(x,y) * 1 // length(y)
+crossent = @λ (x,y) -> Flux.crossentropy(model(x), y)
+mincrossent = @λ (y) -> -sum(y .* log.(y))
 
 if model_settings["loss"] ∉ ["l2", "mse", "crossent"]
     @warn "Unknown loss $(model_settings["loss"]); defaulting to mse"
@@ -145,12 +144,12 @@ loss =
     mse # default
 
 accuracy =
-    model_settings["loss"] == "l2" ? (x,y) -> 100 - 100 * sqrt(loss(x,y) * 1 // length(y)) :
-    model_settings["loss"] == "crossent" ? (x,y) -> 100 - 100 * (loss(x,y) - mincrossent(y)) :
-    (x,y) -> 100 - 100 * sqrt(loss(x,y)) # default
+    model_settings["loss"] == "l2" ? @λ( (x,y) -> 100 - 100 * sqrt(loss(x,y) * 1 // length(y)) ) :
+    model_settings["loss"] == "crossent" ? @λ( (x,y) -> 100 - 100 * (loss(x,y) - mincrossent(y)) ) :
+    @λ( (x,y) -> 100 - 100 * sqrt(loss(x,y)) ) # default
 
 labelerror =
-    (x,y) -> 100 .* mean(abs.(model(x) .- y); dims = 2) ./ maximum(abs.(y); dims = 2)
+    @λ (x,y) -> 100 .* mean(abs.(model(x) .- y); dims = 2) ./ maximum(abs.(y); dims = 2)
 
 # stringlabelerror =
 #     (x,y) -> string.(round.(settings["plot"]["scale"] .* Flux.data(labelerror(x,y)); sigdigits = 4)) .* " " .* settings["plot"]["units"]
@@ -186,7 +185,7 @@ plot_errs_cb = () -> begin
         plot(
             plot(loss;      title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), min(1, quantile(loss, 0.90)))),
             plot(acc;       title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (95, 100)),
-            plot(labelerr;  title = "Label Error ($k: rel. mean abs %)",                            titlefontsize = 10, label = labelnames, legend = :topleft, ylim = (minimum(labelerr), 15)),
+            plot(labelerr;  title = "Label Error ($k: rel. %)",                                     titlefontsize = 10, label = labelnames, legend = :topleft, ylim = (max(0, minimum(labelerr) - 0.5), min(15, quantile(labelerr[:], 0.90)))),
             layout = (1,3)
         )
     end for (k,v) in errs)
@@ -217,16 +216,17 @@ cbs = Flux.Optimise.runall([
 ])
 
 # Training Loop
+const ACC_THRESH = 100.0
+const DROP_ETA_THRESH = 250 #typemax(Int)
+const CONVERGED_THRESH = 500 #typemax(Int)
 BEST_ACC = 0.0
 LAST_IMPROVED_EPOCH = 0
-DROP_ETA_THRESH = 250 #typemax(Int)
-CONVERGED_THRESH = 500 #typemax(Int)
 
 @info("Beginning training loop...")
 
 try
     for epoch in 1:settings["optimizer"]["epochs"]
-        global BEST_ACC, LAST_IMPROVED_EPOCH, DROP_ETA_THRESH, CONVERGED_THRESH
+        global BEST_ACC, LAST_IMPROVED_EPOCH
 
         # Train for a single epoch
         Flux.train!(loss, Flux.params(model), train_set, opt; cb = cbs)
@@ -236,7 +236,7 @@ try
         @info(@sprintf("[%d]: Test accuracy: %.4f", epoch, acc))
         
         # If our accuracy is good enough, quit out.
-        if acc >= 99.99
+        if acc >= ACC_THRESH
             @info " -> Early-exiting: We reached our target accuracy of 99.99%"
             break
         end
@@ -249,17 +249,16 @@ try
             curr_epoch = epoch
             curr_acc = BEST_ACC
 
-            # TODO
-            # try
-            #     # model = Flux.mapleaves(Flux.data, model) # local scope, can rename
-            #     save_time = savebson("models/" * FILE_PREFIX * "model.bson", @dict(model, opt, curr_epoch, curr_acc)) #TODO getnow()
-            #     @info " -> New best accuracy; model saved ($(round(1000*save_time; digits = 2)) ms)"
-            # catch e
-            #     @warn "Error saving model"
-            #     @warn sprint(showerror, e, catch_backtrace())
-            # end
+            try
+                # TODO
+                # model = Flux.mapleaves(Flux.data, model) # local scope, can rename
+                # save_time = savebson("models/" * FILE_PREFIX * "model.bson", @dict(model, opt, curr_epoch, curr_acc)) #TODO getnow()
+                # @info " -> New best accuracy; model saved ($(round(1000*save_time; digits = 2)) ms)"
+            catch e
+                @warn "Error saving model"
+                @warn sprint(showerror, e, catch_backtrace())
+            end
 
-            # TODO
             try
                 weights = Flux.data.(Flux.params(model))
                 save_time = savebson("weights/" * FILE_PREFIX * "weights.bson", @dict(weights, curr_epoch, curr_acc)) #TODO getnow()
@@ -300,11 +299,11 @@ fig = plot([
     begin
         scale = settings["plot"]["scale"][i]
         units = settings["plot"]["units"][i]
-        err = scale .* abs.(model_labels[i,:] .- true_labels[i,:])
+        err = scale .* (model_labels[i,:] .- true_labels[i,:])
         histogram(err;
             grid = true, minorgrid = true, titlefontsize = 10,
             label = settings["data"]["labels"][i] * " ($units)",
-            title = "μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2)), IQR = $(round(iqr(err); sigdigits = 2))",
+            title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
         )
     end for i in 1:size(model_labels, 1)
     ]...)

@@ -73,6 +73,21 @@ to_float_type_T(T, x::AbstractMatrix) = convert(Matrix{T}, x)
 to_float_type_T(T, x::AbstractVector{C}) where {C <: Complex} = convert(Vector{Complex{T}}, x)
 to_float_type_T(T, x::AbstractMatrix{C}) where {C <: Complex} = convert(Matrix{Complex{T}}, x)
 
+"""
+    verify_settings
+"""
+function verify_settings(settings::Dict)
+    # Expand vector properties in model
+    for (k,v) in settings["model"]
+        if v isa AbstractVector
+            for i in 1:length(v)
+                settings["model"][k * string(i)] = v[i]
+            end
+        end
+    end
+    return settings
+end
+
 # ---------------------------------------------------------------------------- #
 # Preparing data
 # ---------------------------------------------------------------------------- #
@@ -104,8 +119,8 @@ function prepare_data(settings::Dict, model_settings = settings["model"])
     @assert size(training_data, 1) == size(testing_data, 1)
 
     labels_scale = init_labels_scale(settings, hcat(training_labels, testing_labels))
-    # training_labels .*= labels_scale
-    # testing_labels .*= labels_scale
+    # training_labels ./= labels_scale
+    # testing_labels ./= labels_scale
 
     T = settings["prec"] == 32 ? Float32 : Float64
     training_data, testing_data, training_labels, testing_labels = map(
@@ -160,17 +175,27 @@ function label_fun(s::String, d::Dict)::Float64
     elseif s == "iwf" # intra-cellular (large pool) water fraction
         d[:btparams_dict][:AxonPDensity] - d[:mwfvalues][:exact]
     elseif s == "T2iew" # inverse of area-averaged R2 for intra/extra-cellular water
+        @unpack R2_lp, R2_Tissue = d[:btparams_dict] # R2 values
         iwf, ewf = label_fun("iwf", d), label_fun("ewf", d) # area fractions
-        R2iew = (iwf * d[:btparams_dict][:R2_lp] + ewf * d[:btparams_dict][:R2_Tissue]) / (iwf + ewf) # area-weighted average
+        R2iew = (iwf * R2_lp + ewf * R2_Tissue) / (iwf + ewf) # area-weighted average
         inv(R2iew) # R2iew -> T2iew
     elseif s == "T2mw" # myelin-water T2
         inv(d[:btparams_dict][:R2_sp])
+    elseif s == "T2av" # inverse of area-averaged R2 for whole domain
+        @unpack R2_lp, R2_sp, R2_Tissue = d[:btparams_dict] # R2 values
+        iwf, mwf, ewf = label_fun("iwf", d), label_fun("mwf", d), label_fun("ewf", d) # area fractions
+        R2av = (iwf * R2_lp + mwf * R2_sp + ewf * R2_Tissue) # area-weighted average
+        inv(R2av) # R2av -> T2av
+    elseif s == "Dav" # area-averaged D-coeff for whole domain
+        @unpack D_Axon, D_Sheath, D_Tissue = d[:btparams_dict] # D values
+        iwf, mwf, ewf = label_fun("iwf", d), label_fun("mwf", d), label_fun("ewf", d) # area fractions
+        Dav = (iwf * D_Axon + mwf * D_Sheath + ewf * D_Tissue) # area-weighted average
     else
         k = Symbol(s)
-        if k ∈ keys(d[:sweepparams]) # From sweep parameters
-            d[:sweepparams][k]
-        elseif k ∈ keys(d[:btparams_dict]) # From BlochTorreyParameters
+        if k ∈ keys(d[:btparams_dict]) # from BlochTorreyParameters
             d[:btparams_dict][k]
+        elseif k ∈ keys(d[:sweepparams]) # from sweep parameters
+            d[:sweepparams][k]
         else
             error("Unknown label: $s")
         end
@@ -191,7 +216,7 @@ end
 
 function init_labels_scale(settings::Dict, labels::AbstractMatrix)
     if settings["model"]["scale"] == "auto"
-        inv.(vec(maximum(labels; dims = 2))) :: Vector{Float64}
+        vec(maximum(labels; dims = 2)) :: Vector{Float64}
     else
         settings["model"]["scale"] :: Vector{Float64}
     end
