@@ -96,12 +96,14 @@ const test_set = make_minibatch(data_set[:testing_data], data_set[:testing_label
 # mean(plot_xdata[2:end] ./ plot_xdata[1:end-1])
 
 @info "Plotting random data samples..."
-plot_xdata = log10range(settings["data"]["T2Range"]...; length = settings["data"]["nT2"])
-plot_ydata = reshape(test_set[1], :, batchsize(test_set[1]))
 plot_random_data_samples = () -> begin
+    plot_xdata = settings["data"]["PCA"] ?
+        collect(1:heightsize(test_set[1])) :
+        log10range(settings["data"]["T2Range"]...; length = settings["data"]["nT2"])
+    plot_ydata = reshape(test_set[1], :, batchsize(test_set[1]))
     fig = plot([
         plot(plot_xdata, plot_ydata[:,i];
-            xscale = :log10,
+            xscale = settings["data"]["PCA"] ? :identity : :log10,
             titlefontsize = 8, grid = true, minorgrid = true,
             label = "\$T_2\$ Distbn.",
             title = DrWatson.savename("", data_set[:testing_data_dicts][i][:sweepparams]; connector = ", ")
@@ -112,10 +114,7 @@ plot_random_data_samples = () -> begin
 end
 savefig(plot_random_data_samples(), "plots/" * FILE_PREFIX * "datasamples.png")
 
-# Define our model. This is the example model from the Keras documentation,
-# "Sequence classification with 1D convolutions", at the following url:
-#   https://keras.io/getting-started/sequential-model-guide/
-
+# Construct model
 @info "Constructing model..."
 model = MWFLearning.get_model(settings, model_settings)
 model_summary(model)
@@ -125,22 +124,36 @@ const param_density = sum(length, Flux.params(model)) / sum(b -> length(b[2]), t
 @info "Parameter density = $(round(100 * param_density; digits = 2)) %"
 
 # Loss and accuracy function
-get_weights()::Union{Vector{Float32},Vector{Float64}} =
-    convert(settings["prec"] == 32 ? Vector{Float32} : Vector{Float64},
-        model_settings["scale"] .* settings["data"]["weights"])
+unitsum(x) = x ./ sum(x)
+get_label_weights()::Union{Vector{Float32},Vector{Float64}} =
+    unitsum(convert(settings["prec"] == 32 ? Vector{Float32} : Vector{Float64},
+        model_settings["scale"] .* settings["data"]["weights"]))
 
-l2(x,y) = sum((get_weights() .* (model(x) .- y)).^2)
+l2(x,y) = sum((get_label_weights() .* (model(x) .- y)).^2)
 mse(x,y) = l2(x,y) * 1 // length(y)
 crossent(x,y) = Flux.crossentropy(model(x), y)
+mincrossent(y) = -sum(y.*log.(y))
+
+if model_settings["loss"] ∉ ["l2", "mse", "crossent"]
+    @warn "Unknown loss $(model_settings["loss"]); defaulting to mse"
+    model_settings["loss"] = "mse"
+end
 
 loss =
     model_settings["loss"] == "l2" ? l2 :
-    model_settings["loss"] == "mse" ? mse :
     model_settings["loss"] == "crossent" ? crossent :
-    error("Unknown loss function: " * model_settings["loss"])
+    mse # default
 
-mwfloss(x,y) = sum(abs2, model(x)[1,:] .- y[1,:])
-accuracy(x,y) = 100 - 100 * sqrt(mwfloss(x,y) / batchsize(y))
+accuracy =
+    model_settings["loss"] == "l2" ? (x,y) -> 100 - 100 * sqrt(loss(x,y) * 1 // length(y)) :
+    model_settings["loss"] == "crossent" ? (x,y) -> 100 - 100 * (loss(x,y) - mincrossent(y)) :
+    (x,y) -> 100 - 100 * sqrt(loss(x,y)) # default
+
+labelerror =
+    (x,y) -> 100 .* mean(abs.(model(x) .- y); dims = 2) ./ maximum(abs.(y); dims = 2)
+
+# stringlabelerror =
+#     (x,y) -> string.(round.(settings["plot"]["scale"] .* Flux.data(labelerror(x,y)); sigdigits = 4)) .* " " .* settings["plot"]["units"]
 
 # Optimizer
 opt = Flux.ADAM(
@@ -149,28 +162,35 @@ opt = Flux.ADAM(
 
 # Callbacks
 errs = Dict(
-    :training => Dict(:loss => [], :acc => []),
-    :testing => Dict(:loss => [], :acc => []))
+    :training => Dict(:loss => [], :acc => [], :labelerr => []),
+    :testing => Dict(:loss => [], :acc => [], :labelerr => []))
 
 train_err_cb = () -> begin
     push!(errs[:training][:loss], mean(Flux.data(loss(b...)) for b in train_set))
     push!(errs[:training][:acc], mean(Flux.data(accuracy(b...)) for b in train_set))
+    push!(errs[:training][:labelerr], mean(Flux.data(labelerror(b...)) for b in train_set))
 end
 
 test_err_cb = () -> begin
     push!(errs[:testing][:loss], Flux.data(loss(test_set...)))
     push!(errs[:testing][:acc], Flux.data(accuracy(test_set...)))
+    push!(errs[:testing][:labelerr], Flux.data(labelerror(test_set...)))
 end
 
 plot_errs_cb = () -> begin
     @info " -> Plotting progress..."
-    train_loss, train_acc, test_loss, test_acc = errs[:training][:loss], errs[:training][:acc], errs[:testing][:loss], errs[:testing][:acc]
-    fig = plot(
-        plot(train_loss; title = "Training loss (Min = $(round(minimum(train_loss); sigdigits = 4)))", label = "loss", legend = :topright, ylim = (minimum(train_loss), length(train_loss) < 5 ? maximum(train_loss) : quantile(train_loss, 0.90)) ),
-        plot(train_acc;  title = "Training acc (Peak = $(round(maximum(train_acc); sigdigits = 4))%)", label = "acc",  legend = :topleft,  ylim = (95, 100)),
-        plot(test_loss;  title = "Testing loss (Min = $(round(minimum(test_loss); sigdigits = 4)))",   label = "loss", legend = :topright, ylim = (minimum(test_loss), length(test_loss) < 5 ? maximum(test_loss) : quantile(test_loss, 0.90)) ),
-        plot(test_acc;   title = "Testing acc (Peak = $(round(maximum(test_acc); sigdigits = 4))%)",   label = "acc",  legend = :topleft,  ylim = (95, 100));
-        layout = (2,2))
+    allfigs = reduce(vcat, begin
+        @unpack loss, acc, labelerr = v
+        labelerr = permutedims(reduce(hcat, labelerr))
+        labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
+        plot(
+            plot(loss;      title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), min(1, quantile(loss, 0.90)))),
+            plot(acc;       title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (95, 100)),
+            plot(labelerr;  title = "Label Error ($k: rel. mean abs %)",                            titlefontsize = 10, label = labelnames, legend = :topleft, ylim = (minimum(labelerr), 15)),
+            layout = (1,3)
+        )
+    end for (k,v) in errs)
+    fig = plot(allfigs...; layout = (length(errs), 1))
     display(fig)
     savefig(fig, "plots/" * FILE_PREFIX * "errs.png")
 end
@@ -199,8 +219,8 @@ cbs = Flux.Optimise.runall([
 # Training Loop
 BEST_ACC = 0.0
 LAST_IMPROVED_EPOCH = 0
-DROP_ETA_THRESH = 50 #typemax(Int)
-CONVERGED_THRESH = 250 #typemax(Int)
+DROP_ETA_THRESH = 250 #typemax(Int)
+CONVERGED_THRESH = 500 #typemax(Int)
 
 @info("Beginning training loop...")
 
@@ -290,47 +310,5 @@ fig = plot([
     ]...)
 display(fig)
 savefig(fig, "plots/" * FILE_PREFIX * "labelhistograms.png")
-
-"""
-NOTES:
-
-Running multiple models for fixed 100 epochs w/ default ADAM
-
--> Keras_1D_Seq_Class (density = 44%, activation = relu)
-
-                    Softmax
-                    Yes                     No
-    Dropout
-    Yes             98.01% Train Acc        98.66% Train Acc
-                    98.01% Test Acc         98.63% Test Acc
-                    -> No overtraining      -> No overtraining
-    
-    No              99.81% Train Acc        99.74% Train Acc
-                    99.82% Test Acc         99.76% Test Acc
-                    -> No overtraining      -> Yes overtraining
-
--> Keras_1D_Seq_Class (density = 44%, activation = leakyrelu)
-
-                    Softmax
-                    Yes                     No
-    Dropout
-    No              99.68% Train Acc        99.73% Train Acc
-                    99.70% Test Acc         99.73% Test Acc
-                    -> No overtraining      -> No overtraining
-
--> Keras_1D_Seq_Class (density = 17%, activation = leakyrelu, no Dropout)
-
-                    Softmax
-                    Yes                     No
-    Loss
-    MSE             99.64% Train Acc        99.60% Train Acc
-                    99.67% Test Acc         99.64% Test Acc
-                    -> No overtraining      -> No overtraining
-
-    Crossentropy    99.64% Train Acc        XX.XX% Train Acc
-                    99.69% Test Acc         XX.XX% Test Acc
-                    -> XX overtraining      -> XX overtraining
-
-"""
 
 nothing

@@ -12,6 +12,10 @@ get_activation(str::String) =
     str == "swish"     ? NNlib.swish :
     (@warn("Unkown activation function $str; defaulting to relu"); NNlib.relu)
 
+"""
+See "Sequence classification with 1D convolutions" at the following url:
+    https://keras.io/getting-started/sequential-model-guide/
+"""
 function keras_1D_sequence_classification(settings, model_settings = settings["model"])
     H = settings["data"]["height"] # data height
     C = settings["data"]["channels"] # number of channels
@@ -116,6 +120,9 @@ function test_model_2(settings, model_settings = settings["model"])
 
         # Softmax
         model_settings["softmax"] ? NNlib.softmax : identity,
+        
+        # Swish to ensure positivity, unless softmax has already been applied
+        model_settings["softmax"] ? identity : x -> NNlib.swish.(x),
 
         # Scale from (0,1) back to model parameter range
         model_settings["scale"] == false ? identity : Scale(model_settings["scale"]),
@@ -124,13 +131,11 @@ function test_model_2(settings, model_settings = settings["model"])
     return model
 end
 
-
-
 function model_summary(model)
     @info "Model summary..."
     for layer in model
         if layer != identity
-            print("\t")
+            print("        ")
             println(layer)
         end
     end

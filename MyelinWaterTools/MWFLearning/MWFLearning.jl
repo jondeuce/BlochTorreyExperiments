@@ -17,7 +17,7 @@ using Parameters: @unpack
 export @dict, @ntuple, @unpack
 
 export model_summary, get_model, get_activation
-export log10range, batchsize, channelsize
+export heightsize, batchsize, channelsize, log10range
 export prepare_data, label_fun, init_data, init_labels, init_signal
 export project_onto_exp, project_onto_exp!
 

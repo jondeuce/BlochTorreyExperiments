@@ -23,6 +23,14 @@ channelsize(x::AbstractMatrix) = 1
 channelsize(x::AbstractArray{T,N}) where {T,N} = size(x, N-1)
 
 """
+    heightsize(x::AbstractArray)
+
+Returns the length of the first dimension of the data `x`.
+"""
+heightsize(x::AbstractVector) = 1
+heightsize(x::AbstractArray{T,N}) where {T,N} = size(x, 1)
+
+"""
     DenseResize()
 
 Non-learnable layer which resizes input arguments `x` to be a matrix with batchsize(x) columns.
@@ -64,6 +72,10 @@ to_float_type_T(T, x::AbstractVector) = convert(Vector{T}, x)
 to_float_type_T(T, x::AbstractMatrix) = convert(Matrix{T}, x)
 to_float_type_T(T, x::AbstractVector{C}) where {C <: Complex} = convert(Vector{Complex{T}}, x)
 to_float_type_T(T, x::AbstractMatrix{C}) where {C <: Complex} = convert(Matrix{Complex{T}}, x)
+
+# ---------------------------------------------------------------------------- #
+# Preparing data
+# ---------------------------------------------------------------------------- #
 
 function prepare_data(settings::Dict, model_settings = settings["model"])
     training_data_dicts = BSON.load.(joinpath.(settings["data"]["train_data"], readdir(settings["data"]["train_data"])))
@@ -122,17 +134,17 @@ function init_data(settings::Dict, ds::AbstractVector{<:Dict})
     T2Range = settings["data"]["T2Range"] :: VT
     nT2     = settings["data"]["nT2"] :: Int
     nTEs    = unique(d[:sweepparams][:nTE] for d in ds) :: Vector{Int}
-    bufs    = [(A = zeros(T, nTE, nT2), B = zeros(T, nT2, nT2), y = zeros(T, nT2)) for nTE in nTEs]
+    bufs    = [(A = zeros(T, nTE, nT2), B = zeros(T, nT2, nT2), x = zeros(T, nT2)) for nTE in nTEs]
     bufdict = Dict(nTEs .=> bufs)
 
     out = reduce(hcat, begin
         signals = d[:signals] :: VC
         TE      = d[:sweepparams][:TE] :: T
         nTE     = d[:sweepparams][:nTE] :: Int
-        x       = init_signal(signals) :: VT
+        b       = init_signal(signals) :: VT
         T2      = log10range(T2Range...; length = nT2) :: VT
-        y       = project_onto_exp!(bufdict[nTE], x, T2, TE, alpha) :: VT
-        copy(y)
+        x       = project_onto_exp!(bufdict[nTE], b, T2, TE, alpha) :: VT
+        copy(x)
     end for d in ds)
     
     return reshape(out, :, 1, size(out, 2))
@@ -219,15 +231,16 @@ and is given by
     x = (A'A + α^2 * I)^{-1} A'b
 """
 function project_onto_exp(b::AbstractVecOrMat, τ::AbstractVector, η::Number, α::Number = 1)
+    # The below code is equivalent to the following (but is much faster):
+    #   A = [exp(-ti/τj) for ti in t, τj in τ]
+    #   x = (A'A + α^2*I)\(A'b)
     T = promote_type(eltype(b), eltype(τ), eltype(η), eltype(α))
     M, P = size(b)
     N = length(τ)
     t = η.*(1:M)
-    # A = [exp(-ti/τj) for ti in t, τj in τ]
-    # x = (A'A + α^2*I)\(A'b)
-    bufs = (A = zeros(T, M, N), B = zeros(T, N, N), y = zeros(T, N, P))
-    y = project_onto_exp!(bufs, b, τ, η, α)
-    return copy(y)
+    bufs = (A = zeros(T, M, N), B = zeros(T, N, N), x = zeros(T, N, P))
+    x = project_onto_exp!(bufs, b, τ, η, α)
+    return copy(x)
 end
 
 function project_onto_exp!(bufs, b::AbstractVecOrMat, τ::AbstractVector, η::Number, α::Number = 1)
@@ -235,16 +248,15 @@ function project_onto_exp!(bufs, b::AbstractVecOrMat, τ::AbstractVector, η::Nu
     N = length(τ)
     t = η.*(1:M)
 
-    @unpack A, B, y = bufs
-    @assert size(A) == (M, N) && size(B) == (N, N) &&
-            size(y,1) == N && size(y,2) == size(b,2)
+    @unpack A, B, x = bufs
+    @assert size(A) == (M, N) && size(B) == (N, N) && size(x,1) == N && size(x,2) == size(b,2)
 
     @inbounds for j in 1:N
         for i in 1:M
             A[i,j] = exp(-t[i]/τ[j]) # LHS matrix
         end
     end
-    mul!(y, A', b) # RHS vector
+    mul!(x, A', b) # RHS vector
 
     mul!(B, A', A)
     @inbounds for j in 1:N
@@ -252,9 +264,9 @@ function project_onto_exp!(bufs, b::AbstractVecOrMat, τ::AbstractVector, η::Nu
     end
 
     Bf = cholesky!(B)
-    ldiv!(Bf, y) # Solve inverse
+    ldiv!(Bf, x) # Invert A'A + α^2*I onto A'b
 
-    return y
+    return x
 end
 
 """
