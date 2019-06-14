@@ -27,7 +27,7 @@ end
 @inline floattype(::Type{T}) where {T<:Real} = T
 @inline floattype(::T) where {T<:Real} = T
 
-@inline norm2(x::Vec) = dot(x,x)
+@inline norm2(x::Vec) = x⋅x
 @inline Base.complex(x::Vec{2}) = complex(x[1], x[2])
 @inline Base.angle(x::Vec{2}) = atan(x[2], x[1])
 @inline Base.sincos(x::Vec{2}) = (r = norm(x); sinθ = x[2]/r; cosθ = x[1]/r; return (sinθ, cosθ))
@@ -35,6 +35,7 @@ end
     sinθ, cosθ = sincos(x)
     return Tensor{2,2,T}((cosθ, sinθ, -sinθ, cosθ))
 end
+@inline transverse(x::Vec{3,T}) where {T} = Vec{2,T}((x[1], x[2]))
 
 @inline function hadamardproduct(S1::Vec{dim}, S2::Vec{dim}) where {dim}
     return Vec{dim}(@inline function(i) v = S1[i] * S2[i]; return v; end)

@@ -41,6 +41,7 @@ make_minibatch(x, y, idxs) = (x[:,:,idxs], y[:,idxs])
 const data_set = prepare_data(settings, model_settings)
 const train_batches = partition(1:batchsize(data_set[:training_data]), settings["data"]["batch_size"])
 const train_set = [make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches]
+# const train_set = [([make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches][1]...,)] # For overtraining testing
 const test_set = make_minibatch(data_set[:testing_data], data_set[:testing_labels], 1:settings["data"]["test_size"])
 
 # # Component analysis
@@ -208,17 +209,17 @@ test_err_cb() # initial loss
 train_err_cb() # initial loss
 
 cbs = Flux.Optimise.runall([
-    Flux.throttle(test_err_cb, 1),
-    Flux.throttle(train_err_cb, 2),
-    Flux.throttle(plot_errs_cb, 10),
-    Flux.throttle(checkpoint_errs_cb, 10),
+    Flux.throttle(test_err_cb, 5),
+    Flux.throttle(train_err_cb, 5),
+    Flux.throttle(plot_errs_cb, 15),
+    Flux.throttle(checkpoint_errs_cb, 30),
     # Flux.throttle(checkpoint_model_opt_cb, 120),
 ])
 
 # Training Loop
 const ACC_THRESH = 100.0
-const DROP_ETA_THRESH = 250 #typemax(Int)
-const CONVERGED_THRESH = 500 #typemax(Int)
+const DROP_ETA_THRESH = 250 # typemax(Int)
+const CONVERGED_THRESH = 500 # typemax(Int)
 BEST_ACC = 0.0
 LAST_IMPROVED_EPOCH = 0
 

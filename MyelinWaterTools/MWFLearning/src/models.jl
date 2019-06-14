@@ -147,4 +147,5 @@ function _model_summary(io::IO, model)
             println(io, layer)
         end
     end
+    println(io, "\nParameters: $(sum(length, Flux.params(model)))")
 end
