@@ -1,3 +1,10 @@
+#######################
+## PROJECT GITIGNORE ##
+#######################
+Test/*
+GeometryGeneration/Images/*
+Results/*
+
 ######################
 ## MATLAB GITIGNORE ##
 ######################
