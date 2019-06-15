@@ -36,6 +36,7 @@ end
     return Tensor{2,2,T}((cosθ, sinθ, -sinθ, cosθ))
 end
 @inline transverse(x::Vec{3,T}) where {T} = Vec{2,T}((x[1], x[2]))
+@inline longitudinal(x::Vec{3,T}) where {T} = x[3]
 
 @inline function hadamardproduct(S1::Vec{dim}, S2::Vec{dim}) where {dim}
     return Vec{dim}(@inline function(i) v = S1[i] * S2[i]; return v; end)

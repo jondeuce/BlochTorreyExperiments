@@ -331,7 +331,7 @@ version = "0.11.0"
 
 [[DiffEqOperators]]
 deps = ["BandedMatrices", "DiffEqBase", "ForwardDiff", "LinearAlgebra", "SparseArrays", "StaticArrays", "SuiteSparse"]
-git-tree-sha1 = "55cf3858a3234d40b0b6977ef9a389caf638e244"
+git-tree-sha1 = "81bd09f2e81aa50260c99471e56ee328d08b9415"
 repo-rev = "master"
 repo-url = "https://github.com/JuliaDiffEq/DiffEqOperators.jl.git"
 uuid = "9fdde737-9c7f-55bf-ade8-46b3f136cc48"
@@ -996,9 +996,9 @@ version = "0.10.3"
 
 [[Parsers]]
 deps = ["Dates", "Test"]
-git-tree-sha1 = "eaed2db080700f1013f0fc05667ecb2a082265a1"
+git-tree-sha1 = "db2b35dedab3c0e46dc15996d170af07a5ab91c9"
 uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
-version = "0.3.5"
+version = "0.3.6"
 
 [[Pidfile]]
 deps = ["FileWatching", "Test"]

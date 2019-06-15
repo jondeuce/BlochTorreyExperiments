@@ -17,10 +17,10 @@ Base.show(io::IO, grid::JuAFEM.Grid) = print(io, "$(typeof(grid)) with $(JuAFEM.
 # face of the domain and applying it to the vector `u`. This is really quite
 # slow and wasteful, and there is almost definitely a better way to implement
 # this, but it just isn't a bottleneck and this is easy.
-function _interpolate!(u::AbstractVector{Tu}, f::Function, dh::DofHandler, uDim::Int) where {Tu}
+function _interpolate!(u::AbstractVector{Tu}, f::Function, dh::DofHandler, uDim::Int, field = :u, comp = [1:uDim;]) where {Tu}
     ch = ConstraintHandler(dh)
     ∂Ω = getfaces(dh.grid)
-    dbc = Dirichlet(:u, ∂Ω, (x,t) -> f(x), [1:uDim;])
+    dbc = Dirichlet(field, ∂Ω, (x,t) -> f(x), comp) # BC on field components
     add!(ch, dbc)
     close!(ch)
     update!(ch, zero(Tu)) # time zero
@@ -37,6 +37,14 @@ function interpolate!(u::AbstractVector{uType}, f::Function, domain::AbstractDom
     uR = _interpolate!(zeros(Tu, ndofs(dh)), x->real(f(x)), dh, uDim)
     uI = _interpolate!(zeros(Tu, ndofs(dh)), x->imag(f(x)), dh, uDim)
     u .= complex.(uR, uI)
+    return u
+end
+function interpolate!(u::AbstractVector{Tu}, f::Function, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:Vec{3,Tu}}
+    # Treat Vec{3,Tu} as two systems of Vec{2,Tu} and Vec{1,Tu}
+    dh, uDim = getdofhandler(domain), fielddim(uType)
+    u = zeros(Tu, ndofs(dh))
+    u = _interpolate!(u, x->transverse(f(x)), dh, 2, :u)
+    u = _interpolate!(u, x->longitudinal(f(x)), dh, 1, :uz)
     return u
 end
 interpolate(f::Function, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = interpolate!(zeros(Tu, ndofs(getdofhandler(domain))), f, domain)
@@ -80,40 +88,15 @@ end
 ####
 #### Integration
 ####
-function _integrate(u::AbstractVector{Te}, domain::AbstractDomain{Tu,uType}) where {Te, Tu, uType<:Vec{3,Tu}}
-    dh = getdofhandler(domain)
-    cv_u, cv_uz = getcellvalues(domain)
-    n_basefuncs_u, n_basefuncs_uz = getnbasefunctions(cv_u), getnbasefunctions(cv_uz)
-    ubuf = zeros(Te, n_basefuncs_u)
-    uzbuf = zeros(Te, n_basefuncs_uz)
-    S = zero(uType)
-    @inbounds for cell in CellIterator(dh)
-        JuAFEM.reinit!(cv_u, cell)
-        JuAFEM.reinit!(cv_uz, cell)
-        for (i,j) in enumerate(celldofs(cell)[dof_range(dh, :u)])
-            ubuf[i] = u[j]
-        end
-        for (i,j) in enumerate(celldofs(cell)[dof_range(dh, :uz)])
-            uzbuf[i] = u[j]
-        end
-        for q_point in 1:getnquadpoints(cv_u)
-            dΩ = getdetJdV(cv_u, q_point) # same quad rule
-            uq = function_value(cv_u, q_point, ubuf)
-            uzq = function_value(cv_uz, q_point, uzbuf)
-            S += uType((uq..., uzq)) * dΩ
-        end
-    end
-    return S
-end
-function _integrate(u::AbstractVector{Te}, domain::AbstractDomain{Tu,uType}) where {Te, Tu, uType<:FieldType{Tu}}
-    cv = getcellvalues(domain)
+function _integrate(u::AbstractVector{Te}, dh::DofHandler, cv::CellValues, uDim::Int, field = :u) where {Te}
     n_basefuncs = getnbasefunctions(cv)
+    u_dof_range = dof_range(dh, field)
     ubuf = zeros(Te, n_basefuncs)
-    S = zero(uType)
-    @inbounds for cell in CellIterator(getdofhandler(domain))
+    S = uDim == 1 ? zero(Te) : zero(Vec{uDim, Te})
+    @inbounds for cell in CellIterator(dh)
         JuAFEM.reinit!(cv, cell)
-        for (i,j) in enumerate(celldofs(cell))
-            ubuf[i] = u[j]
+        for (i,j) in enumerate(u_dof_range)
+            ubuf[i] = u[celldofs(cell)[j]]
         end
         for q_point in 1:getnquadpoints(cv)
             uq = function_value(cv, q_point, ubuf)
@@ -123,34 +106,24 @@ function _integrate(u::AbstractVector{Te}, domain::AbstractDomain{Tu,uType}) whe
     end
     return S
 end
-integrate(u::AbstractVector{Tu}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = _integrate(u, domain)
-integrate(u::AbstractVector{uType}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = _integrate(u, domain)
+function _integrate(u::AbstractVector{Te}, domain::AbstractDomain{Tu,uType}) where {Te, Tu, uType<:FieldType{Tu}}
+    return _integrate(u, getdofhandler(domain), getcellvalues(domain), fielddim(uType))
+end
 
-# function integrate_threaded(u::AbstractVector{Tu}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}}
-#     nt = Threads.nthreads()
-#     _cv = [deepcopy(getcellvalues(domain)) for _ in 1:nt]
-#     _ubuf = [zeros(Tu, getnbasefunctions(_cv[1])) for _ in 1:nt]
-#     _cell = [CellIterator(getdofhandler(domain)) for _ in 1:nt]
-#     _S = [zero(uType) for _ in 1:nt]
-#     # @inbounds
-#     Threads.@threads for c in 1:getncells(getgrid(domain))
-#         tid = Threads.threadid()
-#         cell, cv, ubuf, S = _cell[tid], _cv[tid], _ubuf[tid], _S[tid]
-#         JuAFEM.reinit!(cell, c)
-#         JuAFEM.reinit!(cv, cell)
-#         for (i,j) in enumerate(celldofs(cell))
-#             ubuf[i] = u[j]
-#         end
-#         for q_point in 1:getnquadpoints(cv)
-#             uq = function_value(cv, q_point, ubuf)
-#             dΩ = getdetJdV(cv, q_point)
-#             S += uq * dΩ
-#         end
-#         _S[tid] = S
-#     end
-#     S = sum(_S)
-#     return S
-# end
+function integrate(u::AbstractVector{Tu}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:Complex{Tu}}
+    @views _uR, _uI = u[1:2:end], u[2:2:end]
+    SR = _integrate(_uR, getdofhandler(domain), getcellvalues(domain), 1)
+    SI = _integrate(_uI, getdofhandler(domain), getcellvalues(domain), 1)
+    return complex(SR, SI)
+end
+function integrate(u::AbstractVector{Tu}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:Vec{3,Tu}}
+    cv_u, cv_uz = getcellvalues(domain)
+    Su  = _integrate(u, getdofhandler(domain), cv_u,  2, :u)
+    Suz = _integrate(u, getdofhandler(domain), cv_uz, 1, :uz)
+    return uType((Su..., Suz))
+end
+integrate(u::AbstractVector{uType}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = integrate(reinterpret(Tu, u), domain)
+integrate(u::AbstractVector{Tu}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = _integrate(u, domain)
 
 # function integrate(u::AbstractVector{Tu}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}}
 #     @assert length(u) == ndofs(getdofhandler(domain))
