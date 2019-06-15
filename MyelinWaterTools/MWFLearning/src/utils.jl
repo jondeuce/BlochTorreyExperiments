@@ -168,19 +168,23 @@ end
 function label_fun(s::String, d::Dict)::Float64
     if s == "mwf" # myelin (small pool) water fraction
         d[:mwfvalues][:exact]
-    elseif s == "iewf" # intra/extra-cellular water fraction
+    elseif s == "iewf" # intra/extra-cellular (large pool/axonal + tissue) water fraction
         1 - d[:mwfvalues][:exact]
     elseif s == "ewf" # extra-cellular (tissue) water fraction
         1 - d[:btparams_dict][:AxonPDensity]
-    elseif s == "iwf" # intra-cellular (large pool) water fraction
+    elseif s == "iwf" # intra-cellular (large pool/axonal) water fraction
         d[:btparams_dict][:AxonPDensity] - d[:mwfvalues][:exact]
-    elseif s == "T2iew" # inverse of area-averaged R2 for intra/extra-cellular water
+    elseif s == "T2mw" # myelin-water (small pool) T2
+        inv(d[:btparams_dict][:R2_sp])
+    elseif s == "T2iw" # intra-cellular (large pool/axonal) T2
+        inv(d[:btparams_dict][:R2_lp])
+    elseif s == "T2ew" # myelin-water (small pool) T2
+        inv(d[:btparams_dict][:R2_Tissue])
+    elseif s == "T2iew" # inverse of area-averaged R2 for intra/extra-cellular (large pool/axonal + tissue) water
         @unpack R2_lp, R2_Tissue = d[:btparams_dict] # R2 values
         iwf, ewf = label_fun("iwf", d), label_fun("ewf", d) # area fractions
         R2iew = (iwf * R2_lp + ewf * R2_Tissue) / (iwf + ewf) # area-weighted average
         inv(R2iew) # R2iew -> T2iew
-    elseif s == "T2mw" # myelin-water T2
-        inv(d[:btparams_dict][:R2_sp])
     elseif s == "T2av" # inverse of area-averaged R2 for whole domain
         @unpack R2_lp, R2_sp, R2_Tissue = d[:btparams_dict] # R2 values
         iwf, mwf, ewf = label_fun("iwf", d), label_fun("mwf", d), label_fun("ewf", d) # area fractions

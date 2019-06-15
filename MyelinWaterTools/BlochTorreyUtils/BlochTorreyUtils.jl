@@ -12,6 +12,7 @@ using Reexport
 @reexport using GeometryUtils
 @reexport using DiffEqBase, OrdinaryDiffEq, DiffEqCallbacks, DiffEqOperators#, Sundials
 @reexport using LinearMaps
+using BlockArrays
 
 using Parameters: @with_kw, @unpack
 export @with_kw, @unpack

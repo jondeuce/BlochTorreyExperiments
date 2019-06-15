@@ -406,11 +406,6 @@ function solveblochtorrey(
         kwargs...
     )
 
-    # @show TE, nTE, tspan #TODO
-    # @show saveat./TE #TODO
-    # @show tstops./TE #TODO
-    # @show kwargs #TODO
-
     prob = ODEProblem(myelindomain, interpolate(u0, myelindomain), tspan)
     sol = solve(prob, alg, args...;
         dense = false, # don't save all intermediate time steps

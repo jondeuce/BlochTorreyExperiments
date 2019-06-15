@@ -110,7 +110,9 @@ const VectorOfDomains{Tu,uType,gDim,T,Nd,Nf} = AbstractVector{<:AbstractDomain{T
 mutable struct ParabolicDomain{
         Tu, uType <: FieldType{Tu},
         gDim, T, Nd, Nf,
-        S <: JuAFEM.AbstractRefShape, CV <: CellValues{gDim,T,S}, FV <: FaceValues{gDim,T,S},
+        S <: JuAFEM.AbstractRefShape,
+        CV <: Union{CellValues{gDim,T,S}, Tuple{Vararg{CellValues{gDim,T,S}}}},
+        FV <: Union{FaceValues{gDim,T,S}, Tuple{Vararg{FaceValues{gDim,T,S}}}},
         MType <: MassType{Tu}, MfactType <: MassFactType{Tu}, KType <: StiffnessType{Tu}
     } <: AbstractDomain{Tu,uType,gDim,T,Nd,Nf}
     grid::Grid{gDim,Nd,T,Nf}
@@ -198,7 +200,7 @@ end
 # Create BlochTorreyProblem from a MyelinProblem and a MyelinDomain
 function BlochTorreyProblem(p::MyelinProblem{T}, m::MyelinDomain) where {T}
     @inline Dcoeff(x...) = dcoeff(x..., p, m) # Dcoeff function
-    @inline Rdecay(x...) = rdecay(x..., p, m) # R2 function
+    @inline Rdecay(x...) = (r1decay(x..., p, m), r2decay(x..., p, m)) # R2 function
     @inline Omega(x...) = omega(x..., p, m) # Omega function
     return BlochTorreyProblem{T}(Dcoeff, Rdecay, Omega)
 end
@@ -213,30 +215,42 @@ function ParabolicDomain(
         geominterporder::Int = 1
     ) where {gDim,Nd,T,Nf,Tu,uType<:FieldType{Tu}}
 
+    uDim = fielddim(uType)::Int
+    @assert 1 <= uDim <= 3
+    
     # Quadrature and interpolation rules and corresponding cellvalues/facevalues
     func_interp = Lagrange{gDim, typeof(refshape), funcinterporder}()
     geom_interp = Lagrange{gDim, typeof(refshape), geominterporder}()
     quadrule = QuadratureRule{gDim, typeof(refshape)}(quadorder)
     quadrule_face = QuadratureRule{gDim-1, typeof(refshape)}(quadorder)
 
-    uDim = fielddim(uType)
     if uDim == 1
         cellvalues = CellScalarValues(Tu, quadrule, func_interp, geom_interp)
         facevalues = FaceScalarValues(Tu, quadrule_face, func_interp, geom_interp)
-    else
+    elseif uDim == 2
         cellvalues = CellVectorValues(Tu, quadrule, func_interp, geom_interp)
         facevalues = FaceVectorValues(Tu, quadrule_face, func_interp, geom_interp)
+    elseif uDim == 3
+        cellvalues = (CellVectorValues(Tu, quadrule, func_interp, geom_interp), CellScalarValues(Tu, quadrule, func_interp, geom_interp))
+        facevalues = (FaceVectorValues(Tu, quadrule_face, func_interp, geom_interp), FaceScalarValues(Tu, quadrule_face, func_interp, geom_interp))
     end
 
     # Degree of freedom handler
     dh = DofHandler(grid)
-    push!(dh, :u, uDim, func_interp)
+    if uDim == 1 || uDim == 2
+        push!(dh, :u, uDim, func_interp)
+    elseif uDim == 3
+        push!(dh, :u, 2, func_interp)
+        push!(dh, :uz, 1, func_interp)
+    end
     close!(dh)
 
-    # Assign dof ordering to be such that node number `n` corresponds to dof's `uDim*n-(uDim-1):uDim*n`
-    # NOTE: this is somewhat wasteful as nodes are visited multiple times, but it's easy
-    if ndofs(dh) == uDim * getnnodes(grid)
-        perm = zeros(Int, ndofs(dh))
+    # Assign dof ordering to be such that node number `n` corresponds to dof's `uDim*n-(uDim-1):uDim*n`,
+    # i.e. each node's DOFs are consecutive, and are in order of node number
+    #   NOTE: this is somewhat wasteful as nodes are visited multiple times, but it's easy
+    @assert ndofs(dh) == uDim * getnnodes(grid)
+    perm = zeros(Int, ndofs(dh))
+    if uDim == 1 || uDim == 2
         for cell in CellIterator(dh)
             for (i,n) in enumerate(cell.nodes)
                 for d in uDim-1:-1:0
@@ -244,8 +258,22 @@ function ParabolicDomain(
                 end
             end
         end
-        renumber!(dh, perm)
+    elseif uDim == 3
+        for cell in CellIterator(dh)
+            # node_offset = 2 * getnnodes(grid)
+            # for (i,n) in enumerate(cell.nodes)
+            #     perm[cell.celldofs[dof_range(dh, :u )[2i-1]]] = 2*n-1 # transverse component
+            #     perm[cell.celldofs[dof_range(dh, :u )[2i]]]   = 2*n   # transverse component
+            #     perm[cell.celldofs[dof_range(dh, :uz)[i]]]    = node_offset + n # longitudinal component
+            # end
+            for (i,n) in enumerate(cell.nodes)
+                perm[cell.celldofs[dof_range(dh, :u )[2i-1]]] = 3*n-2 # transverse component
+                perm[cell.celldofs[dof_range(dh, :u )[2i]]]   = 3*n-1 # transverse component
+                perm[cell.celldofs[dof_range(dh, :uz)[i]]]    = 3*n   # longitudinal component
+            end
+        end
     end
+    renumber!(dh, perm)
 
     # Mass and stiffness matrices, and weights vector
     M = create_sparsity_pattern(dh)

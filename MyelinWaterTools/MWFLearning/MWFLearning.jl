@@ -7,7 +7,7 @@ module MWFLearning
 using Reexport
 @reexport using LinearAlgebra
 using Statistics: mean, median
-#using StatsBase: quantile
+using StatsBase: quantile
 
 import Flux, Flux.NNlib, Flux.Tracker, Flux.Optimise, DrWatson, BSON, TOML, Dates, MultivariateStats
 export Flux,      NNlib,      Tracker,      Optimise, DrWatson, BSON, TOML, Dates, MultivariateStats

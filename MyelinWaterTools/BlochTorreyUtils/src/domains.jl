@@ -80,6 +80,31 @@ end
 ####
 #### Integration
 ####
+function _integrate(u::AbstractVector{Te}, domain::AbstractDomain{Tu,uType}) where {Te, Tu, uType<:Vec{3,Tu}}
+    dh = getdofhandler(domain)
+    cv_u, cv_uz = getcellvalues(domain)
+    n_basefuncs_u, n_basefuncs_uz = getnbasefunctions(cv_u), getnbasefunctions(cv_uz)
+    ubuf = zeros(Te, n_basefuncs_u)
+    uzbuf = zeros(Te, n_basefuncs_uz)
+    S = zero(uType)
+    @inbounds for cell in CellIterator(dh)
+        JuAFEM.reinit!(cv_u, cell)
+        JuAFEM.reinit!(cv_uz, cell)
+        for (i,j) in enumerate(celldofs(cell)[dof_range(dh, :u)])
+            ubuf[i] = u[j]
+        end
+        for (i,j) in enumerate(celldofs(cell)[dof_range(dh, :uz)])
+            uzbuf[i] = u[j]
+        end
+        for q_point in 1:getnquadpoints(cv_u)
+            dΩ = getdetJdV(cv_u, q_point) # same quad rule
+            uq = function_value(cv_u, q_point, ubuf)
+            uzq = function_value(cv_uz, q_point, uzbuf)
+            S += uType((uq..., uzq)) * dΩ
+        end
+    end
+    return S
+end
 function _integrate(u::AbstractVector{Te}, domain::AbstractDomain{Tu,uType}) where {Te, Tu, uType<:FieldType{Tu}}
     cv = getcellvalues(domain)
     n_basefuncs = getnbasefunctions(cv)
@@ -407,7 +432,8 @@ function doassemble!(
     ) where {Tu}
 
     # This assembly function is only for CellVectorValues
-    @assert typeof(getcellvalues(domain)) <: CellVectorValues
+    @assert typeof(getcellvalues(domain)) <: Tuple{<:CellVectorValues, <:CellScalarValues}
+    cellvalues_u, cellvalues_uz = getcellvalues(domain)
 
     # First, we create assemblers for the stiffness matrix `K` and the mass
     # matrix `M`. The assemblers are just thin wrappers around `K` and `M`
@@ -418,21 +444,22 @@ function doassemble!(
     # Next, we allocate the element stiffness matrix and element mass matrix
     # just once before looping over all the cells instead of allocating
     # them every time in the loop.
-    n_basefuncs = getnbasefunctions(getcellvalues(domain))
-    Ke = zeros(Tu, n_basefuncs, n_basefuncs)
-    Me = zeros(Tu, n_basefuncs, n_basefuncs)
-    # we = zeros(Tu, n_basefuncs)
+    n_basefuncs_u, n_basefuncs_uz = getnbasefunctions(cellvalues_u), getnbasefunctions(cellvalues_uz)
+    n_basefuncs = n_basefuncs_u + n_basefuncs_uz
+    Ke = PseudoBlockArray(zeros(n_basefuncs, n_basefuncs), [n_basefuncs_u, n_basefuncs_uz], [n_basefuncs_u, n_basefuncs_uz])
+    Me = PseudoBlockArray(zeros(n_basefuncs, n_basefuncs), [n_basefuncs_u, n_basefuncs_uz], [n_basefuncs_u, n_basefuncs_uz])
+    iu, iuz = 1, 2
 
-    DEBUG = false
+    DEBUG = true
     local assembler_D, assembler_R, assembler_W
     local De, Re, We
     if DEBUG
         domain.metadata[:D] = similar(getmass(domain)); assembler_D = start_assemble(domain.metadata[:D])
         domain.metadata[:R] = similar(getmass(domain)); assembler_R = start_assemble(domain.metadata[:R])
         domain.metadata[:W] = similar(getmass(domain)); assembler_W = start_assemble(domain.metadata[:W])
-        De = zeros(Tu, n_basefuncs, n_basefuncs)
-        Re = zeros(Tu, n_basefuncs, n_basefuncs)
-        We = zeros(Tu, n_basefuncs, n_basefuncs)
+        De = copy(Ke)
+        Re = copy(Ke)
+        We = copy(Ke)
     end
 
     # It is now time to loop over all the cells in our grid. We do this by iterating
@@ -443,7 +470,6 @@ function doassemble!(
         # element mass matrix since we reuse them for all elements.
         fill!(Ke, zero(Tu))
         fill!(Me, zero(Tu))
-        # fill!(we, zero(Tu))
         if DEBUG
             fill!(De, zero(Tu))
             fill!(Re, zero(Tu))
@@ -454,39 +480,57 @@ function doassemble!(
         coords = getcoordinates(cell)
 
         # For each cell we also need to reinitialize the cached values in `cellvalues`.
-        JuAFEM.reinit!(getcellvalues(domain), cell)
+        JuAFEM.reinit!(cellvalues_u, cell)
+        JuAFEM.reinit!(cellvalues_uz, cell)
 
         # It is now time to loop over all the quadrature points in the cell and
         # assemble the contribution to `Ke` and `Me`. The integration weight
         # can be queried from `cellvalues` by `getdetJdV`, and the quadrature
         # coordinate can be queried from `cellvalues` by `spatial_coordinate`
-        for q_point in 1:getnquadpoints(getcellvalues(domain))
-            dΩ = getdetJdV(getcellvalues(domain), q_point)
-            coords_qp = spatial_coordinate(getcellvalues(domain), q_point, coords)
+        for q_point in 1:getnquadpoints(cellvalues_u)
+            dΩ = getdetJdV(cellvalues_u, q_point)
+            coords_qp = spatial_coordinate(cellvalues_u, q_point, coords)
 
             # calculate the heat conductivity and heat source at point `coords_qp`
             D = prob.Dcoeff(coords_qp)
-            R = prob.Rdecay(coords_qp)
+            R1, R2 = prob.Rdecay(coords_qp)
             ω = prob.Omega(coords_qp)
 
             # For each quadrature point we loop over all the (local) shape functions.
             # We need the value and gradient of the testfunction `v` and also the gradient
             # of the trial function `u`. We get all of these from `cellvalues`.
-            for i in 1:n_basefuncs
-                v  = shape_value(getcellvalues(domain), q_point, i)
-                vT = transverse(v)
-                ∇v = shape_gradient(getcellvalues(domain), q_point, i)
-                # we[i] += sum(v) * dΩ
-                for j in 1:n_basefuncs
-                    u = shape_value(getcellvalues(domain), q_point, j)
-                    uT = transverse(u)
-                    ∇u = shape_gradient(getcellvalues(domain), q_point, j)
-                    Ke[i,j] -= (D * (∇v ⊡ ∇u) + v ⋅ (R ⊙ u) - ω * (vT ⊠ uT)) * dΩ
-                    Me[i,j] += (v ⋅ u) * dΩ
+            for i in 1:n_basefuncs_u
+                v  = shape_value(cellvalues_u, q_point, i)
+                ∇v = shape_gradient(cellvalues_u, q_point, i)
+                for j in 1:n_basefuncs_u
+                    idx = BlockIndex((iu, iu), (i, j))
+                    u = shape_value(cellvalues_u, q_point, j)
+                    ∇u = shape_gradient(cellvalues_u, q_point, j)
+                    Ke[idx] -= (D * (∇v ⊡ ∇u) + v ⋅ (R2 * u) - ω * (v ⊠ u)) * dΩ
+                    Me[idx] += (v ⋅ u) * dΩ
                     if DEBUG
-                        De[i,j] += (D * (∇v ⊡ ∇u)) * dΩ
-                        Re[i,j] += (v ⋅ (R ⊙ u)) * dΩ
-                        We[i,j] -= (ω * (vT ⊠ uT)) * dΩ
+                        De[idx] += (D * (∇v ⊡ ∇u)) * dΩ
+                        Re[idx] += (v ⋅ (R2 * u)) * dΩ
+                        We[idx] -= (ω * (v ⊠ u)) * dΩ
+                    end
+                end
+            end
+
+            # For each quadrature point we loop over all the (local) shape functions.
+            # We need the value and gradient of the testfunction `v` and also the gradient
+            # of the trial function `u`. We get all of these from `cellvalues`.
+            for i in 1:n_basefuncs_uz
+                v  = shape_value(cellvalues_uz, q_point, i)
+                ∇v = shape_gradient(cellvalues_uz, q_point, i)
+                for j in 1:n_basefuncs_uz
+                    idx = BlockIndex((iuz, iuz), (i, j))
+                    u = shape_value(cellvalues_uz, q_point, j)
+                    ∇u = shape_gradient(cellvalues_uz, q_point, j)
+                    Ke[idx] -= (D * (∇v ⋅ ∇u) + v * (R1 * u)) * dΩ
+                    Me[idx] += (v ⋅ u) * dΩ
+                    if DEBUG
+                        De[idx] += (D * (∇v ⋅ ∇u)) * dΩ
+                        Re[idx] += (v * (R1 * u)) * dΩ
                     end
                 end
             end
@@ -494,7 +538,12 @@ function doassemble!(
 
         # The last step in the element loop is to assemble `Ke` and `Me`
         # into the global `K` and `M` with `assemble!`.
-        assemble!(assembler_K, celldofs(cell), Ke)#, we)
+        # dof_range_u = dof_range(getdofhandler(domain), :u)
+        # dof_range_uz = dof_range(getdofhandler(domain), :uz)
+        # celldofs_perm = collect(Iterators.flatten(Iterators.zip(dof_range_u[1:2:end], dof_range_u[2:2:end], dof_range_uz)))
+        # celldofs_u_uz = celldofs(cell)[celldofs_perm]
+        # celldofs_u_uz = celldofs(cell)
+        assemble!(assembler_K, celldofs(cell), Ke)
         assemble!(assembler_M, celldofs(cell), Me)
         if DEBUG
             assemble!(assembler_D, celldofs(cell), De)
@@ -572,7 +621,7 @@ function doassemble!(
 
             # calculate the heat conductivity and heat source at point `coords_qp`
             D = prob.Dcoeff(coords_qp)
-            R = prob.Rdecay(coords_qp)
+            R2 = prob.Rdecay(coords_qp)[2]
             ω = prob.Omega(coords_qp)
 
             # For each quadrature point we loop over all the (local) shape functions.
@@ -585,11 +634,11 @@ function doassemble!(
                 for j in 1:n_basefuncs
                     u = shape_value(getcellvalues(domain), q_point, j)
                     ∇u = shape_gradient(getcellvalues(domain), q_point, j)
-                    Ke[i,j] -= (D * (∇v ⊡ ∇u) + R * (v ⋅ u) - ω * (v ⊠ u)) * dΩ
+                    Ke[i,j] -= (D * (∇v ⊡ ∇u) + R2 * (v ⋅ u) - ω * (v ⊠ u)) * dΩ
                     Me[i,j] += (v ⋅ u) * dΩ
                     if DEBUG
                         De[i,j] += (D * (∇v ⊡ ∇u)) * dΩ
-                        Re[i,j] += (R * (v ⋅ u)) * dΩ
+                        Re[i,j] += (R2 * (v ⋅ u)) * dΩ
                         We[i,j] -= (ω * (v ⊠ u)) * dΩ
                     end
                 end
@@ -644,7 +693,7 @@ function doassemble!(
         Re = zeros(Tu, n_basefuncs, n_basefuncs)
         We = zeros(Tu, n_basefuncs, n_basefuncs)
         domain.metadata[:Gamma] = interpolate(domain) do x
-            return complex(prob.Rdecay(x), prob.Omega(x))
+            return complex(prob.Rdecay(x)[2], prob.Omega(x))
         end
     end
 
@@ -678,9 +727,9 @@ function doassemble!(
 
             # calculate the heat conductivity and heat source at point `coords_qp`
             D = prob.Dcoeff(coords_qp)
-            R = prob.Rdecay(coords_qp)
+            R2 = prob.Rdecay(coords_qp)[2]
             ω = prob.Omega(coords_qp)
-            Γ = R + im * ω
+            Γ = complex(R2, ω)
 
             # For each quadrature point we loop over all the (local) shape functions.
             # We need the value and gradient of the testfunction `v` and also the gradient
@@ -695,7 +744,7 @@ function doassemble!(
                     Me[i,j] += (v * u) * dΩ
                     if DEBUG
                         De[i,j] += (D * (∇v ⋅ ∇u)) * dΩ
-                        Re[i,j] += (R * (v * u)) * dΩ
+                        Re[i,j] += (R2 * (v * u)) * dΩ
                         We[i,j] += (ω * (v * u)) * dΩ
                     end
                 end
