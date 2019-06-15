@@ -397,10 +397,12 @@ function solveblochtorrey(
         u0 = Vec{2}((0.0, 1.0)), # initial π/2 pulse
         TE = 10e-3, # 10ms echotime
         nTE = 32, # 32 echoes by default
+        flipangle = π, # flipangle for MultiSpinEchoCallback
+        steadystate = 1, # steady state value for z-component of magnetization
         tspan = TE .* (0, nTE), # time span for ode solution
         saveat = tspan[1]:TE/2:tspan[2], # save every TE/2 by default
         tstops = tspan[1]:TE/2:tspan[2], # default extra points which the integrator must step to; match saveat by default
-        callback = MultiSpinEchoCallback(tspan; TE = TE),
+        callback = MultiSpinEchoCallback(u0, tspan; TE = TE, flipangle = flipangle, steadystate = 1),
         reltol = 1e-8,
         abstol = 0.0,
         kwargs...
