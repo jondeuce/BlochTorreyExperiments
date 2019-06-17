@@ -402,11 +402,16 @@ function solveblochtorrey(
         tspan = TE .* (0, nTE), # time span for ode solution
         saveat = tspan[1]:TE/2:tspan[2], # save every TE/2 by default
         tstops = tspan[1]:TE/2:tspan[2], # default extra points which the integrator must step to; match saveat by default
-        callback = MultiSpinEchoCallback(u0, tspan; TE = TE, flipangle = flipangle, steadystate = 1),
+        callback = MultiSpinEchoCallback(typeof(u0), tspan; TE = TE, flipangle = flipangle, steadystate = 1),
         reltol = 1e-8,
         abstol = 0.0,
         kwargs...
     )
+
+    if u0 isa Vec{3}
+        # Convention is that u₃ = M∞ - M₃; this convenience function shifts u0 from M-space to u-space
+        u0 = shift_longitudinal(u0, steadystate)
+    end
 
     prob = ODEProblem(myelindomain, interpolate(u0, myelindomain), tspan)
     sol = solve(prob, alg, args...;

@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------- #
 
 # Convention is that u₃ = M∞ - M₃; this convenience function converts between M and u
-@inline shift_uz(u::uType, M∞) where {uType <: Vec{3}} = uType((u[1], u[2], M∞ - u[3]))
+@inline shift_longitudinal(u::uType, M∞) where {uType <: Vec{3}} = uType((u[1], u[2], M∞ - u[3]))
 
 @inline pi_flip(u::Complex) = conj(u)
 @inline pi_flip(u::uType) where {uType <: Vec{2}} = uType((u[1], -u[2]))
@@ -14,7 +14,7 @@ apply_pulse!(u::AbstractVector{Tu}, α, M∞, uDim) where {Tu} = (apply_pulse!(r
 apply_pulse!(u::AbstractVector{uType}, α, M∞) where {uType <: Complex} = (@assert α ≈ π; pi_pulse!(u); return u)
 apply_pulse!(u::AbstractVector{uType}, α, M∞) where {uType <: Vec{2}} = (@assert α ≈ π; pi_pulse!(u); return u)
 function apply_pulse!(u::AbstractVector{uType}, α, M∞) where {Tu, uType <: Vec{3,Tu}}
-    u .= shift_uz.(u, M∞)
+    u .= shift_longitudinal.(u, M∞)
     if α ≈ π
         pi_pulse!(u)
     else
@@ -24,21 +24,21 @@ function apply_pulse!(u::AbstractVector{uType}, α, M∞) where {Tu, uType <: Ve
         R = Tensor{2,3,Tu}(RotX(-α))
         u .= (x -> R ⋅ x).(u)
     end
-    u .= shift_uz.(u, M∞)
+    u .= shift_longitudinal.(u, M∞)
     return u
 end
 
 # NOTE: This constructor works and is more robust than the below version, but
 #       requires callbacks to be initialized, which Sundials doesn't support.
 function MultiSpinEchoCallback(
-        u0::FieldType, tspan::NTuple{2,T};
+        ::Type{uType}, tspan::NTuple{2,T};
         TE::T = (tspan[2] - tspan[1]), # default to single echo
         flipangle = π, # flip angle
         steadystate = 1, # steady state value for z-component of magnetization
         verbose = true, # verbose printing
         pulsetimes::AbstractVector{T} = tspan[1] + TE/2 : TE : tspan[2], # default to equispaced pulses every TE starting at TE/2
         kwargs...
-    ) where {T}
+    ) where {T, uType <: FieldType}
 
     if isempty(pulsetimes)
         @warn "No pulsetimes given; returning `nothing` for callback"
@@ -54,7 +54,7 @@ function MultiSpinEchoCallback(
     time_choice(integrator) = isempty(tstops) ? typemax(T) : popfirst!(tstops)
     function user_affect!(integrator)
         verbose && println("$(rad2deg(flipangle)) degree pulse at t = $(1000*integrator.t) ms")
-        apply_pulse!(integrator.u, flipangle, steadystate, fielddim(u0))
+        apply_pulse!(integrator.u, flipangle, steadystate, fielddim(uType))
         return integrator
     end
 

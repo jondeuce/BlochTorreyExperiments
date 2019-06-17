@@ -66,9 +66,9 @@ function main()
 
     # Parameters to sweep over
     sweep_params = Dict{Symbol,Any}(
-        :numfibres  => 10, #[5:5:50;],
-        :gratio     => 0.75, #[0.75, 0.78],
-        :density    => 0.75, #[0.78, 0.8]
+        :numfibres  => [5:5:50;],
+        :gratio     => [0.75, 0.78],
+        :density    => [0.78, 0.8]
     )
 
     all_params = DrWatson.dict_list(sweep_params)

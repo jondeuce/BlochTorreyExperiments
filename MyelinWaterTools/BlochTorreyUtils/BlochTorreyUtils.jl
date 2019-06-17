@@ -42,6 +42,7 @@ export getgrid, getdomain, numfibres, createmyelindomains, omegamap
 export getmass, getmassfact, getstiffness, # getquadweights
        getdofhandler, getcellvalues, getfacevalues,
        getregion, getoutercircles, getinnercircles, getoutercircle, getinnercircle, getouterradius, getinnerradius
+export shift_longitudinal
 export testproblem
 
 # ---------------------------------------------------------------------------- #
