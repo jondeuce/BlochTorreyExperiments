@@ -13,10 +13,11 @@ using Reexport
 @reexport using DiffEqBase, OrdinaryDiffEq, DiffEqCallbacks, DiffEqOperators#, Sundials
 @reexport using LinearMaps
 @reexport using Rotations
-using BlockArrays
+@reexport using BlockArrays
 
+using DrWatson: @dict, @ntuple
 using Parameters: @with_kw, @unpack
-export @with_kw, @unpack
+export @with_kw, @unpack, @dict, @ntuple
 
 import SuiteSparse # for defining ldiv! on SuiteSparse.CHOLMOD.Factor's
 import ExpmV, Expokit

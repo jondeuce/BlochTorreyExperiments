@@ -1,8 +1,5 @@
 module MWFUtils
 
-# using OrdinaryDiffEq, DiffEqOperators, Sundials
-# using Parameters: @with_kw, @unpack
-
 const AVOID_MAT_PLOTS = true # avoid external matlab calls, if possible
 
 using Reexport
@@ -10,10 +7,10 @@ using Reexport
 @reexport using CirclePackingUtils
 # @reexport using MATLABPlots
 @reexport using StatsPlots
-using LaTeXStrings
+@reexport using LaTeXStrings
 
-using IterableTables, DataFrames
-import BSON, CSV, Dates
+import BSON, Dates, DrWatson
+export BSON, Dates, DrWatson
 
 # For curve fitting/optimization in calculating MWF
 import ForwardDiff

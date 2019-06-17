@@ -2,7 +2,7 @@
 #   NOTE: must load pyplot backend BEFORE loading MATLAB in init.jl
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
-using StatsPlots, BSON, Dates
+using StatsPlots
 pyplot(size=(1200,900))
 
 # Initialize project packages
@@ -20,8 +20,6 @@ make_reproduce( # Creating backup file
 )
 
 # DrWatson package for tagged saving
-import DrWatson
-using DrWatson: @dict, @ntuple
 gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
 
 ####

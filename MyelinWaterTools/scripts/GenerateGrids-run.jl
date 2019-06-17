@@ -1,5 +1,5 @@
 # NOTE: must load pyplot backend BEFORE loading MATLAB in init.jl
-using StatsPlots, BSON, Dates
+using StatsPlots
 pyplot(size=(1200,900), leg = false, grid = false, labels = nothing)
 
 # Initialize project packages
@@ -11,16 +11,14 @@ make_reproduce(
     """
 )
 
-import DrWatson
-using DrWatson: @dict, @ntuple
 DrWatson.default_prefix(c) = MWFUtils.getnow() #TODO
 gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
 
-function runcreategeometry(params)
+function runcreategeometry(params; numreps = 5)
     @unpack numfibres, gratio, density = params
     btparams = BlochTorreyParameters{Float64}(AxonPDensity = density, g_ratio = gratio)
     
-    numreps = 5 # number of grid generation attempts per parameter set
+    # Attempt to generate `numreps` grids for given parameter set
     for _ in 1:numreps
         try
             geom = creategeometry(btparams;
@@ -68,9 +66,9 @@ function main()
 
     # Parameters to sweep over
     sweep_params = Dict{Symbol,Any}(
-        :numfibres  => [5:5:50;],
-        :gratio     => [0.75, 0.78],
-        :density    => [0.78, 0.8]
+        :numfibres  => 10, #[5:5:50;],
+        :gratio     => 0.75, #[0.75, 0.78],
+        :density    => 0.75, #[0.78, 0.8]
     )
 
     all_params = DrWatson.dict_list(sweep_params)
