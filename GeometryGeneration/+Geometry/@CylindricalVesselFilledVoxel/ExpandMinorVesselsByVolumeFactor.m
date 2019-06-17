@@ -29,8 +29,10 @@ Bounds = getinitialbounds(G, VolumeFactor);
 SpaceFactor = fzero(@BVF_Error, Bounds, fzero_opts );
 
     function BVF_err = BVF_Error(SpaceFactor)
-        G_out = expandminorvessels(G, SpaceFactor);
-        G_out = CalculateVasculatureMap(G_out);
+        if SpaceFactor ~= 1
+            G_out = expandminorvessels(G, SpaceFactor);
+            G_out = CalculateVasculatureMap(G_out);
+        end
         BVF_err = G.iBVF * VolumeFactor - G_out.iBVF;
     end
 

@@ -8,21 +8,21 @@ if ~isempty(VRSRelativeRad)
 end
 
 if ~isempty(G.VRSRelativeRad)
+    [p, r, vx, vy, vz] = GetVRSCylinders(G);
     isUnit = true;
     isCentered = true;
     prec = 'double';
-    VRSRadii = G.VRSRelativeRad * G.r0;
     
     % Virchow-Robin space is the CSF-filled region surrounding the
     % anisotropic vessels; create boolean cylinder map with VRS radii
     [ VRSMap, ~ ] = getCylinderMask( ...
         G.GridSize, G.SubVoxSize, G.VoxelCenter, G.VoxelSize, ...
-        G.p0, G.vz0, VRSRadii, G.vx0, G.vy0, ...
+        p, vz, r, vx, vy, ...
         isUnit, isCentered, prec );
     
     % Virchow-Robin space is the CSF-filled region surrounding the
     % anisotropic vessels; remove vessel containing regions from the VRSMap
-    % (major and minor); remaining region is the VRS
+    % (major and minor), and remaining region is the VRS
     VRSMap = VRSMap & ~G.VasculatureMap;
     G.VRSIndices = find(VRSMap);
 end

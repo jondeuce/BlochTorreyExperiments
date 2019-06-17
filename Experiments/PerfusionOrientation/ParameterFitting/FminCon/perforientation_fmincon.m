@@ -1,14 +1,12 @@
 %PERFORIENTATION_FMINCON
 
+%Save current repository information
+saverepostatus('BlochTorreyExperiments-temp1')
+
 %Save a copy of this script in the directory of the caller
 backupscript  = sprintf('%s__%s.m',datestr(now,30),mfilename);
 currentscript = strcat(mfilename('fullpath'), '.m');
 copyfile(currentscript,backupscript);
-
-%Save a copy of perforientation_fun in the directory of the caller
-backupoptfun  = sprintf('%s__%s.m',datestr(now,30),'perforientation_fun');
-currentoptfun = which('perforientation_fun');
-copyfile(currentoptfun,backupoptfun);
 
 %Save diary of workspace
 DiaryFilename = [datestr(now,30), '__', 'diary.txt'];
@@ -22,15 +20,17 @@ end
 
 % ---- Angles to simulate ---- %
 % alpha_range = [2.5, 47.5, 87.5];
-alpha_range = 2.5:5.0:87.5;
+% alpha_range = 2.5:5.0:87.5;
 % alpha_range = 22.5:5.0:87.5;
 % alpha_range = 7.5:10.0:87.5;
 % alpha_range = 17.5:10.0:87.5;
 % alpha_range = 7.5:20.0:87.5;
 % alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
 % alpha_range = [37.5, 52.5, 72.5, 17.5, 87.5];
+alpha_range = [2.5, 12.5, 22.5, 32.5, 47.5, 57.5, 67.5, 77.5, 87.5];
 % alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 
+%%
 % =============================== DATA ================================== %
 
 % % ---- GRE w/ Diffusion Initial Guess (large minor) ---- %
@@ -39,9 +39,9 @@ alpha_range = 2.5:5.0:87.5;
 % ub  = [ 8.000,          3.5000/100,         1.5000/100 ];
 
 % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
-lb  = [ 3.0000,          1.2000/100,         0.5000/100 ];
-CA0 =   3.8969;  iBVF0 = 1.6407/100; aBVF0 = 0.8261/100;
-ub  = [ 6.0000,          2.0000/100,         1.0000/100 ];
+lb  = [ 3.0000,          1.0000/100,         0.5000/100 ];
+CA0 =   4.6320;  iBVF0 = 1.1765/100; aBVF0 = 0.7176/100;
+ub  = [ 6.0000,          2.0000/100,         1.5000/100 ];
 
 % % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
 % lb  = [ 3.5000,          1.0000/100,         0.6000/100 ];
@@ -53,7 +53,10 @@ x0 = [CA0, iBVF0, aBVF0];
 type = 'GRE';
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize, BinCounts] = get_GRE_data(alpha_range);
 TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
-Weights = BinCounts / sum(BinCounts(:));
+% TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [500,500,500];
+% TE = 40e-3; VoxelSize = [1750,1750,4000]; VoxelCenter = [0,0,0]; GridSize = [350,350,800];
+Weights = sqrt(BinCounts); % BinCounts;
+Weights = Weights / sum(vec(Weights));
 
 % % ---- SE w/ Diffusion Initial Guess ---- %
 % lb  = [ 1.0000,          0.5000/100,         0.5000/100 ];
@@ -69,38 +72,39 @@ Weights = BinCounts / sum(BinCounts(:));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 9;
+Nmajor = 7;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
 % Rminor_sig = 2.1;
+Rmedium_thresh = 0.0;
 
-% % ---- With Diffusion ---- %
+% ---- With Diffusion ---- %
 % D_Tissue = 2000; %[um^2/s]
 % D_Blood = []; %[um^2/s]
 % D_VRS = []; %[um^2/s]
 % MaskType = '';
-% 
-% % D_Tissue = 1000; %[um^2/s]
-% % D_Blood = 2000; %[um^2/s]
-% % D_VRS = 3000; %[um^2/s]
-% % MaskType = 'PVS';
-% % MaskType = 'PVSOrVasculature';
-% % MaskType = 'PVSAndVasculature';
-% % MaskType = 'Vasculature';
-% 
+
+D_Tissue = 1500; %[um^2/s]
+D_Blood = 3037; %[um^2/s]
+D_VRS = 3037; %[um^2/s]
+% MaskType = 'Vasculature'; % only true in Vasc.
+% MaskType = 'PVS'; % only true in PVS
+% MaskType = 'PVSOrVasculature'; % true in PVS or Vasc. (don't think this is ever useful?)
+MaskType = 'PVSAndVasculature'; % 2 in PVS, 1 in Vasc., 0 else ("trinary" mask)
+
 % Nsteps = 8;
 % StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
-% % Nsteps = 1;
-% % StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
+Nsteps = 1;
+StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
 
-% ---- Diffusionless ---- %
-D_Tissue = 0; %[um^2/s]
-D_Blood = []; %[um^2/s]
-D_VRS = []; %[um^2/s]
-MaskType = '';
-Nsteps = 1; % one exact step
-StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
+% % ---- Diffusionless ---- %
+% D_Tissue = 0; %[um^2/s]
+% D_Blood = []; %[um^2/s]
+% D_VRS = []; %[um^2/s]
+% MaskType = '';
+% Nsteps = 1; % one exact step
+% StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
 
 B0 = -3.0; %[Tesla]
 rng('default'); seed = rng; % for consistent geometries between sims.
@@ -113,10 +117,10 @@ MinorArterialFrac = 0.0;
 % Radius of Virchow-Robin space relative to major vessel radius [unitless];
 % VRS space volume is approx (relrad^2-1)*BVF, so e.g. sqrt(2X radius) => 1X volume
 % VRSRelativeRad = 1; % 1X => 0X volume
-VRSRelativeRad = sqrt(2); % sqrt(2X) => 1X volume
+% VRSRelativeRad = sqrt(2); % sqrt(2X) => 1X volume
 % VRSRelativeRad = sqrt(2.5); % sqrt(2.5X) => 1.5X volume
 % VRSRelativeRad = sqrt(3); % sqrt(3X) => 2X volume
-% VRSRelativeRad = 2; % 2X => 3X volume
+VRSRelativeRad = 2; % 2X => 3X volume
 
 PlotFigs = true;
 SaveFigs = true;
@@ -136,6 +140,7 @@ GeomArgs = struct( ...% 'iBVF', iBVF, 'aBVF', aBVF, ... % these are set below
     'NumMajorArteries', NumMajorArteries, 'MinorArterialFrac', MinorArterialFrac, ...
     'Rminor_mu', Rminor_mu, 'Rminor_sig', Rminor_sig, ...
     'VRSRelativeRad', VRSRelativeRad, ...
+    'MediumVesselRadiusThresh', Rmedium_thresh, 'AllowInitialMinorPruning', true, ...
     'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', true, ...
     'ImproveMajorBVF', true, 'ImproveMinorBVF', true, ...
     'PopulateIdx', true, 'seed', seed );
@@ -145,8 +150,8 @@ switch upper(OptVariables)
     case 'CA_IBVF_ABVF'
         Geom = []; % Geom is created inside perforientation_fun
     case 'CA_RMAJOR_MINOREXPANSION'
-        GeomArgs.ImproveMajorBVF = false;
-        GeomArgs.ImproveMinorBVF = false;
+        GeomArgs.ImproveMajorBVF = true;
+        GeomArgs.ImproveMinorBVF = true;
         
         % Generate geometry for contraction
         GeomArgs.iBVF = ub(2);

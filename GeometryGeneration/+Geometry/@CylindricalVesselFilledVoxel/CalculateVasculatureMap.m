@@ -26,6 +26,8 @@ BVF_Fun = @(x) sum(vec(sum(x,1)))/numel(x); % faster than sum(x(:)) for logical 
 G.BVF = BVF_Fun(G.VasculatureMap);
 G.aBVF = numel(unique(cat(1,G.idx0{:})))/prod(G.GridSize);
 G.iBVF = G.BVF - G.aBVF;
+G.iRBVF = G.iBVF / G.BVF;
+G.aRBVF = G.aBVF / G.BVF;
 
 end
 

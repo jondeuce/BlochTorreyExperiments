@@ -26,6 +26,7 @@ classdef CylindricalVesselFilledVoxel
         RmajorFun, RminorFun % Functions for generating major/minor radii
         MinorDilation, MinorRadiusFactor, isMinorDilated % Minor dilation settings
         MajorArteries, MinorArteries % Lists of vessels which are arteries
+        MediumVessels, MediumVesselRadiusThresh % Lists of larger minor vessels; these are surrounded by VRS
         ArterialIndices % Indices for all arteries
         VRSRelativeRad % Virchow-Robin space radius relative to the major vessel radius
         VRSIndices % Indices for the Virchow-Robin space surrounding the anisotropic vessels

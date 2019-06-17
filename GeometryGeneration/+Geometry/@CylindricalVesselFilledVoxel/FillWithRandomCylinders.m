@@ -50,6 +50,15 @@ t_SetArteries = toc(t_SetArteries);
 if G.Verbose; display_toc_time( t_SetArteries, 'setting arteries', 0 ); end
 
 %==========================================================================
+% Add medium vessels
+%==========================================================================
+
+t_SetMediumVessels = tic;
+G = SetMediumVessels(G);
+t_SetMediumVessels = toc(t_SetMediumVessels);
+if G.Verbose; display_toc_time( t_SetMediumVessels, 'setting medium vessels', 0 ); end
+
+%==========================================================================
 % Add Virchow-Robin space
 %==========================================================================
 

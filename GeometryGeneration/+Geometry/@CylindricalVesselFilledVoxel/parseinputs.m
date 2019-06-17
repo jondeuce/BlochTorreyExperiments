@@ -58,6 +58,9 @@ addParameter(p,'aBVF',  []);
 
 addParameter(p,'Rmajor',[]);
 addParameter(p,'VRSRelativeRad',[]);
+
+addParameter(p,'MediumVessels', []);
+addParameter(p,'MediumVesselRadiusThresh', 0.0);
         
 %-------------------------------------------------------------------------%
 % Optional parameters
@@ -67,6 +70,10 @@ addParameter(p,'AllowMinorSelfIntersect',true,@(x)VA(x,{'logical'},{'scalar'}));
 addParameter(p,'AllowMinorMajorIntersect',true,@(x)VA(x,{'logical'},{'scalar'}));
 addParameter(p,'ImproveMajorBVF',true,@(x)VA(x,{'logical'},{'scalar'}));
 addParameter(p,'ImproveMinorBVF',true,@(x)VA(x,{'logical'},{'scalar'}));
+
+% Allow pruning of initial minor cylinders, i.e. if minor cylinders don't
+% intersect with the voxel, remove them
+addParameter(p,'AllowInitialMinorPruning',true,@(x)VA(x,{'logical'},{'scalar'}));
 
 % Minor vessel orientation
 expectedinterptype = {'RANDOM','ALIGNED','PERIODIC'};
@@ -83,8 +90,11 @@ end
 function G = setParsedArgs(G,p)
 
 NamedArgs = {'VoxelSize','VoxelCenter','GridSize','Nmajor','MajorAngle',...
-    'NumMajorArteries','MinorArterialFrac','MinorDilation','Rmajor',...
-    'Rminor_mu','Rminor_sig','VRSRelativeRad','Verbose','seed'};
+    'NumMajorArteries','MinorArterialFrac',...
+    'MediumVessels','MediumVesselRadiusThresh',...
+    'Rmajor','Rminor_mu','Rminor_sig',...
+    'VRSRelativeRad','MinorDilation',...
+    'Verbose','seed'};
 TargetArgs = {'BVF','iRBVF','aRBVF','iBVF','aBVF'};
 
 for f = NamedArgs; G.(f{1}) = p.Results.(f{1}); end
