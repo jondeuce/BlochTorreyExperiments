@@ -161,9 +161,9 @@ end
 @inline dcoeff(x, p::MyelinProblem, m::MyelinDomain{AxonRegion}) = p.params.D_Axon
 @inline dcoeff(x, y, p::MyelinProblem, m::MyelinDomain) = dcoeff(Vec{2}((x, y)), p, m)
 
-@inline r1decay(x, p::MyelinProblem, m::MyelinDomain{TissueRegion}) = p.params.R2_Tissue #TODO
-@inline r1decay(x, p::MyelinProblem, m::MyelinDomain{MyelinRegion}) = p.params.R2_sp #TODO
-@inline r1decay(x, p::MyelinProblem, m::MyelinDomain{AxonRegion}) = p.params.R2_lp #TODO
+@inline r1decay(x, p::MyelinProblem, m::MyelinDomain{TissueRegion}) = p.params.R1_Tissue
+@inline r1decay(x, p::MyelinProblem, m::MyelinDomain{MyelinRegion}) = p.params.R1_sp
+@inline r1decay(x, p::MyelinProblem, m::MyelinDomain{AxonRegion}) = p.params.R1_lp
 @inline r1decay(x, y, p::MyelinProblem, m::MyelinDomain) = r1decay(Vec{2}((x, y)), p, m)
 
 @inline r2decay(x, p::MyelinProblem, m::MyelinDomain{TissueRegion}) = p.params.R2_Tissue

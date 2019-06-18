@@ -1,6 +1,13 @@
+# Activate project and load packages for this script
+import Pkg
+Pkg.activate(joinpath(@__DIR__, ".."))
+include(joinpath(@__DIR__, "../initpaths.jl"))
+
 # NOTE: must load pyplot backend BEFORE loading MATLAB in init.jl
 using StatsPlots
 pyplot(size=(1200,900), leg = false, grid = false, labels = nothing)
+using GlobalUtils
+using MWFUtils
 
 # Initialize project packages
 include(joinpath(@__DIR__, "../init.jl"))
@@ -11,7 +18,6 @@ make_reproduce(
     """
 )
 
-DrWatson.default_prefix(c) = MWFUtils.getnow() #TODO
 gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
 
 function runcreategeometry(params; numreps = 5)
@@ -38,8 +44,8 @@ function runcreategeometry(params; numreps = 5)
             )
 
             # Common filename without suffix
-            fname = DrWatson.savename(params)
-            
+            fname = DrWatson.savename(MWFUtils.getnow(), params)
+
             # Plot circles and grid
             plotcircles([geom.innercircles; geom.outercircles], geom.bdry; fname = "plots/" * fname * ".circles")
             plotgrids(geom.exteriorgrids, geom.torigrids, geom.interiorgrids; fname = "plots/" * fname * ".grids")
@@ -52,7 +58,7 @@ function runcreategeometry(params; numreps = 5)
                 gitdir()
             )
         catch e
-            @warn "Error generating grid with param string: " * DrWatson.savename("", params)
+            @warn "Error generating grid with param string: " * DrWatson.savename("", params; connector = ", ")
             @warn sprint(showerror, e, catch_backtrace())
         end
     end
@@ -75,7 +81,7 @@ function main()
     all_params = sort(all_params; by = d -> (d[:numfibres], d[:gratio], d[:density]))
     for (i,params) in enumerate(all_params)
         params = convert(Dict{Symbol,Any}, params)
-        @info "Generating geometry $i/$(length(all_params)) at $(Dates.now()): $(DrWatson.savename("", params))"
+        @info "Generating geometry $i/$(length(all_params)) at $(Dates.now()): $(DrWatson.savename("", params; connector = ", "))"
         runcreategeometry(params)
     end
 

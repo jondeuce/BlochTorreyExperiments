@@ -1,3 +1,44 @@
+function wrap_string(str, len, dlm, newdlm = dlm)
+    isempty(str) && return str
+    parts = split(str, dlm)
+    out = ""
+    currlen = 0
+    for i in 1:length(parts)-1
+        out *= parts[i]
+        currlen += length(parts[i])
+        out = currlen >= len ? (currlen = 0; out * "\n") : out * newdlm
+    end
+    out *= parts[end]
+    return out
+end
+
+function partitionby(s::AbstractVector{S}, field) where {S}
+    seenindices = Set{Int}()
+    groups, groupindices = [], []
+    while length(seenindices) < length(s)
+        for i in 1:length(s)
+            i ∈ seenindices && continue
+            el1 = s[i]
+            idx = Int[i]
+            group = S[el1]
+            for j in 1:length(s)
+                ((i == j) || (j ∈ seenindices)) && continue
+                el = s[j]
+                if all(f -> (f == field) || (getfield(el1, f) == getfield(el, f)), fieldnames(S))
+                    push!(idx, j)
+                    push!(group, el)
+                end
+            end
+            for k in idx
+                push!(seenindices, k)
+            end
+            push!(groupindices, sort!(idx))
+            push!(groups, sort!(group; by = el -> getfield(el, field)))
+        end
+    end
+    return groups, groupindices
+end
+
 function default_savefigs(fig, fname, exts = [".png", ".pdf"])
     for ext in exts
         savefig(fig, fname * ext)
@@ -25,34 +66,70 @@ function plotgrids(exteriorgrids, torigrids, interiorgrids; fname = nothing, dis
     return fig
 end
 
-function mxplotomega(myelinprob, myelindomains, myelinsubdomains, bdry; titlestr = "Omega", fname = nothing)
+function mxplotomega(
+        myelinprob, myelindomains, myelinsubdomains, bdry;
+        titlestr = "Omega", fname = nothing, kwargs...
+    )
     omega = calcomega(myelinprob, myelinsubdomains)
-    mxsimpplot(getgrid.(myelindomains); newfigure = true, facecol = omega,
-        axis = Float64[mxaxis(bdry)...])
+    mxsimpplot(getgrid.(myelindomains);
+        facecol = omega, axis = Float64[mxaxis(bdry)...],
+        kwargs...)
     mxcall(:title, 0, titlestr)
     !(fname == nothing) && mxsavefig(fname)
     return nothing
 end
 
-function mxplotmagnitude(sols, btparams, myelindomains, bdry; titlestr = "Magnitude", fname = nothing)
-    Umagn = reduce(vcat, norm.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
+function mxplotmagnitude(
+        ::Type{uType}, sols, btparams, myelindomains, bdry;
+        titlestr = "Magnitude", fname = nothing, kwargs...
+    ) where {uType <: FieldType}
+    Umagn = reduce(vcat, norm.(preprocess_signal(reinterpret(uType, s.u[end]))) for s in sols)
     @unpack R2_sp, R2_lp, R2_Tissue = btparams
-    caxis = (0.0, exp(-min(R2_sp, R2_lp, R2_Tissue) * sols[1].t[end]))
-    mxsimpplot(getgrid.(myelindomains); newfigure = true, facecol = Umagn,
-        axis = Float64[mxaxis(bdry)...], caxis = Float64[caxis...])
+    # caxis = (0.0, exp(-min(R2_sp, R2_lp, R2_Tissue) * sols[1].t[end]))
+    caxis = (0.0, maximum(Umagn))
+    mxsimpplot(getgrid.(myelindomains);
+        facecol = Umagn, axis = Float64[mxaxis(bdry)...], caxis = Float64[caxis...],
+        kwargs...)
     mxcall(:title, 0, titlestr)
     !(fname == nothing) && mxsavefig(fname)
     return nothing
 end
+mxplotmagnitude(sols, btparams, myelindomains, bdry; kwargs...) =
+    mxplotmagnitude(Vec{2,Float64}, sols, btparams, myelindomains, bdry; kwargs...)
 
-function mxplotphase(sols, btparams, myelindomains, bdry; titlestr = "Phase", fname = nothing)
-    Uphase = reduce(vcat, angle.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
-    mxsimpplot(getgrid.(myelindomains); newfigure = true, facecol = Uphase,
-        axis = Float64[mxaxis(bdry)...])
+function mxplotphase(
+        ::Type{uType}, sols, btparams, myelindomains, bdry;
+        titlestr = "Phase", fname = nothing, kwargs...
+    ) where {uType <: FieldType}
+    Uphase = reduce(vcat, angle.(preprocess_signal(reinterpret(uType, s.u[end]))) for s in sols)
+    mxsimpplot(getgrid.(myelindomains);
+        facecol = Uphase, axis = Float64[mxaxis(bdry)...],
+        kwargs...)
     mxcall(:title, 0, titlestr)
     !(fname == nothing) && mxsavefig(fname)
     return nothing
 end
+mxplotphase(sols, btparams, myelindomains, bdry; kwargs...) =
+    mxplotphase(Vec{2,Float64}, sols, btparams, myelindomains, bdry; kwargs...)
+
+function mxplotlongitudinal(
+        ::Type{uType}, sols, btparams, myelindomains, bdry;
+        titlestr = "Longitudinal", fname = nothing, steadystate = 1, kwargs...
+    ) where {uType <: Vec{3}}
+    Mz = reduce(vcat, longitudinal.(reinterpret(uType, s.u[end])) for s in sols)
+    Mz .= steadystate .- Mz
+    @unpack R2_sp, R2_lp, R2_Tissue = btparams
+    # caxis = (0.0, exp(-min(R2_sp, R2_lp, R2_Tissue) * sols[1].t[end]))
+    caxis = (0.0, maximum(Mz))
+    mxsimpplot(getgrid.(myelindomains);
+        facecol = Mz, axis = Float64[mxaxis(bdry)...], caxis = Float64[caxis...],
+        kwargs...)
+    mxcall(:title, 0, titlestr)
+    !(fname == nothing) && mxsavefig(fname)
+    return nothing
+end
+mxplotlongitudinal(sols, btparams, myelindomains, bdry; kwargs...) =
+    mxplotlongitudinal(Vec{2,Float64}, sols, btparams, myelindomains, bdry; kwargs...)
 
 function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bdry;
         titlestr = "Signal Magnitude vs. Time",
@@ -62,7 +139,7 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
     )
     tspan = get_tspan(opts)
     ts = get_tpoints(opts)
-    signals = calcsignal(sols, ts, myelindomains)
+    signals = preprocess_signal(calcsignal(sols, ts, myelindomains))
 
     myelin_area = intersect_area(outercircles, bdry) - intersect_area(innercircles, bdry)
     total_area = area(bdry)
@@ -98,6 +175,7 @@ function plotsignal(tpoints, signals;
         fname = nothing,
         disp = (fname == nothing)
     )
+    signals = preprocess_signal(signals)
 
     props = Dict{Symbol,Any}(
         :linewidth => 5, :marker => :circle, :markersize => 10,
@@ -146,7 +224,7 @@ function plotSEcorr(
     )
     tspan = get_tspan(opts)
     ts = get_tpoints(opts)
-    signals = calcsignal(sols, ts, myelindomains)
+    signals = preprocess_signal(calcsignal(sols, ts, myelindomains))
 
     MWImaps, MWIdist, MWIpart = fitmwfmodel(signals, opts)
 
@@ -303,33 +381,6 @@ function plotMWFvsMethod(results::Dict; kwargs...)
     isempty(mwfvalues) && return nothing
     mwfvalues = convert(Vector{typeof(mwfvalues[1])}, mwfvalues)
     return plotMWFvsMethod(mwfvalues; kwargs...)
-end
-
-function partitionby(s::AbstractVector{S}, field) where {S}
-    seenindices = Set{Int}()
-    groups, groupindices = [], []
-    while length(seenindices) < length(s)
-        for i in 1:length(s)
-            i ∈ seenindices && continue
-            el1 = s[i]
-            idx = Int[i]
-            group = S[el1]
-            for j in 1:length(s)
-                ((i == j) || (j ∈ seenindices)) && continue
-                el = s[j]
-                if all(f -> (f == field) || (getfield(el1, f) == getfield(el, f)), fieldnames(S))
-                    push!(idx, j)
-                    push!(group, el)
-                end
-            end
-            for k in idx
-                push!(seenindices, k)
-            end
-            push!(groupindices, sort!(idx))
-            push!(groups, sort!(group; by = el -> getfield(el, field)))
-        end
-    end
-    return groups, groupindices
 end
 
 # Save plot

@@ -1,5 +1,6 @@
 function mxsimpplot(p::AbstractMatrix, t::AbstractMatrix;
-        newfigure = false,
+        newfigure = true,
+        visible = false,
         hold = false,
         xlim = nothing,
         ylim = nothing,
@@ -14,7 +15,12 @@ function mxsimpplot(p::AbstractMatrix, t::AbstractMatrix;
     )
     @assert size(p,2) == 2 && size(t,2) == 3
 
-    newfigure && mxcall(:figure, 0)
+    # Default figure is not visible, undocked, with full screen size
+    newfigure && mxcall(:figure, 0,
+        "visible", visible ? "on" : "off",
+        "windowstyle", "normal",
+        "units", "normalized",
+        "outerposition", [0 0 1 1])
     hold && mxcall(:hold, 0, "on")
 
     if !(isempty(p) || isempty(t))

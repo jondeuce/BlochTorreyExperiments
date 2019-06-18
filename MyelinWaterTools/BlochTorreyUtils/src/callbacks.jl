@@ -22,7 +22,7 @@ function apply_pulse!(u::AbstractVector{uType}, α, M∞) where {Tu, uType <: Ve
         # M₀ = [0, M∞, 0], is actually a rotation of [0, 0, M∞] by -π/2 about the x-axis, not of +π/2.
         # To be consistent, we apply all general rotations by -α (which is equivalent to +α when α = π)
         R = Tensor{2,3,Tu}(RotX(-α))
-        u .= (x -> R ⋅ x).(u)
+        u .= (x -> R⋅x).(u)
     end
     u .= shift_longitudinal.(u, M∞)
     return u
