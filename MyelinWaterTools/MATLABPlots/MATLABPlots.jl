@@ -6,8 +6,9 @@ module MATLABPlots
 using GeometryUtils
 using Reexport
 @reexport using MATLAB
+import Dates
 
-export mxsimpplot
+export mxsimpplot, mxsimpgif
 
 include("src/mxsimpplot.jl")
 

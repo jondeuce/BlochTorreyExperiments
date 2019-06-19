@@ -152,10 +152,10 @@ const sweepparamsampler_settings = Dict{Symbol,Any}(
     :Dax    => (sampler = :linearsampler,    args = (lb = 200.0,   ub = 200.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
     :TE     => (sampler = :linearsampler,    args = (lb = 10e-3,   ub = 10e-3)), #TODO (lb = 5e-3,   ub = 15e-3)),
     :nTE    => (sampler = :unitrangesampler, args = (lb = 32,      ub = 32)), #TODO (lb = 24,     ub = 60)),
-    :T2sp   => (sampler = :linearsampler,    args = (lb = 10e-3,   ub = 20e-3)), #Default: 15e-3
-    :T2lp   => (sampler = :linearsampler,    args = (lb = 50e-3,   ub = 80e-3)), #Default: 63e-3
-    :T2tiss => (sampler = :linearsampler,    args = (lb = 50e-3,   ub = 80e-3)), #Default: 63e-3
-    :T1sp   => (sampler = :linearsampler,    args = (lb = 1000e-3, ub = 1000e-3)), #args = (lb = 949e-3, ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
+    :T2sp   => (sampler = :linearsampler,    args = (lb = 15e-3,   ub = 15e-3)), #TODO args = (lb = 10e-3,   ub = 20e-3)), #Default: 15e-3
+    :T2lp   => (sampler = :linearsampler,    args = (lb = 63e-3,   ub = 63e-3)), #TODO args = (lb = 50e-3,   ub = 80e-3)), #Default: 63e-3
+    :T2tiss => (sampler = :linearsampler,    args = (lb = 63e-3,   ub = 63e-3)), #TODO args = (lb = 50e-3,   ub = 80e-3)), #Default: 63e-3
+    :T1sp   => (sampler = :linearsampler,    args = (lb = 200e-3,  ub = 200e-3)), #args = (lb = 949e-3, ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
     :T1lp   => (sampler = :linearsampler,    args = (lb = 1000e-3, ub = 1000e-3)), #args = (lb = 949e-3, ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
     :T1tiss => (sampler = :linearsampler,    args = (lb = 1000e-3, ub = 1000e-3)), #args = (lb = 949e-3, ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
 )

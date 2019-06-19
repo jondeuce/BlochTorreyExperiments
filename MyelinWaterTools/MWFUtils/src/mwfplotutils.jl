@@ -79,11 +79,20 @@ function mxplotomega(
     return nothing
 end
 
+###
+### Magnitude, phase, and longitudinal plotting
+###
+
+trans(::Type{uType}, sol::ODESolution, t = sol.t[end]) where {uType} = transverse_signal(reinterpret(uType, s(t)))
+calctimes(sol::ODESolution, length = 100) = range(sol.prob.tspan...; length = length)
+calcmag(::Type{uType}, sols, ts = calctimes(sol)) where {uType} = reduce(vcat, reduce(hcat, norm.(trans(uType, s, t)) for t in ts) for s in sols)
+calcphase(::Type{uType}, sols, ts = calctimes(sol)) where {uType} = reduce(vcat, reduce(hcat, angle.(trans(uType, s, t)) for t in ts) for s in sols)
+
 function mxplotmagnitude(
         ::Type{uType}, sols, btparams, myelindomains, bdry;
         titlestr = "Magnitude", fname = nothing, kwargs...
     ) where {uType <: FieldType}
-    Umagn = reduce(vcat, norm.(preprocess_signal(reinterpret(uType, s.u[end]))) for s in sols)
+    Umagn = reduce(vcat, norm.(transverse_signal(reinterpret(uType, s.u[end]))) for s in sols)
     @unpack R2_sp, R2_lp, R2_Tissue = btparams
     # caxis = (0.0, exp(-min(R2_sp, R2_lp, R2_Tissue) * sols[1].t[end]))
     caxis = (0.0, maximum(Umagn))
@@ -101,7 +110,7 @@ function mxplotphase(
         ::Type{uType}, sols, btparams, myelindomains, bdry;
         titlestr = "Phase", fname = nothing, kwargs...
     ) where {uType <: FieldType}
-    Uphase = reduce(vcat, angle.(preprocess_signal(reinterpret(uType, s.u[end]))) for s in sols)
+    Uphase = reduce(vcat, angle.(transverse_signal(reinterpret(uType, s.u[end]))) for s in sols)
     mxsimpplot(getgrid.(myelindomains);
         facecol = Uphase, axis = Float64[mxaxis(bdry)...],
         kwargs...)
@@ -131,7 +140,7 @@ end
 mxplotlongitudinal(sols, btparams, myelindomains, bdry; kwargs...) =
     mxplotlongitudinal(Vec{2,Float64}, sols, btparams, myelindomains, bdry; kwargs...)
 
-function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bdry;
+function plotbtransverse_signalms, myelindomains, outercircles, innercircles, bdry;
         titlestr = "Signal Magnitude vs. Time",
         opts = NNLSRegression(PlotDist = !AVOID_MAT_PLOTS),
         fname = nothing,
@@ -139,7 +148,7 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
     )
     tspan = get_tspan(opts)
     ts = get_tpoints(opts)
-    signals = preprocess_signal(calcsignal(sols, ts, myelindomains))
+    signals = transverse_signal(calcsignal(sols, ts, myelindomains))
 
     myelin_area = intersect_area(outercircles, bdry) - intersect_area(innercircles, bdry)
     total_area = area(bdry)
@@ -167,7 +176,7 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
     disp && display(fig)
 
     return nothing
-end
+endtransverse_signal
 
 function plotsignal(tpoints, signals;
         titlestr = "Complex Signal vs. Time",
@@ -175,7 +184,7 @@ function plotsignal(tpoints, signals;
         fname = nothing,
         disp = (fname == nothing)
     )
-    signals = preprocess_signal(signals)
+    signals = transverse_signal(signals)
 
     props = Dict{Symbol,Any}(
         :linewidth => 5, :marker => :circle, :markersize => 10,
@@ -216,7 +225,7 @@ function plotsignal(results::Dict; kwargs...)
 end
 
 function plotSEcorr(
-        sols, btparams, myelindomains;
+        sols, transverse_signalomains;
         opts::NNLSRegression = NNLSRegression(PlotDist = !AVOID_MAT_PLOTS),
         mwftrue = nothing,
         fname = nothing,
@@ -224,7 +233,7 @@ function plotSEcorr(
     )
     tspan = get_tspan(opts)
     ts = get_tpoints(opts)
-    signals = preprocess_signal(calcsignal(sols, ts, myelindomains))
+    signals = transverse_signal(calcsignal(sols, ts, myelindomains))
 
     MWImaps, MWIdist, MWIpart = fitmwfmodel(signals, opts)
 

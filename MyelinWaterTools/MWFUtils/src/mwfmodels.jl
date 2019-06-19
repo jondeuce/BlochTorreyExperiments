@@ -10,9 +10,9 @@ function getmwf(outer::VecOfCircles{2}, inner::VecOfCircles{2}, bdry::Rectangle)
 end
 
 # Convert all signals to vectors of Vec{2}'s, representing the transverse magnetization
-preprocess_signal(x) = x # fallback
-preprocess_signal(x::AbstractVector{Complex{T}}) where {T} = copy(reinterpret(Vec{2,T}, x)) # complex -> Vec{2}
-preprocess_signal(x::AbstractVector{Vec{3,T}}) where {T} = transverse.(x) # Vec{3} -> Vec{2}
+transverse_signal(x) = x # fallback
+transverse_signal(x::AbstractVector{Complex{T}}) where {T} = copy(reinterpret(Vec{2,T}, x)) # complex -> Vec{2}
+transverse_signal(x::AbstractVector{Vec{3,T}}) where {T} = transverse.(x) # Vec{3} -> Vec{2}
 
 # Abstract interface for calculating mwf from measured signals
 function getmwf(
@@ -21,7 +21,7 @@ function getmwf(
         kwargs...
     )
     try
-        _getmwf(modeltype, fitmwfmodel(preprocess_signal(signals), modeltype; kwargs...)...)
+        _getmwf(modeltype, fitmwfmodel(transverse_signal(signals), modeltype; kwargs...)...)
     catch e
         @warn "Error computing the myelin water fraction"
         @warn sprint(showerror, e, catch_backtrace())
@@ -36,7 +36,7 @@ function fitmwfmodel(
         kwargs...
     ) where {V <: Vec{2}}
     try
-        _fitmwfmodel(preprocess_signal(signals), modeltype; kwargs...)
+        _fitmwfmodel(transverse_signal(signals), modeltype; kwargs...)
     catch e
         @warn "Error fitting $modeltype model to signal."
         @warn sprint(showerror, e, catch_backtrace())
@@ -45,10 +45,10 @@ function fitmwfmodel(
 end
 
 # Abstract interface for initializing model parameters
-initialparams(modeltype::AbstractMWIFittingModel, ts::AbstractVector, S::AbstractVector) = _initialparams(modeltype, ts, preprocess_signal(S))
+initialparams(modeltype::AbstractMWIFittingModel, ts::AbstractVector, S::AbstractVector) = _initialparams(modeltype, ts, transverse_signal(S))
 
 # Abstract interface for extracting MWI model data
-mwimodeldata(modeltype::AbstractMWIFittingModel, S::AbstractVector) = _mwimodeldata(modeltype, preprocess_signal(S))
+mwimodeldata(modeltype::AbstractMWIFittingModel, S::AbstractVector) = _mwimodeldata(modeltype, transverse_signal(S))
 _mwimodeldata(modeltype::NNLSRegression, S::AbstractVector{Vec{2,T}}) where {T} = norm.(S[2:end])
 _mwimodeldata(modeltype::TwoPoolMagnData, S::AbstractVector{Vec{2,T}}) where {T} = norm.(S[2:end])
 _mwimodeldata(modeltype::ThreePoolMagnData, S::AbstractVector{Vec{2,T}}) where {T} = norm.(S[2:end])

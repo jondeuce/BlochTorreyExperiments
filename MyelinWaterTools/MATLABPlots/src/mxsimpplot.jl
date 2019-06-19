@@ -1,3 +1,7 @@
+####
+#### mxsimpplot
+####
+
 function mxsimpplot(p::AbstractMatrix, t::AbstractMatrix;
         newfigure = true,
         visible = false,
@@ -48,3 +52,40 @@ end
 
 mxsimpplot(g::G; kwargs...) where {G <: Grid{2,3}} = mxsimpplot(nodematrix(g), cellmatrix(g); kwargs...)
 mxsimpplot(gs::AbstractArray{G}; kwargs...) where {G <: Grid{2,3}} = mxsimpplot(nodecellmatrices(gs)...; kwargs...)
+
+####
+#### mxsimpgif
+####
+
+function mxsimpgif(p::AbstractMatrix, t::AbstractMatrix;
+        filename = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss") * ".mxsimpgif.gif",
+        caxistype = "auto",
+        expr = Float64[],
+        bcol = [0.8, 0.9, 1.0],
+        icol = [0.0, 0.0, 0.0],
+        nodes = 0.0,
+        tris = 0.0,
+        facecol = Matrix[]
+    )
+    @assert size(p,2) == 2 && size(t,2) == 3
+
+    if !(isempty(p) || isempty(t))
+        mxcall(:simpgif, 0,
+            Matrix{Float64}(p), Matrix{Float64}(t),
+            expr, bcol, icol, nodes, tris, facecol, filename, caxistype
+        )
+    end
+
+    return nothing
+end
+
+function mxsimpgif(
+        p::AbstractVector{V},
+        t::AbstractVector{NTuple{3,Int}};
+        kwargs...
+    ) where {V<:Vec{2}}
+    mxsimpgif(DistMesh.to_mat(p), DistMesh.to_mat(t); kwargs...)
+end
+
+mxsimpgif(g::G; kwargs...) where {G <: Grid{2,3}} = mxsimpgif(nodematrix(g), cellmatrix(g); kwargs...)
+mxsimpgif(gs::AbstractArray{G}; kwargs...) where {G <: Grid{2,3}} = mxsimpgif(nodecellmatrices(gs)...; kwargs...)
