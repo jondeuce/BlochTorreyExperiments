@@ -139,7 +139,7 @@ const default_btparams_dict = Dict(default_btparams)
 ####
 
 linearsampler(a,b) = a + rand() * (b - a)
-unitrangesampler(a,b) = rand(a:b)
+rangesampler(a,b,s=1) = rand(a:s:b)
 log10sampler(a,b) = 10^linearsampler(log10(a), log10(b))
 acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
 
