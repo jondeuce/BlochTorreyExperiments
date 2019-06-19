@@ -139,7 +139,7 @@ const default_btparams_dict = Dict(default_btparams)
 ####
 
 linearsampler(a,b) = a + rand() * (b - a)
-unitrangesampler(a,b) = rand(a:b)
+rangesampler(a,b,s=1) = rand(a:s:b)
 log10sampler(a,b) = 10^linearsampler(log10(a), log10(b))
 acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
 
@@ -151,7 +151,7 @@ const sweepparamsampler_settings = Dict{Symbol,Any}(
     :Dmye   => (sampler = :linearsampler,    args = (lb = 200.0,   ub = 200.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
     :Dax    => (sampler = :linearsampler,    args = (lb = 200.0,   ub = 200.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
     :TE     => (sampler = :linearsampler,    args = (lb = 10e-3,   ub = 10e-3)), #TODO (lb = 5e-3,   ub = 15e-3)),
-    :nTE    => (sampler = :unitrangesampler, args = (lb = 32,      ub = 32)), #TODO (lb = 24,     ub = 60)),
+    :nTE    => (sampler = :rangesampler,     args = (lb = 32,      ub = 32)), #TODO (lb = 24,     ub = 60)),
     :T2sp   => (sampler = :linearsampler,    args = (lb = 10e-3,   ub = 20e-3)), #Default: 15e-3
     :T2lp   => (sampler = :linearsampler,    args = (lb = 50e-3,   ub = 80e-3)), #Default: 63e-3
     :T2tiss => (sampler = :linearsampler,    args = (lb = 50e-3,   ub = 80e-3)), #Default: 63e-3
