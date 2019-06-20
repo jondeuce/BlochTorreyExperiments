@@ -164,6 +164,8 @@ integrate(U::VectorOfVectors, domains::VectorOfDomains) = sum(map((u,d) -> integ
 # ParabolicDomain methods
 # ---------------------------------------------------------------------------- #
 
+@inline fieldvectype(::ParabolicDomain{Tu,uType}) where {Tu,uType} = uType
+@inline fieldfloattype(::ParabolicDomain{Tu,uType}) where {Tu,uType} = Tu
 @inline getgrid(d::ParabolicDomain) = d.grid
 @inline getdofhandler(d::ParabolicDomain) = d.dh
 @inline getcellvalues(d::ParabolicDomain) = d.cellvalues
@@ -229,7 +231,7 @@ Base.show(io::IO, d::ParabolicDomain) = print(io, "$(typeof(d)) with $(ndofs(d))
 @inline getinnerradius(m::MyelinDomain, i::Int) = radius(getinnercircle(m,i))
 @inline numfibres(m::MyelinDomain) = length(getoutercircles(m))
 
-Lazy.@forward MyelinDomain.domain (getgrid, getdofhandler, getcellvalues, getfacevalues, getrefshape, getquadorder, getfuncinterporder, getgeominterporder, getmass, getmassfact, getstiffness)#, getquadweights)
+Lazy.@forward MyelinDomain.domain (fieldvectype, fieldfloattype, getgrid, getdofhandler, getcellvalues, getfacevalues, getrefshape, getquadorder, getfuncinterporder, getgeominterporder, getmass, getmassfact, getstiffness)#, getquadweights)
 Lazy.@forward MyelinDomain.domain (factorize!,)# addquadweights!)
 Lazy.@forward MyelinDomain.domain (JuAFEM.ndofs, LinearAlgebra.norm, GeometryUtils.area)
 

@@ -37,12 +37,12 @@ include("src/callbacks.jl")
 # Exported Methods
 # ---------------------------------------------------------------------------- #
 export normest1_norm, radiidistribution
-export doassemble!, factorize!, interpolate, interpolate!, integrate #, addquadweights
-export getgrid, getdomain, numfibres, createmyelindomains, omegamap
-export getmass, getmassfact, getstiffness, # getquadweights
+export doassemble!, factorize!, interpolate, interpolate!, integrate
+export fieldvectype, fieldfloattype, getgrid, getdomain, numfibres, createmyelindomains, omegamap
+export getmass, getmassfact, getstiffness
        getdofhandler, getcellvalues, getfacevalues,
        getregion, getoutercircles, getinnercircles, getoutercircle, getinnercircle, getouterradius, getinnerradius
-export shift_longitudinal
+export shift_longitudinal, shift_longitudinal!, pi_flip, pi_pulse!, apply_pulse!, init_fliptimes, init_savetimes
 export testproblem
 
 # ---------------------------------------------------------------------------- #

@@ -93,12 +93,18 @@ const geometries = copy_and_load_geomfiles(geomfiles);
 ####
 
 const default_TE = 10e-3; # Echotime
+const default_TR = 1000e-3; # Repetition time
 const default_nTE = 32; # Number of echoes
+const default_nTR = 3; # Number of repetitions
+const default_tspan = (0.0, default_nTE * default_TE + (default_nTR - 1) * default_TR); # timespan
 const default_solverparams_dict = Dict(
-    :u0        => Vec{3}((0.0, 1.0, 0.0)),        # Initial π/2 pulse (Default: Vec{2}((0.0,1.0)))
-    :flipangle => π,                              # Flip angle for MultiSpinEchoCallback
-    :TE        => default_TE,                     # Echotime for MultiSpinEchoCallback (Default: 10e-3)
-    :tspan     => default_TE .* (0, default_nTE), # Solver time span (Default: (0.0, 320e-3); must start at zero)
+    :u0        => Vec{3}((0.0, 0.0, 1.0)), # Initial magnetization; should be [0,1] for 2D (π/2 pulse) or [0,0,1] for 3D (steady-state)
+    :flipangle => Float64(π),              # Flip angle for MultiSpinEchoCallback
+    :TE        => default_TE,              # Echotime for MultiSpinEchoCallback (Default: 10e-3)
+    :TR        => default_TR,              # Repetition time for MultiSpinEchoCallback (Default: 1000e-3)
+    :nTE       => default_nTE,             # Number of echoes for MultiSpinEchoCallback (Default: 32)
+    :nTR       => default_nTR,             # Number of repetitions for MultiSpinEchoCallback (Default: 1)
+    :tspan     => default_tspan,           # Solver time span (Default: (0.0, 320e-3); must start at zero)
     :reltol    => 1e-8,
     :abstol    => 0.0);
 
@@ -144,20 +150,22 @@ log10sampler(a,b) = 10^linearsampler(log10(a), log10(b))
 acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
 
 const sweepparamsampler_settings = Dict{Symbol,Any}(
-    :theta  => (sampler = :acossampler,      args = (lb = 0.0,     ub = 90.0)), #TODO args = (lb = 0.0,    ub = 90.0)),
-    :alpha  => (sampler = :linearsampler,    args = (lb = 170.0,   ub = 170.0)),
-    :K      => (sampler = :linearsampler,    args = (lb = 0.0,     ub = 0.0)), #TODO #(sampler = :log10sampler,     args = (lb = 1e-3,   ub = 1.0)),   #Test value: 0.05
-    :Dtiss  => (sampler = :linearsampler,    args = (lb = 200.0,   ub = 200.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
-    :Dmye   => (sampler = :linearsampler,    args = (lb = 200.0,   ub = 200.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
-    :Dax    => (sampler = :linearsampler,    args = (lb = 200.0,   ub = 200.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
-    :TE     => (sampler = :linearsampler,    args = (lb = 10e-3,   ub = 10e-3)), #TODO (lb = 5e-3,   ub = 15e-3)),
-    :nTE    => (sampler = :unitrangesampler, args = (lb = 32,      ub = 32)), #TODO (lb = 24,     ub = 60)),
-    :T2sp   => (sampler = :linearsampler,    args = (lb = 15e-3,   ub = 15e-3)), #TODO args = (lb = 10e-3,   ub = 20e-3)), #Default: 15e-3
-    :T2lp   => (sampler = :linearsampler,    args = (lb = 63e-3,   ub = 63e-3)), #TODO args = (lb = 50e-3,   ub = 80e-3)), #Default: 63e-3
-    :T2tiss => (sampler = :linearsampler,    args = (lb = 63e-3,   ub = 63e-3)), #TODO args = (lb = 50e-3,   ub = 80e-3)), #Default: 63e-3
-    :T1sp   => (sampler = :linearsampler,    args = (lb = 200e-3,  ub = 200e-3)), #args = (lb = 949e-3, ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
-    :T1lp   => (sampler = :linearsampler,    args = (lb = 1000e-3, ub = 1000e-3)), #args = (lb = 949e-3, ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
-    :T1tiss => (sampler = :linearsampler,    args = (lb = 1000e-3, ub = 1000e-3)), #args = (lb = 949e-3, ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
+    :theta  => (sampler = :acossampler,   args = (lb = 0.0,     ub = 0.0)), #TODO args = (lb = 0.0,    ub = 90.0)),
+    :alpha  => (sampler = :linearsampler, args = (lb = 170.0,   ub = 170.0)),
+    :K      => (sampler = :linearsampler, args = (lb = 100.0,   ub = 100.0)), #TODO #(sampler = :log10sampler,     args = (lb = 1e-3,   ub = 1.0)),   #Test value: 0.05
+    :Dtiss  => (sampler = :linearsampler, args = (lb = 100.0,   ub = 100.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
+    :Dmye   => (sampler = :linearsampler, args = (lb = 100.0,   ub = 100.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
+    :Dax    => (sampler = :linearsampler, args = (lb = 100.0,   ub = 100.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
+    :TE     => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 10e-3)), #TODO (lb = 5e-3,   ub = 15e-3)),
+    :TR     => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), #TODO
+    :nTE    => (sampler = :rangesampler,  args = (lb = 32,      ub = 32)), #TODO (lb = 24,     ub = 60)),
+    :nTR    => (sampler = :rangesampler,  args = (lb = 3,       ub = 3)), #TODO
+    :T2sp   => (sampler = :linearsampler, args = (lb = 15e-3,   ub = 15e-3)), #TODO args = (lb = 10e-3,   ub = 20e-3)), #Default: 15e-3
+    :T2lp   => (sampler = :linearsampler, args = (lb = 63e-3,   ub = 63e-3)), #TODO args = (lb = 50e-3,   ub = 80e-3)), #Default: 63e-3
+    :T2tiss => (sampler = :linearsampler, args = (lb = 63e-3,   ub = 63e-3)), #TODO args = (lb = 50e-3,   ub = 80e-3)), #Default: 63e-3
+    :T1sp   => (sampler = :linearsampler, args = (lb = 200e-3,  ub = 200e-3)), #args = (lb = 949e-3, ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
+    :T1lp   => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), #args = (lb = 949e-3, ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
+    :T1tiss => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), #args = (lb = 949e-3, ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
 )
 sweepparamsampler() = Dict{Symbol,Union{Float64,Int}}(
     k => eval(Expr(:call, v.sampler, v.args...))
@@ -180,8 +188,10 @@ function runsolve(btparams, sweepparams, geom)
     # Unpack solver settings
     solverparams_dict = copy(default_solverparams_dict)
     solverparams_dict[:TE] = sweepparams[:TE]
+    solverparams_dict[:TR] = sweepparams[:TR]
     solverparams_dict[:nTE] = sweepparams[:nTE]
-    solverparams_dict[:tspan] = sweepparams[:TE] .* (0, sweepparams[:nTE])
+    solverparams_dict[:nTR] = sweepparams[:nTR]
+    solverparams_dict[:tspan] = (0.0, sweepparams[:nTE] * sweepparams[:TE] + (sweepparams[:nTR] - 1) * sweepparams[:TR])
     solverparams_dict[:flipangle] = deg2rad(sweepparams[:alpha])
 
     # Unpack geometry, create myelin domains, and create omegafield
@@ -199,7 +209,7 @@ function runsolve(btparams, sweepparams, geom)
 end
 
 function runsimulation!(results, sweepparams, geom)
-    @unpack alpha, theta, K, Dtiss, Dmye, Dax, TE, nTE, T2sp, T2lp, T2tiss, T1sp, T1lp, T1tiss = sweepparams
+    @unpack alpha, theta, K, Dtiss, Dmye, Dax, TE, TR, nTE, nTR, T2sp, T2lp, T2tiss, T1sp, T1lp, T1tiss = sweepparams
     density = intersect_area(geom.outercircles, geom.bdry) / area(geom.bdry)
     gratio = radius(geom.innercircles[1]) / radius(geom.outercircles[1])
 
@@ -220,7 +230,9 @@ function runsimulation!(results, sweepparams, geom)
     )
     sols, myelinprob, myelinsubdomains, myelindomains = runsolve(btparams, sweepparams, geom)
     
-    tpoints = collect(TE .* (0:nTE))
+    # Sample solution signals, ensuring that each sample is taken after the pulse occurs
+    tpoints = reduce(vcat, n * TR .+ (0 : TE/4 : TR) for n in 0:nTR-2; init = typeof(TE)[])
+    tpoints = append!(tpoints, (nTR-1) * TR .+ (0 : TE/4 : nTE * TE)) |> sort! |> unique!
     signals = calcsignal(sols, tpoints, myelindomains)
 
     # Common filename without suffix
@@ -313,12 +325,12 @@ function runsimulation!(results, sweepparams, geom)
             plotbiexp(sols, btparams, myelindomains,
                 geom.outercircles, geom.innercircles, geom.bdry;
                 titlestr = "Signal Magnitude (" * titleparamstr * ")",
-                opts = mwfmodels[1], fname = "sig/" * fname * ".signalmag")
+                opts = mwfmodels[1], fname = "sig/" * fname * ".biexp")
         end
         plotsignal(tpoints, signals;
-            titlestr = "Complex Signal (" * titleparamstr * ")",
+            titlestr = "Magnetization Signal (" * titleparamstr * ")",
             apply_pi_correction = false,
-            fname = "sig/" * fname * ".signalcplx")
+            fname = "sig/" * fname * ".signal")
     catch e
         @warn "Error plotting signal"
         @warn sprint(showerror, e, catch_backtrace())
@@ -344,12 +356,13 @@ function main(;iters::Int = typemax(Int))
     for (i,sweepparams) in enumerate(all_sweepparams)
         geomnumber = rand(1:length(geometries))
         geom = geometries[geomnumber]
+        tspan = (0.0, sweepparams[:nTE] * sweepparams[:TE] + (default_nTR - 1) * default_TR)
         try
             println("\n")
             @info "Running simulation $i/$(length(all_sweepparams)) at $(Dates.now()):"
             @info "    Sweep parameters:    " * DrWatson.savename("", sweepparams; connector = ", ")
             @info "    Geometry info:       Geom #$geomnumber - " * basename(geomfiles[geomnumber])
-            @info "    Simulation timespan: (0.0 ms, $(round(1000 .* sweepparams[:nTE] .* sweepparams[:TE]; digits=3)) ms)"
+            @info "    Simulation timespan: (0.0 ms, $(round(1000 .* tspan[2]; digits=3)) ms)"
             
             tic = Dates.now()
             runsimulation!(results, sweepparams, geom)

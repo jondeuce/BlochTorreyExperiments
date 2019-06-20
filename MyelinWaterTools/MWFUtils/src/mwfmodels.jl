@@ -10,18 +10,15 @@ function getmwf(outer::VecOfCircles{2}, inner::VecOfCircles{2}, bdry::Rectangle)
 end
 
 # Convert all signals to vectors of Vec{2}'s, representing the transverse magnetization
-transverse_signal(x) = x # fallback
-transverse_signal(x::AbstractVector{Complex{T}}) where {T} = copy(reinterpret(Vec{2,T}, x)) # complex -> Vec{2}
+transverse_signal(x::AbstractVector{Vec{2,T}}) where {T} = x # Already Vec{2}
+transverse_signal(x::AbstractVector{Complex{T}}) where {T} = copy(reinterpret(Vec{2,T}, x)) # Complex -> Vec{2}
 transverse_signal(x::AbstractVector{Vec{3,T}}) where {T} = transverse.(x) # Vec{3} -> Vec{2}
+longitudinal_signal(x::AbstractVector{Vec{3,T}}) where {T} = longitudinal.(x) # Vec{3} -> Scalar
 
 # Abstract interface for calculating mwf from measured signals
-function getmwf(
-        signals::AbstractVector,
-        modeltype::AbstractMWIFittingModel;
-        kwargs...
-    )
+function getmwf(signals::AbstractVector, modeltype::AbstractMWIFittingModel; kwargs...)
     try
-        _getmwf(modeltype, fitmwfmodel(transverse_signal(signals), modeltype; kwargs...)...)
+        _getmwf(modeltype, fitmwfmodel(signals, modeltype; kwargs...)...)
     catch e
         @warn "Error computing the myelin water fraction"
         @warn sprint(showerror, e, catch_backtrace())
@@ -30,13 +27,10 @@ function getmwf(
 end
 
 # Abstract interface for fitting mwf model
-function fitmwfmodel(
-        signals::AbstractVector{V},
-        modeltype::AbstractMWIFittingModel;
-        kwargs...
-    ) where {V <: Vec{2}}
+function fitmwfmodel(signals::AbstractVector, modeltype::AbstractMWIFittingModel; kwargs... )
     try
-        _fitmwfmodel(transverse_signal(signals), modeltype; kwargs...)
+        # The last nTE + 1 points of the vector `signals` is assumed to represent the multi-echo signal
+        _fitmwfmodel(transverse_signal(signals[end - modeltype.nTE : end]), modeltype; kwargs...)
     catch e
         @warn "Error fitting $modeltype model to signal."
         @warn sprint(showerror, e, catch_backtrace())
@@ -303,7 +297,8 @@ function compareMWFmethods(
         return (mwfvalues = nothing, signals = nothing)
     end
 
-    signals = [calcsignal(sols, get_tpoints(m), myelindomains) for m in models]
+    tspan = sols[1].prob.tspan
+    signals = [calcsignal(sols, get_tpoints(m, tspan), myelindomains) for m in models]
     mwfvalues = Dict(
         :exact => getmwf(outercircles, innercircles, bdry),
         [Symbol(typeof(m)) => getmwf(s, m) for (s,m) in zip(signals, models)]...

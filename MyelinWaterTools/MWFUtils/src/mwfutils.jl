@@ -337,15 +337,19 @@ calcomega(myelinprob, myelinsubdomains) = reduce(vcat, calcomegas(myelinprob, my
 # NOTE: This are integrals over the region, so the signals are already weighted
 #       for the relative size of the region; the total signal is the sum of the
 #       signals returned here
-function calcsignals(sols, ts, myelindomains)
+function calcsignals(sols, ts, myelindomains; steadystate = 1)
     Signals = map(sols, myelindomains) do s, m
-        [integrate(s(t), m) for t in ts]
+        if fieldvectype(m) <: Vec{3}
+            [integrate(shift_longitudinal(s(t), steadystate), m) for t in ts]
+        else
+            [integrate(s(t), m) for t in ts]
+        end
     end
     return Signals
 end
 
 # Sum signals over all domains
-calcsignal(sols, ts, myelindomains) = sum(calcsignals(sols, ts, myelindomains))
+calcsignal(sols, ts, myelindomains; kwargs...) = sum(calcsignals(sols, ts, myelindomains; kwargs...))
 
 # ---------------------------------------------------------------------------- #
 # ODEProblem constructor and solver for ParabolicDomain's and MyelinDomain's
@@ -394,26 +398,45 @@ OrdinaryDiffEq.ODEProblem(m::MyelinDomain, u0, tspan; kwargs...) = ODEProblem(ge
 
 function solveblochtorrey(
         myelinprob::MyelinProblem, myelindomain::MyelinDomain, alg = default_algorithm(), args...;
-        u0 = Vec{2}((0.0, 1.0)), # initial π/2 pulse
+        u0 = Vec{2}((0.0, 1.0)), # initial magnetization
         TE = 10e-3, # 10ms echotime
+        TR = 1000e-3, # 1000ms repetition time
         nTE = 32, # 32 echoes by default
+        nTR = 1, # 1 repetition by default
+        fliptimes = init_fliptimes(TE, TR, nTE, nTR), # flip times for callback
+        initpulse = (u0 isa Vec{3} ? π/2 : 0.0), # initial pulse
         flipangle = π, # flipangle for MultiSpinEchoCallback
-        steadystate = 1, # steady state value for z-component of magnetization
-        tspan = TE .* (0, nTE), # time span for ode solution
-        saveat = tspan[1]:TE/2:tspan[2], # save every TE/2 by default
-        tstops = tspan[1]:TE/2:tspan[2], # default extra points which the integrator must step to; match saveat by default
-        callback = MultiSpinEchoCallback(typeof(u0), tspan; TE = TE, flipangle = flipangle, steadystate = 1),
+        steadystate = (u0 isa Vec{3} ? u0[3] : nothing), # steady state value for z-component of magnetization
+        tspan = (zero(TE), nTE * TE + (nTR - 1) * TR), # time span for ode solution
+        saveat = init_savetimes(TE, TR, nTE, nTR), # save every TE/2 as well as every TR by default
+        tstops = init_savetimes(TE, TR, nTE, nTR), # default extra points which the integrator must step to; match saveat by default
+        callback = MultiSpinEchoCallback(typeof(u0), tspan;
+            TE = TE, TR = TR, nTE = nTE, nTR = nTR, fliptimes = fliptimes,
+            initpulse = initpulse, flipangle = flipangle, steadystate = steadystate),
         reltol = 1e-8,
         abstol = 0.0,
         kwargs...
     )
 
-    if u0 isa Vec{3}
-        # Convention is that u₃ = M∞ - M₃; this convenience function shifts u0 from M-space to u-space
-        u0 = shift_longitudinal(u0, steadystate)
+    if !(u0 isa Vec{3})
+        # Restrictions for when only transverse magnetization is simulated:
+        #   -initial pulse (i.e. rotation) cannot be applied
+        #   -flip angle must be exactly π
+        #   -simulation only runs until nTE * TE
+        @assert nTR == 1
+        @assert flipangle ≈ π
+        @assert initpulse ≈ 0
     end
+    
+    # Initialize initial magnetization state (in M-space)
+    U0 = interpolate(u0, myelindomain)
+    (u0 isa Vec{3}) && apply_pulse!(U0, initpulse, typeof(u0))
 
-    prob = ODEProblem(myelindomain, interpolate(u0, myelindomain), tspan)
+    # Our convention is that u₃ = M∞ - M₃. This convenience function shifts u0 from
+    # M-space (i.e. [M₁, M₂, M₃]) to u-space (i.e. [u₁, u₂, u₃] = [M₁, M₂, M∞ - M₃])
+    (u0 isa Vec{3}) && shift_longitudinal!(U0, steadystate)
+
+    prob = ODEProblem(myelindomain, U0, tspan)
     sol = solve(prob, alg, args...;
         dense = false, # don't save all intermediate time steps
         saveat = tstops, # timepoints to save solution at

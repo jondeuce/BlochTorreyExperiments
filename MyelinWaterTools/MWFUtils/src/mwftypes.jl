@@ -42,8 +42,9 @@ const TwoPoolModel = TwoPoolMagnToMagn
 const ThreePoolMagnData = Union{ThreePoolMagnToMagn, ThreePoolCplxToMagn}
 const ThreePoolModel = Union{ThreePoolMagnToMagn, ThreePoolCplxToMagn, ThreePoolCplxToCplx}
 
-get_tspan(opts::AbstractMWIFittingModel) = opts.TE .* (0, opts.nTE)
-get_tpoints(opts::AbstractMWIFittingModel) = opts.TE .* (0:opts.nTE)
+get_tspan(opts::AbstractMWIFittingModel) = (0.0, opts.nTE * opts.TE)
+get_tpoints(opts::AbstractMWIFittingModel) = collect(opts.TE .* (0:opts.nTE))
+get_tpoints(opts::AbstractMWIFittingModel, tspan::NTuple{2}) = (ts = get_tpoints(opts); ts .+= tspan[2] - ts[end]; return ts)
 get_T2vals(opts::NNLSRegression) = exp10.(range(log10(opts.T2Range[1]), stop=log10(opts.T2Range[2]), length=opts.nT2))
 
 # Construction to/from dictionary

@@ -84,6 +84,7 @@ end
 ###
 
 trans(::Type{uType}, sol::ODESolution, t = sol.t[end]) where {uType} = transverse_signal(reinterpret(uType, s(t)))
+long(::Type{uType}, sol::ODESolution, t = sol.t[end]) where {uType} = longitudinal_signal(reinterpret(uType, s(t)))
 calctimes(sol::ODESolution, length = 100) = range(sol.prob.tspan...; length = length)
 calcmag(::Type{uType}, sols, ts = calctimes(sol)) where {uType} = reduce(vcat, reduce(hcat, norm.(trans(uType, s, t)) for t in ts) for s in sols)
 calcphase(::Type{uType}, sols, ts = calctimes(sol)) where {uType} = reduce(vcat, reduce(hcat, angle.(trans(uType, s, t)) for t in ts) for s in sols)
@@ -140,15 +141,19 @@ end
 mxplotlongitudinal(sols, btparams, myelindomains, bdry; kwargs...) =
     mxplotlongitudinal(Vec{2,Float64}, sols, btparams, myelindomains, bdry; kwargs...)
 
-function plotbtransverse_signalms, myelindomains, outercircles, innercircles, bdry;
+function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bdry;
         titlestr = "Signal Magnitude vs. Time",
         opts = NNLSRegression(PlotDist = !AVOID_MAT_PLOTS),
         fname = nothing,
         disp = (fname == nothing)
     )
+    # Extract signals from last (0, nTE*TE) of simulation
+    signals = transverse_signal(calcsignal(sols, get_tpoints(opts, sols[1].prob.tspan), myelindomains))
+    S0 = norm(signals[1])
+    
+    # Default timespan/timepoints in range (0, nTE*TE)
     tspan = get_tspan(opts)
     ts = get_tpoints(opts)
-    signals = transverse_signal(calcsignal(sols, ts, myelindomains))
 
     myelin_area = intersect_area(outercircles, bdry) - intersect_area(innercircles, bdry)
     total_area = area(bdry)
@@ -158,11 +163,11 @@ function plotbtransverse_signalms, myelindomains, outercircles, innercircles, bd
     # likely to be anywhere on the grid, hence experience a decay rate R2_mono
     # on the average, where R2_mono is the area averaged R2 of each compartment
     R2_mono = (btparams.R2_sp * myelin_area + btparams.R2_lp * ext_area) / total_area
-    y_monoexp = @. total_area * exp(-ts * R2_mono)
+    y_monoexp = @. S0 * exp(-ts * R2_mono)
 
     # In the high diffusion & low permeability limit, spins are confined to
     # their separate regions and experience their compartment R2 only
-    y_biexp = @. ext_area * exp(-ts * btparams.R2_lp) + myelin_area * exp(-ts * btparams.R2_sp)
+    y_biexp = @. S0 * (ext_area / total_area) * exp(-ts * btparams.R2_lp) + S0 * (myelin_area / total_area) * exp(-ts * btparams.R2_sp)
 
     props = Dict{Symbol,Any}(
         :linewidth => 5, :marker => :circle, :markersize => 10,
@@ -176,7 +181,7 @@ function plotbtransverse_signalms, myelindomains, outercircles, innercircles, bd
     disp && display(fig)
 
     return nothing
-endtransverse_signal
+end
 
 function plotsignal(tpoints, signals;
         titlestr = "Complex Signal vs. Time",
@@ -184,36 +189,43 @@ function plotsignal(tpoints, signals;
         fname = nothing,
         disp = (fname == nothing)
     )
-    signals = transverse_signal(signals)
+    trans = transverse_signal(signals)
+    allfigs = []
 
-    props = Dict{Symbol,Any}(
-        :linewidth => 5, :marker => :circle, :markersize => 10,
+    mag_props = Dict{Symbol,Any}(
+        :seriestype => :line, :linewidth => 2, :marker => :none, #:marker => :circle, :markersize => 10,
         :grid => true, :minorgrid => true, :legend => :topright,
-        :xticks => 1000 .* tpoints, :xrotation => -60, :xlims => 1000 .* extrema(tpoints),
+        :xticks => 1000 .* range(tpoints[1], tpoints[end]; length = 30),
+        :xrotation => -60, :xlims => 1000 .* extrema(tpoints),
         :formatter => x -> string(round(x; sigdigits = 3)),
         :labels => "Magnitude", :ylabel => L"$S(t)$ Magnitude", :xlabel => "Time [ms]",
         :title => titlestr)
-    xdata, ydata = 1000 .* tpoints, norm.(signals)
-    mag_fig = plot(xdata, ydata; props...)
+    xdata, ydata = 1000 .* tpoints, norm.(trans)
+    push!(allfigs, plot(xdata, ydata; mag_props...))
 
-    props = Dict{Symbol,Any}(
-        :linetype => :steppost, :m => :square, :ms => 5, :lw => 1, :ls => :solid, :lc => :red, :ytick => -180:30:180,
-        :grid => true, :minorgrid => true, :legend => :right,
-        :xticks => 1000 .* tpoints, :xrotation => -60, :xlims => 1000 .* extrema(tpoints),
-        :formatter => x -> string(round(x; sigdigits = 3)),
-        :labels => "Phase (deg)", :ylabel => L"$S(t)$ Phase (deg)", :xlabel => "Time [ms]")
-    xdata, ydata = 1000 .* tpoints, rad2deg.(angle.(signals))
+    pha_props = Dict{Symbol,Any}(mag_props...,
+        :seriestype => :steppost, :linewidth => 1, :marker => :none, #:m => :square, :ms => 5,
+        :linecolour => :red, :ytick => -180:30:180, :title => "",
+        :labels => "Phase (deg)", :ylabel => L"$S(t)$ Phase (deg)")
+    xdata, ydata = 1000 .* tpoints, rad2deg.(angle.(trans))
     if apply_pi_correction
         phase_corrections = ifelse.(isodd.(1:length(ydata)), -90, 90)
         ydata = ydata .+ phase_corrections
-        props = Dict(props...,
-            :ytick => :auto, #:linetype => :line,
+        pha_props = Dict{Symbol,Any}(pha_props...,
+            :ytick => :auto, #:seriestype => :line,
             :labels => L"$\pi$-corrected Phase (deg)", :ylabel => L"$S(t)$ $\pi$-corrected Phase (deg)")
     end
-    pha_fig = plot(xdata, ydata; props...)
+    push!(allfigs, plot(xdata, ydata; pha_props...))
 
-    fig = plot(mag_fig, pha_fig; layout = (2,1))
+    if eltype(signals) <: Vec{3}
+        long_props = Dict{Symbol,Any}(mag_props...,
+            :linecolour => :green, :title => "",
+            :labels => "Longitudinal", :ylabel => L"$S(t)$ Longitudinal")
+        xdata, ydata = 1000 .* tpoints, longitudinal.(signals)
+        push!(allfigs, plot(xdata, ydata; long_props...))
+    end
 
+    fig = plot(allfigs...; layout = (length(allfigs), 1))
     !(fname == nothing) && default_savefigs(fig, fname)
     disp && display(fig)
 
@@ -225,16 +237,13 @@ function plotsignal(results::Dict; kwargs...)
 end
 
 function plotSEcorr(
-        sols, transverse_signalomains;
+        sols, btparams, myelindomains;
         opts::NNLSRegression = NNLSRegression(PlotDist = !AVOID_MAT_PLOTS),
         mwftrue = nothing,
         fname = nothing,
         disp = (fname == nothing)
     )
-    tspan = get_tspan(opts)
-    ts = get_tpoints(opts)
-    signals = transverse_signal(calcsignal(sols, ts, myelindomains))
-
+    signals = transverse_signal(calcsignal(sols, get_tpoints(opts, sols[1].prob.tspan), myelindomains))
     MWImaps, MWIdist, MWIpart = fitmwfmodel(signals, opts)
 
     if AVOID_MAT_PLOTS
