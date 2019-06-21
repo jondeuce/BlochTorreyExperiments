@@ -408,15 +408,19 @@ function solveblochtorrey(
         flipangle = π, # flipangle for MultiSpinEchoCallback
         steadystate = (u0 isa Vec{3} ? u0[3] : nothing), # steady state value for z-component of magnetization
         tspan = (zero(TE), nTE * TE + (nTR - 1) * TR), # time span for ode solution
-        saveat = init_savetimes(TE, TR, nTE, nTR), # save every TE/2 as well as every TR by default
-        tstops = init_savetimes(TE, TR, nTE, nTR), # default extra points which the integrator must step to; match saveat by default
         callback = MultiSpinEchoCallback(typeof(u0), tspan;
             TE = TE, TR = TR, nTE = nTE, nTR = nTR, fliptimes = fliptimes,
             initpulse = initpulse, flipangle = flipangle, steadystate = steadystate),
         reltol = 1e-8,
         abstol = 0.0,
+        dt = TE/10, # Maximum timestep
         kwargs...
     )
+
+    # Save solution every dt (an even divisor of TE) as well as every TR by default
+    ndt = round(Int, TE/dt)
+    @assert (TE ≈ ndt * dt) && (ndt >= 2) && iseven(ndt)
+    tstops = init_savetimes(2 * dt, TR, (ndt ÷ 2) * nTE, nTR)
 
     if !(u0 isa Vec{3})
         # Restrictions for when only transverse magnetization is simulated:
@@ -441,7 +445,7 @@ function solveblochtorrey(
         dense = false, # don't save all intermediate time steps
         saveat = tstops, # timepoints to save solution at
         tstops = tstops, # ensure stopping at all tstops points
-        dt = TE, reltol = reltol, abstol = abstol, callback = callback, kwargs...)
+        dt = dt, reltol = reltol, abstol = abstol, callback = callback, kwargs...)
     return sol
 end
 
@@ -465,3 +469,40 @@ default_cvode_bdf() = CVODE_BDF(method = :Functional)
 default_expokit() = ExpokitExpmv(m = 30)
 default_higham() = HighamExpmv(precision = :single)
 default_algorithm() = default_expokit()
+
+function saveblochtorrey(::Type{uType}, grids::Vector{<:Grid}, sols::Vector{<:ODESolution};
+        timepoints = sols[1].t,
+        steadystate = 1,
+        filename = nothing,
+    ) where {uType}
+
+    @assert length(grids) == length(sols)
+    @assert !(filename == nothing)
+    tostr(x::Int) = @sprintf("%4.4d", x)
+
+    # Create a paraview collection for each (grid, solution) pair
+    for i in 1:length(grids)
+        vtk_filename_noext = DrWatson.savename(filename, Dict(:grid => i))
+        paraview_collection(vtk_filename_noext) do pvd
+            for (it,t) in enumerate(timepoints)
+                vtk_grid_filename = DrWatson.savename(vtk_filename_noext, Dict(:time => it))
+                vtk_grid(vtk_grid_filename, grids[i]) do vtk
+                    u = copy(reinterpret(uType, sols[i](t)))
+                    Mt = transverse.(u)
+                    vtk_point_data(vtk, norm.(Mt), "Magnitude")
+                    vtk_point_data(vtk, angle.(Mt), "Phase")
+                    if uType <: Vec{3}
+                        shift_longitudinal!(u, steadystate)
+                        Mz = longitudinal.(u)
+                        vtk_point_data(vtk, Mz, "Longitudinal")
+                    end
+                    collection_add_timestep(pvd, vtk, Float64(t))
+                end
+            end
+        end
+    end
+
+    return nothing
+end
+saveblochtorrey(myelindomains::Vector{<:MyelinDomain}, sols, args...; kwargs...) =
+    saveblochtorrey(fieldvectype(myelindomains[1]), getgrid.(myelindomains), sols, args...; kwargs...)

@@ -80,7 +80,7 @@ function MultiSpinEchoCallback(
     # Check parameters
     @assert nTE >= 1 && nTR >= 1 && TR >= TE
     @assert tspan[1] ≈ 0 && (tspan[2] ≈ nTE * TE + (nTR - 1) * TR)
-
+    
     tstops = copy(collect(fliptimes))
     isinitpulse = reduce(vcat, [true; falses(nTE)] for _ in 1:nTR-1; init = falses(nTE))
     
@@ -95,13 +95,9 @@ function MultiSpinEchoCallback(
     function user_affect!(integrator)
         α = isinitpulse_choice() ? initpulse : flipangle
         verbose && println("$(round(rad2deg(α); digits=3)) degree pulse at t = $(round(1000*integrator.t; digits=3)) ms")
-        println("") #TODO
-        i = 28:30; ui = uType((integrator.u[i]...,)); print("BEFORE: "); @show ui; # @show shift_longitudinal(ui, steadystate) #TODO
         shift_longitudinal!(integrator.u, steadystate) # convert from u-space to M-space
         apply_pulse!(integrator.u, α, uType) # apply rotation in M-space
         shift_longitudinal!(integrator.u, steadystate) # convert back to u-space
-        i = 28:30; ui = uType((integrator.u[i]...,)); print("AFTER:  "); @show ui; # @show shift_longitudinal(ui, steadystate) #TODO
-        println("") #TODO
         return integrator
     end
 

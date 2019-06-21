@@ -35,6 +35,7 @@ end
     sinθ, cosθ = sincos(x)
     return Tensor{2,2,T}((cosθ, sinθ, -sinθ, cosθ))
 end
+@inline transverse(x::Complex{T}) where {T} = Vec{2,T}((real(x), imag(x)))
 @inline transverse(x::Vec{3,T}) where {T} = Vec{2,T}((x[1], x[2]))
 @inline longitudinal(x::Vec{3,T}) where {T} = x[3]
 

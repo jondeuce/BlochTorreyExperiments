@@ -14,6 +14,7 @@ using Reexport
 @reexport using LinearMaps
 @reexport using Rotations
 @reexport using BlockArrays
+@reexport using WriteVTK
 
 using DrWatson: @dict, @ntuple
 using Parameters: @with_kw, @unpack

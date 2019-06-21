@@ -83,23 +83,21 @@ end
 ### Magnitude, phase, and longitudinal plotting
 ###
 
-trans(::Type{uType}, sol::ODESolution, t = sol.t[end]) where {uType} = transverse_signal(reinterpret(uType, s(t)))
-long(::Type{uType}, sol::ODESolution, t = sol.t[end]) where {uType} = longitudinal_signal(reinterpret(uType, s(t)))
-calctimes(sol::ODESolution, length = 100) = range(sol.prob.tspan...; length = length)
-calcmag(::Type{uType}, sols, ts = calctimes(sol)) where {uType} = reduce(vcat, reduce(hcat, norm.(trans(uType, s, t)) for t in ts) for s in sols)
-calcphase(::Type{uType}, sols, ts = calctimes(sol)) where {uType} = reduce(vcat, reduce(hcat, angle.(trans(uType, s, t)) for t in ts) for s in sols)
+trans(::Type{uType}, sol::ODESolution, t = sol.t[end]) where {uType} = transverse_signal(reinterpret(uType, sol(t)))
+long(::Type{uType}, sol::ODESolution, t = sol.t[end]) where {uType} = longitudinal_signal(reinterpret(uType, sol(t)))
+calctimes(sol::ODESolution, length::Int = 100) = range(sol.prob.tspan...; length = length)
+calctimes(sol::ODESolution, dt::Real = 1e-3) = collect(sol.prob.tspan[1] : dt : sol.prob.tspan[2])
+calcmag(::Type{uType}, sols, ts = sols[1].prob.tspan[2]) where {uType} = reduce(vcat, reduce(hcat, norm.(trans(uType, s, t)) for t in ts) for s in sols)
+calcphase(::Type{uType}, sols, ts = sols[1].prob.tspan[2]) where {uType} = reduce(vcat, reduce(hcat, angle.(trans(uType, s, t)) for t in ts) for s in sols)
+calclong(::Type{uType}, sols, ts = sols[1].prob.tspan[2]) where {uType} = reduce(vcat, reduce(hcat, long(uType, s, t) for t in ts) for s in sols)
 
 function mxplotmagnitude(
         ::Type{uType}, sols, btparams, myelindomains, bdry;
         titlestr = "Magnitude", fname = nothing, kwargs...
     ) where {uType <: FieldType}
-    Umagn = reduce(vcat, norm.(transverse_signal(reinterpret(uType, s.u[end]))) for s in sols)
-    @unpack R2_sp, R2_lp, R2_Tissue = btparams
-    # caxis = (0.0, exp(-min(R2_sp, R2_lp, R2_Tissue) * sols[1].t[end]))
-    caxis = (0.0, maximum(Umagn))
+    Umagn = calcmag(uType, sols)
     mxsimpplot(getgrid.(myelindomains);
-        facecol = Umagn, axis = Float64[mxaxis(bdry)...], caxis = Float64[caxis...],
-        kwargs...)
+        facecol = Umagn, axis = Float64[mxaxis(bdry)...], caxis = Float64[0.0, maximum(Umagn)], kwargs...)
     mxcall(:title, 0, titlestr)
     !(fname == nothing) && mxsavefig(fname)
     return nothing
@@ -111,10 +109,9 @@ function mxplotphase(
         ::Type{uType}, sols, btparams, myelindomains, bdry;
         titlestr = "Phase", fname = nothing, kwargs...
     ) where {uType <: FieldType}
-    Uphase = reduce(vcat, angle.(transverse_signal(reinterpret(uType, s.u[end]))) for s in sols)
+    Uphase = calcphase(uType, sols)
     mxsimpplot(getgrid.(myelindomains);
-        facecol = Uphase, axis = Float64[mxaxis(bdry)...],
-        kwargs...)
+        facecol = Uphase, axis = Float64[mxaxis(bdry)...], kwargs...)
     mxcall(:title, 0, titlestr)
     !(fname == nothing) && mxsavefig(fname)
     return nothing
@@ -126,20 +123,68 @@ function mxplotlongitudinal(
         ::Type{uType}, sols, btparams, myelindomains, bdry;
         titlestr = "Longitudinal", fname = nothing, steadystate = 1, kwargs...
     ) where {uType <: Vec{3}}
-    Mz = reduce(vcat, longitudinal.(reinterpret(uType, s.u[end])) for s in sols)
-    Mz .= steadystate .- Mz
-    @unpack R2_sp, R2_lp, R2_Tissue = btparams
-    # caxis = (0.0, exp(-min(R2_sp, R2_lp, R2_Tissue) * sols[1].t[end]))
-    caxis = (0.0, maximum(Mz))
+    Mz = steadystate .- calclong(uType, sols)
     mxsimpplot(getgrid.(myelindomains);
-        facecol = Mz, axis = Float64[mxaxis(bdry)...], caxis = Float64[caxis...],
-        kwargs...)
+        facecol = Mz, axis = Float64[mxaxis(bdry)...], kwargs...)
     mxcall(:title, 0, titlestr)
     !(fname == nothing) && mxsavefig(fname)
     return nothing
 end
 mxplotlongitudinal(sols, btparams, myelindomains, bdry; kwargs...) =
     mxplotlongitudinal(Vec{2,Float64}, sols, btparams, myelindomains, bdry; kwargs...)
+
+###
+### Magnitude, phase, and longitudinal gifs
+###
+
+function mxgifmagnitude(
+        ::Type{uType}, sols, btparams, myelindomains, bdry;
+        titlestr = "Magnitude", fname = nothing, totaltime = 10.0, kwargs...
+    ) where {uType <: FieldType}
+    @assert !(fname == nothing)
+    ts = calctimes(sols[1], 2.5e-3) # unique!(sort!(round.(sols[1].t; digits=3))) # calctimes(sols[1], 100)
+    Umagn = calcmag(uType, sols, ts)
+    title = [titlestr * " (t = " * @sprintf("%7.2f", 1000*t) * " ms)" for t in ts]
+    mxsimpgif(getgrid.(myelindomains);
+        filename = fname, facecol = Umagn, caxistype = "all", title = title, imsize = 0.5 .* [1 1], imscale = 1.0, totaltime = totaltime, kwargs...)
+    return nothing
+end
+mxgifmagnitude(sols, btparams, myelindomains, bdry; kwargs...) =
+    mxgifmagnitude(Vec{2,Float64}, sols, btparams, myelindomains, bdry; kwargs...)
+
+function mxgifphase(
+        ::Type{uType}, sols, btparams, myelindomains, bdry;
+        titlestr = "Phase", fname = nothing, totaltime = 10.0, kwargs...
+    ) where {uType <: FieldType}
+    @assert !(fname == nothing)
+    ts = calctimes(sols[1], 2.5e-3) # unique!(sort!(round.(sols[1].t; digits=3))) # calctimes(sols[1], 100)
+    Uphase = calcphase(uType, sols, ts)
+    title = [titlestr * " (t = " * @sprintf("%7.2f", 1000*t) * " ms)" for t in ts]
+    mxsimpgif(getgrid.(myelindomains);
+        filename = fname, facecol = Uphase, caxistype = "all", title = title, imsize = 0.5 .* [1 1], imscale = 1.0, totaltime = totaltime, kwargs...)
+    return nothing
+end
+mxgifphase(sols, btparams, myelindomains, bdry; kwargs...) =
+    mxgifphase(Vec{2,Float64}, sols, btparams, myelindomains, bdry; kwargs...)
+
+function mxgiflongitudinal(
+        ::Type{uType}, sols, btparams, myelindomains, bdry;
+        titlestr = "Longitudinal", fname = nothing, steadystate = 1, totaltime = 10.0, kwargs...
+    ) where {uType <: Vec{3}}
+    @assert !(fname == nothing)
+    ts = calctimes(sols[1], 2.5e-3) # unique!(sort!(round.(sols[1].t; digits=3))) # calctimes(sols[1], 100)
+    Mz = steadystate .- calclong(uType, sols, ts)
+    title = [titlestr * " (t = " * @sprintf("%7.2f", 1000*t) * " ms)" for t in ts]
+    mxsimpgif(getgrid.(myelindomains);
+        filename = fname, facecol = Mz, caxistype = "all", title = title, imsize = 0.5 .* [1 1], imscale = 1.0, totaltime = totaltime, kwargs...)
+    return nothing
+end
+mxgiflongitudinal(sols, btparams, myelindomains, bdry; kwargs...) =
+    mxgiflongitudinal(Vec{2,Float64}, sols, btparams, myelindomains, bdry; kwargs...)
+
+###
+### Total signal plotting
+###
 
 function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bdry;
         titlestr = "Signal Magnitude vs. Time",

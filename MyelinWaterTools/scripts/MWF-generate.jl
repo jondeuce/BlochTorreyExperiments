@@ -27,15 +27,15 @@ gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
 ####
 
 geomfiles = vcat(
-    joinpath.(
-        "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/kmg_geom_sweep_3",
-        [
-            "2019-03-28-T-15-24-11-877__N-10_g-0.7500_p-0.7500__structs.bson" # 1.3k triangles, 1.2k points, Qmin = 0.3
-            # "2019-03-28-T-15-26-44-544__N-10_g-0.8000_p-0.8300__structs.bson" # 4.7k triangles, 3.2k points, Qmin = 0.3
-            # "2019-03-28-T-15-27-56-042__N-20_g-0.7500_p-0.7000__structs.bson" # 3.1k triangles, 2.6k points, Qmin = 0.3
-            # "2019-03-28-T-15-33-59-628__N-20_g-0.8000_p-0.8000__structs.bson" #13.3k triangles, 9.2k points, Qmin = 0.3
-        ]
-    ),
+    # joinpath.(
+    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/kmg_geom_sweep_3",
+    #     [
+    #         "2019-03-28-T-15-24-11-877__N-10_g-0.7500_p-0.7500__structs.bson" # 1.3k triangles, 1.2k points, Qmin = 0.3
+    #         "2019-03-28-T-15-26-44-544__N-10_g-0.8000_p-0.8300__structs.bson" # 4.7k triangles, 3.2k points, Qmin = 0.3
+    #         "2019-03-28-T-15-27-56-042__N-20_g-0.7500_p-0.7000__structs.bson" # 3.1k triangles, 2.6k points, Qmin = 0.3
+    #         "2019-03-28-T-15-33-59-628__N-20_g-0.8000_p-0.8000__structs.bson" #13.3k triangles, 9.2k points, Qmin = 0.3
+    #     ]
+    # ),
     # joinpath.(
     #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/kmg_geom_sweep_4",
     #     [
@@ -58,14 +58,17 @@ geomfiles = vcat(
     #         "2019-04-24-T-17-54-24-004_density=0.75_gratio=0.78_numfibres=5.geom.bson" #3.4k triangles, 2.5k points, Qmin = 0.4
     #     ]
     # ),
-    # joinpath.(
-    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/drwatson_geom_sweep_2/geom",
-    #     [
-    #         "2019-04-25-T-11-05-25-221_density=0.78_gratio=0.78_numfibres=10.geom.bson" #11.4k triangles, 7.8k points, Qmin = 0.4
-    #         "2019-04-25-T-11-59-59-400_density=0.78_gratio=0.75_numfibres=20.geom.bson" #20.8k triangles, 14.5k points, Qmin = 0.4
-    #         # "2019-04-25-T-15-13-27-738_density=0.78_gratio=0.75_numfibres=30.geom.bson" #38.7k triangles, 25.9k points, Qmin = 0.4
-    #     ]
-    # )
+    joinpath.(
+        "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/drwatson_geom_sweep_2/geom",
+        [
+            "2019-04-25-T-11-05-25-221_density=0.78_gratio=0.78_numfibres=10.geom.bson" #11.4k triangles, 7.8k points, Qmin = 0.4
+            # "2019-04-25-T-11-24-46-840_density=0.78_gratio=0.78_numfibres=15.geom.bson" #20.2k triangles, 13.6k points, Qmin = 0.4
+            # "2019-04-25-T-11-46-05-769_density=0.8_gratio=0.75_numfibres=15.geom.bson" #19.4k triangles, 13.1k points, Qmin = 0.4
+            # "2019-04-25-T-11-59-59-400_density=0.78_gratio=0.75_numfibres=20.geom.bson" #20.8k triangles, 14.5k points, Qmin = 0.4
+            # "2019-04-25-T-15-13-27-738_density=0.78_gratio=0.75_numfibres=30.geom.bson" #38.7k triangles, 25.9k points, Qmin = 0.4
+            # "2019-04-25-T-20-10-44-038_density=0.8_gratio=0.75_numfibres=35.geom.bson" #62.8k triangles, 40.7k points, Qmin = 0.4
+        ]
+    ),
 )
 
 function copy_and_load_geomfiles(geomfilenames)
@@ -95,7 +98,7 @@ const geometries = copy_and_load_geomfiles(geomfiles);
 const default_TE = 10e-3; # Echotime
 const default_TR = 1000e-3; # Repetition time
 const default_nTE = 32; # Number of echoes
-const default_nTR = 3; # Number of repetitions
+const default_nTR = 2; # Number of repetitions
 const default_tspan = (0.0, default_nTE * default_TE + (default_nTR - 1) * default_TR); # timespan
 const default_solverparams_dict = Dict(
     :u0        => Vec{3}((0.0, 0.0, 1.0)), # Initial magnetization; should be [0,1] for 2D (π/2 pulse) or [0,0,1] for 3D (steady-state)
@@ -150,12 +153,12 @@ log10sampler(a,b) = 10^linearsampler(log10(a), log10(b))
 acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
 
 const sweepparamsampler_settings = Dict{Symbol,Any}(
-    :theta  => (sampler = :acossampler,   args = (lb = 0.0,     ub = 0.0)), #TODO args = (lb = 0.0,    ub = 90.0)),
-    :alpha  => (sampler = :linearsampler, args = (lb = 170.0,   ub = 170.0)),
-    :K      => (sampler = :linearsampler, args = (lb = 100.0,   ub = 100.0)), #TODO #(sampler = :log10sampler,     args = (lb = 1e-3,   ub = 1.0)),   #Test value: 0.05
-    :Dtiss  => (sampler = :linearsampler, args = (lb = 100.0,   ub = 100.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
-    :Dmye   => (sampler = :linearsampler, args = (lb = 100.0,   ub = 100.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
-    :Dax    => (sampler = :linearsampler, args = (lb = 100.0,   ub = 100.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
+    :theta  => (sampler = :rangesampler,  args = (lb = 0.0,     ub = 90.0,  step = 30.0)), #(sampler = :acossampler,   args = (lb = 90.0,    ub = 90.0)), #TODO args = (lb = 0.0,    ub = 90.0)),
+    :alpha  => (sampler = :rangesampler,  args = (lb = 150.0,   ub = 180.0, step = 15.0)), #(sampler = :linearsampler, args = (lb = 170.0,   ub = 170.0)),
+    :K      => (sampler = :linearsampler, args = (lb = 0.0,     ub = 1.0)), #TODO #(sampler = :log10sampler,     args = (lb = 1e-3,   ub = 1.0)),   #Test value: 0.05
+    :Dtiss  => (sampler = :linearsampler, args = (lb = 0.0,     ub = 250.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
+    :Dmye   => (sampler = :linearsampler, args = (lb = 0.0,     ub = 250.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
+    :Dax    => (sampler = :linearsampler, args = (lb = 0.0,     ub = 250.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
     :TE     => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 10e-3)), #TODO (lb = 5e-3,   ub = 15e-3)),
     :TR     => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), #TODO
     :nTE    => (sampler = :rangesampler,  args = (lb = 32,      ub = 32)), #TODO (lb = 24,     ub = 60)),
@@ -231,12 +234,14 @@ function runsimulation!(results, sweepparams, geom)
     sols, myelinprob, myelinsubdomains, myelindomains = runsolve(btparams, sweepparams, geom)
     
     # Sample solution signals, ensuring that each sample is taken after the pulse occurs
-    tpoints = reduce(vcat, n * TR .+ (0 : TE/4 : TR) for n in 0:nTR-2; init = typeof(TE)[])
-    tpoints = append!(tpoints, (nTR-1) * TR .+ (0 : TE/4 : nTE * TE)) |> sort! |> unique!
+    dt = TE/4 # TODO
+    tpoints = reduce(vcat, n * TR .+ (0 : dt : TR) for n in 0:nTR-2; init = typeof(TE)[])
+    tpoints = append!(tpoints, (nTR-1) * TR .+ (0 : dt : nTE * TE)) |> sort! |> unique!
     signals = calcsignal(sols, tpoints, myelindomains)
 
     # Common filename without suffix
-    fname = DrWatson.savename(MWFUtils.getnow(), sweepparams)
+    curr_time = MWFUtils.getnow()
+    fname = DrWatson.savename(curr_time, sweepparams)
     titleparamstr = wrap_string(DrWatson.savename("", sweepparams; connector = ", "), 50, ", ")
     
     # Compute MWF values
@@ -257,6 +262,9 @@ function runsimulation!(results, sweepparams, geom)
     push!(results[:tpoints], tpoints)
     push!(results[:signals], signals)
     push!(results[:sols], sols) #TODO
+    push!(results[:myelinprob], myelinprob) #TODO
+    push!(results[:myelinsubdomains], myelinsubdomains) #TODO
+    push!(results[:myelindomains], myelindomains) #TODO
     push!(results[:mwfvalues], mwfvalues)
 
     # Save measurables
@@ -268,6 +276,26 @@ function runsimulation!(results, sweepparams, geom)
             true, gitdir())
     catch e
         @warn "Error saving measurables"
+        @warn sprint(showerror, e, catch_backtrace())
+    end
+
+    # # Save solution as vtk file
+    # try
+    #     saveblochtorrey(myelindomains, sols; timepoints = tpoints, filename = "vtk/" * curr_time)
+    # catch e
+    #     @warn "Error saving solution to vtk file"
+    #     @warn sprint(showerror, e, catch_backtrace())
+    # end
+
+    try
+        mxplotmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+            titlestr = "Field Magnitude (" * titleparamstr * ")",
+            fname = "mag/" * fname * ".magnitude")
+        # mxgifmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+        #     titlestr = "Field Magnitude (" * titleparamstr * ")", totaltime = (2*nTR-1) * 10.0,
+        #     fname = "mag/" * fname * ".magnitude.gif")
+    catch e
+        @warn "Error plotting magnetization magnitude"
         @warn sprint(showerror, e, catch_backtrace())
     end
 
@@ -285,6 +313,9 @@ function runsimulation!(results, sweepparams, geom)
         mxplotmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
             titlestr = "Field Magnitude (" * titleparamstr * ")",
             fname = "mag/" * fname * ".magnitude")
+        # mxgifmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+        #     titlestr = "Field Magnitude (" * titleparamstr * ")", totaltime = (2*nTR-1) * 10.0,
+        #     fname = "mag/" * fname * ".magnitude.gif")
     catch e
         @warn "Error plotting magnetization magnitude"
         @warn sprint(showerror, e, catch_backtrace())
@@ -294,6 +325,9 @@ function runsimulation!(results, sweepparams, geom)
         mxplotphase(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
             titlestr = "Field Phase (" * titleparamstr * ")",
             fname = "phase/" * fname * ".phase")
+        # mxgifphase(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+        #     titlestr = "Field Phase (" * titleparamstr * ")", totaltime = (2*nTR-1) * 10.0,
+        #     fname = "phase/" * fname * ".phase.gif")
     catch e
         @warn "Error plotting magnetization phase"
         @warn sprint(showerror, e, catch_backtrace())
@@ -303,6 +337,9 @@ function runsimulation!(results, sweepparams, geom)
         mxplotlongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
             titlestr = "Longitudinal (" * titleparamstr * ")",
             fname = "long/" * fname * ".longitudinal")
+        # mxgiflongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+        #     titlestr = "Longitudinal (" * titleparamstr * ")", totaltime = (2*nTR-1) * 10.0,
+        #     fname = "long/" * fname * ".longitudinal.gif")
     catch e
         @warn "Error plotting longitudinal magnetization"
         @warn sprint(showerror, e, catch_backtrace())
@@ -341,16 +378,19 @@ end
 
 function main(;iters::Int = typemax(Int))
     # Make subfolders
-    mkpath.(("mag", "phase", "long", "t2dist", "sig", "omega", "mwfplots", "measurables"))
+    mkpath.(("vtk", "mag", "phase", "long", "t2dist", "sig", "omega", "mwfplots", "measurables"))
 
     # Initialize results
     results = Dict{Symbol,Any}(
-        :sweepparams => [],
-        :btparams    => [],
-        :tpoints     => [],
-        :signals     => [],
-        :sols        => [], #TODO
-        :mwfvalues   => [])
+        :sweepparams        => [],
+        :btparams           => [],
+        :tpoints            => [],
+        :signals            => [],
+        :sols               => [], #TODO
+        :myelinprob         => [], #TODO
+        :myelinsubdomains   => [], #TODO
+        :myelindomains      => [], #TODO
+        :mwfvalues          => [])
 
     all_sweepparams = (sweepparamsampler() for _ in 1:iters)
     for (i,sweepparams) in enumerate(all_sweepparams)

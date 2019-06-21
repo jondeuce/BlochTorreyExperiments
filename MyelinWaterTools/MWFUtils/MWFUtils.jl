@@ -8,6 +8,7 @@ using Reexport
 @reexport using MATLABPlots
 @reexport using StatsPlots
 @reexport using LaTeXStrings
+@reexport using Printf
 
 import BSON, Dates, DrWatson
 export BSON, Dates, DrWatson
@@ -22,9 +23,9 @@ export creategeometry, loadgeometry
 export createdomains
 export calcomegas, calcomega
 export calcsignals, calcsignal
-export solveblochtorrey, default_algorithm
+export solveblochtorrey, saveblochtorrey, default_algorithm
 export plotcircles, plotgrids, plotSEcorr, plotbiexp, plotsignal, plotMWFvsAngle, plotMWFvsMethod
-export mxplotomega, mxplotmagnitude, mxplotphase, mxplotlongitudinal
+export mxplotomega, mxplotmagnitude, mxplotphase, mxplotlongitudinal, mxgifmagnitude, mxgifphase, mxgiflongitudinal
 export mxsavefig, getnow
 
 export AbstractMWIFittingModel, NNLSRegression, TwoPoolMagnToMagn, ThreePoolMagnToMagn, ThreePoolCplxToMagn, ThreePoolCplxToCplx
