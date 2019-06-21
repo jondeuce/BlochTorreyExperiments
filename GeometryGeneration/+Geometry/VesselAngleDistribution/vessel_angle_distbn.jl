@@ -3,6 +3,7 @@ using StaticArrays, LinearAlgebra
 using QuadGK
 using DrWatson: @dict, @ntuple
 using Parameters: @unpack
+pyplot(size=(800,600))
 
 tounit(x) = x / norm(x)
 fielddir(α) = SVector{3}(sin(α), 0, cos(α))
@@ -13,6 +14,9 @@ end
 sinangle(x::SVector{3}, y::SVector{3}) = norm(x × y) / (norm(x) * norm(y))
 cosangle(x::SVector{3}, y::SVector{3}) = (x ⋅ y) / (norm(x) * norm(y))
 
+h(y) = sin(y)^2 # Inverse transformation x(y) applied to y = α (monotonically increasing)
+dh(y) = sin(2y) # Derivative dh/dy (needed for transformation)
+
 function sin²α(B̂, θ, ϕ)
     sinθ, cosθ = sin(θ), cos(θ)
     sinϕ, cosϕ = sin(ϕ), cos(ϕ)
@@ -21,75 +25,95 @@ function sin²α(B̂, θ, ϕ)
     return sinα^2
 end
 
-function sample(α₀, ρ, Nb, dθ, dϕ, dr, dℓ)
-    B̂ = fielddir(α₀)
-    ν = (ρ^2 - 1)
+function sample(α₀, dists)
+    @unpack db, dθ, dϕ, dr, dℓ = dists
+
+    B̂ = fielddir(α₀) # Main magnetic field direction
     num = sin(α₀)^2
     den = one(α₀)
-    for i in 1:Nb
+
+    for i in 1:rand(db)
         θ, ϕ, r, ℓ = rand(dθ), rand(dϕ), rand(dr), rand(dℓ)
-        A = r^2 * ν * ℓ
+        A = r^2 * ℓ
         num += A * sin²α(B̂, θ, ϕ)
         den += A
     end
+
     return num / den
 end
+runsample(α₀, opts, dists) = [sample(α₀, dists) for _ in 1:opts.Ns]
 
-function runsample(Ns, α₀, ρ, Nb, dθ, dϕ, dr, dℓ)
-    S = KHist(25)
-    for i in 1:Ns
-        fit!(S, sample(α₀, ρ, Nb, dθ, dϕ, dr, dℓ))
-    end
-    return S
+# Transform sin²α-distribution to α-distribution by fitting a distribution D
+# to the observed sin²α values and then transforming variables
+function fitsample(S, D = Normal)
+    # Fit x = sin²α samples to distribution D and truncate to x ∈ [0, 1] if necessary
+    DX = fit(D, S) 
+    !(D <: Beta) && (DX = Truncated(DX, 0.0, 1.0))
+    
+    # Compute transformed pdf and moments
+    fX(x) = pdf(DX, x) # Pdf for x = sin²α, x ∈ [0, 1]
+    fY(y) = fX(h(y)) * abs(dh(y)) # Transformed pdf for y = α, y ∈ [0, π/2]
+    μY = quadgk(y -> y * fY(y), 0.0, π/2)[1] # Compute mean of y
+    σY = √quadgk(y -> (y - μY)^2 * fY(y), 0.0, π/2)[1] # Compute std of y
+    μX, σX = mean(S), std(S)
+    
+    return @ntuple(μY, σY, fY, μX, σX, DX, fX)
 end
 
 function main(
-        Ns = 10_000, Na = 25, Nb = 10, ρ = 2,
-        dθ = Normal(45.0, 10.0), dϕ = Uniform(0.0, 360.0),
-        dr = Uniform(1/6, 1/4), dℓ = Uniform(1/10, 1/4)
+        αF = range(0, π/2; length = 36), # Field angles to simulate
+        Ns = 1_000, # Number of samples per field angle
+        db = 5:20, # Number of branches per vessel
+        dθ = Normal(deg2rad(45.0), deg2rad(10.0)), # Branching angle distribution (polar angle)
+        dϕ = Uniform(0.0, 2π), # Azimuthal angle distribution
+        dr = Uniform(1/6, 1/4), # Relative radius size distribution
+        dℓ = Uniform(1/10, 1/4), # Relative length distribution
     )
-    αF = range(0, π/2; length = Na)
-    runs = [runsample(Ns, α, ρ, Nb, dθ, dϕ, dr, dℓ) for α in αF]
-    μ_sin²α = mean.(runs)
-    σ_sin²α = std.(runs)
+    # Run Ns samples of volume-weighted sin²α computations
+    opts = @ntuple(Ns) # Hyperparameters
+    dists = @ntuple(db, dθ, dϕ, dr, dℓ) # Distributions to sample from
+    runs = [runsample(α₀, opts, dists) for α₀ in αF]
+    data = [α => fitsample(S) for (α, S) in zip(αF, runs)]
 
-    h(y) = asin(√y)
-    dh(y) = inv(2 * √(y * (1 - y)))
-    moments = [begin
-        fX(x) = exp(-(x - μ)^2 / (2σ^2)) / √(2π * σ^2)
-        fY(y) = fX(h(y)) * abs(dh(y))
-        μα, _ = quadgk(fY, 0.0, 1.0)
-        σ²α, _ = quadgk(y -> y^2 * fY(y), 0.0, 1.0)
-        (μ = μα, σ = √σ²α)
-    end
-    for (μ, σ) in zip(μ_sin²α, σ_sin²α)]
-    
-    αV = [m.μ for m in moments]
-    σV = [m.σ for m in moments]
-
-    return @ntuple(runs, αF, αV, σV)
+    return @ntuple(runs, data)
 end
 
 function plotmain(args...; kwargs...)
     str(x) = string(round(x; sigdigits = 3))
-    title(x) = "μ = " * str(mean(x)) # * ", " * "σ = " * str(std(x))
+    title(S, μ = mean(S)) = "μ = " * str(μ) # * ", " * "σ = " * str(std(x))
     
-    @unpack runs, αF, αV, σV = main(args...)
+    # Run simulations
+    @unpack runs, data = main(args...)
+    αF = [d[1] for d in data]
+    αV = [d[2].μY for d in data]
+    σV = [d[2].σY for d in data]
     
-    plot(map(S -> begin
-            plot(S; title = title(S), legend = :none)
-            plot!(Normal(mean(S), std(S)), legend = :none)
-        end, runs)...
-    ) |> display
+    # plot(map((S,d) -> begin
+    #         @unpack fX = d[2]
+    #         p = histogram(S; title = title(S), legend = :none, normalized = true)
+    #         plot!(fX, xlims(p)..., legend = :none)
+    #     end, runs, data)...;
+    #     titlefontsize = 10, xtickfontsize = 6, ytickfontsize = 6,
+    # ) |> display
     
-    plot([αF αF], [αF αV];
-        ribbon = [0 1] .* σV,
+    # plot(map((S,d) -> begin
+    #         @unpack μY, σY, fY = d[2]
+    #         xl = rad2deg.((max(0, μY - 5σY), min(π/2, μY + 5σY)))
+    #         plot(y -> fY(deg2rad(y)), xl...; title = title(nothing, rad2deg(μY)), legend = :none)
+    #     end, runs, data)...;
+    #     titlefontsize = 10, xtickfontsize = 6, ytickfontsize = 6,
+    # ) |> display
+
+    plot(rad2deg.([αF αF]), rad2deg.([αF αV]);
+        ribbon = [0 1] .* rad2deg.(σV),
         ls = [:dash :solid],
         legend = :topleft,
         label = ["Identity" "Simulated"],
         title = L"Simulated $\alpha_{Vessel}$ vs. $\alpha_{Fibre}$",
+        xticks = 0:15:90, yticks = 0:15:90,
+        xlims = (0,90), ylims = (0,90),
         kwargs...
     ) |> display
     
-    return runs
+    return @ntuple(runs, data)
 end

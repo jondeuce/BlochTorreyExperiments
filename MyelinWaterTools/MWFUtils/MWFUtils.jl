@@ -8,7 +8,6 @@ using Reexport
 @reexport using MATLABPlots
 @reexport using StatsPlots
 @reexport using LaTeXStrings
-@reexport using Printf
 
 import BSON, Dates, DrWatson
 export BSON, Dates, DrWatson

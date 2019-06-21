@@ -15,6 +15,7 @@ using Reexport
 @reexport using Rotations
 @reexport using BlockArrays
 @reexport using WriteVTK
+@reexport using Printf
 
 using DrWatson: @dict, @ntuple
 using Parameters: @with_kw, @unpack
