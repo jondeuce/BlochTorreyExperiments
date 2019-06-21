@@ -40,7 +40,7 @@ alpha_range = [2.5, 12.5, 22.5, 32.5, 47.5, 57.5, 67.5, 77.5, 87.5];
 
 % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
 lb  = [ 3.0000,          1.0000/100,         0.5000/100 ];
-CA0 =   4.9065;  iBVF0 = 1.1798/100; aBVF0 = 0.7020/100;
+CA0 =   4.9065;  iBVF0 = 1.2293/100; aBVF0 = 0.7527/100;
 ub  = [ 6.0000,          2.0000/100,         1.5000/100 ];
 
 % % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
