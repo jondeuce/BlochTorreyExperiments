@@ -23,7 +23,8 @@ using RecipesBase
 # using MATLAB # Only need for MAT_* methods, which are no longer used
 
 export Vec1d, Vec1f, Vec2d, Vec2f, Vec3d, Vec3f,
-       fielddim, norm2, rotmat, hadamardproduct, ⊙, skewprod, ⊠
+       fielddim, norm2, rotmat, transverse, longitudinal,
+       hadamardproduct, ⊙, skewprod, ⊠
 export Ellipse, Circle, Rectangle, VecOfCircles, VecOfEllipses, VecOfRectangles,
        origin, radius, radii, widths, corners, geta, getb, getc, getF1, getF2,
        dimension, floattype, xmin, ymin, xmax, ymax, area, volume,

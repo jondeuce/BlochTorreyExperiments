@@ -7,7 +7,7 @@ using CirclePackingUtils
 # using JuAFEM
 using MATLABPlots
 
-using BlochTorreyUtils: omega_tissue, omega_myelin, omega_axon, omega, omegamap, dcoeff, rdecay
+using BlochTorreyUtils: omega_tissue, omega_myelin, omega_axon, omega, omegamap, dcoeff, r2decay, r1decay
 using BlochTorreyUtils: AxonRegion, MyelinRegion, TissueRegion
 
 using Test

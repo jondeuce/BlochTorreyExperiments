@@ -5,19 +5,22 @@
 module MWFLearning
 
 using Reexport
-@reexport using LinearAlgebra, Statistics, StatsBase
-@reexport using Flux
+@reexport using LinearAlgebra
+using Statistics: mean, median
+using StatsBase: quantile
 
-import DrWatson, BSON, TOML, Dates
+import Flux, Flux.NNlib, Flux.Tracker, Flux.Optimise, DrWatson, BSON, TOML, Dates, MultivariateStats
+export Flux,      NNlib,      Tracker,      Optimise, DrWatson, BSON, TOML, Dates, MultivariateStats
+
 using DrWatson: @dict, @ntuple
 using Parameters: @unpack
+using LegibleLambdas: @λ
+export @dict, @ntuple, @unpack, @λ
 
-export DrWatson, BSON, TOML, Dates
-export @dict, @ntuple, @unpack
-
-export prepare_data, get_model
-export init_signal, project_onto_exp
-export log10range
+export verify_settings, model_summary, get_model, get_activation
+export heightsize, batchsize, channelsize, log10range
+export prepare_data, label_fun, init_data, init_labels, init_signal
+export project_onto_exp, project_onto_exp!
 
 include("src/utils.jl")
 include("src/models.jl")
