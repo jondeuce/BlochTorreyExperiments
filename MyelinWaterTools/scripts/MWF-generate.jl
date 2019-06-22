@@ -27,44 +27,44 @@ gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
 ####
 
 geomfiles = vcat(
-    # joinpath.(
-    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/kmg_geom_sweep_3",
-    #     [
-    #         "2019-03-28-T-15-24-11-877__N-10_g-0.7500_p-0.7500__structs.bson" # 1.3k triangles, 1.2k points, Qmin = 0.3
-    #         "2019-03-28-T-15-26-44-544__N-10_g-0.8000_p-0.8300__structs.bson" # 4.7k triangles, 3.2k points, Qmin = 0.3
-    #         "2019-03-28-T-15-27-56-042__N-20_g-0.7500_p-0.7000__structs.bson" # 3.1k triangles, 2.6k points, Qmin = 0.3
-    #         "2019-03-28-T-15-33-59-628__N-20_g-0.8000_p-0.8000__structs.bson" #13.3k triangles, 9.2k points, Qmin = 0.3
-    #     ]
-    # ),
-    # joinpath.(
-    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/kmg_geom_sweep_4",
-    #     [
-    #         "2019-03-28-T-16-19-20-218__N-40_g-0.7500_p-0.8000__structs.bson" # 11.0k triangles, 8.6k points, Qmin = 0.3
-    #     ]
-    # ),
-    # joinpath.(
-    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/kmg_geom_sweep_6",
-    #     [
-    #         "2019-03-29-T-10-47-05-945__N-40_g-0.7500_p-0.7000__structs.bson" #10k triangles, 8k points, Qmin = 0.4
-    #         "2019-03-29-T-12-19-17-694__N-40_g-0.8370_p-0.7500__structs.bson" #13k triangles, 10k points, Qmin = 0.4
-    #         "2019-03-29-T-12-15-03-265__N-40_g-0.8000_p-0.8300__structs.bson" #28k triangles, 19k points, Qmin = 0.4
-    #     ]
-    # ),
-    # joinpath.(
-    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/drwatson_geom_sweep_1/geom",
-    #     [
-    #         "2019-04-24-T-18-33-57-731_density=0.75_gratio=0.78_numfibres=20.geom.bson" #12.8k triangles, 9.6k points, Qmin = 0.4
-    #         # "2019-04-24-T-21-16-38-329_density=0.75_gratio=0.78_numfibres=35.geom.bson" #36.7k triangles, 25.3k points, Qmin = 0.4
-    #         "2019-04-24-T-17-54-24-004_density=0.75_gratio=0.78_numfibres=5.geom.bson" #3.4k triangles, 2.5k points, Qmin = 0.4
-    #     ]
-    # ),
+    joinpath.(
+        "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/kmg_geom_sweep_3",
+        [
+            "2019-03-28-T-15-24-11-877__N-10_g-0.7500_p-0.7500__structs.bson" # 1.3k triangles, 1.2k points, Qmin = 0.3
+            "2019-03-28-T-15-26-44-544__N-10_g-0.8000_p-0.8300__structs.bson" # 4.7k triangles, 3.2k points, Qmin = 0.3
+            "2019-03-28-T-15-27-56-042__N-20_g-0.7500_p-0.7000__structs.bson" # 3.1k triangles, 2.6k points, Qmin = 0.3
+            "2019-03-28-T-15-33-59-628__N-20_g-0.8000_p-0.8000__structs.bson" #13.3k triangles, 9.2k points, Qmin = 0.3
+        ]
+    ),
+    joinpath.(
+        "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/kmg_geom_sweep_4",
+        [
+            "2019-03-28-T-16-19-20-218__N-40_g-0.7500_p-0.8000__structs.bson" # 11.0k triangles, 8.6k points, Qmin = 0.3
+        ]
+    ),
+    joinpath.(
+        "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/kmg_geom_sweep_6",
+        [
+            "2019-03-29-T-10-47-05-945__N-40_g-0.7500_p-0.7000__structs.bson" #10k triangles, 8k points, Qmin = 0.4
+            "2019-03-29-T-12-19-17-694__N-40_g-0.8370_p-0.7500__structs.bson" #13k triangles, 10k points, Qmin = 0.4
+            # "2019-03-29-T-12-15-03-265__N-40_g-0.8000_p-0.8300__structs.bson" #28k triangles, 19k points, Qmin = 0.4
+        ]
+    ),
+    joinpath.(
+        "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/drwatson_geom_sweep_1/geom",
+        [
+            "2019-04-24-T-18-33-57-731_density=0.75_gratio=0.78_numfibres=20.geom.bson" #12.8k triangles, 9.6k points, Qmin = 0.4
+            # "2019-04-24-T-21-16-38-329_density=0.75_gratio=0.78_numfibres=35.geom.bson" #36.7k triangles, 25.3k points, Qmin = 0.4
+            "2019-04-24-T-17-54-24-004_density=0.75_gratio=0.78_numfibres=5.geom.bson" #3.4k triangles, 2.5k points, Qmin = 0.4
+        ]
+    ),
     joinpath.(
         "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/drwatson_geom_sweep_2/geom",
         [
             "2019-04-25-T-11-05-25-221_density=0.78_gratio=0.78_numfibres=10.geom.bson" #11.4k triangles, 7.8k points, Qmin = 0.4
-            # "2019-04-25-T-11-24-46-840_density=0.78_gratio=0.78_numfibres=15.geom.bson" #20.2k triangles, 13.6k points, Qmin = 0.4
-            # "2019-04-25-T-11-46-05-769_density=0.8_gratio=0.75_numfibres=15.geom.bson" #19.4k triangles, 13.1k points, Qmin = 0.4
-            # "2019-04-25-T-11-59-59-400_density=0.78_gratio=0.75_numfibres=20.geom.bson" #20.8k triangles, 14.5k points, Qmin = 0.4
+            "2019-04-25-T-11-24-46-840_density=0.78_gratio=0.78_numfibres=15.geom.bson" #20.2k triangles, 13.6k points, Qmin = 0.4
+            "2019-04-25-T-11-46-05-769_density=0.8_gratio=0.75_numfibres=15.geom.bson" #19.4k triangles, 13.1k points, Qmin = 0.4
+            "2019-04-25-T-11-59-59-400_density=0.78_gratio=0.75_numfibres=20.geom.bson" #20.8k triangles, 14.5k points, Qmin = 0.4
             # "2019-04-25-T-15-13-27-738_density=0.78_gratio=0.75_numfibres=30.geom.bson" #38.7k triangles, 25.9k points, Qmin = 0.4
             # "2019-04-25-T-20-10-44-038_density=0.8_gratio=0.75_numfibres=35.geom.bson" #62.8k triangles, 40.7k points, Qmin = 0.4
         ]
@@ -153,22 +153,22 @@ log10sampler(a,b) = 10^linearsampler(log10(a), log10(b))
 acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
 
 const sweepparamsampler_settings = Dict{Symbol,Any}(
-    :theta  => (sampler = :rangesampler,  args = (lb = 0.0,     ub = 90.0,  step = 30.0)), #(sampler = :acossampler,   args = (lb = 90.0,    ub = 90.0)), #TODO args = (lb = 0.0,    ub = 90.0)),
-    :alpha  => (sampler = :rangesampler,  args = (lb = 150.0,   ub = 180.0, step = 15.0)), #(sampler = :linearsampler, args = (lb = 170.0,   ub = 170.0)),
-    :K      => (sampler = :linearsampler, args = (lb = 0.0,     ub = 1.0)), #TODO #(sampler = :log10sampler,     args = (lb = 1e-3,   ub = 1.0)),   #Test value: 0.05
-    :Dtiss  => (sampler = :linearsampler, args = (lb = 0.0,     ub = 250.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
-    :Dmye   => (sampler = :linearsampler, args = (lb = 0.0,     ub = 250.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
-    :Dax    => (sampler = :linearsampler, args = (lb = 0.0,     ub = 250.0)), #TODO #(sampler = :log10sampler,     args = (lb = 10.0,   ub = 500.0)), #Test value: 25.0
-    :TE     => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 10e-3)), #TODO (lb = 5e-3,   ub = 15e-3)),
-    :TR     => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), #TODO
-    :nTE    => (sampler = :rangesampler,  args = (lb = 32,      ub = 32)), #TODO (lb = 24,     ub = 60)),
-    :nTR    => (sampler = :rangesampler,  args = (lb = 3,       ub = 3)), #TODO
-    :T2sp   => (sampler = :linearsampler, args = (lb = 15e-3,   ub = 15e-3)), #TODO args = (lb = 10e-3,   ub = 20e-3)), #Default: 15e-3
-    :T2lp   => (sampler = :linearsampler, args = (lb = 63e-3,   ub = 63e-3)), #TODO args = (lb = 50e-3,   ub = 80e-3)), #Default: 63e-3
-    :T2tiss => (sampler = :linearsampler, args = (lb = 63e-3,   ub = 63e-3)), #TODO args = (lb = 50e-3,   ub = 80e-3)), #Default: 63e-3
-    :T1sp   => (sampler = :linearsampler, args = (lb = 200e-3,  ub = 200e-3)), #args = (lb = 949e-3, ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
-    :T1lp   => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), #args = (lb = 949e-3, ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
-    :T1tiss => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), #args = (lb = 949e-3, ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
+    :theta  => (sampler = :acossampler,   args = (lb = 0.0,     ub = 90.0)),
+    :alpha  => (sampler = :linearsampler, args = (lb = 140.0,   ub = 180.0)),
+    :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 1.0)),
+    :Dtiss  => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 500.0)),
+    :Dmye   => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 500.0)),
+    :Dax    => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 500.0)),
+    :TE     => (sampler = :linearsampler, args = (lb = 5e-3,    ub = 15e-3)),
+    :TR     => (sampler = :linearsampler, args = (lb = 800e-3,  ub = 1200e-3)),
+    :nTE    => (sampler = :rangesampler,  args = (lb = 24,      ub = 48)),
+    :nTR    => (sampler = :rangesampler,  args = (lb = 2,       ub = 2)),
+    :T2sp   => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 20e-3)),
+    :T2lp   => (sampler = :linearsampler, args = (lb = 50e-3,   ub = 80e-3)),
+    :T2tiss => (sampler = :linearsampler, args = (lb = 50e-3,   ub = 80e-3)),
+    :T1sp   => (sampler = :linearsampler, args = (lb = 150e-3,  ub = 250e-3)),
+    :T1lp   => (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
+    :T1tiss => (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
 )
 sweepparamsampler() = Dict{Symbol,Union{Float64,Int}}(
     k => eval(Expr(:call, v.sampler, v.args...))

@@ -14,6 +14,7 @@ end
 sinangle(x::SVector{3}, y::SVector{3}) = norm(x × y) / (norm(x) * norm(y))
 cosangle(x::SVector{3}, y::SVector{3}) = (x ⋅ y) / (norm(x) * norm(y))
 
+g(x) = asin(√x) # Transformation y(x) applied to x = sin²α
 h(y) = sin(y)^2 # Inverse transformation x(y) applied to y = α (monotonically increasing)
 dh(y) = sin(2y) # Derivative dh/dy (needed for transformation)
 
@@ -45,7 +46,7 @@ runsample(α₀, opts, dists) = [sample(α₀, dists) for _ in 1:opts.Ns]
 
 # Transform sin²α-distribution to α-distribution by fitting a distribution D
 # to the observed sin²α values and then transforming variables
-function fitsample(S, D = Normal)
+function fitsample(S, D = Beta)
     # Fit x = sin²α samples to distribution D and truncate to x ∈ [0, 1] if necessary
     DX = fit(D, S) 
     !(D <: Beta) && (DX = Truncated(DX, 0.0, 1.0))
@@ -53,16 +54,19 @@ function fitsample(S, D = Normal)
     # Compute transformed pdf and moments
     fX(x) = pdf(DX, x) # Pdf for x = sin²α, x ∈ [0, 1]
     fY(y) = fX(h(y)) * abs(dh(y)) # Transformed pdf for y = α, y ∈ [0, π/2]
-    μY = quadgk(y -> y * fY(y), 0.0, π/2)[1] # Compute mean of y
-    σY = √quadgk(y -> (y - μY)^2 * fY(y), 0.0, π/2)[1] # Compute std of y
+    # μY = quadgk(y -> y * fY(y), 0.0, π/2)[1] # Compute mean of y
+    # σY = √quadgk(y -> (y - μY)^2 * fY(y), 0.0, π/2)[1] # Compute std of y
+    
+    # Compute moments directly from data
+    μY, σY = mean(g(x) for x in S), std(g(x) for x in S)
     μX, σX = mean(S), std(S)
     
     return @ntuple(μY, σY, fY, μX, σX, DX, fX)
 end
 
 function main(
-        αF = range(0, π/2; length = 36), # Field angles to simulate
-        Ns = 1_000, # Number of samples per field angle
+        αF = range(0, π/2; length = 16), # Field angles to simulate
+        Ns = 100_000, # Number of samples per field angle
         db = 5:20, # Number of branches per vessel
         dθ = Normal(deg2rad(45.0), deg2rad(10.0)), # Branching angle distribution (polar angle)
         dϕ = Uniform(0.0, 2π), # Azimuthal angle distribution
@@ -88,21 +92,21 @@ function plotmain(args...; kwargs...)
     αV = [d[2].μY for d in data]
     σV = [d[2].σY for d in data]
     
-    # plot(map((S,d) -> begin
-    #         @unpack fX = d[2]
-    #         p = histogram(S; title = title(S), legend = :none, normalized = true)
-    #         plot!(fX, xlims(p)..., legend = :none)
-    #     end, runs, data)...;
-    #     titlefontsize = 10, xtickfontsize = 6, ytickfontsize = 6,
-    # ) |> display
+    plot(map((S,d) -> begin
+            @unpack fX = d[2]
+            p = histogram(S; title = title(S), legend = :none, normalized = true)
+            plot!(fX, xlims(p)..., legend = :none)
+        end, runs, data)...;
+        titlefontsize = 10, xtickfontsize = 6, ytickfontsize = 6,
+    ) |> display
     
-    # plot(map((S,d) -> begin
-    #         @unpack μY, σY, fY = d[2]
-    #         xl = rad2deg.((max(0, μY - 5σY), min(π/2, μY + 5σY)))
-    #         plot(y -> fY(deg2rad(y)), xl...; title = title(nothing, rad2deg(μY)), legend = :none)
-    #     end, runs, data)...;
-    #     titlefontsize = 10, xtickfontsize = 6, ytickfontsize = 6,
-    # ) |> display
+    plot(map((S,d) -> begin
+            @unpack μY, σY, fY = d[2]
+            p = histogram(rad2deg.(g.(S)); title = title(nothing, rad2deg(μY)), legend = :none, normalized = true)
+            plot!(p, y -> deg2rad(fY(deg2rad(y))))
+        end, runs, data)...;
+        titlefontsize = 10, xtickfontsize = 6, ytickfontsize = 6,
+    ) |> display
 
     plot(rad2deg.([αF αF]), rad2deg.([αF αV]);
         ribbon = [0 1] .* rad2deg.(σV),

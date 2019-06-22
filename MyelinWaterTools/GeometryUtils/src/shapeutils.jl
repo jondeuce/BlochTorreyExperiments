@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------- #
 
 # Convenience shorthands (Vec2d = Vec{2,Float64}, Vec3f = Vec{3,Float32}, etc.)
-for (dim, tup) in Iterators.product(1:3, zip([:d,:f], [Float64,Float32]))
+for (dim, tup) in Iterators.product(1:3, zip([:d, :f], [Float64, Float32]))
     label, T = tup
     @eval const $(Symbol(:Vec, dim, label)) = Vec{$dim, $T}
 end
@@ -35,9 +35,18 @@ end
     sinθ, cosθ = sincos(x)
     return Tensor{2,2,T}((cosθ, sinθ, -sinθ, cosθ))
 end
+
+# Transverse and longitudinal components of 3D vector, or interpret complex number as a Vec{2}
 @inline transverse(x::Complex{T}) where {T} = Vec{2,T}((real(x), imag(x)))
 @inline transverse(x::Vec{3,T}) where {T} = Vec{2,T}((x[1], x[2]))
 @inline longitudinal(x::Vec{3,T}) where {T} = x[3]
+
+# Three argument inner product (v,A,u) = v'(A*u), where scalar A is interpreted as A*I
+LinearAlgebra.dot(v::Number,              A::Number,                u::Number             ) where {dim} = A * (v * u)
+LinearAlgebra.dot(v::Vec{dim},            A::Number,                u::Vec{dim}           ) where {dim} = A * (v ⋅ u)
+LinearAlgebra.dot(v::Vec{dim},            A::AbstractTensor{2,dim}, u::Vec{dim}           ) where {dim} = v ⋅ (A ⋅ u)
+LinearAlgebra.dot(v::AbstractTensor{dim}, A::Number,                u::AbstractTensor{dim}) where {dim} = A * (v ⊡ u)
+LinearAlgebra.dot(v::AbstractTensor{dim}, A::AbstractTensor{2,dim}, u::AbstractTensor{dim}) where {dim} = v ⊡ (A ⋅ u)
 
 @inline function hadamardproduct(S1::Vec{dim}, S2::Vec{dim}) where {dim}
     return Vec{dim}(@inline function(i) v = S1[i] * S2[i]; return v; end)
