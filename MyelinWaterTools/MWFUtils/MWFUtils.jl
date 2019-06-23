@@ -28,6 +28,7 @@ export mxplotomega, mxplotmagnitude, mxplotphase, mxplotlongitudinal, mxgifmagni
 export mxsavefig, getnow
 
 export AbstractMWIFittingModel, NNLSRegression, TwoPoolMagnToMagn, ThreePoolMagnToMagn, ThreePoolCplxToMagn, ThreePoolCplxToCplx
+export AbstractGeometry, AbstractMyelinatedFibresGeometry, AbstractPackedFibresGeometry, PeriodicPackedFibres, SingleFibre
 export getmwf, fitmwfmodel, mwimodel, initialparams, compareMWFmethods
 export blank_results_dict, load_results_dict
 export wrap_string, partitionby

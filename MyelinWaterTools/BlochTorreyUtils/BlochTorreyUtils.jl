@@ -12,7 +12,6 @@ using Reexport
 @reexport using GeometryUtils
 @reexport using DiffEqBase, OrdinaryDiffEq, DiffEqCallbacks, DiffEqOperators#, Sundials
 @reexport using LinearMaps
-@reexport using Rotations
 @reexport using BlockArrays
 @reexport using WriteVTK
 @reexport using Printf

@@ -2,8 +2,8 @@
 # DistMesh helper functions
 # ---------------------------------------------------------------------------- #
 
-@inline huniform(x::Vec{dim,T}) where {dim,T} = one(T)#eltype(eltype(x)))
-@inline norm2(x::Vec) = x⋅x
+@inline huniform(x::Vec{dim,T}) where {dim,T} = one(T)
+@inline norm2(x::Vec) = x ⋅ x
 @inline getxy(p::AbstractVector{V}) where {V <: Vec{2}} = (x->x[1]).(p), (x->x[2]).(p)
 
 @inline function triangle_area(p1::Vec{2}, p2::Vec{2}, p3::Vec{2})

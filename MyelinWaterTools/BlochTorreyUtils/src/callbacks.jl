@@ -17,13 +17,10 @@ pi_pulse(u::AbstractVector) = pi_pulse!(copy(u))
 # Our convention is that M∞ points in the +z-direction. This means that our typical initial condition,
 # M₀ = [0, M∞, 0], is actually a rotation of [0, 0, M∞] by -π/2 about the x-axis, not of +π/2.
 # To be consistent, we apply all general rotations by -α (which is equivalent to +α when α = π)
-function apply_pulse!(u::AbstractVector{uType}, α) where {Tu, uType <: Vec{3,Tu}}
-    R = Tensor{2,3,Tu}(RotX(-α))
-    u .= (x -> R⋅x).(u)
-    return u
-end
-apply_pulse!(u::AbstractVector{Tu}, α, ::Type{uType}) where {Tu,uType} = (_u = reinterpret(Vec{fielddim(uType),Tu}, u); apply_pulse!(_u, α); return u)
-apply_pulse!(u::AbstractVector{uType}, α) where {uType <: Complex} = (@assert α ≈ π; pi_pulse!(u); return u)
+apply_pulse!(u::AbstractVector{Tu}, α, ::Type{uType}) where {dim, Tu, uType <: Vec{dim,Tu}} = (_u = reinterpret(Vec{dim,Tu}, u); apply_pulse!(_u, α); return u)
+apply_pulse!(u::AbstractVector{uType}, α, ::Type{uType}) where {Tu, uType <: Complex{Tu}} = (_u = reinterpret(Vec{2,Tu}, u); apply_pulse!(_u, α); return u)
+apply_pulse!(u::AbstractVector{uType}, α, ::Type{uType}) where {uType <: Vec} = apply_pulse!(u, α)
+apply_pulse!(u::AbstractVector{uType}, α) where {Tu, uType <: Vec{3,Tu}} = (R = pulsemat(Tu, α); u .= (x -> R ⋅ x).(u); return u)
 apply_pulse!(u::AbstractVector{uType}, α) where {uType <: Vec{2}} = (@assert α ≈ π; pi_pulse!(u); return u)
 
 # Flip times are equispaced pulses every TE starting at t = TE/2 until t = nTE * TE,
@@ -95,9 +92,9 @@ function MultiSpinEchoCallback(
     function user_affect!(integrator)
         α = isinitpulse_choice() ? initpulse : flipangle
         verbose && println("$(round(rad2deg(α); digits=3)) degree pulse at t = $(round(1000*integrator.t; digits=3)) ms")
-        shift_longitudinal!(integrator.u, steadystate) # convert from u-space to M-space
+        (uType <: Vec{3}) && shift_longitudinal!(integrator.u, steadystate) # convert from u-space to M-space
         apply_pulse!(integrator.u, α, uType) # apply rotation in M-space
-        shift_longitudinal!(integrator.u, steadystate) # convert back to u-space
+        (uType <: Vec{3}) && shift_longitudinal!(integrator.u, steadystate) # convert back to u-space
         return integrator
     end
 
