@@ -301,7 +301,7 @@ end
 # Create geometry for packed circles on a rectangular domain
 function creategeometry(::SingleFibre, btparams::BlochTorreyParameters{T} = BlochTorreyParameters{Float64}();
         radius::T = btparams.R_mu, # radius of fibre
-        g_ratio::T = 0.6, # g_ratio of fibre
+        g_ratio::T = btparams.g_ratio, # g_ratio of fibre
         h0::T = T(1/3 * radius * (1 - g_ratio)),
         QMIN::T = T(0.5),
         MAXITERS = 1000,

@@ -24,7 +24,7 @@
 
 function kmg2d(
         fd,                             # signed distance function
-        fsubs::AbstractVector,          # vector of sub-region distance functions, the boundaries of which are forced onto the grid
+        fsubs,                          # tuple/vector of sub-region distance functions, the boundaries of which are forced onto the grid
         fh,                             # relative edge length function
         h0::T,                          # nominal edge length
         bbox::Matrix{T},                # bounding box (2x2 matrix [xmin ymin; xmax ymax])
@@ -33,7 +33,7 @@ function kmg2d(
         pfix::AbstractVector{Vec{2,T}}  = Vec{2,T}[], # fixed points
         pinit::AbstractVector{Vec{2,T}} = Vec{2,T}[], # inital distribution of points (fine triangular grid + rejection method by default)
         ∇fd                             = x -> Tensors.gradient(fd, x), # Gradient of distance function `fd`
-        ∇fsubs                          = [x -> Tensors.gradient(fs, x) for fs in fsubs]; # gradients of sub-region distance functions
+        ∇fsubs                          = ntuple(i -> x -> Tensors.gradient(fsubs[i], x), length(fsubs)); # gradients of sub-region distance functions
         PLOT::Bool                      = false, # plot all triangulations during evolution
         PLOTLAST::Bool                  = false, # plot resulting triangulation
         MAXITERS::Int                   = 1000, # max iterations of stalled progress
@@ -57,7 +57,7 @@ function kmg2d(
         DELTAT::T                       = T(0.1) # relative step size
     ) where {T}
 
-    DEBUG = true #DEBUG
+    DEBUG = false #DEBUG
     DEBUG_ITERS = 5_000
 
     # Create initial distribution in bounding box (equilateral triangles by default)
