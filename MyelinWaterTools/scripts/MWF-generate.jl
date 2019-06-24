@@ -235,7 +235,7 @@ function runsimulation!(results, sweepparams, geom)
     
     # Sample solution signals, ensuring that each sample is taken after the pulse occurs
     dt = TE/4 # TODO
-    tpoints = reduce(vcat, n * TR .+ (0 : dt : TR) for n in 0:nTR-2; init = typeof(TE)[])
+    tpoints = reduce(vcat, n * TR .+ (0 : dt : TR) for n in 0:nTR-2; init = typeof(dt)[])
     tpoints = append!(tpoints, (nTR-1) * TR .+ (0 : dt : nTE * TE)) |> sort! |> unique!
     signals = calcsignal(sols, tpoints, myelindomains)
 
@@ -396,7 +396,7 @@ function main(;iters::Int = typemax(Int))
     for (i,sweepparams) in enumerate(all_sweepparams)
         geomnumber = rand(1:length(geometries))
         geom = geometries[geomnumber]
-        tspan = (0.0, sweepparams[:nTE] * sweepparams[:TE] + (default_nTR - 1) * default_TR)
+        tspan = (0.0, sweepparams[:nTE] * sweepparams[:TE] + (sweepparams[:nTR] - 1) * sweepparams[:TR])
         try
             println("\n")
             @info "Running simulation $i/$(length(all_sweepparams)) at $(Dates.now()):"
