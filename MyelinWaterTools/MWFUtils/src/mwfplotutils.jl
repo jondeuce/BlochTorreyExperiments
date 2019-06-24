@@ -86,7 +86,7 @@ end
 trans(::Type{uType}, sol::ODESolution, t = sol.t[end]) where {uType} = transverse_signal(reinterpret(uType, sol(t)))
 long(::Type{uType}, sol::ODESolution, t = sol.t[end]) where {uType} = longitudinal_signal(reinterpret(uType, sol(t)))
 calctimes(sol::ODESolution, length::Int = 100) = range(sol.prob.tspan...; length = length)
-calctimes(sol::ODESolution, dt::Real = 1e-3) = collect(sol.prob.tspan[1] : dt : sol.prob.tspan[2])
+calctimes(sol::ODESolution, dt::Real) = sol.prob.tspan[1] : dt : sol.prob.tspan[2]
 calcmag(::Type{uType}, sols, ts = sols[1].prob.tspan[2]) where {uType} = reduce(vcat, reduce(hcat, norm.(trans(uType, s, t)) for t in ts) for s in sols)
 calcphase(::Type{uType}, sols, ts = sols[1].prob.tspan[2]) where {uType} = reduce(vcat, reduce(hcat, angle.(trans(uType, s, t)) for t in ts) for s in sols)
 calclong(::Type{uType}, sols, ts = sols[1].prob.tspan[2]) where {uType} = reduce(vcat, reduce(hcat, long(uType, s, t) for t in ts) for s in sols)

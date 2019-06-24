@@ -60,6 +60,49 @@ function load_results_dict(;
     return results
 end
 
+####
+#### Rectangular geometry with packed circles
+####
+
+function reorder(p, t)
+    isempty(t) && (return eltype(p)[], eltype(t)[])
+    idx = reinterpret(Int, t) |> copy |> sort! |> unique!
+    d = Dict{Int,Int}(idx .=> 1:length(idx))
+    return p[idx], [(d[t[1]], d[t[2]], d[t[3]]) for t in t]
+end
+
+# Create exteriorgrids, interiorgrids, and torigrids from a grid (p,t) and boundary functions fsubs,
+# representing circle distances functions [fouter1, finner1, fouter2, finner2, ...]
+function createsubgrids(
+        ::AbstractMyelinatedFibresGeometry,
+        p::AbstractVector{Vec{2,T}},
+        t::AbstractVector{NTuple{3,Int}},
+        fsubs
+    ) where {T}
+    Ncircles = length(fsubs) ÷ 2
+    text  = [NTuple{3,Int}[] for _ in 1:1]
+    tint  = [NTuple{3,Int}[] for _ in 1:Ncircles]
+    ttori = [NTuple{3,Int}[] for _ in 1:Ncircles]
+
+    for t in t
+        @inbounds pmid = (p[t[1]] + p[t[2]] + p[t[3]])/3
+        isfound = false
+        for j in 1:Ncircles
+            (fsubs[2j  ](pmid) < 0) && (push!(tint[ j], t); isfound = true; break) # check interior first
+            (fsubs[2j-1](pmid) < 0) && (push!(ttori[j], t); isfound = true; break) # then tori
+        end
+        isfound && continue
+        push!(text[1], t) # otherwise, exterior
+    end
+
+    G = Grid{2,3,T,3}
+    exteriorgrids = G[Grid(reorder(p,t)...) for t in text]
+    interiorgrids = G[Grid(reorder(p,t)...) for t in tint]
+    torigrids     = G[Grid(reorder(p,t)...) for t in ttori]
+
+    return @ntuple(exteriorgrids, interiorgrids, torigrids)
+end
+
 # Pack circles
 function packcircles(btparams::BlochTorreyParameters = BlochTorreyParameters{Float64}();
         Ncircles    = 20, # number of circles
@@ -138,7 +181,8 @@ function packcircles(btparams::BlochTorreyParameters = BlochTorreyParameters{Flo
     return out
 end
 
-function creategeometry(btparams::BlochTorreyParameters{T} = BlochTorreyParameters{Float64}();
+# Create geometry for packed circles on a rectangular domain
+function creategeometry(::PeriodicPackedFibres, btparams::BlochTorreyParameters{T} = BlochTorreyParameters{Float64}();
         Ncircles = 20, # number of circles
         goaldensity = btparams.AxonPDensity, # goal packing density
         overlapthresh = 0.05, # overlap occurs when distance between circle edges is ≤ overlapthresh * btparams.R_mu
@@ -216,39 +260,15 @@ function creategeometry(btparams::BlochTorreyParameters{T} = BlochTorreyParamete
         VERBOSE = true,
         DETERMINISTIC = true,
         PLOT = false,
-        PLOTLAST = false
-    );
+        PLOTLAST = false)
 
     if FORCEQUALITY
         Qmesh = DistMesh.mesh_quality(p,t)
         !(Qmesh >= QMIN) && error("Grid quality not high enough; Q = $Qmesh < $QMIN.")
     end
 
-    text  = [NTuple{3,Int}[] for _ in 1:1]
-    tint  = [NTuple{3,Int}[] for _ in 1:length(outercircles)]
-    ttori = [NTuple{3,Int}[] for _ in 1:length(outercircles)]
-    for t in t
-        @inbounds pmid = (p[t[1]] + p[t[2]] + p[t[3]])/3
-        isfound = false
-        for j in 1:length(outercircles)
-            (fsubs[2j  ](pmid) < 0) && (push!(tint[j],  t); isfound = true; break) # check interior first
-            (fsubs[2j-1](pmid) < 0) && (push!(ttori[j], t); isfound = true; break) # then tori
-        end
-        isfound && continue
-        push!(text[1], t) # otherwise, exterior
-    end
-
-    function reorder(p, t)
-        isempty(t) && (return eltype(p)[], eltype(t)[])
-        idx = reinterpret(Int, t) |> copy |> sort! |> unique!
-        d = Dict{Int,Int}(idx .=> 1:length(idx))
-        return p[idx], [(d[t[1]], d[t[2]], d[t[3]]) for t in t]
-    end
-
-    G = Grid{2,3,T,3}
-    exteriorgrids = G[Grid(reorder(p,t)...) for t in text]
-    interiorgrids = G[Grid(reorder(p,t)...) for t in tint]
-    torigrids     = G[Grid(reorder(p,t)...) for t in ttori]
+    # Create subgrids for parent grid (p,t) and fsubs
+    exteriorgrids, torigrids, interiorgrids = createsubgrids(PeriodicPackedFibres(), p, t, fsubs)
 
     grid_area = sum(area.(exteriorgrids)) + sum(area.(torigrids)) + sum(area.(interiorgrids))
     bdry_area = area(bdry)
@@ -271,19 +291,58 @@ function creategeometry(btparams::BlochTorreyParameters{T} = BlochTorreyParamete
         !(dA_max < one(T)) && error("Grid subregion areas are not close to analytical circle areas; error relative to average triangle area is $(dA_max).")
     end
 
-    # Return named tuple of results
-    geom = (
-        exteriorgrids = exteriorgrids, 
-        torigrids = torigrids, 
-        interiorgrids = interiorgrids, 
-        outercircles = outercircles, 
-        innercircles = innercircles, 
-        bdry = bdry
-    )
-    
-    return geom
+    return @ntuple(exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry)
 end
 
+####
+#### Example geometry with only two concentric circles
+####
+
+# Create geometry for packed circles on a rectangular domain
+function creategeometry(::SingleFibre, btparams::BlochTorreyParameters{T} = BlochTorreyParameters{Float64}();
+        radius::T = btparams.R_mu, # radius of fibre
+        g_ratio::T = btparams.g_ratio, # g_ratio of fibre
+        h0::T = T(1/3 * radius * (1 - g_ratio)),
+        QMIN::T = T(0.5),
+        MAXITERS = 1000,
+        FIXPOINTSITERS = 500,
+        FIXSUBSITERS = 450,
+        FORCEQUALITY = true, # If this flag is true, an error is thrown if the resulting grid doesn't have high enough quality
+        VERBOSE = false,
+        PLOT = false,
+        PLOTLAST = false,
+    ) where {T}
+
+    # Initial set of circles
+    outercircles = Circle{2,T}[Circle(zero(Vec{2,T}), radius)]
+    innercircles = scale_shape.(outercircles, g_ratio)
+    allcircles = [outercircles[1], innercircles[1]]
+    bdry = Rectangle{2,T}(radius * Vec{2,T}((-1.5, -1.5)), radius * Vec{2,T}((1.5, 1.5)))
+    
+    bbox = T[xmin(bdry) ymin(bdry); xmax(bdry) ymax(bdry)]
+    pfix = Vec{2,T}[corners(bdry)...]
+
+    # Signed distance function, edge length function, and sub-region definitions
+    fd(x) = drectangle0(x, bdry)
+    fh(x) = huniform(x)
+    fsubs = [x->dcircle(x,c) for c in allcircles]
+
+    p, t = kmg2d(fd, fsubs, fh, h0, bbox, 1, 0, pfix;
+        QMIN = QMIN, MAXITERS = MAXITERS, FIXPOINTSITERS = FIXPOINTSITERS, FIXSUBSITERS = FIXSUBSITERS,
+        VERBOSE = VERBOSE, PLOT = PLOT, PLOTLAST = PLOTLAST, DETERMINISTIC = true)
+
+    if FORCEQUALITY
+        Qmesh = DistMesh.mesh_quality(p,t)
+        !(Qmesh >= QMIN) && error("Grid quality not high enough; Q = $Qmesh < $QMIN.")
+    end
+
+    # Create subgrids for parent grid (p,t) and fsubs
+    exteriorgrids, torigrids, interiorgrids = createsubgrids(SingleFibre(), p, t, fsubs)
+
+    return @ntuple(exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry)
+end
+
+# Load geometry of packed circles on rectangular domain
 function loadgeometry(fname)
     d = BSON.load(fname)
     G = Grid{2,3,Float64,3} # 2D triangular grid
@@ -291,14 +350,19 @@ function loadgeometry(fname)
     R = Rectangle{2,Float64}
 
     # Ensure proper typing of grids, and return NamedTuple of data
-    out = ( exteriorgrids = convert(Vector{G}, d[:exteriorgrids][:]),
-            torigrids     = convert(Vector{G}, d[:torigrids][:]),
-            interiorgrids = convert(Vector{G}, d[:interiorgrids][:]),
-            outercircles  = convert(Vector{C}, d[:outercircles][:]),
-            innercircles  = convert(Vector{C}, d[:innercircles][:]),
-            bdry          = convert(R, d[:bdry]) )
-    return out
+    exteriorgrids = convert(Vector{G}, d[:exteriorgrids][:])
+    torigrids     = convert(Vector{G}, d[:torigrids][:])
+    interiorgrids = convert(Vector{G}, d[:interiorgrids][:])
+    outercircles  = convert(Vector{C}, d[:outercircles][:])
+    innercircles  = convert(Vector{C}, d[:innercircles][:])
+    bdry          = convert(R, d[:bdry])
+
+    return @ntuple(exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry)
 end
+
+####
+#### Create myelin domains from exteriorgrids, torigrids, and interiorgrids
+####
 
 function createdomains(
         btparams::BlochTorreyParameters{Tu},
@@ -310,7 +374,7 @@ function createdomains(
         ferritins::AbstractArray{V} = Vec{3,T}[], #Default to geometry float type
         ::Type{uType} = Vec{2,Tu}; #Default btparams float type
         kwargs...
-    ) where {T, G<:TriangularGrid{T}, C<:Circle{2,T}, V<:Vec{3,T}, Tu, uType<:FieldType{Tu}}
+    ) where {T, G <: TriangularGrid{T}, C <: Circle{2,T}, V <: Vec{3,T}, Tu, uType <: FieldType{Tu}}
 
     myelinprob = MyelinProblem(btparams)
     myelinsubdomains = createmyelindomains(
@@ -330,13 +394,21 @@ function createdomains(
             myelindomains = myelindomains)
 end
 
+####
+#### Frenquency map calculations
+####
+
 calcomegas(myelinprob, myelinsubdomains) = omegamap.(Ref(myelinprob), myelinsubdomains)
 calcomega(myelinprob, myelinsubdomains) = reduce(vcat, calcomegas(myelinprob, myelinsubdomains))
 
-# Vector of signals on each domain.
-# NOTE: This are integrals over the region, so the signals are already weighted
+####
+#### Signal calculation
+####
+
+# NOTE: These are integrals over the region, so the signals are already weighted
 #       for the relative size of the region; the total signal is the sum of the
 #       signals returned here
+
 function calcsignals(sols, ts, myelindomains; steadystate = 1)
     Signals = map(sols, myelindomains) do s, m
         if fieldvectype(m) <: Vec{3}
@@ -347,8 +419,6 @@ function calcsignals(sols, ts, myelindomains; steadystate = 1)
     end
     return Signals
 end
-
-# Sum signals over all domains
 calcsignal(sols, ts, myelindomains; kwargs...) = sum(calcsignals(sols, ts, myelindomains; kwargs...))
 
 # ---------------------------------------------------------------------------- #
@@ -410,7 +480,7 @@ function solveblochtorrey(
         tspan = (zero(TE), nTE * TE + (nTR - 1) * TR), # time span for ode solution
         callback = MultiSpinEchoCallback(typeof(u0), tspan;
             TE = TE, TR = TR, nTE = nTE, nTR = nTR, fliptimes = fliptimes,
-            initpulse = initpulse, flipangle = flipangle, steadystate = steadystate),
+            initpulse = initpulse, steadystate = steadystate, flipangle = float(flipangle)),
         reltol = 1e-8,
         abstol = 0.0,
         dt = TE/10, # Maximum timestep

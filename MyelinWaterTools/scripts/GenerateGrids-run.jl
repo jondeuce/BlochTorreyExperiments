@@ -27,7 +27,7 @@ function runcreategeometry(params; numreps = 5)
     # Attempt to generate `numreps` grids for given parameter set
     for _ in 1:numreps
         try
-            geom = creategeometry(btparams;
+            geom = creategeometry(PeriodicPackedFibres(), btparams;
                 Ncircles = numfibres, # number of fibres to pack (resulting grid will have less due to cropping)
                 maxpackiter = 10, # number of radii distributions to attempt packing
                 overlapthresh = 0.05, # overlap relative to btparams.R_mu

@@ -1,4 +1,15 @@
-# MWI Model fitting types
+####
+#### Geometry types
+####
+abstract type AbstractGeometry end
+abstract type AbstractMyelinatedFibresGeometry <: AbstractGeometry end
+abstract type AbstractPackedFibresGeometry <: AbstractMyelinatedFibresGeometry end
+struct PeriodicPackedFibres <: AbstractPackedFibresGeometry end
+struct SingleFibre <: AbstractMyelinatedFibresGeometry end
+
+####
+#### MWI Model fitting types
+####
 abstract type AbstractMWIFittingModel end
 
 @with_kw struct TwoPoolMagnToMagn <: AbstractMWIFittingModel

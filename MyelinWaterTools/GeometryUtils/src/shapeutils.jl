@@ -36,9 +36,16 @@ end
     return Tensor{2,2,T}((cosθ, sinθ, -sinθ, cosθ))
 end
 
+# Our convention is that M∞ points in the +z-direction. This means that our typical initial condition,
+# M₀ = [0, M∞, 0], is actually a rotation of [0, 0, M∞] by -π/2 about the x-axis, not of +π/2.
+# To be consistent, we apply all general rotations by -α (which is equivalent to +α when α = π)
+pulsemat(::Type{Tu}, α) where {Tu} = Tensor{2,3,Tu}(RotX(-α))
+pulsemat(α) = pulsemat(Float64, Float64(α))
+
 # Transverse and longitudinal components of 3D vector, or interpret complex number as a Vec{2}
-@inline transverse(x::Complex{T}) where {T} = Vec{2,T}((real(x), imag(x)))
+@inline transverse(x::Vec{2}) = x
 @inline transverse(x::Vec{3,T}) where {T} = Vec{2,T}((x[1], x[2]))
+@inline transverse(x::Complex{T}) where {T} = Vec{2,T}((real(x), imag(x)))
 @inline longitudinal(x::Vec{3,T}) where {T} = x[3]
 
 # Three argument inner product (v,A,u) = v'(A*u), where scalar A is interpreted as A*I

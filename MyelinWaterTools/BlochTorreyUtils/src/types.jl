@@ -28,8 +28,9 @@ const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{
     D_Water::T        =    T(3037.0)        # Diffusion coefficient in water [um^2/s]
     D_Blood::T        =    T(3037.0)        # Diffusion coefficient in blood [um^2/s]
     D_Tissue::T       =    T(1500.0)        # #TODO (reference?) Diffusion coefficient in tissue [um^2/s]
-    D_Sheath::T       =    T(250.0)         # #TODO (reference?) Diffusion coefficient in myelin sheath [um^2/s]
+    D_Sheath::T       =    T(1000.0)        # #TODO (reference?) Mean diffusivity coefficient in myelin sheath [um^2/s]
     D_Axon::T         =    T(2000.0)        # #TODO (reference?) Diffusion coefficient in axon interior [um^2/s]
+    FRD_Sheath::T     =    T(0.5)           # #TODO (reference?) Fractional radial diffusivity within myelin sheath; FRD ∈ [0,1] where 0 is purely polar, 0.5 is isotropic, and 1 is purely radial
     K_perm            =    T(1.0e-3)        # #TODO (reference?) Interface permeability constant [um/s]
     K_Axon_Sheath     =    T(K_perm)        # Axon-Myelin interface permeability [um/s]
     K_Tissue_Sheath   =    T(K_perm)        # Tissue-Myelin interface permeability [um/s]
@@ -55,12 +56,11 @@ const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{
     Rho_Iron::T       =    T(7.874)         # Iron density [g/cm^3]
 end
 
-Base.Dict(p::BlochTorreyParameters{T}) where {T} = Dict{Symbol,T}(f => getfield(p,f) for f in fieldnames(typeof(p)))
 function BlochTorreyParameters(d::Dict{Symbol,T}) where {T}
     d_ = deepcopy(d)
     f = fieldnames(BlochTorreyParameters)
     for (k, v) ∈ zip(collect(keys(d_)), collect(values(d_)))
-        # Deprecations
+        # Deprecations, e.g.:
         # if k == :K_perm
         #     delete!(d_, k)
         #     d_[:K_Axon_Sheath] = v
@@ -73,6 +73,9 @@ function BlochTorreyParameters(d::Dict{Symbol,T}) where {T}
     end
     return BlochTorreyParameters{T}(;d_...)
 end
+Base.Dict(p::BlochTorreyParameters{T}) where {T} = Dict{Symbol,T}(f => getfield(p,f) for f in fieldnames(typeof(p)))
+
+@inline GeometryUtils.floattype(p::BlochTorreyParameters{T}) where {T} = T
 
 # ---------------------------------------------------------------------------- #
 # AbstractParabolicProblem
@@ -94,6 +97,8 @@ end
 struct MyelinProblem{T} <: AbstractParabolicProblem{T}
     params::BlochTorreyParameters{T}
 end
+
+@inline GeometryUtils.floattype(p::MyelinProblem{T}) where {T} = T
 
 # ---------------------------------------------------------------------------- #
 # AbstractDomain
