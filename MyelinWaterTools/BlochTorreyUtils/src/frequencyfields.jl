@@ -54,9 +54,9 @@ function omega(x::Vec{2}, p::MyelinProblem, region::TissueRegion, outercircles::
     (isempty(outercircles) && isempty(innercircles)) && return zero(eltype(x))
         constants = OmegaDerivedConstants(p)
 
-    ω = sum(eachindex(outercircles, innercircles)) do i
-        @inbounds ωi = omega_tissue(x, p, constants, innercircles[i], outercircles[i])
-        return ωi
+    ω = zero(floattype(p))
+    @inbounds for i in eachindex(outercircles, innercircles)
+        ω += omega_tissue(x, p, constants, innercircles[i], outercircles[i])
     end
 
     return ω
@@ -70,13 +70,11 @@ function omega(x::Vec{2}, p::MyelinProblem, region::MyelinRegion, outercircles::
     (isempty(outercircles) && isempty(innercircles)) && return zero(eltype(x))
     constants = OmegaDerivedConstants(p)
 
-    ω = sum(eachindex(outercircles, innercircles)) do i
-        @inbounds ωi = if i == region.parent_circle_idx
-            omega_myelin(x, p, constants, innercircles[i], outercircles[i])
-        else
+    ω = zero(floattype(p))
+    @inbounds for i in eachindex(outercircles, innercircles)
+        ω += i == region.parent_circle_idx ?
+            omega_myelin(x, p, constants, innercircles[i], outercircles[i]) :
             omega_tissue(x, p, constants, innercircles[i], outercircles[i])
-        end
-        return ωi
     end
 
     return ω
@@ -90,13 +88,11 @@ function omega(x::Vec{2}, p::MyelinProblem, region::AxonRegion, outercircles::Ve
     (isempty(outercircles) && isempty(innercircles)) && return zero(eltype(x))
     constants = OmegaDerivedConstants(p)
 
-    ω = sum(eachindex(outercircles, innercircles)) do i
-        @inbounds ωi = if i == region.parent_circle_idx
-            omega_axon(x, p, constants, innercircles[i], outercircles[i])
-        else
+    ω = zero(floattype(p))
+    @inbounds for i in eachindex(outercircles, innercircles)
+        ω += i == region.parent_circle_idx ?
+            omega_axon(x, p, constants, innercircles[i], outercircles[i]) :
             omega_tissue(x, p, constants, innercircles[i], outercircles[i])
-        end
-        return ωi
     end
 
     return ω
@@ -149,19 +145,29 @@ function omegamap(p::MyelinProblem, m::MyelinDomain)
 end
 
 # ---------------------------------------------------------------------------- #
-# Global dcoeff/rdecay functions on each region
+# Global dcoeff/r1decay/r2decay functions on each region
 # ---------------------------------------------------------------------------- #
 
-#TODO: re-write to take in plain vectors of inner/outer circles/ferritins which
-# can be called on its own, and wrap with a method that takes a MyelinDomain,
-# just like omega(x,p,outercircles,innercircles,...) above
-
-@inline dcoeff(x, p::MyelinProblem, m::MyelinDomain{TissueRegion}) = p.params.D_Tissue
-@inline dcoeff(x, p::MyelinProblem, m::MyelinDomain{MyelinRegion}) = p.params.D_Sheath
-@inline dcoeff(x, p::MyelinProblem, m::MyelinDomain{AxonRegion}) = p.params.D_Axon
+@inline function dcoeff(x::Vec{2}, p::MyelinProblem{T}, region::MyelinRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {T, C <: Circle{2}}
+    Dμ, FRD = p.params.D_Sheath, p.params.FRD_Sheath
+    Dr, Dt = 2 * FRD * Dμ, 2 * (1 - FRD) * Dμ # Radial and transverse diffusivities
+    D = diagm(SymmetricTensor{2,2,T}, (Dr, Dt)) # Diagonal diffusion tensor
+    R = rotmat(x - origin(outercircles[region.parent_circle_idx])) # Rotation matrix, rotating (x,y)-space into (r,t)-space
+    return R' ⋅ D ⋅ R # Final diffusion tensor: rotate (x,y) to (r,t), apply diffusion, rotate back
+end
+@inline dcoeff(x::Vec{2}, p::MyelinProblem{T}, region::TissueRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {T, C <: Circle{2}} = p.params.D_Tissue
+@inline dcoeff(x::Vec{2}, p::MyelinProblem{T}, region::AxonRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {T, C <: Circle{2}} = p.params.D_Axon
+@inline dcoeff(x::Vec{2}, p::MyelinProblem, domain::MyelinDomain) = dcoeff(x, p, getregion(domain), getoutercircles(domain), getinnercircles(domain))
 @inline dcoeff(x, y, p::MyelinProblem, m::MyelinDomain) = dcoeff(Vec{2}((x, y)), p, m)
 
-@inline rdecay(x, p::MyelinProblem, m::MyelinDomain{TissueRegion}) = p.params.R2_Tissue
-@inline rdecay(x, p::MyelinProblem, m::MyelinDomain{MyelinRegion}) = p.params.R2_sp
-@inline rdecay(x, p::MyelinProblem, m::MyelinDomain{AxonRegion}) = p.params.R2_lp
-@inline rdecay(x, y, p::MyelinProblem, m::MyelinDomain) = rdecay(Vec{2}((x, y)), p, m)
+@inline r1decay(x::Vec{2}, p::MyelinProblem{T}, region::TissueRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {T, C <: Circle{2}} = p.params.R1_Tissue
+@inline r1decay(x::Vec{2}, p::MyelinProblem{T}, region::MyelinRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {T, C <: Circle{2}} = p.params.R1_sp
+@inline r1decay(x::Vec{2}, p::MyelinProblem{T}, region::AxonRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {T, C <: Circle{2}} = p.params.R1_lp
+@inline r1decay(x::Vec{2}, p::MyelinProblem, domain::MyelinDomain) = r1decay(x, p, getregion(domain), getoutercircles(domain), getinnercircles(domain))
+@inline r1decay(x, y, p::MyelinProblem, m::MyelinDomain) = r1decay(Vec{2}((x, y)), p, m)
+
+@inline r2decay(x::Vec{2}, p::MyelinProblem{T}, region::TissueRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {T, C <: Circle{2}} = p.params.R2_Tissue
+@inline r2decay(x::Vec{2}, p::MyelinProblem{T}, region::MyelinRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {T, C <: Circle{2}} = p.params.R2_sp
+@inline r2decay(x::Vec{2}, p::MyelinProblem{T}, region::AxonRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {T, C <: Circle{2}} = p.params.R2_lp
+@inline r2decay(x::Vec{2}, p::MyelinProblem, domain::MyelinDomain) = r2decay(x, p, getregion(domain), getoutercircles(domain), getinnercircles(domain))
+@inline r2decay(x, y, p::MyelinProblem, m::MyelinDomain) = r2decay(Vec{2}((x, y)), p, m)

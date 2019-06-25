@@ -18,6 +18,9 @@ const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{
     gamma::T          =    T(2.67515255e8)  # Gyromagnetic ratio [rad/s/T]
     theta::T          =    T(π)/2           # Main magnetic field angle w.r.t B0 [rad]
     g_ratio::T        =    T(0.8370)        # g-ratio (original 0.71), 0.84658 for healthy, 0.8595 for MS.
+    R1_sp::T          =    T(inv(200e-3))   # 1/T1 relaxation rate of small pool (myelin) water [REF: TODO]
+    R1_lp::T          =    T(inv(1084e-3))  # 1/T1 relaxation rate of large pool (intra-cellular/axonal) water [REF: TODO]
+    R1_Tissue::T      =    T(inv(1084e-3))  # 1/T1 relaxation rate of white matter tissue [s^-1] [REF: 1084 ± 45; https://www.ncbi.nlm.nih.gov/pubmed/16086319]
     R2_sp::T          =    T(inv(15e-3))    # #TODO (play with these?) Relaxation rate of small pool [s^-1] (Myelin) (Xu et al. 2017) (15e-3s)
     R2_lp::T          =    T(inv(63e-3))    # #TODO (play with these?) 1st attempt was 63E-3. 2nd attempt 76 ms
     R2_Tissue::T      =    T(inv(63e-3))    # #TODO (was 14.5Hz; changed to match R2_lp) Relaxation rate of tissue [s^-1]
@@ -25,8 +28,9 @@ const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{
     D_Water::T        =    T(3037.0)        # Diffusion coefficient in water [um^2/s]
     D_Blood::T        =    T(3037.0)        # Diffusion coefficient in blood [um^2/s]
     D_Tissue::T       =    T(1500.0)        # #TODO (reference?) Diffusion coefficient in tissue [um^2/s]
-    D_Sheath::T       =    T(250.0)         # #TODO (reference?) Diffusion coefficient in myelin sheath [um^2/s]
+    D_Sheath::T       =    T(1000.0)        # #TODO (reference?) Mean diffusivity coefficient in myelin sheath [um^2/s]
     D_Axon::T         =    T(2000.0)        # #TODO (reference?) Diffusion coefficient in axon interior [um^2/s]
+    FRD_Sheath::T     =    T(0.5)           # #TODO (reference?) Fractional radial diffusivity within myelin sheath; FRD ∈ [0,1] where 0 is purely polar, 0.5 is isotropic, and 1 is purely radial
     K_perm            =    T(1.0e-3)        # #TODO (reference?) Interface permeability constant [um/s]
     K_Axon_Sheath     =    T(K_perm)        # Axon-Myelin interface permeability [um/s]
     K_Tissue_Sheath   =    T(K_perm)        # Tissue-Myelin interface permeability [um/s]
@@ -52,12 +56,11 @@ const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{
     Rho_Iron::T       =    T(7.874)         # Iron density [g/cm^3]
 end
 
-Base.Dict(p::BlochTorreyParameters{T}) where {T} = Dict{Symbol,T}(f => getfield(p,f) for f in fieldnames(typeof(p)))
 function BlochTorreyParameters(d::Dict{Symbol,T}) where {T}
     d_ = deepcopy(d)
     f = fieldnames(BlochTorreyParameters)
     for (k, v) ∈ zip(collect(keys(d_)), collect(values(d_)))
-        # Deprecations
+        # Deprecations, e.g.:
         # if k == :K_perm
         #     delete!(d_, k)
         #     d_[:K_Axon_Sheath] = v
@@ -70,6 +73,9 @@ function BlochTorreyParameters(d::Dict{Symbol,T}) where {T}
     end
     return BlochTorreyParameters{T}(;d_...)
 end
+Base.Dict(p::BlochTorreyParameters{T}) where {T} = Dict{Symbol,T}(f => getfield(p,f) for f in fieldnames(typeof(p)))
+
+@inline GeometryUtils.floattype(p::BlochTorreyParameters{T}) where {T} = T
 
 # ---------------------------------------------------------------------------- #
 # AbstractParabolicProblem
@@ -92,6 +98,8 @@ struct MyelinProblem{T} <: AbstractParabolicProblem{T}
     params::BlochTorreyParameters{T}
 end
 
+@inline GeometryUtils.floattype(p::MyelinProblem{T}) where {T} = T
+
 # ---------------------------------------------------------------------------- #
 # AbstractDomain
 #   Abstract type with the most generic information on the underlying problem:
@@ -110,7 +118,9 @@ const VectorOfDomains{Tu,uType,gDim,T,Nd,Nf} = AbstractVector{<:AbstractDomain{T
 mutable struct ParabolicDomain{
         Tu, uType <: FieldType{Tu},
         gDim, T, Nd, Nf,
-        S <: JuAFEM.AbstractRefShape, CV <: CellValues{gDim,T,S}, FV <: FaceValues{gDim,T,S},
+        S <: JuAFEM.AbstractRefShape,
+        CV <: Union{CellValues{gDim,T,S}, Tuple{Vararg{CellValues{gDim,T,S}}}},
+        FV <: Union{FaceValues{gDim,T,S}, Tuple{Vararg{FaceValues{gDim,T,S}}}},
         MType <: MassType{Tu}, MfactType <: MassFactType{Tu}, KType <: StiffnessType{Tu}
     } <: AbstractDomain{Tu,uType,gDim,T,Nd,Nf}
     grid::Grid{gDim,Nd,T,Nf}
@@ -198,7 +208,7 @@ end
 # Create BlochTorreyProblem from a MyelinProblem and a MyelinDomain
 function BlochTorreyProblem(p::MyelinProblem{T}, m::MyelinDomain) where {T}
     @inline Dcoeff(x...) = dcoeff(x..., p, m) # Dcoeff function
-    @inline Rdecay(x...) = rdecay(x..., p, m) # R2 function
+    @inline Rdecay(x...) = (r1decay(x..., p, m), r2decay(x..., p, m)) # R2 function
     @inline Omega(x...) = omega(x..., p, m) # Omega function
     return BlochTorreyProblem{T}(Dcoeff, Rdecay, Omega)
 end
@@ -213,30 +223,42 @@ function ParabolicDomain(
         geominterporder::Int = 1
     ) where {gDim,Nd,T,Nf,Tu,uType<:FieldType{Tu}}
 
+    uDim = fielddim(uType)::Int
+    @assert 1 <= uDim <= 3
+    
     # Quadrature and interpolation rules and corresponding cellvalues/facevalues
     func_interp = Lagrange{gDim, typeof(refshape), funcinterporder}()
     geom_interp = Lagrange{gDim, typeof(refshape), geominterporder}()
     quadrule = QuadratureRule{gDim, typeof(refshape)}(quadorder)
     quadrule_face = QuadratureRule{gDim-1, typeof(refshape)}(quadorder)
 
-    uDim = fielddim(uType)
     if uDim == 1
         cellvalues = CellScalarValues(Tu, quadrule, func_interp, geom_interp)
         facevalues = FaceScalarValues(Tu, quadrule_face, func_interp, geom_interp)
-    else
+    elseif uDim == 2
         cellvalues = CellVectorValues(Tu, quadrule, func_interp, geom_interp)
         facevalues = FaceVectorValues(Tu, quadrule_face, func_interp, geom_interp)
+    elseif uDim == 3
+        cellvalues = (CellVectorValues(Tu, quadrule, func_interp, geom_interp), CellScalarValues(Tu, quadrule, func_interp, geom_interp))
+        facevalues = (FaceVectorValues(Tu, quadrule_face, func_interp, geom_interp), FaceScalarValues(Tu, quadrule_face, func_interp, geom_interp))
     end
 
     # Degree of freedom handler
     dh = DofHandler(grid)
-    push!(dh, :u, uDim, func_interp)
+    if uDim == 1 || uDim == 2
+        push!(dh, :u, uDim, func_interp)
+    elseif uDim == 3
+        push!(dh, :u, 2, func_interp)
+        push!(dh, :uz, 1, func_interp)
+    end
     close!(dh)
 
-    # Assign dof ordering to be such that node number `n` corresponds to dof's `uDim*n-(uDim-1):uDim*n`
-    # NOTE: this is somewhat wasteful as nodes are visited multiple times, but it's easy
-    if ndofs(dh) == uDim * getnnodes(grid)
-        perm = zeros(Int, ndofs(dh))
+    # Assign dof ordering to be such that node number `n` corresponds to dof's `uDim*n-(uDim-1):uDim*n`,
+    # i.e. each node's DOFs are consecutive, and are in order of node number
+    #   NOTE: this is somewhat wasteful as nodes are visited multiple times, but it's easy
+    @assert ndofs(dh) == uDim * getnnodes(grid)
+    perm = zeros(Int, ndofs(dh))
+    if uDim == 1 || uDim == 2
         for cell in CellIterator(dh)
             for (i,n) in enumerate(cell.nodes)
                 for d in uDim-1:-1:0
@@ -244,8 +266,22 @@ function ParabolicDomain(
                 end
             end
         end
-        renumber!(dh, perm)
+    elseif uDim == 3
+        for cell in CellIterator(dh)
+            # node_offset = 2 * getnnodes(grid)
+            # for (i,n) in enumerate(cell.nodes)
+            #     perm[cell.celldofs[dof_range(dh, :u )[2i-1]]] = 2*n-1 # transverse component
+            #     perm[cell.celldofs[dof_range(dh, :u )[2i]]]   = 2*n   # transverse component
+            #     perm[cell.celldofs[dof_range(dh, :uz)[i]]]    = node_offset + n # longitudinal component
+            # end
+            for (i,n) in enumerate(cell.nodes)
+                perm[cell.celldofs[dof_range(dh, :u )[2i-1]]] = 3*n-2 # transverse component
+                perm[cell.celldofs[dof_range(dh, :u )[2i]]]   = 3*n-1 # transverse component
+                perm[cell.celldofs[dof_range(dh, :uz)[i]]]    = 3*n   # longitudinal component
+            end
+        end
     end
+    renumber!(dh, perm)
 
     # Mass and stiffness matrices, and weights vector
     M = create_sparsity_pattern(dh)

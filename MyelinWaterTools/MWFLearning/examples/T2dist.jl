@@ -7,7 +7,7 @@ pyplot(size = (600,400))
 function plot_T2_dist(d; α = 0.05, σ = 0, T2Range = (1e-3, 2000e-3), nT2 = 120)
     η = d[:sweepparams][:TE]
     t = η .* (1:d[:sweepparams][:nTE])
-    x = normalize_signal(d[:signals])
+    x = init_signal(d[:signals])
     x .+= σ.*randn(Random.MersenneTwister(0), size(x))
     τ = log10range(T2Range...; length = nT2);
     @time y = project_onto_exp(x, τ, η, α)

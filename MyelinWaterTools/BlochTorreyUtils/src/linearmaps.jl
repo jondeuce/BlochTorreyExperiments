@@ -25,9 +25,18 @@ LinearAlgebra.ldiv!(y::AbstractVecOrMat, A::SuiteSparse.CHOLMOD.Factor, x::Abstr
 LinearAlgebra.ldiv!(A::SuiteSparse.CHOLMOD.Factor, x::AbstractVecOrMat) = copyto!(x, A\x)
 
 # Multiplication action
-Minv_K_mul_u!(Y, X, K, Mfact) = (mul!(Y, K, X); ldiv!(Mfact, Y); return Y)
-Kt_Minv_mul_u!(Y, X, K, Mfact) = (mul!(Y, transpose(K), Mfact\X); return Y)
-Kc_Minv_mul_u!(Y, X, K, Mfact) = (mul!(Y, adjoint(K), Mfact\X); return Y)
+const FORWARD_EVAL_COUNTER = Ref(0)
+const ADJOINT_EVAL_COUNTER = Ref(0)
+const TRANSPOSE_EVAL_COUNTER = Ref(0)
+const ALL_COUNTERS = 
+_increment!(x) = x[] += 1
+_reset!(x) = x[] = 0
+_reset_all_counters!() = (_reset!.((FORWARD_EVAL_COUNTER, ADJOINT_EVAL_COUNTER, TRANSPOSE_EVAL_COUNTER)); nothing)
+_display_counters() = (println(""); @show(FORWARD_EVAL_COUNTER[]); @show(ADJOINT_EVAL_COUNTER[]); @show(TRANSPOSE_EVAL_COUNTER[]); println(""); nothing)
+
+Minv_K_mul_u!(Y, X, K, Mfact) = (_increment!(FORWARD_EVAL_COUNTER); mul!(Y, K, X); ldiv!(Mfact, Y); return Y)
+Kc_Minv_mul_u!(Y, X, K, Mfact) = (_increment!(ADJOINT_EVAL_COUNTER); mul!(Y, adjoint(K), Mfact\X); return Y)
+Kt_Minv_mul_u!(Y, X, K, Mfact) = (_increment!(TRANSPOSE_EVAL_COUNTER); mul!(Y, transpose(K), Mfact\X); return Y)
 
 # Multiplication with Vector or Matrix
 LinearAlgebra.mul!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = Minv_K_mul_u!(Y, X, A.K, A.Mfact)

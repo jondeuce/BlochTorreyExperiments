@@ -1,6 +1,13 @@
+# Activate project and load packages for this script
+import Pkg
+Pkg.activate(joinpath(@__DIR__, ".."))
+include(joinpath(@__DIR__, "../initpaths.jl"))
+
 # NOTE: must load pyplot backend BEFORE loading MATLAB in init.jl
-using StatsPlots, BSON, Dates
+using StatsPlots
 pyplot(size=(1200,900), leg = false, grid = false, labels = nothing)
+using GlobalUtils
+using MWFUtils
 
 # Initialize project packages
 include(joinpath(@__DIR__, "../init.jl"))
@@ -11,19 +18,16 @@ make_reproduce(
     """
 )
 
-import DrWatson
-using DrWatson: @dict, @ntuple
-DrWatson.default_prefix(c) = MWFUtils.getnow() #TODO
 gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
 
-function runcreategeometry(params)
+function runcreategeometry(params; numreps = 5)
     @unpack numfibres, gratio, density = params
     btparams = BlochTorreyParameters{Float64}(AxonPDensity = density, g_ratio = gratio)
     
-    numreps = 5 # number of grid generation attempts per parameter set
+    # Attempt to generate `numreps` grids for given parameter set
     for _ in 1:numreps
         try
-            geom = creategeometry(btparams;
+            geom = creategeometry(PeriodicPackedFibres(), btparams;
                 Ncircles = numfibres, # number of fibres to pack (resulting grid will have less due to cropping)
                 maxpackiter = 10, # number of radii distributions to attempt packing
                 overlapthresh = 0.05, # overlap relative to btparams.R_mu
@@ -40,8 +44,8 @@ function runcreategeometry(params)
             )
 
             # Common filename without suffix
-            fname = DrWatson.savename(params)
-            
+            fname = DrWatson.savename(MWFUtils.getnow(), params)
+
             # Plot circles and grid
             plotcircles([geom.innercircles; geom.outercircles], geom.bdry; fname = "plots/" * fname * ".circles")
             plotgrids(geom.exteriorgrids, geom.torigrids, geom.interiorgrids; fname = "plots/" * fname * ".grids")
@@ -54,7 +58,7 @@ function runcreategeometry(params)
                 gitdir()
             )
         catch e
-            @warn "Error generating grid with param string: " * DrWatson.savename("", params)
+            @warn "Error generating grid with param string: " * DrWatson.savename("", params; connector = ", ")
             @warn sprint(showerror, e, catch_backtrace())
         end
     end
@@ -77,7 +81,7 @@ function main()
     all_params = sort(all_params; by = d -> (d[:numfibres], d[:gratio], d[:density]))
     for (i,params) in enumerate(all_params)
         params = convert(Dict{Symbol,Any}, params)
-        @info "Generating geometry $i/$(length(all_params)) at $(Dates.now()): $(DrWatson.savename("", params))"
+        @info "Generating geometry $i/$(length(all_params)) at $(Dates.now()): $(DrWatson.savename("", params; connector = ", "))"
         runcreategeometry(params)
     end
 

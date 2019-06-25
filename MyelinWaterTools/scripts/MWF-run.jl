@@ -5,7 +5,6 @@ pyplot(size=(800,600), leg = false, grid = false, labels = nothing)
 # Initialize project packages
 include(joinpath(@__DIR__, "../init.jl")) # call "init.jl", located in the same directory as this file
 mxcall(:cd, 0, pwd()) # change MATLAB path to current path for saving outputs
-mxcall(:figure, 0) # bring up MATLAB figure gui
 make_reproduce( # Creating backup file
     """
     include("BlochTorreyExperiments/MyelinWaterTools/scripts/MWF-run.jl")
@@ -131,10 +130,10 @@ DrWatson.@tagsave(
 
 function runsolve(btparams)
     # Unpack geometry, create myelin domains, and create omegafield
-    exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
+    @unpack exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
     ferritins = Vec{3,floattype(bdry)}[]
     
-    myelinprob, myelinsubdomains, myelindomains = createdomains(btparams,
+    @unpack myelinprob, myelinsubdomains, myelindomains = createdomains(btparams,
         exteriorgrids, torigrids, interiorgrids,
         outercircles, innercircles, ferritins, typeof(solverparams[:u0]))
         

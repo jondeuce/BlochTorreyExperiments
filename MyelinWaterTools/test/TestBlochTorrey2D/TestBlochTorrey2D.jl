@@ -3,6 +3,7 @@ module TestBlochTorrey2D
 # Packages to load
 # using LinearAlgebra
 using BenchmarkTools
+using Parameters: @unpack
 using MATLAB
 # using JuAFEM
 # using LinearMaps
