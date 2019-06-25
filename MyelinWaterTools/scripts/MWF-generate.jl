@@ -223,7 +223,7 @@ function runsimulation!(results, sweepparams, geom)
         D_Tissue = Dtiss,
         D_Sheath = Dmye,
         D_Axon = Dax,
-        FRD_Sheath = FRD_Sheath,
+        FRD_Sheath = FRD,
         R2_sp = inv(T2sp),
         R2_lp = inv(T2lp),
         R2_Tissue = inv(T2tiss),
