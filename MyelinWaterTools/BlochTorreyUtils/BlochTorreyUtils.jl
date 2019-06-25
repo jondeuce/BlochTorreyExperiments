@@ -10,7 +10,7 @@ module BlochTorreyUtils
 
 using Reexport
 @reexport using GeometryUtils
-@reexport using DiffEqBase, OrdinaryDiffEq, DiffEqCallbacks, DiffEqOperators#, Sundials
+@reexport using DiffEqBase, OrdinaryDiffEq, DiffEqCallbacks #, DiffEqOperators, Sundials
 @reexport using LinearMaps
 @reexport using BlockArrays
 @reexport using WriteVTK
@@ -43,7 +43,7 @@ export fieldvectype, fieldfloattype, getgrid, getdomain, numfibres, createmyelin
 export getmass, getmassfact, getstiffness
        getdofhandler, getcellvalues, getfacevalues,
        getregion, getoutercircles, getinnercircles, getoutercircle, getinnercircle, getouterradius, getinnerradius
-export shift_longitudinal, shift_longitudinal!, pi_flip, pi_pulse!, apply_pulse!, init_fliptimes, init_savetimes
+export shift_longitudinal, shift_longitudinal!, pi_flip, pi_pulse!, apply_pulse!, multispinecho_savetimes
 export testproblem
 
 # ---------------------------------------------------------------------------- #

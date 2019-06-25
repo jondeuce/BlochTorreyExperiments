@@ -257,8 +257,8 @@ function MyelinDomain(
         ms::AbstractVector{<:TriangularMyelinDomain{R,Tu,uType,T} where R}
     ) where {Tu,uType,T}
     domain = ParabolicDomain(region, prob, ms)
-    myelindomain = TriangularMyelinDomain{PermeableInterfaceRegion,Tu,uType,T,typeof(domain)}(
-        PermeableInterfaceRegion(),
+    myelindomain = TriangularMyelinDomain{typeof(region),Tu,uType,T,typeof(domain)}(
+        region,
         domain,
         ms[1].outercircles, # assume these are the same for all domains
         ms[1].innercircles, # assume these are the same for all domains
@@ -621,12 +621,10 @@ function doassemble!(
         domain.metadata[:D] = similar(getmass(domain)); assembler_D = start_assemble(domain.metadata[:D])
         domain.metadata[:R] = similar(getmass(domain)); assembler_R = start_assemble(domain.metadata[:R])
         domain.metadata[:W] = similar(getmass(domain)); assembler_W = start_assemble(domain.metadata[:W])
+        domain.metadata[:Gamma] = interpolate(x -> complex(prob.Rdecay(x)[2], prob.Omega(x)), domain)
         De = zeros(Tu, n_basefuncs, n_basefuncs)
         Re = zeros(Tu, n_basefuncs, n_basefuncs)
         We = zeros(Tu, n_basefuncs, n_basefuncs)
-        domain.metadata[:Gamma] = interpolate(domain) do x
-            return complex(prob.Rdecay(x)[2], prob.Omega(x))
-        end
     end
 
     # It is now time to loop over all the cells in our grid. We do this by iterating

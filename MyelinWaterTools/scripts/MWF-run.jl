@@ -130,10 +130,10 @@ DrWatson.@tagsave(
 
 function runsolve(btparams)
     # Unpack geometry, create myelin domains, and create omegafield
-    exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
+    @unpack exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
     ferritins = Vec{3,floattype(bdry)}[]
     
-    myelinprob, myelinsubdomains, myelindomains = createdomains(btparams,
+    @unpack myelinprob, myelinsubdomains, myelindomains = createdomains(btparams,
         exteriorgrids, torigrids, interiorgrids,
         outercircles, innercircles, ferritins, typeof(solverparams[:u0]))
         

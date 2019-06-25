@@ -150,10 +150,10 @@ end
 
 @inline function dcoeff(x::Vec{2}, p::MyelinProblem{T}, region::MyelinRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {T, C <: Circle{2}}
     Dμ, FRD = p.params.D_Sheath, p.params.FRD_Sheath
-    Dϕ, Dρ = 2 * (1 - FRD) * Dμ, 2 * FRD * Dμ # Polar and radial diffusivities
-    D = diagm(SymmetricTensor{2,2,T}, (Dϕ, Dρ)) # Isotropic diffusion tensor
-    R = rotmat(x - origin(outercircles[region.parent_circle_idx])) # Rotation matrix, rotating into (ϕ, ρ)-space
-    return R' ⋅ D ⋅ R # Final diffusion tensor
+    Dr, Dt = 2 * FRD * Dμ, 2 * (1 - FRD) * Dμ # Radial and transverse diffusivities
+    D = diagm(SymmetricTensor{2,2,T}, (Dr, Dt)) # Diagonal diffusion tensor
+    R = rotmat(x - origin(outercircles[region.parent_circle_idx])) # Rotation matrix, rotating (x,y)-space into (r,t)-space
+    return R' ⋅ D ⋅ R # Final diffusion tensor: rotate (x,y) to (r,t), apply diffusion, rotate back
 end
 @inline dcoeff(x::Vec{2}, p::MyelinProblem{T}, region::TissueRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {T, C <: Circle{2}} = p.params.D_Tissue
 @inline dcoeff(x::Vec{2}, p::MyelinProblem{T}, region::AxonRegion, outercircles::Vector{C}, innercircles::Vector{C}) where {T, C <: Circle{2}} = p.params.D_Axon

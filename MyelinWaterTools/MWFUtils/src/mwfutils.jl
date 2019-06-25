@@ -10,7 +10,7 @@ function load_results_dict(;
     @info "Loading geometry from file: " * geomfilename
     geom = loadgeometry(geomfilename)
     @unpack exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
-
+    
     # Find btparam filenames and solution filenames
     soldir = isdir(joinpath(basedir, "sol")) ? joinpath(basedir, "sol") : basedir
     paramfiles = filter(s -> endswith(s, "btparams.bson"), joinpath.(soldir, readdir(soldir)))
@@ -26,7 +26,7 @@ function load_results_dict(;
     # unpack geometry and create myelin domains
     for (params, solfilebatch) in zip(allparams, Iterators.partition(solfiles, numregions))
         @info "Recreating myelin domains"
-        myelinprob, myelinsubdomains, myelindomains = createdomains(params, exteriorgrids, torigrids, interiorgrids, outercircles, innercircles)
+        @unpack myelinprob, myelinsubdomains, myelindomains = createdomains(params, exteriorgrids, torigrids, interiorgrids, outercircles, innercircles)
         
         @info "Recreating frenquency fields"
         omega = calcomega(myelinprob, myelinsubdomains)
@@ -100,7 +100,7 @@ function createsubgrids(
     interiorgrids = G[Grid(reorder(p,t)...) for t in tint]
     torigrids     = G[Grid(reorder(p,t)...) for t in ttori]
 
-    return @ntuple(exteriorgrids, interiorgrids, torigrids)
+    return @ntuple(exteriorgrids, torigrids, interiorgrids)
 end
 
 # Pack circles
@@ -268,7 +268,7 @@ function creategeometry(::PeriodicPackedFibres, btparams::BlochTorreyParameters{
     end
 
     # Create subgrids for parent grid (p,t) and fsubs
-    exteriorgrids, torigrids, interiorgrids = createsubgrids(PeriodicPackedFibres(), p, t, fsubs)
+    @unpack exteriorgrids, torigrids, interiorgrids = createsubgrids(PeriodicPackedFibres(), p, t, fsubs)
 
     grid_area = sum(area.(exteriorgrids)) + sum(area.(torigrids)) + sum(area.(interiorgrids))
     bdry_area = area(bdry)
@@ -337,7 +337,7 @@ function creategeometry(::SingleFibre, btparams::BlochTorreyParameters{T} = Bloc
     end
 
     # Create subgrids for parent grid (p,t) and fsubs
-    exteriorgrids, torigrids, interiorgrids = createsubgrids(SingleFibre(), p, t, fsubs)
+    @unpack exteriorgrids, torigrids, interiorgrids = createsubgrids(SingleFibre(), p, t, fsubs)
 
     return @ntuple(exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry)
 end
@@ -384,14 +384,11 @@ function createdomains(
 
     @info "Assembling MyelinDomain from subdomains"
     print("    Assemble subdomains   "); @time doassemble!.(myelinsubdomains, Ref(myelinprob))
-    print("    Factorize subdomains  "); @time factorize!.(getdomain.(myelinsubdomains))
-    print("    Assemble combined     "); @time combinedmyelindomain = MyelinDomain(PermeableInterfaceRegion(), myelinprob, myelinsubdomains)
-    print("    Factorize combined    "); @time factorize!(combinedmyelindomain)
-    myelindomains = [combinedmyelindomain]
+    print("    Factorize subdomains  "); @time factorize!.(myelinsubdomains)
+    print("    Assemble combined     "); @time myelindomains = [MyelinDomain(PermeableInterfaceRegion(), myelinprob, myelinsubdomains)]
+    print("    Factorize combined    "); @time factorize!.(myelindomains)
 
-    return (myelinprob = myelinprob,
-            myelinsubdomains = myelinsubdomains,
-            myelindomains = myelindomains)
+    return @ntuple(myelinprob, myelinsubdomains, myelindomains)
 end
 
 ####
@@ -425,6 +422,11 @@ calcsignal(sols, ts, myelindomains; kwargs...) = sum(calcsignals(sols, ts, myeli
 # ODEProblem constructor and solver for ParabolicDomain's and MyelinDomain's
 # ---------------------------------------------------------------------------- #
 
+const DEBUG_ODEPROBLEM = false
+@static if DEBUG_ODEPROBLEM
+    @eval using BenchmarkTools
+end
+
 # Create an `ODEProblem` from a `ParabolicDomain` representing either
 #   du/dt = (M\K)*u   [invertmass = true], or
 #   M*du/dt = K*u     [invertmass = false]
@@ -436,6 +438,14 @@ function OrdinaryDiffEq.ODEProblem(d::ParabolicDomain, u0, tspan; invertmass = t
 
     A = ParabolicLinearMap(d)
     f = ODEFunction(A)
+
+    if DEBUG_ODEPROBLEM
+        BlochTorreyUtils._reset_all_counters!()
+        @time display(@benchmark $f(du,u) setup = (u = copy($u0); du = similar(u)))
+        BlochTorreyUtils._display_counters()
+        BlochTorreyUtils._reset_all_counters!()
+    end
+
     return ODEProblem(f, u0, tspan)
 
     # f!(du,u,p,t) = mul!(du, p[1], u) # RHS action of ODE for general matrix A stored in p[1]
@@ -469,17 +479,17 @@ OrdinaryDiffEq.ODEProblem(m::MyelinDomain, u0, tspan; kwargs...) = ODEProblem(ge
 function solveblochtorrey(
         myelinprob::MyelinProblem, myelindomain::MyelinDomain, alg = default_algorithm(), args...;
         u0 = Vec{2}((0.0, 1.0)), # initial magnetization
+        uType::Type = typeof(u0), # Field type
         TE = 10e-3, # 10ms echotime
         TR = 1000e-3, # 1000ms repetition time
         nTE = 32, # 32 echoes by default
         nTR = 1, # 1 repetition by default
-        fliptimes = init_fliptimes(TE, TR, nTE, nTR), # flip times for callback
-        initpulse = (u0 isa Vec{3} ? π/2 : 0.0), # initial pulse
+        initpulse = (uType <: Vec{3} ? π/2 : 0.0), # initial pulse
         flipangle = π, # flipangle for MultiSpinEchoCallback
-        steadystate = (u0 isa Vec{3} ? u0[3] : nothing), # steady state value for z-component of magnetization
-        tspan = (zero(TE), nTE * TE + (nTR - 1) * TR), # time span for ode solution
-        callback = MultiSpinEchoCallback(typeof(u0), tspan;
-            TE = TE, TR = TR, nTE = nTE, nTR = nTR, fliptimes = fliptimes,
+        steadystate = (uType <: Vec{3} ? 1 : nothing), # steady state value for z-component of magnetization
+        tspan = (zero(TE), (nTR - 1) * TR + nTE * TE), # time span for ode solution
+        callback = MultiSpinEchoCallback(uType, tspan;
+            TE = TE, TR = TR, nTE = nTE, nTR = nTR,
             initpulse = initpulse, steadystate = steadystate, flipangle = float(flipangle)),
         reltol = 1e-8,
         abstol = 0.0,
@@ -487,12 +497,7 @@ function solveblochtorrey(
         kwargs...
     )
 
-    # Save solution every dt (an even divisor of TE) as well as every TR by default
-    ndt = round(Int, TE/dt)
-    @assert (TE ≈ ndt * dt) && (ndt >= 2) && iseven(ndt)
-    tstops = init_savetimes(2 * dt, TR, (ndt ÷ 2) * nTE, nTR)
-
-    if !(u0 isa Vec{3})
+    if !(uType <: Vec{3})
         # Restrictions for when only transverse magnetization is simulated:
         #   -initial pulse (i.e. rotation) cannot be applied
         #   -flip angle must be exactly π
@@ -504,18 +509,27 @@ function solveblochtorrey(
     
     # Initialize initial magnetization state (in M-space)
     U0 = interpolate(u0, myelindomain)
-    (u0 isa Vec{3}) && apply_pulse!(U0, initpulse, typeof(u0))
+    (uType <: Vec{3}) && apply_pulse!(U0, initpulse, uType)
 
-    # Our convention is that u₃ = M∞ - M₃. This convenience function shifts u0 from
+    # Our convention is that u₃ = M∞ - M₃. This convenience function shifts U0 from
     # M-space (i.e. [M₁, M₂, M₃]) to u-space (i.e. [u₁, u₂, u₃] = [M₁, M₂, M∞ - M₃])
-    (u0 isa Vec{3}) && shift_longitudinal!(U0, steadystate)
+    (uType <: Vec{3}) && shift_longitudinal!(U0, steadystate)
 
+    # Save solution every dt (an even divisor of TE) as well as every TR by default
+    tstops = multispinecho_savetimes(dt, TE, TR, nTE, nTR)
+
+    # Setup problem and solve
     prob = ODEProblem(myelindomain, U0, tspan)
     sol = solve(prob, alg, args...;
         dense = false, # don't save all intermediate time steps
         saveat = tstops, # timepoints to save solution at
         tstops = tstops, # ensure stopping at all tstops points
         dt = dt, reltol = reltol, abstol = abstol, callback = callback, kwargs...)
+    
+    if DEBUG_ODEPROBLEM
+        BlochTorreyUtils._display_counters()
+    end
+
     return sol
 end
 
@@ -550,7 +564,8 @@ function saveblochtorrey(::Type{uType}, grids::Vector{<:Grid}, sols::Vector{<:OD
     @assert !(filename == nothing)
     tostr(x::Int) = @sprintf("%4.4d", x)
 
-    # Create a paraview collection for each (grid, solution) pair
+    # Create a paraview collection for each (grid, solution) pair, saving for each pair
+    # a pvd collection with vtu files for each timepoint
     for i in 1:length(grids)
         vtk_filename_noext = DrWatson.savename(filename, Dict(:grid => i))
         paraview_collection(vtk_filename_noext) do pvd

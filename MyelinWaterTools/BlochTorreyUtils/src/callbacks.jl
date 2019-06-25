@@ -23,50 +23,35 @@ apply_pulse!(u::AbstractVector{uType}, α, ::Type{uType}) where {uType <: Vec} =
 apply_pulse!(u::AbstractVector{uType}, α) where {Tu, uType <: Vec{3,Tu}} = (R = pulsemat(Tu, α); u .= (x -> R ⋅ x).(u); return u)
 apply_pulse!(u::AbstractVector{uType}, α) where {uType <: Vec{2}} = (@assert α ≈ π; pi_pulse!(u); return u)
 
-# Flip times are equispaced pulses every TE starting at t = TE/2 until t = nTE * TE,
-# repeating every TR, with an additional pulse at multiple of t = TR, not including t = 0.
-# All pulses are shifted early by √eps() so that sampling the signal at e.g. t = TE/2
-# is guaranteed to be after the pulse; pulses are therefore contained in the closed interval
-# [TE/2 - √eps(), nTR * TR + nTE * TE - TE/2 - √eps()]
-function init_fliptimes(TE::T, TR::T, nTE::Int = 1, nTR::Int = 1) where {T}
+function multispinecho_savetimes(dt::T, TE::T, TR::T, nTE::Int, nTR::Int) where {T}
     @assert TR >= nTE * TE && nTE >= 1 && nTR >= 1
-    fliptimes = if TR ≈ nTE * TE
-        [TE/2 .+ TE .* (0 : round(Int, nTR * TR / TE) - 1);]
-    else
-        fliptimes = T[]
-        for n in 0:nTR-1
-            (n > 0) && push!(fliptimes, n*TR)
-            append!(fliptimes, n*TR .+ TE/2 .+ TE .* (0:nTE-1))
+    @assert (ndt = round(Int, TE/dt); (TE ≈ ndt * dt) && (ndt >= 2) && iseven(ndt))
+    savetimes = T[]
+    for n in 0:nTR-1
+        newsavetimes = n * TR : dt : min((n+1) * TR, (nTR-1) * TR + nTE * TE)
+        if (n < nTR-1) && (newsavetimes[end] ≈ (n+1) * TR)
+            newsavetimes = newsavetimes[1:end-1]
         end
-        fliptimes
+        append!(savetimes, newsavetimes)
     end
-    fliptimes .-= √eps(TE)
-    return fliptimes
+    return savetimes
 end
 
-function init_savetimes(TE::T, TR::T, nTE::Int = 1, nTR::Int = 1) where {T}
-    @assert TR >= nTE * TE && nTE >= 1 && nTR >= 1
-    if TR ≈ nTE * TE
-        [TE/2 .* (0 : round(Int, 2 * nTR * TR / TE));]
-    else
-        savetimes = T[]
-        for n in 0:nTR - 1
-            append!(savetimes, n*TR .+ TE/2 .* (0 : 2 * nTE))
-            (n < nTR - 1) && append!(savetimes, n*TR .+ TE/2 .* (2 * nTE + 1 : ceil(Int, 2 * TR / TE) - 1))
-        end
-        savetimes
-    end
-end
+"""
+    MultiSpinEchoCallback
 
-# NOTE: This constructor works and is more robust than the below version, but
-#       requires callbacks to be initialized, which Sundials doesn't support.
+Apply initial pulses with flip angle `initpulse` every TR, as well as `flipangle` pulses
+every TE starting every TR + TE/2 until TR + nTE * TE - TE/2.
+
+All pulses are shifted early, proportional to √eps(), to ensure that sampling the signal
+at e.g. t = TE/2 is guaranteed to be after the pulse.
+"""
 function MultiSpinEchoCallback(
         ::Type{uType}, tspan::NTuple{2,T};
         TE::T = tspan[2] - tspan[1], # default to single echo
         TR::T = tspan[2] - tspan[1], # default to immediate repetition
         nTE::Int = 1, # default to single echo
         nTR::Int = 1, # default to single rep
-        fliptimes::AbstractVector{T} = init_fliptimes(TE, TR, nTE, nTR), # default pulsetrain
         initpulse::T = T(π)/2, # init pulse flip angle (default none)
         flipangle::T = T(π), # multi-echo flip angle
         steadystate = 1, # steady state value for z-component of magnetization
@@ -75,26 +60,54 @@ function MultiSpinEchoCallback(
     ) where {T, uType <: FieldType}
 
     # Check parameters
-    @assert nTE >= 1 && nTR >= 1 && TR >= TE
+    @assert nTE >= 1 && nTR >= 1 && TR >= nTE * TE
     @assert tspan[1] ≈ 0 && (tspan[2] ≈ nTE * TE + (nTR - 1) * TR)
-    
+
+    # Initial pulse, repeating every TR
+    initpulse_fliptimes = [TR .* (1:nTR-1) .- √eps(TR);]
+    initpulse_callback  = EchoTrainCallback(uType, initpulse, initpulse_fliptimes, steadystate, verbose)
+
+    # Flip angle pulses, repeating nTE times every TE starting at TE/2, repeating every TR
+    flipangle_fliptimes = [[n*TR .+ TE/2 .+ TE .* (0:nTE-1) .- √eps(TE);] for n in 0:nTR-1]
+    flipangle_callbacks = CallbackSet((EchoTrainCallback(uType, flipangle, fliptimes, steadystate, verbose) for fliptimes in flipangle_fliptimes)...)
+
+    return CallbackSet(initpulse_callback, flipangle_callbacks)
+end
+
+"""
+    EchoTrainCallback
+
+Apply pulse with angle `flipangle` and time points `fliptimes`.
+Note that `fliptimes` cannot obtain t = tspan[1]; flipping of the
+initial state must be handled outside of this callback.
+"""
+function EchoTrainCallback(
+        ::Type{uType},
+        flipangle::T, # Flip angle
+        fliptimes::AbstractVector{T}, # Flip times
+        steadystate = 1, # Steady state value for z-component of magnetization
+        verbose = true, # Verbose printing
+        kwargs...
+    ) where {T, uType <: FieldType{T}}
+
+    # Collect tstops
     tstops = copy(collect(fliptimes))
-    isinitpulse = reduce(vcat, [true; falses(nTE)] for _ in 1:nTR-1; init = falses(nTE))
-    
-    @assert !isempty(tstops)
-    @assert !(tstops[1] ≈ 0) # Initial t=0 pulse must be handled outside this callback
+    if isempty(tstops)
+        return nothing
+    end
 
     # Return next pulse time/next pulse type
-    isinitpulse_choice() = isempty(isinitpulse) ? false : popfirst!(isinitpulse)
     time_choice(integrator) = isempty(tstops) ? typemax(T) : popfirst!(tstops)
     
     # Apply appropriate pulse
     function user_affect!(integrator)
-        α = isinitpulse_choice() ? initpulse : flipangle
-        verbose && println("$(round(rad2deg(α); digits=3)) degree pulse at t = $(round(1000*integrator.t; digits=3)) ms")
-        (uType <: Vec{3}) && shift_longitudinal!(integrator.u, steadystate) # convert from u-space to M-space
-        apply_pulse!(integrator.u, α, uType) # apply rotation in M-space
-        (uType <: Vec{3}) && shift_longitudinal!(integrator.u, steadystate) # convert back to u-space
+        if verbose
+            anglestr, timestr = @sprintf("%5.1f", rad2deg(flipangle)), @sprintf("%.1f ms", 1000 * integrator.t)
+            println("$anglestr degree pulse at t = $timestr")
+        end
+        (uType <: Vec{3}) && shift_longitudinal!(integrator.u, steadystate) # Convert from u-space to M-space
+        apply_pulse!(integrator.u, flipangle, uType) # Apply rotation in M-space
+        (uType <: Vec{3}) && shift_longitudinal!(integrator.u, steadystate) # Convert back to u-space
         return integrator
     end
 
@@ -102,57 +115,3 @@ function MultiSpinEchoCallback(
     callback = IterativeCallback(time_choice, user_affect!, T; initial_affect = false, kwargs...)
     return callback
 end
-
-# TODO: Update below alternative constructor
-# NOTE: This constructor works but is fragile, in particular `tstops` must be
-#       passed to `solve` to ensure that no pulses are missed; the above
-#       constructor should be preferred when not using Sundials
-
-# function MultiSpinEchoCallback(
-#         tspan::NTuple{2,T};
-#         TE::T = (tspan[2] - tspan[1]), # default to single echo
-#         verbose = true, # verbose printing
-#         kwargs...
-#     ) where {T}
-# 
-#     # Pulse times start at tspan[1] + TE/2 and repeat every TE
-#     tstops = collect(tspan[1] + TE/2 : TE : tspan[2])
-#     next_pulse() = isempty(tstops) ? typemax(T) : popfirst!(tstops) # next pulse time function
-#     next_pulse(integrator) = next_pulse() # next_pulse is integrator independent
-# 
-#     # Discrete condition
-#     tnext = Ref(typemin(T)) # initialize to -Inf
-#     function condition(u, t, integrator)
-#         # TODO this initialization hack is due to Sundials not supporting initializing callbacks
-#         # NOTE this can fail if the first time step is bigger than TE/2! need to set tstops in `solve` explicitly to be sure
-#         (tnext[] == typemin(T)) && (tnext[] = next_pulse(); add_tstop!(integrator, tnext[]))
-#         t == tnext[]
-#     end
-# 
-#     # # Discrete condition
-#     # tnext = Ref(next_pulse()) # initialize to tstops[1]
-#     # function condition(u, t, integrator)
-#     #     t == tnext[]
-#     # end
-# 
-#     # Apply π-pulse
-#     function apply_pulse!(integrator)
-#         verbose && println("π-pulse at t = $(1000*integrator.t) ms")
-#         pi_pulse!(integrator.u)
-#         return integrator
-#     end
-# 
-#     # Affect function
-#     function affect!(integrator)
-#         apply_pulse!(integrator)
-#         tnext[] = next_pulse()
-#         (tnext[] <= tspan[2]) && add_tstop!(integrator, tnext[])
-#         return integrator
-#     end
-# 
-#     # Create DiscreteCallback
-#     callback = DiscreteCallback(condition, affect!; kwargs...)
-# 
-#     # Return CallbackSet
-#     return callback
-# end

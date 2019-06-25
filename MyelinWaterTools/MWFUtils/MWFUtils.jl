@@ -18,8 +18,7 @@ import LsqFit
 import BlackBoxOptim
 
 export packcircles
-export creategeometry, loadgeometry
-export createdomains
+export creategeometry, loadgeometry, createdomains
 export calcomegas, calcomega
 export calcsignals, calcsignal
 export solveblochtorrey, saveblochtorrey, default_algorithm

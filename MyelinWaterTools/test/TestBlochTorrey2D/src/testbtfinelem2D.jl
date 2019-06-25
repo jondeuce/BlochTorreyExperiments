@@ -9,10 +9,10 @@ function testbtfinelem2D(opts::BlochTorreyParameters{T};
     a, b = Domain
     bdry = Rectangle(Vec{2,T}((a,a)), Vec{2,T}((b,b)))
     outercircles = [Circle{2,T}(zero(Vec{2,T}), Router)]
-    exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry =
+    @unpack exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry =
         creategeometry(PeriodicPackedFibres(), opts; outercircles = outercircles, bdry = bdry, RESOLUTION = Resolution)
 
-    myelinprob, myelinsubdomains, myelindomains = createdomains(opts, exteriorgrids, torigrids, interiorgrids, outercircles, innercircles)
+    @unpack myelinprob, myelinsubdomains, myelindomains = createdomains(opts, exteriorgrids, torigrids, interiorgrids, outercircles, innercircles)
     omega = calcomega(myelinprob, myelinsubdomains)
 
     solve(ms) = solveblochtorrey(myelinprob, ms;

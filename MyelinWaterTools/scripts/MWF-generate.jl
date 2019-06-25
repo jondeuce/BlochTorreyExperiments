@@ -98,10 +98,10 @@ const geometries = copy_and_load_geomfiles(geomfiles);
 const default_TE = 10e-3; # Echotime
 const default_TR = 1000e-3; # Repetition time
 const default_nTE = 32; # Number of echoes
-const default_nTR = 2; # Number of repetitions
+const default_nTR = 1; # Number of repetitions
 const default_tspan = (0.0, default_nTE * default_TE + (default_nTR - 1) * default_TR); # timespan
 const default_solverparams_dict = Dict(
-    :u0        => Vec{3}((0.0, 0.0, 1.0)), # Initial magnetization; should be [0,1] for 2D (π/2 pulse) or [0,0,1] for 3D (steady-state)
+    :u0        => 1.0im,                   # Initial magnetization; should be [0,1] for 2D (π/2 pulse) or [0,0,1] for 3D (steady-state)
     :flipangle => Float64(π),              # Flip angle for MultiSpinEchoCallback
     :TE        => default_TE,              # Echotime for MultiSpinEchoCallback (Default: 10e-3)
     :TR        => default_TR,              # Repetition time for MultiSpinEchoCallback (Default: 1000e-3)
@@ -154,11 +154,12 @@ acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
 
 const sweepparamsampler_settings = Dict{Symbol,Any}(
     :theta  => (sampler = :acossampler,   args = (lb = 0.0,     ub = 90.0)),
-    :alpha  => (sampler = :linearsampler, args = (lb = 140.0,   ub = 180.0)),
-    :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 1.0)),
+    :alpha  => (sampler = :linearsampler, args = (lb = 180.0,   ub = 180.0)),
+    :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 10.0)),
     :Dtiss  => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 500.0)),
     :Dmye   => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 500.0)),
     :Dax    => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 500.0)),
+    :FRD    => (sampler = :linearsampler, args = (lb = 0.0,     ub = 0.5)),
     :TE     => (sampler = :linearsampler, args = (lb = 5e-3,    ub = 15e-3)),
     :TR     => (sampler = :linearsampler, args = (lb = 800e-3,  ub = 1200e-3)),
     :nTE    => (sampler = :rangesampler,  args = (lb = 24,      ub = 48)),
@@ -198,10 +199,10 @@ function runsolve(btparams, sweepparams, geom)
     solverparams_dict[:flipangle] = deg2rad(sweepparams[:alpha])
 
     # Unpack geometry, create myelin domains, and create omegafield
-    exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
+    @unpack exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
     ferritins = Vec{3,floattype(bdry)}[]
     
-    myelinprob, myelinsubdomains, myelindomains = createdomains(btparams,
+    @unpack myelinprob, myelinsubdomains, myelindomains = createdomains(btparams,
         exteriorgrids, torigrids, interiorgrids,
         outercircles, innercircles, ferritins, typeof(solverparams_dict[:u0]))
     
@@ -212,7 +213,7 @@ function runsolve(btparams, sweepparams, geom)
 end
 
 function runsimulation!(results, sweepparams, geom)
-    @unpack alpha, theta, K, Dtiss, Dmye, Dax, TE, TR, nTE, nTR, T2sp, T2lp, T2tiss, T1sp, T1lp, T1tiss = sweepparams
+    @unpack alpha, theta, K, Dtiss, Dmye, Dax, FRD, TE, TR, nTE, nTR, T2sp, T2lp, T2tiss, T1sp, T1lp, T1tiss = sweepparams
     density = intersect_area(geom.outercircles, geom.bdry) / area(geom.bdry)
     gratio = radius(geom.innercircles[1]) / radius(geom.outercircles[1])
 
@@ -222,6 +223,7 @@ function runsimulation!(results, sweepparams, geom)
         D_Tissue = Dtiss,
         D_Sheath = Dmye,
         D_Axon = Dax,
+        FRD_Sheath = FRD_Sheath,
         R2_sp = inv(T2sp),
         R2_lp = inv(T2lp),
         R2_Tissue = inv(T2tiss),
