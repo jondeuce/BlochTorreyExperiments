@@ -163,7 +163,7 @@ const sweepparamsampler_settings = Dict{Symbol,Any}(
     :TE     => (sampler = :linearsampler, args = (lb = 5e-3,    ub = 15e-3)),
     :TR     => (sampler = :linearsampler, args = (lb = 800e-3,  ub = 1200e-3)),
     :nTE    => (sampler = :rangesampler,  args = (lb = 24,      ub = 48)),
-    :nTR    => (sampler = :rangesampler,  args = (lb = 2,       ub = 2)),
+    :nTR    => (sampler = :rangesampler,  args = (lb = 1,       ub = 1)),
     :T2sp   => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 20e-3)),
     :T2lp   => (sampler = :linearsampler, args = (lb = 50e-3,   ub = 80e-3)),
     :T2tiss => (sampler = :linearsampler, args = (lb = 50e-3,   ub = 80e-3)),
