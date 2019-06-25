@@ -423,9 +423,6 @@ calcsignal(sols, ts, myelindomains; kwargs...) = sum(calcsignals(sols, ts, myeli
 # ---------------------------------------------------------------------------- #
 
 const DEBUG_ODEPROBLEM = false
-@static if DEBUG_ODEPROBLEM
-    @eval using BenchmarkTools
-end
 
 # Create an `ODEProblem` from a `ParabolicDomain` representing either
 #   du/dt = (M\K)*u   [invertmass = true], or
