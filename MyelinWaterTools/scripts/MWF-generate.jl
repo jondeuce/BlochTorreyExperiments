@@ -432,7 +432,7 @@ end
 #### Run sweep
 ####
 
-results = main(iters = 1)
+results = main()
 @unpack sweepparams, btparams, solverparams_dict, tpoints, signals, mwfvalues = results;
 @unpack sols, myelinprob, myelinsubdomains, myelindomains = results; #TODO
 btparams_dict = Dict.(btparams);
