@@ -387,7 +387,7 @@ function createdomains(
     print("    Factorize subdomains  "); @time factorize!.(myelinsubdomains)
     print("    Assemble combined     "); @time myelindomains = [MyelinDomain(PermeableInterfaceRegion(), myelinprob, myelinsubdomains)]
     print("    Factorize combined    "); @time factorize!.(myelindomains)
-
+    
     return @ntuple(myelinprob, myelinsubdomains, myelindomains)
 end
 
@@ -513,7 +513,7 @@ function solveblochtorrey(
     (uType <: Vec{3}) && shift_longitudinal!(U0, steadystate)
 
     # Save solution every dt (an even divisor of TE) as well as every TR by default
-    tstops = multispinecho_savetimes(dt, TE, TR, nTE, nTR)
+    tstops = multispinecho_savetimes(tspan, dt, TE, TR, nTE, nTR)
 
     # Setup problem and solve
     prob = ODEProblem(myelindomain, U0, tspan)
@@ -567,7 +567,7 @@ function saveblochtorrey(::Type{uType}, grids::Vector{<:Grid}, sols::Vector{<:OD
         vtk_filename_noext = DrWatson.savename(filename, Dict(:grid => i))
         paraview_collection(vtk_filename_noext) do pvd
             for (it,t) in enumerate(timepoints)
-                vtk_grid_filename = DrWatson.savename(vtk_filename_noext, Dict(:time => it))
+                vtk_grid_filename = DrWatson.savename(vtk_filename_noext, Dict(:time => it-1))
                 vtk_grid(vtk_grid_filename, grids[i]) do vtk
                     u = copy(reinterpret(uType, sols[i](t)))
                     Mt = transverse.(u)

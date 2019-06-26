@@ -24,16 +24,28 @@ apply_pulse!(u::AbstractVector{uType}, α) where {Tu, uType <: Vec{3,Tu}} = (R =
 apply_pulse!(u::AbstractVector{uType}, α) where {uType <: Vec{2}} = (@assert α ≈ π; pi_pulse!(u); return u)
 
 function multispinecho_savetimes(dt::T, TE::T, TR::T, nTE::Int, nTR::Int) where {T}
+    ndt_TE = round(Int, TE/dt)
+    @assert TE ≈ ndt_TE * dt && ndt_TE >= 2 && iseven(ndt_TE)
     @assert TR >= nTE * TE && nTE >= 1 && nTR >= 1
-    @assert (ndt = round(Int, TE/dt); (TE ≈ ndt * dt) && (ndt >= 2) && iseven(ndt))
+    
+    ndt_TR = round(Int, TR/dt)
+    !(ndt_TR * dt ≈ TR) && (ndt_TR * dt > TR) && (ndt_TR -= 1)
+
     savetimes = T[]
     for n in 0:nTR-1
-        newsavetimes = n * TR : dt : min((n+1) * TR, (nTR-1) * TR + nTE * TE)
-        if (n < nTR-1) && (newsavetimes[end] ≈ (n+1) * TR)
-            newsavetimes = newsavetimes[1:end-1]
-        end
+        newsavetimes = n * TR .+ dt .* (0 : min(ndt_TR, (nTR-1-n) * ndt_TR + nTE * ndt_TE))
+        (n < nTR-1) && (newsavetimes[end] ≈ (n+1) * TR) && pop!(newsavetimes) # will be added next iteration
         append!(savetimes, newsavetimes)
     end
+    savetimes[1]   = max(savetimes[1], zero(T)) # Enforce initial point
+    savetimes[end] = min(savetimes[end], nTE * TE + (nTR-1) * TR) # Enforce final point
+
+    return savetimes
+end
+function multispinecho_savetimes(tspan::NTuple{2,T}, dt::T, TE::T, TR::T, nTE::Int, nTR::Int) where {T}
+    savetimes = multispinecho_savetimes(dt, TE, TR, nTE, nTR)
+    savetimes[1] = tspan[1] # Enforce initial point
+    savetimes[end] = tspan[2] # Enforce final point
     return savetimes
 end
 

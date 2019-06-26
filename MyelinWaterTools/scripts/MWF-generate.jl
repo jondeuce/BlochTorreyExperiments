@@ -123,7 +123,7 @@ const default_nnlsparams_dict = Dict(
     :PlotDist    => false);          # Plot resulting distribution in MATLAB
 
 const default_mwfmodels = [
-    NNLSRegression(;default_nnlsparams_dict...),
+    # NNLSRegression(;default_nnlsparams_dict...), #TODO
     TwoPoolMagnToMagn(TE = default_TE, nTE = default_nTE, fitmethod = :local),
     ThreePoolMagnToMagn(TE = default_TE, nTE = default_nTE, fitmethod = :local),
     ThreePoolCplxToMagn(TE = default_TE, nTE = default_nTE, fitmethod = :local),
@@ -209,7 +209,7 @@ function runsolve(btparams, sweepparams, geom)
     # Solve Bloch-Torrey equation and plot
     sols = solveblochtorrey(myelinprob, myelindomains; solverparams_dict...)
     
-    return @ntuple(sols, myelinprob, myelinsubdomains, myelindomains)
+    return @ntuple(sols, myelinprob, myelinsubdomains, myelindomains, solverparams_dict)
 end
 
 function runsimulation!(results, sweepparams, geom)
@@ -233,12 +233,11 @@ function runsimulation!(results, sweepparams, geom)
         AxonPDensity = density,
         g_ratio = gratio,
     )
-    sols, myelinprob, myelinsubdomains, myelindomains = runsolve(btparams, sweepparams, geom)
+    sols, myelinprob, myelinsubdomains, myelindomains, solverparams_dict = runsolve(btparams, sweepparams, geom)
     
     # Sample solution signals, ensuring that each sample is taken after the pulse occurs
     dt = TE/4 # TODO
-    tpoints = reduce(vcat, n * TR .+ (0 : dt : TR) for n in 0:nTR-2; init = typeof(dt)[])
-    tpoints = append!(tpoints, (nTR-1) * TR .+ (0 : dt : nTE * TE)) |> sort! |> unique!
+    tpoints = multispinecho_savetimes(sols[1].prob.tspan, dt, TE, TR, nTE, nTR)
     signals = calcsignal(sols, tpoints, myelindomains)
 
     # Common filename without suffix
@@ -260,6 +259,7 @@ function runsimulation!(results, sweepparams, geom)
 
     # Update results struct and return
     push!(results[:btparams], btparams)
+    push!(results[:solverparams_dict], solverparams_dict)
     push!(results[:sweepparams], sweepparams)
     push!(results[:tpoints], tpoints)
     push!(results[:signals], signals)
@@ -274,20 +274,21 @@ function runsimulation!(results, sweepparams, geom)
         btparams_dict = Dict(btparams)
         DrWatson.@tagsave(
             "measurables/" * fname * ".measurables.bson",
-            deepcopy(@dict(btparams_dict, sweepparams, tpoints, signals, mwfvalues)),
+            deepcopy(@dict(btparams_dict, solverparams_dict, sweepparams, tpoints, signals, mwfvalues)),
             true, gitdir())
     catch e
         @warn "Error saving measurables"
         @warn sprint(showerror, e, catch_backtrace())
     end
 
-    # # Save solution as vtk file
-    # try
-    #     saveblochtorrey(myelindomains, sols; timepoints = tpoints, filename = "vtk/" * curr_time)
-    # catch e
-    #     @warn "Error saving solution to vtk file"
-    #     @warn sprint(showerror, e, catch_backtrace())
-    # end
+    # Save solution as vtk file
+    try
+        vtkfilepath = mkpath(joinpath("vtk/", fname))
+        saveblochtorrey(myelindomains, sols; timepoints = tpoints, filename = joinpath(vtkfilepath, "vtksolution"))
+    catch e
+        @warn "Error saving solution to vtk file"
+        @warn sprint(showerror, e, catch_backtrace())
+    end
 
     try
         mxplotmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
@@ -335,17 +336,17 @@ function runsimulation!(results, sweepparams, geom)
         @warn sprint(showerror, e, catch_backtrace())
     end
     
-    try
-        mxplotlongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-            titlestr = "Longitudinal (" * titleparamstr * ")",
-            fname = "long/" * fname * ".longitudinal")
-        # mxgiflongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-        #     titlestr = "Longitudinal (" * titleparamstr * ")", totaltime = (2*nTR-1) * 10.0,
-        #     fname = "long/" * fname * ".longitudinal.gif")
-    catch e
-        @warn "Error plotting longitudinal magnetization"
-        @warn sprint(showerror, e, catch_backtrace())
-    end
+    # try
+    #     mxplotlongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+    #         titlestr = "Longitudinal (" * titleparamstr * ")",
+    #         fname = "long/" * fname * ".longitudinal")
+    #     # mxgiflongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+    #     #     titlestr = "Longitudinal (" * titleparamstr * ")", totaltime = (2*nTR-1) * 10.0,
+    #     #     fname = "long/" * fname * ".longitudinal.gif")
+    # catch e
+    #     @warn "Error plotting longitudinal magnetization"
+    #     @warn sprint(showerror, e, catch_backtrace())
+    # end
     
     try
         nnlsindex = findfirst(m->m isa NNLSRegression, mwfmodels)
@@ -386,6 +387,7 @@ function main(;iters::Int = typemax(Int))
     results = Dict{Symbol,Any}(
         :sweepparams        => [],
         :btparams           => [],
+        :solverparams_dict  => [],
         :tpoints            => [],
         :signals            => [],
         :sols               => [], #TODO
@@ -430,8 +432,9 @@ end
 #### Run sweep
 ####
 
-results = main(); #iters = 25 TODO
-@unpack sweepparams, btparams, tpoints, signals, mwfvalues = results;
+results = main(iters = 1)
+@unpack sweepparams, btparams, solverparams_dict, tpoints, signals, mwfvalues = results;
+@unpack sols, myelinprob, myelinsubdomains, myelindomains = results; #TODO
 btparams_dict = Dict.(btparams);
 
 ####
