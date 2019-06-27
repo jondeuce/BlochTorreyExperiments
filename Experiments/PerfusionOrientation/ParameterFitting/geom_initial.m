@@ -26,14 +26,14 @@ switch upper(OptVariables)
         Geom = Geometry.CylindricalVesselFilledVoxel( GeomNameValueArgs{:} );
         
         % Generate new initial guesses and bounds via empirical models
-        getRmajor0 = @(aBVF) sqrt( prod(VoxelSize) * aBVF / ( Nmajor * pi * rayBoxIntersectionLength( VoxelCenter(:), [sind(MajorAngle); 0; cosd(MajorAngle)], VoxelSize(:), VoxelCenter(:) ) ) );
+        getRmajor0 = @(aBVF) sqrt( prod(GeomArgs.VoxelSize) * aBVF / ( GeomArgs.Nmajor * pi * rayBoxIntersectionLength( GeomArgs.VoxelCenter(:), [sind(GeomArgs.MajorAngle); 0; cosd(GeomArgs.MajorAngle)], GeomArgs.VoxelSize(:), GeomArgs.VoxelCenter(:) ) ) );
         getSpaceFactor0 = @(iBVF) (Geom.iBVF/iBVF)^(1/2.3); % empirical model: iBVF = iBVF_max * SpaceFactor^(-2.3)
         
         lb_old = lb;
         x0_old = x0;
         ub_old = ub;
         lb = [lb_old(1), getRmajor0(lb_old(3)), getSpaceFactor0(ub_old(2))];
-        x0 = [x0_old(1), getRmajor0(aBVF0),     getSpaceFactor0(iBVF0)];
+        x0 = [x0_old(1), getRmajor0(x0_old(3)), getSpaceFactor0(x0_old(2))];
         ub = [ub_old(1), getRmajor0(ub_old(3)), getSpaceFactor0(lb_old(2))];
         
     otherwise

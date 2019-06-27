@@ -170,13 +170,13 @@ miso_settings = {   ...
     miso_filename   };  % Filename for saving miso results, string (default: '')
 
 % MISO initialization function
-miso_initfun = @(x) struct( ...,
-    'xlow', lb,             ... % variable lower bounds
-    'xup ', ub,             ... % variable upper bounds
-    'dim', 3,               ... % problem dimesnion
-    'integer', [],          ... % indices of integer variables
-    'continuous', [1,2,3],  ... % indices of continuous variables
-    'objfunction', @(x) miso_call_fun(objfun, x) ); % wrapped objective function
+miso_initfun = @() struct(      ...,
+    'xlow',         lb,         ... % variable lower bounds
+    'xup',          ub,         ... % variable upper bounds
+    'dim',          3,          ... % problem dimesnion
+    'integer',      [],         ... % indices of integer variables
+    'continuous',   [1,2,3],    ... % indices of continuous variables
+    'objfunction',  @(x) miso_call_fun(objfun, x) ); % wrapped objective function
 
 % Call `miso` optimization routine
 [xbest, fbest, sol] = miso(miso_initfun, miso_settings{:});
