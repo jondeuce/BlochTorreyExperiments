@@ -1,6 +1,6 @@
-function [dR2, ResultsStruct] = perforientation_fun(params, xdata, dR2_Data, varargin)
-%[dR2, ResultsStruct] = PERFORIENTATION_FUN(params, xdata, dR2_Data, varargin)
-% Calculates the perfusion curve dR2(*) vs. angle. dR2 is [1xNumAngles].
+function [ dR2, ResultsStruct ] = perforientation_fun( params, xdata, dR2_Data, varargin )
+%[ dR2, ResultsStruct ] = PERFORIENTATION_FUN(params, xdata, dR2_Data, varargin)
+% Calculates the perfusion curve dR2(*) vs. angle. dR2 is [1 x NumAngles].
 
 if nargin == 1
     % all arguments are given in a single struct

@@ -1,4 +1,4 @@
-%PERFORIENTATION_FMINCON
+%PERFORIENTATION_MISO
 
 %Save current repository information
 saverepostatus('BlochTorreyExperiments-temp1')
@@ -32,20 +32,10 @@ alpha_range = [2.5, 12.5, 22.5, 32.5, 47.5, 57.5, 67.5, 77.5, 87.5];
 
 % =============================== DATA ================================== %
 
-% % ---- GRE w/ Diffusion Initial Guess (large minor) ---- %
-% lb  = [ 4.000,          1.0000/100,         0.8000/100 ];
-% CA0 =   6.230;  iBVF0 = 2.2999/100; aBVF0 = 1.1601/100;
-% ub  = [ 8.000,          3.5000/100,         1.5000/100 ];
-
 % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
-lb  = [ 3.0000,          1.0000/100,         0.5000/100 ];
+lb  = [ 3.0000,          0.7000/100,         0.5000/100 ];
 CA0 =   4.9065;  iBVF0 = 1.2293/100; aBVF0 = 0.7527/100;
-ub  = [ 6.0000,          2.0000/100,         1.5000/100 ];
-
-% % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
-% lb  = [ 3.5000,          1.0000/100,         0.6000/100 ];
-% CA0 =   4.3226;  iBVF0 = 1.2279/100; aBVF0 = 0.7951/100;
-% ub  = [ 5.5000,          1.5000/100,         1.1000/100 ];
+ub  = [ 7.0000,          2.0000/100,         1.5000/100 ];
 
 x0 = [CA0, iBVF0, aBVF0];
 
@@ -66,31 +56,32 @@ Weights = Weights / sum(vec(Weights));
 % 
 % type = 'SE';
 % [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize] = get_SE_data(alpha_range);
-% 
-% % TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512,512,512];
+% TE = 60e-3; VoxelSize = [3000,3000,3000]; VoxelCenter = [0,0,0]; GridSize = [512,512,512];
+% Weights = ones(size(alpha_range));
+% Weights = Weights / sum(vec(Weights));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 8;
+Nmajor = 4;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
 % Rminor_sig = 2.1;
-Rmedium_thresh = 0.0;
+Rmedium_thresh = Inf;
 
 % ---- With Diffusion ---- %
-% D_Tissue = 2000; %[um^2/s]
-% D_Blood = []; %[um^2/s]
-% D_VRS = []; %[um^2/s]
-% MaskType = '';
+D_Tissue = 3000; %[um^2/s]
+D_Blood = []; %[um^2/s]
+D_VRS = []; %[um^2/s]
+MaskType = '';
 
-D_Tissue = 1500; %[um^2/s]
-D_Blood = 3037; %[um^2/s]
-D_VRS = 3037; %[um^2/s]
-% MaskType = 'Vasculature'; % only true in Vasc.
-% MaskType = 'PVS'; % only true in PVS
-% MaskType = 'PVSOrVasculature'; % true in PVS or Vasc. (don't think this is ever useful?)
-MaskType = 'PVSAndVasculature'; % 2 in PVS, 1 in Vasc., 0 else ("trinary" mask)
+% D_Tissue = 1500; %[um^2/s]
+% D_Blood = 3037; %[um^2/s]
+% D_VRS = 3037; %[um^2/s]
+% % MaskType = 'Vasculature'; % only true in Vasc.
+% % MaskType = 'PVS'; % only true in PVS
+% % MaskType = 'PVSOrVasculature'; % true in PVS or Vasc. (don't think this is ever useful?)
+% MaskType = 'PVSAndVasculature'; % 2 in PVS, 1 in Vasc., 0 else ("trinary" mask)
 
 % Nsteps = 8;
 % StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
@@ -129,11 +120,11 @@ SaveResults = true;
 
 % ============================= GEOMETRY ================================ %
 
-% OptVariables = 'CA_iBVF_aBVF';
 OptVariables = 'CA_Rmajor_MinorExpansion';
 
-% Fixed Geometry Arguments
-GeomArgs = struct( ...% 'iBVF', iBVF, 'aBVF', aBVF, ... % these are set below
+% Generate initial geometry
+[ Geom, GeomArgs, x0, lb, ub ] = geom_initial( struct, OptVariables, x0, lb, ub, ...
+    ... % 'iBVF', iBVF, 'aBVF', aBVF, ... % Set inside
     'VoxelSize', VoxelSize, 'GridSize', GridSize, 'VoxelCenter', VoxelCenter, ...
     'Nmajor', Nmajor, 'MajorAngle', MajorAngle, ......
     'NumMajorArteries', NumMajorArteries, 'MinorArterialFrac', MinorArterialFrac, ...
@@ -144,57 +135,15 @@ GeomArgs = struct( ...% 'iBVF', iBVF, 'aBVF', aBVF, ... % these are set below
     'ImproveMajorBVF', true, 'ImproveMinorBVF', true, ...
     'PopulateIdx', true, 'seed', seed );
 
-% Generate initial guess and geometry
-switch upper(OptVariables)
-    case 'CA_IBVF_ABVF'
-        Geom = []; % Geom is created inside perforientation_fun
-    case 'CA_RMAJOR_MINOREXPANSION'
-        GeomArgs.ImproveMajorBVF = true;
-        GeomArgs.ImproveMinorBVF = true;
-        
-        % Generate geometry for contraction
-        GeomArgs.iBVF = ub(2);
-        GeomArgs.aBVF = ub(3);
-        GeomNameValueArgs = struct2arglist(GeomArgs);
-        Geom = Geometry.CylindricalVesselFilledVoxel( GeomNameValueArgs{:} );
-        
-        % Generate new initial guesses and bounds
-        getRmajor0 = @(aBVF) sqrt( prod(VoxelSize) * aBVF / ( Nmajor * pi * rayBoxIntersectionLength( VoxelCenter(:), [sind(MajorAngle); 0; cosd(MajorAngle)], VoxelSize(:), VoxelCenter(:) ) ) );
-        getSpaceFactor0 = @(iBVF) (Geom.iBVF/iBVF)^(1/2.3); % empirical model: iBVF = iBVF_max * SpaceFactor^(-2.3)
-        
-        lb_old = lb;
-        ub_old = ub;
-        lb = [lb_old(1), getRmajor0(lb_old(3)), getSpaceFactor0(ub_old(2))];
-        x0 = [x0(1),     getRmajor0(aBVF0),     getSpaceFactor0(iBVF0)];
-        ub = [ub_old(1), getRmajor0(ub_old(3)), getSpaceFactor0(lb_old(2))];
-        
-    otherwise
-        error('''OptVariables'' must be ''CA_iBVF_aBVF'' or ''CA_Rmajor_MinorExpansion''');
-end
-
 % =========================== OPTIMIZATION ============================== %
+
+% Call diary before the optimization starts
+if ~isempty(DiaryFilename); diary(DiaryFilename); end
 
 % Norm function type for the weighted residual (see PERFORIENTATION_OBJFUN)
 Normfun = 'AICc';
 
-% Limiting factor will always be MaxIter or MaxFunEvals, as due to
-% simulation randomness, TolX/TolFun tend to not be reliable measures of 
-% goodness of fit
-OptOpts = optimoptions('fmincon', ...
-    'MaxFunEvals', 100, ...
-    'Algorithm', 'sqp', ... % trust-region-reflective', ...
-    'MaxIter', 100, ...
-    'TolX', 1e-12, ...
-    'TolFun', 1e-12, ...
-    'TypicalX', x0, ...
-    'FinDiffRelStep', [0.05, 0.05, 0.05], ...
-    'Display', 'iter' ...
-    );
-
-% Call diary before the minimization starts
-if ~isempty(DiaryFilename); diary(DiaryFilename); end
-
-% Simulation function handle
+% Objective function handle
 objfun = @(x) perforientation_objfun(x, alpha_range, dR2_Data, [], Weights, Normfun, ...
     TE, Nsteps, type, B0, D_Tissue, D_Blood, D_VRS, ...
     'OptVariables', OptVariables, ...
@@ -204,19 +153,43 @@ objfun = @(x) perforientation_objfun(x, alpha_range, dR2_Data, [], Weights, Norm
     'SaveResults', SaveResults, 'DiaryFilename', DiaryFilename, ...
     'GeomArgs', GeomArgs, 'Geom', Geom, 'RotateGeom', RotateGeom);
 
-% Call `fmincon` optimization routine
-[x, fval, exitflag, output, lambda, grad, hessian] = ...
-    fmincon(objfun, x0, [], [], [], [], lb, ub, [], OptOpts);
+% Perturb randomly by a fraction of the range to obtain array of x0 points
+dx0 = ub - lb;
+x0_new = @() x0 + 0.05 .* dx0 .* (2 .* rand(size(x0)) - 1);
+x0_matrix = [x0; x0_new(); x0_new(); x0_new()];
 
-Params0 = struct('OptVariables', OptVariables,...
-    'CA0', CA0, 'iBVF0', iBVF0, 'aBVF0', aBVF0,...
-    'x0', x0, 'lb', lb, 'ub', ub);
+% MISO optimization settings
+miso_filename = [datestr(now, 30), '__MISOOptimizer.mat'];
+miso_settings = {   ...
+    [],             ... % Max iterations, integer (default: 50 * dimensions)
+    'rbf_c',        ... % RBF surrogate type, string (default: 'rbf_c', cubic RBFs)
+    [],             ... % Num. initial points, integer (default: 2 * (dimensions + 1))
+    'own',          ... % Initial design, string (default: 'slhd')
+    'cptvl',        ... % Sample strategy, string (default: 'cptvl')
+    x0_matrix,      ... % Partial or complete initial points, matrix (default: [])
+    miso_filename   };  % Filename for saving miso results, string (default: '')
+
+% MISO initialization function
+miso_initfun = @(x) struct( ...,
+    'xlow', lb,             ... % variable lower bounds
+    'xup ', ub,             ... % variable upper bounds
+    'dim', 3,               ... % problem dimesnion
+    'integer', [],          ... % indices of integer variables
+    'continuous', [1,2,3],  ... % indices of continuous variables
+    'objfunction', @(x) miso_call_fun(objfun, x) ); % wrapped objective function
+
+% Call `miso` optimization routine
+[xbest, fbest, sol] = miso(miso_initfun, miso_settings{:});
+
+% Save initial parameters
+Params0 = struct('OptVariables', OptVariables, 'MISOSettings', miso_settings, ...
+    'CA0', CA0, 'iBVF0', iBVF0, 'aBVF0', aBVF0, 'x0', x0, 'lb', lb, 'ub', ub);
 
 if ~isempty(DiaryFilename); diary(DiaryFilename); diary('off'); end
 
 % =========== Generate text file of best simulation results ============= %
 
-fout = fopen([datestr(now,30),'__','FminconIterationsOutput.txt'], 'w');
+fout = fopen([datestr(now,30),'__','MISOIterationsOutput.txt'], 'w');
 iter = 1;
 Norm_best = Inf;
 R2w_best = -Inf;
@@ -239,20 +212,15 @@ end
 fclose(fout);
 clear fout iter Results f R2w
 
-% Save resulting workspace
-if ~isempty(Geom)
-    % Clear anonymous functions which close over `Geom` for saving
-    clear objfun getRmajor0 getSpaceFactor0
-    
-    % Compress `Geom` for saving
-    Geom = Compress(Geom);
-end
-save([datestr(now,30),'__','FminconResults'], '-v7');
+% ====================== Save resulting workspace ======================= %
+% Clear anonymous functions which close over `Geom` and compress `Geom` for saving
+clear objfun miso_initfun getRmajor0 getSpaceFactor0
+if ~isempty(Geom); Geom = Compress(Geom); end
+save([datestr(now,30),'__','MISOResults'], '-v7');
 
+% ====== Code for regenerating figures/MISOIterationsOutput file ===== %
 
-% ====== Code for regenerating figures/FminconIterationsOutput file ===== %
-
-% fout = fopen([datestr(now,30),'__','FminconIterationsOutput.txt'], 'w');
+% fout = fopen([datestr(now,30),'__','MISOIterationsOutput.txt'], 'w');
 % iter = 1;
 % Norm_best = Inf;
 % fprintf(fout, '%s', 'Timestamp       f-count            f(x)       Best f(x)');

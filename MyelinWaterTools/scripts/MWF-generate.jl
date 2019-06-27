@@ -8,7 +8,7 @@ using StatsPlots
 pyplot(size=(1200,900))
 using GlobalUtils
 using MWFUtils
-mxcall(:cd, 0, pwd()) # change MATLAB path to current path for saving outputs
+mxcall(:cd, 0, pwd()) # Set MATLAB path (Note: pwd(), not @__DIR__)
 const SIM_START_TIME = MWFUtils.getnow()
 
 # Create reproduce file
