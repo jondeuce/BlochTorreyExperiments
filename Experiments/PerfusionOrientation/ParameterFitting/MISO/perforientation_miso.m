@@ -10,13 +10,10 @@ copyfile(currentscript,backupscript);
 
 %Save diary of workspace
 DiaryFilename = [datestr(now,30), '__', 'diary.txt'];
-% DiaryFilename = '';
-if ~isempty(DiaryFilename)
-    diary(DiaryFilename);
-else
-    display_text('WARNING: Not recording prompt output to diary', 75, '=', true, [true,true]);
-    input('[Press enter to continue...]\n\n')
-end
+
+%Prompts to self
+% display_text('WARNING: Set branch to temp1; geometry size to 350^3; initial guesses; minor vessel sizes', 75, '=', true, [true,true]);
+% input('[Press enter to continue...]\n\n')
 
 % ---- Angles to simulate ---- %
 % alpha_range = [2.5, 47.5, 87.5];
@@ -34,13 +31,14 @@ alpha_range = [2.5, 12.5, 22.5, 32.5, 47.5, 57.5, 67.5, 77.5, 87.5];
 
 % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
 lb  = [ 3.0000,          0.7000/100,         0.5000/100 ];
-CA0 =   4.9065;  iBVF0 = 1.2293/100; aBVF0 = 0.7527/100;
+CA0 =   5.0000;  iBVF0 = 1.2000/100; aBVF0 = 0.8000/100;
 ub  = [ 7.0000,          2.0000/100,         1.5000/100 ];
 
 x0 = [CA0, iBVF0, aBVF0];
 
 type = 'GRE';
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize, BinCounts] = get_GRE_data(alpha_range);
+% TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [150,150,150];
 TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
 % TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [500,500,500];
 % TE = 40e-3; VoxelSize = [1750,1750,4000]; VoxelCenter = [0,0,0]; GridSize = [350,350,800];
@@ -62,26 +60,26 @@ Weights = Weights / sum(vec(Weights));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 4;
-Rminor_mu = 7.0;
+Nmajor = 1:9;
+Rminor_mu = 6.0; % Mean vessel size from Shen et al. (MRM 2012 https://onlinelibrary.wiley.com/doi/full/10.1002/mrm.24258)
 Rminor_sig = 0.0;
-% Rminor_mu = 13.7;
+% Rminor_mu = 13.7; % Jochimsen et al. (Neuroimage 2010 https://www.sciencedirect.com/science/article/pii/S1053811910002053)
 % Rminor_sig = 2.1;
 Rmedium_thresh = Inf;
 
 % ---- With Diffusion ---- %
-D_Tissue = 3000; %[um^2/s]
-D_Blood = []; %[um^2/s]
-D_VRS = []; %[um^2/s]
-MaskType = '';
+% D_Tissue = 3000; %[um^2/s]
+% D_Blood = []; %[um^2/s]
+% D_VRS = []; %[um^2/s]
+% MaskType = '';
 
-% D_Tissue = 1500; %[um^2/s]
-% D_Blood = 3037; %[um^2/s]
-% D_VRS = 3037; %[um^2/s]
-% % MaskType = 'Vasculature'; % only true in Vasc.
-% % MaskType = 'PVS'; % only true in PVS
-% % MaskType = 'PVSOrVasculature'; % true in PVS or Vasc. (don't think this is ever useful?)
-% MaskType = 'PVSAndVasculature'; % 2 in PVS, 1 in Vasc., 0 else ("trinary" mask)
+D_Tissue = 1500; %[um^2/s]
+D_Blood = 3037; %[um^2/s]
+D_VRS = 3037; %[um^2/s]
+% MaskType = 'Vasculature'; % only true in Vasc.
+% MaskType = 'PVS'; % only true in PVS
+% MaskType = 'PVSOrVasculature'; % true in PVS or Vasc. (don't think this is ever useful?)
+MaskType = 'PVSAndVasculature'; % 2 in PVS, 1 in Vasc., 0 else ("trinary" mask)
 
 % Nsteps = 8;
 % StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
@@ -100,6 +98,7 @@ B0 = -3.0; %[Tesla]
 rng('default'); seed = rng; % for consistent geometries between sims.
 Navgs = 1; % for now, if geom seed is 'default', there is no point doing > 1 averages
 RotateGeom = false; % geometry is fixed; dipole rotates
+EffectiveVesselAngles = true; % use effective vessel angles instead of fibre angles directly
 MajorAngle = 0.0; % major vessel angle w.r.t z-axis [degrees]
 NumMajorArteries = 0;
 MinorArterialFrac = 0.0;
@@ -123,17 +122,20 @@ SaveResults = true;
 OptVariables = 'CA_Rmajor_MinorExpansion';
 
 % Generate initial geometry
-[ Geom, GeomArgs, x0, lb, ub ] = geom_initial( struct, OptVariables, x0, lb, ub, ...
-    ... % 'iBVF', iBVF, 'aBVF', aBVF, ... % Set inside
-    'VoxelSize', VoxelSize, 'GridSize', GridSize, 'VoxelCenter', VoxelCenter, ...
-    'Nmajor', Nmajor, 'MajorAngle', MajorAngle, ......
-    'NumMajorArteries', NumMajorArteries, 'MinorArterialFrac', MinorArterialFrac, ...
-    'Rminor_mu', Rminor_mu, 'Rminor_sig', Rminor_sig, ...
-    'VRSRelativeRad', VRSRelativeRad, ...
-    'MediumVesselRadiusThresh', Rmedium_thresh, 'AllowInitialMinorPruning', true, ...
-    'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', true, ...
-    'ImproveMajorBVF', true, 'ImproveMinorBVF', true, ...
-    'PopulateIdx', true, 'seed', seed );
+[X0, LB, UB] = deal({});
+for ii = 1:numel(Nmajor)
+    [ Geom(ii), GeomArgs(ii), X0{ii}, LB{ii}, UB{ii} ] = geom_initial( struct, OptVariables, x0, lb, ub, ...
+        ... % 'iBVF', iBVF, 'aBVF', aBVF, ... % Set inside
+        'VoxelSize', VoxelSize, 'GridSize', GridSize, 'VoxelCenter', VoxelCenter, ...
+        'Nmajor', Nmajor(ii), 'MajorAngle', MajorAngle, ......
+        'NumMajorArteries', NumMajorArteries, 'MinorArterialFrac', MinorArterialFrac, ...
+        'Rminor_mu', Rminor_mu, 'Rminor_sig', Rminor_sig, ...
+        'VRSRelativeRad', VRSRelativeRad, ...
+        'MediumVesselRadiusThresh', Rmedium_thresh, 'AllowInitialMinorPruning', true, ...
+        'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', true, ...
+        'ImproveMajorBVF', true, 'ImproveMinorBVF', true, ...
+        'PopulateIdx', true, 'seed', seed );
+end
 
 % =========================== OPTIMIZATION ============================== %
 
@@ -144,38 +146,57 @@ if ~isempty(DiaryFilename); diary(DiaryFilename); end
 Normfun = 'AICc';
 
 % Objective function handle
-objfun = @(x) perforientation_objfun(x, alpha_range, dR2_Data, [], Weights, Normfun, ...
+NmajorMapMatrix = sparse(vec(Nmajor), 1, vec(1:numel(Nmajor)));
+NmajorMap = @(x) full(NmajorMapMatrix(x)); % Nmajor => NmajorIndex
+
+objfun = @(x) perforientation_objfun(x(1:3), alpha_range, dR2_Data, [], Weights, Normfun, ...
     TE, Nsteps, type, B0, D_Tissue, D_Blood, D_VRS, ...
     'OptVariables', OptVariables, ...
     'Navgs', Navgs, 'StepperArgs', StepperArgs, 'MaskType', MaskType, ...
     'Weights', Weights, 'Normfun', Normfun, ...
     'PlotFigs', PlotFigs, 'SaveFigs', SaveFigs, 'CloseFigs', CloseFigs, 'FigTypes', FigTypes, ...
     'SaveResults', SaveResults, 'DiaryFilename', DiaryFilename, ...
-    'GeomArgs', GeomArgs, 'Geom', Geom, 'RotateGeom', RotateGeom);
+    'GeomArgs', GeomArgs(NmajorMap(x(4))), 'Geom', Geom(NmajorMap(x(4))), 'RotateGeom', RotateGeom, ...
+    'EffectiveVesselAngles', EffectiveVesselAngles);
 
-% Perturb randomly by a fraction of the range to obtain array of x0 points
-dx0 = ub - lb;
-x0_new = @() x0 + 0.05 .* dx0 .* (2 .* rand(size(x0)) - 1);
-x0_matrix = [x0; x0_new(); x0_new(); x0_new()];
+% Generate lower/upper bounds, initial x0 matrix, and if generate extra
+% points are needed, make random points within the upper/lower bounds
+lb = min(cat(1, LB{:}), [], 1);
+ub = max(cat(1, UB{:}), [], 1);
+x0_matrix = cat(1, X0{:});
+while size(x0_matrix, 1) < size(x0_matrix, 2) + 1 % Num points < d + 1
+    ix = randi(size(x0_matrix, 1));
+    x0_matrix = [x0_matrix; x0_matrix(ix, :) + 0.05 .* (ub - lb) .* (2 .* rand(1, size(x0_matrix, 2)) - 1)];
+end
+
+if numel(Nmajor) > 1
+    z0_vector = [vec(Nmajor); vec(Nmajor(randi(numel(Nmajor), size(x0_matrix, 1) - numel(Nmajor), 1)))];
+    x0_matrix = [x0_matrix, z0_vector];
+    lb = [lb, min(vec(Nmajor)) * ones(size(lb,1), 1)];
+    ub = [ub, max(vec(Nmajor)) * ones(size(ub,1), 1)];
+    integer_vars = 4;
+else
+    integer_vars = [];
+end
 
 % MISO optimization settings
 miso_filename = [datestr(now, 30), '__MISOOptimizer.mat'];
 miso_settings = {   ...
-    [],             ... % Max iterations, integer (default: 50 * dimensions)
+    500,            ... % Max iterations, integer (default: 50 * dimensions)
     'rbf_c',        ... % RBF surrogate type, string (default: 'rbf_c', cubic RBFs)
     [],             ... % Num. initial points, integer (default: 2 * (dimensions + 1))
     'own',          ... % Initial design, string (default: 'slhd')
-    'cptvl',        ... % Sample strategy, string (default: 'cptvl')
+    'cptv',         ... % Sample strategy, string (default: 'cptvl')
     x0_matrix,      ... % Partial or complete initial points, matrix (default: [])
     miso_filename   };  % Filename for saving miso results, string (default: '')
 
 % MISO initialization function
-miso_initfun = @() struct(      ...,
-    'xlow',         lb,         ... % variable lower bounds
-    'xup',          ub,         ... % variable upper bounds
-    'dim',          3,          ... % problem dimesnion
-    'integer',      [],         ... % indices of integer variables
-    'continuous',   [1,2,3],    ... % indices of continuous variables
+miso_initfun = @() struct( ...,
+    'xlow',         lb,                 ... % variable lower bounds
+    'xup',          ub,                 ... % variable upper bounds
+    'dim',          size(x0_matrix, 2),	... % problem dimesnion
+    'integer',      integer_vars,       ... % indices of integer variables
+    'continuous',   [1,2,3],            ... % indices of continuous variables
     'objfunction',  @(x) miso_call_fun(objfun, x) ); % wrapped objective function
 
 % Call `miso` optimization routine
