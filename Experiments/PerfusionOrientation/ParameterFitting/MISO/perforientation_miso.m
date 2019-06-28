@@ -180,10 +180,9 @@ else
 end
 
 % MISO optimization settings
-miso_filename = [datestr(now, 30), '__MISOOptimizer.mat'];
 miso_settings = {   ...
     500,            ... % Max iterations, integer (default: 50 * dimensions)
-    'rbf_c',        ... % RBF surrogate type, string (default: 'rbf_c', cubic RBFs)
+    'rbf_l',        ... % RBF surrogate type, string (default: 'rbf_c', cubic RBFs)
     [],             ... % Num. initial points, integer (default: 2 * (dimensions + 1))
     'own',          ... % Initial design, string (default: 'slhd')
     'cptv',         ... % Sample strategy, string (default: 'cptvl')
@@ -200,73 +199,38 @@ miso_initfun = @() struct( ...,
     'objfunction',  @(x) miso_call_fun(objfun, x) ); % wrapped objective function
 
 % Call `miso` optimization routine
-[xbest, fbest, sol] = miso(miso_initfun, miso_settings{:});
+try
+    [xbest, fbest, sol] = miso(miso_initfun, miso_settings{:});
+catch e
+    warning(e.message)
+    sol = miso_remake_sol(miso_initfun, miso_settings);
+    xbest = sol.xbest;
+    fbest = sol.fbest;
+end
+
+% Plot resulting minimum
+try
+    sol.xfields = [sol.continuous, sol.integer];
+    sol.xfieldnames = {'CA', 'Rminor', 'MinorExpansion', 'Nmajor'};
+    sol.yfieldnames = {Normfun};
+    miso_plot_surrogate(sol);
+catch e
+    warning(e.message);
+end
 
 % Save initial parameters
 Params0 = struct('OptVariables', OptVariables, 'MISOSettings', miso_settings, ...
     'CA0', CA0, 'iBVF0', iBVF0, 'aBVF0', aBVF0, 'x0', x0, 'lb', lb, 'ub', ub);
 
+% Generate text file of best simulation results
+parse_iterations([datestr(now,30),'__','MISOIterationsOutput.txt']);
+
+% Close diary
 if ~isempty(DiaryFilename); diary(DiaryFilename); diary('off'); end
-
-% =========== Generate text file of best simulation results ============= %
-
-fout = fopen([datestr(now,30),'__','MISOIterationsOutput.txt'], 'w');
-iter = 1;
-Norm_best = Inf;
-R2w_best = -Inf;
-fprintf(fout, '%s', 'Timestamp       f-count            f(x)       Best f(x)             R2w        Best R2w');
-for s = dir('*.mat')'
-    try
-        Results = load(s.name);
-        Results = Results.Results;
-        normfun = @(normfun) perforientation_objfun(Results.params, Results.alpha_range, Results.dR2_Data, Results.dR2, Results.args.Weights, normfun);
-        f = normfun(Results.args.Normfun);
-        R2w = normfun('R2w');
-        Norm_best = min(f, Norm_best);
-        R2w_best = max(R2w, R2w_best);
-        fprintf(fout, '\n%s%8d%16.8f%16.8f%16.8f%16.8f', s.name(1:15), iter, f, Norm_best, R2w, R2w_best);
-        iter = iter + 1;
-    catch me
-        warning(me.message);
-    end
-end
-fclose(fout);
-clear fout iter Results f R2w
 
 % ====================== Save resulting workspace ======================= %
 % Clear anonymous functions which close over `Geom` and compress `Geom` for saving
-clear objfun miso_initfun getRmajor0 getSpaceFactor0
-if ~isempty(Geom); Geom = Compress(Geom); end
+Geom = Compress(Geom);
+sol.objfunction = [];
+clear objfun miso_initfun
 save([datestr(now,30),'__','MISOResults'], '-v7');
-
-% ====== Code for regenerating figures/MISOIterationsOutput file ===== %
-
-% fout = fopen([datestr(now,30),'__','MISOIterationsOutput.txt'], 'w');
-% iter = 1;
-% Norm_best = Inf;
-% fprintf(fout, '%s', 'Timestamp       f-count            f(x)       Best f(x)');
-% 
-% for s = dir('*.mat')'
-%     try
-%         % Load results struct
-%         Results = load(s.name);
-%         Results = Results.Results;
-%         
-%         % % Set proper weights/normfun
-%         % [~, ~, ~, ~, ~, ~, Results.args.Weights] = get_GRE_data(Results.alpha_range);
-%         % Results.args.Weights = Results.args.Weights/sum(Results.args.Weights(:));
-%         % Results.args.Normfun = 'L2w';
-%         % save(s.name, 'Results');
-%         
-%         % replot and save fig
-%         [ fig, ~ ] = perforientation_plot( Results.dR2, Results.dR2_all, Results.Geometries, Results.args );
-%         
-%         % recreate norm values file
-%         f = perforientation_objfun(Results.params, Results.alpha_range, Results.dR2_Data, Results.dR2, Results.args.Weights, Results.args.Normfun);
-%         Norm_best = min(f, Norm_best);
-%         fprintf(fout, '\n%s%8d%16.8f%16.8f', s.name(1:15), iter, f, Norm_best);
-%         iter = iter + 1;
-%     catch me
-%         warning(me.message);
-%     end
-% end

@@ -1,17 +1,18 @@
-function Data = test_miso_func
+function Data = test_miso_func(rbf_flag)
 %MISO_CALL_FUN Data = test_miso_func
 % Example optimization problem using `perfusionorientation_fun` samples.
 
-fdata = test_func_eval_data('miso');
-Data.xlow = min(fdata.xdata, [], 1); % variable lower bounds
-Data.xup  = max(fdata.xdata, [], 1); % variable upper bounds
-Data.dim  = size(fdata.xdata, 2); % problem dimesnion
-Data.integer    = []; % indices of integer variables
-Data.continuous = 1:size(fdata.xdata, 2); % indices of continuous variables
+if nargin < 1
+    rbf_flag = 'lin';
+end
 
-rbf_fun = miso_make_surrogate(fdata, 'cub');
+Data = test_func_eval_data();
+Data.xlow = min(Data.S, [], 1); % variable lower bounds
+Data.xup  = max(Data.S, [], 1); % variable upper bounds
+
+rbf_fun = miso_make_surrogate(Data, rbf_flag);
 Data.objfunction = @(x) miso_call_fun(rbf_fun, x); % handle to objective function
 
-miso_plot_surrogate(fdata, 'cub');
+miso_plot_surrogate(Data, rbf_flag);
 
 end
