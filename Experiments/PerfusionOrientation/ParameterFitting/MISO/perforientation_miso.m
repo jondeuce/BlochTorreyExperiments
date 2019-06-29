@@ -24,22 +24,24 @@ DiaryFilename = [datestr(now,30), '__', 'diary.txt'];
 % alpha_range = 7.5:20.0:87.5;
 % alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
 % alpha_range = [37.5, 52.5, 72.5, 17.5, 87.5];
-alpha_range = [2.5, 12.5, 22.5, 32.5, 47.5, 57.5, 67.5, 77.5, 87.5];
+alpha_range = [2.5, 17.5, 42.5, 67.5, 87.5];
+% alpha_range = [2.5, 12.5, 22.5, 32.5, 47.5, 57.5, 67.5, 77.5, 87.5];
 % alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 
 % =============================== DATA ================================== %
 
 % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
-lb  = [ 3.0000,          0.7000/100,         0.5000/100 ];
-CA0 =   5.0000;  iBVF0 = 1.2000/100; aBVF0 = 0.8000/100;
-ub  = [ 7.0000,          2.0000/100,         1.5000/100 ];
+lb  = [ 3.0000,          0.8000/100,         0.5000/100 ];
+CA0 =   3.8000;  iBVF0 = 1.5000/100; aBVF0 = 0.8000/100;
+ub  = [ 6.0000,          2.0000/100,         1.5000/100 ];
 
-x0 = [CA0, iBVF0, aBVF0];
+x0  = [CA0, iBVF0, aBVF0];
 
 type = 'GRE';
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize, BinCounts] = get_GRE_data(alpha_range);
 % TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [150,150,150];
-TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
+% TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
+TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [400,400,400];
 % TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [500,500,500];
 % TE = 40e-3; VoxelSize = [1750,1750,4000]; VoxelCenter = [0,0,0]; GridSize = [350,350,800];
 Weights = sqrt(BinCounts); % BinCounts;
@@ -146,8 +148,12 @@ if ~isempty(DiaryFilename); diary(DiaryFilename); end
 Normfun = 'AICc';
 
 % Objective function handle
-NmajorMapMatrix = sparse(vec(Nmajor), 1, vec(1:numel(Nmajor)));
-NmajorMap = @(x) full(NmajorMapMatrix(x)); % Nmajor => NmajorIndex
+if numel(Nmajor) > 1
+    NmajorMapMatrix = sparse(vec(Nmajor), 1, vec(1:numel(Nmajor)));
+    NmajorMap = @(x) full(NmajorMapMatrix(x(4))); % Nmajor => Nmajor index, i.e. Geom index
+else
+    NmajorMap = @(x) 1; % Only one geometry
+end
 
 objfun = @(x) perforientation_objfun(x(1:3), alpha_range, dR2_Data, [], Weights, Normfun, ...
     TE, Nsteps, type, B0, D_Tissue, D_Blood, D_VRS, ...
@@ -156,7 +162,7 @@ objfun = @(x) perforientation_objfun(x(1:3), alpha_range, dR2_Data, [], Weights,
     'Weights', Weights, 'Normfun', Normfun, ...
     'PlotFigs', PlotFigs, 'SaveFigs', SaveFigs, 'CloseFigs', CloseFigs, 'FigTypes', FigTypes, ...
     'SaveResults', SaveResults, 'DiaryFilename', DiaryFilename, ...
-    'GeomArgs', GeomArgs(NmajorMap(x(4))), 'Geom', Geom(NmajorMap(x(4))), 'RotateGeom', RotateGeom, ...
+    'GeomArgs', GeomArgs(NmajorMap(x)), 'Geom', Geom(NmajorMap(x)), 'RotateGeom', RotateGeom, ...
     'EffectiveVesselAngles', EffectiveVesselAngles);
 
 % Generate lower/upper bounds, initial x0 matrix, and if generate extra
@@ -180,23 +186,22 @@ else
 end
 
 % MISO optimization settings
-miso_settings = {   ...
-    500,            ... % Max iterations, integer (default: 50 * dimensions)
-    'rbf_l',        ... % RBF surrogate type, string (default: 'rbf_c', cubic RBFs)
-    [],             ... % Num. initial points, integer (default: 2 * (dimensions + 1))
-    'own',          ... % Initial design, string (default: 'slhd')
-    'cptv',         ... % Sample strategy, string (default: 'cptvl')
-    x0_matrix,      ... % Partial or complete initial points, matrix (default: [])
-    miso_filename   };  % Filename for saving miso results, string (default: '')
+miso_settings = { ...
+    500,          ... % Max iterations, integer (default: 50 * dimensions)
+    'rbf_l',      ... % RBF surrogate type, string (default: 'rbf_c', cubic RBFs)
+    [],           ... % Num. initial points, integer (default: 2 * (dimensions + 1))
+    'own',        ... % Initial design, string (default: 'slhd')
+    'cptv',       ... % Sample strategy, string (default: 'cptvl')
+    x0_matrix     };  % Partial or complete initial points, matrix (default: [])
 
 % MISO initialization function
 miso_initfun = @() struct( ...,
-    'xlow',         lb,                 ... % variable lower bounds
-    'xup',          ub,                 ... % variable upper bounds
-    'dim',          size(x0_matrix, 2),	... % problem dimesnion
-    'integer',      integer_vars,       ... % indices of integer variables
-    'continuous',   [1,2,3],            ... % indices of continuous variables
-    'objfunction',  @(x) miso_call_fun(objfun, x) ); % wrapped objective function
+    'xlow',         lb,                             ... % variable lower bounds
+    'xup',          ub,                             ... % variable upper bounds
+    'dim',          size(x0_matrix, 2),             ... % problem dimesnion
+    'integer',      integer_vars,                   ... % indices of integer variables
+    'continuous',   [1,2,3],                        ... % indices of continuous variables
+    'objfunction',  @(x) miso_call_fun(objfun, x)   );  % wrapped objective function
 
 % Call `miso` optimization routine
 try
