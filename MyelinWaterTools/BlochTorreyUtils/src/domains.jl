@@ -278,18 +278,19 @@ function ParabolicDomain(
     grid = Grid(getgrid.(ms)) # combine grids into single large grid
     
     #TODO: This segfaults?
-    # domain = ParabolicDomain(grid::Grid, uType::Type{<:FieldType};
-    #     refshape = getrefshape(ms[1])::JuAFEM.AbstractRefShape, # assume these are the same for all domains
-    #     quadorder = getquadorder(ms[1])::Int, # assume these are the same for all domains
-    #     funcinterporder = getfuncinterporder(ms[1])::Int, # assume these are the same for all domains
-    #     geominterporder = getgeominterporder(ms[1])::Int, # assume these are the same for all domains
-    # )
-    domain = ParabolicDomain(grid, uType;
-        refshape = getrefshape(ms[1]), # assume these are the same for all domains
-        quadorder = getquadorder(ms[1]), # assume these are the same for all domains
-        funcinterporder = getfuncinterporder(ms[1]), # assume these are the same for all domains
-        geominterporder = getgeominterporder(ms[1]), # assume these are the same for all domains
+    domain = ParabolicDomain(grid::Grid, uType::Type{<:FieldType};
+        refshape = getrefshape(ms[1])::JuAFEM.AbstractRefShape, # assume these are the same for all domains
+        quadorder = getquadorder(ms[1])::Int, # assume these are the same for all domains
+        funcinterporder = getfuncinterporder(ms[1])::Int, # assume these are the same for all domains
+        geominterporder = getgeominterporder(ms[1])::Int, # assume these are the same for all domains
     )
+    # error("got here")
+    # domain = ParabolicDomain(grid, uType;
+    #     refshape = getrefshape(ms[1]), # assume these are the same for all domains
+    #     quadorder = getquadorder(ms[1]), # assume these are the same for all domains
+    #     funcinterporder = getfuncinterporder(ms[1]), # assume these are the same for all domains
+    #     geominterporder = getgeominterporder(ms[1]), # assume these are the same for all domains
+    # )
     domain.M = blockdiag(getmass.(ms)...)
     domain.K = blockdiag(getstiffness.(ms)...)
     domain.metadata[:subdomains] = [deepcopy(getdomain(m).metadata) for m in ms]

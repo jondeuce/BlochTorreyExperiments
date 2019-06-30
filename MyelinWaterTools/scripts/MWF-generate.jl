@@ -8,7 +8,7 @@ using StatsPlots
 pyplot(size=(1200,900))
 using GlobalUtils
 using MWFUtils
-mxcall(:cd, 0, pwd()) # change MATLAB path to current path for saving outputs
+mxcall(:cd, 0, pwd()) # Set MATLAB path (Note: pwd(), not @__DIR__)
 const SIM_START_TIME = MWFUtils.getnow()
 
 # Create reproduce file
@@ -263,10 +263,10 @@ function runsimulation!(results, sweepparams, geom)
     push!(results[:sweepparams], sweepparams)
     push!(results[:tpoints], tpoints)
     push!(results[:signals], signals)
-    push!(results[:sols], sols) #TODO
-    push!(results[:myelinprob], myelinprob) #TODO
-    push!(results[:myelinsubdomains], myelinsubdomains) #TODO
-    push!(results[:myelindomains], myelindomains) #TODO
+    # push!(results[:sols], sols) #TODO
+    # push!(results[:myelinprob], myelinprob) #TODO
+    # push!(results[:myelinsubdomains], myelinsubdomains) #TODO
+    # push!(results[:myelindomains], myelindomains) #TODO
     push!(results[:mwfvalues], mwfvalues)
 
     # Save measurables
@@ -281,14 +281,14 @@ function runsimulation!(results, sweepparams, geom)
         @warn sprint(showerror, e, catch_backtrace())
     end
 
-    # Save solution as vtk file
-    try
-        vtkfilepath = mkpath(joinpath("vtk/", fname))
-        saveblochtorrey(myelindomains, sols; timepoints = tpoints, filename = joinpath(vtkfilepath, "vtksolution"))
-    catch e
-        @warn "Error saving solution to vtk file"
-        @warn sprint(showerror, e, catch_backtrace())
-    end
+    # # Save solution as vtk file
+    # try
+    #     vtkfilepath = mkpath(joinpath("vtk/", fname))
+    #     saveblochtorrey(myelindomains, sols; timepoints = tpoints, filename = joinpath(vtkfilepath, "vtksolution"))
+    # catch e
+    #     @warn "Error saving solution to vtk file"
+    #     @warn sprint(showerror, e, catch_backtrace())
+    # end
 
     try
         mxplotmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;

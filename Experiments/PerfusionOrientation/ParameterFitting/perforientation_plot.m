@@ -3,6 +3,7 @@ function [ fig, FileName ] = perforientation_plot( dR2, dR2_all, AllGeoms, args 
 % Plotter for perforientation_fun. dR2 is the curve to be plotted in the
 % top most layer, and dR2_all the curves to be plotted in the background;
 % for example, dR2 may be the average (over dimension 1) of dR2_all.
+% 
 % NOTE: dR2_all will not be plotted if it has the same size as dR2 (it will
 % be assumed they are equal).
 

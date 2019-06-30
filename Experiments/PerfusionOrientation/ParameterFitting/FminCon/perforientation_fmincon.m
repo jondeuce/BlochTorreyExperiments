@@ -30,7 +30,6 @@ end
 alpha_range = [2.5, 12.5, 22.5, 32.5, 47.5, 57.5, 67.5, 77.5, 87.5];
 % alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 
-%%
 % =============================== DATA ================================== %
 
 % % ---- GRE w/ Diffusion Initial Guess (large minor) ---- %
@@ -166,7 +165,7 @@ switch upper(OptVariables)
         lb_old = lb;
         ub_old = ub;
         lb = [lb_old(1), getRmajor0(lb_old(3)), getSpaceFactor0(ub_old(2))];
-        x0 = [x0(1),     getRmajor0(aBVF0),     getSpaceFactor0(iBVF0)];
+        x0 = [x0(1),     getRmajor0(x0(3)),     getSpaceFactor0(x0(2))];
         ub = [ub_old(1), getRmajor0(ub_old(3)), getSpaceFactor0(lb_old(2))];
         
     otherwise

@@ -135,7 +135,6 @@ mutable struct ParabolicDomain{
     Mfact::Union{Nothing,MfactType}
     K::KType
     metadata::Dict{Any,Any}
-    # w::Vector{Tu}
 end
 
 # ---------------------------------------------------------------------------- #
@@ -259,25 +258,21 @@ function ParabolicDomain(
     @assert ndofs(dh) == uDim * getnnodes(grid)
     perm = zeros(Int, ndofs(dh))
     if uDim == 1 || uDim == 2
+        dr_u = dof_range(dh, :u)
         for cell in CellIterator(dh)
             for (i,n) in enumerate(cell.nodes)
                 for d in uDim-1:-1:0
-                    perm[cell.celldofs[uDim*i-d]] = uDim*n-d
+                    perm[cell.celldofs[dr_u[uDim*i-d]]] = uDim * n - d
                 end
             end
         end
     elseif uDim == 3
+        dr_u, dr_uz = dof_range(dh, :u), dof_range(dh, :uz)
         for cell in CellIterator(dh)
-            # node_offset = 2 * getnnodes(grid)
-            # for (i,n) in enumerate(cell.nodes)
-            #     perm[cell.celldofs[dof_range(dh, :u )[2i-1]]] = 2*n-1 # transverse component
-            #     perm[cell.celldofs[dof_range(dh, :u )[2i]]]   = 2*n   # transverse component
-            #     perm[cell.celldofs[dof_range(dh, :uz)[i]]]    = node_offset + n # longitudinal component
-            # end
             for (i,n) in enumerate(cell.nodes)
-                perm[cell.celldofs[dof_range(dh, :u )[2i-1]]] = 3*n-2 # transverse component
-                perm[cell.celldofs[dof_range(dh, :u )[2i]]]   = 3*n-1 # transverse component
-                perm[cell.celldofs[dof_range(dh, :uz)[i]]]    = 3*n   # longitudinal component
+                perm[cell.celldofs[dr_u[2i-1]]] = 3n-2 # transverse component
+                perm[cell.celldofs[dr_u[2i  ]]] = 3n-1 # transverse component
+                perm[cell.celldofs[dr_uz[i  ]]] = 3n   # longitudinal component
             end
         end
     end
@@ -289,7 +284,6 @@ function ParabolicDomain(
     K = uType <: Complex ?
         complex(create_sparsity_pattern(dh)) :
         create_sparsity_pattern(dh)
-    # w = zeros(Tu, ndofs(dh))
 
     # Initialize Mfact to nothing
     Mfact = nothing
@@ -299,7 +293,7 @@ function ParabolicDomain(
         grid, dh,
         refshape, cellvalues, facevalues,
         quadorder, funcinterporder, geominterporder,
-        M, Mfact, K, Dict{Any,Any}() # w
+        M, Mfact, K, Dict{Any,Any}()
     )
 end
 
