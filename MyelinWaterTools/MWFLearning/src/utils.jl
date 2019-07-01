@@ -158,7 +158,7 @@ function init_data(settings::Dict, ds::AbstractVector{<:Dict})
         nTE     = d[:sweepparams][:nTE] :: Int
         b       = init_signal(signals) :: VT
         T2      = log10range(T2Range...; length = nT2) :: VT
-        x       = project_onto_exp!(bufdict[nTE], b, T2, TE, alpha) :: VT
+        x       = ilaplace!(bufdict[nTE], b, T2, TE, alpha) :: VT
         copy(x)
     end for d in ds)
     
@@ -240,82 +240,4 @@ function init_signal(z::AbstractMatrix{C}) where {C <: Complex}
     x = abs.(z[2:end, :])
     x ./= x[1, :]
     return x
-end
-
-"""
-Projection onto exponentials with tikhonov regularization.
-For data `b` sampled at a rate η > 0, we write `b` as a sum of exponentials
-with time constants `τ`:
-
-    b_i = Σ_j exp(-η*i/τ_j) * x_j
-
-where x_j are the unknown weights.
-Since the problem is fundamentally ill-posed, Tikhonov regularization with
-parameter α is performed, i.e. the output `x` is the minimizer of
-
-    ||Ax - b||_2^2 + α ||x||_2^2
-
-and is given by
-
-    x = (A'A + α^2 * I)^{-1} A'b
-"""
-function project_onto_exp(b::AbstractVecOrMat, τ::AbstractVector, η::Number, α::Number = 1)
-    # The below code is equivalent to the following (but is much faster):
-    #   A = [exp(-ti/τj) for ti in t, τj in τ]
-    #   x = (A'A + α^2*I)\(A'b)
-    T = promote_type(eltype(b), eltype(τ), eltype(η), eltype(α))
-    M, P = size(b)
-    N = length(τ)
-    t = η.*(1:M)
-    bufs = (A = zeros(T, M, N), B = zeros(T, N, N), x = zeros(T, N, P))
-    x = project_onto_exp!(bufs, b, τ, η, α)
-    return copy(x)
-end
-
-function project_onto_exp!(bufs, b::AbstractVecOrMat, τ::AbstractVector, η::Number, α::Number = 1)
-    M, P = size(b,1), size(b,2)
-    N = length(τ)
-    t = η.*(1:M)
-
-    @unpack A, B, x = bufs
-    @assert size(A) == (M, N) && size(B) == (N, N) && size(x,1) == N && size(x,2) == size(b,2)
-
-    @inbounds for j in 1:N
-        for i in 1:M
-            A[i,j] = exp(-t[i]/τ[j]) # LHS matrix
-        end
-    end
-    mul!(x, A', b) # RHS vector
-
-    mul!(B, A', A)
-    @inbounds for j in 1:N
-        B[j,j] += α^2 # Tikhonov regularization
-    end
-
-    Bf = cholesky!(B)
-    ldiv!(Bf, x) # Invert A'A + α^2*I onto A'b
-
-    return x
-end
-
-"""
-Discrete Laplace transform. For a stepsize η > 0, the discrete Laplace transform
-of `x` is given by:
-    L_η[x](s) = η * Σ_{k} exp(-s*k*η) * x[k]
-"""
-function dlt(x::AbstractVector, s::AbstractVector, η::Number)
-    T = promote_type(eltype(x), eltype(s), typeof(η))
-    y = zeros(T, length(s))
-    @inbounds for j in eachindex(y,s)
-        Σ = zero(T)
-        ωj = exp(-η * s[j])
-        ω = ωj
-        for k in eachindex(x)
-            Σ += ω * x[k]
-            ω *= ωj
-            # Σ += ω^k * x[k] # equivalent to above
-        end
-        y[j] = η * Σ
-    end
-    return y
 end
