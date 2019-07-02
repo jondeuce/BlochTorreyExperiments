@@ -522,7 +522,7 @@ function solveblochtorrey(
     (uType <: Vec{3}) && shift_longitudinal!(U0, steadystate)
 
     # Save solution every dt (an even divisor of TE) as well as every TR by default
-    tstops = multispinecho_savetimes(tspan, dt, TE, TR, nTE, nTR)
+    tstops = cpmg_savetimes(tspan, dt, TE, TR, nTE, nTR)
 
     # Setup problem and solve
     prob = ODEProblem(myelindomain, U0, tspan)

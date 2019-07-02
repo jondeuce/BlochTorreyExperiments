@@ -20,7 +20,7 @@ apply_pulse!(u::AbstractVector{uType}, α, pulsetype::Symbol, ::Type{uType}) whe
 apply_pulse!(u::AbstractVector{uType}, α, pulsetype::Symbol) where {Tu, uType <: Vec{3,Tu}} = (R = pulsemat3(Tu, α, pulsetype); u .= (x -> R ⋅ x).(u); return u)
 apply_pulse!(u::AbstractVector{uType}, α, pulsetype::Symbol) where {Tu, uType <: Vec{2,Tu}} = (R = pulsemat2(Tu, α, pulsetype); u .= (x -> R ⋅ x).(u); return u)
 
-function multispinecho_savetimes(dt::T, TE::T, TR::T, nTE::Int, nTR::Int) where {T}
+function cpmg_savetimes(dt::T, TE::T, TR::T, nTE::Int, nTR::Int) where {T}
     ndt_TE = round(Int, TE/dt)
     @assert TE ≈ ndt_TE * dt && ndt_TE >= 2 && iseven(ndt_TE)
     @assert TR >= nTE * TE && nTE >= 1 && nTR >= 1
@@ -31,16 +31,18 @@ function multispinecho_savetimes(dt::T, TE::T, TR::T, nTE::Int, nTR::Int) where 
     savetimes = T[]
     for n in 0:nTR-1
         newsavetimes = n * TR .+ dt .* (0 : min(ndt_TR, (nTR-1-n) * ndt_TR + nTE * ndt_TE))
-        (n < nTR-1) && (newsavetimes[end] ≈ (n+1) * TR) && pop!(newsavetimes) # will be added next iteration
-        append!(savetimes, newsavetimes)
+        (n < nTR-1) && (newsavetimes[end] ≈ (n+1) * TR) ?
+            append!(savetimes, newsavetimes[1:end-1]) : # last point will be added next iteration
+            append!(savetimes, newsavetimes)
     end
     savetimes[1]   = max(savetimes[1], zero(T)) # Enforce initial point
     savetimes[end] = min(savetimes[end], nTE * TE + (nTR-1) * TR) # Enforce final point
 
     return savetimes
 end
-function multispinecho_savetimes(tspan::NTuple{2,T}, dt::T, TE::T, TR::T, nTE::Int, nTR::Int) where {T}
-    savetimes = multispinecho_savetimes(dt, TE, TR, nTE, nTR)
+function cpmg_savetimes(tspan::NTuple{2,T}, dt::T, TE::T, TR::T, nTE::Int, nTR::Int) where {T}
+    @assert tspan[1] ≈ 0 && tspan[2] ≈ (nTR - 1) * TR + nTE * TE
+    savetimes = cpmg_savetimes(dt, TE, TR, nTE, nTR)
     savetimes[1] = tspan[1] # Enforce initial point (correct floating point errors)
     savetimes[end] = tspan[2] # Enforce final point (correct floating point errors)
     return savetimes
@@ -141,7 +143,7 @@ function EchoTrainCallback(
     # Apply appropriate pulse
     function user_affect!(integrator)
         if verbose
-            anglestr, timestr = @sprintf("%5.1f", rad2deg(flipangle)), @sprintf("%.1f ms", 1000 * integrator.t)
+            anglestr, timestr = @sprintf("%6.1f", rad2deg(flipangle)), @sprintf("%.1f ms", 1000 * integrator.t)
             println("$anglestr degree pulse of type $pulsetype applied at t = $timestr")
         end
         (uType <: Vec{3}) && shift_longitudinal!(integrator.u, steadystate) # Convert from u-space to M-space
