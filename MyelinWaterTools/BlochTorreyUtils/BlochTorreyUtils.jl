@@ -56,7 +56,7 @@ export AbstractParabolicProblem, MyelinProblem, BlochTorreyProblem
 export AbstractDomain, ParabolicDomain, MyelinDomain, TriangularMyelinDomain, TriangularGrid
 export AbstractRegion, AbstractRegionUnion, AxonRegion, MyelinRegion, TissueRegion, PermeableInterfaceRegion
 export ParabolicLinearMap, LinearOperatorWrapper
-export MultiSpinEchoCallback
+export CPMGCallback
 export ExpokitExpmv, HighamExpmv
 
 end # module BlochTorreyUtils

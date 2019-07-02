@@ -14,14 +14,11 @@ shift_longitudinal(u::AbstractVector, M∞) = shift_longitudinal!(copy(u), M∞)
 pi_pulse!(u::AbstractVector{uType}) where {uType <: FieldType} = (u .= pi_flip.(u))
 pi_pulse(u::AbstractVector) = pi_pulse!(copy(u))
 
-# Our convention is that M∞ points in the +z-direction. This means that our typical initial condition,
-# M₀ = [0, M∞, 0], is actually a rotation of [0, 0, M∞] by -π/2 about the x-axis, not of +π/2.
-# To be consistent, we apply all general rotations by -α (which is equivalent to +α when α = π)
-apply_pulse!(u::AbstractVector{Tu}, α, ::Type{uType}) where {dim, Tu, uType <: Vec{dim,Tu}} = (_u = reinterpret(Vec{dim,Tu}, u); apply_pulse!(_u, α); return u)
-apply_pulse!(u::AbstractVector{uType}, α, ::Type{uType}) where {Tu, uType <: Complex{Tu}} = (_u = reinterpret(Vec{2,Tu}, u); apply_pulse!(_u, α); return u)
-apply_pulse!(u::AbstractVector{uType}, α, ::Type{uType}) where {uType <: Vec} = apply_pulse!(u, α)
-apply_pulse!(u::AbstractVector{uType}, α) where {Tu, uType <: Vec{3,Tu}} = (R = pulsemat(Tu, α); u .= (x -> R ⋅ x).(u); return u)
-apply_pulse!(u::AbstractVector{uType}, α) where {uType <: Vec{2}} = (@assert α ≈ π; pi_pulse!(u); return u)
+apply_pulse!(u::AbstractVector{Tu},    α, pulsetype::Symbol, ::Type{uType}) where {dim, Tu, uType <: Vec{dim,Tu}} = (_u = reinterpret(Vec{dim,Tu}, u); apply_pulse!(_u, α, pulsetype); return u)
+apply_pulse!(u::AbstractVector{uType}, α, pulsetype::Symbol, ::Type{uType}) where {Tu, uType <: Complex{Tu}} = (_u = reinterpret(Vec{2,Tu}, u); apply_pulse!(_u, α, pulsetype); return u)
+apply_pulse!(u::AbstractVector{uType}, α, pulsetype::Symbol, ::Type{uType}) where {uType <: Vec} = apply_pulse!(u, α, pulsetype)
+apply_pulse!(u::AbstractVector{uType}, α, pulsetype::Symbol) where {Tu, uType <: Vec{3,Tu}} = (R = pulsemat3(Tu, α, pulsetype); u .= (x -> R ⋅ x).(u); return u)
+apply_pulse!(u::AbstractVector{uType}, α, pulsetype::Symbol) where {Tu, uType <: Vec{2,Tu}} = (R = pulsemat2(Tu, α, pulsetype); u .= (x -> R ⋅ x).(u); return u)
 
 function multispinecho_savetimes(dt::T, TE::T, TR::T, nTE::Int, nTR::Int) where {T}
     ndt_TE = round(Int, TE/dt)
@@ -44,28 +41,46 @@ function multispinecho_savetimes(dt::T, TE::T, TR::T, nTE::Int, nTR::Int) where 
 end
 function multispinecho_savetimes(tspan::NTuple{2,T}, dt::T, TE::T, TR::T, nTE::Int, nTR::Int) where {T}
     savetimes = multispinecho_savetimes(dt, TE, TR, nTE, nTR)
-    savetimes[1] = tspan[1] # Enforce initial point
-    savetimes[end] = tspan[2] # Enforce final point
+    savetimes[1] = tspan[1] # Enforce initial point (correct floating point errors)
+    savetimes[end] = tspan[2] # Enforce final point (correct floating point errors)
     return savetimes
 end
 
 """
-    MultiSpinEchoCallback
+    CPMGCallback
 
-Apply initial pulses with flip angle `initpulse` every TR, as well as `flipangle` pulses
-every TE starting every TR + TE/2 until TR + nTE * TE - TE/2.
+Callback for applying pulses which simulate the (modified) Carr-Purcell-Meiboom-Gill (CPMG)
+pulse sequence (Carr & Purcell 1954; Meiboom & Gill 1958).
 
-All pulses are shifted early, proportional to √eps(), to ensure that sampling the signal
-at e.g. t = TE/2 is guaranteed to be after the pulse.
+Slice selective pulses with flip angle `sliceselectangle` are applied every TR, starting
+at t = TR, repeating until the simulation end.
+    
+    NOTE: initial pulses at t = 0 must be handled outside of this callback.
+
+Additionally, refocusing pulse trains of type `refocustype` are applied every `TE` from
+`(n-1) * TR + TE/2` until `(n-1) * TR + nTE * TE - TE/2` for a total of `nTE` pulses,
+where `n` is the repetition number.
+
+`refocustype` is a symbol and may be one of three types (where α = `flipangle`):
+    :x      Alternating RotX(+α), RotX(-α) pulses about the x-axis
+    :y      Consecutive RotY(+α) pulses about the y-axis
+    :xyx    Consecutive RotX(π/2) * RotY(+α) * RotX(π/2) composite block pulses,
+            equivalent to consecutive +π-pulses about the axis u = [cos(α/2), sin(α/2), 0]
+
+Finally, note that all pulses are shifted early by a very small configurable amount,
+`pulseshift`, in order to ensure that sampling the signal at e.g. t = TE/2 is guaranteed
+to occur after the pulse. By default, `pulseshift` is max(1ns, 10*eps).
 """
-function MultiSpinEchoCallback(
+function CPMGCallback(
         ::Type{uType}, tspan::NTuple{2,T};
         TE::T = tspan[2] - tspan[1], # default to single echo
         TR::T = tspan[2] - tspan[1], # default to immediate repetition
         nTE::Int = 1, # default to single echo
         nTR::Int = 1, # default to single rep
-        initpulse::T = T(π)/2, # init pulse flip angle (default none)
+        sliceselectangle::T = T(π)/2, # init pulse flip angle (default none)
         flipangle::T = T(π), # multi-echo flip angle
+        refocustype::Symbol = :xyx, # Type of refocusing pulse
+        pulseshift::T = max(T(1e-9), 10*eps(T)), # Pulse shift time (1ns by default)
         steadystate = 1, # steady state value for z-component of magnetization
         verbose = true, # verbose printing
         kwargs...
@@ -75,13 +90,23 @@ function MultiSpinEchoCallback(
     @assert nTE >= 1 && nTR >= 1 && TR >= nTE * TE
     @assert tspan[1] ≈ 0 && (tspan[2] ≈ nTE * TE + (nTR - 1) * TR)
 
-    # Initial pulse, repeating every TR
-    initpulse_fliptimes = [TR .* (1:nTR-1) .- √eps(TR);]
-    initpulse_callback  = EchoTrainCallback(uType, initpulse, initpulse_fliptimes, steadystate, verbose)
+    # Initial pulse, repeating every TR (not including t = 0 pulse, handled outside this callback)
+    sliceselecttype = :x # Rotation about x-axis
+    initpulse_fliptimes = [TR .* (1:nTR-1) .- pulseshift;]
+    initpulse_callback = isempty(initpulse_fliptimes) ? CallbackSet() :
+        EchoTrainCallback(uType, sliceselectangle, sliceselecttype, initpulse_fliptimes, steadystate, verbose)
 
     # Flip angle pulses, repeating nTE times every TE starting at TE/2, repeating every TR
-    flipangle_fliptimes = [[n*TR .+ TE/2 .+ TE .* (0:nTE-1) .- √eps(TE);] for n in 0:nTR-1]
-    flipangle_callbacks = CallbackSet((EchoTrainCallback(uType, flipangle, fliptimes, steadystate, verbose) for fliptimes in flipangle_fliptimes)...)
+    flipangle_callbacks = if refocustype == :x
+        positive_flipangle_fliptimes = [[n*TR .+ TE/2 .+ TE .* (0:2:nTE-1) .- pulseshift;] for n in 0:nTR-1]
+        negative_flipangle_fliptimes = [[n*TR .+ TE/2 .+ TE .* (1:2:nTE-1) .- pulseshift;] for n in 0:nTR-1]
+        CallbackSet(
+            (EchoTrainCallback(uType, +flipangle, refocustype, fliptimes, steadystate, verbose) for fliptimes in positive_flipangle_fliptimes)...,
+            (EchoTrainCallback(uType, -flipangle, refocustype, fliptimes, steadystate, verbose) for fliptimes in negative_flipangle_fliptimes)...)
+    else
+        flipangle_fliptimes = [[n*TR .+ TE/2 .+ TE .* (0:nTE-1) .- pulseshift;] for n in 0:nTR-1]
+        CallbackSet((EchoTrainCallback(uType, flipangle, refocustype, fliptimes, steadystate, verbose) for fliptimes in flipangle_fliptimes)...)
+    end
 
     return CallbackSet(initpulse_callback, flipangle_callbacks)
 end
@@ -89,13 +114,15 @@ end
 """
     EchoTrainCallback
 
-Apply pulse with angle `flipangle` and time points `fliptimes`.
-Note that `fliptimes` cannot obtain t = tspan[1]; flipping of the
-initial state must be handled outside of this callback.
+Apply pulse of type `pulsetype` with flip angle `flipangle` at time points `fliptimes`.
+
+    NOTE: `fliptimes` cannot obtain t = tspan[1]; flipping of the initial state
+          must be handled outside of this callback.
 """
 function EchoTrainCallback(
         ::Type{uType},
         flipangle::T, # Flip angle
+        pulsetype::Symbol, # Pulse type
         fliptimes::AbstractVector{T}, # Flip times
         steadystate = 1, # Steady state value for z-component of magnetization
         verbose = true, # Verbose printing
@@ -115,10 +142,10 @@ function EchoTrainCallback(
     function user_affect!(integrator)
         if verbose
             anglestr, timestr = @sprintf("%5.1f", rad2deg(flipangle)), @sprintf("%.1f ms", 1000 * integrator.t)
-            println("$anglestr degree pulse at t = $timestr")
+            println("$anglestr degree pulse of type $pulsetype applied at t = $timestr")
         end
         (uType <: Vec{3}) && shift_longitudinal!(integrator.u, steadystate) # Convert from u-space to M-space
-        apply_pulse!(integrator.u, flipangle, uType) # Apply rotation in M-space
+        apply_pulse!(integrator.u, flipangle, pulsetype, uType) # Apply rotation in M-space
         (uType <: Vec{3}) && shift_longitudinal!(integrator.u, steadystate) # Convert back to u-space
         return integrator
     end
