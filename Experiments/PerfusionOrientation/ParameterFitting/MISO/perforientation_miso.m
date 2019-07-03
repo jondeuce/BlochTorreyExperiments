@@ -121,7 +121,8 @@ SaveResults = true;
 
 % ============================= GEOMETRY ================================ %
 
-OptVariables = 'CA_Rmajor_MinorExpansion';
+OptVariables = 'CA_iBVF_aBVF';
+% OptVariables = 'CA_Rmajor_MinorExpansion';
 
 % Generate initial geometry
 [X0, LB, UB] = deal({});
@@ -216,7 +217,7 @@ end
 % Plot resulting minimum
 try
     sol.xfields = [sol.continuous, sol.integer];
-    sol.xfieldnames = {'CA', 'Rminor', 'MinorExpansion', 'Nmajor'};
+    sol.xfieldnames = {'CA', 'iBVFapprox', 'aBVFapprox', 'Nmajor'};
     sol.yfieldnames = {Normfun};
     miso_plot_surrogate(sol);
 catch e

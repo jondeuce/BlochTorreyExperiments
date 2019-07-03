@@ -8,7 +8,7 @@ end
 % Generate initial geometry and transformed optimization bounds
 switch upper(OptVariables)
     case 'CA_IBVF_ABVF'
-        % Initial geometry is simply the supplied arguments; to
+        % Initial geometry is simply the supplied arguments; no
         % transformation of bounds is needed
         GeomArgs.iBVF = x0(2);
         GeomArgs.aBVF = x0(3);
