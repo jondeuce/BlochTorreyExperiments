@@ -40,10 +40,11 @@ function runcreategeometry(params; numreps = 5)
                 FIXSUBSITERS = 950, #DEBUG
                 FORCEDENSITY = true, #DEBUG # error if desired density isn't reached
                 FORCEAREA = true, #DEBUG # error if the resulting grid area doesn't match the bdry area
-                FORCEQUALITY = true, #DEBUG # error if the resulting grid area have high enough quality
-            )
+                FORCEQUALITY = true) #DEBUG # error if the resulting grid area have high enough quality
 
             # Common filename without suffix
+            params[:ntri] = sum(JuAFEM.getncells, geom.exteriorgrids) + sum(JuAFEM.getncells, geom.torigrids) + sum(JuAFEM.getncells, geom.interiorgrids)
+            params[:npts] = sum(JuAFEM.getnnodes, geom.exteriorgrids) + sum(JuAFEM.getnnodes, geom.torigrids) + sum(JuAFEM.getnnodes, geom.interiorgrids)
             fname = DrWatson.savename(MWFUtils.getnow(), params)
 
             # Plot circles and grid
@@ -55,8 +56,7 @@ function runcreategeometry(params; numreps = 5)
                 "geom/" * fname * ".geom.bson",
                 Dict(pairs(geom)),
                 true, # safe saving (don't overwrite existing files)
-                gitdir()
-            )
+                gitdir())
         catch e
             if e isa InterruptException
                 # User interrupt; rethrow and catch in main()
@@ -68,6 +68,7 @@ function runcreategeometry(params; numreps = 5)
                 continue
             end
         end
+
         # Grid successfully generated; exit loop
         break
     end
@@ -78,12 +79,11 @@ end
 function main()
     # Make subfolders
     mkpath.(("plots", "geom"))
-    
+
     # Parameters to sweep over
     sweep_params = Dict{Symbol,Any}(
-        :numfibres  => collect(5:5:50),
-        :mwf        => collect(0.15:0.01:0.3),
-    )
+        :numfibres => collect(6:30),
+        :mwf       => collect(0.15:0.01:0.3))
 
     all_params = DrWatson.dict_list(sweep_params)
     all_params = sort(all_params; by = d -> (d[:numfibres], d[:mwf]))
