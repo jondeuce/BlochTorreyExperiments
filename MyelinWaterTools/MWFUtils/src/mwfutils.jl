@@ -475,45 +475,54 @@ OrdinaryDiffEq.ODEProblem(m::MyelinDomain, u0, tspan; kwargs...) = ODEProblem(ge
 
 function solveblochtorrey(
         myelinprob::MyelinProblem, myelindomain::MyelinDomain, alg = default_algorithm(), args...;
-        u0 = Vec{2}((0.0, 1.0)), # initial magnetization
+        u0 = -1.0im, # initial magnetization
         uType::Type = typeof(u0), # Field type
         TE = 10e-3, # 10ms echotime
         TR = 1000e-3, # 1000ms repetition time
         nTE = 32, # 32 echoes by default
         nTR = 1, # 1 repetition by default
-        initpulse = (uType <: Vec{3} ? π/2 : 0.0), # initial pulse
-        flipangle = π, # flipangle for MultiSpinEchoCallback
+        sliceselectangle = eltype(TE)(uType <: Vec{3} ? π/2 : 0), # initial pulse
+        flipangle = π, # flipangle for CPMGCallback
+        refocustype = :xyx, # Type of refocusing pulse
         steadystate = (uType <: Vec{3} ? 1 : nothing), # steady state value for z-component of magnetization
         tspan = (zero(TE), (nTR - 1) * TR + nTE * TE), # time span for ode solution
-        callback = MultiSpinEchoCallback(uType, tspan;
+        callback = CPMGCallback(uType, tspan;
             TE = TE, TR = TR, nTE = nTE, nTR = nTR,
-            initpulse = initpulse, steadystate = steadystate, flipangle = float(flipangle)),
+            steadystate = steadystate, sliceselectangle = sliceselectangle,
+            refocustype = refocustype, flipangle = eltype(TE)(flipangle)),
         reltol = 1e-8,
         abstol = 0.0,
         dt = TE/10, # Maximum timestep
         kwargs...
     )
 
+    # Standardize initial condition and steadystate values; theoretically, these
+    # should be free parameters, in practice there is no point changing them
+    @assert (uType <: Vec{3}  && u0 ≈ uType((0, 0, 1))) || # Longitudinal magnetization; flipped below
+            (uType <: Vec{2}  && u0 ≈ uType((0, -1)))   || # Transverse magnetization following π/2-pulse about x-axis
+            (uType <: Complex && u0 ≈ uType(-im))          # Complex transverse magnetization following π/2-pulse about x-axis
+    @assert (uType <: Vec{3}  && steadystate ≈ 1) || (steadystate == nothing)
+
     if !(uType <: Vec{3})
         # Restrictions for when only transverse magnetization is simulated:
         #   -initial pulse (i.e. rotation) cannot be applied
-        #   -flip angle must be exactly π
-        #   -simulation only runs until nTE * TE
+        #   -flip angle must be exactly π, unless refocustype == :xyx
+        #   -simulation only runs until nTE * TE, i.e. nTR == 1
         @assert nTR == 1
-        @assert flipangle ≈ π
-        @assert initpulse ≈ 0
+        @assert flipangle ≈ π || refocustype == :xyx
+        @assert sliceselectangle ≈ 0
     end
     
     # Initialize initial magnetization state (in M-space)
     U0 = interpolate(u0, myelindomain)
-    (uType <: Vec{3}) && apply_pulse!(U0, initpulse, uType)
+    (uType <: Vec{3}) && apply_pulse!(U0, sliceselectangle, :x, uType)
 
     # Our convention is that u₃ = M∞ - M₃. This convenience function shifts U0 from
     # M-space (i.e. [M₁, M₂, M₃]) to u-space (i.e. [u₁, u₂, u₃] = [M₁, M₂, M∞ - M₃])
     (uType <: Vec{3}) && shift_longitudinal!(U0, steadystate)
 
     # Save solution every dt (an even divisor of TE) as well as every TR by default
-    tstops = multispinecho_savetimes(tspan, dt, TE, TR, nTE, nTR)
+    tstops = cpmg_savetimes(tspan, dt, TE, TR, nTE, nTR)
 
     # Setup problem and solve
     prob = ODEProblem(myelindomain, U0, tspan)

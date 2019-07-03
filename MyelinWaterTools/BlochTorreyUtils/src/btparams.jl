@@ -17,3 +17,9 @@ function radiidistribution(p::BlochTorreyParameters, lower = -1.5, upper = 2.5)
     return d
 end
 @inline radiidistribution(p::MyelinProblem) = radiidistribution(p.params)
+
+# Functions for computing each of mwf, g_ratio, and packing density in terms of
+# the other two parameters, assuming periodic circle packing and constant g_ratio
+periodic_mwf(;density = 0.7, g_ratio = 0.8) = density * (1 - g_ratio^2)
+periodic_g_ratio(;density = 0.7, mwf = 0.252) = √(1 - mwf / density)
+periodic_packdensity(;mwf = 0.252, g_ratio = 0.8) = mwf / (1 - g_ratio^2)

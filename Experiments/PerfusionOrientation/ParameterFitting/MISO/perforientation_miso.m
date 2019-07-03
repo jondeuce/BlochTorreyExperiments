@@ -24,9 +24,17 @@ DiaryFilename = [datestr(now,30), '__', 'diary.txt'];
 % alpha_range = 7.5:20.0:87.5;
 % alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
 % alpha_range = [37.5, 52.5, 72.5, 17.5, 87.5];
-alpha_range = [2.5, 17.5, 42.5, 67.5, 87.5];
+% alpha_range = [2.5, 17.5, 42.5, 67.5, 87.5];
+alpha_range = [2.5, 22.5, 42.5, 62.5, 87.5];
 % alpha_range = [2.5, 12.5, 22.5, 32.5, 47.5, 57.5, 67.5, 77.5, 87.5];
 % alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
+
+% Plot sample of alpha range being simulated
+[all_alpha_range, all_dR2_Data] = get_GRE_data(2.5:5:87.5);
+figure, p = plot(all_alpha_range, all_dR2_Data, 'bo-', 'markersize', 12, 'markeredgecolor', 'r', 'markerfacecolor', 'g'); hold on
+[test_alpha_range, test_dR2_Data] = get_GRE_data(alpha_range);
+plot(test_alpha_range, test_dR2_Data, 'kx', 'markersize', 25, 'linewidth', 6);
+leg = legend('All Data Points', 'Simulated Points'); set(leg, 'location', 'northwest');
 
 % =============================== DATA ================================== %
 
@@ -204,7 +212,7 @@ miso_initfun = @() struct( ...,
     'continuous',   [1,2,3],                        ... % indices of continuous variables
     'objfunction',  @(x) miso_call_fun(objfun, x)   );  % wrapped objective function
 
-% Call `miso` optimization routine
+% Call `miso` optimization routineM
 try
     [xbest, fbest, sol] = miso(miso_initfun, miso_settings{:});
 catch e

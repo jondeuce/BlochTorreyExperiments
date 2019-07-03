@@ -2,6 +2,9 @@
 % Periodic SevenPointSum Operator
 %==========================================================================
 
+CALLING_DIRECTORY = pwd;
+cd(fileparts(mfilename('fullpath')));
+
 if ispc
     % complex double version
     mex CFLAGS="-fexceptions -fPIC -fno-omit-frame-pointer -pthread" ...
@@ -25,3 +28,6 @@ else
         LDOPTIMFLAGS="-O3 -flto" ...
         -lgomp SevenPointSumMaskedBoolMask_cd.c  
 end
+
+cd(CALLING_DIRECTORY)
+clear CALLING_DIRECTORY

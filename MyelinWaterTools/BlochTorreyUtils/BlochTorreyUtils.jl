@@ -43,7 +43,7 @@ export fieldvectype, fieldfloattype, getgrid, getdomain, numfibres, createmyelin
 export getmass, getmassfact, getstiffness
        getdofhandler, getcellvalues, getfacevalues,
        getregion, getoutercircles, getinnercircles, getoutercircle, getinnercircle, getouterradius, getinnerradius
-export shift_longitudinal, shift_longitudinal!, pi_flip, pi_pulse!, apply_pulse!, multispinecho_savetimes
+export shift_longitudinal, shift_longitudinal!, pi_flip, pi_pulse!, apply_pulse!, cpmg_savetimes
 export testproblem
 
 # ---------------------------------------------------------------------------- #
@@ -56,7 +56,7 @@ export AbstractParabolicProblem, MyelinProblem, BlochTorreyProblem
 export AbstractDomain, ParabolicDomain, MyelinDomain, TriangularMyelinDomain, TriangularGrid
 export AbstractRegion, AbstractRegionUnion, AxonRegion, MyelinRegion, TissueRegion, PermeableInterfaceRegion
 export ParabolicLinearMap, LinearOperatorWrapper
-export MultiSpinEchoCallback
+export CPMGCallback
 export ExpokitExpmv, HighamExpmv
 
 end # module BlochTorreyUtils

@@ -229,6 +229,7 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
 end
 
 function plotsignal(tpoints, signals;
+        timeticks = range(tpoints[1], tpoints[end]; length = 65),
         titlestr = "Complex Signal vs. Time",
         apply_pi_correction = true,
         fname = nothing,
@@ -240,7 +241,7 @@ function plotsignal(tpoints, signals;
     mag_props = Dict{Symbol,Any}(
         :seriestype => :line, :linewidth => 2, :marker => :none, #:marker => :circle, :markersize => 10,
         :grid => true, :minorgrid => true, :legend => :topright,
-        :xticks => 1000 .* range(tpoints[1], tpoints[end]; length = 30),
+        :xticks => 1000 .* timeticks,
         :xrotation => -60, :xlims => 1000 .* extrema(tpoints),
         :formatter => x -> string(round(x; sigdigits = 3)),
         :labels => "Magnitude", :ylabel => L"$S(t)$ Magnitude", :xlabel => "Time [ms]",
@@ -294,13 +295,12 @@ function plotSEcorr(
     if AVOID_MAT_PLOTS
         mwf = _getmwf(opts, MWImaps, MWIdist, MWIpart)
         T2Vals = 1000 .* get_T2vals(opts)
-        xtickvals = length(T2Vals) <= 60 ? T2Vals : T2Vals[1:2:end] # length cannot be more than 120
         
         props = Dict{Symbol,Any}(
             :seriestype => :sticks, :xscale => :log10,
             :linewidth => 5, :markersize => 5, :marker => :circle,
             :grid => true, :minorgrid => true, :legend => :none,
-            :xticks => xtickvals, :xrotation => -60,
+            :xrotation => -60, :xticks => length(T2Vals) <= 60 ? T2Vals : T2Vals[1:2:end], # length never more than 120
             :formatter => x -> string(round(x; sigdigits = 3)),
             :xlim => 1000 .* opts.T2Range,
             :xlabel => "T2 [ms]",
