@@ -14,15 +14,15 @@ include(joinpath(@__DIR__, "../init.jl"))
 make_reproduce(
     """
     include("BlochTorreyExperiments/MyelinWaterTools/scripts/GenerateGrids-run.jl")
-    main()
     """
 )
 
 gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
 
 function runcreategeometry(params; numreps = 5)
-    @unpack numfibres, gratio, density = params
-    btparams = BlochTorreyParameters{Float64}(AxonPDensity = density, g_ratio = gratio)
+    # BlochTorreyParameters
+    @unpack numfibres, gratio, density, mwf = params
+    btparams = BlochTorreyParameters{Float64}(AxonPDensity = density, g_ratio = gratio, MWF = mwf)
     
     # Attempt to generate `numreps` grids for given parameter set
     for _ in 1:numreps
@@ -35,9 +35,9 @@ function runcreategeometry(params; numreps = 5)
                 beta = 0.5,
                 gamma = 1.0,
                 QMIN = 0.4, #DEBUG
-                MAXITERS = 1000, #DEBUG
-                FIXPOINTSITERS = 250,
-                FIXSUBSITERS = 200,
+                MAXITERS = 2000, #DEBUG
+                FIXPOINTSITERS = 1000, #DEBUG
+                FIXSUBSITERS = 950, #DEBUG
                 FORCEDENSITY = true, #DEBUG # error if desired density isn't reached
                 FORCEAREA = true, #DEBUG # error if the resulting grid area doesn't match the bdry area
                 FORCEQUALITY = true, #DEBUG # error if the resulting grid area have high enough quality
@@ -58,9 +58,18 @@ function runcreategeometry(params; numreps = 5)
                 gitdir()
             )
         catch e
-            @warn "Error generating grid with param string: " * DrWatson.savename("", params; connector = ", ")
-            @warn sprint(showerror, e, catch_backtrace())
+            if e isa InterruptException
+                # User interrupt; rethrow and catch in main()
+                rethrow(e)
+            else
+                # Grid generation; print error and continue
+                @warn "Error generating grid with param string: " * DrWatson.savename("", params; connector = ", ")
+                @warn sprint(showerror, e, catch_backtrace())
+                continue
+            end
         end
+        # Grid successfully generated; exit loop
+        break
     end
 
     return nothing
@@ -69,21 +78,35 @@ end
 function main()
     # Make subfolders
     mkpath.(("plots", "geom"))
-
+    
     # Parameters to sweep over
     sweep_params = Dict{Symbol,Any}(
-        :numfibres  => [5:5:50;],
-        :gratio     => [0.75, 0.78],
-        :density    => [0.78, 0.8]
+        :numfibres  => collect(5:5:50),
+        :mwf        => collect(0.15:0.01:0.3),
     )
 
     all_params = DrWatson.dict_list(sweep_params)
-    all_params = sort(all_params; by = d -> (d[:numfibres], d[:gratio], d[:density]))
+    all_params = sort(all_params; by = d -> (d[:numfibres], d[:mwf]))
     for (i,params) in enumerate(all_params)
-        params = convert(Dict{Symbol,Any}, params)
-        @info "Generating geometry $i/$(length(all_params)) at $(Dates.now()): $(DrWatson.savename("", params; connector = ", "))"
-        runcreategeometry(params)
+        try
+            @info "Generating geometry $i/$(length(all_params)) at $(Dates.now()): $(DrWatson.savename("", params; connector = ", "))"
+            @unpack g_ratio, AxonPDensity = BlochTorreyUtils.optimal_g_ratio_packdensity_gridsearch(params[:mwf])
+            geomparams = deepcopy(params)
+            geomparams[:gratio] = g_ratio
+            geomparams[:density] = AxonPDensity
+            runcreategeometry(geomparams)
+        catch e
+            if e isa InterruptException
+                @warn "Parameter sweep interrupted by user. Breaking out of loop and returning..."
+                break
+            else
+                @warn "Error running simulation $i/$(length(all_params))"
+                @warn sprint(showerror, e, catch_backtrace())
+            end
+        end
     end
 
     return nothing
 end
+
+main()

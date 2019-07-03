@@ -175,24 +175,43 @@ acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
 #     :T1lp   => (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
 #     :T1tiss => (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
 # )
+# const sweepparamsampler_settings = Dict{Symbol,Any}( #TODO testing settings
+#     :theta  => (sampler = :acossampler,   args = (lb = 90.0,    ub = 90.0)),
+#     :alpha  => (sampler = :linearsampler, args = (lb = 150.0,   ub = 150.0)),
+#     :K      => (sampler = :log10sampler,  args = (lb = 0.5,     ub = 0.5)),
+#     :Dtiss  => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 100.0)),
+#     :Dmye   => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 100.0)),
+#     :Dax    => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 100.0)),
+#     :FRD    => (sampler = :linearsampler, args = (lb = 0.1,     ub = 0.1)),
+#     :TE     => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 10e-3)),
+#     :TR     => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)),
+#     :nTE    => (sampler = :rangesampler,  args = (lb = 16,      ub = 16, s = 2)),
+#     :nTR    => (sampler = :rangesampler,  args = (lb = 1,       ub = 1)),
+#     :T2sp   => (sampler = :linearsampler, args = (lb = 15e-3,   ub = 15e-3)),
+#     :T2lp   => (sampler = :linearsampler, args = (lb = 63e-3,   ub = 63e-3)),
+#     :T2tiss => (sampler = :linearsampler, args = (lb = 63e-3,   ub = 63e-3)),
+#     :T1sp   => (sampler = :linearsampler, args = (lb = 200e-3,  ub = 200e-3)),
+#     :T1lp   => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), #3-sigma range for T1 = 1084 +/- 45
+#     :T1tiss => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), #3-sigma range for T1 = 1084 +/- 45
+# )
 const sweepparamsampler_settings = Dict{Symbol,Any}( #TODO testing settings
-    :theta  => (sampler = :acossampler,   args = (lb = 90.0,    ub = 90.0)),
-    :alpha  => (sampler = :linearsampler, args = (lb = 150.0,   ub = 150.0)),
-    :K      => (sampler = :log10sampler,  args = (lb = 0.5,     ub = 0.5)),
-    :Dtiss  => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 100.0)),
-    :Dmye   => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 100.0)),
-    :Dax    => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 100.0)),
-    :FRD    => (sampler = :linearsampler, args = (lb = 0.1,     ub = 0.1)),
-    :TE     => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 10e-3)),
-    :TR     => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)),
-    :nTE    => (sampler = :rangesampler,  args = (lb = 16,      ub = 16, s = 2)),
-    :nTR    => (sampler = :rangesampler,  args = (lb = 1,       ub = 1)),
-    :T2sp   => (sampler = :linearsampler, args = (lb = 15e-3,   ub = 15e-3)),
-    :T2lp   => (sampler = :linearsampler, args = (lb = 63e-3,   ub = 63e-3)),
-    :T2tiss => (sampler = :linearsampler, args = (lb = 63e-3,   ub = 63e-3)),
-    :T1sp   => (sampler = :linearsampler, args = (lb = 200e-3,  ub = 200e-3)),
-    :T1lp   => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), #3-sigma range for T1 = 1084 +/- 45
-    :T1tiss => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), #3-sigma range for T1 = 1084 +/- 45
+    :Dax    => (sampler = :log10sampler,  args = (lb = 345.087, ub = 345.087)),
+    :Dmye   => (sampler = :log10sampler,  args = (lb = 242.866, ub = 242.866)),
+    :Dtiss  => (sampler = :log10sampler,  args = (lb = 300.332, ub = 300.332)),
+    :FRD    => (sampler = :linearsampler, args = (lb = 0.306,   ub = 0.306)),
+    :K      => (sampler = :log10sampler,  args = (lb = 0.010,   ub = 0.010)),
+    :T1lp   => (sampler = :linearsampler, args = (lb = 1.134,   ub = 1.134)),
+    :T1sp   => (sampler = :linearsampler, args = (lb = 0.230,   ub = 0.230)),
+    :T1tiss => (sampler = :linearsampler, args = (lb = 1.075,   ub = 1.075)),
+    :T2lp   => (sampler = :linearsampler, args = (lb = 0.051,   ub = 0.051)),
+    :T2sp   => (sampler = :linearsampler, args = (lb = 0.013,   ub = 0.013)),
+    :T2tiss => (sampler = :linearsampler, args = (lb = 0.068,   ub = 0.068)),
+    :TE     => (sampler = :linearsampler, args = (lb = 0.009,   ub = 0.009)),
+    :TR     => (sampler = :linearsampler, args = (lb = 0.977,   ub = 0.977)),
+    :alpha  => (sampler = :linearsampler, args = (lb = 180.0,   ub = 180.0)),
+    :nTE    => (sampler = :rangesampler,  args = (lb =    45,   ub =    45)),
+    :nTR    => (sampler = :rangesampler,  args = (lb =     1,   ub =     1)),
+    :theta  => (sampler = :acossampler,   args = (lb = 81.04,   ub = 81.04)),
 )
 sweepparamsampler() = Dict{Symbol,Union{Float64,Int}}(
     k => eval(Expr(:call, v.sampler, v.args...))
@@ -268,17 +287,23 @@ function runsimulation!(results, sweepparams, geom)
     fname = DrWatson.savename(curr_time, sweepparams)
     titleparamstr = wrap_string(DrWatson.savename("", sweepparams; connector = ", "), 50, ", ")
     
-    # Compute MWF values
-    mwfmodels = map(default_mwfmodels) do model
-        if model isa NNLSRegression
-            typeof(model)(model; TE = TE, nTE = nTE, RefConAngle = alpha)
-        else
-            typeof(model)(model; TE = TE, nTE = nTE)
+    try
+        # Compare MWF values
+        mwfmodels = map(default_mwfmodels) do model
+            if model isa NNLSRegression
+                typeof(model)(model; TE = TE, nTE = nTE, RefConAngle = alpha)
+            else
+                typeof(model)(model; TE = TE, nTE = nTE)
+            end
         end
+        mwfvalues, _ = compareMWFmethods(sols, myelindomains,
+            geom.outercircles, geom.innercircles, geom.bdry;
+            models = mwfmodels)
+    catch e
+        mwfvalues = nothing
+        @warn "Error comparing MWF methods"
+        @warn sprint(showerror, e, catch_backtrace())
     end
-    mwfvalues, _ = compareMWFmethods(sols, myelindomains,
-        geom.outercircles, geom.innercircles, geom.bdry;
-        models = mwfmodels)
 
     # Update results struct and return
     push!(results[:btparams], btparams)
