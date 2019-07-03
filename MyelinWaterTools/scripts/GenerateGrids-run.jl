@@ -43,13 +43,13 @@ function runcreategeometry(params; numreps = 5)
                 FORCEQUALITY = true) #DEBUG # error if the resulting grid area have high enough quality
 
             # Common filename without suffix
-            params[:ntri] = sum(JuAFEM.getncells, geom.exteriorgrids) + sum(JuAFEM.getncells, geom.torigrids) + sum(JuAFEM.getncells, geom.interiorgrids)
-            params[:npts] = sum(JuAFEM.getnnodes, geom.exteriorgrids) + sum(JuAFEM.getnnodes, geom.torigrids) + sum(JuAFEM.getnnodes, geom.interiorgrids)
+            params[:Ntri] = sum(JuAFEM.getncells, geom.exteriorgrids) + sum(JuAFEM.getncells, geom.torigrids) + sum(JuAFEM.getncells, geom.interiorgrids)
+            params[:Npts] = sum(JuAFEM.getnnodes, geom.exteriorgrids) + sum(JuAFEM.getnnodes, geom.torigrids) + sum(JuAFEM.getnnodes, geom.interiorgrids)
             fname = DrWatson.savename(MWFUtils.getnow(), params)
 
             # Plot circles and grid
-            plotcircles([geom.innercircles; geom.outercircles], geom.bdry; fname = "plots/" * fname * ".circles")
-            plotgrids(geom.exteriorgrids, geom.torigrids, geom.interiorgrids; fname = "plots/" * fname * ".grids")
+            plotcircles([geom.innercircles; geom.outercircles], geom.bdry; fname = "plots/circles/" * fname * ".circles")
+            plotgrids(geom.exteriorgrids, geom.torigrids, geom.interiorgrids; fname = "plots/grids/" * fname * ".grids")
 
             # Save generated geometry, tagging file with git commit
             DrWatson.@tagsave(
@@ -78,11 +78,11 @@ end
 
 function main()
     # Make subfolders
-    mkpath.(("plots", "geom"))
+    mkpath.(("plots/circles", "plots/grids", "geom"))
 
     # Parameters to sweep over
     sweep_params = Dict{Symbol,Any}(
-        :numfibres => collect(6:30),
+        :numfibres => collect(5:30),
         :mwf       => collect(0.15:0.01:0.3))
 
     all_params = DrWatson.dict_list(sweep_params)
