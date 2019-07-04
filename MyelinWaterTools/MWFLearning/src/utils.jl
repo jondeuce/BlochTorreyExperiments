@@ -14,9 +14,9 @@ batchsize(x::AbstractArray{T,N}) where {T,N} = size(x, N)
 """
     channelsize(x::AbstractArray)
 
-Returns the length of the second-last dimension of the data `x`.
-If `x` is a `Matrix`, 1 is returned.
-If `x` is a `Vector`, an error is thrown.
+Returns the length of the second-last dimension of the data `x`, unless:
+    `x` is a `Matrix`, in which case 1 is returned.
+    `x` is a `Vector`, in which case an error is thrown.
 """
 channelsize(x::AbstractVector) = error("Channel size undefined for AbstractVector's")
 channelsize(x::AbstractMatrix) = 1
@@ -27,31 +27,8 @@ channelsize(x::AbstractArray{T,N}) where {T,N} = size(x, N-1)
 
 Returns the length of the first dimension of the data `x`.
 """
-heightsize(x::AbstractVector) = 1
-heightsize(x::AbstractArray{T,N}) where {T,N} = size(x, 1)
-
-"""
-    DenseResize()
-
-Non-learnable layer which resizes input arguments `x` to be a matrix with batchsize(x) columns.
-"""
-struct DenseResize end
-Flux.@treelike DenseResize
-(l::DenseResize)(x::AbstractArray) = reshape(x, :, batchsize(x))
-Base.show(io::IO, l::DenseResize) = print(io, "DenseResize()")
-
-"""
-    DenseResize(s::AbstractArray)
-
-Non-learnable layer which scales input `x` by array `s`
-"""
-struct Scale{V}
-    s::V
-end
-Scale(s::Flux.TrackedArray) = Scale(Flux.data(s)) # Layer is not learnable
-Flux.@treelike Scale
-(l::Scale)(x::AbstractArray) = x .* l.s
-Base.show(io::IO, l::Scale) = print(io, "Scale(", length(l.s), ")")
+heightsize(x::AbstractVector) = error("TODO: Called here")
+heightsize(x::AbstractArray) = size(x, 1)
 
 """
     log10range(a, b; length = 10)
@@ -182,21 +159,6 @@ function init_data(::WaveletProcessing, settings::Dict, ds::AbstractVector{<:Dic
     peelsig = settings["data"]["preprocess"]["peel"]["apply"] :: Bool
     TEfast  = settings["data"]["preprocess"]["peel"]["TEfast"] :: T
     
-    function applydwt(b)
-        wt = Wavelets.wavelet(Wavelets.WT.db4)
-        # b = sin.(4*range(0, stop=2*pi-eps(), length=1024))
-        if true
-            w = Wavelets.dwt(b, wt)
-            # wth = Wavelets.threshold!(w, Wavelets.BiggestTH(), nterms)
-            wb = w[1:nterms]
-        else
-            tree = Wavelets.bestbasistree(b, wt)
-            w = Wavelets.wpt(b, wt, tree)
-            wth = Wavelets.threshold!(w, Wavelets.BiggestTH(), nterms)
-            wb = [findall(!iszero, wth)]
-        end
-    end
-
     out = reduce(hcat, begin
         signals = d[:signals] :: VC
         TE      = d[:sweepparams][:TE] :: T
@@ -208,11 +170,11 @@ function init_data(::WaveletProcessing, settings::Dict, ds::AbstractVector{<:Dic
             p = peel!(bufdict[nTE], b, Ncutoff, Ncutoff)
             vcat(
                 T[exp(p[1].α), exp(p[2].α), TE * inv(-p[1].β), TE * inv(-p[2].β)],
-                applydwt(bufdict[nTE][1]) :: VT # wavelet transform peeled signal
+                applydwt(bufdict[nTE][1], nterms) :: VT # wavelet transform peeled signal
                 # bufdict[nTE][1][1:nterms] :: VT # remainder signal #TODO
             )
         else
-            applydwt(b) :: VT # wavelet transform of full signal
+            applydwt(b, nterms) :: VT # wavelet transform of full signal
         end
     end for d in ds)
     

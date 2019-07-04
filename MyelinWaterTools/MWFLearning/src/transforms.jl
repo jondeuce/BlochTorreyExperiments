@@ -170,3 +170,71 @@ function linfit(x,y)
     α = mean(y) - β * mean(x)
     return @ntuple(α, β)
 end
+
+"""
+Wavelet filtering
+"""
+function applydwt(
+        b,
+        nterms = length(b),
+        wt = Wavelets.wavelet(Wavelets.WT.cdf97, Wavelets.WT.Lifting),
+        # wt = Wavelets.wavelet(Wavelets.WT.db4),
+    )
+    w = Wavelets.dwt(b, wt)
+    Wavelets.threshold!(w, Wavelets.BiggestTH(), nterms)
+    wb = w[findall(!iszero, w)]
+    return wb
+end
+
+function chopdwt(x, nterms)
+    # n = length(x)
+    # d = Vector{eltype(x)}(undef, nterms)
+    # J = Wavelets.ndyadicscales(n)
+
+    # @inbounds for j = 0:J-1, i in 1:Wavelets.dyadicdetailn(j)
+    #     idx = Wavelets.dyadicdetailindex(j,i)
+    #     @show idx
+    #     (idx <= nterms) && (d[idx] = x[idx])
+    # end
+    # error("done")
+
+    # return d
+
+    return x[1:nterms]
+end
+
+function plotdwt(;
+        # fname = nothing, TODO
+        thresh = 0.1, # dots below `thresh` are zeroed
+        # wt = Wavelets.wavelet(Wavelets.WT.cdf97, Wavelets.WT.Lifting),
+        wt = Wavelets.wavelet(Wavelets.WT.db4),
+        t = nothing,
+        x = nothing,
+        w = nothing,
+    )
+
+    (x == nothing && w == nothing) && (x = Wavelets.testfunction(512, "Bumps"))
+    (x != nothing && w == nothing) && (w = Wavelets.dwt(x, wt))
+    (x == nothing && w != nothing) && (x = Wavelets.idwt(w, wt))
+    (t == nothing) && (t = 0:length(x)-1)
+
+    @assert length(x) == length(w)
+
+    n = length(w)
+    J = floor(Int, log2(n))
+    d, l = Wavelets.wplotdots(w, thresh, n)
+    A = Wavelets.wplotim(w)
+
+    xt, yt = 0:n-2, 0:J-1
+    p1 = RecipesBase.plot(t, x; lc = :black, xlim = (1,length(x)), xtick = [1,length(x)], ylab = L"f(x)", leg = :none)
+    for r in 1:2
+        xr = Wavelets.idwt(chopdwt(w, length(w) ÷ 2^r), wt)
+        RecipesBase.plot!(p1, 2^r .* t, xr)
+    end
+    p2 = RecipesBase.plot(d, l; st = :scatter, ytick = 0:J, xlim = (-0.5,n-1.5), ylab = L"level $j$", lab = "Thresh = $thresh", leg = :bottomright)
+    p3 = RecipesBase.plot(xt, yt, A; st = :heatmap, ytick = 0:J, ylim = (-0.5, J-0.5), ylab = L"level $j$", cb = :none)
+
+    p = RecipesBase.plot(p1,p2,p3; layout = (3,1))
+
+    return p
+end
