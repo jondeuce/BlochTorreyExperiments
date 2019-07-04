@@ -9,8 +9,8 @@ using Reexport
 using Statistics: mean, median, cov, std, var
 using StatsBase: quantile
 
-import Flux, Flux.NNlib, Flux.Tracker, Flux.Optimise, DrWatson, BSON, TOML, Dates, MultivariateStats
-export Flux,      NNlib,      Tracker,      Optimise, DrWatson, BSON, TOML, Dates, MultivariateStats
+import Flux, Flux.NNlib, Flux.Tracker, Flux.Optimise, DrWatson, BSON, TOML, Dates, MultivariateStats, Wavelets
+export Flux,      NNlib,      Tracker,      Optimise, DrWatson, BSON, TOML, Dates, MultivariateStats, Wavelets
 
 using DrWatson: @dict, @ntuple
 using Parameters: @unpack

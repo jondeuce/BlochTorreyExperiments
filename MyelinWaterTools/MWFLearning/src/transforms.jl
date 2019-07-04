@@ -139,21 +139,29 @@ end
 provencher(x::AbstractVector, L::Int = ceil(Int, 0.1 * length(x))) =
     provencher!(zeros(eltype(x), length(x)-L+1), x)
 
-
 """
 Peel method
+
+First buffer element is the output vector `z`, equal to the input `x` with two
+exponential modes "peeled" off.
+Second buffer element `y` is the biexponential sum which was peeled off.
+Third buffer element is a temporary buffer not to be relied upon.
 """
 function peel!(bufs::NTuple{3,A}, x::A, Nslow = 5, Nfast = 5) where {A <: AbstractVector}
-    y, z, e = bufs
-    copyto!(z, y)
+    z, y, e = bufs
+    copyto!(z, x)
     fill!(y, 0)
-    for t in [Nslow:length(y), 1:Nfast]
+    tranges = [Nslow:length(z), 1:Nfast]
+    
+    function fitpeel(t)
         @unpack α, β = linfit(t, log.(abs.(z[t])))
-        e .= exp.(α .+ β .* (1:length(y)))
+        e .= exp.(α .+ β .* (1:length(z)))
         z .-= e # Subtract component off of original vector
-        y .+= e # Add component to output vector
+        y .+= e # Add component to smoothed vector
+        @ntuple(α, β)
     end
-    return y
+
+    return [fitpeel(t) for t in tranges]
 end
 peel(x::AbstractVector, args...; kwargs...) = peel!(ntuple(_->copy(x), 3), x, args...; kwargs...)
 

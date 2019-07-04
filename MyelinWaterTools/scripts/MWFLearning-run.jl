@@ -68,7 +68,7 @@ const test_set = make_minibatch(data_set[:testing_data], data_set[:testing_label
 # # @show maximum(abs, Xte .- Zte);
 # 
 # @info "Plotting PCA results..."
-# plot_xdata = log10range(settings["data"]["T2Range"]...; length = settings["data"]["nT2"])
+# plot_xdata = log10range(settings["data"]["preprocess"]["ilaplace"]["T2Range"]...; length = settings["data"]["preprocess"]["ilaplace"]["nT2"])
 # plot_ydata = permutedims(cat(Xte, Zte; dims = 3), (1,3,2))
 # # plot_ydata = permutedims(cat(Xtr, Ztr; dims = 3), (1,3,2))
 # plot_zdata = permutedims(cat(Yte, Ytr[:,sample(1:batchsize(Ytr), batchsize(Yte); replace = false)]; dims = 3), (1,3,2))
@@ -99,15 +99,23 @@ const test_set = make_minibatch(data_set[:testing_data], data_set[:testing_label
 
 @info "Plotting random data samples..."
 plot_random_data_samples = () -> begin
-    plot_xdata = settings["data"]["PCA"] ?
-        collect(1:heightsize(test_set[1])) :
-        log10range(settings["data"]["T2Range"]...; length = settings["data"]["nT2"])
-    plot_ydata = reshape(test_set[1], :, batchsize(test_set[1]))
+    plot_xdata =
+        settings["data"]["preprocess"]["PCA"]["apply"] ?
+            collect(1:heightsize(test_set[1])) :
+        settings["data"]["preprocess"]["ilaplace"]["apply"] ?
+            log10range(settings["data"]["preprocess"]["ilaplace"]["T2Range"]...; length = settings["data"]["preprocess"]["ilaplace"]["nT2"]) :
+        settings["data"]["preprocess"]["wavelet"]["apply"] ?
+            collect(1:16) : #TODO collect(1:heightsize(test_set[1])) :
+        error("No method supplied")
+    plot_ydata =
+        settings["data"]["preprocess"]["wavelet"]["apply"] ?
+            reshape(test_set[1][5:20,1,:], :, batchsize(test_set[1])) : #TODO
+        reshape(test_set[1], :, batchsize(test_set[1])) # default
     fig = plot([
         plot(plot_xdata, plot_ydata[:,i];
-            xscale = settings["data"]["PCA"] ? :identity : :log10,
+            xscale = settings["data"]["preprocess"]["ilaplace"]["apply"] ? :log10 : :identity,
             titlefontsize = 8, grid = true, minorgrid = true,
-            label = "\$T_2\$ Distbn.",
+            label = "Data Distbn.",
             title = DrWatson.savename("", data_set[:testing_data_dicts][i][:sweepparams]; connector = ", ")
         ) for i in sample(1:batchsize(plot_ydata), 5; replace = false)
         ]...; layout = (5,1))

@@ -6,8 +6,8 @@ dir     = "."
 train_data  = "./train"
 test_data   = "./test"
 batch_size  = 250
-test_size   = 670
-height      = "auto" # Data length; default will be nT2, unless e.g. PCA is performed
+test_size   = 260
+height      = "auto"
 channels    = 1 # Number of data channels
 # labels      = ["mwf"] # Target labels
 # weights     = [1.0] # Weights for loss function
@@ -21,11 +21,21 @@ weights     = [2.0, 2.0, 1.0, 1.0] # Weights for loss function
 # weights     = [2.0, 2.0, 1.0, 1.0, 0.5] # Weights for loss function
 # labels      = ["mwf", "iewf", "T2iew", "T2mw", "Dav", "K"] # Target labels
 # weights     = [2.0, 2.0, 1.0, 1.0, 0.5, 0.5] # Weights for loss function
+[data.preprocess]
 SNR         = [0.0] # Additive random noise
+[data.preprocess.peel]
+apply       = true # peel before applying wavelet
+TEfast      = 0.015 # Threshold for fast decay mode
+[data.preprocess.wavelet]
+apply       = true # Apply wavelet preprocessing
+nterms      = 16 # number of terms to keep
+[data.preprocess.ilaplace]
+apply       = false # Apply ilaplace preprocessing
 T2Range     = [0.001, 2.0] # T2 distribution range
 nT2         = 40 # Number of exponentials in T2 distribution
 alpha       = 0.02 # Tikhonov regularization parameter
-PCA         = false # Apply PCA transform to data
+[data.preprocess.PCA]
+apply       = false # Apply PCA preprocessing
 
 [plot]
 # scale     = [100.0, 100.0] # scale labels before plotting
