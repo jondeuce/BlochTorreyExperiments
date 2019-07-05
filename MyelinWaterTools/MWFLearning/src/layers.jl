@@ -113,7 +113,7 @@ ResidualBlock
 
 Input has size H x C x B, for some batch size B.
 """
-function ResidualBlock(H::Int, C::Int, mode::Symbol = :post, bn::Bool = false, σ = Flux.relu)
+function ResidualBlock(H::Int, C::Int, mode::Symbol = :hybrid, bn::Bool = true, σ = Flux.elu)
     ApplyDense(σ = identity) = ChannelwiseDense(H, C=>C, σ).layers
     layer = if mode == :pre
         BN = bn ? Flux.BatchNorm(C, σ) : identity
