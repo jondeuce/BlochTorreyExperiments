@@ -4,15 +4,21 @@
 
 module MWFLearning
 
+import Flux, Flux.NNlib, Flux.Tracker, Flux.Optimise, DrWatson, BSON, TOML, Dates
+export Flux,      NNlib,      Tracker,      Optimise, DrWatson, BSON, TOML, Dates
+
 using Reexport
 @reexport using LinearAlgebra
 using Statistics: mean, median, cov, std, var
 using StatsBase: quantile
-using RecipesBase, LaTeXStrings
+import MultivariateStats
 
-import Flux, Flux.NNlib, Flux.Tracker, Flux.Optimise, DrWatson, BSON, TOML, Dates, MultivariateStats, Wavelets
-export Flux,      NNlib,      Tracker,      Optimise, DrWatson, BSON, TOML, Dates, MultivariateStats, Wavelets
+@reexport using RecipesBase, LaTeXStrings
+using RecipesBase: plot, plot!
+export plot, plot!, mean, median, cov, std, var, quantile
 
+@reexport using EllipsisNotation
+@reexport using Wavelets
 using DrWatson: @dict, @ntuple
 using Parameters: @unpack
 using LegibleLambdas: @λ
@@ -23,7 +29,8 @@ export heightsize, batchsize, channelsize, log10range
 export prepare_data, label_fun, init_data, init_labels, init_signal
 
 # Layers
-export DenseResize, ChannelResize, Scale
+export PrintSize, DenseResize, ChannelResize, Scale
+export IdentitySkip, CatSkip, ResidualBlock
 
 include("src/transforms.jl")
 include("src/utils.jl")

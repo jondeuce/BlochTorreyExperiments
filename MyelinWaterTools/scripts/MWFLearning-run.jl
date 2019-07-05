@@ -44,59 +44,6 @@ const train_set = [make_minibatch(data_set[:training_data], data_set[:training_l
 # const train_set = [([make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches][1]...,)] # For overtraining testing
 const test_set = make_minibatch(data_set[:testing_data], data_set[:testing_labels], 1:settings["data"]["test_size"])
 
-# # Component analysis
-# import MultivariateStats
-# const MVS = MultivariateStats
-# norm2(x) = x⋅x
-# 
-# Xtr = copy(reduce(hcat, (x->x[1][:,1,:]).(train_set)))
-# Xte = copy(test_set[1][:,1,:])
-# 
-# M = MVS.fit(MVS.PCA, Xtr; maxoutdim = size(Xtr,1)) # fit PCA
-# # M = MVS.fit(MVS.ICA, Xtr, 1) # fit ICA
-# # M = MVS.fit(MVS.KernelPCA, Xtr; maxoutdim = 7, kernel = (x,y) -> exp(-norm2(x-y)), inverse = true)
-# Ytr = MVS.transform(M, Xtr) # apply to train
-# Yte = MVS.transform(M, Xte) # apply to test
-# Ztr = MVS.reconstruct(M, Ytr)
-# Zte = MVS.reconstruct(M, Yte)
-# 
-# # @show sqrt(sum(abs2, Matrix{Float64}(Xtr .- Ztr))/length(Xtr));
-# # @show sqrt(sum(abs2, Matrix{Float64}(Xte .- Zte))/length(Xte));
-# # @show sum(abs, Matrix{Float64}(Xtr .- Ztr))/length(Xtr);
-# # @show sum(abs, Matrix{Float64}(Xte .- Zte))/length(Xte);
-# # @show maximum(abs, Xtr .- Ztr);
-# # @show maximum(abs, Xte .- Zte);
-# 
-# @info "Plotting PCA results..."
-# plot_xdata = log10range(settings["data"]["preprocess"]["ilaplace"]["T2Range"]...; length = settings["data"]["preprocess"]["ilaplace"]["nT2"])
-# plot_ydata = permutedims(cat(Xte, Zte; dims = 3), (1,3,2))
-# # plot_ydata = permutedims(cat(Xtr, Ztr; dims = 3), (1,3,2))
-# plot_zdata = permutedims(cat(Yte, Ytr[:,sample(1:batchsize(Ytr), batchsize(Yte); replace = false)]; dims = 3), (1,3,2))
-# plot_PCA_fun = () -> begin
-#     plot([
-#         plot(plot_xdata, plot_ydata[:,:,i];
-#             xscale = :log10,
-#             titlefontsize = 8, grid = true, minorgrid = true,
-#             label = ["\$T_2\$ Distbn." "Reconstructed"],
-#         ) for i in sample(1:batchsize(plot_ydata), 5; replace = false)
-#         ]...; layout = (5,1)) |> display
-#     plot([
-#         plot(1:size(plot_zdata, 1), plot_zdata[:,:,i];
-#             titlefontsize = 8, grid = true, minorgrid = true,
-#             label = ["Test" "Train"],
-#         ) for i in sample(1:batchsize(plot_zdata), 5; replace = false)
-#         ]...; layout = (5,1)) |> display
-#     plot([
-#         plot(plot_xdata, MVS.reconstruct(M, VT(Flux.onehot(i, 1:MVS.outdim(M))));
-#         xscale = :log10, titlefontsize = 8, grid = true, minorgrid = true,
-#         label = "\$ϕ_$i\$", legend = :topright,
-#         ) for i in 1:MVS.outdim(M)
-#         ]...; layout = (MVS.outdim(M), 1)) |> display
-#     nothing
-# end
-# plot_PCA_fun()
-# mean(plot_xdata[2:end] ./ plot_xdata[1:end-1])
-
 @info "Plotting random data samples..."
 plot_random_data_samples = () -> begin
     plot_xdata =
@@ -109,7 +56,7 @@ plot_random_data_samples = () -> begin
         error("No method supplied")
     plot_ydata =
         settings["data"]["preprocess"]["wavelet"]["apply"] ?
-            reshape(test_set[1][5:20,1,:], :, batchsize(test_set[1])) : #TODO
+            reshape(test_set[1][end - settings["data"]["preprocess"]["wavelet"]["nterms"] + 1 : end,1,:], :, batchsize(test_set[1])) :
         reshape(test_set[1], :, batchsize(test_set[1])) # default
     fig = plot([
         plot(plot_xdata, plot_ydata[:,i];
@@ -167,6 +114,8 @@ labelerror =
 opt = Flux.ADAM(
     settings["optimizer"]["ADAM"]["lr"],
     (settings["optimizer"]["ADAM"]["beta"]...,))
+# opt = Flux.ADAM(1e-3, (0.9, 0.999))
+# opt = Flux.Nesterov(1e-3)
 
 # Callbacks
 errs = Dict(
@@ -192,9 +141,9 @@ plot_errs_cb = () -> begin
         labelerr = permutedims(reduce(hcat, labelerr))
         labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
         plot(
-            plot(loss;      title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), min(1, quantile(loss, 0.90)))),
-            plot(acc;       title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (95, 100)),
-            plot(labelerr;  title = "Label Error ($k: rel. %)",                                     titlefontsize = 10, label = labelnames, legend = :topleft, ylim = (max(0, minimum(labelerr) - 0.5), min(15, quantile(labelerr[:], 0.90)))),
+            plot(loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), min(1, quantile(loss, 0.90)))),
+            plot(acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (95, 100)),
+            plot(labelerr; title = "Label Error ($k: rel. %)",                                     titlefontsize = 10, label = labelnames, legend = :topleft, ylim = (max(0, minimum(labelerr) - 0.5), min(15, quantile(labelerr[:], 0.90)))),
             layout = (1,3)
         )
     end for (k,v) in errs)

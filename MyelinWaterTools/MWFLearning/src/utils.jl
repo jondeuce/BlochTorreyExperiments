@@ -140,7 +140,7 @@ function init_data(::iLaplaceProcessing, settings::Dict, ds::AbstractVector{<:Di
         signals = d[:signals] :: VC
         TE      = d[:sweepparams][:TE] :: T
         nTE     = d[:sweepparams][:nTE] :: Int
-        b       = init_signal(signals) :: VT
+        b       = init_signal(signals, nTE) :: VT
         T2      = log10range(T2Range...; length = nT2) :: VT
         x       = ilaplace!(bufdict[nTE], b, T2, TE, alpha) :: VT
         copy(x)
@@ -156,26 +156,71 @@ function init_data(::WaveletProcessing, settings::Dict, ds::AbstractVector{<:Dic
     bufdict = Dict(nTEs .=> bufs)
 
     nterms  = settings["data"]["preprocess"]["wavelet"]["nterms"] :: Int
-    peelsig = settings["data"]["preprocess"]["peel"]["apply"] :: Bool
+    peelbi  = settings["data"]["preprocess"]["peel"]["biexp"] :: Bool
     TEfast  = settings["data"]["preprocess"]["peel"]["TEfast"] :: T
+    peelper = settings["data"]["preprocess"]["peel"]["periodic"] :: Bool
     
+    PLOT_COUNT = 0
+    PLOT_LIMIT = 3
+    PLOT_FUN = (b, nTE; kwargs...) -> begin
+        if PLOT_COUNT < PLOT_LIMIT
+            plotdwt(;
+                x = b,
+                nchopterms = nterms,
+                thresh = round(0.01 * norm(b); sigdigits = 3),
+                kwargs...)
+            PLOT_COUNT += 1
+        end
+    end
+
     out = reduce(hcat, begin
         signals = d[:signals] :: VC
         TE      = d[:sweepparams][:TE] :: T
         nTE     = d[:sweepparams][:nTE] :: Int
-        Ncutoff = ceil(Int, -TEfast/TE * log(5e-2)) :: Int
-        b       = init_signal(signals) :: VT
-        if peelsig
-            # Slow/fast magnitudes, slow/fast T2 times
+        Ncutoff = ceil(Int, -TEfast/TE * log(1e-3)) :: Int
+        b       = init_signal(signals, nTE) :: VT
+        
+        x = T[] # Output vector
+        sizehint!(x, nterms + 4 * peelbi + 2 * peelper)
+
+        # Peel off slow/fast exponentials
+        if peelbi
             p = peel!(bufdict[nTE], b, Ncutoff, Ncutoff)
-            vcat(
-                T[exp(p[1].α), exp(p[2].α), TE * inv(-p[1].β), TE * inv(-p[2].β)],
-                applydwt(bufdict[nTE][1], nterms) :: VT # wavelet transform peeled signal
-                # bufdict[nTE][1][1:nterms] :: VT # remainder signal #TODO
-            )
-        else
-            applydwt(b, nterms) :: VT # wavelet transform of full signal
+            b = copy(bufdict[nTE][1]) # Peeled signal
+            push!(x, exp(p[1].α)) # Slow magnitude
+            push!(x, exp(p[2].α)) # Fast magnitude
+            push!(x, TE * inv(-p[1].β)) # Slow decay rate
+            push!(x, TE * inv(-p[1].β)) # Fast decay rate
         end
+
+        # Peel off linear term to force periodicity
+        if peelper
+            b1, bn, n = b[1], b[end], length(b)
+            β = (bn - b1) / (nb - 1) # slope forces equal endpoints
+            α = b1 - β # TODO subtract mean?
+            f = x -> α + β*x
+            b .-= (x -> α + β*x).(1:n)
+            push!(x, α) # Linear term mean
+            push!(x, β) # Linear term slope
+        end
+
+        # Apply wavelet transform to peeled signal
+        if maxtransformlevels(b) < 2
+            npad = 4 - mod(length(b), 4) # pad to a multiple of 4
+            append!(b, fill(b[end], npad))
+        end
+        th = BiggestTH()
+        w, _ = chopdwt(b, nterms, th)
+        append!(x, w :: VT)
+
+        # Plot final signal
+        PLOT_FUN(b, nTE; th = th,
+            title = "final padded, nTE = $nTE, norm(err) = " * string(
+                norm(b - ichopdwt(chopdwt(b, nterms, th)..., th)) |> x -> round(x; sigdigits=3)
+            ))
+        
+        # Return vector of transformed data
+        x :: VT
     end for d in ds)
     
     return reshape(out, :, 1, size(out, 2))
@@ -197,18 +242,17 @@ function init_data(::PCAProcessing, training_data, testing_data)
 end
 
 """
-Normalize input complex signal data `z` is sampled at (0, TE, ..., nTE*TE).
-The magnitude sampled at (TE, 2*TE, ..., nTE*TE), is returned, normalized
+Normalize input complex signal data `z`.
+Assume that `z` is sampled every `TE/n` seconds for some positive integer `n`.
+The output is the magnitude of the last `nTE` points sampled at a multiple of `TE`.
 to have the first point equal to 1.
 """
-function init_signal(z::AbstractVector{C}) where {C <: Complex}
-    x = abs.(z[5:4:end]) #TODO signals are sampled every TE/4, not TE
-    x ./= x[1]
-    return x
-end
-function init_signal(z::AbstractMatrix{C}) where {C <: Complex}
-    x = abs.(z[5:4:end, :]) #TODO signals are sampled every TE/4, not TE
-    x ./= x[1, :]
+function init_signal(z::AbstractVecOrMat{C}, nTE::Int = size(z,1) - 1) where {C <: Complex}
+    n = size(z,1)
+    dt = (n-1) ÷ nTE
+    @assert n == 1 + dt * nTE
+    x = abs.(z[n - dt*(nTE-1) : dt : n, ..])
+    x ./= x[1:1, ..]
     return x
 end
 

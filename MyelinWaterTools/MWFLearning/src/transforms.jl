@@ -172,69 +172,86 @@ function linfit(x,y)
 end
 
 """
-Wavelet filtering
+Default wavelet transform
 """
-function applydwt(
-        b,
-        nterms = length(b),
-        wt = Wavelets.wavelet(Wavelets.WT.cdf97, Wavelets.WT.Lifting),
-        # wt = Wavelets.wavelet(Wavelets.WT.db4),
-    )
-    w = Wavelets.dwt(b, wt)
-    Wavelets.threshold!(w, Wavelets.BiggestTH(), nterms)
-    wb = w[findall(!iszero, w)]
-    return wb
+# const MWF_DEFAULT_WT = wavelet(WT.db2)
+# const MWF_DEFAULT_WT = wavelet(WT.db4)
+const MWF_DEFAULT_WT = wavelet(WT.cdf97, WT.Lifting)
+struct ChopTH <: Threshold.THType end
+
+"""
+Chop discrete wavelet coefficients to `nterms`, optionally specifying
+the wavelet transform `wt`.
+"""
+function chopdwt(x, nterms, th::ChopTH, wt = MWF_DEFAULT_WT)
+    w = wt == nothing ? x[1:nterms] : dwt(x, wt)[1:nterms]
+    return w, (length(x),)
+end
+function chopdwt(x, nterms, th::BiggestTH, wt = MWF_DEFAULT_WT)
+    w = wt == nothing ? copy(x) : dwt(x, wt)
+    threshold!(w, BiggestTH(), nterms)
+    tree = findall(!iszero, w)
+    return w[tree], (length(x), tree)
 end
 
-function chopdwt(x, nterms)
-    # n = length(x)
-    # d = Vector{eltype(x)}(undef, nterms)
-    # J = Wavelets.ndyadicscales(n)
+"""
+Reconstruct original signal of length `nsignal` from chopped wavelet coefficients,
+optionally specifying the wavelet transform `wt`.
+"""
+function ichopdwt(w, args::Tuple, th::ChopTH, wt = MWF_DEFAULT_WT)
+    nsignal = args[1]
+    _w = copy(w)
+    append!(_w, zeros(eltype(w), nsignal - length(w)))
+    return idwt(_w, wt)
+end
 
-    # @inbounds for j = 0:J-1, i in 1:Wavelets.dyadicdetailn(j)
-    #     idx = Wavelets.dyadicdetailindex(j,i)
-    #     @show idx
-    #     (idx <= nterms) && (d[idx] = x[idx])
-    # end
-    # error("done")
-
-    # return d
-
-    return x[1:nterms]
+function ichopdwt(w, args::Tuple, th::BiggestTH, wt = MWF_DEFAULT_WT)
+    nsignal, tree = args
+    _w = zeros(eltype(w), nsignal)
+    _w[tree] .= w
+    return idwt(_w, wt)
 end
 
 function plotdwt(;
         # fname = nothing, TODO
         thresh = 0.1, # dots below `thresh` are zeroed
-        # wt = Wavelets.wavelet(Wavelets.WT.cdf97, Wavelets.WT.Lifting),
-        wt = Wavelets.wavelet(Wavelets.WT.db4),
+        wt = MWF_DEFAULT_WT,
+        th = ChopTH(),
         t = nothing,
         x = nothing,
         w = nothing,
+        nchopterms = nothing,
+        kwargs...
     )
 
-    (x == nothing && w == nothing) && (x = Wavelets.testfunction(512, "Bumps"))
-    (x != nothing && w == nothing) && (w = Wavelets.dwt(x, wt))
-    (x == nothing && w != nothing) && (x = Wavelets.idwt(w, wt))
+    (x == nothing && w == nothing) && (x = testfunction(512, "Bumps"))
+    (x != nothing && w == nothing) && (w = dwt(x, wt))
+    (x == nothing && w != nothing) && (x = idwt(w, wt))
     (t == nothing) && (t = 0:length(x)-1)
-
-    @assert length(x) == length(w)
-
-    n = length(w)
-    J = floor(Int, log2(n))
-    d, l = Wavelets.wplotdots(w, thresh, n)
-    A = Wavelets.wplotim(w)
-
-    xt, yt = 0:n-2, 0:J-1
-    p1 = RecipesBase.plot(t, x; lc = :black, xlim = (1,length(x)), xtick = [1,length(x)], ylab = L"f(x)", leg = :none)
-    for r in 1:2
-        xr = Wavelets.idwt(chopdwt(w, length(w) ÷ 2^r), wt)
-        RecipesBase.plot!(p1, 2^r .* t, xr)
+    
+    nx = length(x)
+    p1 = plot(t, x;
+        lc = :black, xlim = extrema(t), xtick = [extrema(t)...],
+        ylab = L"f(x)", leg = :none,
+        kwargs...)
+    if nchopterms != nothing
+        wr, ichopargs = chopdwt(x, nchopterms, th, wt)
+        xr = ichopdwt(wr, ichopargs, th, wt)
+        plot!(p1, t, xr)
     end
-    p2 = RecipesBase.plot(d, l; st = :scatter, ytick = 0:J, xlim = (-0.5,n-1.5), ylab = L"level $j$", lab = "Thresh = $thresh", leg = :bottomright)
-    p3 = RecipesBase.plot(xt, yt, A; st = :heatmap, ytick = 0:J, ylim = (-0.5, J-0.5), ylab = L"level $j$", cb = :none)
 
-    p = RecipesBase.plot(p1,p2,p3; layout = (3,1))
+    J = floor(Int, log2(length(w)))
+    w, _ = chopdwt(w, 2^J, th, nothing)
+    n = length(w)
+    xt, yt = 0:n-2, 0:J-1
+    d, l = wplotdots(w, thresh, n)
+    A = wplotim(w)
+
+    p2 = plot(d, l; st = :scatter, ytick = 0:J, xlim = (-0.5, n-1.5), ylab = L"level $j$", lab = "Thresh = $thresh", leg = :bottomright)
+    p3 = plot(xt, yt, A; st = :heatmap, ytick = 0:J, ylim = (-0.5, J-0.5), ylab = L"level $j$", cb = :none)
+
+    p = plot(p1,p2,p3; layout = (3,1))
+    display(p)
 
     return p
 end

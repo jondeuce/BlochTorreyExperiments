@@ -2,6 +2,7 @@ get_model(settings::Dict, model_settings = settings["model"]) =
     model_settings["name"] == "Keras1DSeqClass" ? keras_1D_sequence_classification(settings, model_settings) :
     model_settings["name"] == "TestModel1" ? test_model_1(settings, model_settings) :
     model_settings["name"] == "TestModel2" ? test_model_2(settings, model_settings) :
+    model_settings["name"] == "TestModel3" ? test_model_3(settings, model_settings) :
     error("Unknown model: " * model_settings["name"])
 
 get_activation(str::String) =
@@ -132,20 +133,22 @@ function test_model_2(settings, model_settings = settings["model"])
     return model
 end
 
-function model_summary(io::IO, model, filename = nothing)
-    @info "Model summary..."
-    (filename != nothing) && open(filename, "w") do file
-        _model_summary(file, model)
-    end
-    _model_summary(io, model)
-end
-model_summary(model, filename = nothing) = model_summary(stdout, model, filename)
+function test_model_3(settings, model_settings = settings["model"])
+    H = settings["data"]["height"] # data height
+    C = settings["data"]["channels"] # number of channels
 
-function _model_summary(io::IO, model)
-    for layer in model
-        if layer != identity
-            println(io, layer)
-        end
-    end
-    println(io, "\nParameters: $(sum(length, Flux.params(model)))")
+    @unpack Nout, act = model_settings
+    actfun = get_activation(act)
+
+    model = Flux.Chain(
+        DenseResize(),
+        Flux.Dense(H*C, (H*C)÷2, Flux.relu),
+        ChannelResize(2),
+        (ResidualBlock(((H*C)÷2)÷2, 2, :pre) for _ in 1:5)...,
+        DenseResize(),
+        Flux.Dense((H*C)÷2, Nout),
+        @λ(x -> [Flux.softmax(x[1:2, ..]); Flux.relu.(x[3:Nout, ..])])
+    )
+
+    return model
 end
