@@ -5,6 +5,7 @@ using Statistics: mean, median, std
 using StatsBase: quantile, sample, iqr
 using Base.Iterators: repeated, partition
 Pkg.activate(joinpath(@__DIR__, ".."))
+Pkg.instantiate() #TODO
 include(joinpath(@__DIR__, "../initpaths.jl"))
 
 using MWFLearning
@@ -76,16 +77,21 @@ savefig(plot_random_data_samples(), "plots/" * FILE_PREFIX * "datasamples.png")
 # model = MWFLearning.get_model(settings, model_settings)
 # model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"))
 
+error("got here....")
+physical_params = @λ(x -> x[1:4,1,:])
+wavelet_coeffs  = @λ(x -> x[5:20,1,:])
+
 model = Flux.Chain(
     Sumout(
-        @λ(x -> x[1:4,1,:]),
+        physical_params,
         Flux.Chain(
-            @λ(x -> x[5:20,1,:]),
+            wavelet_coeffs,
             Flux.Dense(16, 8, Flux.relu),
             ChannelResize(2),
             (ResidualBlock(4, 2, :pre, false) for _ in 1:1)...,
             DenseResize(),
             Flux.Dense(8, 4),
+            @λ(x -> 1e-3 * x), # Small perturbation
         ),
     ),
     @λ(x -> vcat(Flux.softmax(x[1:2,:]), x[3:4,:])),
@@ -134,19 +140,16 @@ opt = Flux.ADAM(1e-2, (0.9, 0.999)) #TODO
 errs = Dict(
     :training => Dict(:loss => [], :acc => [], :labelerr => []),
     :testing => Dict(:loss => [], :acc => [], :labelerr => []))
-
 train_err_cb = () -> begin
     push!(errs[:training][:loss], mean(Flux.data(loss(b...)) for b in train_set))
     push!(errs[:training][:acc], mean(Flux.data(accuracy(b...)) for b in train_set))
     push!(errs[:training][:labelerr], mean(Flux.data(labelerror(b...)) for b in train_set))
 end
-
 test_err_cb = () -> begin
     push!(errs[:testing][:loss], Flux.data(loss(test_set...)))
     push!(errs[:testing][:acc], Flux.data(accuracy(test_set...)))
     push!(errs[:testing][:labelerr], Flux.data(labelerror(test_set...)))
 end
-
 plot_errs_cb = () -> begin
     @info " -> Plotting progress..."
     _plot_errs_cb = (k,v) -> begin
@@ -164,12 +167,10 @@ plot_errs_cb = () -> begin
     display(fig)
     savefig(fig, "plots/" * FILE_PREFIX * "errs.png")
 end
-
 checkpoint_model_opt_cb = () -> begin
     save_time = savebson("models/" * FILE_PREFIX * "model-checkpoint.bson", @dict(model, opt)) #TODO getnow()
     @info " -> Model checkpoint... ($(round(1000*save_time; digits = 2)) ms)"
 end
-
 checkpoint_errs_cb = () -> begin
     save_time = savebson("log/" * FILE_PREFIX * "errors.bson", @dict(errs)) #TODO getnow()
     @info " -> Error checkpoint ($(round(1000*save_time; digits = 2)) ms)" #TODO
