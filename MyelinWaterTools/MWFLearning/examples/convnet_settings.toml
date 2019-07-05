@@ -25,11 +25,12 @@ weights     = [2.0, 2.0, 1.0, 1.0] # Weights for loss function
 SNR         = [0.0] # Additive random noise
 [data.preprocess.peel]
 biexp       = true # peel before applying wavelet
+makefrac    = true # convert component magnitudes to fractions
 TEfast      = 0.015 # Threshold for fast decay mode
 periodic    = false # subtract linear term to make signal periodic
 [data.preprocess.wavelet]
 apply       = true # Apply wavelet preprocessing
-nterms      = 24 # number of terms to keep
+nterms      = 16 # number of terms to keep
 [data.preprocess.ilaplace]
 apply       = false # Apply ilaplace preprocessing
 T2Range     = [0.001, 2.0] # T2 distribution range

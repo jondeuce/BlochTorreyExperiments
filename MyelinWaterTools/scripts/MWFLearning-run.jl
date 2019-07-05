@@ -52,7 +52,7 @@ plot_random_data_samples = () -> begin
         settings["data"]["preprocess"]["ilaplace"]["apply"] ?
             log10range(settings["data"]["preprocess"]["ilaplace"]["T2Range"]...; length = settings["data"]["preprocess"]["ilaplace"]["nT2"]) :
         settings["data"]["preprocess"]["wavelet"]["apply"] ?
-            collect(1:16) : #TODO collect(1:heightsize(test_set[1])) :
+            collect(1:heightsize(test_set[1])-4) :
         error("No method supplied")
     plot_ydata =
         settings["data"]["preprocess"]["wavelet"]["apply"] ?
@@ -73,8 +73,24 @@ savefig(plot_random_data_samples(), "plots/" * FILE_PREFIX * "datasamples.png")
 
 # Construct model
 @info "Constructing model..."
-model = MWFLearning.get_model(settings, model_settings)
-model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"))
+# model = MWFLearning.get_model(settings, model_settings)
+# model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"))
+
+model = Flux.Chain(
+    Sumout(
+        @λ(x -> x[1:4,1,:]),
+        Flux.Chain(
+            @λ(x -> x[5:20,1,:]),
+            Flux.Dense(16, 8, Flux.relu),
+            ChannelResize(2),
+            (ResidualBlock(4, 2, :pre, false) for _ in 1:1)...,
+            DenseResize(),
+            Flux.Dense(8, 4),
+        ),
+    ),
+    @λ(x -> vcat(Flux.softmax(x[1:2,:]), x[3:4,:])),
+)
+model_summary(model)
 
 # Compute parameter density, defined as the number of Flux.params / number of training label datapoints
 const param_density = sum(length, Flux.params(model)) / sum(b -> length(b[2]), train_set)
@@ -107,14 +123,11 @@ accuracy =
 labelerror =
     @λ (x,y) -> 100 .* mean(abs.(model(x) .- y); dims = 2) ./ maximum(abs.(y); dims = 2)
 
-# stringlabelerror =
-#     (x,y) -> string.(round.(settings["plot"]["scale"] .* Flux.data(labelerror(x,y)); sigdigits = 4)) .* " " .* settings["plot"]["units"]
-
 # Optimizer
-opt = Flux.ADAM(
-    settings["optimizer"]["ADAM"]["lr"],
-    (settings["optimizer"]["ADAM"]["beta"]...,))
-# opt = Flux.ADAM(1e-3, (0.9, 0.999))
+# opt = Flux.ADAM(
+#     settings["optimizer"]["ADAM"]["lr"],
+#     (settings["optimizer"]["ADAM"]["beta"]...,))
+opt = Flux.ADAM(1e-2, (0.9, 0.999)) #TODO
 # opt = Flux.Nesterov(1e-3)
 
 # Callbacks
@@ -136,7 +149,7 @@ end
 
 plot_errs_cb = () -> begin
     @info " -> Plotting progress..."
-    allfigs = reduce(vcat, begin
+    _plot_errs_cb = (k,v) -> begin
         @unpack loss, acc, labelerr = v
         labelerr = permutedims(reduce(hcat, labelerr))
         labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
@@ -146,8 +159,8 @@ plot_errs_cb = () -> begin
             plot(labelerr; title = "Label Error ($k: rel. %)",                                     titlefontsize = 10, label = labelnames, legend = :topleft, ylim = (max(0, minimum(labelerr) - 0.5), min(15, quantile(labelerr[:], 0.90)))),
             layout = (1,3)
         )
-    end for (k,v) in errs)
-    fig = plot(allfigs...; layout = (length(errs), 1))
+    end
+    fig = plot((_plot_errs_cb(k,v) for (k,v) in errs)...; layout = (length(errs), 1))
     display(fig)
     savefig(fig, "plots/" * FILE_PREFIX * "errs.png")
 end
@@ -175,8 +188,8 @@ cbs = Flux.Optimise.runall([
 
 # Training Loop
 const ACC_THRESH = 100.0
-const DROP_ETA_THRESH = 250 # typemax(Int)
-const CONVERGED_THRESH = 500 # typemax(Int)
+const DROP_ETA_THRESH = 1000 # typemax(Int)
+const CONVERGED_THRESH = 2500 # typemax(Int)
 BEST_ACC = 0.0
 LAST_IMPROVED_EPOCH = 0
 

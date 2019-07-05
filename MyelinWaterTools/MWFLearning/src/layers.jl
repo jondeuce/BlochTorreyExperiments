@@ -1,5 +1,5 @@
 """
-Print model
+Print model/layer
 """
 function model_summary(io::IO, model, filename = nothing)
     @info "Model summary..."
@@ -11,19 +11,19 @@ end
 model_summary(model, filename = nothing) = model_summary(stdout, model, filename)
 
 """
-Recursively print model
+Recursively print model/layer
 """
 _model_summary(io::IO, model, depth::Int = 0) = println(io, model) # fallback
 getindent(depth) = reduce(*, "    " for _ in 1:depth; init = "")
 
-function _model_summary(io::IO, model::Flux.Chain, depth::Int = 0)
+function _model_summary(io::IO, model::Flux.Chain, depth::Int = 0; skipidentity = true)
     indent = getindent(depth)
     for layer in model
         if layer isa Flux.Chain
             println(io, indent * "Chain(")
             _model_summary(io, layer, depth + 1)
             println(io, indent * ")")
-        elseif layer != identity
+        elseif !(skipidentity && layer == identity)
             print(io, indent)
             _model_summary(io, layer, depth)
         end
@@ -39,9 +39,18 @@ function _model_summary(io::IO, model::Flux.SkipConnection, depth::Int = 0)
     print(io, getindent(depth + 1) * "λ = ")
     print(io, model.connection)
     println(",")
-    _model_summary(io, model.layers, depth + 1)
+    _model_summary(io, model.layers, depth + 1; skipidentity = false)
     println(io, getindent(depth) * ")")
 end
+
+function _model_summary(io::IO, model::Sumout, depth::Int = 0)
+    println(io, getindent(depth) * "Sumout(")
+    map(layer -> begin
+        _model_summary(io, Flux.Chain(layer), depth + 1; skipidentity = false)
+    end, model.over)
+    println(io, getindent(depth) * ")")
+end
+Base.show(io::IO, so::Sumout) = (print(io, "Sumout("); join(io, so.over, ", "); print(io, ")"))
 
 """
 PrintSize()
@@ -88,6 +97,24 @@ Flux.@treelike Scale
 Base.show(io::IO, l::Scale) = print(io, "Scale(", length(l.s), ")")
 
 """
+    Sumout(over)
+`Sumout` is a neural network layer, which has a number of internal layers,
+which all have the same input, and returns the elementwise sum of the
+internal layers' outputs.
+"""
+struct Sumout{FS<:Tuple}
+    over::FS
+end
+Sumout(args...) = Sumout(args)
+Base.show(io::IO, so::Sumout) = (print(io, "Sumout("); join(io, so.over, ", "); print(io, ")"))
+
+Flux.@treelike Sumout
+
+function (mo::Sumout)(input::AbstractArray)
+    mapreduce(f -> f(input), (acc, out) -> acc + out, mo.over)
+end
+
+"""
 ChannelwiseDense
 """
 ChannelwiseDense(H::Int, ch::Pair, σ = identity) = Flux.Chain(DenseResize(), Flux.Dense(H*ch[1], H*ch[2]), ChannelResize(ch[2]))
@@ -113,34 +140,35 @@ ResidualBlock
 
 Input has size H x C x B, for some batch size B.
 """
-function ResidualBlock(H::Int, C::Int, mode::Symbol = :hybrid, bn::Bool = true, σ = Flux.elu)
+ResidualBlock(args...) = IdentitySkip(DenseResidualCell(args...))
+
+function DenseResidualCell(H::Int, C::Int, mode::Symbol = :hybrid, bn::Bool = true, σ = Flux.elu)
     ApplyDense(σ = identity) = ChannelwiseDense(H, C=>C, σ).layers
-    layer = if mode == :pre
+    if mode == :pre
         BN = bn ? Flux.BatchNorm(C, σ) : identity
         Flux.Chain(
-            BN,                   # Flux.BatchNorm(ch[2], σ),
-            ApplyDense()...,      # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2),
-            BN,                   # Flux.BatchNorm(ch[2], σ),
-            ApplyDense()...,      # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2),
+            BN,               # Flux.BatchNorm(ch[2], σ),
+            ApplyDense()...,  # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2),
+            BN,               # Flux.BatchNorm(ch[2], σ),
+            ApplyDense()...,  # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2),
         )
     elseif mode == :post
         BN = bn ? Flux.BatchNorm(C, σ) : identity
         Flux.Chain(
-            ApplyDense()...,      # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2),
-            BN,                   # Flux.BatchNorm(ch[2], σ),
-            ApplyDense()...,      # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2),
-            BN,                   # Flux.BatchNorm(ch[2], σ),
+            ApplyDense()...,  # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2),
+            BN,               # Flux.BatchNorm(ch[2], σ),
+            ApplyDense()...,  # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2),
+            BN,               # Flux.BatchNorm(ch[2], σ),
         )
     elseif mode == :hybrid
         BN = bn ? Flux.BatchNorm(C) : identity
         Flux.Chain(
-            BN,                   # Flux.BatchNorm(ch[2]),
-            ApplyDense(σ)...,     # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2, σ),
-            BN,                   # Flux.BatchNorm(ch[2]),
-            ApplyDense()...,      # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2),
+            BN,               # Flux.BatchNorm(ch[2]),
+            ApplyDense(σ)..., # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2, σ),
+            BN,               # Flux.BatchNorm(ch[2]),
+            ApplyDense()...,  # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2),
         )
     else
-        error("Unknown ResidualBlock mode $mode")
+        error("Unknown DenseResidualCell mode $mode")
     end
-    IdentitySkip(layer)
 end

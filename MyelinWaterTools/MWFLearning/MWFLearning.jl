@@ -29,8 +29,8 @@ export heightsize, batchsize, channelsize, log10range
 export prepare_data, label_fun, init_data, init_labels, init_signal
 
 # Layers
-export PrintSize, DenseResize, ChannelResize, Scale
-export IdentitySkip, CatSkip, ResidualBlock
+export PrintSize, DenseResize, ChannelResize, Scale, Sumout
+export IdentitySkip, CatSkip, ResidualBlock, DenseResidualCell
 
 include("src/transforms.jl")
 include("src/utils.jl")

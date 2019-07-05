@@ -151,14 +151,15 @@ end
 
 function init_data(::WaveletProcessing, settings::Dict, ds::AbstractVector{<:Dict})
     T, VT, VC = Float64, Vector{Float64}, Vector{ComplexF64}
-    nTEs    = unique(d[:sweepparams][:nTE] for d in ds) :: Vector{Int}
-    bufs    = [ntuple(_ -> zeros(T, nTE), 3) for nTE in nTEs]
-    bufdict = Dict(nTEs .=> bufs)
+    nTEs     = unique(d[:sweepparams][:nTE] for d in ds) :: Vector{Int}
+    bufs     = [ntuple(_ -> zeros(T, nTE), 3) for nTE in nTEs]
+    bufdict  = Dict(nTEs .=> bufs)
 
-    nterms  = settings["data"]["preprocess"]["wavelet"]["nterms"] :: Int
-    peelbi  = settings["data"]["preprocess"]["peel"]["biexp"] :: Bool
-    TEfast  = settings["data"]["preprocess"]["peel"]["TEfast"] :: T
-    peelper = settings["data"]["preprocess"]["peel"]["periodic"] :: Bool
+    nterms   = settings["data"]["preprocess"]["wavelet"]["nterms"] :: Int
+    TEfast   = settings["data"]["preprocess"]["peel"]["TEfast"] :: T
+    peelbi   = settings["data"]["preprocess"]["peel"]["biexp"] :: Bool
+    makefrac = settings["data"]["preprocess"]["peel"]["makefrac"] :: Bool
+    peelper  = settings["data"]["preprocess"]["peel"]["periodic"] :: Bool
     
     PLOT_COUNT = 0
     PLOT_LIMIT = 3
@@ -187,10 +188,16 @@ function init_data(::WaveletProcessing, settings::Dict, ds::AbstractVector{<:Dic
         if peelbi
             p = peel!(bufdict[nTE], b, Ncutoff, Ncutoff)
             b = copy(bufdict[nTE][1]) # Peeled signal
-            push!(x, exp(p[1].α)) # Slow magnitude
-            push!(x, exp(p[2].α)) # Fast magnitude
+            Aslow, Afast = exp(p[1].α), exp(p[2].α)
+            if makefrac
+                push!(x, Afast / (Aslow + Afast)) # Fast fraction
+                push!(x, Aslow / (Aslow + Afast)) # Slow fraction
+            else
+                push!(x, Afast) # Fast magnitude
+                push!(x, Aslow) # Slow magnitude
+            end
             push!(x, TE * inv(-p[1].β)) # Slow decay rate
-            push!(x, TE * inv(-p[1].β)) # Fast decay rate
+            push!(x, TE * inv(-p[2].β)) # Fast decay rate
         end
 
         # Peel off linear term to force periodicity
