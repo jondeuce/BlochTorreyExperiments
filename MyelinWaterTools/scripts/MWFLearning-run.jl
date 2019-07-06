@@ -23,7 +23,8 @@ const settings_file = "settings.toml"
 const settings = verify_settings(TOML.parsefile(settings_file))
 const model_settings = settings["model"]
 
-const FILE_PREFIX = getnow() * "." * DrWatson.savename(model_settings) * "."
+const DATE_PREFIX = getnow() * "."
+const FILE_PREFIX = DATE_PREFIX * DrWatson.savename(model_settings) * "."
 const GPU = settings["gpu"] :: Bool
 const T   = settings["prec"] == 32 ? Float32 : Float64
 const VT  = Vector{T}
@@ -42,7 +43,7 @@ make_minibatch(x, y, idxs) = (x[:,:,idxs], y[:,idxs])
 const data_set = prepare_data(settings, model_settings)
 const train_batches = partition(1:batchsize(data_set[:training_data]), settings["data"]["batch_size"])
 const train_set = [make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches]
-# const train_set = [([make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches][1]...,)] # For overtraining testing
+# const train_set = [([make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches][1]...,)] # For overtraining testing (set batch size small)
 const test_set = make_minibatch(data_set[:testing_data], data_set[:testing_labels], 1:settings["data"]["test_size"])
 
 @info "Plotting random data samples..."
@@ -53,7 +54,7 @@ plot_random_data_samples = () -> begin
         settings["data"]["preprocess"]["ilaplace"]["apply"] ?
             log10range(settings["data"]["preprocess"]["ilaplace"]["T2Range"]...; length = settings["data"]["preprocess"]["ilaplace"]["nT2"]) :
         settings["data"]["preprocess"]["wavelet"]["apply"] ?
-            collect(1:heightsize(test_set[1])-4) :
+            collect(1:heightsize(test_set[1])-Nout) :
         error("No method supplied")
     plot_ydata =
         settings["data"]["preprocess"]["wavelet"]["apply"] ?
@@ -74,29 +75,9 @@ savefig(plot_random_data_samples(), "plots/" * FILE_PREFIX * "datasamples.png")
 
 # Construct model
 @info "Constructing model..."
-# model = MWFLearning.get_model(settings, model_settings)
-# model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"))
 
-error("got here....")
-physical_params = @λ(x -> x[1:4,1,:])
-wavelet_coeffs  = @λ(x -> x[5:20,1,:])
-
-model = Flux.Chain(
-    Sumout(
-        physical_params,
-        Flux.Chain(
-            wavelet_coeffs,
-            Flux.Dense(16, 8, Flux.relu),
-            ChannelResize(2),
-            (ResidualBlock(4, 2, :pre, false) for _ in 1:1)...,
-            DenseResize(),
-            Flux.Dense(8, 4),
-            @λ(x -> 1e-3 * x), # Small perturbation
-        ),
-    ),
-    @λ(x -> vcat(Flux.softmax(x[1:2,:]), x[3:4,:])),
-)
-model_summary(model)
+model = MWFLearning.get_model(settings, model_settings)
+model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"))
 
 # Compute parameter density, defined as the number of Flux.params / number of training label datapoints
 const param_density = sum(length, Flux.params(model)) / sum(b -> length(b[2]), train_set)
@@ -104,27 +85,31 @@ const param_density = sum(length, Flux.params(model)) / sum(b -> length(b[2]), t
 
 # Loss and accuracy function
 unitsum(x) = x ./ sum(x)
-get_label_weights()::VT = VT(inv.(model_settings["scale"]) .* unitsum(settings["data"]["weights"]))
+LabelWeights()::VT = VT(inv.(model_settings["scale"]) .* unitsum(settings["data"]["weights"]))
 
-l2 = @λ (x,y) -> sum((get_label_weights() .* (model(x) .- y)).^2)
+l1 = @λ (x,y) -> sum(abs.(LabelWeights() .* (model(x) .- y)))
+l2 = @λ (x,y) -> sum((LabelWeights() .* (model(x) .- y)).^2)
+mae = @λ (x,y) -> l1(x,y) * 1 // length(y)
 mse = @λ (x,y) -> l2(x,y) * 1 // length(y)
 crossent = @λ (x,y) -> Flux.crossentropy(model(x), y)
 mincrossent = @λ (y) -> -sum(y .* log.(y))
 
-if model_settings["loss"] ∉ ["l2", "mse", "crossent"]
+if model_settings["loss"] ∉ ["l1", "l2", "mse", "crossent"]
     @warn "Unknown loss $(model_settings["loss"]); defaulting to mse"
     model_settings["loss"] = "mse"
 end
 
 loss =
+    model_settings["loss"] == "l1" ? l1 :
     model_settings["loss"] == "l2" ? l2 :
     model_settings["loss"] == "crossent" ? crossent :
     mse # default
 
 accuracy =
-    model_settings["loss"] == "l2" ? @λ( (x,y) -> 100 - 100 * sqrt(loss(x,y) * 1 // length(y)) ) :
-    model_settings["loss"] == "crossent" ? @λ( (x,y) -> 100 - 100 * (loss(x,y) - mincrossent(y)) ) :
-    @λ( (x,y) -> 100 - 100 * sqrt(loss(x,y)) ) # default
+    model_settings["acc"] == "mae" ? @λ( (x,y) -> 100 - 100 * mae(x,y) ) :
+    model_settings["acc"] == "rmse" ? @λ( (x,y) -> 100 - 100 * sqrt(mse(x,y)) ) :
+    model_settings["acc"] == "crossent" ? @λ( (x,y) -> 100 - 100 * (crossent(x,y) - mincrossent(y)) ) :
+    @λ( (x,y) -> 100 - 100 * sqrt(mse(x,y)) ) # default
 
 labelerror =
     @λ (x,y) -> 100 .* mean(abs.(model(x) .- y); dims = 2) ./ maximum(abs.(y); dims = 2)
@@ -133,26 +118,42 @@ labelerror =
 # opt = Flux.ADAM(
 #     settings["optimizer"]["ADAM"]["lr"],
 #     (settings["optimizer"]["ADAM"]["beta"]...,))
-opt = Flux.ADAM(1e-2, (0.9, 0.999)) #TODO
-# opt = Flux.Nesterov(1e-3)
+# opt = Flux.Nesterov(1e-1)
+# opt = Flux.ADAMW(3e-4, (0.9, 0.999), 1e-5)
+opt = Flux.ADAMW(1e-2, (0.9, 0.999), 1e-5)
+getLRopt = opt -> opt[1]
+linspace(x1,x2,y1,y2) = x -> (y2-y1)/(x2-x1) * (x-x1) + y1
+logspace(x1,x2,y1,y2) = x -> 10^linspace(x1,x2,log10(y1),log10(y2))(x)
+
+# Learning Rate Finder
+LRfun(e) = e <= 100 ? logspace(1,100,1e-8,1.0)(e) : 1.0
+learnratefinderlossesvariable = []
+
+# Cycling
+LRSTART, LRMAX, LRMIN, LRWIDTH, LRTAIL = 1e-6, 1e-3, 1e-6, 50, 10
+LRfun(e) =
+    e <= LRWIDTH ? linspace(1,LRWIDTH,LRSTART,LRMAX)(e) :
+    LRWIDTH+1 <= e <= 4*LRWIDTH ? linspace(LRWIDTH,4*LRWIDTH,LRMAX,LRSTART)(e) :
+    4*LRWIDTH+1 <= e <= 4*LRWIDTH + LRTAIL ? linspace(4*LRWIDTH,4*LRWIDTH+LRTAIL,LRSTART,LRMIN)(e) :
+    LRMIN
 
 # Callbacks
 errs = Dict(
     :training => Dict(:loss => [], :acc => [], :labelerr => []),
     :testing => Dict(:loss => [], :acc => [], :labelerr => []))
-train_err_cb = () -> begin
+train_err_cb = function()
     push!(errs[:training][:loss], mean(Flux.data(loss(b...)) for b in train_set))
     push!(errs[:training][:acc], mean(Flux.data(accuracy(b...)) for b in train_set))
     push!(errs[:training][:labelerr], mean(Flux.data(labelerror(b...)) for b in train_set))
 end
-test_err_cb = () -> begin
+test_err_cb = function()
     push!(errs[:testing][:loss], Flux.data(loss(test_set...)))
     push!(errs[:testing][:acc], Flux.data(accuracy(test_set...)))
     push!(errs[:testing][:labelerr], Flux.data(labelerror(test_set...)))
 end
-plot_errs_cb = () -> begin
+plot_errs_cb = function()
     @info " -> Plotting progress..."
-    _plot_errs_cb = (k,v) -> begin
+    function make_subplot(k,v)
         @unpack loss, acc, labelerr = v
         labelerr = permutedims(reduce(hcat, labelerr))
         labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
@@ -163,15 +164,15 @@ plot_errs_cb = () -> begin
             layout = (1,3)
         )
     end
-    fig = plot((_plot_errs_cb(k,v) for (k,v) in errs)...; layout = (length(errs), 1))
-    display(fig)
+    fig = plot((make_subplot(k,v) for (k,v) in errs)...; layout = (length(errs), 1))
     savefig(fig, "plots/" * FILE_PREFIX * "errs.png")
+    display(fig)
 end
-checkpoint_model_opt_cb = () -> begin
+checkpoint_model_opt_cb = function()
     save_time = savebson("models/" * FILE_PREFIX * "model-checkpoint.bson", @dict(model, opt)) #TODO getnow()
     @info " -> Model checkpoint... ($(round(1000*save_time; digits = 2)) ms)"
 end
-checkpoint_errs_cb = () -> begin
+checkpoint_errs_cb = function()
     save_time = savebson("log/" * FILE_PREFIX * "errors.bson", @dict(errs)) #TODO getnow()
     @info " -> Error checkpoint ($(round(1000*save_time; digits = 2)) ms)" #TODO
 end
@@ -182,15 +183,15 @@ train_err_cb() # initial loss
 cbs = Flux.Optimise.runall([
     Flux.throttle(test_err_cb, 5),
     Flux.throttle(train_err_cb, 5),
-    Flux.throttle(plot_errs_cb, 15),
+    Flux.throttle(plot_errs_cb, 5),
     Flux.throttle(checkpoint_errs_cb, 30),
     # Flux.throttle(checkpoint_model_opt_cb, 120),
 ])
 
 # Training Loop
-const ACC_THRESH = 100.0
-const DROP_ETA_THRESH = 1000 # typemax(Int)
-const CONVERGED_THRESH = 2500 # typemax(Int)
+const ACC_THRESH = 100.0 # Never stop
+const DROP_ETA_THRESH = 250 # 250 TODO
+const CONVERGED_THRESH = typemax(Int) # 500 TODO
 BEST_ACC = 0.0
 LAST_IMPROVED_EPOCH = 0
 
@@ -199,9 +200,15 @@ LAST_IMPROVED_EPOCH = 0
 try
     for epoch in 1:settings["optimizer"]["epochs"]
         global BEST_ACC, LAST_IMPROVED_EPOCH
+        
+        # Set the learning rate
+        getLRopt(opt).eta = LRfun(epoch)
 
         # Train for a single epoch
         Flux.train!(loss, Flux.params(model), train_set, opt; cb = cbs)
+
+        # Find learning rate
+        push!(learnratefinderlossesvariable, sum(d->Flux.data(loss(d...)), train_set))
 
         # Calculate accuracy:
         acc = accuracy(test_set...)
@@ -223,9 +230,10 @@ try
 
             try
                 # TODO
-                # model = Flux.mapleaves(Flux.data, model) # local scope, can rename
-                # save_time = savebson("models/" * FILE_PREFIX * "model.bson", @dict(model, opt, curr_epoch, curr_acc)) #TODO getnow()
-                # @info " -> New best accuracy; model saved ($(round(1000*save_time; digits = 2)) ms)"
+                # let model = Flux.mapleaves(Flux.data, model) # local scope, can rename
+                #     save_time = savebson("models/" * FILE_PREFIX * "model.bson", @dict(model, opt, curr_epoch, curr_acc)) #TODO getnow()
+                #     @info " -> New best accuracy; model saved ($(round(1000*save_time; digits = 2)) ms)"
+                # end
             catch e
                 @warn "Error saving model"
                 @warn sprint(showerror, e, catch_backtrace())
@@ -241,14 +249,14 @@ try
             end
         end
 
-        # If we haven't seen improvement in 5 epochs, drop our learning rate:
-        if epoch - LAST_IMPROVED_EPOCH >= DROP_ETA_THRESH && opt.eta > 5e-7
-            opt.eta /= 2.0
-            @warn(" -> Haven't improved in $DROP_ETA_THRESH iters; dropping learning rate to $(opt.eta)")
-
-            # After dropping learning rate, give it a few epochs to improve
-            LAST_IMPROVED_EPOCH = epoch
-        end
+        # # If we haven't seen improvement in 5 epochs, drop our learning rate:
+        # if epoch - LAST_IMPROVED_EPOCH >= DROP_ETA_THRESH && getLRopt(opt).eta > 1e-6
+        #     getLRopt(opt).eta /= 2.0
+        #     @warn(" -> Haven't improved in $DROP_ETA_THRESH iters; dropping learning rate to $(getLRopt(opt).eta)")
+        # 
+        #     # After dropping learning rate, give it a few epochs to improve
+        #     LAST_IMPROVED_EPOCH = epoch
+        # end
 
         if epoch - LAST_IMPROVED_EPOCH >= CONVERGED_THRESH
             @warn(" -> Haven't improved in $CONVERGED_THRESH iters; model has converged")
@@ -263,6 +271,9 @@ catch e
         @warn sprint(showerror, e, catch_backtrace())
     end
 end
+
+plot(LRfun.(1:length(learnratefinderlossesvariable)), learnratefinderlossesvariable;
+    xscale = :log10, xlabel = "alpha", ylabel = "loss") |> display
 
 @info "Plotting prediction histograms..."
 model_labels = Flux.data(model(test_set[1]))

@@ -1,64 +1,10 @@
 """
-Print model/layer
-"""
-function model_summary(io::IO, model, filename = nothing)
-    @info "Model summary..."
-    (filename != nothing) && open(filename, "w") do file
-        _model_summary(file, model)
-    end
-    _model_summary(io, model)
-end
-model_summary(model, filename = nothing) = model_summary(stdout, model, filename)
-
-"""
-Recursively print model/layer
-"""
-_model_summary(io::IO, model, depth::Int = 0) = println(io, model) # fallback
-getindent(depth) = reduce(*, "    " for _ in 1:depth; init = "")
-
-function _model_summary(io::IO, model::Flux.Chain, depth::Int = 0; skipidentity = true)
-    indent = getindent(depth)
-    for layer in model
-        if layer isa Flux.Chain
-            println(io, indent * "Chain(")
-            _model_summary(io, layer, depth + 1)
-            println(io, indent * ")")
-        elseif !(skipidentity && layer == identity)
-            print(io, indent)
-            _model_summary(io, layer, depth)
-        end
-    end
-    if depth == 0
-        println(io, "\nParameters: $(sum(length, Flux.params(model)))")
-    end
-    nothing
-end
-
-function _model_summary(io::IO, model::Flux.SkipConnection, depth::Int = 0)
-    println(io, getindent(depth) * "SkipConnection(")
-    print(io, getindent(depth + 1) * "λ = ")
-    print(io, model.connection)
-    println(",")
-    _model_summary(io, model.layers, depth + 1; skipidentity = false)
-    println(io, getindent(depth) * ")")
-end
-
-function _model_summary(io::IO, model::Sumout, depth::Int = 0)
-    println(io, getindent(depth) * "Sumout(")
-    map(layer -> begin
-        _model_summary(io, Flux.Chain(layer), depth + 1; skipidentity = false)
-    end, model.over)
-    println(io, getindent(depth) * ")")
-end
-Base.show(io::IO, so::Sumout) = (print(io, "Sumout("); join(io, so.over, ", "); print(io, ")"))
-
-"""
 PrintSize()
 
 Non-learnable layer which simply prints the current size.
 """
 printsize(x) = (@show size(x); x)
-PrintSize() = @λ(x -> printsize(x))
+PrintSize() = @λ (x -> printsize(x))
 
 """
 DenseResize()
@@ -142,33 +88,99 @@ Input has size H x C x B, for some batch size B.
 """
 ResidualBlock(args...) = IdentitySkip(DenseResidualCell(args...))
 
-function DenseResidualCell(H::Int, C::Int, mode::Symbol = :hybrid, bn::Bool = true, σ = Flux.elu)
-    ApplyDense(σ = identity) = ChannelwiseDense(H, C=>C, σ).layers
+function DenseResidualCell(H::Int, C::Int, mode::Symbol = :hybrid, bn::Bool = true, σ = Flux.relu)
+    CD(σ = identity) = ChannelwiseDense(H, C=>C, σ).layers
+    # BN(σ = identity) = bn ? Flux.BatchNorm(C, σ) : identity
+    BN(σ = identity) = bn ? Flux.GroupNorm(C, C÷2, σ) : identity
+    AF() = @λ x -> σ.(x)
     if mode == :pre
-        BN = bn ? Flux.BatchNorm(C, σ) : identity
-        Flux.Chain(
-            BN,               # Flux.BatchNorm(ch[2], σ),
-            ApplyDense()...,  # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2),
-            BN,               # Flux.BatchNorm(ch[2], σ),
-            ApplyDense()...,  # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2),
-        )
+        Flux.Chain(BN(), AF(), CD()..., BN(), AF(), CD()...)
     elseif mode == :post
-        BN = bn ? Flux.BatchNorm(C, σ) : identity
-        Flux.Chain(
-            ApplyDense()...,  # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2),
-            BN,               # Flux.BatchNorm(ch[2], σ),
-            ApplyDense()...,  # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2),
-            BN,               # Flux.BatchNorm(ch[2], σ),
-        )
+        Flux.Chain(CD()..., BN(), AF(), CD()..., BN(), AF())
     elseif mode == :hybrid
-        BN = bn ? Flux.BatchNorm(C) : identity
-        Flux.Chain(
-            BN,               # Flux.BatchNorm(ch[2]),
-            ApplyDense(σ)..., # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2, σ),
-            BN,               # Flux.BatchNorm(ch[2]),
-            ApplyDense()...,  # Flux.Conv(k, ch[2]=>ch[2], pad=(k.-1).÷2),
-        )
+        Flux.Chain(BN(), CD(σ)..., BN(), CD()...)
     else
         error("Unknown DenseResidualCell mode $mode")
     end
 end
+
+"""
+Print model/layer
+"""
+function model_summary(io::IO, model, filename = nothing; kwargs...)
+    @info "Model summary..."
+    (filename != nothing) && open(filename, "w") do file
+        _model_summary(file, model; kwargs...)
+        _model_parameters(file, model)
+    end
+    _model_summary(io, model; kwargs...)
+    _model_parameters(io, model)
+end
+model_summary(model, filename = nothing; kwargs...) = model_summary(stdout, model, filename; kwargs...)
+
+"""
+Print model parameters following `_model_summary`
+"""
+function _model_parameters(io::IO, model, depth::Int = 0)
+    if depth == 0
+        nparams = reduce(+, length.(Flux.params(model)); init = 0)
+        println(io, "\nParameters: $nparams")
+    end
+end
+
+"""
+Recursively print model/layer
+
+Note: All models implementing `_model_summary` should not end the printing on a new line.
+      This is so that, during the recursive printing, parent callers may add commas, etc.,
+      following printing. A final newline will be added in the `_model_parameters` function,
+      called inside the `model_summary` parent function.
+"""
+function _model_summary(io::IO, model::Flux.Chain, depth::Int = 0; skipidentity = false)
+    println(io, getindent(depth) * "Chain(")
+    for (i,layer) in enumerate(model)
+        if !(skipidentity && layer == identity)
+            _model_summary(io, layer, depth+1; skipidentity = skipidentity)
+            (i < length(model)) ? println(io, ",") : println(io, "")
+        end
+    end
+    print(io, getindent(depth) * ")")
+    nothing
+end
+
+# SkipConnection
+function _model_summary(io::IO, model::Flux.SkipConnection, depth::Int = 0; kwargs...)
+    println(io, getindent(depth) * "SkipConnection(")
+    _model_summary(io, model.layers, depth+1; kwargs...)
+    println(io, ",")
+    _model_summary(io, model.connection, depth+1; kwargs...)
+    println(io, "")
+    print(io, getindent(depth) * ")")
+end
+
+# Sumout
+function _model_summary(io::IO, model::Sumout, depth::Int = 0; kwargs...)
+    println(io, getindent(depth) * "Sumout(")
+    for (i,layer) in enumerate(model.over)
+        _model_summary(io, layer, depth+1; kwargs...)
+        (i < length(model.over)) ? println(io, ",") : println(io, "")
+    end
+    print(io, getindent(depth) * ")")
+end
+
+# Fallback method
+function _model_summary(io::IO, model::Function, depth::Int = 0; kwargs...)
+    print(io, getindent(depth) * "@λ ")
+    print(io, model)
+end
+
+# Fallback method
+function _model_summary(io::IO, model, depth::Int = 0; kwargs...)
+    print(io, getindent(depth))
+    print(io, model)
+end
+
+"""
+Indenting for layer `depth`
+"""
+getindent(depth) = reduce(*, "    " for _ in 1:depth; init = "")

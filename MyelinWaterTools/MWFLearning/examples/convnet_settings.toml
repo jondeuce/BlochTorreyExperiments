@@ -5,7 +5,7 @@ dir     = "."
 [data]
 train_data  = "./train"
 test_data   = "./test"
-batch_size  = 250
+batch_size  = 75
 test_size   = 260
 height      = "auto"
 channels    = 1 # Number of data channels
@@ -29,10 +29,10 @@ makefrac    = true # convert component magnitudes to fractions
 TEfast      = 0.015 # Threshold for fast decay mode
 periodic    = false # subtract linear term to make signal periodic
 [data.preprocess.wavelet]
-apply       = true # Apply wavelet preprocessing
+apply       = false # Apply wavelet preprocessing
 nterms      = 16 # number of terms to keep
 [data.preprocess.ilaplace]
-apply       = false # Apply ilaplace preprocessing
+apply       = true # Apply ilaplace preprocessing
 T2Range     = [0.001, 2.0] # T2 distribution range
 nT2         = 40 # Number of exponentials in T2 distribution
 alpha       = 0.02 # Tikhonov regularization parameter
@@ -51,20 +51,21 @@ units     = ["%", "%", "ms", "ms"] # label units, after scaling
 
 [model]
 name      = "TestModel3"
-loss      = "l2"
-act       = "elu"
+loss      = "l1"
+acc       = "rmse"
+act       = "leakyrelu"
 dropout   = false
-softmax   = false
-batchnorm = false
+# softmax   = false
+batchnorm = true
 scale     = "auto"
-Nf        = [4, 8, 8] # num features for conv layers
+# Nf        = [4, 8, 8] # num features for conv layers
 # Nd        = [25, 25, 25, 25, 25]
-Npool     = 3 # pooling size
-Nkern     = 5 # kernel size
+# Npool     = 3 # pooling size
+# Nkern     = 5 # kernel size
 Nout      = 4 # number of output labels
 
 [optimizer]
-epochs  = 10000
+epochs  = 250
 savemod = 1
 testmod = 1
 [optimizer.ADAM]

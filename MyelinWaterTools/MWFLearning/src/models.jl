@@ -134,20 +134,44 @@ function test_model_2(settings, model_settings = settings["model"])
 end
 
 function test_model_3(settings, model_settings = settings["model"])
-    H = settings["data"]["height"] # data height
-    C = settings["data"]["channels"] # number of channels
+    H      = settings["data"]["height"] :: Int # Data height
+    C      = settings["data"]["channels"] :: Int # Number of channels
+    Nout   = model_settings["Nout"] :: Int # Number of outputs
+    BN     = model_settings["batchnorm"] :: Bool # Use batch normalization
+    NP     = settings["data"]["preprocess"]["wavelet"]["apply"] == true ? 4 : 0
 
-    @unpack Nout, act = model_settings
-    actfun = get_activation(act)
+    PhysicalParams() = @λ(x -> x[1:NP, 1:C, :])
+    NonPhysicsCoeffs() = @λ(x -> x[NP+1:end, 1:C, :])
+    ParamsScale() = model_settings["scale"] == false ? identity : Scale(model_settings["scale"])
+    MakeDropout() = model_settings["dropout"] == true ? Flux.AlphaDropout(0.5) : identity
+    MakeActfun() = model_settings["act"] |> get_activation
 
+    # NonPhysicsCoeffs -> Output Parameters
+    residualnetwork = Flux.Chain(
+        NonPhysicsCoeffs(),
+        DenseResize(),
+        Flux.Dense(H*C - NP, 16, MakeActfun()),
+        ChannelResize(4),
+        (ResidualBlock(4, 4, :post, BN, MakeActfun()) for _ in 1:2)...,
+        MakeDropout(),
+        DenseResize(),
+        Flux.Dense(16, Nout),
+        ParamsScale(), # Scale to parameter space
+        NP > 0 ?
+            @λ(x -> 0.01 * x) : # Force physics perturbation to be small (helps with convergence)
+            Flux.Diagonal(4) # Learn output scale
+    )
+
+    # Reshape physical parameters
+    physicsnetwork = Flux.Chain(
+        PhysicalParams(),
+        DenseResize(),
+    )
+
+    # Output (assumes 1:2 is mwf/ief and 3:4 are other physical params)
     model = Flux.Chain(
-        DenseResize(),
-        Flux.Dense(H*C, (H*C)÷2, Flux.relu),
-        ChannelResize(2),
-        (ResidualBlock(((H*C)÷2)÷2, 2, :pre) for _ in 1:5)...,
-        DenseResize(),
-        Flux.Dense((H*C)÷2, Nout),
-        @λ(x -> [Flux.softmax(x[1:2, ..]); Flux.relu.(x[3:Nout, ..])])
+        NP > 0 ? Sumout(physicsnetwork, residualnetwork) : residualnetwork,
+        @λ(x -> vcat(Flux.softmax(x[1:2,:]), Flux.relu.(x[3:4,:]))),
     )
 
     return model
