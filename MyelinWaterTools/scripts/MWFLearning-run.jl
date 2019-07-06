@@ -130,7 +130,7 @@ LRfun(e) = e <= 100 ? logspace(1,100,1e-8,1.0)(e) : 1.0
 learnratefinderlossesvariable = []
 
 # Cycling
-LRSTART, LRMAX, LRMIN, LRWIDTH, LRTAIL = 1e-6, 1e-3, 1e-6, 50, 10
+LRSTART, LRMAX, LRMIN, LRWIDTH, LRTAIL = 1e-5, 1e-3, 1e-6, 100, 10
 LRfun(e) =
     e <= LRWIDTH ? linspace(1,LRWIDTH,LRSTART,LRMAX)(e) :
     LRWIDTH+1 <= e <= 4*LRWIDTH ? linspace(LRWIDTH,4*LRWIDTH,LRMAX,LRSTART)(e) :
