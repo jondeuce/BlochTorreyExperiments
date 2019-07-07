@@ -192,9 +192,11 @@ function creategeometry(::PeriodicPackedFibres, btparams::BlochTorreyParameters{
         gamma = 1.0, #DEBUG
         QMIN = 0.4, #DEBUG
         RESOLUTION = 1.0, #DEBUG
-        MAXITERS = 1000, #DEBUG
-        FIXPOINTSITERS = 250, #DEBUG
-        FIXSUBSITERS = 200, #DEBUG
+        MAXITERS = 2000, #DEBUG
+        FIXSUBSITERS = 450, #DEBUG
+        FIXPOINTSITERS = 500, #DEBUG
+        DENSITYCTRLFREQ = 250, #DEBUG
+        DELTAT = 0.1, #DEBUG
         FORCEDENSITY = false, # If this flag is true, an error is thrown if the reached packing density is not goaldensity
         FORCEAREA = false, # If this flag is true, an error is thrown if the resulting grid area doesn't match the bdry area
         FORCEQUALITY = false # If this flag is true, an error is thrown if the resulting grid doesn't have high enough quality
@@ -228,13 +230,13 @@ function creategeometry(::PeriodicPackedFibres, btparams::BlochTorreyParameters{
     mintoriwidth = (1-btparams.g_ratio) * minimum(radius, outercircles)
     h0 = gamma * min(mincircdist, mintoriwidth)
 
-    dmax = beta * btparams.R_mu
-    bbox = [xmin(bdry) ymin(bdry); xmax(bdry) ymax(bdry)]
-    pfix = [Vec{2,T}[corners(bdry)...]; reduce(vcat, intersection_points(c,bdry) for c in allcircles)]
-
     # Increase resolution by a factor RESOLUTION
     h0 /= RESOLUTION
     beta /= RESOLUTION
+
+    dmax = beta * btparams.R_mu
+    bbox = [xmin(bdry) ymin(bdry); xmax(bdry) ymax(bdry)]
+    pfix = [Vec{2,T}[corners(bdry)...]; reduce(vcat, intersection_points(c,bdry) for c in allcircles)]
 
     # Signed distance function
     fd(x) = drectangle0(x, bdry)
@@ -243,20 +245,24 @@ function creategeometry(::PeriodicPackedFibres, btparams::BlochTorreyParameters{
     function fh(x::Vec{2,T}) where {T}
         douter = dcircles(x, outercircles)
         dinner = dcircles(x, innercircles)
-        hallcircles = min(abs(douter), abs(dinner))/T(dmax)
-        return alpha + min(hallcircles, one(T))
+        hallcircles = min(abs(douter), abs(dinner)) / dmax
+        return T(alpha + min(1, hallcircles))
+        # return T(alpha + hallcircles)
     end
 
     # Region and sub-region definitions. Order of `allcircles` is important, as we want to project
     # outer circle points first, followed by inner circle points. Note also that zipping the circles
     # together allows for the anonymous function in the comprehension to be well typed.
-    fsubs = [x->dcircle(x,c) for c in allcircles]
+    fsubs = [x -> dcircle(x,c) for c in allcircles]
+    # fsubs = ntuple(i -> x -> dcircle(x, allcircles[i]), length(allcircles))
 
     p, t = kmg2d(fd, fsubs, fh, h0, bbox, 1, 0, pfix;
         QMIN = QMIN,
         MAXITERS = MAXITERS,
-        FIXPOINTSITERS = FIXPOINTSITERS,
         FIXSUBSITERS = FIXSUBSITERS,
+        FIXPOINTSITERS = FIXPOINTSITERS,
+        DENSITYCTRLFREQ = DENSITYCTRLFREQ,
+        DELTAT = DELTAT,
         VERBOSE = true,
         DETERMINISTIC = true,
         PLOT = false,
@@ -325,7 +331,8 @@ function creategeometry(::SingleFibre, btparams::BlochTorreyParameters{T} = Bloc
     # Signed distance function, edge length function, and sub-region definitions
     fd(x) = drectangle0(x, bdry)
     fh(x) = huniform(x)
-    fsubs = [x->dcircle(x,c) for c in allcircles]
+    # fsubs = ntuple(i -> x -> dcircle(x, allcircles[i]), length(allcircles))
+    fsubs = [x -> dcircle(x,c) for c in allcircles]
 
     p, t = kmg2d(fd, fsubs, fh, h0, bbox, 1, 0, pfix;
         QMIN = QMIN, MAXITERS = MAXITERS, FIXPOINTSITERS = FIXPOINTSITERS, FIXSUBSITERS = FIXSUBSITERS,
