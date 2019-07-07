@@ -5,7 +5,7 @@ using Statistics: mean, median, std
 using StatsBase: quantile, sample, iqr
 using Base.Iterators: repeated, partition
 Pkg.activate(joinpath(@__DIR__, ".."))
-Pkg.instantiate() #TODO
+Pkg.instantiate()
 include(joinpath(@__DIR__, "../initpaths.jl"))
 
 using MWFLearning
@@ -94,14 +94,14 @@ mse = @λ (x,y) -> l2(x,y) * 1 // length(y)
 crossent = @λ (x,y) -> Flux.crossentropy(model(x), y)
 mincrossent = @λ (y) -> -sum(y .* log.(y))
 
-if model_settings["loss"] ∉ ["l1", "l2", "mse", "crossent"]
+if model_settings["loss"] ∉ ["l1", "l2", "mae", "mse", "crossent"]
     @warn "Unknown loss $(model_settings["loss"]); defaulting to mse"
     model_settings["loss"] = "mse"
 end
 
 loss =
-    model_settings["loss"] == "l1" ? l1 :
-    model_settings["loss"] == "l2" ? l2 :
+    model_settings["loss"] == "l1" ? l1 : model_settings["loss"] == "mae" ? mae :
+    model_settings["loss"] == "l2" ? l2 : model_settings["loss"] == "mse" ? mse :
     model_settings["loss"] == "crossent" ? crossent :
     mse # default
 
@@ -109,38 +109,49 @@ accuracy =
     model_settings["acc"] == "mae" ? @λ( (x,y) -> 100 - 100 * mae(x,y) ) :
     model_settings["acc"] == "rmse" ? @λ( (x,y) -> 100 - 100 * sqrt(mse(x,y)) ) :
     model_settings["acc"] == "crossent" ? @λ( (x,y) -> 100 - 100 * (crossent(x,y) - mincrossent(y)) ) :
-    @λ( (x,y) -> 100 - 100 * sqrt(mse(x,y)) ) # default
+    @λ (x,y) -> 100 - 100 * sqrt(mse(x,y)) # default
 
 labelerror =
-    @λ (x,y) -> 100 .* mean(abs.(model(x) .- y); dims = 2) ./ maximum(abs.(y); dims = 2)
+    @λ (x,y) -> 100 .* vec(mean(abs.((model(x) .- y) ./ y); dims = 2))
+    #@λ (x,y) -> 100 .* vec(mean(abs.(model(x) .- y); dims = 2) ./ maximum(abs.(y); dims = 2))
 
-# Optimizer
-# opt = Flux.ADAM(
-#     settings["optimizer"]["ADAM"]["lr"],
-#     (settings["optimizer"]["ADAM"]["beta"]...,))
-# opt = Flux.Nesterov(1e-1)
-# opt = Flux.ADAMW(3e-4, (0.9, 0.999), 1e-5)
-opt = Flux.ADAMW(1e-2, (0.9, 0.999), 1e-5)
-getLRopt = opt -> opt[1]
+# Utils
 linspace(x1,x2,y1,y2) = x -> (y2-y1)/(x2-x1) * (x-x1) + y1
 logspace(x1,x2,y1,y2) = x -> 10^linspace(x1,x2,log10(y1),log10(y2))(x)
 
-# Learning Rate Finder
-LRfun(e) = e <= 100 ? logspace(1,100,1e-8,1.0)(e) : 1.0
-learnratefinderlossesvariable = []
+# Optimizer
+lr(opt) = opt.eta
+lr!(opt, α) = (opt.eta = α; opt.eta)
+lr(opt::Flux.Optimiser) = lr(opt[1])
+lr!(opt::Flux.Optimiser, α) = lr!(opt[1], α)
+# opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
+# opt = Flux.Nesterov(1e-1)
+# opt = Flux.ADAM(3e-4, (0.9, 0.999))
+opt = Flux.ADAMW(3e-4, (0.9, 0.999), 1e-5)
 
-# Cycling
-LRSTART, LRMAX, LRMIN, LRWIDTH, LRTAIL = 1e-5, 1e-3, 1e-6, 100, 10
+# # Fixed learning rate
+# LRfun(e) = 3e-4
+
+# Learning rate finder
+LRfun(e) = e <= 100 ? logspace(1,100,1e-6,0.5)(e) : 0.5
+
+# Learning rate cycling
+LRSTART, LRMAX, LRMIN, LRWIDTH, LRTAIL = 1e-5, 1e-2, 1e-6, 50, 10
 LRfun(e) =
-    e <= LRWIDTH ? linspace(1,LRWIDTH,LRSTART,LRMAX)(e) :
-    LRWIDTH+1 <= e <= 4*LRWIDTH ? linspace(LRWIDTH,4*LRWIDTH,LRMAX,LRSTART)(e) :
-    4*LRWIDTH+1 <= e <= 4*LRWIDTH + LRTAIL ? linspace(4*LRWIDTH,4*LRWIDTH+LRTAIL,LRSTART,LRMIN)(e) :
+                     e <=   LRWIDTH          ? linspace(        1,            LRWIDTH, LRSTART, LRMAX)(e) :
+      LRWIDTH + 1 <= e <= 1*LRWIDTH          ? linspace(  LRWIDTH,          1*LRWIDTH, LRMAX,   LRSTART)(e) :
+    1*LRWIDTH + 1 <= e <= 1*LRWIDTH + LRTAIL ? linspace(1*LRWIDTH, 1*LRWIDTH + LRTAIL, LRSTART, LRMIN)(e) :
     LRMIN
 
 # Callbacks
+errs_per_epoch = Dict(
+    :epoch => Int[],
+    :alpha => T[],
+    :training => Dict(:loss => T[]),
+    :testing => Dict(:loss => T[]))
 errs = Dict(
-    :training => Dict(:loss => [], :acc => [], :labelerr => []),
-    :testing => Dict(:loss => [], :acc => [], :labelerr => []))
+    :training => Dict(:loss => T[], :acc => T[], :labelerr => VT[]),
+    :testing => Dict(:loss => T[], :acc => T[], :labelerr => VT[]))
 train_err_cb = function()
     push!(errs[:training][:loss], mean(Flux.data(loss(b...)) for b in train_set))
     push!(errs[:training][:acc], mean(Flux.data(accuracy(b...)) for b in train_set))
@@ -183,14 +194,14 @@ train_err_cb() # initial loss
 cbs = Flux.Optimise.runall([
     Flux.throttle(test_err_cb, 5),
     Flux.throttle(train_err_cb, 5),
-    Flux.throttle(plot_errs_cb, 5),
+    Flux.throttle(plot_errs_cb, 15),
     Flux.throttle(checkpoint_errs_cb, 30),
     # Flux.throttle(checkpoint_model_opt_cb, 120),
 ])
 
 # Training Loop
 const ACC_THRESH = 100.0 # Never stop
-const DROP_ETA_THRESH = 250 # 250 TODO
+const DROP_ETA_THRESH = typemax(Int) # 250 TODO
 const CONVERGED_THRESH = typemax(Int) # 500 TODO
 BEST_ACC = 0.0
 LAST_IMPROVED_EPOCH = 0
@@ -202,13 +213,16 @@ try
         global BEST_ACC, LAST_IMPROVED_EPOCH
         
         # Set the learning rate
-        getLRopt(opt).eta = LRfun(epoch)
+        lr!(opt, LRfun(epoch))
 
         # Train for a single epoch
         Flux.train!(loss, Flux.params(model), train_set, opt; cb = cbs)
 
         # Find learning rate
-        push!(learnratefinderlossesvariable, sum(d->Flux.data(loss(d...)), train_set))
+        push!(errs_per_epoch[:epoch], epoch)
+        push!(errs_per_epoch[:alpha], LRfun(epoch))
+        push!(errs_per_epoch[:testing][:loss], Flux.data(loss(test_set...)))
+        push!(errs_per_epoch[:training][:loss], mean(d->Flux.data(loss(d...)), train_set))
 
         # Calculate accuracy:
         acc = accuracy(test_set...)
@@ -250,9 +264,9 @@ try
         end
 
         # # If we haven't seen improvement in 5 epochs, drop our learning rate:
-        # if epoch - LAST_IMPROVED_EPOCH >= DROP_ETA_THRESH && getLRopt(opt).eta > 1e-6
-        #     getLRopt(opt).eta /= 2.0
-        #     @warn(" -> Haven't improved in $DROP_ETA_THRESH iters; dropping learning rate to $(getLRopt(opt).eta)")
+        # if epoch - LAST_IMPROVED_EPOCH >= DROP_ETA_THRESH && lr(opt) > 1e-6
+        #     lr!(opt, lr(opt)/2)
+        #     @warn(" -> Haven't improved in $DROP_ETA_THRESH iters; dropping learning rate to $(lr(opt))")
         # 
         #     # After dropping learning rate, give it a few epochs to improve
         #     LAST_IMPROVED_EPOCH = epoch
@@ -272,24 +286,52 @@ catch e
     end
 end
 
-plot(LRfun.(1:length(learnratefinderlossesvariable)), learnratefinderlossesvariable;
-    xscale = :log10, xlabel = "alpha", ylabel = "loss") |> display
-
-@info "Plotting prediction histograms..."
+@info "Computing resulting labels..."
 model_labels = Flux.data(model(test_set[1]))
 true_labels = copy(test_set[2])
-fig = plot([
-    begin
-        scale = settings["plot"]["scale"][i]
-        units = settings["plot"]["units"][i]
-        err = scale .* (model_labels[i,:] .- true_labels[i,:])
-        histogram(err;
-            grid = true, minorgrid = true, titlefontsize = 10,
-            label = settings["data"]["labels"][i] * " ($units)",
-            title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
-        )
-    end for i in 1:size(model_labels, 1)
-    ]...)
+
+@info "Plotting errors vs. learning rate..."
+errs_plot = [errs_per_epoch[:training][:loss], errs_per_epoch[:testing][:loss]]
+fig = plot(
+    plot(
+        [errs_per_epoch[:alpha]], (e -> log10.(e .- minimum(e) .+ 1e-6)).(errs_plot);
+        xscale = :log10, ylabel = "stretched loss ($(model_settings["loss"]))", label = ["training" "testing"]),
+    plot(
+        [errs_per_epoch[:alpha]], (e -> log10.(e)).(errs_plot);
+        xscale = :log10, xlabel = "learning rate", ylabel = "loss ($(model_settings["loss"]))", label = ["training" "testing"]);
+    layout = (2,1)
+)
+display(fig)
+savefig(fig, "plots/" * FILE_PREFIX * "lossvslearningrate.png")
+
+@info "Plotting prediction histograms..."
+prediction_hist = function(i)
+    scale = settings["plot"]["scale"][i]
+    units = settings["plot"]["units"][i]
+    err = scale .* (model_labels[i,:] .- true_labels[i,:])
+    histogram(err;
+        grid = true, minorgrid = true, titlefontsize = 10,
+        label = settings["data"]["labels"][i] * " ($units)",
+        title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
+    )
+end
+fig = plot([prediction_hist(i) for i in 1:size(model_labels, 1)]...)
+display(fig)
+savefig(fig, "plots/" * FILE_PREFIX * "labelhistograms.png")
+
+@info "Plotting prediction scatter plots..."
+prediction_scatter = function(i)
+    scale = settings["plot"]["scale"][i]
+    units = settings["plot"]["units"][i]
+    datascale = scale * settings["model"]["scale"][i]
+    p = scatter(scale * true_labels[i,:], scale * model_labels[i,:];
+        marker = :circle, grid = true, minorgrid = true, titlefontsize = 10,
+        label = settings["data"]["labels"][i] * " ($units)",
+        # title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
+    )
+    plot!(p, identity, ylims(p)...; line = (:dash, 2, :red), label = L"y = x")
+end
+fig = plot([prediction_scatter(i) for i in 1:size(model_labels, 1)]...)
 display(fig)
 savefig(fig, "plots/" * FILE_PREFIX * "labelhistograms.png")
 

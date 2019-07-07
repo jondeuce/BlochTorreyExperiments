@@ -82,16 +82,34 @@ Wraps `SkipConnection` from the Flux library.
 CatSkip(layer, dims = 1) = Flux.SkipConnection(layer, @λ (a,b) -> cat(a, b; dims = dims))
 
 """
-ResidualBlock
-
-Input has size H x C x B, for some batch size B.
+DenseCatSkip
 """
-ResidualBlock(args...) = IdentitySkip(DenseResidualCell(args...))
+function DenseCatSkip(Factory, k::Tuple, ch::Pair, depth::Int, σ = Flux.relu; dims = 1)
+    layers = Any[]
+    CatLayer(A...) = @λ x -> cat(A.(x)...; dims = dims)
+    for i in 1:depth
+        push!(layers, Flux.Chain(
+            CatLayer(layers..., Factory()),
+            Flux.Conv(k, i * ch[1] => ch[2], σ)
+        ))
+    end
+    return Flux.Chain(layers...)
+end
 
-function DenseResidualCell(H::Int, C::Int, mode::Symbol = :hybrid, bn::Bool = true, σ = Flux.relu)
+"""
+DenseResConnection
+
+Input has size H1 x ... x HN x C x B, for some data size (H1,...,HN), channels C,
+and batch size B.
+"""
+function DenseResConnection(
+        H::Int, C::Int, σ = Flux.relu;
+        mode::Symbol = :hybrid,
+        groupnorm::Bool = false,
+        batchnorm::Bool = false,
+    )
     CD(σ = identity) = ChannelwiseDense(H, C=>C, σ).layers
-    # BN(σ = identity) = bn ? Flux.BatchNorm(C, σ) : identity
-    BN(σ = identity) = bn ? Flux.GroupNorm(C, C÷2, σ) : identity
+    BN(σ = identity) = batchnorm ? Flux.BatchNorm(C, σ) : groupnorm ? Flux.GroupNorm(C, C÷2, σ) : identity
     AF() = @λ x -> σ.(x)
     if mode == :pre
         Flux.Chain(BN(), AF(), CD()..., BN(), AF(), CD()...)
@@ -100,9 +118,40 @@ function DenseResidualCell(H::Int, C::Int, mode::Symbol = :hybrid, bn::Bool = tr
     elseif mode == :hybrid
         Flux.Chain(BN(), CD(σ)..., BN(), CD()...)
     else
-        error("Unknown DenseResidualCell mode $mode")
+        error("Unknown DenseResConnection mode $mode")
     end
 end
+DenseResConnection(H::Tuple, args...; kwargs...) = DenseResConnection(prod(H), args...; kwargs...)
+
+"""
+ConvResConnection
+
+Input has size H1 x ... x HN x C x B, for some data size (H1,...,HN), channels C,
+and batch size B.
+"""
+function ConvResConnection(
+        k::Tuple, ch::Pair, σ = Flux.relu;
+        mode::Symbol = :hybrid,
+        numlayers::Int = 3,
+        groupnorm::Bool = false,
+        batchnorm::Bool = false,
+    )
+    @assert numlayers >= 2
+    CV(ch, σ = identity) = Flux.Conv(k, ch, σ; pad = (k.-1).÷2)
+    BN(C,  σ = identity) = batchnorm ? Flux.BatchNorm(C, σ) : groupnorm ? Flux.GroupNorm(C, C÷2, σ) : identity
+    AF() = @λ x -> σ.(x)
+    if mode == :pre
+        Flux.Chain(BN(ch[1]), AF(), CV(ch[1]=>ch[2]), vcat(([BN(ch[2]), AF(), CV(ch[2]=>ch[2])] for _ in 1:numlayers-2)...)..., BN(ch[2]), AF(), CV(ch[2]=>ch[1]))
+    elseif mode == :post
+        Flux.Chain(CV(ch[1]=>ch[2]), BN(ch[2]), AF(), vcat(([CV(ch[2]=>ch[2]), BN(ch[2]), AF()] for _ in 1:numlayers-2)...)..., CV(ch[2]=>ch[1]), BN(ch[1]), AF())
+    elseif mode == :hybrid
+        Flux.Chain(BN(ch[1]), CV(ch[1]=>ch[2], σ),    vcat(([BN(ch[2]), CV(ch[2]=>ch[2], σ)]    for _ in 1:numlayers-2)...)..., BN(ch[2]), CV(ch[2]=>ch[1]))
+    else
+        error("Unknown DenseResConnection mode $mode")
+    end
+end
+ConvResConnection(k::Int, args...; kwargs...) = ConvResConnection((k,), args...; kwargs...)
+ConvResConnection(k, C::Int, args...; kwargs...) = ConvResConnection(k, C=>C, args...; kwargs...)
 
 """
 Print model/layer

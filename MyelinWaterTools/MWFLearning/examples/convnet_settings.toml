@@ -9,18 +9,12 @@ batch_size  = 75
 test_size   = 260
 height      = "auto"
 channels    = 1 # Number of data channels
-# labels      = ["mwf"] # Target labels
-# weights     = [1.0] # Weights for loss function
-# labels      = ["mwf", "iewf"] # Target labels
-# weights     = [1.0, 1.0] # Weights for loss function
-# labels      = ["mwf", "iewf", "K"] # Target labels
-# weights     = [1.0, 1.0, 0.2] # Weights for loss function
-labels      = ["mwf", "iewf", "T2iew", "T2mw"] # Target labels
-weights     = [2.0, 2.0, 1.0, 1.0] # Weights for loss function
-# labels      = ["mwf", "iewf", "T2iew", "T2mw", "Dax"] # Target labels
-# weights     = [2.0, 2.0, 1.0, 1.0, 0.5] # Weights for loss function
-# labels      = ["mwf", "iewf", "T2iew", "T2mw", "Dav", "K"] # Target labels
-# weights     = [2.0, 2.0, 1.0, 1.0, 0.5, 0.5] # Weights for loss function
+# labels      = ["mwf", "iewf", "T2iew", "T2mw"] # Target labels
+# weights     = [1.0, 1.0, 1.0, 1.0] # Weights for loss function
+# labels      = ["mwf", "iewf", "T2iew", "T2mw", "K"] # Target labels
+# weights     = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
+labels      = ["mwf", "iewf", "T2iew", "T2mw", "K", "Dav"] # Target labels
+weights     = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
 [data.preprocess]
 SNR         = [0.0] # Additive random noise
 [data.preprocess.peel]
@@ -35,37 +29,41 @@ nterms      = 16 # number of terms to keep
 apply       = true # Apply ilaplace preprocessing
 T2Range     = [0.001, 2.0] # T2 distribution range
 nT2         = 40 # Number of exponentials in T2 distribution
-alpha       = 0.02 # Tikhonov regularization parameter
+alpha       = 0.001 # Tikhonov regularization parameter
 [data.preprocess.PCA]
 apply       = false # Apply PCA preprocessing
 
 [plot]
-# scale     = [100.0, 100.0] # scale labels before plotting
-# units     = ["%", "%"] # label units, after scaling
-scale     = [100.0, 100.0, 1000.0, 1000.0] # scale labels before plotting
-units     = ["%", "%", "ms", "ms"] # label units, after scaling
-# scale     = [100.0, 100.0, 1000.0, 1000.0, 1.0] # scale labels before plotting
-# units     = ["%", "%", "ms", "ms", "um^2/s"] # label units, after scaling
-# scale     = [100.0, 100.0, 1000.0, 1000.0, 1.0, 1.0] # scale labels before plotting
-# units     = ["%", "%", "ms", "ms", "um^2/s", "um/s"] # label units, after scaling
+# scale     = [100.0, 100.0, 1000.0, 1000.0] # scale labels before plotting
+# units     = ["%", "%", "ms", "ms"] # label units, after scaling
+scale     = [100.0, 100.0, 1000.0, 1000.0, 1.0, 1.0] # scale labels before plotting
+units     = ["%", "%", "ms", "ms", "um/s", "um^2/s"] # label units, after scaling
 
 [model]
-name      = "TestModel3"
+name      = "TestModel4"
 loss      = "l1"
 acc       = "rmse"
 act       = "leakyrelu"
-dropout   = false
+Nout      = 6 # number of output labels
+# dropout   = false
 # softmax   = false
-batchnorm = true
+# batchnorm = true
 scale     = "auto"
 # Nf        = [4, 8, 8] # num features for conv layers
 # Nd        = [25, 25, 25, 25, 25]
 # Npool     = 3 # pooling size
 # Nkern     = 5 # kernel size
-Nout      = 4 # number of output labels
+[model.resnet]
+dropout   = false
+batchnorm = false
+groupnorm = true
+Nkern     = 3 # kernel size
+Nconv     = 5 # num conv layers per residual connection
+Nfeat     = 4 # num features for conv layers
+Nblock    = 10 # Number of residual blocks
 
 [optimizer]
-epochs  = 250
+epochs  = 110
 savemod = 1
 testmod = 1
 [optimizer.ADAM]
