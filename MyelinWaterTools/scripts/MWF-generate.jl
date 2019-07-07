@@ -26,49 +26,50 @@ gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
 #### Geometries to sweep over
 ####
 
+# TODO all geom files
 geomfiles = vcat(
     joinpath.(
         "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/kmg_geom_sweep_3",
         [
             "2019-03-28-T-15-24-11-877__N-10_g-0.7500_p-0.7500__structs.bson" # 1.3k triangles, 1.2k points, Qmin = 0.3
-            "2019-03-28-T-15-26-44-544__N-10_g-0.8000_p-0.8300__structs.bson" # 4.7k triangles, 3.2k points, Qmin = 0.3
-            "2019-03-28-T-15-27-56-042__N-20_g-0.7500_p-0.7000__structs.bson" # 3.1k triangles, 2.6k points, Qmin = 0.3
-            "2019-03-28-T-15-33-59-628__N-20_g-0.8000_p-0.8000__structs.bson" #13.3k triangles, 9.2k points, Qmin = 0.3
+            # "2019-03-28-T-15-26-44-544__N-10_g-0.8000_p-0.8300__structs.bson" # 4.7k triangles, 3.2k points, Qmin = 0.3
+            # "2019-03-28-T-15-27-56-042__N-20_g-0.7500_p-0.7000__structs.bson" # 3.1k triangles, 2.6k points, Qmin = 0.3
+            # "2019-03-28-T-15-33-59-628__N-20_g-0.8000_p-0.8000__structs.bson" #13.3k triangles, 9.2k points, Qmin = 0.3
         ]
     ),
-    joinpath.(
-        "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/kmg_geom_sweep_4",
-        [
-            "2019-03-28-T-16-19-20-218__N-40_g-0.7500_p-0.8000__structs.bson" # 11.0k triangles, 8.6k points, Qmin = 0.3
-        ]
-    ),
-    joinpath.(
-        "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/kmg_geom_sweep_6",
-        [
-            "2019-03-29-T-10-47-05-945__N-40_g-0.7500_p-0.7000__structs.bson" #10k triangles, 8k points, Qmin = 0.4
-            "2019-03-29-T-12-19-17-694__N-40_g-0.8370_p-0.7500__structs.bson" #13k triangles, 10k points, Qmin = 0.4
-            # "2019-03-29-T-12-15-03-265__N-40_g-0.8000_p-0.8300__structs.bson" #28k triangles, 19k points, Qmin = 0.4
-        ]
-    ),
-    joinpath.(
-        "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/drwatson_geom_sweep_1/geom",
-        [
-            "2019-04-24-T-18-33-57-731_density=0.75_gratio=0.78_numfibres=20.geom.bson" #12.8k triangles, 9.6k points, Qmin = 0.4
-            # "2019-04-24-T-21-16-38-329_density=0.75_gratio=0.78_numfibres=35.geom.bson" #36.7k triangles, 25.3k points, Qmin = 0.4
-            "2019-04-24-T-17-54-24-004_density=0.75_gratio=0.78_numfibres=5.geom.bson" #3.4k triangles, 2.5k points, Qmin = 0.4
-        ]
-    ),
-    joinpath.(
-        "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/drwatson_geom_sweep_2/geom",
-        [
-            "2019-04-25-T-11-05-25-221_density=0.78_gratio=0.78_numfibres=10.geom.bson" #11.4k triangles, 7.8k points, Qmin = 0.4
-            "2019-04-25-T-11-24-46-840_density=0.78_gratio=0.78_numfibres=15.geom.bson" #20.2k triangles, 13.6k points, Qmin = 0.4
-            "2019-04-25-T-11-46-05-769_density=0.8_gratio=0.75_numfibres=15.geom.bson" #19.4k triangles, 13.1k points, Qmin = 0.4
-            "2019-04-25-T-11-59-59-400_density=0.78_gratio=0.75_numfibres=20.geom.bson" #20.8k triangles, 14.5k points, Qmin = 0.4
-            # "2019-04-25-T-15-13-27-738_density=0.78_gratio=0.75_numfibres=30.geom.bson" #38.7k triangles, 25.9k points, Qmin = 0.4
-            # "2019-04-25-T-20-10-44-038_density=0.8_gratio=0.75_numfibres=35.geom.bson" #62.8k triangles, 40.7k points, Qmin = 0.4
-        ]
-    ),
+    # joinpath.(
+    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/kmg_geom_sweep_4",
+    #     [
+    #         "2019-03-28-T-16-19-20-218__N-40_g-0.7500_p-0.8000__structs.bson" # 11.0k triangles, 8.6k points, Qmin = 0.3
+    #     ]
+    # ),
+    # joinpath.(
+    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/kmg_geom_sweep_6",
+    #     [
+    #         "2019-03-29-T-10-47-05-945__N-40_g-0.7500_p-0.7000__structs.bson" #10k triangles, 8k points, Qmin = 0.4
+    #         "2019-03-29-T-12-19-17-694__N-40_g-0.8370_p-0.7500__structs.bson" #13k triangles, 10k points, Qmin = 0.4
+    #         # "2019-03-29-T-12-15-03-265__N-40_g-0.8000_p-0.8300__structs.bson" #28k triangles, 19k points, Qmin = 0.4
+    #     ]
+    # ),
+    # joinpath.(
+    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/drwatson_geom_sweep_1/geom",
+    #     [
+    #         "2019-04-24-T-18-33-57-731_density=0.75_gratio=0.78_numfibres=20.geom.bson" #12.8k triangles, 9.6k points, Qmin = 0.4
+    #         # "2019-04-24-T-21-16-38-329_density=0.75_gratio=0.78_numfibres=35.geom.bson" #36.7k triangles, 25.3k points, Qmin = 0.4
+    #         "2019-04-24-T-17-54-24-004_density=0.75_gratio=0.78_numfibres=5.geom.bson" #3.4k triangles, 2.5k points, Qmin = 0.4
+    #     ]
+    # ),
+    # joinpath.(
+    #     "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterOrientation/Geometries/drwatson_geom_sweep_2/geom",
+    #     [
+    #         "2019-04-25-T-11-05-25-221_density=0.78_gratio=0.78_numfibres=10.geom.bson" #11.4k triangles, 7.8k points, Qmin = 0.4
+    #         "2019-04-25-T-11-24-46-840_density=0.78_gratio=0.78_numfibres=15.geom.bson" #20.2k triangles, 13.6k points, Qmin = 0.4
+    #         "2019-04-25-T-11-46-05-769_density=0.8_gratio=0.75_numfibres=15.geom.bson" #19.4k triangles, 13.1k points, Qmin = 0.4
+    #         "2019-04-25-T-11-59-59-400_density=0.78_gratio=0.75_numfibres=20.geom.bson" #20.8k triangles, 14.5k points, Qmin = 0.4
+    #         # "2019-04-25-T-15-13-27-738_density=0.78_gratio=0.75_numfibres=30.geom.bson" #38.7k triangles, 25.9k points, Qmin = 0.4
+    #         # "2019-04-25-T-20-10-44-038_density=0.8_gratio=0.75_numfibres=35.geom.bson" #62.8k triangles, 40.7k points, Qmin = 0.4
+    #     ]
+    # ),
 )
 
 function copy_and_load_geomfiles(geomfilenames)
@@ -101,15 +102,18 @@ const default_nTE = 32; # Number of echoes
 const default_nTR = 1; # Number of repetitions
 const default_tspan = (0.0, default_nTE * default_TE + (default_nTR - 1) * default_TR); # timespan
 const default_solverparams_dict = Dict(
-    :u0        => 1.0im,                   # Initial magnetization; should be [0,1] for 2D (π/2 pulse) or [0,0,1] for 3D (steady-state)
-    :flipangle => Float64(π),              # Flip angle for MultiSpinEchoCallback
-    :TE        => default_TE,              # Echotime for MultiSpinEchoCallback (Default: 10e-3)
-    :TR        => default_TR,              # Repetition time for MultiSpinEchoCallback (Default: 1000e-3)
-    :nTE       => default_nTE,             # Number of echoes for MultiSpinEchoCallback (Default: 32)
-    :nTR       => default_nTR,             # Number of repetitions for MultiSpinEchoCallback (Default: 1)
-    :tspan     => default_tspan,           # Solver time span (Default: (0.0, 320e-3); must start at zero)
-    :reltol    => 1e-8,
-    :abstol    => 0.0);
+    :u0          => Vec3d((0,0,1)),  # Initial magnetization; should be [0,-1] for 2D (π/2 pulse) or [0,0,1] for 3D (steady-state)
+    :flipangle   => Float64(π),      # Flip angle for CPMGCallback
+    :refocustype => :x,            # Refocusing pulse type (Default: :xyx)
+    # :refocustype => :y,              # Refocusing pulse type (Default: :xyx)
+    # :refocustype => :xyx,          # Refocusing pulse type (Default: :xyx)
+    :TE          => default_TE,      # Echotime for CPMGCallback (Default: 10e-3)
+    :TR          => default_TR,      # Repetition time for CPMGCallback (Default: 1000e-3)
+    :nTE         => default_nTE,     # Number of echoes for CPMGCallback (Default: 32)
+    :nTR         => default_nTR,     # Number of repetitions for CPMGCallback (Default: 1)
+    :tspan       => default_tspan,   # Solver time span (Default: (0.0, 320e-3); must start at zero)
+    :reltol      => 1e-8,
+    :abstol      => 0.0);
 
 const default_nnlsparams_dict = Dict(
     :TE          => default_TE,      # Echotime of signal
@@ -152,24 +156,62 @@ rangesampler(a,b,s=1) = rand(a:s:b)
 log10sampler(a,b) = 10^linearsampler(log10(a), log10(b))
 acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
 
-const sweepparamsampler_settings = Dict{Symbol,Any}(
-    :theta  => (sampler = :acossampler,   args = (lb = 0.0,     ub = 90.0)),
+# const sweepparamsampler_settings = Dict{Symbol,Any}(
+#     :theta  => (sampler = :acossampler,   args = (lb = 0.0,     ub = 90.0)),
+#     :alpha  => (sampler = :linearsampler, args = (lb = 180.0,   ub = 180.0)), #TODO lb/ub?
+#     :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 10.0)),
+#     :Dtiss  => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 500.0)),
+#     :Dmye   => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 500.0)),
+#     :Dax    => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 500.0)),
+#     :FRD    => (sampler = :linearsampler, args = (lb = 0.0,     ub = 0.5)),
+#     :TE     => (sampler = :linearsampler, args = (lb = 5e-3,    ub = 15e-3)),
+#     :TR     => (sampler = :linearsampler, args = (lb = 800e-3,  ub = 1200e-3)),
+#     :nTE    => (sampler = :rangesampler,  args = (lb = 24,      ub = 48, s = 2)), #TODO even number
+#     :nTR    => (sampler = :rangesampler,  args = (lb = 1,       ub = 1)),
+#     :T2sp   => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 20e-3)),
+#     :T2lp   => (sampler = :linearsampler, args = (lb = 50e-3,   ub = 80e-3)),
+#     :T2tiss => (sampler = :linearsampler, args = (lb = 50e-3,   ub = 80e-3)),
+#     :T1sp   => (sampler = :linearsampler, args = (lb = 150e-3,  ub = 250e-3)),
+#     :T1lp   => (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
+#     :T1tiss => (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
+# )
+# const sweepparamsampler_settings = Dict{Symbol,Any}( #TODO testing settings
+#     :theta  => (sampler = :acossampler,   args = (lb = 90.0,    ub = 90.0)),
+#     :alpha  => (sampler = :linearsampler, args = (lb = 150.0,   ub = 150.0)),
+#     :K      => (sampler = :log10sampler,  args = (lb = 0.5,     ub = 0.5)),
+#     :Dtiss  => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 100.0)),
+#     :Dmye   => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 100.0)),
+#     :Dax    => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 100.0)),
+#     :FRD    => (sampler = :linearsampler, args = (lb = 0.1,     ub = 0.1)),
+#     :TE     => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 10e-3)),
+#     :TR     => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)),
+#     :nTE    => (sampler = :rangesampler,  args = (lb = 16,      ub = 16, s = 2)),
+#     :nTR    => (sampler = :rangesampler,  args = (lb = 1,       ub = 1)),
+#     :T2sp   => (sampler = :linearsampler, args = (lb = 15e-3,   ub = 15e-3)),
+#     :T2lp   => (sampler = :linearsampler, args = (lb = 63e-3,   ub = 63e-3)),
+#     :T2tiss => (sampler = :linearsampler, args = (lb = 63e-3,   ub = 63e-3)),
+#     :T1sp   => (sampler = :linearsampler, args = (lb = 200e-3,  ub = 200e-3)),
+#     :T1lp   => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), #3-sigma range for T1 = 1084 +/- 45
+#     :T1tiss => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), #3-sigma range for T1 = 1084 +/- 45
+# )
+const sweepparamsampler_settings = Dict{Symbol,Any}( #TODO testing settings
+    :Dax    => (sampler = :log10sampler,  args = (lb = 345.087, ub = 345.087)),
+    :Dmye   => (sampler = :log10sampler,  args = (lb = 242.866, ub = 242.866)),
+    :Dtiss  => (sampler = :log10sampler,  args = (lb = 300.332, ub = 300.332)),
+    :FRD    => (sampler = :linearsampler, args = (lb = 0.306,   ub = 0.306)),
+    :K      => (sampler = :log10sampler,  args = (lb = 0.010,   ub = 0.010)),
+    :T1lp   => (sampler = :linearsampler, args = (lb = 1.134,   ub = 1.134)),
+    :T1sp   => (sampler = :linearsampler, args = (lb = 0.230,   ub = 0.230)),
+    :T1tiss => (sampler = :linearsampler, args = (lb = 1.075,   ub = 1.075)),
+    :T2lp   => (sampler = :linearsampler, args = (lb = 0.051,   ub = 0.051)),
+    :T2sp   => (sampler = :linearsampler, args = (lb = 0.013,   ub = 0.013)),
+    :T2tiss => (sampler = :linearsampler, args = (lb = 0.068,   ub = 0.068)),
+    :TE     => (sampler = :linearsampler, args = (lb = 0.009,   ub = 0.009)),
+    :TR     => (sampler = :linearsampler, args = (lb = 0.977,   ub = 0.977)),
     :alpha  => (sampler = :linearsampler, args = (lb = 180.0,   ub = 180.0)),
-    :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 10.0)),
-    :Dtiss  => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 500.0)),
-    :Dmye   => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 500.0)),
-    :Dax    => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 500.0)),
-    :FRD    => (sampler = :linearsampler, args = (lb = 0.0,     ub = 0.5)),
-    :TE     => (sampler = :linearsampler, args = (lb = 5e-3,    ub = 15e-3)),
-    :TR     => (sampler = :linearsampler, args = (lb = 800e-3,  ub = 1200e-3)),
-    :nTE    => (sampler = :rangesampler,  args = (lb = 24,      ub = 48)),
-    :nTR    => (sampler = :rangesampler,  args = (lb = 1,       ub = 1)),
-    :T2sp   => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 20e-3)),
-    :T2lp   => (sampler = :linearsampler, args = (lb = 50e-3,   ub = 80e-3)),
-    :T2tiss => (sampler = :linearsampler, args = (lb = 50e-3,   ub = 80e-3)),
-    :T1sp   => (sampler = :linearsampler, args = (lb = 150e-3,  ub = 250e-3)),
-    :T1lp   => (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
-    :T1tiss => (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
+    :nTE    => (sampler = :rangesampler,  args = (lb =    45,   ub =    45)),
+    :nTR    => (sampler = :rangesampler,  args = (lb =     1,   ub =     1)),
+    :theta  => (sampler = :acossampler,   args = (lb = 81.04,   ub = 81.04)),
 )
 sweepparamsampler() = Dict{Symbol,Union{Float64,Int}}(
     k => eval(Expr(:call, v.sampler, v.args...))
@@ -235,9 +277,9 @@ function runsimulation!(results, sweepparams, geom)
     )
     sols, myelinprob, myelinsubdomains, myelindomains, solverparams_dict = runsolve(btparams, sweepparams, geom)
     
-    # Sample solution signals, ensuring that each sample is taken after the pulse occurs
-    dt = TE/4 # TODO
-    tpoints = multispinecho_savetimes(sols[1].prob.tspan, dt, TE, TR, nTE, nTR)
+    # Sample solution signals
+    dt = TE/50 # TODO
+    tpoints = cpmg_savetimes(sols[1].prob.tspan, dt, TE, TR, nTE, nTR) #TODO should be exported
     signals = calcsignal(sols, tpoints, myelindomains)
 
     # Common filename without suffix
@@ -245,17 +287,23 @@ function runsimulation!(results, sweepparams, geom)
     fname = DrWatson.savename(curr_time, sweepparams)
     titleparamstr = wrap_string(DrWatson.savename("", sweepparams; connector = ", "), 50, ", ")
     
-    # Compute MWF values
-    mwfmodels = map(default_mwfmodels) do model
-        if model isa NNLSRegression
-            typeof(model)(model; TE = TE, nTE = nTE, RefConAngle = alpha)
-        else
-            typeof(model)(model; TE = TE, nTE = nTE)
+    try
+        # Compare MWF values
+        mwfmodels = map(default_mwfmodels) do model
+            if model isa NNLSRegression
+                typeof(model)(model; TE = TE, nTE = nTE, RefConAngle = alpha)
+            else
+                typeof(model)(model; TE = TE, nTE = nTE)
+            end
         end
+        mwfvalues, _ = compareMWFmethods(sols, myelindomains,
+            geom.outercircles, geom.innercircles, geom.bdry;
+            models = mwfmodels)
+    catch e
+        mwfvalues = nothing
+        @warn "Error comparing MWF methods"
+        @warn sprint(showerror, e, catch_backtrace())
     end
-    mwfvalues, _ = compareMWFmethods(sols, myelindomains,
-        geom.outercircles, geom.innercircles, geom.bdry;
-        models = mwfmodels)
 
     # Update results struct and return
     push!(results[:btparams], btparams)
@@ -263,10 +311,10 @@ function runsimulation!(results, sweepparams, geom)
     push!(results[:sweepparams], sweepparams)
     push!(results[:tpoints], tpoints)
     push!(results[:signals], signals)
-    # push!(results[:sols], sols) #TODO
-    # push!(results[:myelinprob], myelinprob) #TODO
-    # push!(results[:myelinsubdomains], myelinsubdomains) #TODO
-    # push!(results[:myelindomains], myelindomains) #TODO
+    push!(results[:sols], sols) #TODO
+    push!(results[:myelinprob], myelinprob) #TODO
+    push!(results[:myelinsubdomains], myelinsubdomains) #TODO
+    push!(results[:myelindomains], myelindomains) #TODO
     push!(results[:mwfvalues], mwfvalues)
 
     # Save measurables
@@ -281,14 +329,15 @@ function runsimulation!(results, sweepparams, geom)
         @warn sprint(showerror, e, catch_backtrace())
     end
 
-    # # Save solution as vtk file
-    # try
-    #     vtkfilepath = mkpath(joinpath("vtk/", fname))
-    #     saveblochtorrey(myelindomains, sols; timepoints = tpoints, filename = joinpath(vtkfilepath, "vtksolution"))
-    # catch e
-    #     @warn "Error saving solution to vtk file"
-    #     @warn sprint(showerror, e, catch_backtrace())
-    # end
+    # Save solution as vtk file
+    try
+        #TODO don't save these for full sweep
+        vtkfilepath = mkpath(joinpath("vtk/", fname))
+        saveblochtorrey(myelindomains, sols; timepoints = tpoints, filename = joinpath(vtkfilepath, "vtksolution"))
+    catch e
+        @warn "Error saving solution to vtk file"
+        @warn sprint(showerror, e, catch_backtrace())
+    end
 
     try
         mxplotmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
@@ -336,17 +385,18 @@ function runsimulation!(results, sweepparams, geom)
         @warn sprint(showerror, e, catch_backtrace())
     end
     
-    # try
-    #     mxplotlongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-    #         titlestr = "Longitudinal (" * titleparamstr * ")",
-    #         fname = "long/" * fname * ".longitudinal")
-    #     # mxgiflongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-    #     #     titlestr = "Longitudinal (" * titleparamstr * ")", totaltime = (2*nTR-1) * 10.0,
-    #     #     fname = "long/" * fname * ".longitudinal.gif")
-    # catch e
-    #     @warn "Error plotting longitudinal magnetization"
-    #     @warn sprint(showerror, e, catch_backtrace())
-    # end
+    try
+        #TODO only for 3D
+        mxplotlongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+            titlestr = "Longitudinal (" * titleparamstr * ")",
+            fname = "long/" * fname * ".longitudinal")
+        # mxgiflongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+        #     titlestr = "Longitudinal (" * titleparamstr * ")", totaltime = (2*nTR-1) * 10.0,
+        #     fname = "long/" * fname * ".longitudinal.gif")
+    catch e
+        @warn "Error plotting longitudinal magnetization"
+        @warn sprint(showerror, e, catch_backtrace())
+    end
     
     try
         nnlsindex = findfirst(m->m isa NNLSRegression, mwfmodels)
@@ -368,6 +418,7 @@ function runsimulation!(results, sweepparams, geom)
                 opts = mwfmodels[1], fname = "sig/" * fname * ".biexp")
         end
         plotsignal(tpoints, signals;
+            timeticks = cpmg_savetimes(sols[1].prob.tspan, TE/2, TE, TR, nTE, nTR), #TODO should be exported
             titlestr = "Magnetization Signal (" * titleparamstr * ")",
             apply_pi_correction = false,
             fname = "sig/" * fname * ".signal")
@@ -432,7 +483,7 @@ end
 #### Run sweep
 ####
 
-results = main()
+results = main(iters = 1) #TODO
 @unpack sweepparams, btparams, solverparams_dict, tpoints, signals, mwfvalues = results;
 @unpack sols, myelinprob, myelinsubdomains, myelindomains = results; #TODO
 btparams_dict = Dict.(btparams);

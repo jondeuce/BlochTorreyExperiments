@@ -14,9 +14,9 @@ batchsize(x::AbstractArray{T,N}) where {T,N} = size(x, N)
 """
     channelsize(x::AbstractArray)
 
-Returns the length of the second-last dimension of the data `x`.
-If `x` is a `Matrix`, 1 is returned.
-If `x` is a `Vector`, an error is thrown.
+Returns the length of the second-last dimension of the data `x`, unless:
+    `x` is a `Matrix`, in which case 1 is returned.
+    `x` is a `Vector`, in which case an error is thrown.
 """
 channelsize(x::AbstractVector) = error("Channel size undefined for AbstractVector's")
 channelsize(x::AbstractMatrix) = 1
@@ -27,31 +27,8 @@ channelsize(x::AbstractArray{T,N}) where {T,N} = size(x, N-1)
 
 Returns the length of the first dimension of the data `x`.
 """
-heightsize(x::AbstractVector) = 1
-heightsize(x::AbstractArray{T,N}) where {T,N} = size(x, 1)
-
-"""
-    DenseResize()
-
-Non-learnable layer which resizes input arguments `x` to be a matrix with batchsize(x) columns.
-"""
-struct DenseResize end
-Flux.@treelike DenseResize
-(l::DenseResize)(x::AbstractArray) = reshape(x, :, batchsize(x))
-Base.show(io::IO, l::DenseResize) = print(io, "DenseResize()")
-
-"""
-    DenseResize(s::AbstractArray)
-
-Non-learnable layer which scales input `x` by array `s`
-"""
-struct Scale{V}
-    s::V
-end
-Scale(s::Flux.TrackedArray) = Scale(Flux.data(s)) # Layer is not learnable
-Flux.@treelike Scale
-(l::Scale)(x::AbstractArray) = x .* l.s
-Base.show(io::IO, l::Scale) = print(io, "Scale(", length(l.s), ")")
+heightsize(x::AbstractVector) = error("TODO: Called here")
+heightsize(x::AbstractArray) = size(x, 1)
 
 """
     log10range(a, b; length = 10)
@@ -92,6 +69,11 @@ end
 # Preparing data
 # ---------------------------------------------------------------------------- #
 
+abstract type AbstractDataProcessing end
+struct PCAProcessing <: AbstractDataProcessing end
+struct iLaplaceProcessing <: AbstractDataProcessing end
+struct WaveletProcessing <: AbstractDataProcessing end
+
 function prepare_data(settings::Dict, model_settings = settings["model"])
     training_data_dicts = BSON.load.(joinpath.(settings["data"]["train_data"], readdir(settings["data"]["train_data"])))
     testing_data_dicts = BSON.load.(joinpath.(settings["data"]["test_data"], readdir(settings["data"]["test_data"])))
@@ -100,22 +82,20 @@ function prepare_data(settings::Dict, model_settings = settings["model"])
     testing_labels = init_labels(settings, testing_data_dicts)
     @assert size(training_labels, 1) == size(testing_labels, 1)
     
-    training_data = init_data(settings, training_data_dicts)
-    testing_data = init_data(settings, testing_data_dicts)
+    processing_type =
+        settings["data"]["preprocess"]["ilaplace"]["apply"] ? iLaplaceProcessing() :
+        settings["data"]["preprocess"]["wavelet"]["apply"] ? WaveletProcessing() :
+        error("No processing selected")
+        
+    training_data = init_data(processing_type, settings, training_data_dicts)
+    testing_data = init_data(processing_type, settings, testing_data_dicts)
     
-    if settings["data"]["PCA"] == true
-        training_data = reshape(training_data, :, batchsize(training_data))
-        testing_data = reshape(testing_data, :, batchsize(testing_data))
-        
-        MVS = MultivariateStats
-        M = MVS.fit(MVS.PCA, training_data; maxoutdim = size(training_data, 1))
-        training_data = MVS.transform(M, training_data)
-        testing_data = MVS.transform(M, testing_data)
-        
-        training_data = reshape(training_data, :, 1, batchsize(training_data))
-        testing_data = reshape(testing_data, :, 1, batchsize(testing_data))
+    if settings["data"]["preprocess"]["PCA"]["apply"] == true
+        @unpack training_data, testing_data =
+            init_data(PCAProcessing(), training_data, testing_data)
     end
 
+    # Redundancy check
     @assert size(training_data, 1) == size(testing_data, 1)
 
     labels_scale = init_labels_scale(settings, hcat(training_labels, testing_labels))
@@ -143,11 +123,15 @@ function prepare_data(settings::Dict, model_settings = settings["model"])
 end
 prepare_data(settings_file::String) = prepare_data(TOML.parsefile(settings_file))
 
-function init_data(settings::Dict, ds::AbstractVector{<:Dict})
+# ---------------------------------------------------------------------------- #
+# Initialize data
+# ---------------------------------------------------------------------------- #
+
+function init_data(::iLaplaceProcessing, settings::Dict, ds::AbstractVector{<:Dict})
     T, VT, VC = Float64, Vector{Float64}, Vector{ComplexF64}
-    alpha   = settings["data"]["alpha"] :: T
-    T2Range = settings["data"]["T2Range"] :: VT
-    nT2     = settings["data"]["nT2"] :: Int
+    alpha   = settings["data"]["preprocess"]["ilaplace"]["alpha"] :: T
+    T2Range = settings["data"]["preprocess"]["ilaplace"]["T2Range"] :: VT
+    nT2     = settings["data"]["preprocess"]["ilaplace"]["nT2"] :: Int
     nTEs    = unique(d[:sweepparams][:nTE] for d in ds) :: Vector{Int}
     bufs    = [(A = zeros(T, nTE, nT2), B = zeros(T, nT2, nT2), x = zeros(T, nT2)) for nTE in nTEs]
     bufdict = Dict(nTEs .=> bufs)
@@ -156,7 +140,7 @@ function init_data(settings::Dict, ds::AbstractVector{<:Dict})
         signals = d[:signals] :: VC
         TE      = d[:sweepparams][:TE] :: T
         nTE     = d[:sweepparams][:nTE] :: Int
-        b       = init_signal(signals) :: VT
+        b       = init_signal(signals, nTE) :: VT
         T2      = log10range(T2Range...; length = nT2) :: VT
         x       = ilaplace!(bufdict[nTE], b, T2, TE, alpha) :: VT
         copy(x)
@@ -164,6 +148,124 @@ function init_data(settings::Dict, ds::AbstractVector{<:Dict})
     
     return reshape(out, :, 1, size(out, 2))
 end
+
+function init_data(::WaveletProcessing, settings::Dict, ds::AbstractVector{<:Dict})
+    T, VT, VC = Float64, Vector{Float64}, Vector{ComplexF64}
+    nTEs     = unique(d[:sweepparams][:nTE] for d in ds) :: Vector{Int}
+    bufs     = [ntuple(_ -> zeros(T, nTE), 3) for nTE in nTEs]
+    bufdict  = Dict(nTEs .=> bufs)
+
+    nterms   = settings["data"]["preprocess"]["wavelet"]["nterms"] :: Int
+    TEfast   = settings["data"]["preprocess"]["peel"]["TEfast"] :: T
+    peelbi   = settings["data"]["preprocess"]["peel"]["biexp"] :: Bool
+    makefrac = settings["data"]["preprocess"]["peel"]["makefrac"] :: Bool
+    peelper  = settings["data"]["preprocess"]["peel"]["periodic"] :: Bool
+    
+    PLOT_COUNT = 0
+    PLOT_LIMIT = 3
+    PLOT_FUN = (b, nTE; kwargs...) -> begin
+        if PLOT_COUNT < PLOT_LIMIT
+            plotdwt(;
+                x = b,
+                nchopterms = nterms,
+                thresh = round(0.01 * norm(b); sigdigits = 3),
+                kwargs...)
+            PLOT_COUNT += 1
+        end
+    end
+
+    out = reduce(hcat, begin
+        signals = d[:signals] :: VC
+        TE      = d[:sweepparams][:TE] :: T
+        nTE     = d[:sweepparams][:nTE] :: Int
+        Ncutoff = ceil(Int, -TEfast/TE * log(1e-3)) :: Int
+        b       = init_signal(signals, nTE) :: VT
+        
+        x = T[] # Output vector
+        sizehint!(x, nterms + 4 * peelbi + 2 * peelper)
+
+        # Peel off slow/fast exponentials
+        if peelbi
+            p = peel!(bufdict[nTE], b, Ncutoff, Ncutoff)
+            b = copy(bufdict[nTE][1]) # Peeled signal
+            Aslow, Afast = exp(p[1].α), exp(p[2].α)
+            if makefrac
+                push!(x, Afast / (Aslow + Afast)) # Fast fraction
+                push!(x, Aslow / (Aslow + Afast)) # Slow fraction
+            else
+                push!(x, Afast) # Fast magnitude
+                push!(x, Aslow) # Slow magnitude
+            end
+            push!(x, TE * inv(-p[1].β)) # Slow decay rate
+            push!(x, TE * inv(-p[2].β)) # Fast decay rate
+        end
+
+        # Peel off linear term to force periodicity
+        if peelper
+            b1, bn, n = b[1], b[end], length(b)
+            β = (bn - b1) / (nb - 1) # slope forces equal endpoints
+            α = b1 - β # TODO subtract mean?
+            f = x -> α + β*x
+            b .-= (x -> α + β*x).(1:n)
+            push!(x, α) # Linear term mean
+            push!(x, β) # Linear term slope
+        end
+
+        # Apply wavelet transform to peeled signal
+        if maxtransformlevels(b) < 2
+            npad = 4 - mod(length(b), 4) # pad to a multiple of 4
+            append!(b, fill(b[end], npad))
+        end
+        th = BiggestTH()
+        w, _ = chopdwt(b, nterms, th)
+        append!(x, w :: VT)
+
+        # Plot final signal
+        PLOT_FUN(b, nTE; th = th,
+            title = "final padded, nTE = $nTE, norm(err) = " * string(
+                norm(b - ichopdwt(chopdwt(b, nterms, th)..., th)) |> x -> round(x; sigdigits=3)
+            ))
+        
+        # Return vector of transformed data
+        x :: VT
+    end for d in ds)
+    
+    return reshape(out, :, 1, size(out, 2))
+end
+
+function init_data(::PCAProcessing, training_data, testing_data)
+    training_data = reshape(training_data, :, batchsize(training_data))
+    testing_data = reshape(testing_data, :, batchsize(testing_data))
+
+    MVS = MultivariateStats
+    M = MVS.fit(MVS.PCA, training_data; maxoutdim = size(training_data, 1))
+    training_data = MVS.transform(M, training_data)
+    testing_data = MVS.transform(M, testing_data)
+
+    training_data = reshape(training_data, :, 1, batchsize(training_data))
+    testing_data = reshape(testing_data, :, 1, batchsize(testing_data))
+
+    return @dict(training_data, testing_data)
+end
+
+"""
+Normalize input complex signal data `z`.
+Assume that `z` is sampled every `TE/n` seconds for some positive integer `n`.
+The output is the magnitude of the last `nTE` points sampled at a multiple of `TE`.
+to have the first point equal to 1.
+"""
+function init_signal(z::AbstractVecOrMat{C}, nTE::Int = size(z,1) - 1) where {C <: Complex}
+    n = size(z,1)
+    dt = (n-1) ÷ nTE
+    @assert n == 1 + dt * nTE
+    x = abs.(z[n - dt*(nTE-1) : dt : n, ..])
+    x ./= x[1:1, ..]
+    return x
+end
+
+# ---------------------------------------------------------------------------- #
+# Initialize labels
+# ---------------------------------------------------------------------------- #
 
 function label_fun(s::String, d::Dict)::Float64
     if s == "mwf" # myelin (small pool) water fraction
@@ -224,20 +326,4 @@ function init_labels_scale(settings::Dict, labels::AbstractMatrix)
     else
         settings["model"]["scale"] :: Vector{Float64}
     end
-end
-
-"""
-Normalize input complex signal data `z` is sampled at (0, TE, ..., nTE*TE).
-The magnitude sampled at (TE, 2*TE, ..., nTE*TE), is returned, normalized
-to have the first point equal to 1.
-"""
-function init_signal(z::AbstractVector{C}) where {C <: Complex}
-    x = abs.(z[2:end])
-    x ./= x[1]
-    return x
-end
-function init_signal(z::AbstractMatrix{C}) where {C <: Complex}
-    x = abs.(z[2:end, :])
-    x ./= x[1, :]
-    return x
 end

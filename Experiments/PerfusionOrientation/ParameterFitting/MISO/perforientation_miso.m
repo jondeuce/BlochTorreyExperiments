@@ -25,7 +25,9 @@ DiaryFilename = [datestr(now,30), '__', 'diary.txt'];
 % alpha_range = [17.5, 32.5, 52.5, 67.5, 87.5];
 % alpha_range = [37.5, 52.5, 72.5, 17.5, 87.5];
 % alpha_range = [2.5, 17.5, 42.5, 67.5, 87.5];
-alpha_range = [2.5, 22.5, 42.5, 62.5, 87.5];
+% alpha_range = [2.5, 22.5, 42.5, 62.5, 87.5];
+% alpha_range = [2.5, 12.5, 22.5, 37.5, 57.5, 77.5, 87.5];
+alpha_range = [2.5, 17.5, 27.5, 42.5, 57.5, 77.5, 87.5];
 % alpha_range = [2.5, 12.5, 22.5, 32.5, 47.5, 57.5, 67.5, 77.5, 87.5];
 % alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 
@@ -33,7 +35,7 @@ alpha_range = [2.5, 22.5, 42.5, 62.5, 87.5];
 [all_alpha_range, all_dR2_Data] = get_GRE_data(2.5:5:87.5);
 figure, p = plot(all_alpha_range, all_dR2_Data, 'bo-', 'markersize', 12, 'markeredgecolor', 'r', 'markerfacecolor', 'g'); hold on
 [test_alpha_range, test_dR2_Data] = get_GRE_data(alpha_range);
-plot(test_alpha_range, test_dR2_Data, 'kx', 'markersize', 25, 'linewidth', 6);
+plot(test_alpha_range, test_dR2_Data, 'kx--', 'markersize', 25, 'linewidth', 6);
 leg = legend('All Data Points', 'Simulated Points'); set(leg, 'location', 'northwest');
 
 % =============================== DATA ================================== %
@@ -70,7 +72,7 @@ Weights = Weights / sum(vec(Weights));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 1:9;
+Nmajor = 4:6;
 Rminor_mu = 6.0; % Mean vessel size from Shen et al. (MRM 2012 https://onlinelibrary.wiley.com/doi/full/10.1002/mrm.24258)
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7; % Jochimsen et al. (Neuroimage 2010 https://www.sciencedirect.com/science/article/pii/S1053811910002053)
@@ -129,7 +131,8 @@ SaveResults = true;
 
 % ============================= GEOMETRY ================================ %
 
-OptVariables = 'CA_Rmajor_MinorExpansion';
+OptVariables = 'CA_iBVF_aBVF';
+% OptVariables = 'CA_Rmajor_MinorExpansion';
 
 % Generate initial geometry
 [X0, LB, UB] = deal({});
@@ -224,7 +227,7 @@ end
 % Plot resulting minimum
 try
     sol.xfields = [sol.continuous, sol.integer];
-    sol.xfieldnames = {'CA', 'Rminor', 'MinorExpansion', 'Nmajor'};
+    sol.xfieldnames = {'CA', 'iBVFapprox', 'aBVFapprox', 'Nmajor'};
     sol.yfieldnames = {Normfun};
     miso_plot_surrogate(sol);
 catch e

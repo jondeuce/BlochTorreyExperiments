@@ -14,9 +14,34 @@ alpha_range = args.xdata;
 
 switch upper(args.OptVariables)
     case 'CA_IBVF_ABVF'
-        CA = args.params(1);
-        iBVF = args.params(2);
-        aBVF = args.params(3);
+        if isempty(args.Geom)
+            % Geometry is created inside PerfusionCurve function
+            CA = args.params(1);
+            iBVF = args.params(2);
+            aBVF = args.params(3);
+        else
+            % Geometry has been precomputed; rescale geometry approximately
+            % to input parameter values in a continuous fashion, i.e.
+            % non-iteratively using a heuristic (this is important for
+            % minimization procedures, as it makes the loss function
+            % smoother; the exact iBVF/aBVF can be extracted afterwards)
+            CA = args.params(1);
+            iBVF = args.params(2);
+            aBVF = args.params(3);
+            
+            AnisoBloodVolume = prod(args.GeomArgs.VoxelSize) * aBVF;
+            AnisoCylLength = rayBoxIntersectionLength( args.GeomArgs.VoxelCenter(:), [sind(args.GeomArgs.MajorAngle); 0; cosd(args.GeomArgs.MajorAngle)], args.GeomArgs.VoxelSize(:), args.GeomArgs.VoxelCenter(:) );
+            Rmajor = sqrt(AnisoBloodVolume / ( args.GeomArgs.Nmajor * pi * AnisoCylLength ));
+            SpaceFactor = (args.Geom.iBVF/iBVF)^(1/2.3); % empirical model: iBVF = iBVF_max * SpaceFactor^(-2.3)
+            
+            args.Geom = SetRmajor(args.Geom, Rmajor); % Update Rmajor in input Geom
+            args.Geom = ExpandMinorVessels(args.Geom, SpaceFactor); % Expand minor vessels in input Geom
+            args.Geom = Uncompress(args.Geom); % Re-calculate vasculature map, add arteries, etc.
+            
+            % Update iBVF and aBVF to actual values
+            iBVF = args.Geom.iBVF; % extract resulting iBVF
+            aBVF = args.Geom.aBVF; % extract resulting aBVF
+        end
     case 'CA_RMAJOR_MINOREXPANSION'
         CA = args.params(1);
         Rmajor = args.params(2);

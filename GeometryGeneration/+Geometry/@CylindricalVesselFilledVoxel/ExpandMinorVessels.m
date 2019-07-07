@@ -12,9 +12,7 @@ function [ G ] = ExpandMinorVessels( G, SpaceFactor )
 
 if nargin == 0; RunTests; return; end
 
-if nargin < 4 || isempty(TOLF); TOLF = 1e-8; end
-if nargin < 3 || isempty(TOLX); TOLX = 1e-8; end
-if nargin < 2; VolumeFactor = 1; end
+if nargin < 2; SpaceFactor = 1; end
 
 % Simply expand cylinder points away from the voxel center by `SpaceFactor`
 dp = bsxfun(@minus, G.p, G.VoxelCenter(:));

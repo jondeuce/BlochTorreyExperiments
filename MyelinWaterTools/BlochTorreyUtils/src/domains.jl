@@ -164,18 +164,10 @@ LinearAlgebra.norm(u, domain::ParabolicDomain) = √dot(u, getmass(domain) * u)
 GeometryUtils.area(d::ParabolicDomain{Tu,uType,2}) where {Tu,uType} = area(getgrid(d)) # calculate area of 2D grid directly
 
 # Show methods
-function _compact_show_sparse(io, S::SparseMatrixCSC)
-    print(io, S.m, "×", S.n, " ", typeof(S), " with ", nnz(S), " stored ", nnz(S) == 1 ? "entry" : "entries")
-end
-function _compact_show_sparse(io, A::Symmetric{T,<:SparseMatrixCSC{T}}) where {T}
-    S = A.data
-    print(io, S.m, "×", S.n, " ", typeof(A), " with ", nnz(S), " stored ", nnz(S) == 1 ? "entry" : "entries")
-end
-function _compact_show_factorization(io, F::Union{Nothing, <:Factorization})
-    F == nothing && (show(io, F); return)
-    m, n = size(F)
-    print(io, m, "×", n, " ", typeof(F), " with ", nnz(F), " stored ", nnz(F) == 1 ? "entry" : "entries")
-end
+_compact_show_sparse(io, S::SparseMatrixCSC) = print(io, S.m, "×", S.n, " ", typeof(S), " with ", nnz(S), " stored ", nnz(S) == 1 ? "entry" : "entries")
+_compact_show_sparse(io, A::Symmetric{T,<:SparseMatrixCSC{T}}) where {T} = print(io, A.data.m, "×", A.data.n, " ", typeof(A), " with ", nnz(A.data), " stored ", nnz(A.data) == 1 ? "entry" : "entries")
+_compact_show_factorization(io, F::Nothing) = show(io, F)
+_compact_show_factorization(io, F::Factorization) = print(io, size(F,1), "×", size(F,2), " ", typeof(F), " with ", nnz(F), " stored ", nnz(F) == 1 ? "entry" : "entries")
 
 function Base.show(io::IO, ::MIME"text/plain", d::ParabolicDomain)
     print(io, "$(typeof(d)) with:")

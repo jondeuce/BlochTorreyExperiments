@@ -36,11 +36,21 @@ end
     return Tensor{2,2,T}((cosθ, sinθ, -sinθ, cosθ))
 end
 
-# Our convention is that M∞ points in the +z-direction. This means that our typical initial condition,
-# M₀ = [0, M∞, 0], is actually a rotation of [0, 0, M∞] by -π/2 about the x-axis, not of +π/2.
-# To be consistent, we apply all general rotations by -α (which is equivalent to +α when α = π)
-pulsemat(::Type{Tu}, α) where {Tu} = Tensor{2,3,Tu}(RotX(-α))
-pulsemat(α) = pulsemat(Float64, Float64(α))
+# 3D pulse matrices of one of several standard types
+pulsemat3(::Type{Tu}, α, pulsetype::Symbol) where {Tu} =
+    pulsetype == :x   ? Tensor{2,3,Tu}(RotX(α)) : # Rotation about x-axis
+    pulsetype == :y   ? Tensor{2,3,Tu}(RotY(α)) : # Rotation about y-axis
+    pulsetype == :xyx ? Tensor{2,3,Tu}(RotX(π/2) * RotY(α) * RotX(π/2)) : # Consecutive rotations about x, y, and x-axes
+    error("Pulse type must be one of :x, :y, or :xyx")
+pulsemat3(α, pulsetype::Symbol) = pulsemat3(Float64, Float64(α), pulsetype)
+
+# Form 2D pulse matrices of one of several standard types
+pulsemat2(::Type{Tu}, α, pulsetype::Symbol) where {Tu} =
+    pulsetype == :x   ? (@assert α ≈ π; Tensor{2,2,Float64}(( 1, 0, 0,-1))) : # Rotation about x-axis
+    pulsetype == :y   ? (@assert α ≈ π; Tensor{2,2,Float64}((-1, 0, 0, 1))) : # Rotation about y-axis
+    pulsetype == :xyx ? Tensor{2,2,Tu}((cos(α), sin(α), sin(α), -cos(α)))   : # Consecutive rotations about x, y, and x-axes
+    error("Pulse type must be one of :x, :y, or :xyx")
+pulsemat2(α, pulsetype::Symbol) = pulsemat2(Float64, Float64(α), pulsetype)
 
 # Transverse and longitudinal components of 3D vector, or interpret complex number as a Vec{2}
 @inline transverse(x::Vec{2}) = x
