@@ -98,9 +98,8 @@ function prepare_data(settings::Dict, model_settings = settings["model"])
     # Redundancy check
     @assert size(training_data, 1) == size(testing_data, 1)
 
+    # Compute scale of labels
     labels_scale = init_labels_scale(settings, hcat(training_labels, testing_labels))
-    # training_labels ./= labels_scale
-    # testing_labels ./= labels_scale
 
     T = settings["prec"] == 32 ? Float32 : Float64
     training_data, testing_data, training_labels, testing_labels = map(
@@ -108,9 +107,13 @@ function prepare_data(settings::Dict, model_settings = settings["model"])
         (training_data, testing_data, training_labels, testing_labels))
     
     if settings["data"]["height"] == "auto"
-        settings["data"]["height"] = size(training_data, 1) :: Int
+        settings["data"]["height"] = heightsize(training_data) :: Int
     end
 
+    if settings["data"]["test_size"] == "auto"
+        settings["data"]["test_size"] = batchsize(testing_data) :: Int
+    end
+    
     if model_settings["scale"] == "auto"
         model_settings["scale"] = convert(Vector{T}, labels_scale)
     end

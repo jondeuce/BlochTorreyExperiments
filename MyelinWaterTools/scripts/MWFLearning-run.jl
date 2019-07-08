@@ -2,12 +2,13 @@
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 Pkg.instantiate()
+include(joinpath(@__DIR__, "../initpaths.jl"))
+
 using Printf
 using Statistics: mean, median, std
 using StatsBase: quantile, sample, iqr
 using Base.Iterators: repeated, partition
 
-include(joinpath(@__DIR__, "../initpaths.jl"))
 using MWFLearning
 using StatsPlots
 pyplot(size=(800,600))
