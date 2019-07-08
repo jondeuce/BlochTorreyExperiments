@@ -79,22 +79,21 @@ CatSkip
 `DenseNet`-type skip-connection with concatenation shortcut along dimension `dim`.
 Wraps `SkipConnection` from the Flux library.
 """
-CatSkip(layer, dims = 1) = Flux.SkipConnection(layer, @λ (a,b) -> cat(a, b; dims = dims))
+CatSkip(dims, layer) = Flux.SkipConnection(layer, @λ (a,b) -> cat(a, b; dims = dims))
 
 """
 DenseCatSkip
 """
-function DenseCatSkip(Factory, k::Tuple, ch::Pair, depth::Int, σ = Flux.relu; dims = 1)
-    layers = Any[]
-    CatLayer(A...) = @λ x -> cat(A.(x)...; dims = dims)
-    for i in 1:depth
-        push!(layers, Flux.Chain(
-            CatLayer(layers..., Factory()),
-            Flux.Conv(k, i * ch[1] => ch[2], σ)
-        ))
-    end
-    return Flux.Chain(layers...)
+function DenseCatSkip(Factory, k::Tuple, ch::Pair, σ = Flux.relu; dims::Int = 2, depth::Int = 1)
+    Downsample(ch) = Flux.Conv(k, ch, σ; pad = (k .- 1) .÷ 2)
+    DenseBlock(ch) = CatSkip(dims, Flux.Chain(Downsample(ch), Factory()))
+    return Flux.Chain(
+        [DenseBlock(i * ch[1] => ch[1]) for i in 1:depth]...,
+        Downsample((depth + 1) * ch[1] => ch[2]),
+    )
 end
+DenseCatSkip(Factory, k::Int, args...; kwargs...) = DenseCatSkip(Factory, (k,), args...; kwargs...)
+DenseCatSkip(Factory, k, C::Int, args...; kwargs...) = DenseCatSkip(Factory, k, C=>C, args...; kwargs...)
 
 """
 DenseResConnection

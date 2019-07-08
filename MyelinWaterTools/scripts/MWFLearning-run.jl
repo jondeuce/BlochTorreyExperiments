@@ -1,13 +1,13 @@
 # Initialize project/code loading
 import Pkg
+Pkg.activate(joinpath(@__DIR__, ".."))
+Pkg.instantiate()
 using Printf
 using Statistics: mean, median, std
 using StatsBase: quantile, sample, iqr
 using Base.Iterators: repeated, partition
-Pkg.activate(joinpath(@__DIR__, ".."))
-Pkg.instantiate()
-include(joinpath(@__DIR__, "../initpaths.jl"))
 
+include(joinpath(@__DIR__, "../initpaths.jl"))
 using MWFLearning
 using StatsPlots
 pyplot(size=(800,600))
@@ -127,21 +127,22 @@ lr!(opt::Flux.Optimiser, α) = lr!(opt[1], α)
 # opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
 # opt = Flux.Nesterov(1e-1)
 # opt = Flux.ADAM(3e-4, (0.9, 0.999))
-opt = Flux.ADAMW(3e-4, (0.9, 0.999), 1e-5)
+opt = Flux.ADAMW(1e-3, (0.9, 0.999), 1e-5)
+# opt = Flux.ADAMW(3e-4, (0.9, 0.999), 1e-5)
 
-# # Fixed learning rate
-# LRfun(e) = 3e-4
+# Fixed learning rate
+LRfun(e) = lr(opt)
 
-# Learning rate finder
-LRfun(e) = e <= 100 ? logspace(1,100,1e-6,0.5)(e) : 0.5
+# # Learning rate finder
+# LRfun(e) = e <= 100 ? logspace(1,100,1e-6,0.5)(e) : 0.5
 
-# Learning rate cycling
-LRSTART, LRMAX, LRMIN, LRWIDTH, LRTAIL = 1e-5, 1e-2, 1e-6, 50, 10
-LRfun(e) =
-                     e <=   LRWIDTH          ? linspace(        1,            LRWIDTH, LRSTART, LRMAX)(e) :
-      LRWIDTH + 1 <= e <= 1*LRWIDTH          ? linspace(  LRWIDTH,          1*LRWIDTH, LRMAX,   LRSTART)(e) :
-    1*LRWIDTH + 1 <= e <= 1*LRWIDTH + LRTAIL ? linspace(1*LRWIDTH, 1*LRWIDTH + LRTAIL, LRSTART, LRMIN)(e) :
-    LRMIN
+# # Learning rate cycling
+# LRSTART, LRMAX, LRMIN, LRWIDTH, LRTAIL = 1e-5, 1e-2, 1e-6, 50, 10
+# LRfun(e) =
+#                      e <=   LRWIDTH          ? linspace(        1,            LRWIDTH, LRSTART, LRMAX)(e) :
+#       LRWIDTH + 1 <= e <= 1*LRWIDTH          ? linspace(  LRWIDTH,          1*LRWIDTH, LRMAX,   LRSTART)(e) :
+#     1*LRWIDTH + 1 <= e <= 1*LRWIDTH + LRTAIL ? linspace(1*LRWIDTH, 1*LRWIDTH + LRTAIL, LRSTART, LRMIN)(e) :
+#     LRMIN
 
 # Callbacks
 errs_per_epoch = Dict(

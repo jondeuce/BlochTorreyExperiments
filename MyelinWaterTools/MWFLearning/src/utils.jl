@@ -75,8 +75,8 @@ struct iLaplaceProcessing <: AbstractDataProcessing end
 struct WaveletProcessing <: AbstractDataProcessing end
 
 function prepare_data(settings::Dict, model_settings = settings["model"])
-    training_data_dicts = BSON.load.(joinpath.(settings["data"]["train_data"], readdir(settings["data"]["train_data"])))
-    testing_data_dicts = BSON.load.(joinpath.(settings["data"]["test_data"], readdir(settings["data"]["test_data"])))
+    training_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["train_data"], readdir(settings["data"]["train_data"]))))
+    testing_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["test_data"], readdir(settings["data"]["test_data"]))))
 
     training_labels = init_labels(settings, training_data_dicts)
     testing_labels = init_labels(settings, testing_data_dicts)

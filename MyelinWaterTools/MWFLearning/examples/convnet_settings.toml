@@ -11,10 +11,10 @@ height      = "auto"
 channels    = 1 # Number of data channels
 # labels      = ["mwf", "iewf", "T2iew", "T2mw"] # Target labels
 # weights     = [1.0, 1.0, 1.0, 1.0] # Weights for loss function
-# labels      = ["mwf", "iewf", "T2iew", "T2mw", "K"] # Target labels
-# weights     = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
-labels      = ["mwf", "iewf", "T2iew", "T2mw", "K", "Dav"] # Target labels
-weights     = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
+labels      = ["mwf", "iewf", "T2iew", "T2mw", "K"] # Target labels
+weights     = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
+# labels      = ["mwf", "iewf", "T2iew", "T2mw", "K", "Dav"] # Target labels
+# weights     = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
 [data.preprocess]
 SNR         = [0.0] # Additive random noise
 [data.preprocess.peel]
@@ -36,15 +36,18 @@ apply       = false # Apply PCA preprocessing
 [plot]
 # scale     = [100.0, 100.0, 1000.0, 1000.0] # scale labels before plotting
 # units     = ["%", "%", "ms", "ms"] # label units, after scaling
-scale     = [100.0, 100.0, 1000.0, 1000.0, 1.0, 1.0] # scale labels before plotting
-units     = ["%", "%", "ms", "ms", "um/s", "um^2/s"] # label units, after scaling
+scale     = [100.0, 100.0, 1000.0, 1000.0, 1.0] # scale labels before plotting
+units     = ["%", "%", "ms", "ms", "um/s"] # label units, after scaling
+# scale     = [100.0, 100.0, 1000.0, 1000.0, 1.0, 1.0] # scale labels before plotting
+# units     = ["%", "%", "ms", "ms", "um/s", "um^2/s"] # label units, after scaling
 
 [model]
-name      = "TestModel4"
-loss      = "l1"
+name      = "DenseConvResNet"
+loss      = "l2"
 acc       = "rmse"
 act       = "leakyrelu"
-Nout      = 6 # number of output labels
+Nout      = 5 # number of output labels
+# Nout      = 6 # number of output labels
 # dropout   = false
 # softmax   = false
 # batchnorm = true
@@ -58,12 +61,12 @@ dropout   = false
 batchnorm = false
 groupnorm = true
 Nkern     = 3 # kernel size
-Nconv     = 5 # num conv layers per residual connection
-Nfeat     = 4 # num features for conv layers
-Nblock    = 10 # Number of residual blocks
+Nconv     = 2 # num conv layers per residual connection
+Nfeat     = 8 # num features for conv layers
+Nblock    = 3 # Number of residual blocks
 
 [optimizer]
-epochs  = 110
+epochs  = 1000
 savemod = 1
 testmod = 1
 [optimizer.ADAM]

@@ -1,9 +1,10 @@
 get_model(settings::Dict, model_settings = settings["model"]) =
+    model_settings["name"] == "ConvResNet" ? conv_resnet(settings, model_settings) :
+    model_settings["name"] == "DenseConvResNet" ? dense_conv_resnet(settings, model_settings) :
     model_settings["name"] == "Keras1DSeqClass" ? keras_1D_sequence_classification(settings, model_settings) :
     model_settings["name"] == "TestModel1" ? test_model_1(settings, model_settings) :
     model_settings["name"] == "TestModel2" ? test_model_2(settings, model_settings) :
     model_settings["name"] == "TestModel3" ? test_model_3(settings, model_settings) :
-    model_settings["name"] == "TestModel4" ? test_model_4(settings, model_settings) :
     error("Unknown model: " * model_settings["name"])
 
 get_activation(str::String) =
@@ -180,7 +181,7 @@ function test_model_3(settings, model_settings = settings["model"])
     return model
 end
 
-function test_model_4(settings, model_settings = settings["model"])
+function conv_resnet(settings, model_settings = settings["model"])
     H       = settings["data"]["height"] :: Int # Data height
     C       = settings["data"]["channels"] :: Int # Number of channels
     Nout    = model_settings["Nout"] :: Int # Number of outputs
@@ -224,6 +225,61 @@ function test_model_4(settings, model_settings = settings["model"])
             Flux.softmax(x[1:2,:]), # Automatically scales fractions
             Flux.relu.(x[3:4,:]) .* scale[3:4], # Params vary linearly over a range
             Flux.sigmoid.(x[5:6,:]) .* scale[5:6], # Params vary logarithmically over a range
+        )),
+    )
+
+    return model
+end
+
+function dense_conv_resnet(settings, model_settings = settings["model"])
+    H       = settings["data"]["height"] :: Int # Data height
+    C       = settings["data"]["channels"] :: Int # Number of channels
+    Nout    = model_settings["Nout"] :: Int # Number of outputs
+    scale   = model_settings["scale"] :: Vector # Parameter scales
+    DP      = model_settings["resnet"]["dropout"] :: Bool # Use batch normalization
+    BN      = model_settings["resnet"]["batchnorm"] :: Bool # Use batch normalization
+    GN      = model_settings["resnet"]["groupnorm"] :: Bool # Use group normalization
+    Nkern   = model_settings["resnet"]["Nkern"] :: Int # Kernel size
+    Nfeat   = model_settings["resnet"]["Nfeat"] :: Int # Kernel size
+    Nconv   = model_settings["resnet"]["Nconv"] :: Int # Num residual connection layers
+    Nblock  = model_settings["resnet"]["Nblock"] :: Int # Num residual connection layers
+    @assert !(BN && GN)
+
+    ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> zeros(eltype(scale), size(scale)))
+    MakeDropout() = DP ? Flux.AlphaDropout(0.5) : identity
+    MakeActfun() = model_settings["act"] |> get_activation
+    Upsample() = Flux.Conv((1,), 1 => Nfeat, MakeActfun(); pad = (0,)) # 1x1 upsample convolutions
+    Downsample() = Flux.Conv((1,), Nfeat => 1, MakeActfun(); pad = (0,)) # 1x1 downsample convolutions
+    ResidualBlockFactory() = IdentitySkip(
+        ConvResConnection(Nkern, Nfeat => Nfeat, MakeActfun();
+        numlayers = Nconv, batchnorm = BN, groupnorm = GN, mode = :post))
+    DenseResidualBlocks() = DenseCatSkip(
+        ResidualBlockFactory, 1, Nfeat => Nfeat, MakeActfun();
+        dims = 2, depth = Nblock)
+
+    # Residual network
+    denseresnet = Flux.Chain(
+        DenseResize(),
+        Flux.Dense(H*C, H*C ÷ 2, MakeActfun()),
+        ChannelResize(1),
+        Upsample(),
+        DenseResidualBlocks(),
+        MakeDropout(),
+        Downsample(),
+        DenseResize(),
+        Flux.Dense(H*C ÷ 2, Nout),
+        Flux.Diagonal(Nout),
+    )
+
+    # Output (assumes 1:2 is mwf/iewf, 3:4 are positive params, 5:6 is learned on a log scale)
+    model = Flux.Chain(
+        denseresnet,
+        # ParamsScale(), # Scale to parameter space
+        @λ(x -> vcat(
+            Flux.softmax(x[1:2,:]), # Automatically scales fractions
+            Flux.relu.(x[3:4,:]) .* scale[3:4], # Params vary linearly over a range
+            Flux.sigmoid.(x[5:5,:]) .* scale[5:5], # Params vary logarithmically over a range
+            # Flux.sigmoid.(x[5:6,:]) .* scale[5:6], # Params vary logarithmically over a range
         )),
     )
 
