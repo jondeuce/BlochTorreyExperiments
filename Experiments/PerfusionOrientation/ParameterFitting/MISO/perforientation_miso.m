@@ -26,7 +26,8 @@ DiaryFilename = [datestr(now,30), '__', 'diary.txt'];
 % alpha_range = [37.5, 52.5, 72.5, 17.5, 87.5];
 % alpha_range = [2.5, 17.5, 42.5, 67.5, 87.5];
 % alpha_range = [2.5, 22.5, 42.5, 62.5, 87.5];
-alpha_range = [2.5, 12.5, 22.5, 37.5, 57.5, 77.5, 87.5];
+% alpha_range = [2.5, 12.5, 22.5, 37.5, 57.5, 77.5, 87.5];
+alpha_range = [2.5, 17.5, 27.5, 42.5, 57.5, 77.5, 87.5];
 % alpha_range = [2.5, 12.5, 22.5, 32.5, 47.5, 57.5, 67.5, 77.5, 87.5];
 % alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 
@@ -71,7 +72,7 @@ Weights = Weights / sum(vec(Weights));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 1:3;
+Nmajor = 4:6;
 Rminor_mu = 6.0; % Mean vessel size from Shen et al. (MRM 2012 https://onlinelibrary.wiley.com/doi/full/10.1002/mrm.24258)
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7; % Jochimsen et al. (Neuroimage 2010 https://www.sciencedirect.com/science/article/pii/S1053811910002053)
