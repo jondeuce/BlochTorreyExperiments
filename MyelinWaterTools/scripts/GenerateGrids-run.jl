@@ -82,7 +82,7 @@ function main(iters = 1000)
     mkpath.(("plots/circles", "plots/grids", "geom"))
 
     # Parameter sampler
-    sweep_params_sampler = Dict{Symbol,Union{Float64,Int}}(
+    sweep_params_sampler() = Dict{Symbol,Union{Float64,Int}}(
         :numfibres => rand(5:30),
         :mwf       => 0.15 + 0.15 * rand())
     
