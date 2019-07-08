@@ -1,9 +1,10 @@
 # Activate project and load packages for this script
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
+Pkg.instantiate()
 include(joinpath(@__DIR__, "../initpaths.jl"))
 
-# NOTE: must load pyplot backend BEFORE loading MATLAB in init.jl
+# NOTE: must load pyplot backend BEFORE loading MATLAB in MWFUtils/init.jl
 using StatsPlots
 pyplot(size=(1200,900), leg = false, grid = false, labels = nothing)
 using GlobalUtils
@@ -54,7 +55,7 @@ function runcreategeometry(params; numreps = 5)
             # Save generated geometry, tagging file with git commit
             DrWatson.@tagsave(
                 "geom/" * fname * ".geom.bson",
-                Dict(pairs(geom)),
+                Dict(:params => params, pairs(geom)...),
                 true, # safe saving (don't overwrite existing files)
                 gitdir())
         catch e
@@ -62,7 +63,7 @@ function runcreategeometry(params; numreps = 5)
                 # User interrupt; rethrow and catch in main()
                 rethrow(e)
             else
-                # Grid generation; print error and continue
+                # Grid generation error; print error and try again
                 @warn "Error generating grid with param string: " * DrWatson.savename("", params; connector = ", ")
                 @warn sprint(showerror, e, catch_backtrace())
                 continue
@@ -76,20 +77,22 @@ function runcreategeometry(params; numreps = 5)
     return nothing
 end
 
-function main()
+function main(iters = 1000)
     # Make subfolders
     mkpath.(("plots/circles", "plots/grids", "geom"))
 
+    # Parameter sampler
+    sweep_params_sampler = Dict{Symbol,Union{Float64,Int}}(
+        :numfibres => rand(5:30),
+        :mwf       => 0.15 + 0.15 * rand())
+    
     # Parameters to sweep over
-    sweep_params = Dict{Symbol,Any}(
-        :numfibres => collect(5:30),
-        :mwf       => collect(0.15:0.01:0.3))
-
-    all_params = DrWatson.dict_list(sweep_params)
-    all_params = sort(all_params; by = d -> (d[:numfibres], d[:mwf]))
-    for (i,params) in enumerate(all_params)
+    sweep_params = [sweep_params_sampler() for _ in 1:iters]
+    sweep_params = sort(sweep_params; by = d -> (d[:numfibres], d[:mwf]))
+    
+    for (i,params) in enumerate(sweep_params)
         try
-            @info "Generating geometry $i/$(length(all_params)) at $(Dates.now()): $(DrWatson.savename("", params; connector = ", "))"
+            @info "Generating geometry $i/$(length(sweep_params)) at $(Dates.now()): $(DrWatson.savename("", params; connector = ", "))"
             @unpack g_ratio, AxonPDensity = BlochTorreyUtils.optimal_g_ratio_packdensity_gridsearch(params[:mwf])
             geomparams = deepcopy(params)
             geomparams[:gratio] = g_ratio
@@ -100,7 +103,7 @@ function main()
                 @warn "Parameter sweep interrupted by user. Breaking out of loop and returning..."
                 break
             else
-                @warn "Error running simulation $i/$(length(all_params))"
+                @warn "Error running simulation $i/$(length(sweep_params))"
                 @warn sprint(showerror, e, catch_backtrace())
             end
         end

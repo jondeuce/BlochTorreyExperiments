@@ -131,9 +131,9 @@ version = "0.6.0"
 
 [[CSV]]
 deps = ["CategoricalArrays", "DataFrames", "Dates", "Mmap", "Parsers", "PooledArrays", "Profile", "Tables", "Unicode", "WeakRefStrings"]
-git-tree-sha1 = "078801ccf5a644df31cef99c9add46107b94aba5"
+git-tree-sha1 = "f4a8ed808b7ee18638c5f8b278071ce0245e5e85"
 uuid = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
-version = "0.5.6"
+version = "0.5.7"
 
 [[CSVFiles]]
 deps = ["CodecZlib", "DataValues", "FileIO", "HTTP", "IterableTables", "IteratorInterfaceExtensions", "TableShowUtils", "TableTraits", "TableTraitsUtils", "Test", "TextParse"]
@@ -321,9 +321,9 @@ version = "1.0.0"
 
 [[DataValues]]
 deps = ["DataValueInterfaces", "Dates"]
-git-tree-sha1 = "b23285b1ebe5c9febc8a2146395f4177c1282a39"
+git-tree-sha1 = "34e6d8205cf46dbdd0485f970c8590f63243ac30"
 uuid = "e7dc6d0d-1eca-5fa6-8ad6-5aecde8b7ea5"
-version = "0.4.9"
+version = "0.4.10"
 
 [[Dates]]
 deps = ["Printf"]
@@ -341,9 +341,9 @@ uuid = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 
 [[DiffEqBase]]
 deps = ["Compat", "Distributed", "DocStringExtensions", "FunctionWrappers", "IterativeSolvers", "IteratorInterfaceExtensions", "LinearAlgebra", "MuladdMacro", "Parameters", "RecipesBase", "RecursiveArrayTools", "RecursiveFactorization", "Requires", "Roots", "SparseArrays", "StaticArrays", "Statistics", "SuiteSparse", "TableTraits", "TreeViews"]
-git-tree-sha1 = "3c08441014d2e1bad515df5443dd2d0ba379888c"
+git-tree-sha1 = "d48559a6fc4229881859e61e5de62c115ee2ed3d"
 uuid = "2b5f629d-d688-5b77-993f-72d75c75574e"
-version = "5.12.0"
+version = "5.15.0"
 
 [[DiffEqCallbacks]]
 deps = ["DataStructures", "DiffEqBase", "LinearAlgebra", "OrdinaryDiffEq", "RecipesBase", "RecursiveArrayTools", "StaticArrays", "Test"]
@@ -484,7 +484,7 @@ version = "0.6.1"
 
 [[Flux]]
 deps = ["AbstractTrees", "Adapt", "CodecZlib", "Colors", "DelimitedFiles", "Juno", "LinearAlgebra", "MacroTools", "NNlib", "Pkg", "Printf", "Random", "Reexport", "Requires", "SHA", "Statistics", "StatsBase", "Tracker", "ZipFile"]
-git-tree-sha1 = "2b7f7ffa9887abd6b498d2ac25624224a8080845"
+git-tree-sha1 = "ba52cfdbc9aedd122fc08b2047bf56fd0b675add"
 repo-rev = "master"
 repo-url = "https://github.com/FluxML/Flux.jl.git"
 uuid = "587475ba-b771-5e3f-ad9e-33799f191a9c"
@@ -514,9 +514,9 @@ uuid = "9fa8497b-333b-5362-9e8d-4d0656e87820"
 
 [[GPUArrays]]
 deps = ["Adapt", "FFTW", "FillArrays", "LinearAlgebra", "Printf", "Random", "Serialization", "StaticArrays", "Test"]
-git-tree-sha1 = "414250733f00f3b38acbf31f1f8e2cdad3907b42"
+git-tree-sha1 = "6b556af6e42b71f5712a98f8df3d110a76bfdea9"
 uuid = "0c68f7d7-f131-5f86-a1c3-88cf8149b2d7"
-version = "0.7.1"
+version = "0.7.2"
 
 [[GR]]
 deps = ["Base64", "DelimitedFiles", "LinearAlgebra", "Pkg", "Printf", "Random", "Serialization", "Sockets", "Test"]
@@ -555,22 +555,16 @@ uuid = "a2bd30eb-e257-5431-a919-1863eab51364"
 version = "0.4.0"
 
 [[HDF5]]
-deps = ["BinDeps", "Blosc", "Homebrew", "Libdl", "Mmap", "WinRPM"]
-git-tree-sha1 = "e6f0c154d01faef0d0831d075aa8f279f95946da"
+deps = ["BinaryProvider", "Blosc", "Libdl", "Mmap"]
+git-tree-sha1 = "635ae44613c8c8dcf5d5b0084bfa00abea498e1f"
 uuid = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
-version = "0.11.1"
+version = "0.12.0"
 
 [[HTTP]]
 deps = ["Base64", "Dates", "IniFile", "MbedTLS", "Sockets"]
-git-tree-sha1 = "6e59e7ec3c71eda9e0261c98896da5d3d008fa7d"
+git-tree-sha1 = "03ddc88af7f2d963fac5aa9f3ac8e11914d68a78"
 uuid = "cd3eb016-35fb-5094-929b-558a96fad6f3"
-version = "0.8.3"
-
-[[HTTPClient]]
-deps = ["Compat", "LibCURL"]
-git-tree-sha1 = "161d5776ae8e585ac0b8c20fb81f17ab755b3671"
-uuid = "0862f596-cf2d-50af-8ef4-f2be67dfa83f"
-version = "0.2.1"
+version = "0.8.4"
 
 [[HeaderREPLs]]
 deps = ["REPL", "Test"]
@@ -589,12 +583,6 @@ deps = ["DocStringExtensions", "InteractiveUtils", "REPL", "Test"]
 git-tree-sha1 = "286ff83d696dd92748e603a3219618d9e407e872"
 uuid = "eafb193a-b7ab-5a9e-9068-77385905fa72"
 version = "0.3.1"
-
-[[Homebrew]]
-deps = ["BinDeps", "InteractiveUtils", "JSON", "Libdl", "Test", "Unicode"]
-git-tree-sha1 = "f01fb2f34675f9839d55ba7238bab63ebd2e531e"
-uuid = "d9be37ee-ecc9-5288-90f1-b9ca67657a75"
-version = "0.7.1"
 
 [[IJulia]]
 deps = ["Base64", "Conda", "Dates", "InteractiveUtils", "JSON", "Markdown", "MbedTLS", "Pkg", "Printf", "REPL", "Random", "SoftGlobalScope", "Test", "UUIDs", "ZMQ"]
@@ -703,10 +691,9 @@ uuid = "8197267c-284f-5f27-9208-e0e47529a953"
 version = "0.3.1"
 
 [[IterTools]]
-deps = ["SparseArrays", "Test"]
-git-tree-sha1 = "79246285c43602384e6f1943b3554042a3712056"
+git-tree-sha1 = "2ebe60d7343962966d1779a74a760f13217a6901"
 uuid = "c8e1da08-722c-5040-9ed9-7db0dc04731e"
-version = "1.1.1"
+version = "1.2.0"
 
 [[IterableTables]]
 deps = ["DataValues", "IteratorInterfaceExtensions", "Requires", "TableTraits", "TableTraitsUtils", "Test"]
@@ -792,18 +779,6 @@ deps = ["MLStyle", "MacroTools", "Test"]
 git-tree-sha1 = "987298a681f4946b0d5d87ded1e89b53957d3b07"
 uuid = "f1f30506-32fe-5131-bd72-7c197988f9e5"
 version = "0.2.0"
-
-[[LibCURL]]
-deps = ["BinaryProvider", "Libdl"]
-git-tree-sha1 = "fd5fc15f2a04608fe1435a769dbbfc7959ff1daa"
-uuid = "b27032c2-a3e7-50c8-80cd-2d36dbcbfd21"
-version = "0.5.2"
-
-[[LibExpat]]
-deps = ["Compat"]
-git-tree-sha1 = "fde352ec13479e2f90e57939da2440fb78c5e388"
-uuid = "522f3ed2-3f36-55e3-b6df-e94fee9b0c07"
-version = "0.5.0"
 
 [[LibGit2]]
 uuid = "76f85450-5226-5b5a-8eaa-529ad045b433"
@@ -1024,9 +999,9 @@ version = "1.1.0"
 
 [[OrdinaryDiffEq]]
 deps = ["DataStructures", "DiffEqBase", "DiffEqDiffTools", "DiffEqOperators", "ExponentialUtilities", "ForwardDiff", "GenericSVD", "LinearAlgebra", "Logging", "MuladdMacro", "NLsolve", "Parameters", "RecursiveArrayTools", "Reexport", "StaticArrays"]
-git-tree-sha1 = "7481f05badc75b80a62d0da988f09d6028c4fbb1"
+git-tree-sha1 = "3980f750a7258698533145ee6b3f8aad492245e7"
 uuid = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
-version = "5.8.1"
+version = "5.9.0"
 
 [[PDMats]]
 deps = ["Arpack", "LinearAlgebra", "SparseArrays", "SuiteSparse", "Test"]
@@ -1088,9 +1063,9 @@ version = "0.5.8"
 
 [[Plots]]
 deps = ["Base64", "Contour", "Dates", "FixedPointNumbers", "GR", "GeometryTypes", "JSON", "LinearAlgebra", "Measures", "NaNMath", "Pkg", "PlotThemes", "PlotUtils", "Printf", "REPL", "Random", "RecipesBase", "Reexport", "Requires", "Showoff", "SparseArrays", "Statistics", "StatsBase", "UUIDs"]
-git-tree-sha1 = "85eed66b6d128b1c89ca76eaf63f7d1142160eef"
+git-tree-sha1 = "a9c011a7176a9010dda4853373e8d89a83f9d69d"
 uuid = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
-version = "0.25.2"
+version = "0.25.3"
 
 [[PolynomialRoots]]
 deps = ["Test"]
@@ -1287,11 +1262,11 @@ version = "0.7.2"
 
 [[StatProfilerHTML]]
 deps = ["Profile", "Test"]
-git-tree-sha1 = "47eaacec5398acf43e9b7919ddca71afb48fc09a"
+git-tree-sha1 = "a089feddc9040af147b4aa0cbba4ba0dc66a643c"
 repo-rev = "master"
 repo-url = "https://github.com/tkluck/StatProfilerHTML.jl.git"
 uuid = "7957ca88-7554-11e8-9c82-b34c04f5d4e2"
-version = "0.4.0"
+version = "0.5.0"
 
 [[StaticArrays]]
 deps = ["LinearAlgebra", "Random", "Statistics"]
@@ -1322,10 +1297,10 @@ uuid = "f3b207a7-027a-5e70-b257-86293d7955fd"
 version = "0.10.2"
 
 [[SteadyStateDiffEq]]
-deps = ["Compat", "DiffEqBase", "DiffEqCallbacks", "LinearAlgebra", "NLsolve", "Reexport", "Test"]
-git-tree-sha1 = "fe9852d18c3e30f384003da50d6049e5fbc97071"
+deps = ["DiffEqBase", "DiffEqCallbacks", "LinearAlgebra", "NLsolve", "Reexport"]
+git-tree-sha1 = "9a2de84a1618e1702dbb95ebdbb84dbf7f24d1ab"
 uuid = "9672c7b4-1e72-59bd-8a11-6ac3964bc41f"
-version = "1.4.0"
+version = "1.5.0"
 
 [[StringDistances]]
 deps = ["Distances", "IterTools", "Random", "Test"]
@@ -1512,12 +1487,6 @@ deps = ["Colors", "Dates", "Observables", "OrderedCollections", "Test"]
 git-tree-sha1 = "c53befc70c6b91eaa2a9888c2f6ac2d92720a81b"
 uuid = "cc8bc4a8-27d6-5769-a93b-9d913e69aa62"
 version = "0.6.1"
-
-[[WinRPM]]
-deps = ["BinDeps", "Compat", "HTTPClient", "LibExpat", "Libdl", "Libz", "URIParser"]
-git-tree-sha1 = "2a889d320f3b77d17c037f295859fe570133cfbf"
-uuid = "c17dfb99-b4f7-5aad-8812-456da1ad7187"
-version = "0.4.2"
 
 [[WoodburyMatrices]]
 deps = ["LinearAlgebra", "Random", "SparseArrays", "Test"]
