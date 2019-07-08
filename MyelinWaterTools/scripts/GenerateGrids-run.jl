@@ -83,8 +83,8 @@ function main(iters = 1000)
 
     # Parameter sampler
     sweep_params_sampler() = Dict{Symbol,Union{Float64,Int}}(
-        :numfibres => rand(5:30),
-        :mwf       => 0.15 + 0.15 * rand())
+        :numfibres => rand(9:30), #TODO
+        :mwf       => 0.15 + 0.15 * rand()) #TODO
     
     # Parameters to sweep over
     sweep_params = [sweep_params_sampler() for _ in 1:iters]
