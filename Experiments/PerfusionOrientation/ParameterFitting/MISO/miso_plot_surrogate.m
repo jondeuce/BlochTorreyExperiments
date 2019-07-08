@@ -46,7 +46,7 @@ range = @(x) linspace(min(x), max(x), npts);
 minstr = ['Min = ', num2str(Data.(yfieldnamesbest{1}))];
 titlefun = @(x,y,fix) title(['RBF ', yfieldnames{1}, ' vs. ', x, ' and ', y, ' (', fix, ' fixed; ', minstr, ')']);
 plotargs = {'EdgeColor', 'None'};
-scattersurfaceargs = {30 * ones(size(Data.(yfieldnames{1}))), 'ko', 'filled'};
+scattersurfaceargs = {30, 'ko', 'filled'};
 
 x = Data.(xfieldnames{1}); y = Data.(xfieldnames{2}); z = Data.(xfieldnamesbest{3}) * ones(size(x));
 w = []; if numel(xfields) > 3; w = Data.(xfieldnamesbest{4}) * ones(size(x)); end
