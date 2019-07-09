@@ -5,10 +5,12 @@ dir     = "."
 [data]
 train_data  = "./train"
 test_data   = "./test"
-batch_size  = 75
+batch_size  = 250
 test_size   = "auto"
 height      = "auto"
 channels    = 1 # Number of data channels
+# labels      = ["T2iew", "T2mw", "K"] # Target labels
+# weights     = [1.0, 1.0, 1.0] # Weights for loss function
 # labels      = ["mwf", "iewf", "T2iew", "T2mw"] # Target labels
 # weights     = [1.0, 1.0, 1.0, 1.0] # Weights for loss function
 labels      = ["mwf", "iewf", "T2iew", "T2mw", "K"] # Target labels
@@ -34,6 +36,8 @@ alpha       = 0.001 # Tikhonov regularization parameter
 apply       = false # Apply PCA preprocessing
 
 [plot]
+# scale     = [1000.0, 1000.0, 1.0] # scale labels before plotting
+# units     = ["ms", "ms", "um/s"] # label units, after scaling
 # scale     = [100.0, 100.0, 1000.0, 1000.0] # scale labels before plotting
 # units     = ["%", "%", "ms", "ms"] # label units, after scaling
 scale     = [100.0, 100.0, 1000.0, 1000.0, 1.0] # scale labels before plotting
@@ -45,7 +49,8 @@ units     = ["%", "%", "ms", "ms", "um/s"] # label units, after scaling
 name      = "DenseConvResNet"
 loss      = "l2"
 acc       = "rmse"
-act       = "leakyrelu"
+act       = "relu"
+# Nout      = 3 # number of output labels
 Nout      = 5 # number of output labels
 # Nout      = 6 # number of output labels
 # dropout   = false
@@ -61,12 +66,13 @@ dropout   = false
 batchnorm = false
 groupnorm = true
 Nkern     = 3 # kernel size
-Nconv     = 2 # num conv layers per residual connection
-Nfeat     = 8 # num features for conv layers
-Nblock    = 3 # Number of residual blocks
+Nconv     = 5 # Number of conv layers per residual connection
+Nfeat     = 4 # Number of features per residual block conv layer
+Nblock    = 5 # Number of residual blocks per residual network
+Ndense    = 5 # Number of residual networks per dense residual network
 
 [optimizer]
-epochs  = 1000
+epochs  = 500
 savemod = 1
 testmod = 1
 [optimizer.ADAM]

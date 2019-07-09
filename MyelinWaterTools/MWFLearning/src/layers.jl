@@ -84,7 +84,7 @@ CatSkip(dims, layer) = Flux.SkipConnection(layer, @λ (a,b) -> cat(a, b; dims = 
 """
 DenseCatSkip
 """
-function DenseCatSkip(Factory, k::Tuple, ch::Pair, σ = Flux.relu; dims::Int = 2, depth::Int = 1)
+function DenseCatSkip(Factory, k::Tuple, ch::Pair, σ = identity; dims::Int = 2, depth::Int = 1)
     Downsample(ch) = Flux.Conv(k, ch, σ; pad = (k .- 1) .÷ 2)
     DenseBlock(ch) = CatSkip(dims, Flux.Chain(Downsample(ch), Factory()))
     return Flux.Chain(
@@ -94,6 +94,20 @@ function DenseCatSkip(Factory, k::Tuple, ch::Pair, σ = Flux.relu; dims::Int = 2
 end
 DenseCatSkip(Factory, k::Int, args...; kwargs...) = DenseCatSkip(Factory, (k,), args...; kwargs...)
 DenseCatSkip(Factory, k, C::Int, args...; kwargs...) = DenseCatSkip(Factory, k, C=>C, args...; kwargs...)
+
+"""
+ResidualDenseBlock
+"""
+function ResidualDenseBlock(Factory, G0::Int, G::Int, d::Int; dims::Int = 2)
+    return IdentitySkip(
+        Flux.Chain(
+            [CatSkip(dims, Factory(G0 + (c - 1) * G => G)) for c in 1:d]...,
+            Flux.Conv((1,), G0 + d * G => G0, identity; pad = (0,)),
+        )
+    )
+end
+ResidualDenseBlock(Factory, k::Int, args...; kwargs...) = ResidualDenseBlock(Factory, (k,), args...; kwargs...)
+ResidualDenseBlock(Factory, k, C::Int, args...; kwargs...) = ResidualDenseBlock(Factory, k, C=>C, args...; kwargs...)
 
 """
 DenseResConnection

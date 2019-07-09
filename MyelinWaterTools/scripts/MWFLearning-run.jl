@@ -1,7 +1,7 @@
 # Initialize project/code loading
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
-Pkg.instantiate()
+# Pkg.instantiate() #TODO
 include(joinpath(@__DIR__, "../initpaths.jl"))
 
 using Printf
@@ -76,7 +76,6 @@ savefig(plot_random_data_samples(), "plots/" * FILE_PREFIX * "datasamples.png")
 
 # Construct model
 @info "Constructing model..."
-
 model = MWFLearning.get_model(settings, model_settings)
 model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"))
 
@@ -113,8 +112,8 @@ accuracy =
     @λ (x,y) -> 100 - 100 * sqrt(mse(x,y)) # default
 
 labelerror =
-    @λ (x,y) -> 100 .* vec(mean(abs.((model(x) .- y) ./ y); dims = 2))
-    #@λ (x,y) -> 100 .* vec(mean(abs.(model(x) .- y); dims = 2) ./ maximum(abs.(y); dims = 2))
+    # @λ (x,y) -> 100 .* vec(mean(abs.((model(x) .- y) ./ y); dims = 2))
+    @λ (x,y) -> 100 .* vec(mean(abs.(model(x) .- y); dims = 2) ./ maximum(abs.(y); dims = 2))
 
 # Utils
 linspace(x1,x2,y1,y2) = x -> (y2-y1)/(x2-x1) * (x-x1) + y1
@@ -335,6 +334,6 @@ prediction_scatter = function(i)
 end
 fig = plot([prediction_scatter(i) for i in 1:size(model_labels, 1)]...)
 display(fig)
-savefig(fig, "plots/" * FILE_PREFIX * "labelhistograms.png")
+savefig(fig, "plots/" * FILE_PREFIX * "labelscatter.png")
 
 nothing

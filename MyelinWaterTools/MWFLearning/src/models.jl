@@ -231,6 +231,7 @@ function conv_resnet(settings, model_settings = settings["model"])
     return model
 end
 
+# https://arxiv.org/abs/1802.08797
 function dense_conv_resnet(settings, model_settings = settings["model"])
     H       = settings["data"]["height"] :: Int # Data height
     C       = settings["data"]["channels"] :: Int # Number of channels
@@ -243,43 +244,56 @@ function dense_conv_resnet(settings, model_settings = settings["model"])
     Nfeat   = model_settings["resnet"]["Nfeat"] :: Int # Kernel size
     Nconv   = model_settings["resnet"]["Nconv"] :: Int # Num residual connection layers
     Nblock  = model_settings["resnet"]["Nblock"] :: Int # Num residual connection layers
+    Ndense  = model_settings["resnet"]["Ndense"] :: Int # Num residual connection layers
     @assert !(BN && GN)
 
     ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> zeros(eltype(scale), size(scale)))
     MakeDropout() = DP ? Flux.AlphaDropout(0.5) : identity
     MakeActfun() = model_settings["act"] |> get_activation
-    Upsample() = Flux.Conv((1,), 1 => Nfeat, MakeActfun(); pad = (0,)) # 1x1 upsample convolutions
-    Downsample() = Flux.Conv((1,), Nfeat => 1, MakeActfun(); pad = (0,)) # 1x1 downsample convolutions
-    ResidualBlockFactory() = IdentitySkip(
-        ConvResConnection(Nkern, Nfeat => Nfeat, MakeActfun();
-        numlayers = Nconv, batchnorm = BN, groupnorm = GN, mode = :post))
-    DenseResidualBlocks() = DenseCatSkip(
-        ResidualBlockFactory, 1, Nfeat => Nfeat, MakeActfun();
-        dims = 2, depth = Nblock)
+    Upsample() = Flux.Conv((1,), 1 => Nfeat, identity; pad = (0,)) # 1x1 upsample convolutions
+    Downsample() = Flux.Conv((1,), Nfeat => 1, identity; pad = (0,)) # 1x1 downsample convolutions
+    ResidualBlock() = IdentitySkip(
+            ConvResConnection(
+                Nkern, Nfeat => Nfeat, MakeActfun();
+                numlayers = Nconv, batchnorm = BN, groupnorm = GN, mode = :post
+            )
+        )
+    ResidualBlockChainFactory() = Flux.Chain(
+            [ResidualBlock() for _ in 1:Nblock]...
+        )
+    DenseResidualNetwork() = DenseCatSkip(
+            ResidualBlockChainFactory,
+            (1,), Nfeat => Nfeat, identity;
+            dims = 2, depth = Ndense
+        )
 
     # Residual network
     denseresnet = Flux.Chain(
         DenseResize(),
-        Flux.Dense(H*C, H*C ÷ 2, MakeActfun()),
+        # Flux.Dense(H*C, H*C ÷ 2, MakeActfun()),
         ChannelResize(1),
         Upsample(),
-        DenseResidualBlocks(),
+        DenseResidualNetwork(),
         MakeDropout(),
         Downsample(),
         DenseResize(),
-        Flux.Dense(H*C ÷ 2, Nout),
-        Flux.Diagonal(Nout),
+        # Flux.Dense(H*C ÷ 2, Nout),
+        Flux.Dense(H*C, Nout),
+        # Flux.Diagonal(Nout),
     )
 
-    # Output (assumes 1:2 is mwf/iewf, 3:4 are positive params, 5:6 is learned on a log scale)
+    # Output parameter handling:
+    #   `relu` to force positivity
+    #   `softmax` to force positivity and unit sum, i.e. fractions
+    #   `sigmoid` to force positivity for parameters which vary over several orders of magnitude
     model = Flux.Chain(
         denseresnet,
-        # ParamsScale(), # Scale to parameter space
         @λ(x -> vcat(
+            # Flux.relu.(x[1:2,:]) .* scale[1:2], # Params vary linearly over a range
+            # Flux.sigmoid.(x[3:3,:]) .* scale[3:3], # Params vary logarithmically over a range
             Flux.softmax(x[1:2,:]), # Automatically scales fractions
             Flux.relu.(x[3:4,:]) .* scale[3:4], # Params vary linearly over a range
             Flux.sigmoid.(x[5:5,:]) .* scale[5:5], # Params vary logarithmically over a range
-            # Flux.sigmoid.(x[5:6,:]) .* scale[5:6], # Params vary logarithmically over a range
         )),
     )
 
