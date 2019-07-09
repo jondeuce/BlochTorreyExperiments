@@ -71,7 +71,8 @@ IdentitySkip
 `ResNet`-type skip-connection with identity shortcut.
 Wraps `SkipConnection` from the Flux library.
 """
-IdentitySkip(layer) = Flux.SkipConnection(layer, @λ (a,b) -> a + b)
+IdentitySkip(layer::Flux.Chain) = Flux.SkipConnection(layer, @λ (a,b) -> a + b)
+IdentitySkip(layer) = IdentitySkip(Flux.Chain(layer))
 
 """
 CatSkip
@@ -79,35 +80,8 @@ CatSkip
 `DenseNet`-type skip-connection with concatenation shortcut along dimension `dim`.
 Wraps `SkipConnection` from the Flux library.
 """
-CatSkip(dims, layer) = Flux.SkipConnection(layer, @λ (a,b) -> cat(a, b; dims = dims))
-
-"""
-DenseCatSkip
-"""
-function DenseCatSkip(Factory, k::Tuple, ch::Pair, σ = identity; dims::Int = 2, depth::Int = 1)
-    Downsample(ch) = Flux.Conv(k, ch, σ; pad = (k .- 1) .÷ 2)
-    DenseBlock(ch) = CatSkip(dims, Flux.Chain(Downsample(ch), Factory()))
-    return Flux.Chain(
-        [DenseBlock(i * ch[1] => ch[1]) for i in 1:depth]...,
-        Downsample((depth + 1) * ch[1] => ch[2]),
-    )
-end
-DenseCatSkip(Factory, k::Int, args...; kwargs...) = DenseCatSkip(Factory, (k,), args...; kwargs...)
-DenseCatSkip(Factory, k, C::Int, args...; kwargs...) = DenseCatSkip(Factory, k, C=>C, args...; kwargs...)
-
-"""
-ResidualDenseBlock
-"""
-function ResidualDenseBlock(Factory, G0::Int, G::Int, d::Int; dims::Int = 2)
-    return IdentitySkip(
-        Flux.Chain(
-            [CatSkip(dims, Factory(G0 + (c - 1) * G => G)) for c in 1:d]...,
-            Flux.Conv((1,), G0 + d * G => G0, identity; pad = (0,)),
-        )
-    )
-end
-ResidualDenseBlock(Factory, k::Int, args...; kwargs...) = ResidualDenseBlock(Factory, (k,), args...; kwargs...)
-ResidualDenseBlock(Factory, k, C::Int, args...; kwargs...) = ResidualDenseBlock(Factory, k, C=>C, args...; kwargs...)
+CatSkip(dims, layer::Flux.Chain) = Flux.SkipConnection(layer, @λ (a,b) -> cat(a, b; dims = dims))
+CatSkip(dims, layer) = CatSkip(dims, Flux.Chain(layer))
 
 """
 DenseResConnection
@@ -167,6 +141,64 @@ ConvResConnection(k::Int, args...; kwargs...) = ConvResConnection((k,), args...;
 ConvResConnection(k, C::Int, args...; kwargs...) = ConvResConnection(k, C=>C, args...; kwargs...)
 
 """
+ResidualDenseConnection
+"""
+function ResidualDenseConnection(Factory, G0::Int, G::Int, C::Int; dims::Int = 2)
+    Flux.Chain(
+        [CatSkip(dims, Factory(G0 + (c - 1) * G => G)) for c in 1:C]...,
+        Flux.Conv((1,), G0 + C * G => G0, identity; pad = (0,)),
+    )
+end
+
+"""
+ResidualDenseBlock
+"""
+ResidualDenseBlock(args...; kwargs...) = IdentitySkip(ResidualDenseConnection(args...; kwargs...))
+
+"""
+GlobalFeatureFusion
+"""
+struct GlobalFeatureFusion{FS<:Tuple}
+    dims::Int
+    layers::FS
+end
+GlobalFeatureFusion(dims::Int, args...) = GlobalFeatureFusion(dims, args)
+Base.show(io::IO, GFF::GlobalFeatureFusion) = (print(io, "GlobalFeatureFusion($(GFF.dims), "); join(io, GFF.layers, ", "); print(io, ")"))
+
+Flux.@treelike GlobalFeatureFusion
+
+function (GFF::GlobalFeatureFusion)(x::AbstractArray)
+    y = GFF.layers[1](x)
+    out = y
+    for d in 2:length(GFF.layers)
+        y = GFF.layers[d](y)
+        out = cat(out, y; dims = GFF.dims)
+    end
+    out
+end
+
+"""
+DenseFeatureFusion
+"""
+function DenseFeatureFusion(Factory, G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,), σ = Flux.relu; dims::Int = 2)
+    IdentitySkip(
+        Flux.Chain(
+            Flux.Conv(k, G0 => G0, σ; pad = (k.-1).÷2),
+            GlobalFeatureFusion(
+                dims,
+                [ResidualDenseBlock(Factory, G0, G, C; dims = dims) for d in 1:D]...,
+            ),
+            Flux.Conv((1,), D * G0 => G0, identity; pad = (0,)),
+            Flux.Conv(k, G0 => G0, σ; pad = (k.-1).÷2),
+        )
+    )
+end
+DenseFeatureFusion(G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,), σ = Flux.relu; kwargs...) =
+    DenseFeatureFusion(
+        ch -> Flux.Conv(k, ch, σ; pad = (k.-1).÷2), # Default factory for RDB's
+        G0, G, C, D, k, σ; kwargs...)
+
+"""
 Print model/layer
 """
 function model_summary(io::IO, model, filename = nothing; kwargs...)
@@ -217,6 +249,18 @@ function _model_summary(io::IO, model::Flux.SkipConnection, depth::Int = 0; kwar
     println(io, ",")
     _model_summary(io, model.connection, depth+1; kwargs...)
     println(io, "")
+    print(io, getindent(depth) * ")")
+end
+
+# GlobalFeatureFusion
+function _model_summary(io::IO, model::GlobalFeatureFusion, depth::Int = 0; kwargs...)
+    println(io, getindent(depth) * "GlobalFeatureFusion(")
+    _model_summary(io, model.dims, depth+1; kwargs...)
+    println(io, ",")
+    for (d,layer) in enumerate(model.layers)
+        _model_summary(io, layer, depth + 1; kwargs...)
+        (d < length(model.layers)) ? println(io, ",") : println(io, "")
+    end
     print(io, getindent(depth) * ")")
 end
 

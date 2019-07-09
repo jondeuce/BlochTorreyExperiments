@@ -30,9 +30,10 @@ export prepare_data, label_fun, init_data, init_labels, init_signal
 
 # Layers
 export PrintSize, DenseResize, ChannelResize, Scale, Sumout
-export IdentitySkip, CatSkip, DenseCatSkip
+export IdentitySkip, CatSkip
 export DenseResConnection, ConvResConnection
-export ResidualDenseBlock
+export ResidualDenseConnection, ResidualDenseBlock
+export GlobalFeatureFusion, DenseFeatureFusion
 
 include("src/transforms.jl")
 include("src/utils.jl")

@@ -231,7 +231,9 @@ function conv_resnet(settings, model_settings = settings["model"])
     return model
 end
 
-# https://arxiv.org/abs/1802.08797
+"""
+Residual Dense Network for Image Super-Resolution: https://arxiv.org/abs/1802.08797
+"""
 function dense_conv_resnet(settings, model_settings = settings["model"])
     H       = settings["data"]["height"] :: Int # Data height
     C       = settings["data"]["channels"] :: Int # Number of channels
@@ -274,7 +276,7 @@ function dense_conv_resnet(settings, model_settings = settings["model"])
         ChannelResize(1),
         Upsample(),
         DenseResidualNetwork(),
-        MakeDropout(),
+        # MakeDropout(),
         Downsample(),
         DenseResize(),
         # Flux.Dense(H*C ÷ 2, Nout),
