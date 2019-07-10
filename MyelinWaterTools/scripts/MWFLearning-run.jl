@@ -1,7 +1,7 @@
 # Initialize project/code loading
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
-# Pkg.instantiate() #TODO
+Pkg.instantiate()
 include(joinpath(@__DIR__, "../initpaths.jl"))
 
 using Printf
@@ -41,10 +41,10 @@ clearsavefolders(folders = savefolders) = for (k,f) in folders; rm.(joinpath.(f,
 #   Labels: length Nout 1D vectors organized into B batches as [Nout x B] arrays
 @info "Preparing data..."
 make_minibatch(x, y, idxs) = (x[:,:,idxs], y[:,idxs])
-const data_set = prepare_data(settings, model_settings)
+const data_set = prepare_data(settings)
 const train_batches = partition(1:batchsize(data_set[:training_data]), settings["data"]["batch_size"])
 const train_set = [make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches]
-# const train_set = [([make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches][1]...,)] # For overtraining testing (set batch size small)
+# const train_set = [([make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches][1]...,)] # For overtraining testing (set batch size small, too)
 const test_set = make_minibatch(data_set[:testing_data], data_set[:testing_labels], 1:settings["data"]["test_size"])
 
 @info "Plotting random data samples..."
@@ -76,8 +76,8 @@ savefig(plot_random_data_samples(), "plots/" * FILE_PREFIX * "datasamples.png")
 
 # Construct model
 @info "Constructing model..."
-model = MWFLearning.get_model(settings, model_settings)
-model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"))
+model = MWFLearning.get_model(settings);
+model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"));
 
 # Compute parameter density, defined as the number of Flux.params / number of training label datapoints
 const param_density = sum(length, Flux.params(model)) / sum(b -> length(b[2]), train_set)
@@ -112,8 +112,8 @@ accuracy =
     @λ (x,y) -> 100 - 100 * sqrt(mse(x,y)) # default
 
 labelerror =
-    # @λ (x,y) -> 100 .* vec(mean(abs.((model(x) .- y) ./ y); dims = 2))
-    @λ (x,y) -> 100 .* vec(mean(abs.(model(x) .- y); dims = 2) ./ maximum(abs.(y); dims = 2))
+    @λ (x,y) -> 100 .* vec(mean(abs.((model(x) .- y) ./ y); dims = 2))
+    # @λ (x,y) -> 100 .* vec(mean(abs.(model(x) .- y); dims = 2) ./ maximum(abs.(y); dims = 2))
 
 # Utils
 linspace(x1,x2,y1,y2) = x -> (y2-y1)/(x2-x1) * (x-x1) + y1
@@ -124,24 +124,31 @@ lr(opt) = opt.eta
 lr!(opt, α) = (opt.eta = α; opt.eta)
 lr(opt::Flux.Optimiser) = lr(opt[1])
 lr!(opt::Flux.Optimiser, α) = lr!(opt[1], α)
+
 # opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
 # opt = Flux.Nesterov(1e-1)
-# opt = Flux.ADAM(3e-4, (0.9, 0.999))
-opt = Flux.ADAMW(1e-3, (0.9, 0.999), 1e-5)
+# opt = Flux.ADAM(1e-2, (0.9, 0.999))
+opt = Flux.ADAM(3e-4, (0.9, 0.999))
+# opt = Flux.ADAMW(1e-2, (0.9, 0.999), 1e-5)
+# opt = Flux.ADAMW(1e-3, (0.9, 0.999), 1e-5)
 # opt = Flux.ADAMW(3e-4, (0.9, 0.999), 1e-5)
+# opt = MWFLearning.AdaBound(1e-3, (0.9, 0.999), 1e-5, 1e-3)
 
 # Fixed learning rate
 LRfun(e) = lr(opt)
 
 # # Learning rate finder
-# LRfun(e) = e <= 100 ? logspace(1,100,1e-6,0.5)(e) : 0.5
+# LRfun(e) = e <= settings["optimizer"]["epochs"] ?
+#     logspace(1,settings["optimizer"]["epochs"],1e-6,0.5)(e) : 0.5
 
 # # Learning rate cycling
-# LRSTART, LRMAX, LRMIN, LRWIDTH, LRTAIL = 1e-5, 1e-2, 1e-6, 50, 10
+# LRSTART, LRMAX, LRMIN = 1e-5, 1e-2, 1e-6
+# LRTAIL = settings["optimizer"]["epochs"] ÷ 20
+# LRWIDTH = (settings["optimizer"]["epochs"] - LRTAIL) ÷ 2
 # LRfun(e) =
 #                      e <=   LRWIDTH          ? linspace(        1,            LRWIDTH, LRSTART, LRMAX)(e) :
-#       LRWIDTH + 1 <= e <= 1*LRWIDTH          ? linspace(  LRWIDTH,          1*LRWIDTH, LRMAX,   LRSTART)(e) :
-#     1*LRWIDTH + 1 <= e <= 1*LRWIDTH + LRTAIL ? linspace(1*LRWIDTH, 1*LRWIDTH + LRTAIL, LRSTART, LRMIN)(e) :
+#       LRWIDTH + 1 <= e <= 2*LRWIDTH          ? linspace(  LRWIDTH,          2*LRWIDTH, LRMAX,   LRSTART)(e) :
+#     2*LRWIDTH + 1 <= e <= 2*LRWIDTH + LRTAIL ? linspace(2*LRWIDTH, 2*LRWIDTH + LRTAIL, LRSTART, LRMIN)(e) :
 #     LRMIN
 
 # Callbacks
@@ -170,9 +177,9 @@ plot_errs_cb = function()
         labelerr = permutedims(reduce(hcat, labelerr))
         labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
         plot(
-            plot(loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), min(1, quantile(loss, 0.90)))),
-            plot(acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (95, 100)),
-            plot(labelerr; title = "Label Error ($k: rel. %)",                                     titlefontsize = 10, label = labelnames, legend = :topleft, ylim = (max(0, minimum(labelerr) - 0.5), min(15, quantile(labelerr[:], 0.90)))),
+            plot(loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), min(1, quantile(loss, 0.90)))),
+            plot(acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (90, 100)),
+            plot(labelerr; title = "Label Error ($k: rel. %)",                                     lw = 3, titlefontsize = 10, label = labelnames, legend = :topleft,  ylim = (max(0, minimum(labelerr) - 0.5), min(25, quantile(vec(labelerr), 0.90)))),
             layout = (1,3)
         )
     end
@@ -193,9 +200,9 @@ test_err_cb() # initial loss
 train_err_cb() # initial loss
 
 cbs = Flux.Optimise.runall([
-    Flux.throttle(test_err_cb, 5),
-    Flux.throttle(train_err_cb, 5),
-    Flux.throttle(plot_errs_cb, 15),
+    Flux.throttle(test_err_cb, 1),
+    Flux.throttle(train_err_cb, 1),
+    Flux.throttle(plot_errs_cb, 5),
     Flux.throttle(checkpoint_errs_cb, 30),
     # Flux.throttle(checkpoint_model_opt_cb, 120),
 ])
@@ -210,7 +217,7 @@ LAST_IMPROVED_EPOCH = 0
 @info("Beginning training loop...")
 
 try
-    for epoch in 1:settings["optimizer"]["epochs"]
+    for epoch in 1:settings["optimizer"]["epochs"] # 1:typemax(Int) #TODO
         global BEST_ACC, LAST_IMPROVED_EPOCH
         
         # Set the learning rate

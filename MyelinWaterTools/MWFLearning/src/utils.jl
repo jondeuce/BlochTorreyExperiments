@@ -74,7 +74,7 @@ struct PCAProcessing <: AbstractDataProcessing end
 struct iLaplaceProcessing <: AbstractDataProcessing end
 struct WaveletProcessing <: AbstractDataProcessing end
 
-function prepare_data(settings::Dict, model_settings = settings["model"])
+function prepare_data(settings::Dict)
     training_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["train_data"], readdir(settings["data"]["train_data"]))))
     testing_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["test_data"], readdir(settings["data"]["test_data"]))))
 
@@ -98,31 +98,26 @@ function prepare_data(settings::Dict, model_settings = settings["model"])
     # Redundancy check
     @assert size(training_data, 1) == size(testing_data, 1)
 
-    # Compute scale of labels
-    labels_scale = init_labels_scale(settings, hcat(training_labels, testing_labels))
+    # Compute numerical properties of labels
+    labels_props = init_labels_props(settings, hcat(training_labels, testing_labels))
 
-    T = settings["prec"] == 32 ? Float32 : Float64
+    T  = settings["prec"] == 32 ? Float32 : Float64
+    VT = Vector{T}
     training_data, testing_data, training_labels, testing_labels = map(
         x -> to_float_type_T(T, x),
         (training_data, testing_data, training_labels, testing_labels))
     
-    if settings["data"]["height"] == "auto"
-        settings["data"]["height"] = heightsize(training_data) :: Int
-    end
-
-    if settings["data"]["test_size"] == "auto"
-        settings["data"]["test_size"] = batchsize(testing_data) :: Int
-    end
-    
-    if model_settings["scale"] == "auto"
-        model_settings["scale"] = convert(Vector{T}, labels_scale)
-    end
+    # Set "auto" fields
+    (settings["data"]["height"]    == "auto") && (settings["data"]["height"]    = heightsize(training_data) :: Int)
+    (settings["data"]["test_size"] == "auto") && (settings["data"]["test_size"] = batchsize(testing_data) :: Int)
+    (settings["model"]["scale"]    == "auto") && (settings["model"]["scale"]    = convert(VT, labels_props[:width]) :: VT)
+    (settings["model"]["offset"]   == "auto") && (settings["model"]["offset"]   = convert(VT, labels_props[:mean]) :: VT)
 
     return @dict(
         training_data_dicts, testing_data_dicts,
         training_data, testing_data,
         training_labels, testing_labels,
-        labels_scale)
+        labels_props)
 end
 prepare_data(settings_file::String) = prepare_data(TOML.parsefile(settings_file))
 
@@ -140,7 +135,7 @@ function init_data(::iLaplaceProcessing, settings::Dict, ds::AbstractVector{<:Di
     bufdict = Dict(nTEs .=> bufs)
 
     out = reduce(hcat, begin
-        signals = d[:signals] :: VC
+        signals = complex.(transverse.(d[:signals])) :: VC
         TE      = d[:sweepparams][:TE] :: T
         nTE     = d[:sweepparams][:nTE] :: Int
         b       = init_signal(signals, nTE) :: VT
@@ -299,6 +294,9 @@ function label_fun(s::String, d::Dict)::Float64
         @unpack D_Axon, D_Sheath, D_Tissue = d[:btparams_dict] # D values
         iwf, mwf, ewf = label_fun("iwf", d), label_fun("mwf", d), label_fun("ewf", d) # area fractions
         Dav = (iwf * D_Axon + mwf * D_Sheath + ewf * D_Tissue) # area-weighted average
+    elseif s == "logK" # Logarithm of permeability coefficient
+        @unpack K_perm = d[:btparams_dict] # K value
+        logK = log10(K_perm)
     else
         k = Symbol(s)
         if k ∈ keys(d[:btparams_dict]) # from BlochTorreyParameters
@@ -323,10 +321,13 @@ function init_labels(settings::Dict, ds::AbstractVector{<:Dict})
     return labels
 end
 
-function init_labels_scale(settings::Dict, labels::AbstractMatrix)
-    if settings["model"]["scale"] == "auto"
-        vec(maximum(labels; dims = 2)) :: Vector{Float64}
-    else
-        settings["model"]["scale"] :: Vector{Float64}
-    end
+function init_labels_props(settings::Dict, labels::AbstractMatrix)
+    props = Dict{Symbol, Vector{Float64}}(
+        :max => vec(maximum(labels; dims = 2)),
+        :min => vec(minimum(labels; dims = 2)),
+        :mean => vec(mean(labels; dims = 2)),
+        :med => vec(median(labels; dims = 2)),
+    )
+    props[:width] = props[:max] - props[:min]
+    return props
 end

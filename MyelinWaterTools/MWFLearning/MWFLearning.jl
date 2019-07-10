@@ -7,16 +7,17 @@ module MWFLearning
 import Flux, Flux.NNlib, Flux.Tracker, Flux.Optimise, DrWatson, BSON, TOML, Dates
 export Flux,      NNlib,      Tracker,      Optimise, DrWatson, BSON, TOML, Dates
 
-using Reexport
-@reexport using LinearAlgebra
 using Statistics: mean, median, cov, std, var
 using StatsBase: quantile
 import MultivariateStats
+
+using Reexport
 
 @reexport using RecipesBase, LaTeXStrings
 using RecipesBase: plot, plot!
 export plot, plot!, mean, median, cov, std, var, quantile
 
+@reexport using GeometryUtils
 @reexport using EllipsisNotation
 @reexport using Wavelets
 using DrWatson: @dict, @ntuple
@@ -29,10 +30,11 @@ export heightsize, batchsize, channelsize, log10range
 export prepare_data, label_fun, init_data, init_labels, init_signal
 
 # Layers
+export AdaBound
 export PrintSize, DenseResize, ChannelResize, Scale, Sumout
 export IdentitySkip, CatSkip
-export DenseResConnection, ConvResConnection
-export ResidualDenseConnection, ResidualDenseBlock
+export BatchDenseConnection, BatchConvConnection
+export DenseConnection, ResidualDenseBlock
 export GlobalFeatureFusion, DenseFeatureFusion
 
 include("src/transforms.jl")

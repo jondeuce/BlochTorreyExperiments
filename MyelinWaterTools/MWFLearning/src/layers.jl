@@ -1,4 +1,32 @@
 """
+    AdaBound(η = 0.001, β = (0.9, 0.999), γ = 0.001, clip = 0.1)
+
+[AdaBound](https://openreview.net/forum?id=Bkg3g2R9FX) optimiser.
+"""
+mutable struct AdaBound
+    eta   :: Float64
+    beta  :: Tuple{Float64, Float64}
+    gamma :: Float64
+    clip  :: Float64
+    state :: IdDict
+end
+AdaBound(η = 0.001, β = (0.9, 0.999), γ = 0.001, clip = 0.1) =
+    AdaBound(η, β, γ, clip, IdDict())
+
+function Flux.Optimise.apply!(o::AdaBound, x, Δ)
+    ϵ = 1e-8
+    η, β, γ, clip = o.eta, o.beta, o.gamma, o.clip
+    mt, vt, βp, n = get!(o.state, x, (zero(x), zero(x), β, 1))
+    lb = clip * (1 - 1/(γ * n + 1))
+    ub = clip * (1 + 1/(γ * n))
+    @. mt = β[1] * mt + (1 - β[1]) * Δ
+    @. vt = β[2] * vt + (1 - β[2]) * Δ^2
+    @. Δ  = mt * clamp(η / (1 - βp[1]) / (√(vt / (1 - βp[2])) + ϵ), lb, ub)
+    o.state[x] = (mt, vt, βp .* β, n+1)
+    return Δ
+end
+
+"""
 PrintSize()
 
 Non-learnable layer which simply prints the current size.
@@ -63,7 +91,7 @@ end
 """
 ChannelwiseDense
 """
-ChannelwiseDense(H::Int, ch::Pair, σ = identity) = Flux.Chain(DenseResize(), Flux.Dense(H*ch[1], H*ch[2]), ChannelResize(ch[2]))
+ChannelwiseDense(H::Int, ch::Pair, σ = identity) = Flux.Chain(DenseResize(), Flux.Dense(H*ch[1], H*ch[2], σ), ChannelResize(ch[2]))
 
 """
 IdentitySkip
@@ -84,12 +112,12 @@ CatSkip(dims, layer::Flux.Chain) = Flux.SkipConnection(layer, @λ (a,b) -> cat(a
 CatSkip(dims, layer) = CatSkip(dims, Flux.Chain(layer))
 
 """
-DenseResConnection
+BatchDenseConnection
 
 Input has size H1 x ... x HN x C x B, for some data size (H1,...,HN), channels C,
 and batch size B.
 """
-function DenseResConnection(
+function BatchDenseConnection(
         H::Int, C::Int, σ = Flux.relu;
         mode::Symbol = :hybrid,
         groupnorm::Bool = false,
@@ -105,20 +133,20 @@ function DenseResConnection(
     elseif mode == :hybrid
         Flux.Chain(BN(), CD(σ)..., BN(), CD()...)
     else
-        error("Unknown DenseResConnection mode $mode")
+        error("Unknown BatchDenseConnection mode $mode")
     end
 end
-DenseResConnection(H::Tuple, args...; kwargs...) = DenseResConnection(prod(H), args...; kwargs...)
+BatchDenseConnection(H::Tuple, args...; kwargs...) = BatchDenseConnection(prod(H), args...; kwargs...)
 
 """
-ConvResConnection
+BatchConvConnection
 
-Input has size H1 x ... x HN x C x B, for some data size (H1,...,HN), channels C,
-and batch size B.
+Input size:     H1 x ... x HN x ch[1] x B
+Output size:    H1 x ... x HN x ch[2] x B
 """
-function ConvResConnection(
+function BatchConvConnection(
         k::Tuple, ch::Pair, σ = Flux.relu;
-        mode::Symbol = :hybrid,
+        mode::Symbol = :pre,
         numlayers::Int = 3,
         groupnorm::Bool = false,
         batchnorm::Bool = false,
@@ -128,22 +156,31 @@ function ConvResConnection(
     BN(C,  σ = identity) = batchnorm ? Flux.BatchNorm(C, σ) : groupnorm ? Flux.GroupNorm(C, C÷2, σ) : identity
     AF() = @λ x -> σ.(x)
     if mode == :pre
-        Flux.Chain(BN(ch[1]), AF(), CV(ch[1]=>ch[2]), vcat(([BN(ch[2]), AF(), CV(ch[2]=>ch[2])] for _ in 1:numlayers-2)...)..., BN(ch[2]), AF(), CV(ch[2]=>ch[1]))
+        Flux.Chain(BN(ch[1]), AF(), CV(ch[1]=>ch[2]), vcat(([BN(ch[2]), AF(), CV(ch[2]=>ch[2])] for _ in 1:numlayers-2)...)..., BN(ch[2]), AF(), CV(ch[2]=>ch[2]))
     elseif mode == :post
-        Flux.Chain(CV(ch[1]=>ch[2]), BN(ch[2]), AF(), vcat(([CV(ch[2]=>ch[2]), BN(ch[2]), AF()] for _ in 1:numlayers-2)...)..., CV(ch[2]=>ch[1]), BN(ch[1]), AF())
+        Flux.Chain(CV(ch[1]=>ch[1]), BN(ch[1]), AF(), vcat(([CV(ch[1]=>ch[1]), BN(ch[1]), AF()] for _ in 1:numlayers-2)...)..., CV(ch[1]=>ch[2]), BN(ch[2]), AF())
     elseif mode == :hybrid
-        Flux.Chain(BN(ch[1]), CV(ch[1]=>ch[2], σ),    vcat(([BN(ch[2]), CV(ch[2]=>ch[2], σ)]    for _ in 1:numlayers-2)...)..., BN(ch[2]), CV(ch[2]=>ch[1]))
+        Flux.Chain(BN(ch[1]), CV(ch[1]=>ch[1], σ),    vcat(([BN(ch[1]), CV(ch[1]=>ch[1], σ)]    for _ in 1:numlayers-2)...)..., BN(ch[1]), CV(ch[1]=>ch[2]))
     else
-        error("Unknown DenseResConnection mode $mode")
+        error("Unknown BatchDenseConnection mode $mode")
     end
 end
-ConvResConnection(k::Int, args...; kwargs...) = ConvResConnection((k,), args...; kwargs...)
-ConvResConnection(k, C::Int, args...; kwargs...) = ConvResConnection(k, C=>C, args...; kwargs...)
+BatchConvConnection(k::Int, args...; kwargs...) = BatchConvConnection((k,), args...; kwargs...)
+BatchConvConnection(k, C::Int, args...; kwargs...) = BatchConvConnection(k, C=>C, args...; kwargs...)
 
 """
-ResidualDenseConnection
+DenseConnection (Figure 3: https://arxiv.org/abs/1802.08797)
+
+Densely connected layers, concatenating along the feature dimension, followed by
+feature fusion via 1x1 convolution:
+    `Factory`   Function which takes in a pair `ch` and outputs a layer which maps
+                input data with `ch[1]` channels to output data with `ch[2]` channels
+    `G0`        Number of channels of input and output data
+    `G`         Channel growth rate
+    `C`         Number of densely connected `Factory`s
+    `dims`      Concatenation dimension
 """
-function ResidualDenseConnection(Factory, G0::Int, G::Int, C::Int; dims::Int = 2)
+function DenseConnection(Factory, G0::Int, G::Int, C::Int; dims::Int = 2)
     Flux.Chain(
         [CatSkip(dims, Factory(G0 + (c - 1) * G => G)) for c in 1:C]...,
         Flux.Conv((1,), G0 + C * G => G0, identity; pad = (0,)),
@@ -151,12 +188,21 @@ function ResidualDenseConnection(Factory, G0::Int, G::Int, C::Int; dims::Int = 2
 end
 
 """
-ResidualDenseBlock
+ResidualDenseBlock (Figure 3: https://arxiv.org/abs/1802.08797)
+
+Residual-type connection on a `DenseConnection` block
 """
-ResidualDenseBlock(args...; kwargs...) = IdentitySkip(ResidualDenseConnection(args...; kwargs...))
+ResidualDenseBlock(args...; kwargs...) = IdentitySkip(DenseConnection(args...; kwargs...))
 
 """
-GlobalFeatureFusion
+GlobalFeatureFusion (Figure 2: https://arxiv.org/abs/1802.08797)
+
+Performs global feature fusion over the successive output of the `layers`,
+concatenating the individual outputs over the feature dimension `dims`:
+
+    F0 -> layers[1] -> F1 -> layers[2] -> ... -> layers[D] -> FD
+
+where F0 is the input. The output is then simply `cat(F1, ..., FD; dims = dims)`.
 """
 struct GlobalFeatureFusion{FS<:Tuple}
     dims::Int
@@ -178,18 +224,35 @@ function (GFF::GlobalFeatureFusion)(x::AbstractArray)
 end
 
 """
-DenseFeatureFusion
+DenseFeatureFusion (Figure 2: https://arxiv.org/abs/1802.08797)
+
+From the referenced paper:
+
+    "After extracting hierarchical features with a set of RDBs, we further conduct
+    dense feature fusion (DFF), which includes global feature fusion (GFF) and
+    global residual learning learning (GRL). DFF makes full use of features from
+    all the preceding layers..."
+
+The structure is
+
+    F_{-1} -> 3x3 Conv -> F_{0} -> GlobalFeatureFusion -> 1x1 Conv -> 3x3 Conv -> F_{GF}
+
+where the output - the densely fused features - is then given by
+
+    F_{DF} = F_{-1} + F_{GF}
 """
 function DenseFeatureFusion(Factory, G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,), σ = Flux.relu; dims::Int = 2)
     IdentitySkip(
         Flux.Chain(
-            Flux.Conv(k, G0 => G0, σ; pad = (k.-1).÷2),
+            # Flux.Conv(k, G0 => G0, σ; pad = (k.-1).÷2),
             GlobalFeatureFusion(
                 dims,
                 [ResidualDenseBlock(Factory, G0, G, C; dims = dims) for d in 1:D]...,
             ),
+            Flux.BatchNorm(D * G0, σ),
+            # Flux.GroupNorm(D * G0, (D * G0) ÷ 2, σ),
             Flux.Conv((1,), D * G0 => G0, identity; pad = (0,)),
-            Flux.Conv(k, G0 => G0, σ; pad = (k.-1).÷2),
+            # Flux.Conv(k, G0 => G0, σ; pad = (k.-1).÷2),
         )
     )
 end
