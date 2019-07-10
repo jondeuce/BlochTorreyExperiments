@@ -294,9 +294,12 @@ function label_fun(s::String, d::Dict)::Float64
         @unpack D_Axon, D_Sheath, D_Tissue = d[:btparams_dict] # D values
         iwf, mwf, ewf = label_fun("iwf", d), label_fun("mwf", d), label_fun("ewf", d) # area fractions
         Dav = (iwf * D_Axon + mwf * D_Sheath + ewf * D_Tissue) # area-weighted average
-    elseif s == "logK" # Logarithm of permeability coefficient
-        @unpack K_perm = d[:btparams_dict] # K value
-        logK = log10(K_perm)
+    elseif startswith(s, "log") # Logarithm of parameter
+        log10(label_fun(s[4:end], d))
+    elseif startswith(s, "TE*") # Parameter relative to TE
+        label_fun("TE", d) * label_fun(s[4:end], d)
+    elseif endswith(s, "/TE") # Parameter relative to TE
+        label_fun(s[1:end-3], d) / label_fun("TE", d)
     else
         k = Symbol(s)
         if k ∈ keys(d[:btparams_dict]) # from BlochTorreyParameters

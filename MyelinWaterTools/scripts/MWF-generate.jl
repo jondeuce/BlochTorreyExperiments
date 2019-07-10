@@ -63,8 +63,11 @@ function copy_and_load_geomfiles!(
 end
 
 # Load geometries with at most `maxnnodes` number of nodes to avoid exceedingly long simulations
-const geombasepath = "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-1/geom"
-const geomfiles = realpath.(joinpath.(geombasepath, readdir(geombasepath)))
+const geombasepaths = [
+    "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-1/geom",
+    "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-2/geom",
+]
+const geomfiles = reduce(vcat, realpath.(joinpath.(gp, readdir(gp))) for gp in geombasepaths)
 const maxnnodes = 5000; #TODO
 const geometries = copy_and_load_geomfiles!(geomfiles, 5000);
 

@@ -19,7 +19,9 @@ channels    = 1 # Number of data channels
 # weights     = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
 # labels      = ["T2mw", "T2iew"] # Target labels
 # weights     = [1.0, 1.0] # Weights for loss function
-labels      = ["mwf", "iewf", "T2iew", "T2mw", "alpha", "logK"] # Target labels
+# labels      = ["mwf", "iewf", "T2iew", "T2mw", "alpha", "logK"] # Target labels
+# weights     = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
+labels      = ["mwf", "iewf", "T2iew/TE", "T2mw/TE", "alpha", "logTE*K"] # Target labels
 weights     = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
 [data.preprocess]
 SNR         = [0.0] # Additive random noise
@@ -34,8 +36,8 @@ nterms      = 16 # number of terms to keep
 [data.preprocess.ilaplace]
 apply       = true # Apply ilaplace preprocessing
 T2Range     = [0.001, 2.0] # T2 distribution range
-nT2         = 20 # Number of exponentials in T2 distribution
-alpha       = 0.02 # Tikhonov regularization parameter
+nT2         = 60 # Number of exponentials in T2 distribution
+alpha       = 0.01 # Tikhonov regularization parameter
 [data.preprocess.PCA]
 apply       = false # Apply PCA preprocessing
 
@@ -65,7 +67,7 @@ groupnorm = true
 batchmode = "pre" # Pre-, post-, or hybrid normalization for BatchConvConnection
 Nkern     = 3 # Convolution kernel size
 Nconv     = 2 # Convolutions per BatchConvConnection
-Nfeat     = 16 # Number of features to upsample to from 1-feature input
+Nfeat     = 4 # Number of features to upsample to from 1-feature input
 Nblock    = 2 # Number of blocks in densely connected RDB layer
 Ndense    = 2 # Number of blocks in GlobalFeatureFusion concatenation layer
 
@@ -88,5 +90,7 @@ beta    = [0.9, 0.999]
 # units     = ["%", "%", "ms", "ms", "um/s"] # label units, after scaling
 # scale     = [100.0, 100.0, 1000.0, 1000.0, 1.0] # scale labels before plotting
 # units     = ["%", "%", "ms", "ms", "deg"] # label units, after scaling
-scale     = [100.0, 100.0, 1000.0, 1000.0, 1.0, 1.0] # scale labels before plotting
-units     = ["%", "%", "ms", "ms", "deg", "log(um/s)"] # label units, after scaling
+# scale     = [100.0, 100.0, 1000.0, 1000.0, 1.0, 1.0] # scale labels before plotting
+# units     = ["%", "%", "ms", "ms", "deg", "log(um/s)"] # label units, after scaling
+scale     = [100.0, 100.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
+units     = ["%", "%", "ms/ms", "ms/ms", "deg", "log(um)"] # label units, after scaling
