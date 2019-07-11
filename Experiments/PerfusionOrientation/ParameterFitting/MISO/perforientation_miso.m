@@ -235,7 +235,7 @@ catch e
 end
 
 % Save initial parameters
-Params0 = struct('OptVariables', OptVariables, 'MISOSettings', miso_settings, ...
+Params0 = struct('OptVariables', OptVariables, 'MISOSettings', {miso_settings}, ...
     'CA0', CA0, 'iBVF0', iBVF0, 'aBVF0', aBVF0, 'x0', x0, 'lb', lb, 'ub', ub);
 
 % Generate text file of best simulation results
