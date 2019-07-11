@@ -131,8 +131,8 @@ lr!(opt::Flux.Optimiser, α) = lr!(opt[1], α)
 # opt = Flux.ADAM(1e-2, (0.9, 0.999))
 # opt = Flux.ADAM(3e-4, (0.9, 0.999))
 # opt = Flux.ADAMW(1e-2, (0.9, 0.999), 1e-5)
-opt = Flux.ADAMW(1e-3, (0.9, 0.999), 1e-5)
-# opt = Flux.ADAMW(3e-4, (0.9, 0.999), 1e-5)
+# opt = Flux.ADAMW(1e-3, (0.9, 0.999), 1e-5)
+opt = Flux.ADAMW(3e-4, (0.9, 0.999), 1e-5)
 # opt = MWFLearning.AdaBound(1e-3, (0.9, 0.999), 1e-5, 1e-3)
 # opt = Flux.Momentum(0.01, 0.9)
 
@@ -188,7 +188,7 @@ plot_errs_cb = let LAST_EPOCH = 0
             labelerr = permutedims(reduce(hcat, labelerr))
             labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
             plot(
-                plot(epoch, loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), min(1, quantile(loss, 0.90)))),
+                plot(epoch, loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), quantile(loss, 0.90))),
                 plot(epoch, acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (90, 100)),
                 plot(epoch, labelerr; title = "Label Error ($k: rel. %)",                                     lw = 3, titlefontsize = 10, label = labelnames, legend = :topleft,  ylim = (max(0, minimum(labelerr) - 0.5), min(50, quantile(vec(labelerr), 0.90)))),
                 layout = (1,3)

@@ -310,7 +310,7 @@ function residual_dense_net(settings)
             # 
             Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
             Flux.relu.(x[3:5,:]), # Positive parameters
-            x[6:6,:], # Unbounded parameters
+            # x[6:6,:], # Unbounded parameters
         )),
     )
 
