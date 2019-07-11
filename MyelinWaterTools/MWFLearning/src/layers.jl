@@ -249,8 +249,8 @@ function DenseFeatureFusion(Factory, G0::Int, G::Int, C::Int, D::Int, k::Tuple =
                 dims,
                 [ResidualDenseBlock(Factory, G0, G, C; dims = dims) for d in 1:D]...,
             ),
-            Flux.BatchNorm(D * G0, σ),
-            # Flux.GroupNorm(D * G0, (D * G0) ÷ 2, σ),
+            # Flux.BatchNorm(D * G0, σ),
+            Flux.GroupNorm(D * G0, (D * G0) ÷ 2, σ),
             Flux.Conv((1,), D * G0 => G0, identity; pad = (0,)),
             # Flux.Conv(k, G0 => G0, σ; pad = (k.-1).÷2),
         )

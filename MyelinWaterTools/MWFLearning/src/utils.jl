@@ -27,7 +27,7 @@ channelsize(x::AbstractArray{T,N}) where {T,N} = size(x, N-1)
 
 Returns the length of the first dimension of the data `x`.
 """
-heightsize(x::AbstractVector) = error("TODO: Called here")
+heightsize(x::AbstractVector) = error("heightsize undefined for vectors")
 heightsize(x::AbstractArray) = size(x, 1)
 
 """
@@ -70,6 +70,7 @@ end
 # ---------------------------------------------------------------------------- #
 
 abstract type AbstractDataProcessing end
+struct SignalChunkingProcessing <: AbstractDataProcessing end
 struct PCAProcessing <: AbstractDataProcessing end
 struct iLaplaceProcessing <: AbstractDataProcessing end
 struct WaveletProcessing <: AbstractDataProcessing end
@@ -78,13 +79,15 @@ function prepare_data(settings::Dict)
     training_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["train_data"], readdir(settings["data"]["train_data"]))))
     testing_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["test_data"], readdir(settings["data"]["test_data"]))))
 
+    SNR = settings["data"]["preprocess"]["SNR"]
     training_labels = init_labels(settings, training_data_dicts)
     testing_labels = init_labels(settings, testing_data_dicts)
     @assert size(training_labels, 1) == size(testing_labels, 1)
     
     processing_type =
+        settings["data"]["preprocess"]["chunk"]["apply"]    ? SignalChunkingProcessing() :
         settings["data"]["preprocess"]["ilaplace"]["apply"] ? iLaplaceProcessing() :
-        settings["data"]["preprocess"]["wavelet"]["apply"] ? WaveletProcessing() :
+        settings["data"]["preprocess"]["wavelet"]["apply"]  ? WaveletProcessing() :
         error("No processing selected")
         
     training_data = init_data(processing_type, settings, training_data_dicts)
@@ -95,8 +98,20 @@ function prepare_data(settings::Dict)
             init_data(PCAProcessing(), training_data, testing_data)
     end
 
+    # Duplicate labels, if data has been duplicated
+    if batchsize(testing_data) > batchsize(testing_labels)
+        duplicate_data(x::AbstractMatrix, rep) = x |> z -> repeat(z, length(SNR), 1) |> z -> reshape(z, heightsize(x), :)
+        duplicate_data(x::AbstractVector, rep) = x |> permutedims |> z -> repeat(z, length(SNR), 1) |> vec
+        rep = batchsize(testing_data) ÷ batchsize(testing_labels)
+        training_labels, testing_labels, training_data_dicts, testing_data_dicts = map(
+            data -> duplicate_data(data, rep),
+            (training_labels, testing_labels, training_data_dicts, testing_data_dicts))
+    end
+
     # Redundancy check
-    @assert size(training_data, 1) == size(testing_data, 1)
+    @assert heightsize(training_data) == heightsize(testing_data)
+    @assert batchsize(training_data) == batchsize(training_labels)
+    @assert batchsize(testing_data) == batchsize(testing_labels)
 
     # Compute numerical properties of labels
     labels_props = init_labels_props(settings, hcat(training_labels, testing_labels))
@@ -106,6 +121,13 @@ function prepare_data(settings::Dict)
     training_data, testing_data, training_labels, testing_labels = map(
         x -> to_float_type_T(T, x),
         (training_data, testing_data, training_labels, testing_labels))
+    
+    # Shuffle data and labels
+    if settings["data"]["preprocess"]["shuffle"] == true
+        i_train, i_test = Random.shuffle(1:batchsize(training_data)), Random.shuffle(1:batchsize(testing_data))
+        training_data, training_labels = training_data[:,:,i_train], training_labels[:,i_train]
+        testing_data, testing_labels = testing_data[:,:,i_test], testing_labels[:,i_test]
+    end
     
     # Set "auto" fields
     (settings["data"]["height"]    == "auto") && (settings["data"]["height"]    = heightsize(training_data) :: Int)
@@ -125,22 +147,74 @@ prepare_data(settings_file::String) = prepare_data(TOML.parsefile(settings_file)
 # Initialize data
 # ---------------------------------------------------------------------------- #
 
+function init_data(::SignalChunkingProcessing, settings::Dict, ds::AbstractVector{<:Dict})
+    T, TC = Float64, ComplexF64
+    VT, VC, MT, MC = Vector{T}, Vector{TC}, Matrix{T}, Matrix{TC}
+    SNR       = settings["data"]["preprocess"]["SNR"] :: VT
+    chunksize = settings["data"]["preprocess"]["chunk"]["size"] :: Int
+
+    PLOT_COUNT, PLOT_LIMIT = 0, 3
+    PLOT_FUN = (b, TE, nTE) -> begin
+        if PLOT_COUNT < PLOT_LIMIT
+            p = plot(0:TE:(nTE-1)*TE, b; line = (2,), m = (:c, :black, 3), label = "SNR = " .* string.(permutedims(SNR)))
+            display(p)
+            PLOT_COUNT += 1
+        end
+    end
+
+    out = reduce(hcat, begin
+        TE      = d[:sweepparams][:TE] :: T
+        nTE     = d[:sweepparams][:nTE] :: Int
+        signals = complex.(transverse.(d[:signals])) :: VC
+        z       = cplx_signal(signals, nTE)[1:chunksize] :: VC
+        Z       = repeat(z, 1, length(SNR))
+        for j in 1:length(SNR)
+            add_noise!(@views(Z[:,j]), z, SNR[j])
+        end
+        b       = abs.(Z ./ Z[1:1, ..]) :: MT
+        PLOT_FUN(b, TE, chunksize)
+        b
+    end for d in ds)
+    
+    return reshape(out, :, 1, size(out, 2))
+end
+
 function init_data(::iLaplaceProcessing, settings::Dict, ds::AbstractVector{<:Dict})
-    T, VT, VC = Float64, Vector{Float64}, Vector{ComplexF64}
+    T, TC = Float64, ComplexF64
+    VT, VC, MT, MC = Vector{T}, Vector{TC}, Matrix{T}, Matrix{TC}
+    SNR     = settings["data"]["preprocess"]["SNR"] :: VT
     alpha   = settings["data"]["preprocess"]["ilaplace"]["alpha"] :: T
     T2Range = settings["data"]["preprocess"]["ilaplace"]["T2Range"] :: VT
     nT2     = settings["data"]["preprocess"]["ilaplace"]["nT2"] :: Int
     nTEs    = unique(d[:sweepparams][:nTE] for d in ds) :: Vector{Int}
-    bufs    = [(A = zeros(T, nTE, nT2), B = zeros(T, nT2, nT2), x = zeros(T, nT2)) for nTE in nTEs]
+    bufs    = [(A = zeros(T, nTE, nT2), B = zeros(T, nT2, nT2), x = zeros(T, nT2, length(SNR)), Z = zeros(TC, nTE, length(SNR))) for nTE in nTEs]
     bufdict = Dict(nTEs .=> bufs)
+
+    PLOT_COUNT, PLOT_LIMIT = 0, 3
+    PLOT_FUN = (b, x, TE, nTE, T2) -> begin
+        if PLOT_COUNT < PLOT_LIMIT
+            plot(
+                plot(0:TE:(nTE-1)*TE, b; line = (2,), m = (:c, :black, 3), label = "SNR = " .* string.(permutedims(SNR))),
+                plot(T2, x; xaxis = (:log10,), line = (2,), m = (:c, :black, 3), label = "SNR = " .* string.(permutedims(SNR)));
+                layout = (2,1)
+            ) |> display
+            PLOT_COUNT += 1
+        end
+    end
 
     out = reduce(hcat, begin
         signals = complex.(transverse.(d[:signals])) :: VC
         TE      = d[:sweepparams][:TE] :: T
         nTE     = d[:sweepparams][:nTE] :: Int
-        b       = init_signal(signals, nTE) :: VT
+        z       = cplx_signal(signals, nTE) :: VC
+        Z       = bufdict[nTE].Z :: MC
+        for j in 1:length(SNR)
+            add_noise!(@views(Z[:,j]), z, SNR[j])
+        end
+        b       = abs.(Z ./ Z[1:1, ..]) :: MT
         T2      = log10range(T2Range...; length = nT2) :: VT
-        x       = ilaplace!(bufdict[nTE], b, T2, TE, alpha) :: VT
+        x       = ilaplace!(bufdict[nTE], b, T2, TE, alpha) :: MT
+        PLOT_FUN(b, x, TE, nTE, T2)
         copy(x)
     end for d in ds)
     
@@ -148,84 +222,101 @@ function init_data(::iLaplaceProcessing, settings::Dict, ds::AbstractVector{<:Di
 end
 
 function init_data(::WaveletProcessing, settings::Dict, ds::AbstractVector{<:Dict})
-    T, VT, VC = Float64, Vector{Float64}, Vector{ComplexF64}
+    T, TC = Float64, ComplexF64
+    VT, VC, MT, MC = Vector{T}, Vector{TC}, Matrix{T}, Matrix{TC}
     nTEs     = unique(d[:sweepparams][:nTE] for d in ds) :: Vector{Int}
     bufs     = [ntuple(_ -> zeros(T, nTE), 3) for nTE in nTEs]
     bufdict  = Dict(nTEs .=> bufs)
-
+    
+    SNR      = settings["data"]["preprocess"]["SNR"] :: VT
     nterms   = settings["data"]["preprocess"]["wavelet"]["nterms"] :: Int
     TEfast   = settings["data"]["preprocess"]["peel"]["TEfast"] :: T
+    TEslow   = settings["data"]["preprocess"]["peel"]["TEslow"] :: T
     peelbi   = settings["data"]["preprocess"]["peel"]["biexp"] :: Bool
     makefrac = settings["data"]["preprocess"]["peel"]["makefrac"] :: Bool
     peelper  = settings["data"]["preprocess"]["peel"]["periodic"] :: Bool
+    th       = BiggestTH() # Wavelet thresholding type
     
-    PLOT_COUNT = 0
-    PLOT_LIMIT = 3
-    PLOT_FUN = (b, nTE; kwargs...) -> begin
+    PLOT_COUNT, PLOT_LIMIT= 0, 1 * length(SNR)
+    PLOT_FUN = (x, b, nTE; kwargs...) -> begin
         if PLOT_COUNT < PLOT_LIMIT
-            plotdwt(;
-                x = b,
-                nchopterms = nterms,
-                thresh = round(0.01 * norm(b); sigdigits = 3),
-                kwargs...)
+            plotdwt(;x = b, nchopterms = nterms, disp = true, thresh = round(0.01 * norm(b); sigdigits = 3), kwargs...)
+            if peelbi && !peelper
+                plot(
+                    plot(x[1:2]; ylim = (0,1), leg = :none, xticks = (1:2, ["iewf", "mwf"]), line = (2, :dash), m = (4, :c, :black)),
+                    plot(x[3:4]; ylim = (0,10), leg = :none, xticks = (1:2, ["T2iew/TE", "T2mw/TE"]), line = (2, :dash), m = (4, :c, :black));
+                    layout = (1,2)
+                ) |> display
+            end
             PLOT_COUNT += 1
         end
     end
 
     out = reduce(hcat, begin
-        signals = d[:signals] :: VC
+        signals = complex.(transverse.(d[:signals])) :: VC
         TE      = d[:sweepparams][:TE] :: T
         nTE     = d[:sweepparams][:nTE] :: Int
-        Ncutoff = ceil(Int, -TEfast/TE * log(1e-3)) :: Int
-        b       = init_signal(signals, nTE) :: VT
-        
-        x = T[] # Output vector
-        sizehint!(x, nterms + 4 * peelbi + 2 * peelper)
+        Nfast = ceil(Int, -TEfast/TE * log(0.1)) :: Int
+        Nslow = ceil(Int, -TEslow/TE * log(0.001)) :: Int
+        slowrange = Nfast:min((3*Nslow)÷4, nTE)
+        fastrange = 1:Nfast
 
-        # Peel off slow/fast exponentials
-        if peelbi
-            p = peel!(bufdict[nTE], b, Ncutoff, Ncutoff)
-            b = copy(bufdict[nTE][1]) # Peeled signal
-            Aslow, Afast = exp(p[1].α), exp(p[2].α)
-            if makefrac
-                push!(x, Afast / (Aslow + Afast)) # Fast fraction
-                push!(x, Aslow / (Aslow + Afast)) # Slow fraction
-            else
-                push!(x, Afast) # Fast magnitude
-                push!(x, Aslow) # Slow magnitude
+        function process_signal(b,SNR)
+            x = T[] # Output vector
+            sizehint!(x, nterms + 4 * peelbi + 2 * peelper)
+
+            # Peel off slow/fast exponentials
+            if peelbi
+                p = peel!(bufdict[nTE], b, slowrange, fastrange)
+                b = copy(bufdict[nTE][1]) # Peeled signal
+                Aslow, Afast = exp(p[1].α), exp(p[2].α)
+                if makefrac
+                    push!(x, Afast / (Aslow + Afast)) # Fast fraction
+                    push!(x, Aslow / (Aslow + Afast)) # Slow fraction
+                else
+                    push!(x, Afast) # Fast magnitude
+                    push!(x, Aslow) # Slow magnitude
+                end
+                push!(x, inv(-p[1].β)) # Slow decay rate TODO
+                push!(x, inv(-p[2].β)) # Fast decay rate
             end
-            push!(x, TE * inv(-p[1].β)) # Slow decay rate
-            push!(x, TE * inv(-p[2].β)) # Fast decay rate
+
+            # Peel off linear term to force periodicity
+            if peelper
+                b1, bn, n = b[1], b[end], length(b)
+                β = (bn - b1) / (nb - 1) # slope forces equal endpoints
+                α = b1 - β # TODO subtract mean?
+                f = x -> α + β*x
+                b .-= (x -> α + β*x).(1:n)
+                push!(x, α) # Linear term mean
+                push!(x, β) # Linear term slope
+            end
+
+            # Apply wavelet transform to peeled signal
+            if maxtransformlevels(b) < 2
+                npad = 4 - mod(length(b), 4) # pad to a multiple of 4
+                append!(b, fill(b[end], npad))
+            end
+
+            # Plot final signal
+            PLOT_FUN(x, b, nTE; th = th, title = "final padded, SNR = $(SNR), nTE = $nTE, norm(err) = " *
+                string(norm(b - ichopdwt(chopdwt(b, nterms, th)..., th)) |> x -> round(x; sigdigits=3)))
+            
+            w, _ = chopdwt(b, nterms, th)
+            append!(x, w :: VT)
+
+            # Return vector of transformed data
+            x :: VT
         end
 
-        # Peel off linear term to force periodicity
-        if peelper
-            b1, bn, n = b[1], b[end], length(b)
-            β = (bn - b1) / (nb - 1) # slope forces equal endpoints
-            α = b1 - β # TODO subtract mean?
-            f = x -> α + β*x
-            b .-= (x -> α + β*x).(1:n)
-            push!(x, α) # Linear term mean
-            push!(x, β) # Linear term slope
+        z = cplx_signal(signals, nTE) :: VC
+        Z = repeat(z, 1, length(SNR)) :: MC
+        for j in 1:length(SNR)
+            add_noise!(@views(Z[:,j]), z, SNR[j])
         end
+        b = abs.(Z ./ Z[1:1, ..]) :: MT
 
-        # Apply wavelet transform to peeled signal
-        if maxtransformlevels(b) < 2
-            npad = 4 - mod(length(b), 4) # pad to a multiple of 4
-            append!(b, fill(b[end], npad))
-        end
-        th = BiggestTH()
-        w, _ = chopdwt(b, nterms, th)
-        append!(x, w :: VT)
-
-        # Plot final signal
-        PLOT_FUN(b, nTE; th = th,
-            title = "final padded, nTE = $nTE, norm(err) = " * string(
-                norm(b - ichopdwt(chopdwt(b, nterms, th)..., th)) |> x -> round(x; sigdigits=3)
-            ))
-        
-        # Return vector of transformed data
-        x :: VT
+        reduce(hcat, process_signal(b[:,j], SNR[j]) for j in 1:size(b,2))
     end for d in ds)
     
     return reshape(out, :, 1, size(out, 2))
@@ -252,14 +343,38 @@ Assume that `z` is sampled every `TE/n` seconds for some positive integer `n`.
 The output is the magnitude of the last `nTE` points sampled at a multiple of `TE`.
 to have the first point equal to 1.
 """
-function init_signal(z::AbstractVecOrMat{C}, nTE::Int = size(z,1) - 1) where {C <: Complex}
+function cplx_signal(z::AbstractVecOrMat{C}, nTE::Int = size(z,1) - 1) where {C <: Complex}
     n = size(z,1)
     dt = (n-1) ÷ nTE
     @assert n == 1 + dt * nTE
-    x = abs.(z[n - dt*(nTE-1) : dt : n, ..])
-    x ./= x[1:1, ..]
-    return x
+    return z[n - dt * (nTE-1) : dt : n, ..]
 end
+
+"""
+    snr(x, n)
+
+Signal-to-noise ratio of the signal `x` relative to the noise `n`.
+"""
+snr(x, n; dims = 1) = 10 .* log10.(sum(abs2, x; dims = dims) ./ sum(abs2, n; dims = dims))
+
+"""
+    noise_level(z, SNR)
+
+Standard deviation of gaussian noise with a given `SNR` level, proportional to the first time point.
+    Note: `SNR = 0` is special cased to return a noise level of zero.
+"""
+noise_level(z::AbstractVecOrMat{T}, SNR::Number) where {T} =
+    SNR == 0 ? 0 .* z[1:1,..] : # Special case zero noise
+               sqrt.(abs2.(z[1:1,..]) ./ T(10^(SNR/10))) # Same for both real and complex
+
+"""
+    add_noise(z, SNR)
+
+Add gaussian noise with signal-to-noise ratio `SNR` proportional to the first time point.
+"""
+add_noise!(out::AbstractVecOrMat, z::AbstractVecOrMat, SNR) = out .= z .+ noise_level(z, SNR) .* randn(eltype(z), size(z))
+add_noise!(z::AbstractVecOrMat, SNR) = add_noise!(z, z, SNR)
+add_noise(z::AbstractVecOrMat, SNR) = add_noise!(copy(z), z, SNR)
 
 # ---------------------------------------------------------------------------- #
 # Initialize labels

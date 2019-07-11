@@ -55,8 +55,8 @@ plot_random_data_samples = () -> begin
         settings["data"]["preprocess"]["ilaplace"]["apply"] ?
             log10range(settings["data"]["preprocess"]["ilaplace"]["T2Range"]...; length = settings["data"]["preprocess"]["ilaplace"]["nT2"]) :
         settings["data"]["preprocess"]["wavelet"]["apply"] ?
-            collect(1:heightsize(test_set[1])-Nout) :
-        error("No method supplied")
+            collect(1:heightsize(test_set[1])) :
+            collect(1:heightsize(test_set[1])) # Default
     plot_ydata =
         settings["data"]["preprocess"]["wavelet"]["apply"] ?
             reshape(test_set[1][end - settings["data"]["preprocess"]["wavelet"]["nterms"] + 1 : end,1,:], :, batchsize(test_set[1])) :
@@ -129,11 +129,12 @@ lr!(opt::Flux.Optimiser, α) = lr!(opt[1], α)
 # opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
 # opt = Flux.Nesterov(1e-1)
 # opt = Flux.ADAM(1e-2, (0.9, 0.999))
-opt = Flux.ADAM(3e-4, (0.9, 0.999))
+# opt = Flux.ADAM(3e-4, (0.9, 0.999))
 # opt = Flux.ADAMW(1e-2, (0.9, 0.999), 1e-5)
-# opt = Flux.ADAMW(1e-3, (0.9, 0.999), 1e-5)
+opt = Flux.ADAMW(1e-3, (0.9, 0.999), 1e-5)
 # opt = Flux.ADAMW(3e-4, (0.9, 0.999), 1e-5)
 # opt = MWFLearning.AdaBound(1e-3, (0.9, 0.999), 1e-5, 1e-3)
+# opt = Flux.Momentum(0.01, 0.9)
 
 # Fixed learning rate
 LRfun(e) = lr(opt)
@@ -171,22 +172,26 @@ test_err_cb = function()
     push!(errs[:testing][:acc], Flux.data(accuracy(test_set...)))
     push!(errs[:testing][:labelerr], Flux.data(labelerror(test_set...)))
 end
-plot_errs_cb = function()
-    @info " -> Plotting progress..."
-    function make_subplot(k,v)
-        @unpack loss, acc, labelerr = v
-        labelerr = permutedims(reduce(hcat, labelerr))
-        labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
-        plot(
-            plot(loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), min(1, quantile(loss, 0.90)))),
-            plot(acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (90, 100)),
-            plot(labelerr; title = "Label Error ($k: rel. %)",                                     lw = 3, titlefontsize = 10, label = labelnames, legend = :topleft,  ylim = (max(0, minimum(labelerr) - 0.5), min(50, quantile(vec(labelerr), 0.90)))),
-            layout = (1,3)
-        )
+plot_errs_cb = let LAST_PLOTTED = 0
+    function()
+        curr_data_len = errs |> values |> first |> values |> first |> length
+        curr_data_len > LAST_PLOTTED ? (LAST_PLOTTED = curr_data_len) : return nothing
+        @info " -> Plotting progress..."
+        function make_subplot(k,v)
+            @unpack loss, acc, labelerr = v
+            labelerr = permutedims(reduce(hcat, labelerr))
+            labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
+            plot(
+                plot(loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), min(1, quantile(loss, 0.90)))),
+                plot(acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (90, 100)),
+                plot(labelerr; title = "Label Error ($k: rel. %)",                                     lw = 3, titlefontsize = 10, label = labelnames, legend = :topleft,  ylim = (max(0, minimum(labelerr) - 0.5), min(50, quantile(vec(labelerr), 0.90)))),
+                layout = (1,3)
+            )
+        end
+        fig = plot((make_subplot(k,v) for (k,v) in errs)...; layout = (length(errs), 1))
+        savefig(fig, "plots/" * FILE_PREFIX * "errs.png")
+        display(fig)
     end
-    fig = plot((make_subplot(k,v) for (k,v) in errs)...; layout = (length(errs), 1))
-    savefig(fig, "plots/" * FILE_PREFIX * "errs.png")
-    display(fig)
 end
 checkpoint_model_opt_cb = function()
     save_time = savebson("models/" * FILE_PREFIX * "model-checkpoint.bson", @dict(model, opt)) #TODO getnow()
@@ -201,9 +206,9 @@ test_err_cb() # initial loss
 train_err_cb() # initial loss
 
 cbs = Flux.Optimise.runall([
-    Flux.throttle(test_err_cb, 1),
-    Flux.throttle(train_err_cb, 1),
-    Flux.throttle(plot_errs_cb, 5),
+    Flux.throttle(test_err_cb, 5),
+    Flux.throttle(train_err_cb, 5),
+    Flux.throttle(plot_errs_cb, 30),
     Flux.throttle(checkpoint_errs_cb, 30),
     # Flux.throttle(checkpoint_model_opt_cb, 120),
 ])
@@ -218,7 +223,7 @@ LAST_IMPROVED_EPOCH = 0
 @info("Beginning training loop...")
 
 try
-    for epoch in 1:settings["optimizer"]["epochs"] # 1:typemax(Int) #TODO
+    for epoch in 1:settings["optimizer"]["epochs"] #1:typemax(Int) #TODO
         global BEST_ACC, LAST_IMPROVED_EPOCH
         
         # Set the learning rate

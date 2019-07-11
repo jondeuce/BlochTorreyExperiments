@@ -20,6 +20,9 @@ export plot, plot!, mean, median, cov, std, var, quantile
 @reexport using GeometryUtils
 @reexport using EllipsisNotation
 @reexport using Wavelets
+@reexport using NNLS
+@reexport using Random
+
 using DrWatson: @dict, @ntuple
 using Parameters: @unpack
 using LegibleLambdas: @λ

@@ -222,17 +222,17 @@ function conv_resnet(settings)
         MakeDropout(),
         Downsample(),
         DenseResize(),
-        Flux.Dense(H*C ÷ 2, Nout),
+        Flux.Dense(H*C, Nout),
     )
 
     # Output params
     model = Flux.Chain(
         residualnetwork,
-        ParamsScale(), # Scale to parameter space
+        # ParamsScale(), # Scale to parameter space
         @λ(x -> vcat(
             Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
-            Flux.relu.(x[3:5,:]), # Positive parameters
-            # x[6:6,:], # Unbounded parameters
+            # Flux.relu.(x[3:5,:]), # Positive parameters
+            # # x[6:6,:], # Unbounded parameters
         )),
     )
 
@@ -280,12 +280,14 @@ function residual_dense_net(settings)
     residualdensenet = Flux.Chain(
         # ChannelResize(4),
         # ChannelwiseDense(H*C ÷ 4, 4 => 1, actfun),
+        # DenseResize(),
+        # Flux.Dense(H*C, H*C, actfun),
         ChannelResize(1),
         Upsample(1 => Nfeat),
         DFF(),
         # MakeDropout(),
-        Flux.BatchNorm(Nfeat, actfun),
-        # Flux.GroupNorm(Nfeat, Nfeat÷2, actfun),
+        # Flux.BatchNorm(Nfeat, actfun),
+        Flux.GroupNorm(Nfeat, Nfeat÷2, actfun),
         Downsample(Nfeat => 1),
         DenseResize(),
         # Flux.Dense(H*C ÷ 4, Nout),
@@ -301,6 +303,11 @@ function residual_dense_net(settings)
         ParamsScale(), # Scale to parameter space
         # @λ(x -> Flux.relu.(x)),
         @λ(x -> vcat(
+            # Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
+            # 
+            # Flux.relu.(x[1:3,:]), # Positive parameters
+            # x[4:4,:], # Unbounded parameters
+            # 
             Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
             Flux.relu.(x[3:5,:]), # Positive parameters
             x[6:6,:], # Unbounded parameters

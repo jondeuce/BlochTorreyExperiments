@@ -16,7 +16,7 @@ and is given by
 
     x = (A'A + α^2 * I)^{-1} A'b
 """
-function ilaplace(b::AbstractVecOrMat, τ::AbstractVector, η::Number, α::Number = 1)
+function ilaplace(b::AbstractVecOrMat, τ::AbstractVector, η::Number, α::Number = 1; NNLSsolution = true)
     # The below code is equivalent to the following (but is much faster):
     #   A = [exp(-ti/τj) for ti in t, τj in τ]
     #   x = (A'A + α^2*I)\(A'b)
@@ -25,11 +25,11 @@ function ilaplace(b::AbstractVecOrMat, τ::AbstractVector, η::Number, α::Numbe
     N = length(τ)
     t = η.*(1:M)
     bufs = (A = zeros(T, M, N), B = zeros(T, N, N), x = zeros(T, N, P))
-    x = ilaplace!(bufs, b, τ, η, α)
+    x = ilaplace!(bufs, b, τ, η, α; NNLSsolution = NNLSsolution)
     return copy(x)
 end
 
-function ilaplace!(bufs, b::AbstractVecOrMat, τ::AbstractVector, η::Number, α::Number = 1)
+function ilaplace!(bufs, b::AbstractVecOrMat, τ::AbstractVector, η::Number, α::Number = 1; NNLSsolution = true)
     M, P = size(b,1), size(b,2)
     N = length(τ)
     t = η.*(1:M)
@@ -49,8 +49,17 @@ function ilaplace!(bufs, b::AbstractVecOrMat, τ::AbstractVector, η::Number, α
         B[j,j] += α^2 # Tikhonov regularization
     end
 
-    Bf = cholesky!(B)
-    ldiv!(Bf, x) # Invert A'A + α^2*I onto A'b
+    if NNLSsolution
+        work = NNLSWorkspace(B, x[:,1])
+        for j in 1:size(b,2)
+            @views xj = x[:,j]
+            load!(work, B, xj)
+            solve!(work)
+            xj .= work.x
+        end
+    else
+        ldiv!(cholesky!(B), x) # Invert A'A + α^2*I onto A'b
+    end
 
     return x
 end
@@ -147,11 +156,13 @@ exponential modes "peeled" off.
 Second buffer element `y` is the biexponential sum which was peeled off.
 Third buffer element is a temporary buffer not to be relied upon.
 """
-function peel!(bufs::NTuple{3,A}, x::A, Nslow = 5, Nfast = 5) where {A <: AbstractVector}
+function peel!(bufs::NTuple{3,A}, x::A, slowrange = 5, fastrange = 5) where {A <: AbstractVector}
     z, y, e = bufs
     copyto!(z, x)
     fill!(y, 0)
-    tranges = [Nslow:length(z), 1:Nfast]
+    (slowrange isa Number) && (slowrange = slowrange:length(z))
+    (fastrange isa Number) && (fastrange = 1:fastrange)
+    tranges = [slowrange, fastrange]
     
     function fitpeel(t)
         @unpack α, β = linfit(t, log.(abs.(z[t])))
@@ -221,6 +232,7 @@ function plotdwt(;
         x = nothing,
         w = nothing,
         nchopterms = nothing,
+        disp = true,
         kwargs...
     )
 
@@ -251,7 +263,7 @@ function plotdwt(;
     p3 = plot(xt, yt, A; st = :heatmap, ytick = 0:J, ylim = (-0.5, J-0.5), ylab = L"level $j$", cb = :none)
 
     p = plot(p1,p2,p3; layout = (3,1))
-    display(p)
+    disp && display(p)
 
     return p
 end
