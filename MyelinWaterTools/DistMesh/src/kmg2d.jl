@@ -22,6 +22,9 @@
 # (c) 2009, Koko J., ISIMA, koko@isima.fr
 #--------------------------------------------------------------------
 
+const DEBUG = true
+const DEBUG_ITERS = 5_000
+
 function kmg2d(
         fd,                             # signed distance function
         fsubs,                          # tuple/vector of sub-region distance functions, the boundaries of which are forced onto the grid
@@ -33,17 +36,17 @@ function kmg2d(
         pfix::AbstractVector{Vec{2,T}}  = Vec{2,T}[], # fixed points
         pinit::AbstractVector{Vec{2,T}} = Vec{2,T}[], # inital distribution of points (fine triangular grid + rejection method by default)
         ∇fd                             = x -> Tensors.gradient(fd, x), # Gradient of distance function `fd`
-        ∇fsubs                          = ntuple(i -> x -> Tensors.gradient(fsubs[i], x), length(fsubs)); # gradients of sub-region distance functions
+        ∇fsubs                          = [x -> Tensors.gradient(fsub, x) for fsub in fsubs]; # gradients of sub-region distance functions
         PLOT::Bool                      = false, # plot all triangulations during evolution
         PLOTLAST::Bool                  = false, # plot resulting triangulation
-        MAXITERS::Int                   = 1000, # max iterations of stalled progress
-        FIXPOINTSITERS::Int             = 250, # iterations after which points which haven't moved far are fixed
-        FIXSUBSITERS::Int               = 150, # iterations after which interior region boundary forces are projected to be tangential
+        MAXITERS::Int                   = 2000, # max iterations of stalled progress
+        FIXSUBSITERS::Int               = 950, # iterations after which interior region boundary forces are projected to be tangential
+        FIXPOINTSITERS::Int             = 1000, # iterations after which points which haven't moved far are fixed
         VERBOSE::Bool                   = false, # print verbose information
-        TRIANGLECTRLFREQ::Int           = 200, # period in which triangles are checked for quality
+        TRIANGLECTRLFREQ::Int           = 100, # period in which triangles are checked for quality
         DENSITYCTRLFREQ::Int            = 50, # period in which points are checked for being too close or too far
         BARSPLITTHRESH::T               = T(1.5), # bars are too long if the bar length is more than BARSPLITTHRESH times the desired length
-        BARDENSITYTHRESH::T             = T(2.0), # bars are too short if BARDENSITYTHRESH times bar length is less than the desired length
+        BARDENSITYTHRESH::T             = T(2.5), # bars are too short if BARDENSITYTHRESH times bar length is less than the desired length
         DETERMINISTIC::Bool             = false, # use deterministic pseudo-random
         MP::Int                         = 5, # equilibrium step size threshold (relative to length(p))
         SUBEPS::T                       = 10*h0, # DEBUG
@@ -56,9 +59,6 @@ function kmg2d(
         FSCALE::T                       = T(1.2), # scale bar lengths
         DELTAT::T                       = T(0.1) # relative step size
     ) where {T}
-
-    DEBUG = false #DEBUG
-    DEBUG_ITERS = 5_000
 
     # Create initial distribution in bounding box (equilateral triangles by default)
     if isempty(pinit)
@@ -136,7 +136,7 @@ function kmg2d(
         L .= Lbars ./ (ωs .* hbars) # normalized bar lengths
 
         # Split edges which are too long
-        if iter != MAXITERS && mod(iter, DENSITYCTRLFREQ) == 0 #iter > length(p)
+        if iter != MAXITERS && mod(iter, DENSITYCTRLFREQ) == 0 # && iter > length(p) && iter > FIXPOINTSITERS
             longbars = bars[findall(ℓ -> ℓ > BARSPLITTHRESH, L)]
             if !isempty(longbars)
                 append!(p, [(p[b[1]] + p[b[2]])/2 for b in longbars])
@@ -147,7 +147,7 @@ function kmg2d(
         end
 
         # Density control - remove points that are too close
-        if iter != MAXITERS && iter > DENSITYCTRLFREQ && mod(iter - div(DENSITYCTRLFREQ,2), DENSITYCTRLFREQ) == 0
+        if iter != MAXITERS && iter > DENSITYCTRLFREQ && mod(iter - div(DENSITYCTRLFREQ,2), DENSITYCTRLFREQ) == 0 # && iter > length(p) && iter > FIXPOINTSITERS
             shortbars = bars[findall(ℓ -> ℓ < inv(BARDENSITYTHRESH), L)]
             ix = setdiff(reinterpret(Int, shortbars), 1:length(pfix))
             ix = unique!(sort!(ix))
@@ -266,6 +266,7 @@ function kmg2d(
             Qmin, Qidx = findmin(Qs)
             if Amin < 0 || Qmin < QMIN
                 if Amin > 0 && Qmin > Qbest
+                    # Only update Qbest etc. if triangles are properly oriented
                     Qbest, pbest, tbest = Qmin, copy(p), copy(t)
                 end
                 if Qmin < QMIN
@@ -273,28 +274,32 @@ function kmg2d(
                     i_unfixed = setdiff(i_tri, 1:length(pfix))
                     i_fixed = setdiff(i_tri, i_unfixed)
                     if length(i_unfixed) == 3
-                        # None of the triangle points are fixed points; replace triangle by it's centroid
+                        # None of the triangle corners are fixed points. Simply remove the
+                        # triangle entirely, inserting a new point at it's centroid.
                         ia, ib, ic = i_unfixed
                         pmid = (p[ia] + p[ib] + p[ic])/3
                         deleteat!(p, i_unfixed)
                         push!(p, pmid)
                     elseif length(i_unfixed) == 2
-                        # One of the triangle corners is fixed. Insert a point at the midpoint of the 
-                        # opposite edge, and remove the edge endpoints if the edge is not too long
+                        # One of the triangle corners is fixed. Remove the opposite edge
+                        # endpoints, and if the corresponding edge midpoint isn't too close
+                        # to the fixed point, insert the midpoint
                         ia, ib = i_unfixed
+                        pc = p[i_fixed[1]]
                         pmid = (p[ia] + p[ib])/2
-                        ℓ = norm(p[ia] - p[ib]) / (ωs * fh(pmid))
-                        !(ℓ > BARSPLITTHRESH) ? deleteat!(p, i_unfixed) : i_unfixed = Int[] #DEBUG
-                        push!(p, pmid)
+                        deleteat!(p, i_unfixed)
+                        ℓ = norm(pmid - pc) / (ωs * fh((pmid + pc)/2))
+                        (ℓ < inv(BARDENSITYTHRESH)) && push!(p, pmid)
                     elseif length(i_unfixed) == 1
-                        # Two of the triangle corners are fixed. This likely means that the unfixed point
-                        # is too close to the edge connecting the fixed points. Remove the unfixed point
-                        # if it's too close, and insert a point between the fixed points.
+                        # Two of the triangle corners are fixed. This means that the unfixed point
+                        # is too close to the edge connecting the fixed points. Add a midpoint between
+                        # the two fixed points.
+                        # (TODO: remove the unfixed point if it's too close to the new midpoint?)
                         ia, ib = i_fixed
                         pmid = (p[ia] + p[ib])/2
-                        ℓ = norm(p[ia] - p[ib]) / (ωs * fh(pmid))
-                        (ℓ < inv(BARDENSITYTHRESH)) ? deleteat!(p, i_unfixed) : i_unfixed = Int[] #DEBUG
                         push!(p, pmid)
+                        ℓ = norm(p[ia] - p[ib]) / (ωs * fh(pmid))
+                        (ℓ < inv(BARDENSITYTHRESH)) ? deleteat!(p, i_unfixed) : i_unfixed = Int[]
                     end
                     if DEBUG && iter > DEBUG_ITERS
                         #DEBUG plot the centroid of the low quality triangle

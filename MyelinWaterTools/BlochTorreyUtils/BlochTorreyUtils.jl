@@ -20,6 +20,7 @@ using DrWatson: @dict, @ntuple
 using Parameters: @with_kw, @unpack
 export @with_kw, @unpack, @dict, @ntuple
 
+import Optim
 import SuiteSparse # for defining ldiv! on SuiteSparse.CHOLMOD.Factor's
 import ExpmV, Expokit
 import Distributions

@@ -5,51 +5,65 @@ dir     = "."
 [data]
 train_data  = "./train"
 test_data   = "./test"
-batch_size  = 250
-test_size   = 670
-height      = "auto" # Data length; default will be nT2, unless e.g. PCA is performed
+batch_size  = 400
+test_size   = "auto" # Auto treats entire test set as one batch
+height      = "auto"
 channels    = 1 # Number of data channels
-# labels      = ["mwf"] # Target labels
-# weights     = [1.0] # Weights for loss function
 # labels      = ["mwf", "iewf"] # Target labels
 # weights     = [1.0, 1.0] # Weights for loss function
-# labels      = ["mwf", "iewf", "K"] # Target labels
-# weights     = [1.0, 1.0, 0.2] # Weights for loss function
-labels      = ["mwf", "iewf", "T2iew", "T2mw"] # Target labels
-weights     = [2.0, 2.0, 1.0, 1.0] # Weights for loss function
-# labels      = ["mwf", "iewf", "T2iew", "T2mw", "Dax"] # Target labels
-# weights     = [2.0, 2.0, 1.0, 1.0, 0.5] # Weights for loss function
-# labels      = ["mwf", "iewf", "T2iew", "T2mw", "Dav", "K"] # Target labels
-# weights     = [2.0, 2.0, 1.0, 1.0, 0.5, 0.5] # Weights for loss function
-SNR         = [0.0] # Additive random noise
+# labels      = ["T2iew/TE", "T2mw/TE", "alpha", "logTE*K"] # Target labels
+# weights     = [1.0, 1.0, 1.0, 1.0] # Weights for loss function
+labels      = ["mwf", "iewf", "T2iew/TE", "T2mw/TE", "alpha", "logTE*K"] # Target labels
+weights     = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
+[data.preprocess]
+shuffle     = true
+SNR         = [40.0, 50.0, 60.0, 75.0, 0.0] # Additive random noise
+[data.preprocess.chunk]
+apply       = true
+size        = 24
+[data.preprocess.peel]
+biexp       = false # peel before applying wavelet
+makefrac    = true # convert component magnitudes to fractions
+TEfast      = 0.015 # Approximate fast decay mode
+TEslow      = 0.063 # Approximate slow decay mode
+periodic    = false # subtract linear term to make signal periodic
+[data.preprocess.wavelet]
+apply       = false # Apply wavelet preprocessing
+nterms      = 16 # number of terms to keep
+[data.preprocess.ilaplace]
+apply       = false # Apply ilaplace preprocessing
 T2Range     = [0.001, 2.0] # T2 distribution range
 nT2         = 40 # Number of exponentials in T2 distribution
-alpha       = 0.02 # Tikhonov regularization parameter
-PCA         = false # Apply PCA transform to data
-
-[plot]
-# scale     = [100.0, 100.0] # scale labels before plotting
-# units     = ["%", "%"] # label units, after scaling
-scale     = [100.0, 100.0, 1000.0, 1000.0] # scale labels before plotting
-units     = ["%", "%", "ms", "ms"] # label units, after scaling
-# scale     = [100.0, 100.0, 1000.0, 1000.0, 1.0] # scale labels before plotting
-# units     = ["%", "%", "ms", "ms", "um^2/s"] # label units, after scaling
-# scale     = [100.0, 100.0, 1000.0, 1000.0, 1.0, 1.0] # scale labels before plotting
-# units     = ["%", "%", "ms", "ms", "um^2/s", "um/s"] # label units, after scaling
+alpha       = 0.5 # Tikhonov regularization parameter
+[data.preprocess.PCA]
+apply       = false # Apply PCA preprocessing
 
 [model]
-name      = "TestModel1"
+# name      = "ConvResNet"
+name      = "ResidualDenseNet"
 loss      = "l2"
-act       = "elu"
-dropout   = false
-softmax   = false
-batchnorm = false
+acc       = "rmse"
+act       = "relu"
+Nout      = 6 # number of output labels
 scale     = "auto"
-Nf        = [4, 8, 8] # num features for conv layers
+offset    = "auto"
+# dropout   = false
+# softmax   = false
+# batchnorm = true
+# Nf        = [4, 8, 8] # num features for conv layers
 # Nd        = [25, 25, 25, 25, 25]
-Npool     = 3 # pooling size
-Nkern     = 5 # kernel size
-Nout      = 4 # number of output labels
+# Npool     = 3 # pooling size
+# Nkern     = 5 # kernel size
+[model.resnet]
+dropout   = false
+batchnorm = false
+groupnorm = true
+batchmode = "pre" # Pre-, post-, or hybrid normalization for BatchConvConnection
+Nkern     = 3 # Convolution kernel size
+Nconv     = 2 # Convolutions per BatchConvConnection
+Nfeat     = 4 # Number of features to upsample to from 1-feature input
+Nblock    = 4 # Number of blocks in densely connected RDB layer
+Ndense    = 4 # Number of blocks in GlobalFeatureFusion concatenation layer
 
 [optimizer]
 epochs  = 10000
@@ -58,3 +72,11 @@ testmod = 1
 [optimizer.ADAM]
 lr      = 0.001
 beta    = [0.9, 0.999]
+
+[plot]
+# scale     = [100.0, 100.0] # scale labels before plotting
+# units     = ["%", "%"] # label units, after scaling
+# scale     = [1.0, 1.0, 1.0, 1.0] # scale labels before plotting
+# units     = ["ms/ms", "ms/ms", "deg", "log(um)"] # label units, after scaling
+scale     = [100.0, 100.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
+units     = ["%", "%", "ms/ms", "ms/ms", "deg", "log(um)"] # label units, after scaling

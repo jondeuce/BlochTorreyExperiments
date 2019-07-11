@@ -1,11 +1,13 @@
 # Initialize project/code loading
 import Pkg
+Pkg.activate(joinpath(@__DIR__, ".."))
+Pkg.instantiate()
+include(joinpath(@__DIR__, "../initpaths.jl"))
+
 using Printf
 using Statistics: mean, median, std
 using StatsBase: quantile, sample, iqr
 using Base.Iterators: repeated, partition
-Pkg.activate(joinpath(@__DIR__, ".."))
-include(joinpath(@__DIR__, "../initpaths.jl"))
 
 using MWFLearning
 using StatsPlots
@@ -22,7 +24,8 @@ const settings_file = "settings.toml"
 const settings = verify_settings(TOML.parsefile(settings_file))
 const model_settings = settings["model"]
 
-const FILE_PREFIX = getnow() * "." * DrWatson.savename(model_settings) * "."
+const DATE_PREFIX = getnow() * "."
+const FILE_PREFIX = DATE_PREFIX * DrWatson.savename(model_settings) * "."
 const GPU = settings["gpu"] :: Bool
 const T   = settings["prec"] == 32 ? Float32 : Float64
 const VT  = Vector{T}
@@ -38,76 +41,31 @@ clearsavefolders(folders = savefolders) = for (k,f) in folders; rm.(joinpath.(f,
 #   Labels: length Nout 1D vectors organized into B batches as [Nout x B] arrays
 @info "Preparing data..."
 make_minibatch(x, y, idxs) = (x[:,:,idxs], y[:,idxs])
-const data_set = prepare_data(settings, model_settings)
+const data_set = prepare_data(settings)
 const train_batches = partition(1:batchsize(data_set[:training_data]), settings["data"]["batch_size"])
 const train_set = [make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches]
-# const train_set = [([make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches][1]...,)] # For overtraining testing
+# const train_set = [([make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches][1]...,)] # For overtraining testing (set batch size small, too)
 const test_set = make_minibatch(data_set[:testing_data], data_set[:testing_labels], 1:settings["data"]["test_size"])
-
-# # Component analysis
-# import MultivariateStats
-# const MVS = MultivariateStats
-# norm2(x) = x⋅x
-# 
-# Xtr = copy(reduce(hcat, (x->x[1][:,1,:]).(train_set)))
-# Xte = copy(test_set[1][:,1,:])
-# 
-# M = MVS.fit(MVS.PCA, Xtr; maxoutdim = size(Xtr,1)) # fit PCA
-# # M = MVS.fit(MVS.ICA, Xtr, 1) # fit ICA
-# # M = MVS.fit(MVS.KernelPCA, Xtr; maxoutdim = 7, kernel = (x,y) -> exp(-norm2(x-y)), inverse = true)
-# Ytr = MVS.transform(M, Xtr) # apply to train
-# Yte = MVS.transform(M, Xte) # apply to test
-# Ztr = MVS.reconstruct(M, Ytr)
-# Zte = MVS.reconstruct(M, Yte)
-# 
-# # @show sqrt(sum(abs2, Matrix{Float64}(Xtr .- Ztr))/length(Xtr));
-# # @show sqrt(sum(abs2, Matrix{Float64}(Xte .- Zte))/length(Xte));
-# # @show sum(abs, Matrix{Float64}(Xtr .- Ztr))/length(Xtr);
-# # @show sum(abs, Matrix{Float64}(Xte .- Zte))/length(Xte);
-# # @show maximum(abs, Xtr .- Ztr);
-# # @show maximum(abs, Xte .- Zte);
-# 
-# @info "Plotting PCA results..."
-# plot_xdata = log10range(settings["data"]["T2Range"]...; length = settings["data"]["nT2"])
-# plot_ydata = permutedims(cat(Xte, Zte; dims = 3), (1,3,2))
-# # plot_ydata = permutedims(cat(Xtr, Ztr; dims = 3), (1,3,2))
-# plot_zdata = permutedims(cat(Yte, Ytr[:,sample(1:batchsize(Ytr), batchsize(Yte); replace = false)]; dims = 3), (1,3,2))
-# plot_PCA_fun = () -> begin
-#     plot([
-#         plot(plot_xdata, plot_ydata[:,:,i];
-#             xscale = :log10,
-#             titlefontsize = 8, grid = true, minorgrid = true,
-#             label = ["\$T_2\$ Distbn." "Reconstructed"],
-#         ) for i in sample(1:batchsize(plot_ydata), 5; replace = false)
-#         ]...; layout = (5,1)) |> display
-#     plot([
-#         plot(1:size(plot_zdata, 1), plot_zdata[:,:,i];
-#             titlefontsize = 8, grid = true, minorgrid = true,
-#             label = ["Test" "Train"],
-#         ) for i in sample(1:batchsize(plot_zdata), 5; replace = false)
-#         ]...; layout = (5,1)) |> display
-#     plot([
-#         plot(plot_xdata, MVS.reconstruct(M, VT(Flux.onehot(i, 1:MVS.outdim(M))));
-#         xscale = :log10, titlefontsize = 8, grid = true, minorgrid = true,
-#         label = "\$ϕ_$i\$", legend = :topright,
-#         ) for i in 1:MVS.outdim(M)
-#         ]...; layout = (MVS.outdim(M), 1)) |> display
-#     nothing
-# end
-# plot_PCA_fun()
-# mean(plot_xdata[2:end] ./ plot_xdata[1:end-1])
 
 @info "Plotting random data samples..."
 plot_random_data_samples = () -> begin
-    plot_xdata = settings["data"]["PCA"] ?
-        collect(1:heightsize(test_set[1])) :
-        log10range(settings["data"]["T2Range"]...; length = settings["data"]["nT2"])
-    plot_ydata = reshape(test_set[1], :, batchsize(test_set[1]))
+    plot_xdata =
+        settings["data"]["preprocess"]["PCA"]["apply"] ?
+            collect(1:heightsize(test_set[1])) :
+        settings["data"]["preprocess"]["ilaplace"]["apply"] ?
+            log10range(settings["data"]["preprocess"]["ilaplace"]["T2Range"]...; length = settings["data"]["preprocess"]["ilaplace"]["nT2"]) :
+        settings["data"]["preprocess"]["wavelet"]["apply"] ?
+            collect(1:heightsize(test_set[1])) :
+            collect(1:heightsize(test_set[1])) # Default
+    plot_ydata =
+        settings["data"]["preprocess"]["wavelet"]["apply"] ?
+            reshape(test_set[1][end - settings["data"]["preprocess"]["wavelet"]["nterms"] + 1 : end,1,:], :, batchsize(test_set[1])) :
+        reshape(test_set[1], :, batchsize(test_set[1])) # default
     fig = plot([
         plot(plot_xdata, plot_ydata[:,i];
-            xscale = settings["data"]["PCA"] ? :identity : :log10,
+            xscale = settings["data"]["preprocess"]["ilaplace"]["apply"] ? :log10 : :identity,
             titlefontsize = 8, grid = true, minorgrid = true,
-            label = "\$T_2\$ Distbn.",
+            label = "Data Distbn.",
             title = DrWatson.savename("", data_set[:testing_data_dicts][i][:sweepparams]; connector = ", ")
         ) for i in sample(1:batchsize(plot_ydata), 5; replace = false)
         ]...; layout = (5,1))
@@ -118,8 +76,8 @@ savefig(plot_random_data_samples(), "plots/" * FILE_PREFIX * "datasamples.png")
 
 # Construct model
 @info "Constructing model..."
-model = MWFLearning.get_model(settings, model_settings)
-model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"))
+model = MWFLearning.get_model(settings);
+model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"));
 
 # Compute parameter density, defined as the number of Flux.params / number of training label datapoints
 const param_density = sum(length, Flux.params(model)) / sum(b -> length(b[2]), train_set)
@@ -127,80 +85,119 @@ const param_density = sum(length, Flux.params(model)) / sum(b -> length(b[2]), t
 
 # Loss and accuracy function
 unitsum(x) = x ./ sum(x)
-get_label_weights()::VT = VT(inv.(model_settings["scale"]) .* unitsum(settings["data"]["weights"]))
+LabelWeights()::VT = VT(inv.(model_settings["scale"]) .* unitsum(settings["data"]["weights"]))
 
-l2 = @λ (x,y) -> sum((get_label_weights() .* (model(x) .- y)).^2)
+l1 = @λ (x,y) -> sum(abs.(LabelWeights() .* (model(x) .- y)))
+l2 = @λ (x,y) -> sum((LabelWeights() .* (model(x) .- y)).^2)
+mae = @λ (x,y) -> l1(x,y) * 1 // length(y)
 mse = @λ (x,y) -> l2(x,y) * 1 // length(y)
 crossent = @λ (x,y) -> Flux.crossentropy(model(x), y)
 mincrossent = @λ (y) -> -sum(y .* log.(y))
 
-if model_settings["loss"] ∉ ["l2", "mse", "crossent"]
+if model_settings["loss"] ∉ ["l1", "l2", "mae", "mse", "crossent"]
     @warn "Unknown loss $(model_settings["loss"]); defaulting to mse"
     model_settings["loss"] = "mse"
 end
 
 loss =
-    model_settings["loss"] == "l2" ? l2 :
+    model_settings["loss"] == "l1" ? l1 : model_settings["loss"] == "mae" ? mae :
+    model_settings["loss"] == "l2" ? l2 : model_settings["loss"] == "mse" ? mse :
     model_settings["loss"] == "crossent" ? crossent :
     mse # default
 
 accuracy =
-    model_settings["loss"] == "l2" ? @λ( (x,y) -> 100 - 100 * sqrt(loss(x,y) * 1 // length(y)) ) :
-    model_settings["loss"] == "crossent" ? @λ( (x,y) -> 100 - 100 * (loss(x,y) - mincrossent(y)) ) :
-    @λ( (x,y) -> 100 - 100 * sqrt(loss(x,y)) ) # default
+    model_settings["acc"] == "mae" ? @λ( (x,y) -> 100 - 100 * mae(x,y) ) :
+    model_settings["acc"] == "rmse" ? @λ( (x,y) -> 100 - 100 * sqrt(mse(x,y)) ) :
+    model_settings["acc"] == "crossent" ? @λ( (x,y) -> 100 - 100 * (crossent(x,y) - mincrossent(y)) ) :
+    @λ (x,y) -> 100 - 100 * sqrt(mse(x,y)) # default
 
 labelerror =
-    @λ (x,y) -> 100 .* mean(abs.(model(x) .- y); dims = 2) ./ maximum(abs.(y); dims = 2)
+    # @λ (x,y) -> 100 .* vec(mean(abs.((model(x) .- y) ./ y); dims = 2))
+    # @λ (x,y) -> 100 .* vec(mean(abs.(model(x) .- y); dims = 2) ./ maximum(abs.(y); dims = 2))
+    @λ (x,y) -> 100 .* vec(mean(abs.(model(x) .- y); dims = 2) ./ (e->e[2]-e[1]).(extrema(y; dims=2)))
 
-# stringlabelerror =
-#     (x,y) -> string.(round.(settings["plot"]["scale"] .* Flux.data(labelerror(x,y)); sigdigits = 4)) .* " " .* settings["plot"]["units"]
+# Utils
+linspace(x1,x2,y1,y2) = x -> (y2-y1)/(x2-x1) * (x-x1) + y1
+logspace(x1,x2,y1,y2) = x -> 10^linspace(x1,x2,log10(y1),log10(y2))(x)
 
 # Optimizer
-opt = Flux.ADAM(
-    settings["optimizer"]["ADAM"]["lr"],
-    (settings["optimizer"]["ADAM"]["beta"]...,))
+lr(opt) = opt.eta
+lr!(opt, α) = (opt.eta = α; opt.eta)
+lr(opt::Flux.Optimiser) = lr(opt[1])
+lr!(opt::Flux.Optimiser, α) = lr!(opt[1], α)
+
+# opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
+# opt = Flux.Nesterov(1e-1)
+# opt = Flux.ADAM(1e-2, (0.9, 0.999))
+# opt = Flux.ADAM(3e-4, (0.9, 0.999))
+# opt = Flux.ADAMW(1e-2, (0.9, 0.999), 1e-5)
+opt = Flux.ADAMW(1e-3, (0.9, 0.999), 1e-5)
+# opt = Flux.ADAMW(3e-4, (0.9, 0.999), 1e-5)
+# opt = MWFLearning.AdaBound(1e-3, (0.9, 0.999), 1e-5, 1e-3)
+# opt = Flux.Momentum(0.01, 0.9)
+
+# Fixed learning rate
+LRfun(e) = lr(opt)
+
+# # Learning rate finder
+# LRfun(e) = e <= settings["optimizer"]["epochs"] ?
+#     logspace(1,settings["optimizer"]["epochs"],1e-6,0.5)(e) : 0.5
+
+# # Learning rate cycling
+# LRSTART, LRMAX, LRMIN = 1e-5, 1e-2, 1e-6
+# LRTAIL = settings["optimizer"]["epochs"] ÷ 20
+# LRWIDTH = (settings["optimizer"]["epochs"] - LRTAIL) ÷ 2
+# LRfun(e) =
+#                      e <=   LRWIDTH          ? linspace(        1,            LRWIDTH, LRSTART, LRMAX)(e) :
+#       LRWIDTH + 1 <= e <= 2*LRWIDTH          ? linspace(  LRWIDTH,          2*LRWIDTH, LRMAX,   LRSTART)(e) :
+#     2*LRWIDTH + 1 <= e <= 2*LRWIDTH + LRTAIL ? linspace(2*LRWIDTH, 2*LRWIDTH + LRTAIL, LRSTART, LRMIN)(e) :
+#     LRMIN
 
 # Callbacks
+errs_per_epoch = Dict(
+    :epoch => Int[],
+    :alpha => T[],
+    :training => Dict(:loss => T[]),
+    :testing => Dict(:loss => T[]))
 errs = Dict(
-    :training => Dict(:loss => [], :acc => [], :labelerr => []),
-    :testing => Dict(:loss => [], :acc => [], :labelerr => []))
-
-train_err_cb = () -> begin
+    :training => Dict(:loss => T[], :acc => T[], :labelerr => VT[]),
+    :testing => Dict(:loss => T[], :acc => T[], :labelerr => VT[]))
+train_err_cb = function()
     push!(errs[:training][:loss], mean(Flux.data(loss(b...)) for b in train_set))
     push!(errs[:training][:acc], mean(Flux.data(accuracy(b...)) for b in train_set))
     push!(errs[:training][:labelerr], mean(Flux.data(labelerror(b...)) for b in train_set))
 end
-
-test_err_cb = () -> begin
+test_err_cb = function()
     push!(errs[:testing][:loss], Flux.data(loss(test_set...)))
     push!(errs[:testing][:acc], Flux.data(accuracy(test_set...)))
     push!(errs[:testing][:labelerr], Flux.data(labelerror(test_set...)))
 end
-
-plot_errs_cb = () -> begin
-    @info " -> Plotting progress..."
-    allfigs = reduce(vcat, begin
-        @unpack loss, acc, labelerr = v
-        labelerr = permutedims(reduce(hcat, labelerr))
-        labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
-        plot(
-            plot(loss;      title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), min(1, quantile(loss, 0.90)))),
-            plot(acc;       title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (95, 100)),
-            plot(labelerr;  title = "Label Error ($k: rel. %)",                                     titlefontsize = 10, label = labelnames, legend = :topleft, ylim = (max(0, minimum(labelerr) - 0.5), min(15, quantile(labelerr[:], 0.90)))),
-            layout = (1,3)
-        )
-    end for (k,v) in errs)
-    fig = plot(allfigs...; layout = (length(errs), 1))
-    display(fig)
-    savefig(fig, "plots/" * FILE_PREFIX * "errs.png")
+plot_errs_cb = let LAST_PLOTTED = 0
+    function()
+        curr_data_len = errs |> values |> first |> values |> first |> length
+        curr_data_len > LAST_PLOTTED ? (LAST_PLOTTED = curr_data_len) : return nothing
+        @info " -> Plotting progress..."
+        function make_subplot(k,v)
+            @unpack loss, acc, labelerr = v
+            labelerr = permutedims(reduce(hcat, labelerr))
+            labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
+            plot(
+                plot(loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), min(1, quantile(loss, 0.90)))),
+                plot(acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (90, 100)),
+                plot(labelerr; title = "Label Error ($k: rel. %)",                                     lw = 3, titlefontsize = 10, label = labelnames, legend = :topleft,  ylim = (max(0, minimum(labelerr) - 0.5), min(50, quantile(vec(labelerr), 0.90)))),
+                layout = (1,3)
+            )
+        end
+        fig = plot((make_subplot(k,v) for (k,v) in errs)...; layout = (length(errs), 1))
+        savefig(fig, "plots/" * FILE_PREFIX * "errs.png")
+        display(fig)
+    end
 end
-
-checkpoint_model_opt_cb = () -> begin
+checkpoint_model_opt_cb = function()
     save_time = savebson("models/" * FILE_PREFIX * "model-checkpoint.bson", @dict(model, opt)) #TODO getnow()
     @info " -> Model checkpoint... ($(round(1000*save_time; digits = 2)) ms)"
 end
-
-checkpoint_errs_cb = () -> begin
+checkpoint_errs_cb = function()
     save_time = savebson("log/" * FILE_PREFIX * "errors.bson", @dict(errs)) #TODO getnow()
     @info " -> Error checkpoint ($(round(1000*save_time; digits = 2)) ms)" #TODO
 end
@@ -211,26 +208,35 @@ train_err_cb() # initial loss
 cbs = Flux.Optimise.runall([
     Flux.throttle(test_err_cb, 5),
     Flux.throttle(train_err_cb, 5),
-    Flux.throttle(plot_errs_cb, 15),
+    Flux.throttle(plot_errs_cb, 30),
     Flux.throttle(checkpoint_errs_cb, 30),
     # Flux.throttle(checkpoint_model_opt_cb, 120),
 ])
 
 # Training Loop
-const ACC_THRESH = 100.0
-const DROP_ETA_THRESH = 250 # typemax(Int)
-const CONVERGED_THRESH = 500 # typemax(Int)
+const ACC_THRESH = 100.0 # Never stop
+const DROP_ETA_THRESH = typemax(Int) # 250 TODO
+const CONVERGED_THRESH = typemax(Int) # 500 TODO
 BEST_ACC = 0.0
 LAST_IMPROVED_EPOCH = 0
 
 @info("Beginning training loop...")
 
 try
-    for epoch in 1:settings["optimizer"]["epochs"]
+    for epoch in 1:settings["optimizer"]["epochs"] #1:typemax(Int) #TODO
         global BEST_ACC, LAST_IMPROVED_EPOCH
+        
+        # Set the learning rate
+        lr!(opt, LRfun(epoch))
 
         # Train for a single epoch
         Flux.train!(loss, Flux.params(model), train_set, opt; cb = cbs)
+
+        # Find learning rate
+        push!(errs_per_epoch[:epoch], epoch)
+        push!(errs_per_epoch[:alpha], LRfun(epoch))
+        push!(errs_per_epoch[:testing][:loss], Flux.data(loss(test_set...)))
+        push!(errs_per_epoch[:training][:loss], mean(d->Flux.data(loss(d...)), train_set))
 
         # Calculate accuracy:
         acc = accuracy(test_set...)
@@ -252,9 +258,10 @@ try
 
             try
                 # TODO
-                # model = Flux.mapleaves(Flux.data, model) # local scope, can rename
-                # save_time = savebson("models/" * FILE_PREFIX * "model.bson", @dict(model, opt, curr_epoch, curr_acc)) #TODO getnow()
-                # @info " -> New best accuracy; model saved ($(round(1000*save_time; digits = 2)) ms)"
+                # let model = Flux.mapleaves(Flux.data, model) # local scope, can rename
+                #     save_time = savebson("models/" * FILE_PREFIX * "model.bson", @dict(model, opt, curr_epoch, curr_acc)) #TODO getnow()
+                #     @info " -> New best accuracy; model saved ($(round(1000*save_time; digits = 2)) ms)"
+                # end
             catch e
                 @warn "Error saving model"
                 @warn sprint(showerror, e, catch_backtrace())
@@ -270,14 +277,14 @@ try
             end
         end
 
-        # If we haven't seen improvement in 5 epochs, drop our learning rate:
-        if epoch - LAST_IMPROVED_EPOCH >= DROP_ETA_THRESH && opt.eta > 5e-7
-            opt.eta /= 2.0
-            @warn(" -> Haven't improved in $DROP_ETA_THRESH iters; dropping learning rate to $(opt.eta)")
-
-            # After dropping learning rate, give it a few epochs to improve
-            LAST_IMPROVED_EPOCH = epoch
-        end
+        # # If we haven't seen improvement in 5 epochs, drop our learning rate:
+        # if epoch - LAST_IMPROVED_EPOCH >= DROP_ETA_THRESH && lr(opt) > 1e-6
+        #     lr!(opt, lr(opt)/2)
+        #     @warn(" -> Haven't improved in $DROP_ETA_THRESH iters; dropping learning rate to $(lr(opt))")
+        # 
+        #     # After dropping learning rate, give it a few epochs to improve
+        #     LAST_IMPROVED_EPOCH = epoch
+        # end
 
         if epoch - LAST_IMPROVED_EPOCH >= CONVERGED_THRESH
             @warn(" -> Haven't improved in $CONVERGED_THRESH iters; model has converged")
@@ -293,22 +300,53 @@ catch e
     end
 end
 
-@info "Plotting prediction histograms..."
+@info "Computing resulting labels..."
 model_labels = Flux.data(model(test_set[1]))
 true_labels = copy(test_set[2])
-fig = plot([
-    begin
-        scale = settings["plot"]["scale"][i]
-        units = settings["plot"]["units"][i]
-        err = scale .* (model_labels[i,:] .- true_labels[i,:])
-        histogram(err;
-            grid = true, minorgrid = true, titlefontsize = 10,
-            label = settings["data"]["labels"][i] * " ($units)",
-            title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
-        )
-    end for i in 1:size(model_labels, 1)
-    ]...)
+
+@info "Plotting errors vs. learning rate..."
+errs_plot = [errs_per_epoch[:training][:loss], errs_per_epoch[:testing][:loss]]
+fig = plot(
+    plot(
+        [errs_per_epoch[:alpha]], (e -> log10.(e .- minimum(e) .+ 1e-6)).(errs_plot);
+        xscale = :log10, ylabel = "stretched loss ($(model_settings["loss"]))", label = ["training" "testing"]),
+    plot(
+        [errs_per_epoch[:alpha]], (e -> log10.(e)).(errs_plot);
+        xscale = :log10, xlabel = "learning rate", ylabel = "loss ($(model_settings["loss"]))", label = ["training" "testing"]);
+    layout = (2,1)
+)
+display(fig)
+savefig(fig, "plots/" * FILE_PREFIX * "lossvslearningrate.png")
+
+@info "Plotting prediction histograms..."
+prediction_hist = function(i)
+    scale = settings["plot"]["scale"][i]
+    units = settings["plot"]["units"][i]
+    err = scale .* (model_labels[i,:] .- true_labels[i,:])
+    histogram(err;
+        grid = true, minorgrid = true, titlefontsize = 10,
+        label = settings["data"]["labels"][i] * " ($units)",
+        title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
+    )
+end
+fig = plot([prediction_hist(i) for i in 1:size(model_labels, 1)]...)
 display(fig)
 savefig(fig, "plots/" * FILE_PREFIX * "labelhistograms.png")
+
+@info "Plotting prediction scatter plots..."
+prediction_scatter = function(i)
+    scale = settings["plot"]["scale"][i]
+    units = settings["plot"]["units"][i]
+    datascale = scale * settings["model"]["scale"][i]
+    p = scatter(scale * true_labels[i,:], scale * model_labels[i,:];
+        marker = :circle, grid = true, minorgrid = true, titlefontsize = 10,
+        label = settings["data"]["labels"][i] * " ($units)",
+        # title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
+    )
+    plot!(p, identity, ylims(p)...; line = (:dash, 2, :red), label = L"y = x")
+end
+fig = plot([prediction_scatter(i) for i in 1:size(model_labels, 1)]...)
+display(fig)
+savefig(fig, "plots/" * FILE_PREFIX * "labelscatter.png")
 
 nothing

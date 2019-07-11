@@ -16,7 +16,7 @@ and is given by
 
     x = (A'A + α^2 * I)^{-1} A'b
 """
-function ilaplace(b::AbstractVecOrMat, τ::AbstractVector, η::Number, α::Number = 1)
+function ilaplace(b::AbstractVecOrMat, τ::AbstractVector, η::Number, α::Number = 1; NNLSsolution = true)
     # The below code is equivalent to the following (but is much faster):
     #   A = [exp(-ti/τj) for ti in t, τj in τ]
     #   x = (A'A + α^2*I)\(A'b)
@@ -25,11 +25,11 @@ function ilaplace(b::AbstractVecOrMat, τ::AbstractVector, η::Number, α::Numbe
     N = length(τ)
     t = η.*(1:M)
     bufs = (A = zeros(T, M, N), B = zeros(T, N, N), x = zeros(T, N, P))
-    x = ilaplace!(bufs, b, τ, η, α)
+    x = ilaplace!(bufs, b, τ, η, α; NNLSsolution = NNLSsolution)
     return copy(x)
 end
 
-function ilaplace!(bufs, b::AbstractVecOrMat, τ::AbstractVector, η::Number, α::Number = 1)
+function ilaplace!(bufs, b::AbstractVecOrMat, τ::AbstractVector, η::Number, α::Number = 1; NNLSsolution = true)
     M, P = size(b,1), size(b,2)
     N = length(τ)
     t = η.*(1:M)
@@ -49,8 +49,17 @@ function ilaplace!(bufs, b::AbstractVecOrMat, τ::AbstractVector, η::Number, α
         B[j,j] += α^2 # Tikhonov regularization
     end
 
-    Bf = cholesky!(B)
-    ldiv!(Bf, x) # Invert A'A + α^2*I onto A'b
+    if NNLSsolution
+        work = NNLSWorkspace(B, x[:,1])
+        for j in 1:size(b,2)
+            @views xj = x[:,j]
+            load!(work, B, xj)
+            solve!(work)
+            xj .= work.x
+        end
+    else
+        ldiv!(cholesky!(B), x) # Invert A'A + α^2*I onto A'b
+    end
 
     return x
 end
@@ -139,21 +148,31 @@ end
 provencher(x::AbstractVector, L::Int = ceil(Int, 0.1 * length(x))) =
     provencher!(zeros(eltype(x), length(x)-L+1), x)
 
-
 """
 Peel method
+
+First buffer element is the output vector `z`, equal to the input `x` with two
+exponential modes "peeled" off.
+Second buffer element `y` is the biexponential sum which was peeled off.
+Third buffer element is a temporary buffer not to be relied upon.
 """
-function peel!(bufs::NTuple{3,A}, x::A, Nslow = 5, Nfast = 5) where {A <: AbstractVector}
-    y, z, e = bufs
-    copyto!(z, y)
+function peel!(bufs::NTuple{3,A}, x::A, slowrange = 5, fastrange = 5) where {A <: AbstractVector}
+    z, y, e = bufs
+    copyto!(z, x)
     fill!(y, 0)
-    for t in [Nslow:length(y), 1:Nfast]
+    (slowrange isa Number) && (slowrange = slowrange:length(z))
+    (fastrange isa Number) && (fastrange = 1:fastrange)
+    tranges = [slowrange, fastrange]
+    
+    function fitpeel(t)
         @unpack α, β = linfit(t, log.(abs.(z[t])))
-        e .= exp.(α .+ β .* (1:length(y)))
+        e .= exp.(α .+ β .* (1:length(z)))
         z .-= e # Subtract component off of original vector
-        y .+= e # Add component to output vector
+        y .+= e # Add component to smoothed vector
+        @ntuple(α, β)
     end
-    return y
+
+    return [fitpeel(t) for t in tranges]
 end
 peel(x::AbstractVector, args...; kwargs...) = peel!(ntuple(_->copy(x), 3), x, args...; kwargs...)
 
@@ -161,4 +180,90 @@ function linfit(x,y)
     β = cov(x,y) / var(x)
     α = mean(y) - β * mean(x)
     return @ntuple(α, β)
+end
+
+"""
+Default wavelet transform
+"""
+# const MWF_DEFAULT_WT = wavelet(WT.db2)
+# const MWF_DEFAULT_WT = wavelet(WT.db4)
+const MWF_DEFAULT_WT = wavelet(WT.cdf97, WT.Lifting)
+struct ChopTH <: Threshold.THType end
+
+"""
+Chop discrete wavelet coefficients to `nterms`, optionally specifying
+the wavelet transform `wt`.
+"""
+function chopdwt(x, nterms, th::ChopTH, wt = MWF_DEFAULT_WT)
+    w = wt == nothing ? x[1:nterms] : dwt(x, wt)[1:nterms]
+    return w, (length(x),)
+end
+function chopdwt(x, nterms, th::BiggestTH, wt = MWF_DEFAULT_WT)
+    w = wt == nothing ? copy(x) : dwt(x, wt)
+    threshold!(w, BiggestTH(), nterms)
+    tree = findall(!iszero, w)
+    return w[tree], (length(x), tree)
+end
+
+"""
+Reconstruct original signal of length `nsignal` from chopped wavelet coefficients,
+optionally specifying the wavelet transform `wt`.
+"""
+function ichopdwt(w, args::Tuple, th::ChopTH, wt = MWF_DEFAULT_WT)
+    nsignal = args[1]
+    _w = copy(w)
+    append!(_w, zeros(eltype(w), nsignal - length(w)))
+    return idwt(_w, wt)
+end
+
+function ichopdwt(w, args::Tuple, th::BiggestTH, wt = MWF_DEFAULT_WT)
+    nsignal, tree = args
+    _w = zeros(eltype(w), nsignal)
+    _w[tree] .= w
+    return idwt(_w, wt)
+end
+
+function plotdwt(;
+        # fname = nothing, TODO
+        thresh = 0.1, # dots below `thresh` are zeroed
+        wt = MWF_DEFAULT_WT,
+        th = ChopTH(),
+        t = nothing,
+        x = nothing,
+        w = nothing,
+        nchopterms = nothing,
+        disp = true,
+        kwargs...
+    )
+
+    (x == nothing && w == nothing) && (x = testfunction(512, "Bumps"))
+    (x != nothing && w == nothing) && (w = dwt(x, wt))
+    (x == nothing && w != nothing) && (x = idwt(w, wt))
+    (t == nothing) && (t = 0:length(x)-1)
+    
+    nx = length(x)
+    p1 = plot(t, x;
+        lc = :black, xlim = extrema(t), xtick = [extrema(t)...],
+        ylab = L"f(x)", leg = :none,
+        kwargs...)
+    if nchopterms != nothing
+        wr, ichopargs = chopdwt(x, nchopterms, th, wt)
+        xr = ichopdwt(wr, ichopargs, th, wt)
+        plot!(p1, t, xr)
+    end
+
+    J = floor(Int, log2(length(w)))
+    w, _ = chopdwt(w, 2^J, th, nothing)
+    n = length(w)
+    xt, yt = 0:n-2, 0:J-1
+    d, l = wplotdots(w, thresh, n)
+    A = wplotim(w)
+
+    p2 = plot(d, l; st = :scatter, ytick = 0:J, xlim = (-0.5, n-1.5), ylab = L"level $j$", lab = "Thresh = $thresh", leg = :bottomright)
+    p3 = plot(xt, yt, A; st = :heatmap, ytick = 0:J, ylim = (-0.5, J-0.5), ylab = L"level $j$", cb = :none)
+
+    p = plot(p1,p2,p3; layout = (3,1))
+    disp && display(p)
+
+    return p
 end

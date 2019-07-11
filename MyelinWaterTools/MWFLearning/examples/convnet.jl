@@ -34,7 +34,7 @@ test_set = make_minibatch(data_set[:testing_data], data_set[:testing_labels], 1:
 #   https://keras.io/getting-started/sequential-model-guide/
 
 @info "Constructing model..."
-H = settings["data"]["nT2"] # data height
+H = settings["data"]["preprocess"]["ilaplace"]["nT2"] # data height
 C = 1 # number of channels
 Nfeat = [32,64] # features per conv layer
 Npool = 4 # max/mean pooling size
