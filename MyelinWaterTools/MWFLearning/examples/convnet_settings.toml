@@ -61,9 +61,9 @@ groupnorm = true
 batchmode = "pre" # Pre-, post-, or hybrid normalization for BatchConvConnection
 Nkern     = 3 # Convolution kernel size
 Nconv     = 2 # Convolutions per BatchConvConnection
-Nfeat     = 4 # Number of features to upsample to from 1-feature input
-Nblock    = 4 # Number of blocks in densely connected RDB layer
-Ndense    = 4 # Number of blocks in GlobalFeatureFusion concatenation layer
+Nfeat     = 8 # Number of features to upsample to from 1-feature input
+Nblock    = 2 # Number of blocks in densely connected RDB layer
+Ndense    = 2 # Number of blocks in GlobalFeatureFusion concatenation layer
 
 [optimizer]
 epochs  = 10000

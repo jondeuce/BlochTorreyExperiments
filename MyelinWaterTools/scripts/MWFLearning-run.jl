@@ -154,41 +154,47 @@ LRfun(e) = lr(opt)
 #     LRMIN
 
 # Callbacks
-errs_per_epoch = Dict(
-    :epoch => Int[],
-    :alpha => T[],
-    :training => Dict(:loss => T[]),
-    :testing => Dict(:loss => T[]))
+CB_EPOCH = 0
 errs = Dict(
-    :training => Dict(:loss => T[], :acc => T[], :labelerr => VT[]),
-    :testing => Dict(:loss => T[], :acc => T[], :labelerr => VT[]))
-train_err_cb = function()
-    push!(errs[:training][:loss], mean(Flux.data(loss(b...)) for b in train_set))
-    push!(errs[:training][:acc], mean(Flux.data(accuracy(b...)) for b in train_set))
-    push!(errs[:training][:labelerr], mean(Flux.data(labelerror(b...)) for b in train_set))
-end
-test_err_cb = function()
-    push!(errs[:testing][:loss], Flux.data(loss(test_set...)))
-    push!(errs[:testing][:acc], Flux.data(accuracy(test_set...)))
-    push!(errs[:testing][:labelerr], Flux.data(labelerror(test_set...)))
-end
-plot_errs_cb = let LAST_PLOTTED = 0
+    :training => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]),
+    :testing => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]))
+train_err_cb = let LAST_EPOCH = 0
     function()
-        curr_data_len = errs |> values |> first |> values |> first |> length
-        curr_data_len > LAST_PLOTTED ? (LAST_PLOTTED = curr_data_len) : return nothing
+        global CB_EPOCH
+        CB_EPOCH > LAST_EPOCH ? (LAST_EPOCH = CB_EPOCH) : return nothing
+        push!(errs[:training][:epoch], CB_EPOCH)
+        push!(errs[:training][:loss], mean(Flux.data(loss(b...)) for b in train_set))
+        push!(errs[:training][:acc], mean(Flux.data(accuracy(b...)) for b in train_set))
+        push!(errs[:training][:labelerr], mean(Flux.data(labelerror(b...)) for b in train_set))
+    end
+end
+test_err_cb = let LAST_EPOCH = 0
+    function()
+        global CB_EPOCH
+        CB_EPOCH > LAST_EPOCH ? (LAST_EPOCH = CB_EPOCH) : return nothing
+        push!(errs[:testing][:epoch], CB_EPOCH)
+        push!(errs[:testing][:loss], Flux.data(loss(test_set...)))
+        push!(errs[:testing][:acc], Flux.data(accuracy(test_set...)))
+        push!(errs[:testing][:labelerr], Flux.data(labelerror(test_set...)))
+    end
+end
+plot_errs_cb = let LAST_EPOCH = 0
+    function()
+        global CB_EPOCH
+        CB_EPOCH > LAST_EPOCH ? (LAST_EPOCH = CB_EPOCH) : return nothing
         @info " -> Plotting progress..."
         function make_subplot(k,v)
-            @unpack loss, acc, labelerr = v
+            @unpack epoch, loss, acc, labelerr = v
             labelerr = permutedims(reduce(hcat, labelerr))
             labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
             plot(
-                plot(loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), min(1, quantile(loss, 0.90)))),
-                plot(acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (90, 100)),
-                plot(labelerr; title = "Label Error ($k: rel. %)",                                     lw = 3, titlefontsize = 10, label = labelnames, legend = :topleft,  ylim = (max(0, minimum(labelerr) - 0.5), min(50, quantile(vec(labelerr), 0.90)))),
+                plot(epoch, loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), min(1, quantile(loss, 0.90)))),
+                plot(epoch, acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (90, 100)),
+                plot(epoch, labelerr; title = "Label Error ($k: rel. %)",                                     lw = 3, titlefontsize = 10, label = labelnames, legend = :topleft,  ylim = (max(0, minimum(labelerr) - 0.5), min(50, quantile(vec(labelerr), 0.90)))),
                 layout = (1,3)
             )
         end
-        fig = plot((make_subplot(k,v) for (k,v) in errs)...; layout = (length(errs), 1))
+        fig = plot([make_subplot(k,v) for (k,v) in errs]...; layout = (length(errs), 1))
         savefig(fig, "plots/" * FILE_PREFIX * "errs.png")
         display(fig)
     end
@@ -206,9 +212,9 @@ test_err_cb() # initial loss
 train_err_cb() # initial loss
 
 cbs = Flux.Optimise.runall([
-    Flux.throttle(test_err_cb, 5),
-    Flux.throttle(train_err_cb, 5),
-    Flux.throttle(plot_errs_cb, 30),
+    Flux.throttle(test_err_cb, 0.1),
+    Flux.throttle(train_err_cb, 0.1),
+    Flux.throttle(plot_errs_cb, 15),
     Flux.throttle(checkpoint_errs_cb, 30),
     # Flux.throttle(checkpoint_model_opt_cb, 120),
 ])
@@ -223,21 +229,16 @@ LAST_IMPROVED_EPOCH = 0
 @info("Beginning training loop...")
 
 try
-    for epoch in 1:settings["optimizer"]["epochs"] #1:typemax(Int) #TODO
-        global BEST_ACC, LAST_IMPROVED_EPOCH
+    for epoch in CB_EPOCH .+ (1:settings["optimizer"]["epochs"]) #1:typemax(Int) #TODO
+        global BEST_ACC, LAST_IMPROVED_EPOCH, CB_EPOCH
+        CB_EPOCH = epoch
         
         # Set the learning rate
         lr!(opt, LRfun(epoch))
 
         # Train for a single epoch
         Flux.train!(loss, Flux.params(model), train_set, opt; cb = cbs)
-
-        # Find learning rate
-        push!(errs_per_epoch[:epoch], epoch)
-        push!(errs_per_epoch[:alpha], LRfun(epoch))
-        push!(errs_per_epoch[:testing][:loss], Flux.data(loss(test_set...)))
-        push!(errs_per_epoch[:training][:loss], mean(d->Flux.data(loss(d...)), train_set))
-
+        
         # Calculate accuracy:
         acc = accuracy(test_set...)
         @info(@sprintf("[%d]: Test accuracy: %.4f", epoch, acc))
@@ -305,16 +306,15 @@ model_labels = Flux.data(model(test_set[1]))
 true_labels = copy(test_set[2])
 
 @info "Plotting errors vs. learning rate..."
-errs_plot = [errs_per_epoch[:training][:loss], errs_per_epoch[:testing][:loss]]
-fig = plot(
+fig = let
+    x = [LRfun.(errs[:training][:epoch]), LRfun.(errs[:testing][:epoch])]
+    y = [errs[:training][:loss], errs[:testing][:loss]]
     plot(
-        [errs_per_epoch[:alpha]], (e -> log10.(e .- minimum(e) .+ 1e-6)).(errs_plot);
-        xscale = :log10, ylabel = "stretched loss ($(model_settings["loss"]))", label = ["training" "testing"]),
-    plot(
-        [errs_per_epoch[:alpha]], (e -> log10.(e)).(errs_plot);
-        xscale = :log10, xlabel = "learning rate", ylabel = "loss ($(model_settings["loss"]))", label = ["training" "testing"]);
-    layout = (2,1)
-)
+        plot(x, (e -> log10.(e .- minimum(e) .+ 1e-6)).(y); xscale = :log10, ylabel = "stretched loss ($(model_settings["loss"]))", label = ["training" "testing"]),
+        plot(x, (e -> log10.(e)).(y); xscale = :log10, xlabel = "learning rate", ylabel = "loss ($(model_settings["loss"]))", label = ["training" "testing"]);
+        layout = (2,1)
+    )
+end
 display(fig)
 savefig(fig, "plots/" * FILE_PREFIX * "lossvslearningrate.png")
 
@@ -350,3 +350,13 @@ display(fig)
 savefig(fig, "plots/" * FILE_PREFIX * "labelscatter.png")
 
 nothing
+
+# let
+#     err = Flux.data(model(test_set[1])) .- test_set[2]
+#     logK_perm = test_set[2][6,:]
+#     alpha = test_set[2][5,:]
+#     mwf_err = err[1,:]
+#     scatter(logK_perm, mwf_err; m = (10, :c), xlabel = "logK_perm", ylabel = "mwf_err")
+#     scatter(alpha, mwf_err; m = (10, :c), xlabel = "alpha", ylabel = "mwf_err")
+#     # (d -> d[:btparams_dict][:K_perm]).(data_set[:testing_data_dicts])
+# end

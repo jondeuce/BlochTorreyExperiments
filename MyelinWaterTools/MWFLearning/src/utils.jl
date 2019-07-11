@@ -78,6 +78,11 @@ struct WaveletProcessing <: AbstractDataProcessing end
 function prepare_data(settings::Dict)
     training_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["train_data"], readdir(settings["data"]["train_data"]))))
     testing_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["test_data"], readdir(settings["data"]["test_data"]))))
+    
+    # TODO: Filtering out bad data
+    filter_high_K = (d) -> d[:btparams_dict][:K_perm] < 0.1
+    filter!(filter_high_K, training_data_dicts)
+    filter!(filter_high_K, testing_data_dicts)
 
     SNR = settings["data"]["preprocess"]["SNR"]
     training_labels = init_labels(settings, training_data_dicts)
@@ -108,6 +113,13 @@ function prepare_data(settings::Dict)
             (training_labels, testing_labels, training_data_dicts, testing_data_dicts))
     end
 
+    # Shuffle data and labels
+    if settings["data"]["preprocess"]["shuffle"] == true
+        i_train, i_test = Random.shuffle(1:batchsize(training_data)), Random.shuffle(1:batchsize(testing_data))
+        training_data, training_labels, training_data_dicts = training_data[:,:,i_train], training_labels[:,i_train], training_data_dicts[i_train]
+        testing_data, testing_labels, testing_data_dicts = testing_data[:,:,i_test], testing_labels[:,i_test], testing_data_dicts[i_test]
+    end
+    
     # Redundancy check
     @assert heightsize(training_data) == heightsize(testing_data)
     @assert batchsize(training_data) == batchsize(training_labels)
@@ -116,18 +128,12 @@ function prepare_data(settings::Dict)
     # Compute numerical properties of labels
     labels_props = init_labels_props(settings, hcat(training_labels, testing_labels))
 
+    # Set output type
     T  = settings["prec"] == 32 ? Float32 : Float64
     VT = Vector{T}
     training_data, testing_data, training_labels, testing_labels = map(
         x -> to_float_type_T(T, x),
         (training_data, testing_data, training_labels, testing_labels))
-    
-    # Shuffle data and labels
-    if settings["data"]["preprocess"]["shuffle"] == true
-        i_train, i_test = Random.shuffle(1:batchsize(training_data)), Random.shuffle(1:batchsize(testing_data))
-        training_data, training_labels = training_data[:,:,i_train], training_labels[:,i_train]
-        testing_data, testing_labels = testing_data[:,:,i_test], testing_labels[:,i_test]
-    end
     
     # Set "auto" fields
     (settings["data"]["height"]    == "auto") && (settings["data"]["height"]    = heightsize(training_data) :: Int)
