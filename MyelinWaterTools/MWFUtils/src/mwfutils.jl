@@ -351,18 +351,23 @@ end
 
 # Load geometry of packed circles on rectangular domain
 function loadgeometry(fname)
-    d = BSON.load(fname)
+    geom = BSON.load(fname)
     G = Grid{2,3,Float64,3} # 2D triangular grid
     C = Circle{2,Float64}
     R = Rectangle{2,Float64}
 
+    # Check if `geom` is stored alongside other data
+    if haskey(geom, :geom) || haskey(geom, "geom")
+        @unpack geom = geom
+    end
+    
     # Ensure proper typing of grids, and return NamedTuple of data
-    exteriorgrids = convert(Vector{G}, d[:exteriorgrids][:])
-    torigrids     = convert(Vector{G}, d[:torigrids][:])
-    interiorgrids = convert(Vector{G}, d[:interiorgrids][:])
-    outercircles  = convert(Vector{C}, d[:outercircles][:])
-    innercircles  = convert(Vector{C}, d[:innercircles][:])
-    bdry          = convert(R, d[:bdry])
+    exteriorgrids = convert(Vector{G}, geom[:exteriorgrids][:])
+    torigrids     = convert(Vector{G}, geom[:torigrids][:])
+    interiorgrids = convert(Vector{G}, geom[:interiorgrids][:])
+    outercircles  = convert(Vector{C}, geom[:outercircles][:])
+    innercircles  = convert(Vector{C}, geom[:innercircles][:])
+    bdry          = convert(R, geom[:bdry])
 
     return @ntuple(exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry)
 end
