@@ -80,23 +80,24 @@ function prepare_data(settings::Dict)
     testing_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["test_data"], readdir(settings["data"]["test_data"]))))
     
     # TODO: Filtering out bad data
-    filter_high_K = (d) -> d[:btparams_dict][:K_perm] < 0.1
-    filter!(filter_high_K, training_data_dicts)
-    filter!(filter_high_K, testing_data_dicts)
+    filter_bad_data = (d) -> d[:btparams_dict][:K_perm] < 0.5 && d[:sweepparams][:alpha] > 150
+    filter!(filter_bad_data, training_data_dicts)
+    filter!(filter_bad_data, testing_data_dicts)
 
     SNR = settings["data"]["preprocess"]["SNR"]
     training_labels = init_labels(settings, training_data_dicts)
     testing_labels = init_labels(settings, testing_data_dicts)
     @assert size(training_labels, 1) == size(testing_labels, 1)
     
-    processing_type =
-        settings["data"]["preprocess"]["chunk"]["apply"]    ? SignalChunkingProcessing() :
-        settings["data"]["preprocess"]["ilaplace"]["apply"] ? iLaplaceProcessing() :
-        settings["data"]["preprocess"]["wavelet"]["apply"]  ? WaveletProcessing() :
-        error("No processing selected")
-        
-    training_data = init_data(processing_type, settings, training_data_dicts)
-    testing_data = init_data(processing_type, settings, testing_data_dicts)
+    processing_types = AbstractDataProcessing[]
+    settings["data"]["preprocess"]["chunk"]["apply"]    && push!(processing_types, SignalChunkingProcessing())
+    settings["data"]["preprocess"]["ilaplace"]["apply"] && push!(processing_types, iLaplaceProcessing())
+    settings["data"]["preprocess"]["wavelet"]["apply"]  && push!(processing_types, WaveletProcessing())
+    isempty(processing_types) && error("No processing selected")
+
+    init_all_data(d) = cat(init_data.(processing_types, Ref(settings), Ref(d))...; dims = 2)
+    training_data = init_all_data(training_data_dicts)
+    testing_data = init_all_data(testing_data_dicts)
     
     if settings["data"]["preprocess"]["PCA"]["apply"] == true
         @unpack training_data, testing_data =
@@ -105,8 +106,8 @@ function prepare_data(settings::Dict)
 
     # Duplicate labels, if data has been duplicated
     if batchsize(testing_data) > batchsize(testing_labels)
-        duplicate_data(x::AbstractMatrix, rep) = x |> z -> repeat(z, length(SNR), 1) |> z -> reshape(z, heightsize(x), :)
-        duplicate_data(x::AbstractVector, rep) = x |> permutedims |> z -> repeat(z, length(SNR), 1) |> vec
+        duplicate_data(x::AbstractMatrix, rep) = x |> z -> repeat(z, rep, 1) |> z -> reshape(z, heightsize(x), :)
+        duplicate_data(x::AbstractVector, rep) = x |> permutedims |> z -> repeat(z, rep, 1) |> vec
         rep = batchsize(testing_data) ÷ batchsize(testing_labels)
         training_labels, testing_labels, training_data_dicts, testing_data_dicts = map(
             data -> duplicate_data(data, rep),
@@ -129,7 +130,7 @@ function prepare_data(settings::Dict)
     labels_props = init_labels_props(settings, hcat(training_labels, testing_labels))
 
     # Set output type
-    T  = settings["prec"] == 32 ? Float32 : Float64
+    T  = settings["prec"] == 64 ? Float64 : Float32
     VT = Vector{T}
     training_data, testing_data, training_labels, testing_labels = map(
         x -> to_float_type_T(T, x),
@@ -160,29 +161,46 @@ function init_data(::SignalChunkingProcessing, settings::Dict, ds::AbstractVecto
     chunksize = settings["data"]["preprocess"]["chunk"]["size"] :: Int
 
     PLOT_COUNT, PLOT_LIMIT = 0, 3
-    PLOT_FUN = (b, TE, nTE) -> begin
+    PLOT_FUN = (b, TE, SNR, chunk) -> begin
         if PLOT_COUNT < PLOT_LIMIT
-            p = plot(0:TE:(nTE-1)*TE, b; line = (2,), m = (:c, :black, 3), label = "SNR = " .* string.(permutedims(SNR)))
+            p = plot(
+                0:chunk-1, [b[:,cols] for cols in partition(1:size(b,2), length(SNR))];
+                title = "SNR = " * string(SNR), line = (2,), m = (:c, :black, 3), leg = :none)
             display(p)
             PLOT_COUNT += 1
         end
     end
 
+    # N_CHUNKS = 6
+    # function chunks(b, chunk)
+    #     @assert 2*chunk <= length(b)
+    #     n = length(b)
+    #     r = round.(Int, range(1, n-chunk+1, length=4))
+    #     return hcat(
+    #         b[r[1]:r[1]+chunk-1], b[r[2]:r[2]+chunk-1], b[r[3]:r[3]+chunk-1], b[r[4]:r[4]+chunk-1],
+    #         b[1:2:2*chunk], b[2:2:2*chunk],
+    #     )
+    # end
+
+    N_CHUNKS = 1
+    chunks(b, chunk) = b[1:chunk]
+
     out = reduce(hcat, begin
         TE      = d[:sweepparams][:TE] :: T
         nTE     = d[:sweepparams][:nTE] :: Int
         signals = complex.(transverse.(d[:signals])) :: VC
-        z       = cplx_signal(signals, nTE)[1:chunksize] :: VC
+        z       = cplx_signal(signals, nTE) :: VC
         Z       = repeat(z, 1, length(SNR))
         for j in 1:length(SNR)
             add_noise!(@views(Z[:,j]), z, SNR[j])
         end
         b       = abs.(Z ./ Z[1:1, ..]) :: MT
-        PLOT_FUN(b, TE, chunksize)
+        b       = reduce(hcat, chunks(b[:,j], chunksize) for j in 1:size(b,2))
+        PLOT_FUN(b, TE, SNR, chunksize)
         b
     end for d in ds)
     
-    return reshape(out, :, 1, size(out, 2))
+    return reshape(out, size(out, 1), N_CHUNKS, :)
 end
 
 function init_data(::iLaplaceProcessing, settings::Dict, ds::AbstractVector{<:Dict})

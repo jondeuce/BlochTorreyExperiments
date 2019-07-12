@@ -5,10 +5,10 @@ dir     = "."
 [data]
 train_data  = "./train"
 test_data   = "./test"
-batch_size  = 400
+batch_size  = 200
 test_size   = "auto" # Auto treats entire test set as one batch
 height      = "auto"
-channels    = 1 # Number of data channels
+channels    = 2 # Number of data channels
 # labels      = ["mwf", "iewf"] # Target labels
 # weights     = [1.0, 1.0] # Weights for loss function
 # labels      = ["T2iew/TE", "T2mw/TE", "alpha", "logTE*K"] # Target labels
@@ -18,8 +18,8 @@ weights     = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
 # labels      = ["mwf", "iewf", "T2iew/TE", "T2mw/TE", "alpha", "logTE*K"] # Target labels
 # weights     = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
 [data.preprocess]
-shuffle     = true
-SNR         = [40.0, 50.0, 60.0, 75.0, 0.0] # Additive random noise
+shuffle     = false
+SNR         = [50.0, 60.0, 75.0, 0.0] # Additive random noise
 [data.preprocess.chunk]
 apply       = true
 size        = 24
@@ -33,10 +33,10 @@ periodic    = false # subtract linear term to make signal periodic
 apply       = false # Apply wavelet preprocessing
 nterms      = 16 # number of terms to keep
 [data.preprocess.ilaplace]
-apply       = false # Apply ilaplace preprocessing
+apply       = true # Apply ilaplace preprocessing
 T2Range     = [0.001, 2.0] # T2 distribution range
-nT2         = 40 # Number of exponentials in T2 distribution
-alpha       = 0.5 # Tikhonov regularization parameter
+nT2         = 24 # Number of exponentials in T2 distribution
+alpha       = 0.02 # Tikhonov regularization parameter
 [data.preprocess.PCA]
 apply       = false # Apply PCA preprocessing
 
@@ -59,7 +59,7 @@ offset    = "auto"
 [model.resnet]
 dropout   = false
 batchnorm = false
-groupnorm = true
+groupnorm = false
 batchmode = "pre" # Pre-, post-, or hybrid normalization for BatchConvConnection
 Nkern     = 3 # Convolution kernel size
 Nconv     = 2 # Convolutions per BatchConvConnection

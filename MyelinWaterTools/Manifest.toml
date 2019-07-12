@@ -37,10 +37,10 @@ uuid = "bf4720bc-e11a-5d0c-854e-bdca1663c893"
 version = "0.1.0"
 
 [[Atom]]
-deps = ["Base64", "CodeTools", "CodeTracking", "DocSeeker", "HTTP", "Hiccup", "InteractiveUtils", "JSON", "JuliaInterpreter", "Juno", "LNR", "Lazy", "Logging", "MacroTools", "Markdown", "Media", "OrderedCollections", "Pkg", "Profile", "REPL", "Reexport", "Requires", "Sockets", "Test", "Traceur", "TreeViews", "WebIO", "WebSockets"]
-git-tree-sha1 = "6fd406f9780c847515f98f84cdd03d5ae35fae27"
+deps = ["Base64", "CodeTools", "CodeTracking", "DocSeeker", "DocumentFormat", "HTTP", "Hiccup", "InteractiveUtils", "JSON", "JuliaInterpreter", "Juno", "LNR", "Lazy", "Logging", "MacroTools", "Markdown", "Media", "OrderedCollections", "Pkg", "Profile", "REPL", "Reexport", "Requires", "Sockets", "Test", "Traceur", "TreeViews", "WebIO", "WebSockets"]
+git-tree-sha1 = "cc4e889b66e8e31ce502e4def8c62bec6d05c412"
 uuid = "c52e3926-4ff0-5f6e-af25-54175e0327b1"
-version = "0.8.7"
+version = "0.8.8"
 
 [[AxisAlgorithms]]
 deps = ["LinearAlgebra", "Random", "SparseArrays", "WoodburyMatrices"]
@@ -131,9 +131,9 @@ version = "0.6.0"
 
 [[CSV]]
 deps = ["CategoricalArrays", "DataFrames", "Dates", "Mmap", "Parsers", "PooledArrays", "Profile", "Tables", "Unicode", "WeakRefStrings"]
-git-tree-sha1 = "f4a8ed808b7ee18638c5f8b278071ce0245e5e85"
+git-tree-sha1 = "2ea7620282c60902d7f0085d190abe9cf9928981"
 uuid = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
-version = "0.5.7"
+version = "0.5.8"
 
 [[CSVFiles]]
 deps = ["CodecZlib", "DataValues", "FileIO", "HTTP", "IterableTables", "IteratorInterfaceExtensions", "TableShowUtils", "TableTraits", "TableTraitsUtils", "Test", "TextParse"]
@@ -341,9 +341,9 @@ uuid = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 
 [[DiffEqBase]]
 deps = ["Compat", "Distributed", "DocStringExtensions", "FunctionWrappers", "IterativeSolvers", "IteratorInterfaceExtensions", "LinearAlgebra", "MuladdMacro", "Parameters", "RecipesBase", "RecursiveArrayTools", "RecursiveFactorization", "Requires", "Roots", "SparseArrays", "StaticArrays", "Statistics", "SuiteSparse", "TableTraits", "TreeViews"]
-git-tree-sha1 = "d48559a6fc4229881859e61e5de62c115ee2ed3d"
+git-tree-sha1 = "76b059cad5d43fd1fcfd7ffcd8ab5696d2027595"
 uuid = "2b5f629d-d688-5b77-993f-72d75c75574e"
-version = "5.15.0"
+version = "5.16.0"
 
 [[DiffEqCallbacks]]
 deps = ["DataStructures", "DiffEqBase", "LinearAlgebra", "OrdinaryDiffEq", "RecipesBase", "RecursiveArrayTools", "StaticArrays", "Test"]
@@ -410,6 +410,12 @@ deps = ["LibGit2", "Markdown", "Pkg", "Test"]
 git-tree-sha1 = "0513f1a8991e9d83255e0140aace0d0fc4486600"
 uuid = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
 version = "0.8.0"
+
+[[DocumentFormat]]
+deps = ["CSTParser", "Tokenize"]
+git-tree-sha1 = "b54c7a5a8ae76ae8ecf605d6c75b2f5740bba4ee"
+uuid = "ffa9a821-9c82-50df-894e-fbcef3ed31cd"
+version = "0.4.0"
 
 [[DoubleFloats]]
 deps = ["GenericSVD", "GenericSchur", "LinearAlgebra", "Polynomials", "Quadmath", "Random", "SpecialFunctions"]
@@ -484,7 +490,7 @@ version = "0.6.1"
 
 [[Flux]]
 deps = ["AbstractTrees", "Adapt", "CodecZlib", "Colors", "DelimitedFiles", "Juno", "LinearAlgebra", "MacroTools", "NNlib", "Pkg", "Printf", "Random", "Reexport", "Requires", "SHA", "Statistics", "StatsBase", "Tracker", "ZipFile"]
-git-tree-sha1 = "ba52cfdbc9aedd122fc08b2047bf56fd0b675add"
+git-tree-sha1 = "30df501f301f11a843b82aaa4788b8a4d3bcef20"
 repo-rev = "master"
 repo-url = "https://github.com/FluxML/Flux.jl.git"
 uuid = "587475ba-b771-5e3f-ad9e-33799f191a9c"
@@ -994,10 +1000,10 @@ uuid = "925886fa-5bf2-5e8e-b522-a9147a512338"
 version = "0.13.0"
 
 [[Optim]]
-deps = ["Calculus", "DiffEqDiffTools", "ForwardDiff", "LineSearches", "LinearAlgebra", "NLSolversBase", "NaNMath", "Parameters", "PositiveFactorizations", "Printf", "Random", "SparseArrays", "StatsBase", "Test"]
-git-tree-sha1 = "a626e09c1f7f019b8f3a30a8172c7b82d2f4810b"
+deps = ["Calculus", "DiffEqDiffTools", "FillArrays", "ForwardDiff", "LineSearches", "LinearAlgebra", "NLSolversBase", "NaNMath", "Parameters", "PositiveFactorizations", "Printf", "Random", "SparseArrays", "StatsBase"]
+git-tree-sha1 = "44f21b0f938941d5f9929043847317da8165a95a"
 uuid = "429524aa-4258-5aef-a3af-852621145aeb"
-version = "0.18.1"
+version = "0.19.0"
 
 [[OptimBase]]
 deps = ["Compat", "NLSolversBase", "Printf", "Reexport", "Test"]
@@ -1013,9 +1019,9 @@ version = "1.1.0"
 
 [[OrdinaryDiffEq]]
 deps = ["DataStructures", "DiffEqBase", "DiffEqDiffTools", "DiffEqOperators", "ExponentialUtilities", "ForwardDiff", "GenericSVD", "LinearAlgebra", "Logging", "MuladdMacro", "NLsolve", "Parameters", "RecursiveArrayTools", "Reexport", "StaticArrays"]
-git-tree-sha1 = "ea3c11934f97f803dadb9cb234ef26a35ce4d4ae"
+git-tree-sha1 = "77b2e1d2a7e172ee671acc827ff44060ef8d65c2"
 uuid = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
-version = "5.10.0"
+version = "5.11.1"
 
 [[PDMats]]
 deps = ["Arpack", "LinearAlgebra", "SparseArrays", "SuiteSparse", "Test"]

@@ -27,7 +27,7 @@ const model_settings = settings["model"]
 const DATE_PREFIX = getnow() * "."
 const FILE_PREFIX = DATE_PREFIX * DrWatson.savename(model_settings) * "."
 const GPU = settings["gpu"] :: Bool
-const T   = settings["prec"] == 32 ? Float32 : Float64
+const T   = settings["prec"] == 64 ? Float64 : Float32
 const VT  = Vector{T}
 const MT  = Matrix{T}
 
@@ -56,16 +56,18 @@ plot_random_data_samples = () -> begin
             log10range(settings["data"]["preprocess"]["ilaplace"]["T2Range"]...; length = settings["data"]["preprocess"]["ilaplace"]["nT2"]) :
         settings["data"]["preprocess"]["wavelet"]["apply"] ?
             collect(1:heightsize(test_set[1])) :
+        settings["data"]["preprocess"]["chunk"]["apply"] ?
+            collect(1:settings["data"]["preprocess"]["chunk"]["size"]) :
             collect(1:heightsize(test_set[1])) # Default
     plot_ydata =
         settings["data"]["preprocess"]["wavelet"]["apply"] ?
-            reshape(test_set[1][end - settings["data"]["preprocess"]["wavelet"]["nterms"] + 1 : end,1,:], :, batchsize(test_set[1])) :
-        reshape(test_set[1], :, batchsize(test_set[1])) # default
+            test_set[1][end - settings["data"]["preprocess"]["wavelet"]["nterms"] + 1 : end, 1:1, :] :
+            test_set[1] # default
     fig = plot([
-        plot(plot_xdata, plot_ydata[:,i];
+        plot(plot_xdata, plot_ydata[:,:,i];
             xscale = settings["data"]["preprocess"]["ilaplace"]["apply"] ? :log10 : :identity,
             titlefontsize = 8, grid = true, minorgrid = true,
-            label = "Data Distbn.",
+            legend = :none, #label = "Data Distbn.",
             title = DrWatson.savename("", data_set[:testing_data_dicts][i][:sweepparams]; connector = ", ")
         ) for i in sample(1:batchsize(plot_ydata), 5; replace = false)
         ]...; layout = (5,1))
@@ -132,9 +134,12 @@ lr!(opt::Flux.Optimiser, α) = lr!(opt[1], α)
 # opt = Flux.ADAM(3e-4, (0.9, 0.999))
 # opt = Flux.ADAMW(1e-2, (0.9, 0.999), 1e-5)
 # opt = Flux.ADAMW(1e-3, (0.9, 0.999), 1e-5)
-opt = Flux.ADAMW(3e-4, (0.9, 0.999), 1e-5)
+# opt = Flux.ADAMW(3e-4, (0.9, 0.999), 1e-5)
+opt = Flux.ADAMW(1e-4, (0.9, 0.999), 1e-5)
 # opt = MWFLearning.AdaBound(1e-3, (0.9, 0.999), 1e-5, 1e-3)
-# opt = Flux.Momentum(0.01, 0.9)
+# opt = Flux.Momentum(1e-3, 0.9)
+# opt = Flux.Momentum(3e-4, 0.9)
+# opt = Flux.Momentum(1e-4, 0.9)
 
 # Fixed learning rate
 LRfun(e) = lr(opt)
@@ -154,35 +159,40 @@ LRfun(e) = lr(opt)
 #     LRMIN
 
 # Callbacks
-CB_EPOCH = 0
+CB_EPOCH = 0 # global callback epoch count
+CB_EPOCH_RATE = 5 # rate of per epoch callback updates
+CB_EPOCH_CHECK(last_epoch) = CB_EPOCH >= last_epoch + CB_EPOCH_RATE
 errs = Dict(
     :training => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]),
     :testing => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]))
 train_err_cb = let LAST_EPOCH = 0
     function()
-        global CB_EPOCH
-        CB_EPOCH > LAST_EPOCH ? (LAST_EPOCH = CB_EPOCH) : return nothing
-        push!(errs[:training][:epoch], CB_EPOCH)
-        push!(errs[:training][:loss], mean(Flux.data(loss(b...)) for b in train_set))
-        push!(errs[:training][:acc], mean(Flux.data(accuracy(b...)) for b in train_set))
-        push!(errs[:training][:labelerr], mean(Flux.data(labelerror(b...)) for b in train_set))
+        CB_EPOCH_CHECK(LAST_EPOCH) ? (LAST_EPOCH = CB_EPOCH) : return nothing
+        update_time = @elapsed begin
+            currloss, curracc, currlaberr = mean(Flux.data(loss(b...)) for b in train_set), mean(Flux.data(accuracy(b...)) for b in train_set), mean(Flux.data(labelerror(b...)) for b in train_set)
+            push!(errs[:training][:epoch], CB_EPOCH)
+            push!(errs[:training][:loss], currloss)
+            push!(errs[:training][:acc], curracc)
+            push!(errs[:training][:labelerr], currlaberr)
+        end
+        @info " -> Updating training error... ($(round(1000*update_time; digits = 2)) ms)"
     end
 end
 test_err_cb = let LAST_EPOCH = 0
     function()
-        global CB_EPOCH
-        CB_EPOCH > LAST_EPOCH ? (LAST_EPOCH = CB_EPOCH) : return nothing
-        push!(errs[:testing][:epoch], CB_EPOCH)
-        push!(errs[:testing][:loss], Flux.data(loss(test_set...)))
-        push!(errs[:testing][:acc], Flux.data(accuracy(test_set...)))
-        push!(errs[:testing][:labelerr], Flux.data(labelerror(test_set...)))
+        CB_EPOCH_CHECK(LAST_EPOCH) ? (LAST_EPOCH = CB_EPOCH) : return nothing
+        update_time = @elapsed begin
+            currloss, curracc, currlaberr = Flux.data(loss(test_set...)), Flux.data(accuracy(test_set...)), Flux.data(labelerror(test_set...))
+            push!(errs[:testing][:epoch], CB_EPOCH)
+            push!(errs[:testing][:loss], currloss)
+            push!(errs[:testing][:acc], curracc)
+            push!(errs[:testing][:labelerr], currlaberr)
+        end
+        @info " -> Updating testing error... ($(round(1000*update_time; digits = 2)) ms)"
     end
 end
 plot_errs_cb = let LAST_EPOCH = 0
     function()
-        global CB_EPOCH
-        CB_EPOCH > LAST_EPOCH ? (LAST_EPOCH = CB_EPOCH) : return nothing
-        @info " -> Plotting progress..."
         function make_subplot(k,v)
             @unpack epoch, loss, acc, labelerr = v
             labelerr = permutedims(reduce(hcat, labelerr))
@@ -194,9 +204,13 @@ plot_errs_cb = let LAST_EPOCH = 0
                 layout = (1,3)
             )
         end
-        fig = plot([make_subplot(k,v) for (k,v) in errs]...; layout = (length(errs), 1))
-        savefig(fig, "plots/" * FILE_PREFIX * "errs.png")
-        display(fig)
+        CB_EPOCH_CHECK(LAST_EPOCH) ? (LAST_EPOCH = CB_EPOCH) : return nothing
+        plot_time = @elapsed begin
+            fig = plot([make_subplot(k,v) for (k,v) in errs]...; layout = (length(errs), 1))
+            savefig(fig, "plots/" * FILE_PREFIX * "errs.png")
+            display(fig)
+        end
+        @info " -> Plotting progress... ($(round(1000*plot_time; digits = 2)) ms)"
     end
 end
 checkpoint_model_opt_cb = function()
@@ -212,10 +226,10 @@ test_err_cb() # initial loss
 train_err_cb() # initial loss
 
 cbs = Flux.Optimise.runall([
-    Flux.throttle(test_err_cb, 0.1),
-    Flux.throttle(train_err_cb, 0.1),
+    Flux.throttle(test_err_cb, 5),
+    Flux.throttle(train_err_cb, 5),
     Flux.throttle(plot_errs_cb, 15),
-    Flux.throttle(checkpoint_errs_cb, 30),
+    Flux.throttle(checkpoint_errs_cb, 10),
     # Flux.throttle(checkpoint_model_opt_cb, 120),
 ])
 
@@ -353,10 +367,10 @@ nothing
 
 # let
 #     err = Flux.data(model(test_set[1])) .- test_set[2]
-#     logK_perm = test_set[2][6,:]
-#     alpha = test_set[2][5,:]
 #     mwf_err = err[1,:]
-#     scatter(logK_perm, mwf_err; m = (10, :c), xlabel = "logK_perm", ylabel = "mwf_err")
-#     scatter(alpha, mwf_err; m = (10, :c), xlabel = "alpha", ylabel = "mwf_err")
-#     # (d -> d[:btparams_dict][:K_perm]).(data_set[:testing_data_dicts])
+#     for k in keys(data_set[:testing_data_dicts][1][:sweepparams])
+#         xdata = data_set[:testing_data_dicts] .|> d -> d[:sweepparams][k]
+#         p = scatter(xdata, abs.(mwf_err); m = (10, :c), xlabel = string(k), ylabel = "mwf_err")
+#         display(p)
+#     end
 # end

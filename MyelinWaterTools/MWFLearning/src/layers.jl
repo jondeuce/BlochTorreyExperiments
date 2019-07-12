@@ -1,3 +1,43 @@
+function kaiming_uniform(T::Type, dims; gain = 1)
+   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
+   bound = sqrt(3) * gain / sqrt(fan_in)
+   return rand(Uniform(-bound, bound), dims) |> Array{T}
+end
+kaiming_uniform(T::Type, dims...; kwargs...) = kaiming_uniform(T::Type, dims; kwargs...)
+kaiming_uniform(args...; kwargs...) = kaiming_uniform(Float32, args...; kwargs...)
+
+function kaiming_normal(T::Type, dims; gain = 1)
+   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
+   std = gain / sqrt(fan_in)
+   return rand(Normal(0, std), dims) |> Array{T}
+end
+kaiming_normal(T::Type, dims...; kwargs...) = kaiming_normal(T::Type, dims; kwargs...)
+kaiming_normal(args...; kwargs...) = kaiming_normal(Float32, args...; kwargs...)
+
+function xavier_uniform(T::Type, dims; gain = 1)
+   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
+   fan_out = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end-1]
+   bound = sqrt(3) * gain * sqrt(2 / (fan_in + fan_out))
+   return rand(Uniform(-bound, bound), dims) |> Array{T}
+end
+xavier_uniform(T::Type, dims...; kwargs...) = xavier_uniform(T::Type, dims; kwargs...)
+xavier_uniform(args...; kwargs...) = xavier_uniform(Float32, args...; kwargs...)
+
+function xavier_normal(T::Type, dims; gain = 1)
+   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
+   fan_out = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end-1]
+   std = gain * sqrt(2 / (fan_in + fan_out))
+   return rand(Normal(0, std), dims) |> Array{T}
+end
+xavier_normal(T::Type, dims...; kwargs...) = xavier_normal(T::Type, dims; kwargs...)
+xavier_normal(args...; kwargs...) = xavier_normal(Float32, args...; kwargs...)
+
+# # Override flux defaults
+# Flux.glorot_uniform(dims...) = xavier_uniform(Float32, dims...)
+# Flux.glorot_uniform(T::Type, dims...) = xavier_uniform(T, dims...)
+# Flux.glorot_normal(dims...) = xavier_normal(Float32, dims...)
+# Flux.glorot_normal(T::Type, dims...) = xavier_normal(T, dims...)
+
 """
     AdaBound(η = 0.001, β = (0.9, 0.999), γ = 0.001, clip = 0.1)
 
@@ -47,14 +87,15 @@ Base.show(io::IO, l::DenseResize) = print(io, "DenseResize()")
 """
 ChannelResize(c::Int)
 
-Non-learnable layer which resizes input arguments `x` to be an array with `c` channels.
-The data height is divided by `c`.
+Non-learnable layer which resizes input arguments `x` to be 3D-array with size
+`d` x `c` x `b`, where `c` is the desired channels, `b` is the batch size,
+and `d` is `length(x) ÷ (c x b)`.
 """
 struct ChannelResize
     c::Int
 end
 Flux.@treelike ChannelResize
-(l::ChannelResize)(x::AbstractArray) = reshape(x, heightsize(x) ÷ l.c, l.c, :)
+(l::ChannelResize)(x::AbstractArray) = reshape(x, :, l.c, batchsize(x))
 Base.show(io::IO, l::ChannelResize) = print(io, "ChannelResize(", l.c, ")")
 
 """
@@ -152,7 +193,7 @@ function BatchConvConnection(
         batchnorm::Bool = false,
     )
     @assert numlayers >= 2
-    CV(ch, σ = identity) = Flux.Conv(k, ch, σ; pad = (k.-1).÷2)
+    CV(ch, σ = identity) = Flux.Conv(k, ch, σ; init = xavier_uniform, pad = (k.-1).÷2)
     BN(C,  σ = identity) = batchnorm ? Flux.BatchNorm(C, σ) : groupnorm ? Flux.GroupNorm(C, C÷2, σ) : identity
     AF() = @λ x -> σ.(x)
     if mode == :pre
@@ -183,7 +224,7 @@ feature fusion via 1x1 convolution:
 function DenseConnection(Factory, G0::Int, G::Int, C::Int; dims::Int = 2)
     Flux.Chain(
         [CatSkip(dims, Factory(G0 + (c - 1) * G => G)) for c in 1:C]...,
-        Flux.Conv((1,), G0 + C * G => G0, identity; pad = (0,)),
+        Flux.Conv((1,), G0 + C * G => G0, identity; init = xavier_uniform, pad = (0,)),
     )
 end
 
@@ -244,21 +285,21 @@ where the output - the densely fused features - is then given by
 function DenseFeatureFusion(Factory, G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,), σ = Flux.relu; dims::Int = 2)
     IdentitySkip(
         Flux.Chain(
-            # Flux.Conv(k, G0 => G0, σ; pad = (k.-1).÷2),
+            # Flux.Conv(k, G0 => G0, σ; init = xavier_uniform, pad = (k.-1).÷2),
             GlobalFeatureFusion(
                 dims,
                 [ResidualDenseBlock(Factory, G0, G, C; dims = dims) for d in 1:D]...,
             ),
             # Flux.BatchNorm(D * G0, σ),
             Flux.GroupNorm(D * G0, (D * G0) ÷ 2, σ),
-            Flux.Conv((1,), D * G0 => G0, identity; pad = (0,)),
-            # Flux.Conv(k, G0 => G0, σ; pad = (k.-1).÷2),
+            Flux.Conv((1,), D * G0 => G0, identity; init = xavier_uniform, pad = (0,)),
+            # Flux.Conv(k, G0 => G0, σ; init = xavier_uniform, pad = (k.-1).÷2),
         )
     )
 end
 DenseFeatureFusion(G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,), σ = Flux.relu; kwargs...) =
     DenseFeatureFusion(
-        ch -> Flux.Conv(k, ch, σ; pad = (k.-1).÷2), # Default factory for RDB's
+        ch -> Flux.Conv(k, ch, σ; init = xavier_uniform, pad = (k.-1).÷2), # Default factory for RDB's
         G0, G, C, D, k, σ; kwargs...)
 
 """

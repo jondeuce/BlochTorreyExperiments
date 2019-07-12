@@ -21,11 +21,10 @@ See "Sequence classification with 1D convolutions" at the following url:
     https://keras.io/getting-started/sequential-model-guide/
 """
 function keras_1D_sequence_classification(settings)
-    model_settings = settings["model"]
     H = settings["data"]["height"] # data height
     C = settings["data"]["channels"] # number of channels
 
-    @unpack Nf1, Nf2, Npool, Nkern, Nout, act = model_settings
+    @unpack Nf1, Nf2, Npool, Nkern, Nout, act = settings["model"]
     Npad = Nkern ÷ 2 # pad size
     Ndense = Nf2 * (H ÷ Npool ÷ Npool)
     actfun = get_activation(act)
@@ -42,23 +41,22 @@ function keras_1D_sequence_classification(settings)
         Flux.MeanPool((Npool,)), # (H/Npool, Nf2, 1) -> (H/Npool^2, Nf2, 1)
 
         # Dropout layer
-        model_settings["dropout"] ? Flux.Dropout(0.5) : identity,
+        settings["model"]["dropout"] ? Flux.Dropout(0.5) : identity,
 
         # Dense + softmax layer
         DenseResize(),
         Flux.Dense(Ndense, Nout, actfun),
-        model_settings["softmax"] ? NNlib.softmax : identity,
+        settings["model"]["softmax"] ? NNlib.softmax : identity,
     )
     
     return model
 end
 
 function test_model_1(settings)
-    model_settings = settings["model"]
     H = settings["data"]["height"] # data height
     C = settings["data"]["channels"] # number of channels
 
-    @unpack Nf1, Nf2, Nf3, Npool, Nkern, Nout, act = model_settings
+    @unpack Nf1, Nf2, Nf3, Npool, Nkern, Nout, act = settings["model"]
     Npad = Nkern ÷ 2 # pad size
     Ndense = Nf3 * (H ÷ Npool ÷ Npool ÷ Npool)
     actfun = get_activation(act)
@@ -68,91 +66,89 @@ function test_model_1(settings)
         Flux.Conv((Nkern,), C => Nf1, pad = (Npad,), actfun),
         Flux.Conv((Nkern,), Nf1 => Nf1, pad = (Npad,), actfun),
         Flux.MaxPool((Npool,)),
-        model_settings["batchnorm"] ? Flux.BatchNorm(Nf1, actfun) : identity,
+        settings["model"]["batchnorm"] ? Flux.BatchNorm(Nf1, actfun) : identity,
 
         # Two more convolution layers followed by max pooling and batch normalization
         Flux.Conv((Nkern,), Nf1 => Nf2, pad = (Npad,), actfun),
         Flux.Conv((Nkern,), Nf2 => Nf2, pad = (Npad,), actfun),
         Flux.MaxPool((Npool,)),
-        model_settings["batchnorm"] ? Flux.BatchNorm(Nf2, actfun) : identity,
+        settings["model"]["batchnorm"] ? Flux.BatchNorm(Nf2, actfun) : identity,
 
         # Two more convolution layers followed by max pooling and batch normalization
         Flux.Conv((Nkern,), Nf2 => Nf3, pad = (Npad,), actfun),
         Flux.Conv((Nkern,), Nf3 => Nf3, pad = (Npad,), actfun),
         Flux.MaxPool((Npool,)),
-        model_settings["batchnorm"] ? Flux.BatchNorm(Nf3, actfun) : identity,
+        settings["model"]["batchnorm"] ? Flux.BatchNorm(Nf3, actfun) : identity,
 
         # Dropout layer
-        model_settings["dropout"] ? Flux.Dropout(0.5) : identity,
+        settings["model"]["dropout"] ? Flux.Dropout(0.5) : identity,
 
         # Dense / batchnorm layer
         DenseResize(),
         Flux.Dense(Ndense, Ndense ÷ 2, actfun),
-        model_settings["batchnorm"] ? Flux.BatchNorm(Ndense ÷ 2, actfun) : identity,
+        settings["model"]["batchnorm"] ? Flux.BatchNorm(Ndense ÷ 2, actfun) : identity,
 
         # Dense / batchnorm layer, but last actfun must be softplus since outputs are positive
-        model_settings["batchnorm"] ? Flux.Dense(Ndense ÷ 2, Nout, actfun) : Flux.Dense(Ndense ÷ 2, Nout, NNlib.softplus),
-        model_settings["batchnorm"] ? Flux.BatchNorm(Nout, NNlib.softplus) : identity,
+        settings["model"]["batchnorm"] ? Flux.Dense(Ndense ÷ 2, Nout, actfun) : Flux.Dense(Ndense ÷ 2, Nout, NNlib.softplus),
+        settings["model"]["batchnorm"] ? Flux.BatchNorm(Nout, NNlib.softplus) : identity,
 
         # Softmax
-        model_settings["softmax"] ? NNlib.softmax : identity,
+        settings["model"]["softmax"] ? NNlib.softmax : identity,
 
         # Scale from (0,1) back to model parameter range
-        model_settings["scale"] == false ? identity : Scale(model_settings["scale"]),
+        settings["model"]["scale"] == false ? identity : Scale(settings["model"]["scale"]),
     )
 
     return model
 end
 
 function test_model_2(settings)
-    model_settings = settings["model"]
     H = settings["data"]["height"] # data height
     C = settings["data"]["channels"] # number of channels
 
-    @unpack Nout, act, Nd = model_settings
+    @unpack Nout, act, Nd = settings["model"]
     actfun = get_activation(act)
 
     model = Flux.Chain(
         DenseResize(),
         Flux.Dense(H * C, Nd[1], actfun),
-        # model_settings["batchnorm"] ? Flux.BatchNorm(Nd[1], actfun) : identity,
+        # settings["model"]["batchnorm"] ? Flux.BatchNorm(Nd[1], actfun) : identity,
         
         reduce(vcat, [
             Flux.Dense(Nd[i], Nd[i+1], actfun),
-            # model_settings["batchnorm"] ? Flux.BatchNorm(Nd[i+1], actfun) : identity
+            # settings["model"]["batchnorm"] ? Flux.BatchNorm(Nd[i+1], actfun) : identity
         ] for i in 1:length(Nd)-1)...,
 
         Flux.Dense(Nd[end], Nout, actfun),
-        model_settings["batchnorm"] ? Flux.BatchNorm(Nout, actfun) : identity,
+        settings["model"]["batchnorm"] ? Flux.BatchNorm(Nout, actfun) : identity,
 
         # Softmax
-        model_settings["softmax"] ? NNlib.softmax : identity,
+        settings["model"]["softmax"] ? NNlib.softmax : identity,
         
         # Softplus to ensure positivity, unless softmax has already been applied
-        model_settings["softmax"] ? identity : @λ(x -> NNlib.softplus.(x)),
+        settings["model"]["softmax"] ? identity : @λ(x -> NNlib.softplus.(x)),
 
         # Scale from (0,1) back to model parameter range
-        model_settings["scale"] == false ? identity : Scale(model_settings["scale"]),
+        settings["model"]["scale"] == false ? identity : Scale(settings["model"]["scale"]),
     )
 
     return model
 end
 
 function test_model_3(settings)
-    model_settings = settings["model"]
     H      = settings["data"]["height"] :: Int # Data height
     C      = settings["data"]["channels"] :: Int # Number of channels
-    actfun = model_settings["act"] |> get_activation
-    Nout   = model_settings["Nout"] :: Int # Number of outputs
-    BN     = model_settings["batchnorm"] :: Bool # Use batch normalization
-    scale  = model_settings["scale"] :: Vector # Parameter scales
+    actfun = settings["model"]["act"] |> get_activation
+    Nout   = settings["model"]["Nout"] :: Int # Number of outputs
+    BN     = settings["model"]["batchnorm"] :: Bool # Use batch normalization
+    scale  = settings["model"]["scale"] :: Vector # Parameter scales
     NP     = settings["data"]["preprocess"]["wavelet"]["apply"] == true ? length(scale) : 0
 
     MakeActfun() = @λ x -> actfun.(x)
     PhysicalParams() = @λ(x -> x[1:NP, 1:C, :])
     NonPhysicsCoeffs() = @λ(x -> x[NP+1:end, 1:C, :])
-    ParamsScale() = model_settings["scale"] == false ? identity : Scale(model_settings["scale"])
-    MakeDropout() = model_settings["dropout"] == true ? Flux.AlphaDropout(0.5) : identity
+    ParamsScale() = settings["model"]["scale"] == false ? identity : Scale(settings["model"]["scale"])
+    MakeDropout() = settings["model"]["dropout"] == true ? Flux.AlphaDropout(0.5) : identity
     ResidualBlock() = IdentitySkip(BatchDenseConnection(4, 4, actfun; groupnorm = BN, mode = :post))
 
     # NonPhysicsCoeffs -> Output Parameters
@@ -187,27 +183,26 @@ function test_model_3(settings)
 end
 
 function conv_resnet(settings)
-    model_settings = settings["model"]
     H       = settings["data"]["height"] :: Int # Data height
     C       = settings["data"]["channels"] :: Int # Number of channels
-    Nout    = model_settings["Nout"] :: Int # Number of outputs
-    actfun  = model_settings["act"] |> get_activation # Activation function
-    scale   = model_settings["scale"] :: Vector # Parameter scales
-    offset  = model_settings["offset"] :: Vector # Parameter offsets
-    DP      = model_settings["resnet"]["dropout"] :: Bool # Use batch normalization
-    BN      = model_settings["resnet"]["batchnorm"] :: Bool # Use batch normalization
-    GN      = model_settings["resnet"]["groupnorm"] :: Bool # Use group normalization
-    Nkern   = model_settings["resnet"]["Nkern"] :: Int # Kernel size
-    Nfeat   = model_settings["resnet"]["Nfeat"] :: Int # Kernel size
-    Nconv   = model_settings["resnet"]["Nconv"] :: Int # Num residual connection layers
-    Nblock  = model_settings["resnet"]["Nblock"] :: Int # Num residual connection layers
+    Nout    = settings["model"]["Nout"] :: Int # Number of outputs
+    actfun  = settings["model"]["act"] |> get_activation # Activation function
+    scale   = settings["model"]["scale"] :: Vector # Parameter scales
+    offset  = settings["model"]["offset"] :: Vector # Parameter offsets
+    DP      = settings["model"]["resnet"]["dropout"] :: Bool # Use batch normalization
+    BN      = settings["model"]["resnet"]["batchnorm"] :: Bool # Use batch normalization
+    GN      = settings["model"]["resnet"]["groupnorm"] :: Bool # Use group normalization
+    Nkern   = settings["model"]["resnet"]["Nkern"] :: Int # Kernel size
+    Nfeat   = settings["model"]["resnet"]["Nfeat"] :: Int # Kernel size
+    Nconv   = settings["model"]["resnet"]["Nconv"] :: Int # Num residual connection layers
+    Nblock  = settings["model"]["resnet"]["Nblock"] :: Int # Num residual connection layers
     @assert !(BN && GN)
 
     MakeActfun() = @λ x -> actfun.(x)
     ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> offset)
     MakeDropout() = DP ? Flux.AlphaDropout(0.5) : identity
-    Upsample() = Flux.Conv((1,), 1 => Nfeat, actfun; pad = (0,)) # 1x1 upsample convolutions
-    Downsample() = Flux.Conv((1,), Nfeat => 1, actfun; pad = (0,)) # 1x1 downsample convolutions
+    Upsample() = Flux.Conv((1,), 1 => Nfeat, actfun; init = xavier_uniform, pad = (0,)) # 1x1 upsample convolutions
+    Downsample() = Flux.Conv((1,), Nfeat => 1, actfun; init = xavier_uniform, pad = (0,)) # 1x1 downsample convolutions
     ResidualBlock() = IdentitySkip(
         BatchConvConnection(Nkern, Nfeat => Nfeat, actfun;
         numlayers = Nconv, batchnorm = BN, groupnorm = GN, mode = :post))
@@ -243,33 +238,34 @@ end
 Residual Dense Network for Image Super-Resolution: https://arxiv.org/abs/1802.08797
 """
 function residual_dense_net(settings)
-    model_settings = settings["model"]
-    H       = settings["data"]["height"] :: Int # Data height
-    C       = settings["data"]["channels"] :: Int # Number of channels
-    Nout    = model_settings["Nout"] :: Int # Number of outputs
-    actfun  = model_settings["act"] |> get_activation # Activation function
-    scale   = model_settings["scale"] :: Vector # Parameter scales
-    offset  = model_settings["offset"] :: Vector # Parameter offsets
-    DP      = model_settings["resnet"]["dropout"] :: Bool # Use batch normalization
-    BN      = model_settings["resnet"]["batchnorm"] :: Bool # Use batch normalization
-    GN      = model_settings["resnet"]["groupnorm"] :: Bool # Use group normalization
-    mode    = model_settings["resnet"]["batchmode"] :: String |> Symbol # Batchnorm mode for BatchConvConnection
-    Nkern   = model_settings["resnet"]["Nkern"] :: Int # Convolution kernel size
-    Nconv   = model_settings["resnet"]["Nconv"] :: Int # Convolutions per BatchConvConnection
-    Nfeat   = model_settings["resnet"]["Nfeat"] :: Int # Number of features to upsample to from 1-feature input
-    Nblock  = model_settings["resnet"]["Nblock"] :: Int # Number of blocks in densely connected RDB layer
-    Ndense  = model_settings["resnet"]["Ndense"] :: Int # Number of blocks in GlobalFeatureFusion concatenation layer
+    T = settings["prec"] == 64 ? Float64 : Float32
+    VT = Vector{T}
+
+    H      :: Int      = settings["data"]["height"] # Data height
+    C      :: Int      = settings["data"]["channels"] # Number of channels
+    Nout   :: Int      = settings["model"]["Nout"] # Number of outputs
+    actfun :: Function = settings["model"]["act"] |> get_activation # Activation function
+    scale  :: VT       = settings["model"]["scale"] :: Vector |> VT # Parameter scales
+    offset :: VT       = settings["model"]["offset"] :: Vector |> VT # Parameter offsets
+    DP     :: Bool     = settings["model"]["resnet"]["dropout"] # Use batch normalization
+    BN     :: Bool     = settings["model"]["resnet"]["batchnorm"] # Use batch normalization
+    GN     :: Bool     = settings["model"]["resnet"]["groupnorm"] # Use group normalization
+    mode   :: Symbol   = settings["model"]["resnet"]["batchmode"] :: String |> Symbol # Batchnorm mode for BatchConvConnection
+    Nkern  :: Int      = settings["model"]["resnet"]["Nkern"] # Convolution kernel size
+    Nconv  :: Int      = settings["model"]["resnet"]["Nconv"] # Convolutions per BatchConvConnection
+    Nfeat  :: Int      = settings["model"]["resnet"]["Nfeat"] # Number of features to upsample to from 1-feature input
+    Nblock :: Int      = settings["model"]["resnet"]["Nblock"] # Number of blocks in densely connected RDB layer
+    Ndense :: Int      = settings["model"]["resnet"]["Ndense"] # Number of blocks in GlobalFeatureFusion concatenation layer
     @assert !(BN && GN)
 
     MakeActfun() = @λ x -> actfun.(x)
     ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> offset)
-    MakeDropout() = DP ? Flux.AlphaDropout(0.5) : identity
-    Upsample(ch) = Flux.Conv((1,), ch, identity; pad = (0,)) # 1x1 upsample convolutions
-    Downsample(ch) = Flux.Conv((1,), ch, identity; pad = (0,)) # 1x1 downsample convolutions
+    MakeDropout() = DP ? Flux.AlphaDropout(T(0.5)) : identity
+    Resample(ch) = Flux.Conv((1,), ch, identity; init = xavier_uniform, pad = (0,)) # 1x1 resample convolutions
     
     function DFF()
         local G0, G, C, D, k = Nfeat, Nfeat, Nblock, Ndense, (Nkern,)
-        ConvFactory = @λ ch -> Flux.Conv(k, ch, actfun; pad = (k.-1).÷2)
+        ConvFactory = @λ ch -> Flux.Conv(k, ch, actfun; init = xavier_uniform, pad = (k.-1).÷2)
         BatchConvFactory = @λ ch -> BatchConvConnection(k, ch, actfun; numlayers = Nconv, batchnorm = BN, groupnorm = GN, mode = mode)
         # Factory = ConvFactory
         Factory = BatchConvFactory
@@ -282,16 +278,16 @@ function residual_dense_net(settings)
         # ChannelwiseDense(H*C ÷ 4, 4 => 1, actfun),
         # DenseResize(),
         # Flux.Dense(H*C, H*C, actfun),
-        ChannelResize(1),
-        Upsample(1 => Nfeat),
+        ChannelResize(C),
+        Resample(C => Nfeat),
         DFF(),
         # MakeDropout(),
         # Flux.BatchNorm(Nfeat, actfun),
         Flux.GroupNorm(Nfeat, Nfeat÷2, actfun),
-        Downsample(Nfeat => 1),
+        Resample(Nfeat => 1),
         DenseResize(),
-        # Flux.Dense(H*C ÷ 4, Nout),
-        Flux.Dense(H*C, Nout),
+        # Flux.Dense(H ÷ 4, Nout),
+        Flux.Dense(H, Nout),
     )
 
     # Output parameter handling:

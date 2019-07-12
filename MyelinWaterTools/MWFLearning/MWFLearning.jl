@@ -17,11 +17,13 @@ using Reexport
 using RecipesBase: plot, plot!
 export plot, plot!, mean, median, cov, std, var, quantile
 
+@reexport using Random
+@reexport using Distributions
+@reexport using Base.Iterators
 @reexport using GeometryUtils
 @reexport using EllipsisNotation
 @reexport using Wavelets
 @reexport using NNLS
-@reexport using Random
 
 using DrWatson: @dict, @ntuple
 using Parameters: @unpack
