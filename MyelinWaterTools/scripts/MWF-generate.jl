@@ -64,8 +64,9 @@ end
 
 # Load geometries with at most `maxnnodes` number of nodes to avoid exceedingly long simulations
 const geombasepaths = [
-    "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-1/geom",
-    "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-2/geom",
+    realpath("./geom"),
+    # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-2/geom",
+    # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-1/geom",
 ]
 const geomfiles = reduce(vcat, realpath.(joinpath.(gp, readdir(gp))) for gp in geombasepaths)
 const maxnnodes = 5000; #TODO
