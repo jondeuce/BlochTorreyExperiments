@@ -36,7 +36,7 @@ nterms      = 16 # number of terms to keep
 apply       = true # Apply ilaplace preprocessing
 T2Range     = [0.001, 2.0] # T2 distribution range
 nT2         = 24 # Number of exponentials in T2 distribution
-alpha       = 0.02 # Tikhonov regularization parameter
+alpha       = 0.2 # Tikhonov regularization parameter
 [data.preprocess.PCA]
 apply       = false # Apply PCA preprocessing
 
@@ -46,7 +46,7 @@ apply       = false # Apply PCA preprocessing
 name      = "TestModel4"
 loss      = "l2"
 acc       = "rmse"
-act       = "relu"
+act       = "leakyrelu"
 Nout      = 5 # number of output labels
 scale     = "auto"
 offset    = "auto"
@@ -60,8 +60,8 @@ offset    = "auto"
 [model.resnet]
 dropout   = false
 batchnorm = false
-groupnorm = true
-batchmode = "pre" # Pre-, post-, or hybrid normalization for BatchConvConnection
+groupnorm = false
+batchmode = "post" # Pre-, post-, or hybrid normalization for BatchConvConnection
 Nkern     = 3 # Convolution kernel size
 Nconv     = 2 # Convolutions per BatchConvConnection
 Nfeat     = 4 # Number of features to upsample to from 1-feature input

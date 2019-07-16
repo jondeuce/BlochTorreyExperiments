@@ -360,8 +360,20 @@ function test_model_4(settings)
             # Flux.BatchNorm(D * G0, σ),
             Flux.GroupNorm(D * G0, (D * G0) ÷ 2, σ),
             # Flux.Conv((1,), D * G0 => G0, identity; init = xavier_uniform, pad = (0,)),
-            Flux.Conv(k, D * G0 => (D * G0) ÷ 2, σ; init = xavier_uniform, stride = (2,), pad = (k.-1).÷2),
+            # Flux.Conv(k, D * G0 => (D * G0) ÷ 2, σ; init = xavier_uniform, stride = (2,), pad = (k.-1).÷2),
             # Flux.Conv(k, G0 => G0, σ; init = xavier_uniform, pad = (k.-1).÷2),
+            # 
+            # Flux.Conv(k, D * G0 => D * G0, σ; init = xavier_uniform, pad = (k.-1).÷2),
+            GlobalFeatureFusion(
+                2,
+                [DenseConnection(Factory, D * G0, G, C; dims = 2) for d in 1:D]...,
+            ),
+            Flux.GroupNorm(D^2 * G0, (D^2 * G0) ÷ 2, σ),
+            GlobalFeatureFusion(
+                2,
+                [DenseConnection(Factory, D^2 * G0, G, C; dims = 2) for d in 1:D]...,
+            ),
+            Flux.GroupNorm(D^3 * G0, (D^3 * G0) ÷ 2, σ),
         )
     end
 
@@ -375,11 +387,12 @@ function test_model_4(settings)
         Resample(C => Nfeat),
         DFF(),
         # MakeDropout(),
-        # Flux.BatchNorm(Nfeat * Ndense, actfun),
-        # Flux.GroupNorm(Nfeat * Ndense, (Nfeat * Ndense) ÷ 2, actfun),
+        # Flux.BatchNorm(Ndense * Nfeat, actfun),
+        # Flux.GroupNorm(Ndense * Nfeat, (Ndense * Nfeat) ÷ 2, actfun),
         # Resample(Nfeat => 1),
         DenseResize(),
-        Flux.Dense((H ÷ 2) * (Nfeat * Ndense ÷ 2), Nout),
+        # Flux.Dense((H ÷ 2) * (Ndense * Nfeat ÷ 2), Nout),
+        Flux.Dense(H * Ndense^3 * Nfeat, Nout),
         # Flux.Dense(H, Nout),
     )
 
