@@ -322,21 +322,22 @@ function test_model_4(settings)
     T = settings["prec"] == 64 ? Float64 : Float32
     VT = Vector{T}
 
-    H      :: Int      = settings["data"]["height"] # Data height
-    C      :: Int      = settings["data"]["channels"] # Number of channels
-    Nout   :: Int      = settings["model"]["Nout"] # Number of outputs
-    actfun :: Function = settings["model"]["act"] |> get_activation # Activation function
-    scale  :: VT       = settings["model"]["scale"] :: Vector |> VT # Parameter scales
-    offset :: VT       = settings["model"]["offset"] :: Vector |> VT # Parameter offsets
-    DP     :: Bool     = settings["model"]["resnet"]["dropout"] # Use batch normalization
-    BN     :: Bool     = settings["model"]["resnet"]["batchnorm"] # Use batch normalization
-    GN     :: Bool     = settings["model"]["resnet"]["groupnorm"] # Use group normalization
-    mode   :: Symbol   = settings["model"]["resnet"]["batchmode"] :: String |> Symbol # Batchnorm mode for BatchConvConnection
-    Nkern  :: Int      = settings["model"]["resnet"]["Nkern"] # Convolution kernel size
-    Nconv  :: Int      = settings["model"]["resnet"]["Nconv"] # Convolutions per BatchConvConnection
-    Nfeat  :: Int      = settings["model"]["resnet"]["Nfeat"] # Number of features to upsample to from 1-feature input
-    Nblock :: Int      = settings["model"]["resnet"]["Nblock"] # Number of blocks in densely connected RDB layer
-    Ndense :: Int      = settings["model"]["resnet"]["Ndense"] # Number of blocks in GlobalFeatureFusion concatenation layer
+    H       :: Int      = settings["data"]["height"] # Data height
+    C       :: Int      = settings["data"]["channels"] # Number of channels
+    Nout    :: Int      = settings["model"]["Nout"] # Number of outputs
+    actfun  :: Function = settings["model"]["act"] |> get_activation # Activation function
+    scale   :: VT       = settings["model"]["scale"] :: Vector |> VT # Parameter scales
+    offset  :: VT       = settings["model"]["offset"] :: Vector |> VT # Parameter offsets
+    DP      :: Bool     = settings["model"]["resnet"]["dropout"] # Use batch normalization
+    BN      :: Bool     = settings["model"]["resnet"]["batchnorm"] # Use batch normalization
+    GN      :: Bool     = settings["model"]["resnet"]["groupnorm"] # Use group normalization
+    mode    :: Symbol   = settings["model"]["resnet"]["batchmode"] :: String |> Symbol # Batchnorm mode for BatchConvConnection
+    Nkern   :: Int      = settings["model"]["resnet"]["Nkern"] # Convolution kernel size
+    Nconv   :: Int      = settings["model"]["resnet"]["Nconv"] # Convolutions per BatchConvConnection
+    Nfeat   :: Int      = settings["model"]["resnet"]["Nfeat"] # Number of features to upsample to from 1-feature input
+    Nblock  :: Int      = settings["model"]["resnet"]["Nblock"] # Number of blocks in densely connected RDB layer
+    Ndense  :: Int      = settings["model"]["resnet"]["Ndense"] # Number of blocks in GlobalFeatureFusion concatenation layer
+    Nglobal :: Int      = settings["model"]["resnet"]["Nglobal"] # Number of GlobalFeatureFusion concatenation layers
     @assert !(BN && GN)
 
     MakeActfun() = @λ x -> actfun.(x)
@@ -352,28 +353,14 @@ function test_model_4(settings)
         Factory = BatchConvFactory
         
         Flux.Chain(
-            # Flux.Conv(k, G0 => G0, σ; init = xavier_uniform, pad = (k.-1).÷2),
-            GlobalFeatureFusion(
-                2,
-                [DenseConnection(Factory, G0, G, C; dims = 2) for d in 1:D]...,
-            ),
-            # Flux.BatchNorm(D * G0, σ),
-            Flux.GroupNorm(D * G0, (D * G0) ÷ 2, σ),
-            # Flux.Conv((1,), D * G0 => G0, identity; init = xavier_uniform, pad = (0,)),
-            # Flux.Conv(k, D * G0 => (D * G0) ÷ 2, σ; init = xavier_uniform, stride = (2,), pad = (k.-1).÷2),
-            # Flux.Conv(k, G0 => G0, σ; init = xavier_uniform, pad = (k.-1).÷2),
-            # 
-            # Flux.Conv(k, D * G0 => D * G0, σ; init = xavier_uniform, pad = (k.-1).÷2),
-            GlobalFeatureFusion(
-                2,
-                [DenseConnection(Factory, D * G0, G, C; dims = 2) for d in 1:D]...,
-            ),
-            Flux.GroupNorm(D^2 * G0, (D^2 * G0) ÷ 2, σ),
-            GlobalFeatureFusion(
-                2,
-                [DenseConnection(Factory, D^2 * G0, G, C; dims = 2) for d in 1:D]...,
-            ),
-            Flux.GroupNorm(D^3 * G0, (D^3 * G0) ÷ 2, σ),
+            reduce(vcat, [
+                GlobalFeatureFusion(
+                    2,
+                    [DenseConnection(Factory, D^(g-1) * G0, G, C; dims = 2) for d in 1:D]...,
+                ),
+                # Flux.BatchNorm(D^g * G0, σ),
+                Flux.GroupNorm(D^g * G0, (D^g * G0) ÷ 2, σ),
+            ] for g in 1:Nglobal)...,
         )
     end
 
@@ -392,7 +379,7 @@ function test_model_4(settings)
         # Resample(Nfeat => 1),
         DenseResize(),
         # Flux.Dense((H ÷ 2) * (Ndense * Nfeat ÷ 2), Nout),
-        Flux.Dense(H * Ndense^3 * Nfeat, Nout),
+        Flux.Dense(H * Ndense^Nglobal * Nfeat, Nout),
         # Flux.Dense(H, Nout),
     )
 
