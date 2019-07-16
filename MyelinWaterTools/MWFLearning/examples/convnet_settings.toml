@@ -65,16 +65,16 @@ batchmode = "post" # Pre-, post-, or hybrid normalization for BatchConvConnectio
 Nkern     = 3 # Convolution kernel size
 Nconv     = 2 # Convolutions per BatchConvConnection
 Nfeat     = 4 # Number of features to upsample to from 1-feature input
-Nblock    = 4 # Number of blocks in densely connected RDB layer
-Ndense    = 4 # Number of blocks in GlobalFeatureFusion concatenation layer
-Nglobal   = 1 # Number of GlobalFeatureFusion concatenation layers
+Nblock    = 2 # Number of blocks in densely connected RDB layer
+Ndense    = 2 # Number of blocks in GlobalFeatureFusion concatenation layer
+Nglobal   = 4 # Number of GlobalFeatureFusion concatenation layers
 
 [optimizer]
-epochs  = 10000
+epochs  = 1000
 savemod = 1
 testmod = 1
 [optimizer.ADAM]
-lr      = 0.001
+lr      = 0.0003
 beta    = [0.9, 0.999]
 
 [plot]

@@ -141,8 +141,12 @@ opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADA
 # opt = Flux.Momentum(3e-4, 0.9)
 # opt = Flux.Momentum(1e-4, 0.9)
 
-# Fixed learning rate
-LRfun(e) = lr(opt)
+# # Fixed learning rate
+# LRfun(e) = lr(opt)
+
+# Drop learning rate every LRDROPRATE epochs
+LRINIT, LRDROPRATE = lr(opt), 100
+LRfun(e) = LRINIT / 2^div(e, LRDROPRATE)
 
 # # Learning rate finder
 # LRfun(e) = e <= settings["optimizer"]["epochs"] ?
