@@ -19,7 +19,7 @@ weights     = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
 # weights     = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
 [data.preprocess]
 shuffle     = false
-SNR         = [50.0, 60.0, 75.0, 0.0] # Additive random noise
+SNR         = [50.0, 0.0] # Additive random noise
 [data.preprocess.chunk]
 apply       = true
 size        = 24
@@ -42,7 +42,8 @@ apply       = false # Apply PCA preprocessing
 
 [model]
 # name      = "ConvResNet"
-name      = "ResidualDenseNet"
+# name      = "ResidualDenseNet"
+name      = "TestModel4"
 loss      = "l2"
 acc       = "rmse"
 act       = "relu"
@@ -59,11 +60,11 @@ offset    = "auto"
 [model.resnet]
 dropout   = false
 batchnorm = false
-groupnorm = false
+groupnorm = true
 batchmode = "pre" # Pre-, post-, or hybrid normalization for BatchConvConnection
 Nkern     = 3 # Convolution kernel size
 Nconv     = 2 # Convolutions per BatchConvConnection
-Nfeat     = 8 # Number of features to upsample to from 1-feature input
+Nfeat     = 4 # Number of features to upsample to from 1-feature input
 Nblock    = 2 # Number of blocks in densely connected RDB layer
 Ndense    = 2 # Number of blocks in GlobalFeatureFusion concatenation layer
 

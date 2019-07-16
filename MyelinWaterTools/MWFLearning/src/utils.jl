@@ -80,7 +80,7 @@ function prepare_data(settings::Dict)
     testing_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["test_data"], readdir(settings["data"]["test_data"]))))
     
     # TODO: Filtering out bad data
-    filter_bad_data = (d) -> d[:btparams_dict][:K_perm] < 0.5 && d[:sweepparams][:alpha] > 150
+    filter_bad_data = (d) -> d[:btparams_dict][:K_perm] < 0.1 #&& d[:sweepparams][:alpha] > 150
     filter!(filter_bad_data, training_data_dicts)
     filter!(filter_bad_data, testing_data_dicts)
 

@@ -193,24 +193,28 @@ test_err_cb = let LAST_EPOCH = 0
 end
 plot_errs_cb = let LAST_EPOCH = 0
     function()
-        function make_subplot(k,v)
-            @unpack epoch, loss, acc, labelerr = v
-            labelerr = permutedims(reduce(hcat, labelerr))
-            labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
-            plot(
-                plot(epoch, loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), quantile(loss, 0.90))),
-                plot(epoch, acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (90, 100)),
-                plot(epoch, labelerr; title = "Label Error ($k: rel. %)",                                     lw = 3, titlefontsize = 10, label = labelnames, legend = :topleft,  ylim = (max(0, minimum(labelerr) - 0.5), min(50, quantile(vec(labelerr), 0.90)))),
-                layout = (1,3)
-            )
+        try
+            function make_subplot(k,v)
+                @unpack epoch, loss, acc, labelerr = v
+                labelerr = permutedims(reduce(hcat, labelerr))
+                labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
+                plot(
+                    plot(epoch, loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), quantile(loss, 0.90))),
+                    plot(epoch, acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (90, 100)),
+                    plot(epoch, labelerr; title = "Label Error ($k: rel. %)",                                     lw = 3, titlefontsize = 10, label = labelnames, legend = :topleft,  ylim = (max(0, minimum(labelerr) - 0.5), min(50, quantile(vec(labelerr), 0.90)))),
+                    layout = (1,3)
+                )
+            end
+            CB_EPOCH_CHECK(LAST_EPOCH) ? (LAST_EPOCH = CB_EPOCH) : return nothing
+            plot_time = @elapsed begin
+                fig = plot([make_subplot(k,v) for (k,v) in errs]...; layout = (length(errs), 1))
+                savefig(fig, "plots/" * FILE_PREFIX * "errs.png")
+                display(fig)
+            end
+            @info " -> Plotting progress... ($(round(1000*plot_time; digits = 2)) ms)"
+        catch e
+            @info " -> Plotting FAILED..."
         end
-        CB_EPOCH_CHECK(LAST_EPOCH) ? (LAST_EPOCH = CB_EPOCH) : return nothing
-        plot_time = @elapsed begin
-            fig = plot([make_subplot(k,v) for (k,v) in errs]...; layout = (length(errs), 1))
-            savefig(fig, "plots/" * FILE_PREFIX * "errs.png")
-            display(fig)
-        end
-        @info " -> Plotting progress... ($(round(1000*plot_time; digits = 2)) ms)"
     end
 end
 checkpoint_model_opt_cb = function()
@@ -226,10 +230,10 @@ test_err_cb() # initial loss
 train_err_cb() # initial loss
 
 cbs = Flux.Optimise.runall([
-    Flux.throttle(test_err_cb, 5),
-    Flux.throttle(train_err_cb, 5),
-    Flux.throttle(plot_errs_cb, 15),
-    Flux.throttle(checkpoint_errs_cb, 10),
+    Flux.throttle(test_err_cb, 3),
+    Flux.throttle(train_err_cb, 3),
+    Flux.throttle(plot_errs_cb, 60),
+    Flux.throttle(checkpoint_errs_cb, 60),
     # Flux.throttle(checkpoint_model_opt_cb, 120),
 ])
 

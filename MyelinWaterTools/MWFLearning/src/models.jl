@@ -5,6 +5,7 @@ get_model(settings::Dict) =
     settings["model"]["name"] == "TestModel1"       ?   test_model_1(settings) :
     settings["model"]["name"] == "TestModel2"       ?   test_model_2(settings) :
     settings["model"]["name"] == "TestModel3"       ?   test_model_3(settings) :
+    settings["model"]["name"] == "TestModel4"       ?   test_model_4(settings) :
     error("Unknown model: " * settings["model"]["name"])
 
 get_activation(str::String) =
@@ -296,6 +297,98 @@ function residual_dense_net(settings)
     #   `sigmoid` to force positivity for parameters which vary over several orders of magnitude
     model = Flux.Chain(
         residualdensenet,
+        ParamsScale(), # Scale to parameter space
+        # @λ(x -> Flux.relu.(x)),
+        @λ(x -> vcat(
+            # Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
+            # 
+            # Flux.relu.(x[1:3,:]), # Positive parameters
+            # x[4:4,:], # Unbounded parameters
+            # 
+            Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
+            Flux.relu.(x[3:5,:]), # Positive parameters
+            # x[6:6,:], # Unbounded parameters
+        )),
+    )
+
+    return model
+end
+
+"""
+Modification of the Residual Dense Network for Image Super-Resolution (https://arxiv.org/abs/1802.08797),
+removing all residual-like skip connections.
+"""
+function test_model_4(settings)
+    T = settings["prec"] == 64 ? Float64 : Float32
+    VT = Vector{T}
+
+    H      :: Int      = settings["data"]["height"] # Data height
+    C      :: Int      = settings["data"]["channels"] # Number of channels
+    Nout   :: Int      = settings["model"]["Nout"] # Number of outputs
+    actfun :: Function = settings["model"]["act"] |> get_activation # Activation function
+    scale  :: VT       = settings["model"]["scale"] :: Vector |> VT # Parameter scales
+    offset :: VT       = settings["model"]["offset"] :: Vector |> VT # Parameter offsets
+    DP     :: Bool     = settings["model"]["resnet"]["dropout"] # Use batch normalization
+    BN     :: Bool     = settings["model"]["resnet"]["batchnorm"] # Use batch normalization
+    GN     :: Bool     = settings["model"]["resnet"]["groupnorm"] # Use group normalization
+    mode   :: Symbol   = settings["model"]["resnet"]["batchmode"] :: String |> Symbol # Batchnorm mode for BatchConvConnection
+    Nkern  :: Int      = settings["model"]["resnet"]["Nkern"] # Convolution kernel size
+    Nconv  :: Int      = settings["model"]["resnet"]["Nconv"] # Convolutions per BatchConvConnection
+    Nfeat  :: Int      = settings["model"]["resnet"]["Nfeat"] # Number of features to upsample to from 1-feature input
+    Nblock :: Int      = settings["model"]["resnet"]["Nblock"] # Number of blocks in densely connected RDB layer
+    Ndense :: Int      = settings["model"]["resnet"]["Ndense"] # Number of blocks in GlobalFeatureFusion concatenation layer
+    @assert !(BN && GN)
+
+    MakeActfun() = @λ x -> actfun.(x)
+    ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> offset)
+    MakeDropout() = DP ? Flux.AlphaDropout(T(0.5)) : identity
+    Resample(ch) = Flux.Conv((1,), ch, identity; init = xavier_uniform, pad = (0,)) # 1x1 resample convolutions
+    
+    function DFF()
+        local G0, G, C, D, k, σ = Nfeat, Nfeat, Nblock, Ndense, (Nkern,), actfun
+        ConvFactory = @λ ch -> Flux.Conv(k, ch, σ; init = xavier_uniform, pad = (k.-1).÷2)
+        BatchConvFactory = @λ ch -> BatchConvConnection(k, ch, σ; numlayers = Nconv, batchnorm = BN, groupnorm = GN, mode = mode)
+        # Factory = ConvFactory
+        Factory = BatchConvFactory
+        
+        Flux.Chain(
+            # Flux.Conv(k, G0 => G0, σ; init = xavier_uniform, pad = (k.-1).÷2),
+            GlobalFeatureFusion(
+                2,
+                [DenseConnection(Factory, G0, G, C; dims = 2) for d in 1:D]...,
+            ),
+            # Flux.BatchNorm(D * G0, σ),
+            Flux.GroupNorm(D * G0, (D * G0) ÷ 2, σ),
+            # Flux.Conv((1,), D * G0 => G0, identity; init = xavier_uniform, pad = (0,)),
+            Flux.Conv(k, D * G0 => (D * G0) ÷ 2, σ; init = xavier_uniform, stride = (2,), pad = (k.-1).÷2),
+            # Flux.Conv(k, G0 => G0, σ; init = xavier_uniform, pad = (k.-1).÷2),
+        )
+    end
+
+    # Residual network
+    globalfeaturenet = Flux.Chain(
+        # ChannelResize(4),
+        # ChannelwiseDense(H*C ÷ 4, 4 => 1, actfun),
+        # DenseResize(),
+        # Flux.Dense(H*C, H*C, actfun),
+        ChannelResize(C),
+        Resample(C => Nfeat),
+        DFF(),
+        # MakeDropout(),
+        # Flux.BatchNorm(Nfeat * Ndense, actfun),
+        # Flux.GroupNorm(Nfeat * Ndense, (Nfeat * Ndense) ÷ 2, actfun),
+        # Resample(Nfeat => 1),
+        DenseResize(),
+        Flux.Dense((H ÷ 2) * (Nfeat * Ndense ÷ 2), Nout),
+        # Flux.Dense(H, Nout),
+    )
+
+    # Output parameter handling:
+    #   `relu` to force positivity
+    #   `softmax` to force positivity and unit sum, i.e. fractions
+    #   `sigmoid` to force positivity for parameters which vary over several orders of magnitude
+    model = Flux.Chain(
+        globalfeaturenet,
         ParamsScale(), # Scale to parameter space
         # @λ(x -> Flux.relu.(x)),
         @λ(x -> vcat(
