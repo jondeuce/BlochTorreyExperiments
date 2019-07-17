@@ -30,6 +30,7 @@ const GPU = settings["gpu"] :: Bool
 const T   = settings["prec"] == 64 ? Float64 : Float32
 const VT  = Vector{T}
 const MT  = Matrix{T}
+const VMT = VecOrMat{T}
 
 const savefoldernames = ["settings", "models", "weights", "log", "plots"]
 const savefolders = Dict{String,String}(savefoldernames .=> mkpath.(joinpath.(settings["dir"], savefoldernames)))
@@ -42,6 +43,8 @@ clearsavefolders(folders = savefolders) = for (k,f) in folders; rm.(joinpath.(f,
 @info "Preparing data..."
 make_minibatch(x, y, idxs) = (x[:,:,idxs], y[:,idxs])
 const data_set = prepare_data(settings)
+GPU && [data_set[k] = Flux.gpu(data_set[k]) for k in (:training_data, :testing_data, :training_labels, :testing_labels)]
+
 const train_batches = partition(1:batchsize(data_set[:training_data]), settings["data"]["batch_size"])
 const train_set = [make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches]
 # const train_set = [([make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches][1]...,)] # For overtraining testing (set batch size small, too)
@@ -64,7 +67,7 @@ plot_random_data_samples = () -> begin
             test_set[1][end - settings["data"]["preprocess"]["wavelet"]["nterms"] + 1 : end, 1:1, :] :
             test_set[1] # default
     fig = plot([
-        plot(plot_xdata, plot_ydata[:,:,i];
+        plot(plot_xdata, Flux.cpu(plot_ydata[:,:,i]);
             xscale = settings["data"]["preprocess"]["ilaplace"]["apply"] ? :log10 : :identity,
             titlefontsize = 8, grid = true, minorgrid = true,
             legend = :none, #label = "Data Distbn.",
@@ -79,11 +82,17 @@ savefig(plot_random_data_samples(), "plots/" * FILE_PREFIX * "datasamples.png")
 # Construct model
 @info "Constructing model..."
 model = MWFLearning.get_model(settings);
+model = GPU ? Flux.gpu(model) : model;
 model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"));
 
 # Compute parameter density, defined as the number of Flux.params / number of training label datapoints
-const param_density = sum(length, Flux.params(model)) / sum(b -> length(b[2]), train_set)
-@info "Parameter density = $(round(100 * param_density; digits = 2)) %"
+const test_dofs = length(test_set[2])
+const train_dofs = sum(batch -> length(batch[2]), train_set)
+const param_dofs = sum(length, Flux.params(model))
+const test_param_density = param_dofs / test_dofs
+const train_param_density = param_dofs / train_dofs
+@info " Testing parameter density: $param_dofs/$test_dofs ($(round(100 * test_param_density; digits = 2)) %)"
+@info "Training parameter density: $param_dofs/$train_dofs ($(round(100 * train_param_density; digits = 2)) %)"
 
 # Loss and accuracy function
 unitsum(x) = x ./ sum(x)
@@ -145,7 +154,7 @@ opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADA
 # LRfun(e) = lr(opt)
 
 # Drop learning rate every LRDROPRATE epochs
-LRINIT, LRDROPRATE = lr(opt), 100
+LRINIT, LRDROPRATE = lr(opt), 50
 LRfun(e) = LRINIT / 2^div(e, LRDROPRATE)
 
 # # Learning rate finder
@@ -164,7 +173,7 @@ LRfun(e) = LRINIT / 2^div(e, LRDROPRATE)
 
 # Callbacks
 CB_EPOCH = 0 # global callback epoch count
-CB_EPOCH_RATE = 25 # rate of per epoch callback updates
+CB_EPOCH_RATE = 10 # rate of per epoch callback updates
 CB_EPOCH_CHECK(last_epoch) = CB_EPOCH >= last_epoch + CB_EPOCH_RATE
 errs = Dict(
     :training => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]),
@@ -236,7 +245,7 @@ train_err_cb() # initial loss
 cbs = Flux.Optimise.runall([
     Flux.throttle(test_err_cb, 3),
     Flux.throttle(train_err_cb, 3),
-    Flux.throttle(plot_errs_cb, 60),
+    Flux.throttle(plot_errs_cb, 3),
     Flux.throttle(checkpoint_errs_cb, 60),
     # Flux.throttle(checkpoint_model_opt_cb, 120),
 ])
@@ -252,8 +261,8 @@ LAST_IMPROVED_EPOCH = 0
 
 try
     for epoch in CB_EPOCH .+ (1:settings["optimizer"]["epochs"]) #1:typemax(Int) #TODO
-        global BEST_ACC, LAST_IMPROVED_EPOCH, CB_EPOCH
-        CB_EPOCH = epoch
+        global BEST_ACC, LAST_IMPROVED_EPOCH
+        global CB_EPOCH = epoch
         
         # Set the learning rate
         lr!(opt, LRfun(epoch))
@@ -262,7 +271,7 @@ try
         Flux.train!(loss, Flux.params(model), train_set, opt; cb = cbs)
         
         # Calculate accuracy:
-        acc = accuracy(test_set...)
+        local acc = Flux.data(accuracy(test_set...))
         @info(@sprintf("[%d]: Test accuracy: %.4f", epoch, acc))
         
         # If our accuracy is good enough, quit out.
@@ -273,16 +282,13 @@ try
 
         # If this is the best accuracy we've seen so far, save the model out
         if acc >= BEST_ACC
-            BEST_ACC = Flux.data(acc)
+            BEST_ACC = acc
             LAST_IMPROVED_EPOCH = epoch
-
-            curr_epoch = epoch
-            curr_acc = BEST_ACC
 
             try
                 # TODO
                 # let model = Flux.mapleaves(Flux.data, model) # local scope, can rename
-                #     save_time = savebson("models/" * FILE_PREFIX * "model.bson", @dict(model, opt, curr_epoch, curr_acc)) #TODO getnow()
+                #     save_time = savebson("models/" * FILE_PREFIX * "model.bson", @dict(model, opt, epoch, acc)) #TODO getnow()
                 #     @info " -> New best accuracy; model saved ($(round(1000*save_time; digits = 2)) ms)"
                 # end
             catch e
@@ -292,7 +298,7 @@ try
 
             try
                 weights = Flux.data.(Flux.params(model))
-                save_time = savebson("weights/" * FILE_PREFIX * "weights.bson", @dict(weights, curr_epoch, curr_acc)) #TODO getnow()
+                save_time = savebson("weights/" * FILE_PREFIX * "weights.bson", @dict(weights, epoch, acc)) #TODO getnow()
                 @info " -> New best accuracy; weights saved ($(round(1000*save_time; digits = 2)) ms)"
             catch e
                 @warn "Error saving weights"
@@ -309,10 +315,10 @@ try
         #     LAST_IMPROVED_EPOCH = epoch
         # end
 
-        if epoch - LAST_IMPROVED_EPOCH >= CONVERGED_THRESH
-            @warn(" -> Haven't improved in $CONVERGED_THRESH iters; model has converged")
-            break
-        end
+        # if epoch - LAST_IMPROVED_EPOCH >= CONVERGED_THRESH
+        #     @warn(" -> Haven't improved in $CONVERGED_THRESH iters; model has converged")
+        #     break
+        # end
     end
 catch e
     if e isa InterruptException

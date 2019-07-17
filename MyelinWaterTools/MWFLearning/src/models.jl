@@ -332,6 +332,7 @@ function test_model_4(settings)
     BN      :: Bool     = settings["model"]["resnet"]["batchnorm"] # Use batch normalization
     GN      :: Bool     = settings["model"]["resnet"]["groupnorm"] # Use group normalization
     mode    :: Symbol   = settings["model"]["resnet"]["batchmode"] :: String |> Symbol # Batchnorm mode for BatchConvConnection
+    factory :: Symbol   = settings["model"]["resnet"]["factory"] :: String |> Symbol # Factory type for BatchConvConnection
     Nkern   :: Int      = settings["model"]["resnet"]["Nkern"] # Convolution kernel size
     Nconv   :: Int      = settings["model"]["resnet"]["Nconv"] # Convolutions per BatchConvConnection
     Nfeat   :: Int      = settings["model"]["resnet"]["Nfeat"] # Number of features to upsample to from 1-feature input
@@ -343,43 +344,42 @@ function test_model_4(settings)
     MakeActfun() = @λ x -> actfun.(x)
     ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> offset)
     MakeDropout() = DP ? Flux.AlphaDropout(T(0.5)) : identity
-    Resample(ch) = Flux.Conv((1,), ch, identity; init = xavier_uniform, pad = (0,)) # 1x1 resample convolutions
     
-    function DFF()
+    function GFF()
         local G0, G, C, D, k, σ = Nfeat, Nfeat, Nblock, Ndense, (Nkern,), actfun
         ConvFactory = @λ ch -> Flux.Conv(k, ch, σ; init = xavier_uniform, pad = (k.-1).÷2)
         BatchConvFactory = @λ ch -> BatchConvConnection(k, ch, σ; numlayers = Nconv, batchnorm = BN, groupnorm = GN, mode = mode)
-        # Factory = ConvFactory
-        Factory = BatchConvFactory
-        
+        Factory = factory == :conv ? ConvFactory : BatchConvFactory
         Flux.Chain(
             reduce(vcat, [
                 GlobalFeatureFusion(
                     2,
-                    [DenseConnection(Factory, D^(g-1) * G0, G, C; dims = 2) for d in 1:D]...,
+                    [DenseConnection(Factory, g * G0, g * G, C; dims = 2) for d in 1:D]...,
                 ),
-                # Flux.BatchNorm(D^g * G0, σ),
-                Flux.GroupNorm(D^g * G0, (D^g * G0) ÷ 2, σ),
+                # Flux.BatchNorm(D * g * G0, σ),
+                Flux.GroupNorm(D * g * G0, (D * g * G0) ÷ 2, σ),
+                Nglobal > 1 ? Flux.Conv((1,), D * g * G0 => (g + 1) * G0, identity; init = xavier_uniform, pad = (0,)) :
+                    Ndense > 1 ? Flux.Conv((1,), D * g * G0 => g * G0, identity; init = xavier_uniform, pad = (0,)) :
+                        identity
             ] for g in 1:Nglobal)...,
         )
     end
 
     # Residual network
     globalfeaturenet = Flux.Chain(
-        # ChannelResize(4),
-        # ChannelwiseDense(H*C ÷ 4, 4 => 1, actfun),
-        # DenseResize(),
-        # Flux.Dense(H*C, H*C, actfun),
         ChannelResize(C),
-        Resample(C => Nfeat),
-        DFF(),
-        # MakeDropout(),
-        # Flux.BatchNorm(Ndense * Nfeat, actfun),
-        # Flux.GroupNorm(Ndense * Nfeat, (Ndense * Nfeat) ÷ 2, actfun),
-        # Resample(Nfeat => 1),
+        # Flux.Conv((1,), C => C, identity; init = xavier_uniform, pad = (0,), stride = (2,)), # spatial downsampling
+        # ChannelwiseDense(H ÷ 2, C => C, actfun), # global feature forming
+        Flux.Conv((Nkern,), C => Nfeat, actfun; init = xavier_uniform, pad = (Nkern.-1).÷2), # channel upsampling
+        # Flux.Conv((Nkern,), C => Nfeat, actfun; init = xavier_uniform, pad = (Nkern.-1).÷2, stride = (2,)), # spatial downsampling, channel upsampling
+        GFF(),
+        # Flux.Conv((Nkern,), (Nglobal + 1) * Nfeat => (Nglobal + 1) * Nfeat, actfun; init = xavier_uniform, pad = (Nkern.-1).÷2, stride = (2,)), # spatial downsampling
         DenseResize(),
-        # Flux.Dense((H ÷ 2) * (Ndense * Nfeat ÷ 2), Nout),
-        Flux.Dense(H * Ndense^Nglobal * Nfeat, Nout),
+        # Flux.Dense((H ÷ 2 ÷ 2) * (Nglobal + 1) * Nfeat, Nout, actfun),
+        # Flux.Dense((H ÷ 2) * (Nglobal + 1) * Nfeat, Nout, actfun),
+        Nglobal > 1 ?
+            Flux.Dense(H * (Nglobal + 1) * Nfeat, Nout, actfun) :
+            Flux.Dense(H * Nfeat, Nout, actfun),
         # Flux.Dense(H, Nout),
     )
 
@@ -393,9 +393,6 @@ function test_model_4(settings)
         # @λ(x -> Flux.relu.(x)),
         @λ(x -> vcat(
             # Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
-            # 
-            # Flux.relu.(x[1:3,:]), # Positive parameters
-            # x[4:4,:], # Unbounded parameters
             # 
             Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
             Flux.relu.(x[3:5,:]), # Positive parameters

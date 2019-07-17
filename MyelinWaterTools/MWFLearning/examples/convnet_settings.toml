@@ -11,8 +11,8 @@ height      = "auto"
 channels    = 2 # Number of data channels
 # labels      = ["mwf", "iewf"] # Target labels
 # weights     = [1.0, 1.0] # Weights for loss function
-# labels      = ["T2iew/TE", "T2mw/TE", "alpha", "logTE*K"] # Target labels
-# weights     = [1.0, 1.0, 1.0, 1.0] # Weights for loss function
+# labels      = ["T2iew/TE", "T2mw/TE", "alpha"] # Target labels
+# weights     = [1.0, 1.0, 1.0] # Weights for loss function
 labels      = ["mwf", "iewf", "T2iew/TE", "T2mw/TE", "alpha"] # Target labels
 weights     = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
 # labels      = ["mwf", "iewf", "T2iew/TE", "T2mw/TE", "alpha", "logTE*K"] # Target labels
@@ -34,9 +34,9 @@ apply       = false # Apply wavelet preprocessing
 nterms      = 16 # number of terms to keep
 [data.preprocess.ilaplace]
 apply       = true # Apply ilaplace preprocessing
-T2Range     = [0.001, 2.0] # T2 distribution range
+T2Range     = [0.001, 1.0] # T2 distribution range
 nT2         = 24 # Number of exponentials in T2 distribution
-alpha       = 0.2 # Tikhonov regularization parameter
+alpha       = 0.1 # Tikhonov regularization parameter
 [data.preprocess.PCA]
 apply       = false # Apply PCA preprocessing
 
@@ -61,27 +61,28 @@ offset    = "auto"
 dropout   = false
 batchnorm = false
 groupnorm = false
-batchmode = "post" # Pre-, post-, or hybrid normalization for BatchConvConnection
+factory   = "batchconv" # Factory type ("conv" or "batchconv")
+batchmode = "pre" # Pre-, post-, or hybrid normalization for "batchconv" factory
 Nkern     = 3 # Convolution kernel size
 Nconv     = 2 # Convolutions per BatchConvConnection
 Nfeat     = 4 # Number of features to upsample to from 1-feature input
 Nblock    = 2 # Number of blocks in densely connected RDB layer
 Ndense    = 2 # Number of blocks in GlobalFeatureFusion concatenation layer
-Nglobal   = 4 # Number of GlobalFeatureFusion concatenation layers
+Nglobal   = 2 # Number of GlobalFeatureFusion concatenation layers
 
 [optimizer]
 epochs  = 1000
 savemod = 1
 testmod = 1
 [optimizer.ADAM]
-lr      = 0.0003
+lr      = 0.001
 beta    = [0.9, 0.999]
 
 [plot]
 # scale     = [100.0, 100.0] # scale labels before plotting
 # units     = ["%", "%"] # label units, after scaling
-# scale     = [1.0, 1.0, 1.0, 1.0] # scale labels before plotting
-# units     = ["ms/ms", "ms/ms", "deg", "log(um)"] # label units, after scaling
+# scale     = [1.0, 1.0, 1.0] # scale labels before plotting
+# units     = ["ms/ms", "ms/ms", "deg"] # label units, after scaling
 scale     = [100.0, 100.0, 1.0, 1.0, 1.0] # scale labels before plotting
 units     = ["%", "%", "ms/ms", "ms/ms", "deg"] # label units, after scaling
 # scale     = [100.0, 100.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
