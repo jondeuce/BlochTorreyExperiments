@@ -31,11 +31,11 @@ using LegibleLambdas: @λ
 export @dict, @ntuple, @unpack, @λ
 
 export verify_settings, model_summary, get_model, get_activation
-export heightsize, batchsize, channelsize, log10range
+export heightsize, batchsize, channelsize, log10range, linspace, logspace, unitsum
 export prepare_data, label_fun, init_data, init_labels, init_signal
 
 # Layers
-export AdaBound
+export MomentumW, AdaBound
 export printsize, wrapprint
 export PrintSize, DenseResize, ChannelResize, Scale, Sumout
 export IdentitySkip, CatSkip, ChannelwiseDense, HeightwiseDense

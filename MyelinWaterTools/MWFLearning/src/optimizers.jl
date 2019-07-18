@@ -20,6 +20,12 @@ end
 opt_to_cpu(o::Flux.Optimiser, params) = Flux.Optimiser(map(o -> opt_to_cpu(o, params), o.os)...)
 
 """
+    MomentumW(η = 0.01, ρ = 0.9, decay = 0)
+Gradient descent with learning rate `η`, momentum `ρ`, and weight decay `decay`.
+"""
+MomentumW(η = 0.01, ρ = 0.9, decay = 0) = Flux.Optimiser(Flux.Momentum(η, ρ), Flux.WeightDecay(decay))
+
+"""
     AdaBound(η = 0.001, β = (0.9, 0.999), γ = 0.001, clip = 0.1)
 
 [AdaBound](https://openreview.net/forum?id=Bkg3g2R9FX) optimiser.

@@ -284,8 +284,7 @@ function residual_dense_net(settings)
         Resample(C => Nfeat),
         DFF(),
         # MakeDropout(),
-        # Flux.BatchNorm(Nfeat, actfun),
-        Flux.GroupNorm(Nfeat, Nfeat÷2, actfun),
+        BN ? Flux.BatchNorm(Nfeat, actfun) : GN ? Flux.GroupNorm(Nfeat, Nfeat÷2, actfun) : identity,
         Resample(Nfeat => 1),
         DenseResize(),
         # Flux.Dense(H ÷ 4, Nout),
@@ -340,7 +339,11 @@ function test_model_4(settings)
     Nblock  :: Int      = settings["model"]["densenet"]["Nblock"] # Number of blocks in densely connected RDB layer
     Ndense  :: Int      = settings["model"]["densenet"]["Ndense"] # Number of blocks in GlobalFeatureFusion concatenation layer
     Nglobal :: Int      = settings["model"]["densenet"]["Nglobal"] # Number of GlobalFeatureFusion concatenation layers
+    Nstride :: Int      = settings["model"]["densenet"]["Nstride"] # Number of GlobalFeatureFusion concatenation layers
     @assert !(BN && GN)
+
+    SKIP_CONNECTIONS = true
+    MAYBESKIP(layer) = SKIP_CONNECTIONS ? IdentitySkip(layer) : layer
 
     MakeActfun() = @λ x -> actfun.(x)
     ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> offset)
@@ -351,37 +354,37 @@ function test_model_4(settings)
         ConvFactory = @λ ch -> Flux.Conv(k, ch, σ; init = xavier_uniform, pad = (k.-1).÷2)
         BatchConvFactory = @λ ch -> BatchConvConnection(k, ch, σ; numlayers = Nconv, batchnorm = BN, groupnorm = GN, mode = mode)
         Factory = factory == :conv ? ConvFactory : BatchConvFactory
-        Flux.Chain(
-            reduce(vcat, [
-                GlobalFeatureFusion(
-                    3,
-                    [DenseConnection(Factory, g * G0, g * G, C; dims = 3) for d in 1:D]...,
-                ),
-                # Flux.BatchNorm(D * g * G0, σ),
-                Flux.GroupNorm(D * g * G0, (D * g * G0) ÷ 2, σ),
-                Nglobal > 1 ? Flux.Conv((1,1), D * g * G0 => (g + 1) * G0, identity; init = xavier_uniform, pad = (0,0)) :
-                    Ndense > 1 ? Flux.Conv((1,1), D * g * G0 => g * G0, identity; init = xavier_uniform, pad = (0,0)) :
-                        identity,
-            ] for g in 1:Nglobal)...,
-        )
+        gff_layers = []
+        for g in 1:Nglobal
+            if g > 1
+                push!(gff_layers, Flux.Conv((1,1), D * (g - 1) * G0 => g * G0, identity; init = xavier_uniform, pad = (0,0), stride = (Nstride,1)))
+            end
+            push!(gff_layers, GlobalFeatureFusion(3, [MAYBESKIP(DenseConnection(Factory, g * G0, g * G, C; dims = 3)) for d in 1:D]...,))
+            if BN
+                push!(gff_layers, Flux.BatchNorm(D * g * G0, σ))
+            elseif GN
+                push!(gff_layers, Flux.GroupNorm(D * g * G0, (D * g * G0) ÷ 2, σ))
+            end
+        end
+        push!(gff_layers, Flux.Conv((1,1), D * Nglobal * G0 => Nglobal * G0, identity; init = xavier_uniform, pad = (0,0), stride = (Nstride,1)))
+        return Flux.Chain(gff_layers...)
     end
+
+    @inline stride_size(N::Int, str::Int, nstr::Int) = (@assert nstr >= 0; nstr == 0 ? N : stride_size(length(1:str:N), str, nstr-1))
+    ApplyPool = Nstride > 1
+    Hlast = ApplyPool ? 1 : stride_size(H, Nstride, Nglobal-1)
 
     # Residual network
     globalfeaturenet = Flux.Chain(
         ChannelResize(C),
         # Flux.Conv((1,1), C => C, identity; init = xavier_uniform, pad = (0,0), stride = (2,1)), # spatial downsampling
-        # ChannelwiseDense(H ÷ 2, C => C, actfun), # global feature forming
         Flux.Conv((Nkern,1), C => Nfeat, actfun; init = xavier_uniform, pad = ((Nkern,1).-1).÷2), # channel upsampling
         # Flux.Conv((Nkern,1), C => Nfeat, actfun; init = xavier_uniform, pad = ((Nkern,1).-1).÷2, stride = (2,1)), # spatial downsampling, channel upsampling
         GFF(),
-        # Flux.Conv((Nkern,1), (Nglobal + 1) * Nfeat => (Nglobal + 1) * Nfeat, actfun; init = xavier_uniform, pad = ((Nkern,1).-1).÷2, stride = (2,1)), # spatial downsampling
+        # Flux.Conv((Nkern,1), Nglobal * Nfeat => Nglobal * Nfeat, actfun; init = xavier_uniform, pad = ((Nkern,1).-1).÷2, stride = (2,1)), # spatial downsampling
+        ApplyPool ? Flux.MeanPool((Hlast-1,1)) : identity,
         DenseResize(),
-        # Flux.Dense((H ÷ 2 ÷ 2) * (Nglobal + 1) * Nfeat, Nout, actfun),
-        # Flux.Dense((H ÷ 2) * (Nglobal + 1) * Nfeat, Nout, actfun),
-        Nglobal > 1 ?
-            Flux.Dense(H * (Nglobal + 1) * Nfeat, Nout, actfun) :
-            Flux.Dense(H * Nfeat, Nout, actfun),
-        # Flux.Dense(H, Nout),
+        Flux.Dense(Hlast * Nglobal * Nfeat, Nout, actfun),
     )
 
     # Output parameter handling:
@@ -393,11 +396,8 @@ function test_model_4(settings)
         ParamsScale(), # Scale to parameter space
         # @λ(x -> Flux.relu.(x)),
         @λ(x -> vcat(
-            # Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
-            # 
             Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
             Flux.relu.(x[3:5,:]), # Positive parameters
-            # x[6:6,:], # Unbounded parameters
         )),
     )
 
@@ -408,13 +408,17 @@ end
     ResNet
 """
 function resnet(settings)
-    H       :: Int    = settings["data"]["height"] :: Int # Data height
-    C       :: Int    = settings["data"]["channels"] :: Int # Number of channels
-    Nout    :: Int    = settings["model"]["Nout"] :: Int # Number of outputs
-    type    :: Symbol = settings["model"]["resnet"]["type"] :: String |> Symbol # Factory type for BatchConvConnection
-    Nfilt   :: Int    = settings["model"]["resnet"]["Nfilt"] :: Int # Number of features to upsample to from 1-feature input
-
+    VT               = settings["prec"] == 64 ? Vector{Float64} : Vector{Float32}
+    H      :: Int    = settings["data"]["height"] :: Int # Data height
+    C      :: Int    = settings["data"]["channels"] :: Int # Number of channels
+    Nout   :: Int    = settings["model"]["Nout"] :: Int # Number of outputs
+    type   :: Symbol = settings["model"]["resnet"]["type"] :: String |> Symbol # Factory type for BatchConvConnection
+    Nfilt  :: Int    = settings["model"]["resnet"]["Nfilt"] :: Int # Number of features to upsample to from 1-feature input
+    scale  :: VT     = settings["model"]["scale"] :: Vector |> VT # Parameter scales
+    offset :: VT     = settings["model"]["offset"] :: Vector |> VT # Parameter offsets
+    
     NfiltLast = type ∈ (:ResNet18, :ResNet34) ? Nfilt * 8 : Nfilt * 32
+    ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> offset)
 
     top_in = Flux.Chain(
         Flux.ConvTranspose(ResNet._rep(7), C => C; pad = ResNet._pad(3), stride = ResNet._rep(4)),
@@ -423,9 +427,11 @@ function resnet(settings)
     )
 
     bottom_in = Flux.Chain(
+        # Flux.MeanPool(ResNet._rep(7)),
         Flux.MeanPool(ResNet._rep(5)),
         @λ(x -> reshape(x, :, size(x,4))),
         Flux.Dense(NfiltLast, Nout),
+        ParamsScale(),
         @λ(x -> vcat(
             Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
             Flux.relu.(x[3:5,:]), # Positive parameters

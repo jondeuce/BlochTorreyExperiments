@@ -47,6 +47,21 @@ between `a` and `b`
 log10range(a, b; length = 10) = 10 .^ range(log10(a), log10(b); length = length)
 
 """
+    linspace(x1,x2,y1,y2) = x -> (y2 - y1) / (x2 - x1) * (x - x1) + y1
+"""
+@inline linspace(x1,x2,y1,y2) = x -> (y2 - y1) / (x2 - x1) * (x - x1) + y1
+
+"""
+    logspace(x1,x2,y1,y2) = x -> 10^linspace(x1, x2, log10(y1), log10(y2))(x)
+"""
+@inline logspace(x1,x2,y1,y2) = x -> 10^linspace(x1, x2, log10(y1), log10(y2))(x)
+
+"""
+    unitsum(x) = x ./ sum(x)
+"""
+unitsum(x) = x ./ sum(x)
+
+"""
     to_float_type_T(T, x)
 
 Convert a number or collection `x` to have floating point type `T`.
