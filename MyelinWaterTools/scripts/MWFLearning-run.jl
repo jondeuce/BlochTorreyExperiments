@@ -10,6 +10,7 @@ using StatsBase: quantile, sample, iqr
 using Base.Iterators: repeated, partition
 
 using MWFLearning
+using CuArrays
 using StatsPlots
 pyplot(size=(800,600))
 
@@ -31,6 +32,7 @@ const T   = settings["prec"] == 64 ? Float64 : Float32
 const VT  = Vector{T}
 const MT  = Matrix{T}
 const VMT = VecOrMat{T}
+const CVT = GPU ? CuVector{T} : Vector{T}
 
 const savefoldernames = ["settings", "models", "weights", "log", "plots"]
 const savefolders = Dict{String,String}(savefoldernames .=> mkpath.(joinpath.(settings["dir"], savefoldernames)))
@@ -41,9 +43,15 @@ clearsavefolders(folders = savefolders) = for (k,f) in folders; rm.(joinpath.(f,
 #   Data:   length H 1D vectors organized into B batches as [H x 1 x B] arrays
 #   Labels: length Nout 1D vectors organized into B batches as [Nout x B] arrays
 @info "Preparing data..."
-make_minibatch(x, y, idxs) = (x[:,:,idxs], y[:,idxs])
+make_minibatch(x, y, idxs) = (x[.., idxs], y[.., idxs])
 const data_set = prepare_data(settings)
-GPU && [data_set[k] = Flux.gpu(data_set[k]) for k in (:training_data, :testing_data, :training_labels, :testing_labels)]
+GPU && for k in (:training_data, :testing_data, :training_labels, :testing_labels)
+    data_set[k] = Flux.gpu(data_set[k])
+end
+const MAKE_2D = true #TODO
+MAKE_2D && for k in (:training_data, :testing_data)
+    data_set[k] = reshape(data_set[k], size(data_set[k],1), 1, size(data_set[k],2), size(data_set[k],3))
+end
 
 const train_batches = partition(1:batchsize(data_set[:training_data]), settings["data"]["batch_size"])
 const train_set = [make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches]
@@ -67,7 +75,7 @@ plot_random_data_samples = () -> begin
             test_set[1][end - settings["data"]["preprocess"]["wavelet"]["nterms"] + 1 : end, 1:1, :] :
             test_set[1] # default
     fig = plot([
-        plot(plot_xdata, Flux.cpu(plot_ydata[:,:,i]);
+        plot(plot_xdata, Flux.cpu(plot_ydata[:,1,:,i]);
             xscale = settings["data"]["preprocess"]["ilaplace"]["apply"] ? :log10 : :identity,
             titlefontsize = 8, grid = true, minorgrid = true,
             legend = :none, #label = "Data Distbn.",
@@ -82,24 +90,25 @@ savefig(plot_random_data_samples(), "plots/" * FILE_PREFIX * "datasamples.png")
 # Construct model
 @info "Constructing model..."
 model = MWFLearning.get_model(settings);
+model = Flux.Chain(deepcopy(resnet[1:end-1])..., deepcopy(model[end:end])...); #TODO
 model = GPU ? Flux.gpu(model) : model;
 model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"));
 
 # Compute parameter density, defined as the number of Flux.params / number of training label datapoints
-const test_dofs = length(test_set[2])
-const train_dofs = sum(batch -> length(batch[2]), train_set)
-const param_dofs = sum(length, Flux.params(model))
-const test_param_density = param_dofs / test_dofs
-const train_param_density = param_dofs / train_dofs
+test_dofs = length(test_set[2])
+train_dofs = sum(batch -> length(batch[2]), train_set)
+param_dofs = sum(length, Flux.params(model))
+test_param_density = param_dofs / test_dofs
+train_param_density = param_dofs / train_dofs
 @info " Testing parameter density: $param_dofs/$test_dofs ($(round(100 * test_param_density; digits = 2)) %)"
 @info "Training parameter density: $param_dofs/$train_dofs ($(round(100 * train_param_density; digits = 2)) %)"
 
 # Loss and accuracy function
 unitsum(x) = x ./ sum(x)
-LabelWeights()::VT = VT(inv.(model_settings["scale"]) .* unitsum(settings["data"]["weights"]))
+LabelWeights()::CVT = Flux.gpu(VT(inv.(model_settings["scale"]) .* unitsum(settings["data"]["weights"])))::CVT
 
-l1 = @λ (x,y) -> sum(abs.(LabelWeights() .* (model(x) .- y)))
-l2 = @λ (x,y) -> sum((LabelWeights() .* (model(x) .- y)).^2)
+l1 = @λ (x,y) -> sum(abs, LabelWeights()::CVT .* (model(x) .- y))
+l2 = @λ (x,y) -> sum(abs2, LabelWeights()::CVT .* (model(x) .- y))
 mae = @λ (x,y) -> l1(x,y) * 1 // length(y)
 mse = @λ (x,y) -> l2(x,y) * 1 // length(y)
 crossent = @λ (x,y) -> Flux.crossentropy(model(x), y)
@@ -125,7 +134,7 @@ accuracy =
 labelerror =
     # @λ (x,y) -> 100 .* vec(mean(abs.((model(x) .- y) ./ y); dims = 2))
     # @λ (x,y) -> 100 .* vec(mean(abs.(model(x) .- y); dims = 2) ./ maximum(abs.(y); dims = 2))
-    @λ (x,y) -> 100 .* vec(mean(abs.(model(x) .- y); dims = 2) ./ (e->e[2]-e[1]).(extrema(y; dims=2)))
+    @λ (x,y) -> 100 .* vec(mean(abs.(model(x) .- y); dims = 2) ./ (maximum(abs.(y); dims = 2) .- minimum(abs.(y); dims = 2)))
 
 # Utils
 linspace(x1,x2,y1,y2) = x -> (y2-y1)/(x2-x1) * (x-x1) + y1
@@ -137,9 +146,10 @@ lr!(opt, α) = (opt.eta = α; opt.eta)
 lr(opt::Flux.Optimiser) = lr(opt[1])
 lr!(opt::Flux.Optimiser, α) = lr!(opt[1], α)
 
-opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
+# opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
 # opt = Flux.Nesterov(1e-1)
 # opt = Flux.ADAM(1e-2, (0.9, 0.999))
+opt = Flux.ADAM(1e-3, (0.9, 0.999))
 # opt = Flux.ADAM(3e-4, (0.9, 0.999))
 # opt = Flux.ADAMW(1e-2, (0.9, 0.999), 1e-5)
 # opt = Flux.ADAMW(1e-3, (0.9, 0.999), 1e-5)
@@ -149,13 +159,14 @@ opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADA
 # opt = Flux.Momentum(1e-3, 0.9)
 # opt = Flux.Momentum(3e-4, 0.9)
 # opt = Flux.Momentum(1e-4, 0.9)
+# opt = Flux.Optimiser(Flux.Momentum(0.1, 0.9), Flux.WeightDecay(1e-4))
 
-# # Fixed learning rate
-# LRfun(e) = lr(opt)
+# Fixed learning rate
+LRfun(e) = lr(opt)
 
-# Drop learning rate every LRDROPRATE epochs
-LRINIT, LRDROPRATE = lr(opt), 50
-LRfun(e) = LRINIT / 2^div(e, LRDROPRATE)
+# # Drop learning rate every LRDROPRATE epochs
+# LRDROPRATE, LRDROPFACTOR = 25, 2.0
+# LRfun(e) = mod(e, LRDROPRATE) == 0 ? lr(opt) / LRDROPFACTOR : lr(opt)
 
 # # Learning rate finder
 # LRfun(e) = e <= settings["optimizer"]["epochs"] ?
@@ -166,10 +177,10 @@ LRfun(e) = LRINIT / 2^div(e, LRDROPRATE)
 # LRTAIL = settings["optimizer"]["epochs"] ÷ 20
 # LRWIDTH = (settings["optimizer"]["epochs"] - LRTAIL) ÷ 2
 # LRfun(e) =
-#                      e <=   LRWIDTH          ? linspace(        1,            LRWIDTH, LRSTART, LRMAX)(e) :
-#       LRWIDTH + 1 <= e <= 2*LRWIDTH          ? linspace(  LRWIDTH,          2*LRWIDTH, LRMAX,   LRSTART)(e) :
-#     2*LRWIDTH + 1 <= e <= 2*LRWIDTH + LRTAIL ? linspace(2*LRWIDTH, 2*LRWIDTH + LRTAIL, LRSTART, LRMIN)(e) :
-#     LRMIN
+#                      e <=   LRWIDTH          ? linspace(        1,            LRWIDTH, LRSTART,   LRMAX)(e) :
+#       LRWIDTH + 1 <= e <= 2*LRWIDTH          ? linspace(  LRWIDTH,          2*LRWIDTH,   LRMAX, LRSTART)(e) :
+#     2*LRWIDTH + 1 <= e <= 2*LRWIDTH + LRTAIL ? linspace(2*LRWIDTH, 2*LRWIDTH + LRTAIL, LRSTART,   LRMIN)(e) :
+#             LRMIN
 
 # Callbacks
 CB_EPOCH = 0 # global callback epoch count
@@ -182,7 +193,7 @@ train_err_cb = let LAST_EPOCH = 0
     function()
         CB_EPOCH_CHECK(LAST_EPOCH) ? (LAST_EPOCH = CB_EPOCH) : return nothing
         update_time = @elapsed begin
-            currloss, curracc, currlaberr = mean(Flux.data(loss(b...)) for b in train_set), mean(Flux.data(accuracy(b...)) for b in train_set), mean(Flux.data(labelerror(b...)) for b in train_set)
+            currloss, curracc, currlaberr = mean([Flux.cpu(Flux.data(loss(b...))) for b in train_set]), mean([Flux.cpu(Flux.data(accuracy(b...))) for b in train_set]), mean([Flux.cpu(Flux.data(labelerror(b...))) for b in train_set])
             push!(errs[:training][:epoch], CB_EPOCH)
             push!(errs[:training][:loss], currloss)
             push!(errs[:training][:acc], curracc)
@@ -195,7 +206,7 @@ test_err_cb = let LAST_EPOCH = 0
     function()
         CB_EPOCH_CHECK(LAST_EPOCH) ? (LAST_EPOCH = CB_EPOCH) : return nothing
         update_time = @elapsed begin
-            currloss, curracc, currlaberr = Flux.data(loss(test_set...)), Flux.data(accuracy(test_set...)), Flux.data(labelerror(test_set...))
+            currloss, curracc, currlaberr = Flux.cpu(Flux.data(loss(test_set...))), Flux.cpu(Flux.data(accuracy(test_set...))), Flux.cpu(Flux.data(labelerror(test_set...)))
             push!(errs[:testing][:epoch], CB_EPOCH)
             push!(errs[:testing][:loss], currloss)
             push!(errs[:testing][:acc], curracc)
@@ -231,7 +242,9 @@ plot_errs_cb = let LAST_EPOCH = 0
     end
 end
 checkpoint_model_opt_cb = function()
-    save_time = savebson("models/" * FILE_PREFIX * "model-checkpoint.bson", @dict(model, opt)) #TODO getnow()
+    save_time = @elapsed let opt = opt_to_cpu(opt, Flux.params(model)), model = Flux.cpu(model)
+        savebson("models/" * FILE_PREFIX * "model-checkpoint.bson", @dict(model, opt)) #TODO getnow()
+    end
     @info " -> Model checkpoint... ($(round(1000*save_time; digits = 2)) ms)"
 end
 checkpoint_errs_cb = function()
@@ -264,19 +277,30 @@ try
         global BEST_ACC, LAST_IMPROVED_EPOCH
         global CB_EPOCH = epoch
         
-        # Set the learning rate
-        lr!(opt, LRfun(epoch))
+        # Update learning rate and exit if it has become to small
+        last_lr = lr(opt)
+        curr_lr = lr!(opt, LRfun(epoch))
+        
+        if last_lr != curr_lr
+            @info " -> Learning rate updated: " * @sprintf("%.2e", last_lr) * " --> "  * @sprintf("%.2e", curr_lr)
+        end
+        if lr(opt) < 1e-6
+            @info " -> Early-exiting: Learning rate has dropped below 1e-6"
+            break
+        end
 
         # Train for a single epoch
-        Flux.train!(loss, Flux.params(model), train_set, opt; cb = cbs)
+        train_time = @elapsed CuArrays.@sync begin
+            Flux.train!(loss, Flux.params(model), train_set, opt; cb = cbs)
+        end
         
         # Calculate accuracy:
-        local acc = Flux.data(accuracy(test_set...))
-        @info(@sprintf("[%d]: Test accuracy: %.4f", epoch, acc))
-        
+        acc = Flux.cpu(Flux.data(accuracy(test_set...)))
+        @info @sprintf("[%d]: Test accuracy: %.4f (%.2f ms)", epoch, acc, 1000 * train_time)
+
         # If our accuracy is good enough, quit out.
         if acc >= ACC_THRESH
-            @info " -> Early-exiting: We reached our target accuracy of 99.99%"
+            @info " -> Early-exiting: We reached our target accuracy of $ACC_THRESH%"
             break
         end
 
@@ -285,20 +309,21 @@ try
             BEST_ACC = acc
             LAST_IMPROVED_EPOCH = epoch
 
-            try
-                # TODO
-                # let model = Flux.mapleaves(Flux.data, model) # local scope, can rename
-                #     save_time = savebson("models/" * FILE_PREFIX * "model.bson", @dict(model, opt, epoch, acc)) #TODO getnow()
-                #     @info " -> New best accuracy; model saved ($(round(1000*save_time; digits = 2)) ms)"
-                # end
-            catch e
-                @warn "Error saving model"
-                @warn sprint(showerror, e, catch_backtrace())
-            end
+            # try
+            #     # TODO access to undefined reference error?
+            #     save_time = @elapsed let opt = MWFLearning.opt_to_cpu(opt, Flux.params(model)), model = Flux.cpu(model)
+            #         savebson("models/" * FILE_PREFIX * "model.bson", @dict(model, opt, epoch, acc)) #TODO getnow()
+            #     end
+            #     @info " -> New best accuracy; model saved ($(round(1000*save_time; digits = 2)) ms)"
+            # catch e
+            #     @warn "Error saving model"
+            #     @warn sprint(showerror, e, catch_backtrace())
+            # end
 
             try
-                weights = Flux.data.(Flux.params(model))
-                save_time = savebson("weights/" * FILE_PREFIX * "weights.bson", @dict(weights, epoch, acc)) #TODO getnow()
+                save_time = @elapsed let weights = Flux.cpu.(Flux.data.(Flux.params(model)))
+                    savebson("weights/" * FILE_PREFIX * "weights.bson", @dict(weights, epoch, acc)) #TODO getnow()
+                end
                 @info " -> New best accuracy; weights saved ($(round(1000*save_time; digits = 2)) ms)"
             catch e
                 @warn "Error saving weights"
@@ -330,8 +355,8 @@ catch e
 end
 
 @info "Computing resulting labels..."
-model_labels = Flux.data(model(test_set[1]))
-true_labels = copy(test_set[2])
+model_labels = model(test_set[1]) |> Flux.data |> Flux.cpu |> deepcopy
+true_labels = test_set[2] |> Flux.cpu |> deepcopy
 
 @info "Plotting errors vs. learning rate..."
 fig = let

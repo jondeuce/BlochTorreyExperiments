@@ -1,11 +1,11 @@
 prec    = 32
-gpu     = false
+gpu     = true
 dir     = "."
 
 [data]
 train_data  = "./train"
 test_data   = "./test"
-batch_size  = 200
+batch_size  = 500
 test_size   = "auto" # Auto treats entire test set as one batch
 height      = "auto"
 channels    = 2 # Number of data channels

@@ -37,14 +37,16 @@ export prepare_data, label_fun, init_data, init_labels, init_signal
 # Layers
 export AdaBound
 export PrintSize, DenseResize, ChannelResize, Scale, Sumout
-export IdentitySkip, CatSkip
+export IdentitySkip, CatSkip, ChannelwiseDense, HeightwiseDense
 export BatchDenseConnection, BatchConvConnection
 export DenseConnection, ResidualDenseBlock
 export GlobalFeatureFusion, DenseFeatureFusion
 
 include("src/transforms.jl")
 include("src/utils.jl")
+include("src/loading.jl")
 include("src/layers.jl")
+include("src/optimizers.jl")
 include("src/models.jl")
 
 end # module MWFLearning

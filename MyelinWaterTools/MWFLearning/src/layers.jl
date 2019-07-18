@@ -1,71 +1,3 @@
-function kaiming_uniform(T::Type, dims; gain = 1)
-   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
-   bound = sqrt(3) * gain / sqrt(fan_in)
-   return rand(Uniform(-bound, bound), dims) |> Array{T}
-end
-kaiming_uniform(T::Type, dims...; kwargs...) = kaiming_uniform(T::Type, dims; kwargs...)
-kaiming_uniform(args...; kwargs...) = kaiming_uniform(Float32, args...; kwargs...)
-
-function kaiming_normal(T::Type, dims; gain = 1)
-   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
-   std = gain / sqrt(fan_in)
-   return rand(Normal(0, std), dims) |> Array{T}
-end
-kaiming_normal(T::Type, dims...; kwargs...) = kaiming_normal(T::Type, dims; kwargs...)
-kaiming_normal(args...; kwargs...) = kaiming_normal(Float32, args...; kwargs...)
-
-function xavier_uniform(T::Type, dims; gain = 1)
-   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
-   fan_out = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end-1]
-   bound = sqrt(3) * gain * sqrt(2 / (fan_in + fan_out))
-   return rand(Uniform(-bound, bound), dims) |> Array{T}
-end
-xavier_uniform(T::Type, dims...; kwargs...) = xavier_uniform(T::Type, dims; kwargs...)
-xavier_uniform(args...; kwargs...) = xavier_uniform(Float32, args...; kwargs...)
-
-function xavier_normal(T::Type, dims; gain = 1)
-   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
-   fan_out = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end-1]
-   std = gain * sqrt(2 / (fan_in + fan_out))
-   return rand(Normal(0, std), dims) |> Array{T}
-end
-xavier_normal(T::Type, dims...; kwargs...) = xavier_normal(T::Type, dims; kwargs...)
-xavier_normal(args...; kwargs...) = xavier_normal(Float32, args...; kwargs...)
-
-# # Override flux defaults
-# Flux.glorot_uniform(dims...) = xavier_uniform(Float32, dims...)
-# Flux.glorot_uniform(T::Type, dims...) = xavier_uniform(T, dims...)
-# Flux.glorot_normal(dims...) = xavier_normal(Float32, dims...)
-# Flux.glorot_normal(T::Type, dims...) = xavier_normal(T, dims...)
-
-"""
-    AdaBound(η = 0.001, β = (0.9, 0.999), γ = 0.001, clip = 0.1)
-
-[AdaBound](https://openreview.net/forum?id=Bkg3g2R9FX) optimiser.
-"""
-mutable struct AdaBound
-    eta   :: Float64
-    beta  :: Tuple{Float64, Float64}
-    gamma :: Float64
-    clip  :: Float64
-    state :: IdDict
-end
-AdaBound(η = 0.001, β = (0.9, 0.999), γ = 0.001, clip = 0.1) =
-    AdaBound(η, β, γ, clip, IdDict())
-
-function Flux.Optimise.apply!(o::AdaBound, x, Δ)
-    ϵ = 1e-8
-    η, β, γ, clip = o.eta, o.beta, o.gamma, o.clip
-    mt, vt, βp, n = get!(o.state, x, (zero(x), zero(x), β, 1))
-    lb = clip * (1 - 1/(γ * n + 1))
-    ub = clip * (1 + 1/(γ * n))
-    @. mt = β[1] * mt + (1 - β[1]) * Δ
-    @. vt = β[2] * vt + (1 - β[2]) * Δ^2
-    @. Δ  = mt * clamp(η / (1 - βp[1]) / (√(vt / (1 - βp[2])) + ϵ), lb, ub)
-    o.state[x] = (mt, vt, βp .* β, n+1)
-    return Δ
-end
-
 """
 PrintSize()
 
@@ -133,6 +65,11 @@ end
 ChannelwiseDense
 """
 ChannelwiseDense(H::Int, ch::Pair, σ = identity) = Flux.Chain(DenseResize(), Flux.Dense(H*ch[1], H*ch[2], σ), ChannelResize(ch[2]))
+
+"""
+HeightwiseDense
+"""
+HeightwiseDense(H::Int, C::Int, σ = identity) = Flux.Chain(@λ(x -> reshape(x, H, :)), Flux.Dense(H, H, σ), @λ(x -> reshape(x, H, C, :)))
 
 """
 IdentitySkip
