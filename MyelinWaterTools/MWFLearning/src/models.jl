@@ -6,6 +6,7 @@ get_model(settings::Dict) =
     settings["model"]["name"] == "TestModel2"       ?   test_model_2(settings) :
     settings["model"]["name"] == "TestModel3"       ?   test_model_3(settings) :
     settings["model"]["name"] == "TestModel4"       ?   test_model_4(settings) :
+    settings["model"]["name"] == "ResNet"           ?   resnet(settings) :
     error("Unknown model: " * settings["model"]["name"])
 
 get_activation(str::String) =
@@ -32,13 +33,13 @@ function keras_1D_sequence_classification(settings)
 
     model = Flux.Chain(
         # Two convolution layers followed by max pooling
-        Flux.Conv((Nkern,), C => Nf1, pad = (Npad,), actfun), # (H, 1, 1) -> (H, Nf1, 1)
-        Flux.Conv((Nkern,), Nf1 => Nf1, pad = (Npad,), actfun), # (H, Nf1, 1) -> (H, Nf1, 1)
+        Flux.Conv((Nkern,1), C => Nf1, pad = (Npad,0), actfun), # (H, 1, 1) -> (H, Nf1, 1)
+        Flux.Conv((Nkern,1), Nf1 => Nf1, pad = (Npad,0), actfun), # (H, Nf1, 1) -> (H, Nf1, 1)
         Flux.MaxPool((Npool,)), # (H, Nf1, 1) -> (H/Npool, Nf1, 1)
 
         # Two more convolution layers followed by mean pooling
-        Flux.Conv((Nkern,), Nf1 => Nf2, pad = (Npad,), actfun), # (H/Npool, Nf1, 1) -> (H/Npool, Nf2, 1)
-        Flux.Conv((Nkern,), Nf2 => Nf2, pad = (Npad,), actfun), # (H/Npool, Nf2, 1) -> (H/Npool, Nf2, 1)
+        Flux.Conv((Nkern,1), Nf1 => Nf2, pad = (Npad,0), actfun), # (H/Npool, Nf1, 1) -> (H/Npool, Nf2, 1)
+        Flux.Conv((Nkern,1), Nf2 => Nf2, pad = (Npad,0), actfun), # (H/Npool, Nf2, 1) -> (H/Npool, Nf2, 1)
         Flux.MeanPool((Npool,)), # (H/Npool, Nf2, 1) -> (H/Npool^2, Nf2, 1)
 
         # Dropout layer
@@ -64,20 +65,20 @@ function test_model_1(settings)
 
     model = Flux.Chain(
         # Two convolution layers followed by max pooling and batch normalization
-        Flux.Conv((Nkern,), C => Nf1, pad = (Npad,), actfun),
-        Flux.Conv((Nkern,), Nf1 => Nf1, pad = (Npad,), actfun),
+        Flux.Conv((Nkern,1), C => Nf1, pad = (Npad,0), actfun),
+        Flux.Conv((Nkern,1), Nf1 => Nf1, pad = (Npad,0), actfun),
         Flux.MaxPool((Npool,)),
         settings["model"]["batchnorm"] ? Flux.BatchNorm(Nf1, actfun) : identity,
 
         # Two more convolution layers followed by max pooling and batch normalization
-        Flux.Conv((Nkern,), Nf1 => Nf2, pad = (Npad,), actfun),
-        Flux.Conv((Nkern,), Nf2 => Nf2, pad = (Npad,), actfun),
+        Flux.Conv((Nkern,1), Nf1 => Nf2, pad = (Npad,0), actfun),
+        Flux.Conv((Nkern,1), Nf2 => Nf2, pad = (Npad,0), actfun),
         Flux.MaxPool((Npool,)),
         settings["model"]["batchnorm"] ? Flux.BatchNorm(Nf2, actfun) : identity,
 
         # Two more convolution layers followed by max pooling and batch normalization
-        Flux.Conv((Nkern,), Nf2 => Nf3, pad = (Npad,), actfun),
-        Flux.Conv((Nkern,), Nf3 => Nf3, pad = (Npad,), actfun),
+        Flux.Conv((Nkern,1), Nf2 => Nf3, pad = (Npad,0), actfun),
+        Flux.Conv((Nkern,1), Nf3 => Nf3, pad = (Npad,0), actfun),
         Flux.MaxPool((Npool,)),
         settings["model"]["batchnorm"] ? Flux.BatchNorm(Nf3, actfun) : identity,
 
@@ -190,20 +191,20 @@ function conv_resnet(settings)
     actfun  = settings["model"]["act"] |> get_activation # Activation function
     scale   = settings["model"]["scale"] :: Vector # Parameter scales
     offset  = settings["model"]["offset"] :: Vector # Parameter offsets
-    DP      = settings["model"]["resnet"]["dropout"] :: Bool # Use batch normalization
-    BN      = settings["model"]["resnet"]["batchnorm"] :: Bool # Use batch normalization
-    GN      = settings["model"]["resnet"]["groupnorm"] :: Bool # Use group normalization
-    Nkern   = settings["model"]["resnet"]["Nkern"] :: Int # Kernel size
-    Nfeat   = settings["model"]["resnet"]["Nfeat"] :: Int # Kernel size
-    Nconv   = settings["model"]["resnet"]["Nconv"] :: Int # Num residual connection layers
-    Nblock  = settings["model"]["resnet"]["Nblock"] :: Int # Num residual connection layers
+    DP      = settings["model"]["densenet"]["dropout"] :: Bool # Use batch normalization
+    BN      = settings["model"]["densenet"]["batchnorm"] :: Bool # Use batch normalization
+    GN      = settings["model"]["densenet"]["groupnorm"] :: Bool # Use group normalization
+    Nkern   = settings["model"]["densenet"]["Nkern"] :: Int # Kernel size
+    Nfeat   = settings["model"]["densenet"]["Nfeat"] :: Int # Kernel size
+    Nconv   = settings["model"]["densenet"]["Nconv"] :: Int # Num residual connection layers
+    Nblock  = settings["model"]["densenet"]["Nblock"] :: Int # Num residual connection layers
     @assert !(BN && GN)
 
     MakeActfun() = @λ x -> actfun.(x)
     ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> offset)
     MakeDropout() = DP ? Flux.AlphaDropout(0.5) : identity
-    Upsample() = Flux.Conv((1,), 1 => Nfeat, actfun; init = xavier_uniform, pad = (0,)) # 1x1 upsample convolutions
-    Downsample() = Flux.Conv((1,), Nfeat => 1, actfun; init = xavier_uniform, pad = (0,)) # 1x1 downsample convolutions
+    Upsample() = Flux.Conv((1,1), 1 => Nfeat, actfun; init = xavier_uniform, pad = (0,0)) # 1x1 upsample convolutions
+    Downsample() = Flux.Conv((1,1), Nfeat => 1, actfun; init = xavier_uniform, pad = (0,0)) # 1x1 downsample convolutions
     ResidualBlock() = IdentitySkip(
         BatchConvConnection(Nkern, Nfeat => Nfeat, actfun;
         numlayers = Nconv, batchnorm = BN, groupnorm = GN, mode = :post))
@@ -248,29 +249,29 @@ function residual_dense_net(settings)
     actfun :: Function = settings["model"]["act"] |> get_activation # Activation function
     scale  :: VT       = settings["model"]["scale"] :: Vector |> VT # Parameter scales
     offset :: VT       = settings["model"]["offset"] :: Vector |> VT # Parameter offsets
-    DP     :: Bool     = settings["model"]["resnet"]["dropout"] # Use batch normalization
-    BN     :: Bool     = settings["model"]["resnet"]["batchnorm"] # Use batch normalization
-    GN     :: Bool     = settings["model"]["resnet"]["groupnorm"] # Use group normalization
-    mode   :: Symbol   = settings["model"]["resnet"]["batchmode"] :: String |> Symbol # Batchnorm mode for BatchConvConnection
-    Nkern  :: Int      = settings["model"]["resnet"]["Nkern"] # Convolution kernel size
-    Nconv  :: Int      = settings["model"]["resnet"]["Nconv"] # Convolutions per BatchConvConnection
-    Nfeat  :: Int      = settings["model"]["resnet"]["Nfeat"] # Number of features to upsample to from 1-feature input
-    Nblock :: Int      = settings["model"]["resnet"]["Nblock"] # Number of blocks in densely connected RDB layer
-    Ndense :: Int      = settings["model"]["resnet"]["Ndense"] # Number of blocks in GlobalFeatureFusion concatenation layer
+    DP     :: Bool     = settings["model"]["densenet"]["dropout"] # Use batch normalization
+    BN     :: Bool     = settings["model"]["densenet"]["batchnorm"] # Use batch normalization
+    GN     :: Bool     = settings["model"]["densenet"]["groupnorm"] # Use group normalization
+    mode   :: Symbol   = settings["model"]["densenet"]["batchmode"] :: String |> Symbol # Batchnorm mode for BatchConvConnection
+    Nkern  :: Int      = settings["model"]["densenet"]["Nkern"] # Convolution kernel size
+    Nconv  :: Int      = settings["model"]["densenet"]["Nconv"] # Convolutions per BatchConvConnection
+    Nfeat  :: Int      = settings["model"]["densenet"]["Nfeat"] # Number of features to upsample to from 1-feature input
+    Nblock :: Int      = settings["model"]["densenet"]["Nblock"] # Number of blocks in densely connected RDB layer
+    Ndense :: Int      = settings["model"]["densenet"]["Ndense"] # Number of blocks in GlobalFeatureFusion concatenation layer
     @assert !(BN && GN)
 
     MakeActfun() = @λ x -> actfun.(x)
     ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> offset)
     MakeDropout() = DP ? Flux.AlphaDropout(T(0.5)) : identity
-    Resample(ch) = Flux.Conv((1,), ch, identity; init = xavier_uniform, pad = (0,)) # 1x1 resample convolutions
+    Resample(ch) = Flux.Conv((1,1), ch, identity; init = xavier_uniform, pad = (0,0)) # 1x1 resample convolutions
     
     function DFF()
-        local G0, G, C, D, k = Nfeat, Nfeat, Nblock, Ndense, (Nkern,)
+        local G0, G, C, D, k = Nfeat, Nfeat, Nblock, Ndense, (Nkern,1)
         ConvFactory = @λ ch -> Flux.Conv(k, ch, actfun; init = xavier_uniform, pad = (k.-1).÷2)
         BatchConvFactory = @λ ch -> BatchConvConnection(k, ch, actfun; numlayers = Nconv, batchnorm = BN, groupnorm = GN, mode = mode)
         # Factory = ConvFactory
         Factory = BatchConvFactory
-        DenseFeatureFusion(Factory, G0, G, C, D, k, actfun; dims = 2)
+        DenseFeatureFusion(Factory, G0, G, C, D, k, actfun; dims = 3)
     end
 
     # Residual network
@@ -328,17 +329,17 @@ function test_model_4(settings)
     actfun  :: Function = settings["model"]["act"] |> get_activation # Activation function
     scale   :: VT       = settings["model"]["scale"] :: Vector |> VT # Parameter scales
     offset  :: VT       = settings["model"]["offset"] :: Vector |> VT # Parameter offsets
-    DP      :: Bool     = settings["model"]["resnet"]["dropout"] # Use batch normalization
-    BN      :: Bool     = settings["model"]["resnet"]["batchnorm"] # Use batch normalization
-    GN      :: Bool     = settings["model"]["resnet"]["groupnorm"] # Use group normalization
-    mode    :: Symbol   = settings["model"]["resnet"]["batchmode"] :: String |> Symbol # Batchnorm mode for BatchConvConnection
-    factory :: Symbol   = settings["model"]["resnet"]["factory"] :: String |> Symbol # Factory type for BatchConvConnection
-    Nkern   :: Int      = settings["model"]["resnet"]["Nkern"] # Convolution kernel size
-    Nconv   :: Int      = settings["model"]["resnet"]["Nconv"] # Convolutions per BatchConvConnection
-    Nfeat   :: Int      = settings["model"]["resnet"]["Nfeat"] # Number of features to upsample to from 1-feature input
-    Nblock  :: Int      = settings["model"]["resnet"]["Nblock"] # Number of blocks in densely connected RDB layer
-    Ndense  :: Int      = settings["model"]["resnet"]["Ndense"] # Number of blocks in GlobalFeatureFusion concatenation layer
-    Nglobal :: Int      = settings["model"]["resnet"]["Nglobal"] # Number of GlobalFeatureFusion concatenation layers
+    DP      :: Bool     = settings["model"]["densenet"]["dropout"] # Use batch normalization
+    BN      :: Bool     = settings["model"]["densenet"]["batchnorm"] # Use batch normalization
+    GN      :: Bool     = settings["model"]["densenet"]["groupnorm"] # Use group normalization
+    mode    :: Symbol   = settings["model"]["densenet"]["batchmode"] :: String |> Symbol # Batchnorm mode for BatchConvConnection
+    factory :: Symbol   = settings["model"]["densenet"]["factory"] :: String |> Symbol # Factory type for BatchConvConnection
+    Nkern   :: Int      = settings["model"]["densenet"]["Nkern"] # Convolution kernel size
+    Nconv   :: Int      = settings["model"]["densenet"]["Nconv"] # Convolutions per BatchConvConnection
+    Nfeat   :: Int      = settings["model"]["densenet"]["Nfeat"] # Number of features to upsample to from 1-feature input
+    Nblock  :: Int      = settings["model"]["densenet"]["Nblock"] # Number of blocks in densely connected RDB layer
+    Ndense  :: Int      = settings["model"]["densenet"]["Ndense"] # Number of blocks in GlobalFeatureFusion concatenation layer
+    Nglobal :: Int      = settings["model"]["densenet"]["Nglobal"] # Number of GlobalFeatureFusion concatenation layers
     @assert !(BN && GN)
 
     MakeActfun() = @λ x -> actfun.(x)
@@ -346,21 +347,21 @@ function test_model_4(settings)
     MakeDropout() = DP ? Flux.AlphaDropout(T(0.5)) : identity
     
     function GFF()
-        local G0, G, C, D, k, σ = Nfeat, Nfeat, Nblock, Ndense, (Nkern,), actfun
+        local G0, G, C, D, k, σ = Nfeat, Nfeat, Nblock, Ndense, (Nkern,1), actfun
         ConvFactory = @λ ch -> Flux.Conv(k, ch, σ; init = xavier_uniform, pad = (k.-1).÷2)
         BatchConvFactory = @λ ch -> BatchConvConnection(k, ch, σ; numlayers = Nconv, batchnorm = BN, groupnorm = GN, mode = mode)
         Factory = factory == :conv ? ConvFactory : BatchConvFactory
         Flux.Chain(
             reduce(vcat, [
                 GlobalFeatureFusion(
-                    2,
-                    [DenseConnection(Factory, g * G0, g * G, C; dims = 2) for d in 1:D]...,
+                    3,
+                    [DenseConnection(Factory, g * G0, g * G, C; dims = 3) for d in 1:D]...,
                 ),
                 # Flux.BatchNorm(D * g * G0, σ),
                 Flux.GroupNorm(D * g * G0, (D * g * G0) ÷ 2, σ),
-                Nglobal > 1 ? Flux.Conv((1,), D * g * G0 => (g + 1) * G0, identity; init = xavier_uniform, pad = (0,)) :
-                    Ndense > 1 ? Flux.Conv((1,), D * g * G0 => g * G0, identity; init = xavier_uniform, pad = (0,)) :
-                        identity
+                Nglobal > 1 ? Flux.Conv((1,1), D * g * G0 => (g + 1) * G0, identity; init = xavier_uniform, pad = (0,0)) :
+                    Ndense > 1 ? Flux.Conv((1,1), D * g * G0 => g * G0, identity; init = xavier_uniform, pad = (0,0)) :
+                        identity,
             ] for g in 1:Nglobal)...,
         )
     end
@@ -368,12 +369,12 @@ function test_model_4(settings)
     # Residual network
     globalfeaturenet = Flux.Chain(
         ChannelResize(C),
-        # Flux.Conv((1,), C => C, identity; init = xavier_uniform, pad = (0,), stride = (2,)), # spatial downsampling
+        # Flux.Conv((1,1), C => C, identity; init = xavier_uniform, pad = (0,0), stride = (2,1)), # spatial downsampling
         # ChannelwiseDense(H ÷ 2, C => C, actfun), # global feature forming
-        Flux.Conv((Nkern,), C => Nfeat, actfun; init = xavier_uniform, pad = (Nkern.-1).÷2), # channel upsampling
-        # Flux.Conv((Nkern,), C => Nfeat, actfun; init = xavier_uniform, pad = (Nkern.-1).÷2, stride = (2,)), # spatial downsampling, channel upsampling
+        Flux.Conv((Nkern,1), C => Nfeat, actfun; init = xavier_uniform, pad = ((Nkern,1).-1).÷2), # channel upsampling
+        # Flux.Conv((Nkern,1), C => Nfeat, actfun; init = xavier_uniform, pad = ((Nkern,1).-1).÷2, stride = (2,1)), # spatial downsampling, channel upsampling
         GFF(),
-        # Flux.Conv((Nkern,), (Nglobal + 1) * Nfeat => (Nglobal + 1) * Nfeat, actfun; init = xavier_uniform, pad = (Nkern.-1).÷2, stride = (2,)), # spatial downsampling
+        # Flux.Conv((Nkern,1), (Nglobal + 1) * Nfeat => (Nglobal + 1) * Nfeat, actfun; init = xavier_uniform, pad = ((Nkern,1).-1).÷2, stride = (2,1)), # spatial downsampling
         DenseResize(),
         # Flux.Dense((H ÷ 2 ÷ 2) * (Nglobal + 1) * Nfeat, Nout, actfun),
         # Flux.Dense((H ÷ 2) * (Nglobal + 1) * Nfeat, Nout, actfun),
@@ -401,4 +402,42 @@ function test_model_4(settings)
     )
 
     return model
+end
+
+"""
+    ResNet
+"""
+function resnet(settings)
+    H       :: Int    = settings["data"]["height"] :: Int # Data height
+    C       :: Int    = settings["data"]["channels"] :: Int # Number of channels
+    Nout    :: Int    = settings["model"]["Nout"] :: Int # Number of outputs
+    type    :: Symbol = settings["model"]["resnet"]["type"] :: String |> Symbol # Factory type for BatchConvConnection
+    Nfilt   :: Int    = settings["model"]["resnet"]["Nfilt"] :: Int # Number of features to upsample to from 1-feature input
+
+    NfiltLast = type ∈ (:ResNet18, :ResNet34) ? Nfilt * 8 : Nfilt * 32
+
+    top_in = Flux.Chain(
+        Flux.ConvTranspose(ResNet._rep(7), C => C; pad = ResNet._pad(3), stride = ResNet._rep(4)),
+        Flux.Conv(ResNet._rep(7), C => Nfilt; pad = ResNet._pad(3), stride = ResNet._rep(1)),
+        Flux.MaxPool(ResNet._rep(3), pad = ResNet._pad(1), stride = ResNet._rep(2)),
+    )
+
+    bottom_in = Flux.Chain(
+        Flux.MeanPool(ResNet._rep(5)),
+        @λ(x -> reshape(x, :, size(x,4))),
+        Flux.Dense(NfiltLast, Nout),
+        @λ(x -> vcat(
+            Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
+            Flux.relu.(x[3:5,:]), # Positive parameters
+        )),
+    )
+
+    resnetX =
+        type == :ResNet18 ? resnet18 : type == :ResNet34  ? resnet34  :
+        type == :ResNet50 ? resnet50 : type == :ResNet101 ? resnet101 : type == :ResNet152 ? resnet152 :
+        error("Unknown ResNet type: $type")
+
+    resnet = resnetX(top_in, bottom_in; initial_filters = Nfilt)
+
+    return resnet
 end

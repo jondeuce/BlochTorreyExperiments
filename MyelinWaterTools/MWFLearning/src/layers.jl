@@ -1,4 +1,16 @@
 """
+    wrapprint(io::IO, layer)
+"""    
+wrapprint(io::IO, layer) = Flux.Chain(
+    @λ(x -> (  print(io, "      layer: "); MWFLearning._model_summary(io, layer); print(io, "\n"); x)),
+    @λ(x -> (println(io, " input size: $(size(x))"); x)),
+    layer,
+    @λ(x -> (println(io, "output size: $(size(x))"); x)),
+)
+wrapprint(layer) = wrapprint(stdout, layer)
+wrapprint(layer::Flux.Chain) = Flux.Chain(wrapprint.(layer.layers)...)
+
+"""
 PrintSize()
 
 Non-learnable layer which simply prints the current size.
@@ -19,15 +31,15 @@ Base.show(io::IO, l::DenseResize) = print(io, "DenseResize()")
 """
 ChannelResize(c::Int)
 
-Non-learnable layer which resizes input arguments `x` to be 3D-array with size
-`d` x `c` x `b`, where `c` is the desired channels, `b` is the batch size,
+Non-learnable layer which resizes input arguments `x` to be 4D-array with size
+`d` x 1 x `c` x `b`, where `c` is the desired channels, `b` is the batch size,
 and `d` is `length(x) ÷ (c x b)`.
 """
 struct ChannelResize
     c::Int
 end
 Flux.@treelike ChannelResize
-(l::ChannelResize)(x::AbstractArray) = reshape(x, :, l.c, batchsize(x))
+(l::ChannelResize)(x::AbstractArray) = reshape(x, :, 1, l.c, batchsize(x))
 Base.show(io::IO, l::ChannelResize) = print(io, "ChannelResize(", l.c, ")")
 
 """
@@ -69,7 +81,7 @@ ChannelwiseDense(H::Int, ch::Pair, σ = identity) = Flux.Chain(DenseResize(), Fl
 """
 HeightwiseDense
 """
-HeightwiseDense(H::Int, C::Int, σ = identity) = Flux.Chain(@λ(x -> reshape(x, H, :)), Flux.Dense(H, H, σ), @λ(x -> reshape(x, H, C, :)))
+HeightwiseDense(H::Int, C::Int, σ = identity) = Flux.Chain(@λ(x -> reshape(x, H, :)), Flux.Dense(H, H, σ), @λ(x -> reshape(x, H, 1, C, :)))
 
 """
 IdentitySkip
@@ -158,10 +170,10 @@ feature fusion via 1x1 convolution:
     `C`         Number of densely connected `Factory`s
     `dims`      Concatenation dimension
 """
-function DenseConnection(Factory, G0::Int, G::Int, C::Int; dims::Int = 2)
+function DenseConnection(Factory, G0::Int, G::Int, C::Int; dims::Int = 3)
     Flux.Chain(
         [CatSkip(dims, Factory(G0 + (c - 1) * G => G)) for c in 1:C]...,
-        Flux.Conv((1,), G0 + C * G => G0, identity; init = xavier_uniform, pad = (0,)),
+        Flux.Conv((1,1), G0 + C * G => G0, identity; init = xavier_uniform, pad = (0,0)),
     )
 end
 
@@ -206,10 +218,10 @@ DenseFeatureFusion (Figure 2: https://arxiv.org/abs/1802.08797)
 
 From the referenced paper:
 
-    "After extracting hierarchical features with a set of RDBs, we further conduct
+    'After extracting hierarchical features with a set of RDBs, we further conduct
     dense feature fusion (DFF), which includes global feature fusion (GFF) and
     global residual learning learning (GRL). DFF makes full use of features from
-    all the preceding layers..."
+    all the preceding layers...'
 
 The structure is
 
@@ -219,7 +231,7 @@ where the output - the densely fused features - is then given by
 
     F_{DF} = F_{-1} + F_{GF}
 """
-function DenseFeatureFusion(Factory, G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,), σ = Flux.relu; dims::Int = 2)
+function DenseFeatureFusion(Factory, G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,1), σ = Flux.relu; dims::Int = 3)
     IdentitySkip(
         Flux.Chain(
             # Flux.Conv(k, G0 => G0, σ; init = xavier_uniform, pad = (k.-1).÷2),
@@ -229,12 +241,12 @@ function DenseFeatureFusion(Factory, G0::Int, G::Int, C::Int, D::Int, k::Tuple =
             ),
             # Flux.BatchNorm(D * G0, σ),
             Flux.GroupNorm(D * G0, (D * G0) ÷ 2, σ),
-            Flux.Conv((1,), D * G0 => G0, identity; init = xavier_uniform, pad = (0,)),
+            Flux.Conv((1,1), D * G0 => G0, identity; init = xavier_uniform, pad = (0,0)),
             # Flux.Conv(k, G0 => G0, σ; init = xavier_uniform, pad = (k.-1).÷2),
         )
     )
 end
-DenseFeatureFusion(G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,), σ = Flux.relu; kwargs...) =
+DenseFeatureFusion(G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,1), σ = Flux.relu; kwargs...) =
     DenseFeatureFusion(
         ch -> Flux.Conv(k, ch, σ; init = xavier_uniform, pad = (k.-1).÷2), # Default factory for RDB's
         G0, G, C, D, k, σ; kwargs...)
@@ -330,4 +342,4 @@ end
 """
 Indenting for layer `depth`
 """
-getindent(depth) = reduce(*, "    " for _ in 1:depth; init = "")
+getindent(depth) = reduce(*, ["    " for _ in 1:depth]; init = "")

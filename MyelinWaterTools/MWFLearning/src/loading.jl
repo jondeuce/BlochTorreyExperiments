@@ -28,7 +28,7 @@ function prepare_data(settings::Dict)
     settings["data"]["preprocess"]["wavelet"]["apply"]  && push!(processing_types, WaveletProcessing())
     isempty(processing_types) && error("No processing selected")
 
-    init_all_data(d) = cat(init_data.(processing_types, Ref(settings), Ref(d))...; dims = 2)
+    init_all_data(d) = cat(init_data.(processing_types, Ref(settings), Ref(d))...; dims = 3)
     training_data = init_all_data(training_data_dicts)
     testing_data = init_all_data(testing_data_dicts)
     
@@ -39,7 +39,7 @@ function prepare_data(settings::Dict)
 
     # Duplicate labels, if data has been duplicated
     if batchsize(testing_data) > batchsize(testing_labels)
-        duplicate_data(x::AbstractMatrix, rep) = x |> z -> repeat(z, rep, 1) |> z -> reshape(z, heightsize(x), :)
+        duplicate_data(x::AbstractMatrix, rep) = x |> z -> repeat(z, rep, 1) |> z -> reshape(z, size(x, 1), :)
         duplicate_data(x::AbstractVector, rep) = x |> permutedims |> z -> repeat(z, rep, 1) |> vec
         rep = batchsize(testing_data) ÷ batchsize(testing_labels)
         training_labels, testing_labels, training_data_dicts, testing_data_dicts = map(
@@ -133,7 +133,7 @@ function init_data(::SignalChunkingProcessing, settings::Dict, ds::AbstractVecto
         b
     end for d in ds)
     
-    return reshape(out, size(out, 1), N_CHUNKS, :)
+    return reshape(out, size(out, 1), 1, N_CHUNKS, :)
 end
 
 function init_data(::iLaplaceProcessing, settings::Dict, ds::AbstractVector{<:Dict})
@@ -175,7 +175,7 @@ function init_data(::iLaplaceProcessing, settings::Dict, ds::AbstractVector{<:Di
         copy(x)
     end for d in ds)
     
-    return reshape(out, :, 1, size(out, 2))
+    return reshape(out, :, 1, 1, size(out, 2))
 end
 
 function init_data(::WaveletProcessing, settings::Dict, ds::AbstractVector{<:Dict})
@@ -276,7 +276,7 @@ function init_data(::WaveletProcessing, settings::Dict, ds::AbstractVector{<:Dic
         reduce(hcat, process_signal(b[:,j], SNR[j]) for j in 1:size(b,2))
     end for d in ds)
     
-    return reshape(out, :, 1, size(out, 2))
+    return reshape(out, :, 1, 1, size(out, 2))
 end
 
 function init_data(::PCAProcessing, training_data, testing_data)

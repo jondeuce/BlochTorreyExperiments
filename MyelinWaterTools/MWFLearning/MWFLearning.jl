@@ -36,12 +36,18 @@ export prepare_data, label_fun, init_data, init_labels, init_signal
 
 # Layers
 export AdaBound
+export printsize, wrapprint
 export PrintSize, DenseResize, ChannelResize, Scale, Sumout
 export IdentitySkip, CatSkip, ChannelwiseDense, HeightwiseDense
 export BatchDenseConnection, BatchConvConnection
 export DenseConnection, ResidualDenseBlock
 export GlobalFeatureFusion, DenseFeatureFusion
 
+# ResNet
+include("src/resnet.jl")
+@reexport using .ResNet
+
+# Source
 include("src/transforms.jl")
 include("src/utils.jl")
 include("src/loading.jl")

@@ -1,23 +1,16 @@
-# using CuArrays
+module ResNet
+
 import Flux
 using Flux: onehotbatch, onecold, crossentropy, throttle, @treelike
 using Base.Iterators: partition
-# using Metalhead
-# using Metalhead: trainimgs, testimgs, valimgs
 using LegibleLambdas: @λ
 
-const DIM = 1
-_rep(n::Int) = DIM == 1 ? (n,1) : (n,n)
-_pad(p::Int) = DIM == 1 ? (p,p,0,0) : (p,p,p,p)
+export ResidualBlock, BasicBlock, Bottleneck, StandardResnet
+export resnet18, resnet34, resnet50, resnet101, resnet152
 
-wrapprint(io::IO, layer) = Flux.Chain(
-    @λ(x -> (  print(io, "      layer: "); MWFLearning._model_summary(io, layer); print(io, "\n"); x)),
-    @λ(x -> (println(io, " input size: $(size(x))"); x)),
-    layer,
-    @λ(x -> (println(io, "output size: $(size(x))"); x)),
-)
-wrapprint(layer) = wrapprint(stdout, layer)
-wrapprint(model::Flux.Chain) = Flux.Chain(wrapprint.(resnet.layers)...)
+const DIM = Ref(1)
+_rep(n::Int) = DIM[] == 1 ? (n,1) : (n,n)
+_pad(p::Int) = DIM[] == 1 ? (p,p,0,0) : (p,p,p,p)
 
 struct ResidualBlock
     conv_layers
@@ -114,65 +107,4 @@ resnet50( args...; kwargs...) = StandardResnet(Bottleneck, [3, 4,  6, 3], args..
 resnet101(args...; kwargs...) = StandardResnet(Bottleneck, [3, 4, 23, 3], args...; kwargs...)
 resnet152(args...; kwargs...) = StandardResnet(Bottleneck, [3, 8, 36, 3], args...; kwargs...)
 
-init_filts = 4
-out_classes = 5
-top_in = Flux.Chain(
-    Flux.ConvTranspose(_rep(7), 2 => 2; pad = _pad(3), stride = _rep(4)),
-    Flux.Conv(_rep(7), 2 => init_filts; pad = _pad(3), stride = _rep(1)),
-    Flux.MaxPool(_rep(3), pad = _pad(1), stride = _rep(2)),
-);
-bottom_in = Flux.Chain(
-    Flux.MeanPool(_rep(5)),
-    @λ(x -> reshape(x, :, size(x,4))),
-    # Flux.Dense(init_filts * 32, out_classes), # Bottleneck
-    Flux.Dense(init_filts * 8, out_classes), # BasicBlock
-    Flux.softmax,
-);
-
-resnet = resnet18(top_in, bottom_in; initial_filters = init_filts)
-# resnet = resnet34(top_in, bottom_in; initial_filters = init_filts)
-# resnet = resnet50(top_in, bottom_in; initial_filters = init_filts)
-# resnet = resnet101(top_in, bottom_in; initial_filters = init_filts)
-# resnet = resnet152(top_in, bottom_in; initial_filters = init_filts)
-
-wrappedresnet = wrapprint(resnet)
-# wrappedresnet(randn(256,1,3,1)) |> x -> @show size(x)
-wrappedresnet(rand(24,1,2,10)) |> x -> @show size(x)
-
-error("Stopping here...")
-
-getarray(X) = float.(permutedims(channelview(im), (2, 3, 1)))
-
-# Prepare the Imagenet Data for Training
-
-X = trainimgs(ImageNet)
-imgs = [getarray(X[i].img) for i in 1:10000] # Demonstrate training only on a small set
-labels = onehotbatch([X[i].ground_truth.class for i in 1:10000],1:1000)
-train = [(cat(4, imgs[i]...), labels[:,i]) for i in partition(1:10000, 64)]
-Val = valimgs(ImageNet)
-valX = cat(4, [getarray(Val[i].img) for i in 1:1000])
-valY = onehotbatch([Val[i].ground_truth.class for i in 1:1000],1:1000)
-
-# Define the loss and accuracy functions
-
-loss(x, y) = crossentropy(resnet(x), y)
-
-accuracy(x, y) = mean(onecold(resnet(x), 1:10) .== onecold(y, 1:10))
-
-opt = ADAM(params(resnet))
-
-# Since the dataset is large only push the images to gpu when needed
-
-evalcb = throttle(() -> @show(accuracy(valX |> gpu, valY |> gpu)), 10)
-
-# Start training on Imagenet Data
-
-Flux.train!(loss, (gpu(c) for x in train), opt, cb = evalcb)
-
-# Display the final accuracy
-
-test = testimgs(ImageNet)
-testX = cat(4, [getarray(test[i].img) for i in 1:10000])
-testY = onehotbatch([test[i].ground_truth.class for i in 1:10000],1:1000)
-
-@show(accuracy(testX |> gpu, testY |> gpu))
+end # module

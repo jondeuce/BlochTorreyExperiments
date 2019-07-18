@@ -47,19 +47,19 @@ model = Chain(
     print_size(0),
 
     # Two convolution layers followed by max pooling
-    Conv((Nkern,), C => Nfeat[1], pad = (Npad,), relu), # (H, 1, 1) -> (H, Nfeat[1], 1)
+    Conv((Nkern,1), C => Nfeat[1], pad = (Npad,0), relu), # (H, 1, 1) -> (H, Nfeat[1], 1)
     print_size(1),
-    Conv((Nkern,), Nfeat[1] => Nfeat[1], pad = (Npad,), relu), # (H, Nfeat[1], 1) -> (H, Nfeat[1], 1)
+    Conv((Nkern,1), Nfeat[1] => Nfeat[1], pad = (Npad,0), relu), # (H, Nfeat[1], 1) -> (H, Nfeat[1], 1)
     print_size(2),
-    MaxPool((Npool,)), # (H, Nfeat[1], 1) -> (H/Npool, Nfeat[1], 1)
+    MaxPool((Npool,1)), # (H, Nfeat[1], 1) -> (H/Npool, Nfeat[1], 1)
     print_size(3),
 
     # Two more convolution layers followed by mean pooling
-    Conv((Nkern,), Nfeat[1] => Nfeat[2], pad = (Npad,), relu), # (H/Npool, Nfeat[1], 1) -> (H/Npool, Nfeat[2], 1)
+    Conv((Nkern,1), Nfeat[1] => Nfeat[2], pad = (Npad,0), relu), # (H/Npool, Nfeat[1], 1) -> (H/Npool, Nfeat[2], 1)
     print_size(4),
-    Conv((Nkern,), Nfeat[2] => Nfeat[2], pad = (Npad,), relu), # (H/Npool, Nfeat[2], 1) -> (H/Npool, Nfeat[2], 1)
+    Conv((Nkern,1), Nfeat[2] => Nfeat[2], pad = (Npad,0), relu), # (H/Npool, Nfeat[2], 1) -> (H/Npool, Nfeat[2], 1)
     print_size(5),
-    MeanPool((Npool,)), # (H/Npool, Nfeat[2], 1) -> (H/Npool^2, Nfeat[2], 1)
+    MeanPool((Npool,1)), # (H/Npool, Nfeat[2], 1) -> (H/Npool^2, Nfeat[2], 1)
     print_size(6),
 
     # Dropout layer

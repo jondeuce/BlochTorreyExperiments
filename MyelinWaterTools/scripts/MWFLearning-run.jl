@@ -10,15 +10,14 @@ using StatsBase: quantile, sample, iqr
 using Base.Iterators: repeated, partition
 
 using MWFLearning
-using CuArrays
+# using CuArrays
 using StatsPlots
 pyplot(size=(800,600))
 
 # Utils
 getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
 gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
-savebson(filename, data::Dict) = @elapsed BSON.bson(filename, data) # TODO getnow()
-# savebson(filename, data::Dict) = @elapsed DrWatson.@tagsave(filename, data, false, gitdir()) # TODO getnow(), safe = false
+savebson(filename, data::Dict) = @elapsed BSON.bson(filename, data)
 
 # Settings
 const settings_file = "settings.toml"
@@ -36,7 +35,7 @@ const CVT = GPU ? CuVector{T} : Vector{T}
 
 const savefoldernames = ["settings", "models", "weights", "log", "plots"]
 const savefolders = Dict{String,String}(savefoldernames .=> mkpath.(joinpath.(settings["dir"], savefoldernames)))
-cp(settings_file, joinpath(savefolders["settings"], FILE_PREFIX * "settings.toml"); force = true) # TODO getnow()
+cp(settings_file, joinpath(savefolders["settings"], FILE_PREFIX * "settings.toml"); force = true)
 clearsavefolders(folders = savefolders) = for (k,f) in folders; rm.(joinpath.(f, readdir(f))); end
 
 # Load and prepare signal data
@@ -45,19 +44,20 @@ clearsavefolders(folders = savefolders) = for (k,f) in folders; rm.(joinpath.(f,
 @info "Preparing data..."
 make_minibatch(x, y, idxs) = (x[.., idxs], y[.., idxs])
 const data_set = prepare_data(settings)
-GPU && for k in (:training_data, :testing_data, :training_labels, :testing_labels)
-    data_set[k] = Flux.gpu(data_set[k])
-end
-const MAKE_2D = true #TODO
-MAKE_2D && for k in (:training_data, :testing_data)
-    data_set[k] = reshape(data_set[k], size(data_set[k],1), 1, size(data_set[k],2), size(data_set[k],3))
-end
+GPU && (for k in (:training_data, :testing_data, :training_labels, :testing_labels); data_set[k] = Flux.gpu(data_set[k]); end)
 
-const train_batches = partition(1:batchsize(data_set[:training_data]), settings["data"]["batch_size"])
-const train_set = [make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches]
-# const train_set = [([make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches][1]...,)] # For overtraining testing (set batch size small, too)
-const test_set = make_minibatch(data_set[:testing_data], data_set[:testing_labels], 1:settings["data"]["test_size"])
+const train_batches = partition(1:batchsize(data_set[:training_data]), settings["data"]["batch_size"]);
+const train_set = [make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches];
+# const train_set = [([make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches][1]...,)]; # For overtraining testing (set batch size small, too)
+const test_set = make_minibatch(data_set[:testing_data], data_set[:testing_labels], 1:settings["data"]["test_size"]);
 
+# Construct model
+@info "Constructing model..."
+model = MWFLearning.get_model(settings);
+model = GPU ? Flux.gpu(model) : model;
+model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"));
+
+# Plot example data
 @info "Plotting random data samples..."
 plot_random_data_samples = () -> begin
     plot_xdata =
@@ -87,13 +87,6 @@ plot_random_data_samples = () -> begin
 end
 savefig(plot_random_data_samples(), "plots/" * FILE_PREFIX * "datasamples.png")
 
-# Construct model
-@info "Constructing model..."
-model = MWFLearning.get_model(settings);
-model = Flux.Chain(deepcopy(resnet[1:end-1])..., deepcopy(model[end:end])...); #TODO
-model = GPU ? Flux.gpu(model) : model;
-model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"));
-
 # Compute parameter density, defined as the number of Flux.params / number of training label datapoints
 test_dofs = length(test_set[2])
 train_dofs = sum(batch -> length(batch[2]), train_set)
@@ -104,8 +97,9 @@ train_param_density = param_dofs / train_dofs
 @info "Training parameter density: $param_dofs/$train_dofs ($(round(100 * train_param_density; digits = 2)) %)"
 
 # Loss and accuracy function
+const labelweights = inv.(model_settings["scale"]) .* unitsum(settings["data"]["weights"]) |> VT
 unitsum(x) = x ./ sum(x)
-LabelWeights()::CVT = Flux.gpu(VT(inv.(model_settings["scale"]) .* unitsum(settings["data"]["weights"])))::CVT
+LabelWeights()::CVT = GPU ? Flux.gpu(copy(labelweights)) : copy(labelweights) |> CVT
 
 l1 = @λ (x,y) -> sum(abs, LabelWeights()::CVT .* (model(x) .- y))
 l2 = @λ (x,y) -> sum(abs2, LabelWeights()::CVT .* (model(x) .- y))
@@ -146,10 +140,10 @@ lr!(opt, α) = (opt.eta = α; opt.eta)
 lr(opt::Flux.Optimiser) = lr(opt[1])
 lr!(opt::Flux.Optimiser, α) = lr!(opt[1], α)
 
-# opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
+opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
 # opt = Flux.Nesterov(1e-1)
 # opt = Flux.ADAM(1e-2, (0.9, 0.999))
-opt = Flux.ADAM(1e-3, (0.9, 0.999))
+# opt = Flux.ADAM(1e-3, (0.9, 0.999))
 # opt = Flux.ADAM(3e-4, (0.9, 0.999))
 # opt = Flux.ADAMW(1e-2, (0.9, 0.999), 1e-5)
 # opt = Flux.ADAMW(1e-3, (0.9, 0.999), 1e-5)
@@ -161,12 +155,12 @@ opt = Flux.ADAM(1e-3, (0.9, 0.999))
 # opt = Flux.Momentum(1e-4, 0.9)
 # opt = Flux.Optimiser(Flux.Momentum(0.1, 0.9), Flux.WeightDecay(1e-4))
 
-# Fixed learning rate
-LRfun(e) = lr(opt)
+# # Fixed learning rate
+# LRfun(e) = lr(opt)
 
-# # Drop learning rate every LRDROPRATE epochs
-# LRDROPRATE, LRDROPFACTOR = 25, 2.0
-# LRfun(e) = mod(e, LRDROPRATE) == 0 ? lr(opt) / LRDROPFACTOR : lr(opt)
+# Drop learning rate every LRDROPRATE epochs
+LRDROPRATE, LRDROPFACTOR = 50, √10
+LRfun(e) = mod(e, LRDROPRATE) == 0 ? lr(opt) / LRDROPFACTOR : lr(opt)
 
 # # Learning rate finder
 # LRfun(e) = e <= settings["optimizer"]["epochs"] ?
@@ -243,13 +237,15 @@ plot_errs_cb = let LAST_EPOCH = 0
 end
 checkpoint_model_opt_cb = function()
     save_time = @elapsed let opt = opt_to_cpu(opt, Flux.params(model)), model = Flux.cpu(model)
-        savebson("models/" * FILE_PREFIX * "model-checkpoint.bson", @dict(model, opt)) #TODO getnow()
+        savebson("models/" * FILE_PREFIX * "model-checkpoint.bson", @dict(model, opt))
     end
     @info " -> Model checkpoint... ($(round(1000*save_time; digits = 2)) ms)"
 end
 checkpoint_errs_cb = function()
-    save_time = savebson("log/" * FILE_PREFIX * "errors.bson", @dict(errs)) #TODO getnow()
-    @info " -> Error checkpoint ($(round(1000*save_time; digits = 2)) ms)" #TODO
+    save_time = @elapsed let errs = deepcopy(errs)
+        savebson("log/" * FILE_PREFIX * "errors.bson", @dict(errs))
+    end
+    @info " -> Error checkpoint ($(round(1000*save_time; digits = 2)) ms)"
 end
 
 test_err_cb() # initial loss
@@ -265,15 +261,15 @@ cbs = Flux.Optimise.runall([
 
 # Training Loop
 const ACC_THRESH = 100.0 # Never stop
-const DROP_ETA_THRESH = typemax(Int) # 250 TODO
-const CONVERGED_THRESH = typemax(Int) # 500 TODO
+const DROP_ETA_THRESH = typemax(Int) # Never stop
+const CONVERGED_THRESH = typemax(Int) # Never stop
 BEST_ACC = 0.0
 LAST_IMPROVED_EPOCH = 0
 
 @info("Beginning training loop...")
 
 try
-    for epoch in CB_EPOCH .+ (1:settings["optimizer"]["epochs"]) #1:typemax(Int) #TODO
+    for epoch in CB_EPOCH .+ (1:settings["optimizer"]["epochs"])
         global BEST_ACC, LAST_IMPROVED_EPOCH
         global CB_EPOCH = epoch
         
@@ -281,16 +277,12 @@ try
         last_lr = lr(opt)
         curr_lr = lr!(opt, LRfun(epoch))
         
-        if last_lr != curr_lr
-            @info " -> Learning rate updated: " * @sprintf("%.2e", last_lr) * " --> "  * @sprintf("%.2e", curr_lr)
-        end
-        if lr(opt) < 1e-6
-            @info " -> Early-exiting: Learning rate has dropped below 1e-6"
-            break
-        end
+        (epoch == 1) && @info " -> Initial learning rate: " * @sprintf("%.2e", curr_lr)
+        (last_lr != curr_lr) && @info " -> Learning rate updated: " * @sprintf("%.2e", last_lr) * " --> "  * @sprintf("%.2e", curr_lr)
+        (lr(opt) < 1e-6) && (@info(" -> Early-exiting: Learning rate has dropped below 1e-6"); break)
 
         # Train for a single epoch
-        train_time = @elapsed CuArrays.@sync begin
+        train_time = @elapsed begin # CuArrays.@sync begin # TODO
             Flux.train!(loss, Flux.params(model), train_set, opt; cb = cbs)
         end
         
@@ -312,7 +304,7 @@ try
             # try
             #     # TODO access to undefined reference error?
             #     save_time = @elapsed let opt = MWFLearning.opt_to_cpu(opt, Flux.params(model)), model = Flux.cpu(model)
-            #         savebson("models/" * FILE_PREFIX * "model.bson", @dict(model, opt, epoch, acc)) #TODO getnow()
+            #         savebson("models/" * FILE_PREFIX * "model.bson", @dict(model, opt, epoch, acc))
             #     end
             #     @info " -> New best accuracy; model saved ($(round(1000*save_time; digits = 2)) ms)"
             # catch e
@@ -322,7 +314,7 @@ try
 
             try
                 save_time = @elapsed let weights = Flux.cpu.(Flux.data.(Flux.params(model)))
-                    savebson("weights/" * FILE_PREFIX * "weights.bson", @dict(weights, epoch, acc)) #TODO getnow()
+                    savebson("weights/" * FILE_PREFIX * "weights.bson", @dict(weights, epoch, acc))
                 end
                 @info " -> New best accuracy; weights saved ($(round(1000*save_time; digits = 2)) ms)"
             catch e

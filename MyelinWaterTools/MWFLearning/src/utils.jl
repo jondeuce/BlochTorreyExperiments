@@ -5,29 +5,37 @@
 """
     batchsize(x::AbstractArray)
 
-Returns the length of the last dimension of the data `x`, unless `x` is a `Vector`
-in which case 1 is returned.
+Returns the length of the last dimension of the data `x`.
+`x` must have dimension of at least 2, otherwise an error is thrown.
 """
-batchsize(x::AbstractVector) = 1
+# batchsize(x::AbstractVector) = 1
+batchsize(x::AbstractVector) = error("x must have dimension of at least 2, but x is a $(typeof(x))")
+# batchsize(x::AbstractVecOrMat) = error("x must have dimension of at least 3, but x is a $(typeof(x))")
 batchsize(x::AbstractArray{T,N}) where {T,N} = size(x, N)
 
 """
     channelsize(x::AbstractArray)
 
-Returns the length of the second-last dimension of the data `x`, unless:
-    `x` is a `Matrix`, in which case 1 is returned.
-    `x` is a `Vector`, in which case an error is thrown.
+Returns the length of the second-last dimension of the data `x`.
+`x` must have dimension of at least 3, otherwise an error is thrown.
 """
-channelsize(x::AbstractVector) = error("Channel size undefined for AbstractVector's")
-channelsize(x::AbstractMatrix) = 1
+# Old docstring:
+# Returns the length of the second-last dimension of the data `x`, unless:
+#     `x` is a `Matrix`, in which case 1 is returned.
+#     `x` is a `Vector`, in which case an error is thrown.
+# channelsize(x::AbstractVector) = error("Channel size undefined for AbstractVector's")
+# channelsize(x::AbstractMatrix) = 1
+channelsize(x::AbstractVecOrMat) = error("x must have dimension of at least 3, but x is a $(typeof(x))")
 channelsize(x::AbstractArray{T,N}) where {T,N} = size(x, N-1)
 
 """
     heightsize(x::AbstractArray)
 
 Returns the length of the first dimension of the data `x`.
+`x` must have dimension of at least 3, otherwise an error is thrown.
 """
-heightsize(x::AbstractVector) = error("heightsize undefined for vectors")
+# heightsize(x::AbstractVector) = error("heightsize undefined for vectors")
+heightsize(x::AbstractVecOrMat) = error("x must have dimension of at least 3, but x is a $(typeof(x))")
 heightsize(x::AbstractArray) = size(x, 1)
 
 """
@@ -77,8 +85,7 @@ Standard deviation of gaussian noise with a given `SNR` level, proportional to t
     Note: `SNR = 0` is special cased to return a noise level of zero.
 """
 noise_level(z::AbstractVecOrMat{T}, SNR::Number) where {T} =
-    SNR == 0 ? 0 .* z[1:1,..] : # Special case zero noise
-               sqrt.(abs2.(z[1:1,..]) ./ T(10^(SNR/10))) # Same for both real and complex
+    SNR == 0 ? 0 .* z[1:1, ..] : sqrt.(abs2.(z[1:1, ..]) ./ T(10^(SNR/10))) # Same for both real and complex
 
 """
     add_noise(z, SNR)

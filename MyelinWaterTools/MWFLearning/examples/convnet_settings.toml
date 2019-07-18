@@ -1,5 +1,5 @@
 prec    = 32
-gpu     = true
+gpu     = false
 dir     = "."
 
 [data]
@@ -43,7 +43,8 @@ apply       = false # Apply PCA preprocessing
 [model]
 # name      = "ConvResNet"
 # name      = "ResidualDenseNet"
-name      = "TestModel4"
+# name      = "TestModel4"
+name      = "ResNet"
 loss      = "l2"
 acc       = "rmse"
 act       = "leakyrelu"
@@ -57,7 +58,7 @@ offset    = "auto"
 # Nd        = [25, 25, 25, 25, 25]
 # Npool     = 3 # pooling size
 # Nkern     = 5 # kernel size
-[model.resnet]
+[model.densenet]
 dropout   = false
 batchnorm = false
 groupnorm = false
@@ -69,13 +70,16 @@ Nfeat     = 4 # Number of features to upsample to from 1-feature input
 Nblock    = 2 # Number of blocks in densely connected RDB layer
 Ndense    = 2 # Number of blocks in GlobalFeatureFusion concatenation layer
 Nglobal   = 2 # Number of GlobalFeatureFusion concatenation layers
+[model.resnet]
+type      = "ResNet18" # ResNet type
+Nfilt     = 4 # Number of initial filters
 
 [optimizer]
 epochs  = 1000
 savemod = 1
 testmod = 1
 [optimizer.ADAM]
-lr      = 0.001
+lr      = 0.01
 beta    = [0.9, 0.999]
 
 [plot]
