@@ -8,7 +8,7 @@ test_data   = "./test"
 batch_size  = 500
 test_size   = "auto" # Auto treats entire test set as one batch
 height      = "auto"
-channels    = 2 # Number of data channels
+channels    = 1 # Number of data channels
 # labels      = ["mwf", "T2iew/TE", "T2mw/TE", "alpha"] # Target labels
 # weights     = [1.0, 1.0, 1.0, 1.0] # Weights for loss function
 labels      = ["mwf", "iewf", "T2iew/TE", "T2mw/TE", "alpha"] # Target labels
@@ -29,7 +29,7 @@ periodic    = false # subtract linear term to make signal periodic
 apply       = false # Apply wavelet preprocessing
 nterms      = 24 # number of terms to keep
 [data.preprocess.ilaplace]
-apply       = true # Apply ilaplace preprocessing
+apply       = false # Apply ilaplace preprocessing
 T2Range     = [0.001, 1.0] # T2 distribution range
 nT2         = 24 # Number of exponentials in T2 distribution
 alpha       = 0.1 # Tikhonov regularization parameter

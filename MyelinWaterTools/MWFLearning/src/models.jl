@@ -421,7 +421,8 @@ function resnet(settings)
     ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> offset)
 
     top_in = Flux.Chain(
-        Flux.ConvTranspose(ResNet._rep(7), C => C; pad = ResNet._pad(3), stride = ResNet._rep(4)),
+        ChannelwiseDense(H, C => C, Flux.relu),
+        Flux.ConvTranspose(ResNet._rep(7), C => C, Flux.relu; pad = ResNet._pad(3), stride = ResNet._rep(4)),
         Flux.Conv(ResNet._rep(7), C => Nfilt; pad = ResNet._pad(3), stride = ResNet._rep(1)),
         Flux.MaxPool(ResNet._rep(3), pad = ResNet._pad(1), stride = ResNet._rep(2)),
     )
