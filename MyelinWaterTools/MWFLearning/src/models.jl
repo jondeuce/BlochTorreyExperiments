@@ -357,34 +357,34 @@ function test_model_4(settings)
         gff_layers = []
         for g in 1:Nglobal
             if g > 1
+                GN ? push!(gff_layers, Flux.GroupNorm(D * (g - 1) * G0, (D * (g - 1) * G0) ÷ 2, σ)) :
+                     push!(gff_layers, Flux.BatchNorm(D * (g - 1) * G0, σ))
                 push!(gff_layers, Flux.Conv((1,1), D * (g - 1) * G0 => g * G0, identity; init = xavier_uniform, pad = (0,0), stride = (Nstride,1)))
             end
             push!(gff_layers, GlobalFeatureFusion(3, [MAYBESKIP(DenseConnection(Factory, g * G0, g * G, C; dims = 3)) for d in 1:D]...,))
-            if BN
-                push!(gff_layers, Flux.BatchNorm(D * g * G0, σ))
-            elseif GN
-                push!(gff_layers, Flux.GroupNorm(D * g * G0, (D * g * G0) ÷ 2, σ))
-            end
         end
-        push!(gff_layers, Flux.Conv((1,1), D * Nglobal * G0 => Nglobal * G0, identity; init = xavier_uniform, pad = (0,0), stride = (Nstride,1)))
+        GN ? push!(gff_layers, Flux.GroupNorm(D * Nglobal * G0, (D * Nglobal * G0) ÷ 2, σ)) :
+             push!(gff_layers, Flux.BatchNorm(D * Nglobal * G0, σ))
+        push!(gff_layers, Flux.Conv((1,1), D * Nglobal * G0 => (Nglobal + 1) * G0, identity; init = xavier_uniform, pad = (0,0), stride = (Nstride,1)))
         return Flux.Chain(gff_layers...)
     end
 
     @inline stride_size(N::Int, str::Int, nstr::Int) = (@assert nstr >= 0; nstr == 0 ? N : stride_size(length(1:str:N), str, nstr-1))
     ApplyPool = Nstride > 1
-    Hlast = ApplyPool ? 1 : stride_size(H, Nstride, Nglobal-1)
+    Hlast = ApplyPool ? 1 : stride_size(H, Nstride, Nglobal)
+    Npool = ApplyPool ? stride_size(H, Nstride, Nglobal) - 1 : 1
 
     # Residual network
     globalfeaturenet = Flux.Chain(
-        ChannelResize(C),
+        ChannelwiseDense(H, C => C),
         # Flux.Conv((1,1), C => C, identity; init = xavier_uniform, pad = (0,0), stride = (2,1)), # spatial downsampling
         Flux.Conv((Nkern,1), C => Nfeat, actfun; init = xavier_uniform, pad = ((Nkern,1).-1).÷2), # channel upsampling
         # Flux.Conv((Nkern,1), C => Nfeat, actfun; init = xavier_uniform, pad = ((Nkern,1).-1).÷2, stride = (2,1)), # spatial downsampling, channel upsampling
         GFF(),
         # Flux.Conv((Nkern,1), Nglobal * Nfeat => Nglobal * Nfeat, actfun; init = xavier_uniform, pad = ((Nkern,1).-1).÷2, stride = (2,1)), # spatial downsampling
-        ApplyPool ? Flux.MeanPool((Hlast-1,1)) : identity,
+        ApplyPool ? Flux.MeanPool((Npool,1)) : identity,
         DenseResize(),
-        Flux.Dense(Hlast * Nglobal * Nfeat, Nout, actfun),
+        Flux.Dense(Hlast * (Nglobal + 1) * Nfeat, Nout),
     )
 
     # Output parameter handling:
@@ -421,9 +421,9 @@ function resnet(settings)
     ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> offset)
 
     top_in = Flux.Chain(
-        ChannelwiseDense(H, C => C, Flux.relu),
-        Flux.ConvTranspose(ResNet._rep(7), C => C, Flux.relu; pad = ResNet._pad(3), stride = ResNet._rep(4)),
-        Flux.Conv(ResNet._rep(7), C => Nfilt; pad = ResNet._pad(3), stride = ResNet._rep(1)),
+        ChannelwiseDense(H, C => C),
+        Flux.ConvTranspose(ResNet._rep(7), C => Nfilt; pad = ResNet._pad(3), stride = ResNet._rep(4)),
+        # Flux.Conv(ResNet._rep(7), C => Nfilt; pad = ResNet._pad(3), stride = ResNet._rep(1)),
         Flux.MaxPool(ResNet._rep(3), pad = ResNet._pad(1), stride = ResNet._rep(2)),
     )
 

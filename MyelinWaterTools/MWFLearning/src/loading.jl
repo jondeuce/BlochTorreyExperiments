@@ -12,8 +12,12 @@ function prepare_data(settings::Dict)
     training_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["train_data"], readdir(settings["data"]["train_data"]))))
     testing_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["test_data"], readdir(settings["data"]["test_data"]))))
     
-    # TODO: Filtering out bad data
-    filter_bad_data = (d) -> d[:btparams_dict][:K_perm] < 1.0 #&& d[:sweepparams][:alpha] > 150
+    # Filtering out undesired data
+    filter_bad_data = (d) -> all(map(
+        (label, lower, upper) -> lower <= label_fun(label, d) :: Float64 <= upper,
+        settings["data"]["filter"]["labels"] :: Vector{String},
+        settings["data"]["filter"]["lower"]  :: Vector{Float64},
+        settings["data"]["filter"]["upper"]  :: Vector{Float64}))
     filter!(filter_bad_data, training_data_dicts)
     filter!(filter_bad_data, testing_data_dicts)
 
@@ -50,8 +54,8 @@ function prepare_data(settings::Dict)
     # Shuffle data and labels
     if settings["data"]["preprocess"]["shuffle"] == true
         i_train, i_test = Random.shuffle(1:batchsize(training_data)), Random.shuffle(1:batchsize(testing_data))
-        training_data, training_labels, training_data_dicts = training_data[:,:,i_train], training_labels[:,i_train], training_data_dicts[i_train]
-        testing_data, testing_labels, testing_data_dicts = testing_data[:,:,i_test], testing_labels[:,i_test], testing_data_dicts[i_test]
+        training_data, training_labels, training_data_dicts = training_data[:,:,:,i_train], training_labels[:,i_train], training_data_dicts[i_train]
+        testing_data, testing_labels, testing_data_dicts = testing_data[:,:,:,i_test], testing_labels[:,i_test], testing_data_dicts[i_test]
     end
     
     # Redundancy check

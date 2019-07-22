@@ -2,7 +2,7 @@
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 Pkg.instantiate()
-include(joinpath(@__DIR__, "../initpaths.jl"))
+# include(joinpath(@__DIR__, "../initpaths.jl"))
 
 using Printf
 using Statistics: mean, median, std
@@ -10,7 +10,7 @@ using StatsBase: quantile, sample, iqr
 using Base.Iterators: repeated, partition
 
 using MWFLearning
-using CuArrays
+# using CuArrays
 using StatsPlots
 pyplot(size=(800,600))
 
@@ -38,8 +38,6 @@ cp(settings_file, joinpath(savefolders["settings"], FILE_PREFIX * "settings.toml
 clearsavefolders(folders = savefolders) = for (k,f) in folders; rm.(joinpath.(f, readdir(f))); end
 
 # Load and prepare signal data
-#   Data:   length H 1D vectors organized into B batches as [H x 1 x B] arrays
-#   Labels: length Nout 1D vectors organized into B batches as [Nout x B] arrays
 @info "Preparing data..."
 make_minibatch(x, y, idxs) = (x[.., idxs], y[.., idxs])
 const data_set = prepare_data(settings)
@@ -152,7 +150,7 @@ opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADA
 # LRfun(e) = lr(opt)
 
 # Drop learning rate every LRDROPRATE epochs
-LRDROPRATE, LRDROPFACTOR = 100, √10
+LRDROPRATE, LRDROPFACTOR = 50, √10
 LRfun(e) = mod(e, LRDROPRATE) == 0 ? lr(opt) / LRDROPFACTOR : lr(opt)
 
 # # Learning rate finder
@@ -171,11 +169,23 @@ LRfun(e) = mod(e, LRDROPRATE) == 0 ? lr(opt) / LRDROPFACTOR : lr(opt)
 
 # Callbacks
 CB_EPOCH = 0 # global callback epoch count
-CB_EPOCH_RATE = 10 # rate of per epoch callback updates
+CB_EPOCH_RATE = 5 # rate of per epoch callback updates
 CB_EPOCH_CHECK(last_epoch) = CB_EPOCH >= last_epoch + CB_EPOCH_RATE
+loop_errs = Dict(
+    :testing => Dict(:epoch => Int[], :acc => T[]))
 errs = Dict(
     :training => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]),
     :testing => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]))
+function err_subplots(k,v)
+    @unpack epoch, loss, acc, labelerr = v
+    labelerr = permutedims(reduce(hcat, labelerr))
+    labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
+    p1 = plot(epoch, loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), quantile(loss, 0.90)))
+    p2 = plot(epoch, acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (90, 100))
+    p3 = plot(epoch, labelerr; title = "Label Error ($k: rel. %)",                                     lw = 3, titlefontsize = 10, label = labelnames, legend = :topleft,  ylim = (max(0, minimum(labelerr) - 0.5), min(50, quantile(vec(labelerr), 0.90))))
+    (k == :testing) && plot!(p2, loop_errs[:testing][:epoch] .+ 1, loop_errs[:testing][:acc]; label = "loop acc", lw = 2) # Epochs shifted by 1 since accuracy is evaluated after a training within an epoch, whereas callbacks above are called before training
+    plot(p1, p2, p3; layout = (1,3))
+end
 train_err_cb = let LAST_EPOCH = 0
     function()
         CB_EPOCH_CHECK(LAST_EPOCH) ? (LAST_EPOCH = CB_EPOCH) : return nothing
@@ -203,22 +213,11 @@ test_err_cb = let LAST_EPOCH = 0
     end
 end
 plot_errs_cb = let LAST_EPOCH = 0
-    function make_subplot(k,v)
-        @unpack epoch, loss, acc, labelerr = v
-        labelerr = permutedims(reduce(hcat, labelerr))
-        labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
-        plot(
-            plot(epoch, loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), quantile(loss, 0.90))),
-            plot(epoch, acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (90, 100)),
-            plot(epoch, labelerr; title = "Label Error ($k: rel. %)",                                     lw = 3, titlefontsize = 10, label = labelnames, legend = :topleft,  ylim = (max(0, minimum(labelerr) - 0.5), min(50, quantile(vec(labelerr), 0.90)))),
-            layout = (1,3)
-        )
-    end
     function()
         try
             CB_EPOCH_CHECK(LAST_EPOCH) ? (LAST_EPOCH = CB_EPOCH) : return nothing
             plot_time = @elapsed begin
-                fig = plot([make_subplot(k,v) for (k,v) in errs]...; layout = (length(errs), 1))
+                fig = plot([err_subplots(k,v) for (k,v) in errs]...; layout = (length(errs), 1))
                 savefig(fig, "plots/" * FILE_PREFIX * "errs.png")
                 display(fig)
             end
@@ -241,9 +240,6 @@ checkpoint_errs_cb = function()
     @info @sprintf("[%d] -> Error checkpoint... (%d ms)", CB_EPOCH, 1000 * save_time)
 end
 
-test_err_cb() # initial loss
-train_err_cb() # initial loss
-
 cbs = Flux.Optimise.runall([
     test_err_cb,
     train_err_cb,
@@ -263,7 +259,7 @@ LAST_IMPROVED_EPOCH = 0
 
 try
     for epoch in CB_EPOCH .+ (1:settings["optimizer"]["epochs"])
-        global BEST_ACC, LAST_IMPROVED_EPOCH
+        global BEST_ACC, LAST_IMPROVED_EPOCH, CB_EPOCH
         global CB_EPOCH = epoch
         
         # Update learning rate and exit if it has become to small
@@ -278,7 +274,11 @@ try
         train_time = @elapsed Flux.train!(loss, Flux.params(model), train_set, opt; cb = cbs) # CuArrays.@sync
         
         # Calculate accuracy:
-        acc_time = @elapsed (acc = Flux.cpu(Flux.data(accuracy(test_set...)))) # CuArrays.@sync
+        acc_time = @elapsed begin
+            acc = Flux.cpu(Flux.data(accuracy(test_set...))) # CuArrays.@sync
+            push!(loop_errs[:testing][:epoch], epoch)
+            push!(loop_errs[:testing][:acc], acc)
+        end
         @info @sprintf("[%d] (%d ms): Test accuracy: %.4f (%d ms)", epoch, 1000 * train_time, acc, 1000 * acc_time)
 
         # If our accuracy is good enough, quit out.
