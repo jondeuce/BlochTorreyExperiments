@@ -383,6 +383,12 @@ git-tree-sha1 = "05062165b5c53e5d91a25267d11df6a112d1627e"
 uuid = "6e83dbb3-75ca-525b-8ae2-3751f0dd50b4"
 version = "3.0.1"
 
+[[DistMesh]]
+deps = ["LinearAlgebra", "MATLAB", "Random", "RecipesBase", "Statistics", "StatsBase", "Tensors", "VoronoiDelaunay"]
+path = "DistMesh"
+uuid = "b4596390-acbb-11e9-1f4c-bf4694421f57"
+version = "0.1.0"
+
 [[Distances]]
 deps = ["LinearAlgebra", "Printf", "Random", "Statistics", "Test"]
 git-tree-sha1 = "a135c7c062023051953141da8437ed74f89d767a"
