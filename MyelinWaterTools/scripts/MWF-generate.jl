@@ -21,7 +21,7 @@ make_reproduce( # Creating backup file
 )
 
 # DrWatson package for tagged saving
-gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
+gitdir() = realpath(DrWatson.projectdir(".."))
 
 ####
 #### Geometries to sweep over

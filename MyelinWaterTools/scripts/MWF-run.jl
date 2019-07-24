@@ -14,7 +14,7 @@ make_reproduce( # Creating backup file
 import DrWatson
 using DrWatson: @dict, @ntuple
 DrWatson.default_prefix(c) = MWFUtils.getnow() #TODO
-gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
+gitdir() = realpath(DrWatson.projectdir(".."))
 
 ####
 #### Parameters to sweep over

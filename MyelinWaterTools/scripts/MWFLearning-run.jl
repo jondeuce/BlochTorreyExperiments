@@ -16,7 +16,7 @@ pyplot(size=(800,600))
 
 # Utils
 getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
-gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
+gitdir() = realpath(DrWatson.projectdir(".."))
 savebson(filename, data::Dict) = @elapsed BSON.bson(filename, data)
 
 # Settings
