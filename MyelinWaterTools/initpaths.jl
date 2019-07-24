@@ -7,7 +7,9 @@ MWTPATH = joinpath(BTBRANCHPATH, "MyelinWaterTools/") |> realpath
 
 # Add module paths to global LOAD_PATH
 for dir in filter(isdir, realpath.(joinpath.(MWTPATH, readdir(MWTPATH))))
+    srcdir = realpath(joinpath(dir, "src"))
     (dir ∉ LOAD_PATH) && push!(LOAD_PATH, dir)
+    isdir(srcdir) && (srcdir ∉ LOAD_PATH) && push!(LOAD_PATH, srcdir)
 end
 
 # # Add module paths to global LOAD_PATH recursively
