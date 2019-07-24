@@ -5,22 +5,17 @@ BTHOME = joinpath(@__DIR__, "../..") |> realpath # assume we are in MyelinWaterT
 BTBRANCHPATH = joinpath(@__DIR__, "..") |> realpath
 MWTPATH = joinpath(BTBRANCHPATH, "MyelinWaterTools/") |> realpath
 
-# Add module paths to global LOAD_PATH
-for dir in filter(isdir, realpath.(joinpath.(MWTPATH, readdir(MWTPATH))))
-    srcdir = realpath(joinpath(dir, "src"))
-    (dir ∉ LOAD_PATH) && push!(LOAD_PATH, dir)
-    isdir(srcdir) && (srcdir ∉ LOAD_PATH) && push!(LOAD_PATH, srcdir)
+# Add folders, as well as "src" and "test" subfolders, to global LOAD_PATH
+for dir in joinpath.(MWTPATH, readdir(MWTPATH))
+    srcdir = joinpath(dir, "src")
+    testdir = joinpath(dir, "test")
+    map((dir, srcdir, testdir)) do subdir
+        if isdir(subdir)
+            realsubdir = realpath(subdir)
+            (realsubdir ∉ LOAD_PATH) && push!(LOAD_PATH, realsubdir)
+        end
+    end
 end
-
-# # Add module paths to global LOAD_PATH recursively
-# (MWTPATH ∉ LOAD_PATH) && push!(LOAD_PATH, MWTPATH)
-# for (root, dirs, files) in walkdir(MWTPATH)
-#     realroot = root |> realpath;
-#     for dir in dirs
-#         realdir = joinpath(realroot, dir) |> realpath
-#         (realdir ∉ LOAD_PATH) && push!(LOAD_PATH, realdir)
-#     end
-# end
 
 # Might need to define this environment variable
 # ENV["MATLAB_HOME"] = "/usr/local/MATLAB/R2017b"#/bin/matlab" # curie (don't need it)
