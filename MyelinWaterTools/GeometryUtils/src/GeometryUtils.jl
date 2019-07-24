@@ -36,7 +36,7 @@ export Ellipse, Circle, Rectangle, VecOfCircles, VecOfEllipses, VecOfRectangles,
        is_inside, is_overlapping, is_any_overlapping, is_on_circle, is_on_any_circle, is_in_circle, is_in_any_circle, is_inside, is_outside, is_on_boundary
 export getfaces, nodevector, nodematrix, cellvector, cellmatrix, nodecellmatrices,
        mxbbox, mxaxis, dcircles, dexterior, hcircles
-export disjoint_rect_mesh_with_tori,
+export disjoint_rect_mesh_with_tori
 
 include("types.jl")
 include("shapeutils.jl")
