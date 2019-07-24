@@ -10,6 +10,6 @@ import Dates
 
 export mxsimpplot, mxsimpgif
 
-include("src/mxsimpplot.jl")
+include("mxsimpplot.jl")
 
 end # module MATLABPlots

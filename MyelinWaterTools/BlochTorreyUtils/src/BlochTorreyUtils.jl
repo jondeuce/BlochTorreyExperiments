@@ -27,13 +27,13 @@ import Distributions
 import Random
 import Lazy
 
-include("src/types.jl")
-include("src/btparams.jl")
-include("src/domains.jl")
-include("src/linearmaps.jl")
-include("src/frequencyfields.jl")
-include("src/algorithms.jl")
-include("src/callbacks.jl")
+include("types.jl")
+include("btparams.jl")
+include("domains.jl")
+include("linearmaps.jl")
+include("frequencyfields.jl")
+include("algorithms.jl")
+include("callbacks.jl")
 
 # ---------------------------------------------------------------------------- #
 # Exported Methods

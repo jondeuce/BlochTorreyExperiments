@@ -69,8 +69,8 @@ const geombasepaths = [
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-1/geom",
 ]
 const geomfiles = reduce(vcat, realpath.(joinpath.(gp, readdir(gp))) for gp in geombasepaths)
-const maxnnodes = 5000; #TODO
-const geometries = copy_and_load_geomfiles!(geomfiles, 5000);
+const maxnnodes = 10_000; #TODO
+const geometries = copy_and_load_geomfiles!(geomfiles, maxnnodes);
 
 ####
 #### Default solver parameters and MWF models
@@ -138,16 +138,16 @@ acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
 
 const sweepparamsampler_settings = Dict{Symbol,Any}(
     :theta  => (sampler = :acossampler,   args = (lb = 0.0,     ub = 90.0)),
-    :alpha  => (sampler = :linearsampler, args = (lb = 140.0,   ub = 180.0)),
-    :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 10.0)),
-    :Dtiss  => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 500.0)),
-    :Dmye   => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 500.0)),
-    :Dax    => (sampler = :log10sampler,  args = (lb = 100.0,   ub = 500.0)),
-    :FRD    => (sampler = :linearsampler, args = (lb = 0.5,     ub = 0.5)), #TODO
-    :TE     => (sampler = :linearsampler, args = (lb = 5e-3,    ub = 15e-3)),
-    :TR     => (sampler = :linearsampler, args = (lb = 800e-3,  ub = 1200e-3)), #TODO
-    :nTE    => (sampler = :rangesampler,  args = (lb = 24, ub = 48, step = 2)), #Must be an even number
-    :nTR    => (sampler = :rangesampler,  args = (lb = 1,       ub = 1)),
+    :alpha  => (sampler = :linearsampler, args = (lb = 120.0,   ub = 180.0)),
+    :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 1.0)),
+    :Dtiss  => (sampler = :log10sampler,  args = (lb = 1000.0,  ub = 2000.0)),
+    :Dmye   => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 1000.0)),
+    :Dax    => (sampler = :log10sampler,  args = (lb = 1000.0,  ub = 2000.0)),
+    :FRD    => (sampler = :linearsampler, args = (lb = 0.5,     ub = 0.5)),
+    :TE     => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 10e-3)), # NOTE: for learning the resulting signals, TE should be fixed
+    :TR     => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), # Irrelevant; nTR = 1 below
+    :nTE    => (sampler = :rangesampler,  args = (lb = 32, ub = 48, step = 2)),
+    :nTR    => (sampler = :rangesampler,  args = (lb = 1,       ub = 1)), # Only simulate from t = 0 to t = nTE * TE
     :T2sp   => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 20e-3)),
     :T2lp   => (sampler = :linearsampler, args = (lb = 50e-3,   ub = 80e-3)),
     :T2tiss => (sampler = :linearsampler, args = (lb = 50e-3,   ub = 80e-3)),
@@ -155,25 +155,6 @@ const sweepparamsampler_settings = Dict{Symbol,Any}(
     :T1lp   => (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
     :T1tiss => (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
 )
-# const sweepparamsampler_settings = Dict{Symbol,Any}( #TODO testing settings
-#     :Dax    => (sampler = :log10sampler,  args = (lb = 345.087, ub = 345.087)),
-#     :Dmye   => (sampler = :log10sampler,  args = (lb = 242.866, ub = 242.866)),
-#     :Dtiss  => (sampler = :log10sampler,  args = (lb = 300.332, ub = 300.332)),
-#     :FRD    => (sampler = :linearsampler, args = (lb = 0.306,   ub = 0.306)),
-#     :K      => (sampler = :log10sampler,  args = (lb = 0.010,   ub = 0.010)),
-#     :T1lp   => (sampler = :linearsampler, args = (lb = 1.134,   ub = 1.134)),
-#     :T1sp   => (sampler = :linearsampler, args = (lb = 0.230,   ub = 0.230)),
-#     :T1tiss => (sampler = :linearsampler, args = (lb = 1.075,   ub = 1.075)),
-#     :T2lp   => (sampler = :linearsampler, args = (lb = 0.051,   ub = 0.051)),
-#     :T2sp   => (sampler = :linearsampler, args = (lb = 0.013,   ub = 0.013)),
-#     :T2tiss => (sampler = :linearsampler, args = (lb = 0.068,   ub = 0.068)),
-#     :TE     => (sampler = :linearsampler, args = (lb = 0.009,   ub = 0.009)),
-#     :TR     => (sampler = :linearsampler, args = (lb = 0.977,   ub = 0.977)),
-#     :alpha  => (sampler = :linearsampler, args = (lb = 180.0,   ub = 180.0)),
-#     :nTE    => (sampler = :rangesampler,  args = (lb =    45,   ub =    45)),
-#     :nTR    => (sampler = :rangesampler,  args = (lb =     1,   ub =     1)),
-#     :theta  => (sampler = :acossampler,   args = (lb = 81.04,   ub = 81.04)),
-# )
 sweepparamsampler() = Dict{Symbol,Union{Float64,Int}}(
     k => eval(Expr(:call, v.sampler, v.args...))
     for (k,v) in sweepparamsampler_settings)
@@ -239,8 +220,8 @@ function runsimulation!(results, sweepparams, geom)
     sols, myelinprob, myelinsubdomains, myelindomains, solverparams_dict = runsolve(btparams, sweepparams, geom)
     
     # Sample solution signals
-    dt = sweepparams[:TE]/10 # TODO
-    tpoints = cpmg_savetimes(sols[1].prob.tspan, dt, sweepparams[:TE], sweepparams[:TR], sweepparams[:nTE], sweepparams[:nTR]) #TODO should be exported
+    dt = sweepparams[:TE]/10 # TODO how many samples to save?
+    tpoints = cpmg_savetimes(sols[1].prob.tspan, dt, sweepparams[:TE], sweepparams[:TR], sweepparams[:nTE], sweepparams[:nTR])
     signals = calcsignal(sols, tpoints, myelindomains)
 
     # Common filename without suffix
@@ -290,9 +271,8 @@ function runsimulation!(results, sweepparams, geom)
         @warn sprint(showerror, e, catch_backtrace())
     end
 
-    # # Save solution as vtk file
+    # # Save solution as vtk file # TODO should only be uncommented for testing
     # try
-    #     #TODO don't save these for full sweep
     #     vtkfilepath = mkpath(joinpath("vtk/", fname))
     #     saveblochtorrey(myelindomains, sols; timepoints = tpoints, filename = joinpath(vtkfilepath, "vtksolution"))
     # catch e
@@ -300,7 +280,7 @@ function runsimulation!(results, sweepparams, geom)
     #     @warn sprint(showerror, e, catch_backtrace())
     # end
 
-    # # Plot and save various figures
+    # # Plot frequency/field map
     # try
     #     mxplotomega(myelinprob, myelindomains, myelinsubdomains, geom.bdry;
     #         titlestr = "Frequency Map (theta = $(round(sweepparams[:theta]; digits=3)) deg)",
@@ -310,6 +290,7 @@ function runsimulation!(results, sweepparams, geom)
     #     @warn sprint(showerror, e, catch_backtrace())
     # end
     
+    # Plot solution magnitude on mesh
     try
         mxplotmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
             titlestr = "Field Magnitude (" * titleparamstr * ")",
@@ -322,6 +303,7 @@ function runsimulation!(results, sweepparams, geom)
         @warn sprint(showerror, e, catch_backtrace())
     end
 
+    # Plot solution phase on mesh
     try
         mxplotphase(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
             titlestr = "Field Phase (" * titleparamstr * ")",
@@ -334,6 +316,7 @@ function runsimulation!(results, sweepparams, geom)
         @warn sprint(showerror, e, catch_backtrace())
     end
     
+    # Plot solution longitudinal component on mesh
     try
         #TODO only for 3D
         mxplotlongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
@@ -347,6 +330,7 @@ function runsimulation!(results, sweepparams, geom)
         @warn sprint(showerror, e, catch_backtrace())
     end
     
+    # Plot SEcorr results, if used
     try
         if mwfmodels != nothing && !isempty(mwfmodels)
             nnlsindex = findfirst(m->m isa NNLSRegression, mwfmodels)
@@ -361,6 +345,7 @@ function runsimulation!(results, sweepparams, geom)
         @warn sprint(showerror, e, catch_backtrace())
     end
 
+    # Plot biexponential signal compared with true signal
     try
         if mwfmodels != nothing && !isempty(mwfmodels)
             plotbiexp(sols, btparams, myelindomains,
@@ -369,7 +354,7 @@ function runsimulation!(results, sweepparams, geom)
                 opts = mwfmodels[1], fname = "sig/" * fname * ".biexp")
         end
         plotsignal(tpoints, signals;
-            timeticks = cpmg_savetimes(sols[1].prob.tspan, sweepparams[:TE]/2, sweepparams[:TE], sweepparams[:TR], sweepparams[:nTE], sweepparams[:nTR]), #TODO should be exported
+            timeticks = cpmg_savetimes(sols[1].prob.tspan, sweepparams[:TE]/2, sweepparams[:TE], sweepparams[:TR], sweepparams[:nTE], sweepparams[:nTR]),
             titlestr = "Magnetization Signal (" * titleparamstr * ")",
             apply_pi_correction = false,
             fname = "sig/" * fname * ".signal")
@@ -434,7 +419,7 @@ end
 #### Run sweep
 ####
 
-results = main() #TODO
+results = main() #TODO iters
 @unpack sweepparams, btparams, solverparams_dict, tpoints, signals, mwfvalues = results;
 # @unpack sols, myelinprob, myelinsubdomains, myelindomains = results; #TODO
 btparams_dict = Dict.(btparams);

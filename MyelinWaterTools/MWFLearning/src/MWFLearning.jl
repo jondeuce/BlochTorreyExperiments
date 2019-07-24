@@ -44,15 +44,15 @@ export DenseConnection, ResidualDenseBlock
 export GlobalFeatureFusion, DenseFeatureFusion
 
 # ResNet
-include("src/resnet.jl")
+include("resnet.jl")
 @reexport using .ResNet
 
 # Source
-include("src/transforms.jl")
-include("src/utils.jl")
-include("src/loading.jl")
-include("src/layers.jl")
-include("src/optimizers.jl")
-include("src/models.jl")
+include("transforms.jl")
+include("utils.jl")
+include("loading.jl")
+include("layers.jl")
+include("optimizers.jl")
+include("models.jl")
 
 end # module MWFLearning

@@ -221,7 +221,7 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
         :labels => ["Simulated" "Bi-Exponential"],
         :ylabel => "S(t) Magnitude", :xlabel => "Time [ms]",
         :title => titlestr)
-    fig = plot(1000 .* ts, [norm.(signals) y_biexp]; props...)        
+    fig = plot(1000 .* ts, [y_biexp norm.(signals)]; props...)
     !(fname == nothing) && default_savefigs(fig, fname)
     disp && display(fig)
 
