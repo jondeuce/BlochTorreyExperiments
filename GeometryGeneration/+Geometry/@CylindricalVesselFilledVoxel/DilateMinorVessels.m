@@ -2,6 +2,8 @@ function [ G_out ] = DilateMinorVessels( G, DilationFactor )
 %DILATEMINORVESSELS Dilates the minor blood vessel radii such that the
 %isotropic blood volume becomes DilationFactor * G.iBVF
 
+G_out = G;
+
 if nargin < 2
     DilationFactor = G.MinorDilation;
 end
@@ -12,7 +14,6 @@ elseif DilationFactor < 0
     error('DilationFactor must be positive');
 end
 
-G_out = G;
 G_out.MinorDilation = DilationFactor;
 G_out.MinorRadiusFactor = sqrt(DilationFactor);
 G_out.isMinorDilated = true;

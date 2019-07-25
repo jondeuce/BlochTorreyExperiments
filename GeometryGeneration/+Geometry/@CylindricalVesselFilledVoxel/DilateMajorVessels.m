@@ -2,6 +2,8 @@ function [ G_out ] = DilateMajorVessels( G, DilationFactor )
 %DILATEMAJORVESSELS Dilates the major blood vessel radii such that the
 %isotropic blood volume becomes DilationFactor * G.aBVF
 
+G_out = G;
+
 if nargin < 2
     DilationFactor = G.MajorDilation;
 end
@@ -12,7 +14,6 @@ elseif DilationFactor < 0
     error('DilationFactor must be positive');
 end
 
-G_out = G;
 G_out.MajorDilation = DilationFactor;
 G_out.MajorRadiusFactor = sqrt(DilationFactor);
 G_out.isMajorDilated = true;
