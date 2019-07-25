@@ -64,20 +64,20 @@ iRBVF = iBVF/BVF;
 aRBVF = aBVF/BVF;
 
 Nmajor = 3; % Number of major vessels (optimal number is from SE perf. orientation. sim)
-MajorAngle = 0.0; % Major vessel angles compared to B0 [degrees]
+MajorAngle = 90.0; % Major vessel angles compared to B0 [degrees]
 NumMajorArteries = 1; % Number of major arteries
 MinorArterialFrac = 1/3; % Fraction of minor vessels which are arteries
 VRSRelativeRad = 1; % Radius of Virchow-Robin space relative to major vessel radius [unitless]
 
 Navgs = 1; % Number of geometries to simulate
 VoxelSize = [2500,2500,2500]; % Typical isotropic voxel dimensions. [um]
-GridSize = [512,512,512]; % Voxel size to ensure isotropic subvoxels
+GridSize = [256,256,256]; % Voxel size to ensure isotropic subvoxels
 VoxelCenter = [0,0,0];
 
-% Rminor_mu = 13.7;
-% Rminor_sig = 2.1;
-Rminor_mu = 7.0;
-Rminor_sig = 0.5;
+Rminor_mu = 13.7;
+Rminor_sig = 2.1;
+% Rminor_mu = 7.0;
+% Rminor_sig = 0.5;
 rng('default'); seed = rng; % for consistent geometries between sims.
 
 %% Mock Common/Geometry Settings (for testing)
@@ -127,6 +127,7 @@ NewGeometry = @() Geometry.CylindricalVesselFilledVoxel( ...
     'ImproveMajorBVF', true, 'ImproveMinorBVF', true, ...
     'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', true, ...
     'VRSRelativeRad', VRSRelativeRad, ...
+    'MajorDistribution', 'Line', 'MajorDilation', 1.2, 'MinorDilation', 1.2, ...
     'PopulateIdx', true, 'seed', seed );
 
 %% Bloch-Torrey propagation stepper

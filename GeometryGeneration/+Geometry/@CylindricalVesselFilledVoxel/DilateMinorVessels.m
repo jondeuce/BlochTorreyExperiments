@@ -27,7 +27,7 @@ G_out.MinorRadiusFactor = fzero( @BVF_Error, InitialRadiusFactor, fzero_opts );
 
     function BVF_err = BVF_Error(RadiusScaleFactor)
         if abs(RadiusScaleFactor - 1.0) > 1e-8
-            G_out = SetRminor(G_out, RadiusScaleFactor * InitialRadii);
+            G_out = SetRminor(G_out, RadiusScaleFactor .* InitialRadii);
             G_out.MinorRadiusFactor = RadiusScaleFactor;
             G_out = CalculateVasculatureMap(G_out);
         end

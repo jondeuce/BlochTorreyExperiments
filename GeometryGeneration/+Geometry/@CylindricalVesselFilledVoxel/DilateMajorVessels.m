@@ -1,6 +1,6 @@
 function [ G_out ] = DilateMajorVessels( G, DilationFactor )
 %DILATEMAJORVESSELS Dilates the major blood vessel radii such that the
-%isotropic blood volume becomes DilationFactor * G.iBVF
+%isotropic blood volume becomes DilationFactor * G.aBVF
 
 if nargin < 2
     DilationFactor = G.MajorDilation;
@@ -18,7 +18,7 @@ G_out.MajorRadiusFactor = sqrt(DilationFactor);
 G_out.isMajorDilated = true;
 
 % Theoretically, scaling the radii by sqrt(DilationFactor) will scale the
-% iBVF by DilationFactor, but we can do better by iteratively choosing the
+% aBVF by DilationFactor, but we can do better by iteratively choosing the
 % radii with fzero
 InitialRadii = G_out.r0;
 InitialRadiusFactor = sqrt(DilationFactor);
@@ -31,7 +31,7 @@ G_out.MajorRadiusFactor = fzero( @BVF_Error, InitialRadiusFactor, fzero_opts );
             G_out.MajorRadiusFactor = RadiusScaleFactor;
             G_out = CalculateVasculatureMap(G_out);
         end
-        BVF_err = G_out.Targets.iBVF * DilationFactor - G_out.iBVF;
+        BVF_err = G_out.Targets.aBVF * DilationFactor - G_out.aBVF;
     end
 
 %Update properties which depend on the Vasculature Map

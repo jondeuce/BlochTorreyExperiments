@@ -27,12 +27,18 @@ switch upper(stepper)
             gamma);
 end
 
+% Create geometry for activated blood vessels
+%   NOTE: iBVF is defined as BVF - aBVF; since aBVF is independent of iBVF,
+%         it must be computed first (i.e. major vessels are dilated first).
+%         This will change iBVF; however, DilateMinorVessels uses the
+%         original Geom.Targets.iBVF to determine the goal iBVF, and
+%         dilating the minor vessels will not change the aBVF.
 DilatedGeom = Geom;
-if abs(G.MinorDilation - 1) > 1e-8
-    DilatedGeom = DilateMinorVessels(Geom);
+if abs(Geom.MajorDilation - 1) > 1e-8
+    DilatedGeom = DilateMajorVessels(DilatedGeom);
 end
-if abs(G.MajorDilation - 1) > 1e-8
-    DilatedGeom = DilateMajorVessels(Geom);
+if abs(Geom.MinorDilation - 1) > 1e-8
+    DilatedGeom = DilateMinorVessels(DilatedGeom);
 end
 
 for ii = 1:NumAngles

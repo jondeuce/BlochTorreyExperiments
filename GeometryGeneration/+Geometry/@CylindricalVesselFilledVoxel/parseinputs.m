@@ -59,13 +59,17 @@ addParameter(p,'ImproveMinorBVF',true,@(x)VA(x,{'logical'},{'scalar'}));
 % intersect with the voxel, remove them
 addParameter(p,'AllowInitialMinorPruning',true,@(x)VA(x,{'logical'},{'scalar'}));
 
+% Major vessel distribution
+majordisttypes = {'REGULAR', 'LINE'};
+addParameter(p,'MajorDistribution','REGULAR',@(x) any(VS(x,majordisttypes)));
+
 % Minor vessel orientation
-expectedinterptype = {'RANDOM','ALIGNED','PERIODIC'};
-addParameter(p,'MinorOrientation','RANDOM',@(x) any(VS(x,expectedinterptype)));
+minororientationtypes = {'RANDOM', 'ALIGNED', 'PERIODIC'};
+addParameter(p,'MinorOrientation','RANDOM',@(x) any(VS(x,minororientationtypes)));
 
 % Minor/major dilation factors
-addParameter(p,'MinorDilation',1.0,@(x)VA(x,{'scalar'},{'positive'}));
-addParameter(p,'MajorDilation',1.0,@(x)VA(x,{'scalar'},{'positive'}));
+addParameter(p,'MinorDilation',1.0);%,@(x)VA(x,{'scalar'},{'positive'}));
+addParameter(p,'MajorDilation',1.0);%,@(x)VA(x,{'scalar'},{'positive'}));
 
 % Populate Idx field, or leave blank
 addParameter(p,'PopulateIdx',true,@(x)VA(x,{'logical'},{'scalar'}));

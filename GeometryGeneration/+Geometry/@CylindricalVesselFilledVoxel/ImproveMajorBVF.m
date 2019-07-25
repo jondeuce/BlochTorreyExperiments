@@ -43,7 +43,7 @@ if isAngleZero( G.MajorAngle )
     % dBV_Fun     =  @(R) 2*pi*R * G.Nmajor * (RepDimGsize / G.SubVoxSize^2);
     
     % max allowed radius satisfies 2*R*sqrt(N) = Width, e.g. if they were all in a regular grid
-    r0_bounds   =  [ 0.5 * G.Rmajor, min( 1.5 * G.Rmajor, min(G.VoxelSize(1:2))/(2*sqrt(G.Nmajor)) ) ];
+    r0_bounds   =  [ 0.5 * G.Rmajor, min( 2 * G.Rmajor, min(G.VoxelSize(1:2))/(2*sqrt(G.Nmajor)) ) ];
 elseif isAngleNinety( G.MajorAngle )
     SliceGsize  =  [1, G.GridSize(2:3)];
     SliceVsize  =  [G.SubVoxSize, G.VoxelSize(2:3)];
@@ -55,7 +55,7 @@ elseif isAngleNinety( G.MajorAngle )
     % dBV_Fun     =  @(R) 2*pi*R * G.Nmajor * (RepDimGsize / G.SubVoxSize^2);
     
     % max allowed radius satisfies 2*R*sqrt(N) = Width, e.g. if they were all in a regular grid
-    r0_bounds   =  [ 0.5 * G.Rmajor, min( 1.5 * G.Rmajor, min(G.VoxelSize(2:3))/(2*sqrt(G.Nmajor)) ) ];
+    r0_bounds   =  [ 0.5 * G.Rmajor, min( 2 * G.Rmajor, min(G.VoxelSize(2:3))/(2*sqrt(G.Nmajor)) ) ];
 else
     get_Vmap    =  @(R,p0) getCylinderMask( G.GridSize, G.SubVoxSize, G.VoxelCenter, G.VoxelSize, p0, G.vz0, R*ones(1,G.Nmajor), G.vx0, G.vy0, isUnit, isCentered, prec, [] );
     get_BV      =  @(R,p0) sum(vec(get_Vmap(R,p0)));
@@ -65,7 +65,7 @@ else
     % dBV_Fun   =  @(R) 2*pi*R * G.Nmajor * (G.GridSize(3) / G.SubVoxSize^2);
     
     % max allowed radius satisfies 2*R*sqrt(N) = Width, e.g. if they were all in a regular grid
-    r0_bounds   =  [ 0.5 * G.Rmajor, min( 1.5 * G.Rmajor, min(G.VoxelSize)/(2*sqrt(G.Nmajor)) ) ];
+    r0_bounds   =  [ 0.5 * G.Rmajor, min( 2 * G.Rmajor, min(G.VoxelSize)/(2*sqrt(G.Nmajor)) ) ];
 end
 
 BV_Target   =  G.Targets.aBVF * prod(G.GridSize); % Blood Volume in units of voxels

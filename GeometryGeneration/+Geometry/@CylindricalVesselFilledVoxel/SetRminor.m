@@ -5,11 +5,16 @@ function [ G ] = SetRminor(G, Rminor)
 % this function does not do it by default:
 %   G = Uncompress(G);
 
-Rminor = Rminor(:) .* ones(size(G.r)); % force to row vector
-Rminor_mu = mean(G.Rminor); % mean of minor cylinder radii
-Rminor_sig = std(G.Rminor); % std of minor cylinder radii
+if isscalar(Rminor)
+    Rminor = Rminor * ones(size(G.r));
+else
+    Rminor = reshape(Rminor(:), size(G.r));
+end
+G.r = Rminor .* ones(size(G.r));
+
+Rminor_mu = mean(G.r); % mean of minor cylinder radii
+Rminor_sig = std(G.r); % std of minor cylinder radii
 G.RminorFun = @(varargin) Rminor_mu + Rminor_sig .* randn(varargin{:});
-G.r = Rminor .* ones(1, G.Nmajor);
 
 end
 
