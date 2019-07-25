@@ -690,6 +690,7 @@ classdef BlochTorreyOp
             else
             fprintf('       D: %s %s\n', mat2str(A.gsize), [Dcplxstr, classtype]);
             end
+            fprintf('    mask: %s %s\n', mat2str(size(A.mask)), class(A.mask));
             fprintf('    Diag: %s %s\n', mat2str(A.gsize), [cplxstr, classtype]);
             fprintf('   Gamma: %s %s\n', mat2str(A.gsize), [cplxstr, classtype]);
             fprintf('   R2map: %s %s\n', mat2str(A.gsize), classtype);

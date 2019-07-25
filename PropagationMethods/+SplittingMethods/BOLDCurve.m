@@ -4,23 +4,45 @@ function [ Results ] = BOLDCurve(Results, EchoTimes, dt, Y0, Y, Hct, Dcoeff, B0,
 NumAngles   = numel(AlphaRange);
 ResultsArgs = getargs(Results);
 
+% Geom properties
+if numel(Geom) == 1
+    GridSize = Geom.GridSize;
+    VoxelSize = Geom.VoxelSize;
+else
+    % Vector of geometries passed in; assume they are to be stacked along the 3rd dimension
+    GridSize = cat(1, Geom.GridSize);
+    VoxelSize = cat(1, Geom.VoxelSize);
+    if ~all(GridSize(:,1) == GridSize(1,1) & GridSize(:,2) == GridSize(1,2)) || ...
+       ~all(VoxelSize(:,1) == VoxelSize(1,1) & VoxelSize(:,2) == VoxelSize(1,2))
+        error('Stacked geometries have incompatible dimensions');
+    end
+    GridSize = [GridSize(1,1:2), sum(GridSize(:,3))];
+    VoxelSize = [VoxelSize(1,1:2), sum(VoxelSize(:,3))];
+end
+
+% Vectorized helper functions
+Stack = @(in) cat(3, in{:});
+VecGetMask = @(Geom) Stack(VectorApply(Geom, @GetMask, MaskType));
+CalcGamma = @(Geom, gammasettings) CalculateComplexDecay(gammasettings, Geom); % Argument order is flipped
+VecCalcGamma = @(Geom, gammasettings) Stack(VectorApply(Geom, CalcGamma, gammasettings));
+
 % Create kernelstepper before angle loop, as this way the k-space diffusion
 % kernel is precomputed only once for all angles alpha
 switch upper(stepper)
     case 'BTSPLITSTEPPER'
         Gamma = []; dGamma = {};
         kernelstepper = SplittingMethods.BTSplitStepper(...
-            dt, Dcoeff, Gamma, dGamma, Geom.GridSize, Geom.VoxelSize, ...
+            dt, Dcoeff, Gamma, dGamma, GridSize, VoxelSize, ...
             'NReps', 1, 'Order', 2);
         getstepper = @(gamma) precomputeExpDecays(kernelstepper, gamma);
     case 'EXPMVSTEPPER'
         getstepper = @(gamma) precompute(...
             ExpmvStepper(dt, ...
                 setbuffer( ...
-                    BlochTorreyOp(gamma, Dcoeff, Geom.GridSize, Geom.VoxelSize, false, GetMask(Geom, MaskType)), ...
+                    BlochTorreyOp(gamma, Dcoeff, GridSize, VoxelSize, false, VecGetMask(Geom)), ...
                     BlochTorreyOp.DiagState ...
                     ), ...
-                Geom.GridSize, Geom.VoxelSize, ...
+                GridSize, VoxelSize, ...
                 'type', 'GRE', 'prec', 'half', ...%1e-6, ...
                 'prnt', true, 'forcesparse', false, 'shift', true, ...
                 'bal', false, 'full_term', false), ...
@@ -34,12 +56,8 @@ end
 %         original Geom.Targets.iBVF to determine the goal iBVF, and
 %         dilating the minor vessels will not change the aBVF.
 DilatedGeom = Geom;
-if abs(Geom.MajorDilation - 1) > 1e-8
-    DilatedGeom = DilateMajorVessels(DilatedGeom);
-end
-if abs(Geom.MinorDilation - 1) > 1e-8
-    DilatedGeom = DilateMinorVessels(DilatedGeom);
-end
+DilatedGeom = VectorApply(DilatedGeom, @DilateMajorVessels);
+DilatedGeom = VectorApply(DilatedGeom, @DilateMinorVessels);
 
 for ii = 1:NumAngles
     
@@ -52,7 +70,7 @@ for ii = 1:NumAngles
     % ---- Baseline Signal: BloodOxygenation = Y0 ---- %
     t_Base  =  tic;
     
-    V = getstepper( CalculateComplexDecay( GammaSettingsY0, Geom ) );
+    V = getstepper( VecCalcGamma( Geom, GammaSettingsY0 ) );
     [ Signal_Baseline ] = PropBOLDSignal( V, EchoTimes, type );
     Results = push( Results, Signal_Baseline, [], EchoTimes, deg2rad(alpha), ResultsArgs{3:end} );
     
@@ -66,7 +84,7 @@ for ii = 1:NumAngles
     % ---- Activated Signal: BloodOxygenation = Y ---- %
     t_Base  =  tic;
     
-    V = getstepper( CalculateComplexDecay( GammaSettingsY, DilatedGeom ) );
+    V = getstepper( VecCalcGamma( DilatedGeom, GammaSettingsY ) );
     [ Signal_Activated ] = PropBOLDSignal( V, EchoTimes, type );
     Results = push( Results, [], Signal_Activated, EchoTimes, deg2rad(alpha), ResultsArgs{3:end} );
     
