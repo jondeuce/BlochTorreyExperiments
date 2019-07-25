@@ -37,7 +37,7 @@ if isAngleZero( G.MajorAngle )
     SliceVsize  =  [G.VoxelSize(1:2), G.SubVoxSize];
     RepDimGsize =  G.GridSize(3); % repeated dimension size
     
-    get_Vmap    =  @(R,p0) getCylinderMask( SliceGsize, G.SubVoxSize, G.VoxelCenter, SliceVsize, p0, G.vz0, R*ones(1,G.Nmajor), G.vx0, G.vy0, isUnit, isCentered, prec, [] );
+    get_Vmap    =  @(R,p0) getCylinderMask( SliceGsize, G.SubVoxSize, G.VoxelCenter, SliceVsize, p0, G.vz0, max(R,0)*ones(1,G.Nmajor), G.vx0, G.vy0, isUnit, isCentered, prec, [] );
     get_BV      =  @(R,p0) RepDimGsize * sum(vec(get_Vmap(R,p0)));
     get_rand_p0 =  @() G.p0 + P0_FACT * G.SubVoxSize * [2*rand(2,G.Nmajor)-1; zeros(1,G.Nmajor)];
     % dBV_Fun     =  @(R) 2*pi*R * G.Nmajor * (RepDimGsize / G.SubVoxSize^2);
@@ -49,7 +49,7 @@ elseif isAngleNinety( G.MajorAngle )
     SliceVsize  =  [G.SubVoxSize, G.VoxelSize(2:3)];
     RepDimGsize =  G.GridSize(1); % repeated dimension size
     
-    get_Vmap    =  @(R,p0) getCylinderMask( SliceGsize, G.SubVoxSize, G.VoxelCenter, SliceVsize, p0, G.vz0, R*ones(1,G.Nmajor), G.vx0, G.vy0, isUnit, isCentered, prec, [] );
+    get_Vmap    =  @(R,p0) getCylinderMask( SliceGsize, G.SubVoxSize, G.VoxelCenter, SliceVsize, p0, G.vz0, max(R,0)*ones(1,G.Nmajor), G.vx0, G.vy0, isUnit, isCentered, prec, [] );
     get_BV      =  @(R,p0) RepDimGsize * sum(vec(get_Vmap(R,p0)));
     get_rand_p0 =  @() G.p0 + P0_FACT * G.SubVoxSize * [zeros(1,G.Nmajor); 2*rand(2,G.Nmajor)-1];
     % dBV_Fun     =  @(R) 2*pi*R * G.Nmajor * (RepDimGsize / G.SubVoxSize^2);
@@ -57,7 +57,7 @@ elseif isAngleNinety( G.MajorAngle )
     % max allowed radius satisfies 2*R*sqrt(N) = Width, e.g. if they were all in a regular grid
     r0_bounds   =  [ 0.5 * G.Rmajor, min( 2 * G.Rmajor, min(G.VoxelSize(2:3))/(2*sqrt(G.Nmajor)) ) ];
 else
-    get_Vmap    =  @(R,p0) getCylinderMask( G.GridSize, G.SubVoxSize, G.VoxelCenter, G.VoxelSize, p0, G.vz0, R*ones(1,G.Nmajor), G.vx0, G.vy0, isUnit, isCentered, prec, [] );
+    get_Vmap    =  @(R,p0) getCylinderMask( G.GridSize, G.SubVoxSize, G.VoxelCenter, G.VoxelSize, p0, G.vz0, max(R,0)*ones(1,G.Nmajor), G.vx0, G.vy0, isUnit, isCentered, prec, [] );
     get_BV      =  @(R,p0) sum(vec(get_Vmap(R,p0)));
     get_rand_p0 =  @() G.p0 + roty(G.MajorAngle) * [P0_FACT * G.SubVoxSize * (2*rand(2,G.Nmajor)-1); zeros(1,G.Nmajor)];
     
@@ -86,7 +86,8 @@ while (iter < iter_MAX) && (abs(BV_CurrentBest - BV_Target) > BV_Tol)
     
     % ==== Using fzero ==== %
     fzero_opts = optimset('TolX', 1e-6 * G.SubVoxSize); % use low tolerance, but lots of iterations
-    [r0, BV_err] = fzero(@fopt, r0_bounds, fzero_opts);
+    % [r0, BV_err] = fzero(@fopt, r0_bounds, fzero_opts);
+    [r0, BV_err] = fzero(@fopt, r0_CurrentBest, fzero_opts);
     
     % ==== Using lsqnonlin ==== %
     %     [r0, BV_err_norm, BV_err] = lsqnonlin( @fopt, G.Rmajor, r0 - 2*G.SubVoxSize, r0 + 2*G.SubVoxSize, lsqnonlin_opts );

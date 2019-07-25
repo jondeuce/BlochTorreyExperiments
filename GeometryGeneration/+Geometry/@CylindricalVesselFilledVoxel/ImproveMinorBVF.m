@@ -58,11 +58,13 @@ end
 % ======================================================================= %
 % New method of uniformly expanding isotropic cylinders
 % ======================================================================= %
-VolumeFactor = G.Targets.iBVF/G.iBVF;
 TolX = 0.1 * G.SubVoxSize / maximum(G.VoxelSize); % Approximate grid resolution
 TolF = 1e-3 * G.Targets.iBVF; % Approximate function tolerance
-G = ExpandMinorVesselsByVolumeFactor(G, VolumeFactor, TolX, TolF);
-G = NormalizeCylinderVecs(G); % probably unnecessary, but it's cheap
+if abs(G.Targets.iBVF - G.iBVF) > TolF
+    VolumeFactor = G.Targets.iBVF/G.iBVF;
+    G = ExpandMinorVesselsByVolumeFactor(G, VolumeFactor, TolX, TolF);
+    G = NormalizeCylinderVecs(G); % probably unnecessary, but it's cheap
+end
 
 G.BVF   = G.iBVF + G.aBVF;
 G.iRBVF = G.iBVF / G.BVF;

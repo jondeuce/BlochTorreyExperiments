@@ -152,7 +152,10 @@ ComputeBOLDCurve = @(R,G) SplittingMethods.BOLDCurve(R, EchoTimes, dt, Y0, Y, Hc
 Geometries = [];
 for ii = 1:Navgs
     % Geom = NewGeometry();
-    Geom = [NewGeometry(), NewGeometry('VoxelCenter', [0, 0, -VoxelSize(3)])]; % Must be row vector
+    Geom = [
+        NewGeometry('MajorAngle', 90.0, 'MajorDistribution', 'Line'), ...
+        NewGeometry('MajorAngle', 0.0, 'MajorDistribution', 'Regular', 'VoxelCenter', [0, 0, -VoxelSize(3)])
+        ]; % Must be row vector
     
     Results = BOLDResults( EchoTimes, deg2rad(alpha_range), Y0, Y, Hct, ii );
     Results.MetaData.Geom = Compress(Geom);
