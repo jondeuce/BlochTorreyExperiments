@@ -27,6 +27,14 @@ switch upper(stepper)
             gamma);
 end
 
+DilatedGeom = Geom;
+if abs(G.MinorDilation - 1) > 1e-8
+    DilatedGeom = DilateMinorVessels(Geom);
+end
+if abs(G.MajorDilation - 1) > 1e-8
+    DilatedGeom = DilateMajorVessels(Geom);
+end
+
 for ii = 1:NumAngles
     
     alpha_loop_time = tic;
@@ -52,7 +60,7 @@ for ii = 1:NumAngles
     % ---- Activated Signal: BloodOxygenation = Y ---- %
     t_Base  =  tic;
     
-    V = getstepper( CalculateComplexDecay( GammaSettingsY, Geom ) );
+    V = getstepper( CalculateComplexDecay( GammaSettingsY, DilatedGeom ) );
     [ Signal_Activated ] = PropBOLDSignal( V, EchoTimes, type );
     Results = push( Results, [], Signal_Activated, EchoTimes, deg2rad(alpha), ResultsArgs{3:end} );
     

@@ -2,27 +2,11 @@ function G = parseinputs( G, varargin )
 %PARSEKEYWORDARGS Parses keyword and required arguments for class
 % CylindricalVesselFilledVoxel.
 
-if length(varargin) >= 2 && isstruct(varargin{1}) && isstruct(varargin{2})
-    % OLD VERSION
-    SimSettings = varargin{1};
-    Params = varargin{2};
-    G = parse_SimSettings_Params( G, SimSettings, Params, varargin );
-    
-    % Get parser and parse name-value args
-    p = getSimSettingsParamsInputParser();
-    parse(p,varargin{:})
-    G.opts = p.Results;
-    
-    G.MinorDilation = G.opts.MinorDilation;
-    G.MinorRadiusFactor = sqrt(G.opts.MinorDilation);
-    G.isMinorDilated = false;
-else
-    % Get parser and parse name-value args
-    p = getInputParser();
-    parse(p,varargin{:});
-    G = setParsedArgs(G,p);
-    G = getDerivedArgs(G);
-end
+% Get parser and parse name-value args
+p = getInputParser();
+parse(p,varargin{:});
+G = setParsedArgs(G,p);
+G = getDerivedArgs(G);
 
 end
 
@@ -81,6 +65,7 @@ addParameter(p,'MinorOrientation','RANDOM',@(x) any(VS(x,expectedinterptype)));
 
 % Minor/major dilation factors
 addParameter(p,'MinorDilation',1.0,@(x)VA(x,{'scalar'},{'positive'}));
+addParameter(p,'MajorDilation',1.0,@(x)VA(x,{'scalar'},{'positive'}));
 
 % Populate Idx field, or leave blank
 addParameter(p,'PopulateIdx',true,@(x)VA(x,{'logical'},{'scalar'}));
@@ -93,7 +78,7 @@ NamedArgs = {'VoxelSize','VoxelCenter','GridSize','Nmajor','MajorAngle',...
     'NumMajorArteries','MinorArterialFrac',...
     'MediumVessels','MediumVesselRadiusThresh',...
     'Rmajor','Rminor_mu','Rminor_sig',...
-    'VRSRelativeRad','MinorDilation',...
+    'VRSRelativeRad','MinorDilation','MajorDilation',...
     'Verbose','seed'};
 TargetArgs = {'BVF','iRBVF','aRBVF','iBVF','aBVF'};
 
@@ -236,7 +221,9 @@ G.RmajorFun = @(varargin) Rmajor .* ones(varargin{:});
 G.R = G.RmajorFun(1,G.InitGuesses.N);
 
 G.MinorRadiusFactor = sqrt(G.MinorDilation);
+G.MajorRadiusFactor = sqrt(G.MajorDilation);
 G.isMinorDilated = false;
+G.isMajorDilated = false;
 
 end
 
@@ -333,83 +320,5 @@ G.Targets.aBVF  = G.Targets.BVF - G.Targets.iBVF;
 G.Targets.aRBVF = 1 - G.Targets.iRBVF;
 
 if G.Verbose; disp(G.Targets); end
-
-end
-
-function G = parse_SimSettings_Params( G, SimSettings, Params, varargin )
-
-%==============================================================
-% Store SimSettings and Params
-%==============================================================
-G.SimSettings = SimSettings;
-G.Params = Params;
-
-%==============================================================
-% Extract immutable parameters from SimSettings and Params
-%==============================================================
-G.VoxelSize   = SimSettings.VoxelSize;
-G.SubVoxSize  = SimSettings.SubVoxSize;
-G.VoxelCenter = SimSettings.VoxelCenter;
-G.GridSize    = SimSettings.GridSize;
-G.Nmajor      = SimSettings.NumMajorVessels;
-G.seed        = rng;
-
-[Rminor_mu, Rminor_sig] = deal(SimSettings.R_Minor_mu, SimSettings.R_Minor_sig);
-G.Rminor_mu  = Rminor_mu;
-G.Rminor_sig = Rminor_sig;
-G.RminorFun  = @(varargin) Rminor_mu + Rminor_sig .* randn(varargin{:});
-
-%==============================================================
-% Goal BVF, etc.
-%==============================================================
-G.Targets = struct( ...
-    'BVF',   Params.Total_BVF, ...
-    'iRBVF', Params.MinorVessel_RelBVF ...
-    );
-G.Targets.iBVF  = G.Targets.iRBVF * G.Targets.BVF;
-G.Targets.aBVF  = G.Targets.BVF - G.Targets.iBVF;
-G.Targets.aRBVF = 1 - G.Targets.iRBVF;
-
-%==============================================================
-% Initial guesses
-%==============================================================
-G.InitGuesses = struct( ...
-    'N',      G.Nmajor + Params.NumMinorVessels, ...
-    'Nminor', Params.NumMinorVessels, ...
-    'Rmajor', Params.R_Major ...
-    );
-
-[G.P,G.Vx,G.Vy,G.Vz] = deal(zeros(3,G.InitGuesses.N));
-
-Rmajor = G.InitGuesses.Rmajor; % unpack so that RmajorFun doesn't close over G
-G.RmajorFun = @(varargin) Rmajor .* ones(varargin{:});
-G.R = G.RmajorFun(1, G.InitGuesses.N);
-
-end
-
-function p = getSimSettingsParamsInputParser()
-
-p = inputParser;
-p.FunctionName = 'CylindricalVesselFilledVoxel';
-
-VA = @(varargin) validateattributes(varargin{:});
-VS = @(varargin) validatestring(varargin{:}); %note: case-insensitive
-
-%-------------------------------------------------------------------------%
-% Optional parameters
-%-------------------------------------------------------------------------%
-% Allow intersecting cylinders or not
-addParameter(p,'AllowMinorSelfIntersect',true,@(x)VA(x,{'logical'},{'scalar'}));
-addParameter(p,'AllowMinorMajorIntersect',false,@(x)VA(x,{'logical'},{'scalar'}));
-
-% Minor vessel orientation
-expectedinterptype = {'RANDOM','ALIGNED','PERIODIC'};
-addParameter(p,'MinorOrientation','RANDOM',@(x) any(VS(x,expectedinterptype)));
-
-% Minor/major dilation factors
-addParameter(p,'MinorDilation',1.0,@(x)VA(x,{'scalar'},{'positive'}));
-
-% Populate Idx field, or leave blank
-addParameter(p,'PopulateIdx',true,@(x)VA(x,{'logical'},{'scalar'}));
 
 end
