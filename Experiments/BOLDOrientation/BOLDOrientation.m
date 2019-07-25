@@ -64,20 +64,20 @@ iRBVF = iBVF/BVF;
 aRBVF = aBVF/BVF;
 
 Nmajor = 3; % Number of major vessels (optimal number is from SE perf. orientation. sim)
-MajorAngle = 0.0; % Major vessel angles compared to B0 [degrees]
+MajorAngle = 90.0; % Major vessel angles compared to B0 [degrees]
 NumMajorArteries = 1; % Number of major arteries
 MinorArterialFrac = 1/3; % Fraction of minor vessels which are arteries
 VRSRelativeRad = 1; % Radius of Virchow-Robin space relative to major vessel radius [unitless]
 
 Navgs = 1; % Number of geometries to simulate
-VoxelSize = [2500,2500,2500]; % Typical isotropic voxel dimensions. [um]
-GridSize = [512,512,512]; % Voxel size to ensure isotropic subvoxels
+VoxelSize = [2500,2500,1250]; %TODO % Typical isotropic voxel dimensions. [um]
+GridSize = [256,256,128]; %TODO % Voxel size to ensure isotropic subvoxels
 VoxelCenter = [0,0,0];
 
-% Rminor_mu = 13.7;
-% Rminor_sig = 2.1;
-Rminor_mu = 7.0;
-Rminor_sig = 0.5;
+Rminor_mu = 13.7; %TODO
+Rminor_sig = 2.1;
+% Rminor_mu = 7.0;
+% Rminor_sig = 0.5;
 rng('default'); seed = rng; % for consistent geometries between sims.
 
 %% Mock Common/Geometry Settings (for testing)
@@ -118,7 +118,7 @@ rng('default'); seed = rng; % for consistent geometries between sims.
 % rng('default'); seed = rng; % for consistent geometries between sims.
 
 %% Geometry generator
-NewGeometry = @() Geometry.CylindricalVesselFilledVoxel( ...
+NewGeometry = @(varargin) Geometry.CylindricalVesselFilledVoxel( ...
     'iBVF', iBVF, 'aBVF', aBVF, ...
     'VoxelSize', VoxelSize, 'GridSize', GridSize, 'VoxelCenter', VoxelCenter, ...
     'Nmajor', Nmajor, 'MajorAngle', MajorAngle, ...
@@ -127,7 +127,9 @@ NewGeometry = @() Geometry.CylindricalVesselFilledVoxel( ...
     'ImproveMajorBVF', true, 'ImproveMinorBVF', true, ...
     'AllowMinorSelfIntersect', true, 'AllowMinorMajorIntersect', true, ...
     'VRSRelativeRad', VRSRelativeRad, ...
-    'PopulateIdx', true, 'seed', seed );
+    'MajorDistribution', 'Line', 'MajorDilation', 1.2, 'MinorDilation', 1.2, ... %TODO
+    'PopulateIdx', true, 'seed', seed, ...
+    varargin{:});
 
 %% Bloch-Torrey propagation stepper
 % stepper = 'BTSplitStepper'; % Splitting method
@@ -142,13 +144,15 @@ diary(DiaryFilename);
 AllResults = BOLDResults( EchoTimes, deg2rad(alpha_range), Y0, Y, Hct, 1:Navgs );
 
 % Anon. func. for computing the BOLD Curve
+Stack = @(in) cat(3, in{:});
+VecGetDiffMap = @(G) Stack(VectorApply(G, @CalculateDiffusionMap, D_Tissue, D_Blood, D_VRS));
 ComputeBOLDCurve = @(R,G) SplittingMethods.BOLDCurve(R, EchoTimes, dt, Y0, Y, Hct, ...
-    CalculateDiffusionMap( G, D_Tissue, D_Blood, D_VRS ), ...
-    B0, alpha_range, G, MaskType, type, stepper);
+    VecGetDiffMap(G), B0, alpha_range, G, MaskType, type, stepper);
 
 Geometries = [];
 for ii = 1:Navgs
-    Geom = NewGeometry();
+    % Geom = NewGeometry();
+    Geom = [NewGeometry(), NewGeometry('VoxelCenter', [0, 0, -VoxelSize(3)])]; % Must be row vector
     
     Results = BOLDResults( EchoTimes, deg2rad(alpha_range), Y0, Y, Hct, ii );
     Results.MetaData.Geom = Compress(Geom);

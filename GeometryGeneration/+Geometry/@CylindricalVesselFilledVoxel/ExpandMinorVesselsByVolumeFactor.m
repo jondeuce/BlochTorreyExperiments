@@ -18,7 +18,7 @@ if nargin < 2; VolumeFactor = 1; end
 G_out = G;
 G_out.Targets.iBVF = G.Targets.iBVF * VolumeFactor;
 
-if abs(VolumeFactor - 1.0) < 1e-12
+if abs(VolumeFactor - 1.0) < TOLF
     return
 elseif VolumeFactor < 0
     error('VolumeFactor must be positive');

@@ -5,7 +5,6 @@ pyplot(size=(800,600), leg = false, grid = false, labels = nothing)
 # Initialize project packages
 include(joinpath(@__DIR__, "../init.jl")) # call "init.jl", located in the same directory as this file
 mxcall(:cd, 0, pwd()) # change MATLAB path to current path for saving outputs
-mxcall(:figure, 0) # bring up MATLAB figure gui
 make_reproduce( # Creating backup file
     """
     include("BlochTorreyExperiments/MyelinWaterTools/scripts/MWF-run.jl")
@@ -15,7 +14,7 @@ make_reproduce( # Creating backup file
 import DrWatson
 using DrWatson: @dict, @ntuple
 DrWatson.default_prefix(c) = MWFUtils.getnow() #TODO
-gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
+gitdir() = realpath(DrWatson.projectdir(".."))
 
 ####
 #### Parameters to sweep over
@@ -77,7 +76,7 @@ const TE = 10e-3; # Echotime
 const nTE = 32; # Number of echoes
 const solverparams = Dict(
     :u0     => 1.0im,                   # Initial π/2 pulse (Default: Vec{2}((0.0,1.0)))
-    :TE     => TE,                      # Echotime for MultiSpinEchoCallback (Default: 10e-3)
+    :TE     => TE,                      # Echotime for CPMGCallback (Default: 10e-3)
     :tspan  => TE .* (0, nTE),          # Solver time span (Default: (0.0, 320e-3); must start at zero)
     :reltol => 1e-8,
     :abstol => 0.0);
@@ -131,10 +130,10 @@ DrWatson.@tagsave(
 
 function runsolve(btparams)
     # Unpack geometry, create myelin domains, and create omegafield
-    exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
+    @unpack exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
     ferritins = Vec{3,floattype(bdry)}[]
     
-    myelinprob, myelinsubdomains, myelindomains = createdomains(btparams,
+    @unpack myelinprob, myelinsubdomains, myelindomains = createdomains(btparams,
         exteriorgrids, torigrids, interiorgrids,
         outercircles, innercircles, ferritins, typeof(solverparams[:u0]))
         

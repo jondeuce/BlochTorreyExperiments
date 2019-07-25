@@ -5,6 +5,12 @@ Test/*
 GeometryGeneration/Images/*
 Results/*
 
+####################
+## Paraview files ##
+####################
+*.vtu
+*.pvd
+
 ######################
 ## MATLAB GITIGNORE ##
 ######################

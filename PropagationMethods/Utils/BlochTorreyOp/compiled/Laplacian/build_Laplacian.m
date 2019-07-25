@@ -2,6 +2,9 @@
 % Periodic Laplacian Operator
 %==========================================================================
 
+CALLING_DIRECTORY = pwd;
+cd(fileparts(mfilename('fullpath')));
+
 if ispc
     % complex double version
     mex CFLAGS="-fexceptions -fPIC -fno-omit-frame-pointer -pthread" ...
@@ -20,7 +23,6 @@ if ispc
         COPTIMFLAGS="-O3 -flto -DNDEBUG" ...
         LDOPTIMFLAGS="-O3 -flto" ...
         Laplacian_cs.c
-    
 else
     % complex double version
     mex CFLAGS="-fexceptions -fPIC -fno-omit-frame-pointer -pthread -fopenmp" ...
@@ -39,5 +41,7 @@ else
         COPTIMFLAGS="-O3 -flto -DNDEBUG" ...
         LDOPTIMFLAGS="-O3 -flto" ...
         -lgomp Laplacian_cs.c
-    
 end
+
+cd(CALLING_DIRECTORY)
+clear CALLING_DIRECTORY

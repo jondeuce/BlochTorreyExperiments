@@ -1,17 +1,16 @@
-
 using DistMesh
-using Tensors
-using MATLAB
+using DistMesh.Tensors
 
 using Test
 using BenchmarkTools
+using MATLAB
 
 # ---------------------------------------------------------------------------- #
 # Utils Testing
 # ---------------------------------------------------------------------------- #
 function utilstests(;N = 1000)
     @testset "Distances" begin
-            
+        
     end
 end
 
@@ -61,5 +60,4 @@ function geomtests(;N = 1000)
     nothing
 end
 
-runtests()
 nothing

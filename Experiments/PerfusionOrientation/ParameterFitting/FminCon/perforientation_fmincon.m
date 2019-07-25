@@ -30,7 +30,6 @@ end
 alpha_range = [2.5, 12.5, 22.5, 32.5, 47.5, 57.5, 67.5, 77.5, 87.5];
 % alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 
-%%
 % =============================== DATA ================================== %
 
 % % ---- GRE w/ Diffusion Initial Guess (large minor) ---- %
@@ -40,7 +39,7 @@ alpha_range = [2.5, 12.5, 22.5, 32.5, 47.5, 57.5, 67.5, 77.5, 87.5];
 
 % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
 lb  = [ 3.0000,          1.0000/100,         0.5000/100 ];
-CA0 =   4.6320;  iBVF0 = 1.1765/100; aBVF0 = 0.7176/100;
+CA0 =   4.9065;  iBVF0 = 1.2293/100; aBVF0 = 0.7527/100;
 ub  = [ 6.0000,          2.0000/100,         1.5000/100 ];
 
 % % ---- GRE w/ Diffusion Initial Guess (small minor) ---- %
@@ -72,7 +71,7 @@ Weights = Weights / sum(vec(Weights));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 7;
+Nmajor = 8;
 Rminor_mu = 7.0;
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7;
@@ -166,7 +165,7 @@ switch upper(OptVariables)
         lb_old = lb;
         ub_old = ub;
         lb = [lb_old(1), getRmajor0(lb_old(3)), getSpaceFactor0(ub_old(2))];
-        x0 = [x0(1),     getRmajor0(aBVF0),     getSpaceFactor0(iBVF0)];
+        x0 = [x0(1),     getRmajor0(x0(3)),     getSpaceFactor0(x0(2))];
         ub = [ub_old(1), getRmajor0(ub_old(3)), getSpaceFactor0(lb_old(2))];
         
     otherwise

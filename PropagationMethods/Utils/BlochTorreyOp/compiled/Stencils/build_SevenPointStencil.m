@@ -2,6 +2,9 @@
 % Periodic SevenPointStencil Operator
 %==========================================================================
 
+CALLING_DIRECTORY = pwd;
+cd(fileparts(mfilename('fullpath')));
+
 if ispc
     % complex double version
     mex CFLAGS="-fexceptions -fPIC -fno-omit-frame-pointer -pthread" ...
@@ -41,3 +44,6 @@ else
 %         -lgomp SevenPointStencil_cs.c
     
 end
+
+cd(CALLING_DIRECTORY)
+clear CALLING_DIRECTORY

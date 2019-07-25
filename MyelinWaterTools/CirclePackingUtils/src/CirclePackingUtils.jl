@@ -20,13 +20,13 @@ export wrap_gradient, check_density_callback
 
 export GreedyCirclePacking, EnergyCirclePacking, PeriodicCirclePacking, NBodyCirclePacking
 
-include("src/utils.jl")
-include("src/pairwise_gradient.jl")
-include("src/density_estimation.jl")
-include("src/periodic_tools.jl")
-include("src/GreedyCirclePacking.jl")
-include("src/EnergyCirclePacking.jl")
-include("src/PeriodicCirclePacking.jl")
-include("src/NBodyCirclePacking.jl")
+include("utils.jl")
+include("pairwise_gradient.jl")
+include("density_estimation.jl")
+include("periodic_tools.jl")
+include("GreedyCirclePacking.jl")
+include("EnergyCirclePacking.jl")
+include("PeriodicCirclePacking.jl")
+include("NBodyCirclePacking.jl")
 
 end # module CirclePackingUtils

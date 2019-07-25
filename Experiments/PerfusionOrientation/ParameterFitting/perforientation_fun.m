@@ -1,6 +1,6 @@
-function [dR2, ResultsStruct] = perforientation_fun(params, xdata, dR2_Data, varargin)
-%[dR2, ResultsStruct] = PERFORIENTATION_FUN(params, xdata, dR2_Data, varargin)
-% Calculates the perfusion curve dR2(*) vs. angle. dR2 is [1xNumAngles].
+function [ dR2, ResultsStruct ] = perforientation_fun( params, xdata, dR2_Data, varargin )
+%[ dR2, ResultsStruct ] = PERFORIENTATION_FUN(params, xdata, dR2_Data, varargin)
+% Calculates the perfusion curve dR2(*) vs. angle. dR2 is [1 x NumAngles].
 
 if nargin == 1
     % all arguments are given in a single struct
@@ -14,9 +14,34 @@ alpha_range = args.xdata;
 
 switch upper(args.OptVariables)
     case 'CA_IBVF_ABVF'
-        CA = args.params(1);
-        iBVF = args.params(2);
-        aBVF = args.params(3);
+        if isempty(args.Geom)
+            % Geometry is created inside PerfusionCurve function
+            CA = args.params(1);
+            iBVF = args.params(2);
+            aBVF = args.params(3);
+        else
+            % Geometry has been precomputed; rescale geometry approximately
+            % to input parameter values in a continuous fashion, i.e.
+            % non-iteratively using a heuristic (this is important for
+            % minimization procedures, as it makes the loss function
+            % smoother; the exact iBVF/aBVF can be extracted afterwards)
+            CA = args.params(1);
+            iBVF = args.params(2);
+            aBVF = args.params(3);
+            
+            AnisoBloodVolume = prod(args.GeomArgs.VoxelSize) * aBVF;
+            AnisoCylLength = rayBoxIntersectionLength( args.GeomArgs.VoxelCenter(:), [sind(args.GeomArgs.MajorAngle); 0; cosd(args.GeomArgs.MajorAngle)], args.GeomArgs.VoxelSize(:), args.GeomArgs.VoxelCenter(:) );
+            Rmajor = sqrt(AnisoBloodVolume / ( args.GeomArgs.Nmajor * pi * AnisoCylLength ));
+            SpaceFactor = (args.Geom.iBVF/iBVF)^(1/2.3); % empirical model: iBVF = iBVF_max * SpaceFactor^(-2.3)
+            
+            args.Geom = SetRmajor(args.Geom, Rmajor); % Update Rmajor in input Geom
+            args.Geom = ExpandMinorVessels(args.Geom, SpaceFactor); % Expand minor vessels in input Geom
+            args.Geom = Uncompress(args.Geom); % Re-calculate vasculature map, add arteries, etc.
+            
+            % Update iBVF and aBVF to actual values
+            iBVF = args.Geom.iBVF; % extract resulting iBVF
+            aBVF = args.Geom.aBVF; % extract resulting aBVF
+        end
     case 'CA_RMAJOR_MINOREXPANSION'
         CA = args.params(1);
         Rmajor = args.params(2);
@@ -43,11 +68,12 @@ args.BVF = iBVF + aBVF;
 args.iRBVF = iBVF/(iBVF + aBVF);
 args.params = [CA, iBVF, aBVF];
 
-msg = {'Calling perforientation_fun:', '', ...
-    ['CA   = ', sprintf('%8.6f',CA), ' [mM]'], ...
-    ['iBVF = ', sprintf('%8.6f',100*iBVF), ' [percent]'], ...
-    ['aBVF = ', sprintf('%8.6f',100*aBVF), ' [percent]'] };
-display_text(msg,30,'-',false,[true,false])
+msg = { 'Calling perforientation_fun:', '', ...
+    ['CA     = ', sprintf('%8.6f', CA), ' [mM]'], ...
+    ['iBVF   = ', sprintf('%8.6f', 100*iBVF), ' [percent]'], ...
+    ['aBVF   = ', sprintf('%8.6f', 100*aBVF), ' [percent]'], ...
+    ['Nmajor = ', sprintf('%8d', args.Geom.Nmajor), ' [unitless]'] };
+display_text(msg, 30, '-', false, [true, false]);
 
 solver = @() SplittingMethods.PerfusionCurve( ...
     alpha_range, args.TE, args.Nsteps, args.type, CA, args.B0, ...
@@ -56,6 +82,7 @@ solver = @() SplittingMethods.PerfusionCurve( ...
     'MaskType', args.MaskType, ...
     'StepperArgs', args.StepperArgs, ...
     'RotateGeom', args.RotateGeom, ...
+    'EffectiveVesselAngles', args.EffectiveVesselAngles, ...
     'CADerivative', false );
 
 % Finished with input args.Geom; clear it (Geoms will already be saved)
@@ -163,6 +190,7 @@ DefaultArgs = struct(...
     'Geom', [], ...
     'GeomArgs', [], ...
     'RotateGeom', false, ...
+    'EffectiveVesselAngles', false, ...
     'Navgs', 1, ...
     'StepperArgs', struct('Stepper','BTSplitStepper','Order',2), ...
     'MaskType', '', ...

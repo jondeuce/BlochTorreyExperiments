@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------- #
 
 # Convenience shorthands (Vec2d = Vec{2,Float64}, Vec3f = Vec{3,Float32}, etc.)
-for (dim, tup) in Iterators.product(1:3, zip([:d,:f], [Float64,Float32]))
+for (dim, tup) in Iterators.product(1:3, zip([:d, :f], [Float64, Float32]))
     label, T = tup
     @eval const $(Symbol(:Vec, dim, label)) = Vec{$dim, $T}
 end
@@ -35,8 +35,35 @@ end
     sinθ, cosθ = sincos(x)
     return Tensor{2,2,T}((cosθ, sinθ, -sinθ, cosθ))
 end
+
+# 3D pulse matrices of one of several standard types
+pulsemat3(::Type{Tu}, α, pulsetype::Symbol) where {Tu} =
+    pulsetype == :x   ? Tensor{2,3,Tu}(RotX(α)) : # Rotation about x-axis
+    pulsetype == :y   ? Tensor{2,3,Tu}(RotY(α)) : # Rotation about y-axis
+    pulsetype == :xyx ? Tensor{2,3,Tu}(RotX(π/2) * RotY(α) * RotX(π/2)) : # Consecutive rotations about x, y, and x-axes
+    error("Pulse type must be one of :x, :y, or :xyx")
+pulsemat3(α, pulsetype::Symbol) = pulsemat3(Float64, Float64(α), pulsetype)
+
+# Form 2D pulse matrices of one of several standard types
+pulsemat2(::Type{Tu}, α, pulsetype::Symbol) where {Tu} =
+    pulsetype == :x   ? (@assert α ≈ π; Tensor{2,2,Float64}(( 1, 0, 0,-1))) : # Rotation about x-axis
+    pulsetype == :y   ? (@assert α ≈ π; Tensor{2,2,Float64}((-1, 0, 0, 1))) : # Rotation about y-axis
+    pulsetype == :xyx ? Tensor{2,2,Tu}((cos(α), sin(α), sin(α), -cos(α)))   : # Consecutive rotations about x, y, and x-axes
+    error("Pulse type must be one of :x, :y, or :xyx")
+pulsemat2(α, pulsetype::Symbol) = pulsemat2(Float64, Float64(α), pulsetype)
+
+# Transverse and longitudinal components of 3D vector, or interpret complex number as a Vec{2}
+@inline transverse(x::Vec{2}) = x
 @inline transverse(x::Vec{3,T}) where {T} = Vec{2,T}((x[1], x[2]))
+@inline transverse(x::Complex{T}) where {T} = Vec{2,T}((real(x), imag(x)))
 @inline longitudinal(x::Vec{3,T}) where {T} = x[3]
+
+# Three argument inner product (v,A,u) = v'(A*u), where scalar A is interpreted as A*I
+LinearAlgebra.dot(v::Number,              A::Number,                u::Number             ) where {dim} = A * (v * u)
+LinearAlgebra.dot(v::Vec{dim},            A::Number,                u::Vec{dim}           ) where {dim} = A * (v ⋅ u)
+LinearAlgebra.dot(v::Vec{dim},            A::AbstractTensor{2,dim}, u::Vec{dim}           ) where {dim} = v ⋅ (A ⋅ u)
+LinearAlgebra.dot(v::AbstractTensor{dim}, A::Number,                u::AbstractTensor{dim}) where {dim} = A * (v ⊡ u)
+LinearAlgebra.dot(v::AbstractTensor{dim}, A::AbstractTensor{2,dim}, u::AbstractTensor{dim}) where {dim} = v ⊡ (A ⋅ u)
 
 @inline function hadamardproduct(S1::Vec{dim}, S2::Vec{dim}) where {dim}
     return Vec{dim}(@inline function(i) v = S1[i] * S2[i]; return v; end)

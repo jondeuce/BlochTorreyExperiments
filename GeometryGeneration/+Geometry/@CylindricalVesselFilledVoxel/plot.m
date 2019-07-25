@@ -1,6 +1,7 @@
-function [ Fig ] = plot( G, plotmajor, plotminor, verb )
+function [ Fig ] = plot( G, plotmajor, plotminor, verb, newfig )
 %PLOT Plots the CylindricalVesselFilledVoxel G.
 
+if nargin < 5 || isempty(newfig); newfig = true; end
 if nargin < 4 || isempty(verb); verb = true; end
 if nargin < 3 || isempty(plotminor); plotminor = true; end
 if nargin < 2 || isempty(plotmajor); plotmajor = true; end
@@ -8,7 +9,7 @@ if nargin < 2 || isempty(plotmajor); plotmajor = true; end
 % set(0,'DefaultFigureVisible','off');
 
 titlestr = '';
-fig = figure;
+if newfig; fig = figure; else; fig = gcf; end
 hold on
 
 if plotminor

@@ -45,8 +45,8 @@ function OrdinaryDiffEq.initialize!(integrator,cache::ExpokitExpmvCache)
     # Pre-start fsal
     integrator.fsalfirst = zero(cache.rtmp)
     integrator.f(integrator.fsalfirst, integrator.uprev, integrator.p, integrator.t)
-    integrator.destats.nf += 1
     integrator.fsallast = zero(integrator.fsalfirst)
+    # integrator.destats.nf += 1
 
     # Initialize interpolation derivatives
     integrator.kshortsize = 2
@@ -74,7 +74,7 @@ function OrdinaryDiffEq.perform_step!(
     # Update integrator state
     u .= tmp
     f(integrator.fsallast, u, p, t + dt)
-    integrator.destats.nf += 1
+    # integrator.destats.nf += 1
     # integrator.k is automatically set due to aliasing
 end
 
@@ -134,7 +134,7 @@ struct HighamExpmvCache{uType,rateType,MType} <: OrdinaryDiffEq.OrdinaryDiffEqMu
 end
 function OrdinaryDiffEq.alg_cache(alg::HighamExpmv,u,rate_prototype,uEltypeNoUnits,uBottomEltypeNoUnits,tTypeNoUnits,uprev,uprev2,f,t,dt,reltol,p,calck,::Type{Val{true}})
     @unpack M, b_columns, opnorm, precision, force_estm, check_positive, shift = alg
-    A = f.f # assume f to be an ODEFunction wrapped around a MatrixFreeOperator
+    A = f.f # assume f to be an ODEFunction wrapped around a matrix-free operator
     if M == nothing
         M = ExpmV.select_taylor_degree(A, b_columns, opnorm;
             precision = precision, force_estm = force_estm,
@@ -147,8 +147,8 @@ function OrdinaryDiffEq.initialize!(integrator,cache::HighamExpmvCache)
     # Pre-start fsal
     integrator.fsalfirst = zero(cache.rtmp)
     integrator.f(integrator.fsalfirst, integrator.uprev, integrator.p, integrator.t)
-    integrator.destats.nf += 1
     integrator.fsallast = zero(integrator.fsalfirst)
+    # integrator.destats.nf += 1
 
     # Initialize interpolation derivatives
     integrator.kshortsize = 2
@@ -177,7 +177,7 @@ function OrdinaryDiffEq.perform_step!(
     # Update integrator state
     u .= tmp
     f(integrator.fsallast, u, p, t + dt)
-    integrator.destats.nf += 1
+    # integrator.destats.nf += 1
     # integrator.k is automatically set due to aliasing
 end
 

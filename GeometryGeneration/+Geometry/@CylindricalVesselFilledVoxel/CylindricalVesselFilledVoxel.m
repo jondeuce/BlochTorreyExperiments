@@ -24,6 +24,7 @@ classdef CylindricalVesselFilledVoxel
         Rmajor % Major vessel radii (scalar)
         Rminor_mu, Rminor_sig % mean/std of minor cylinder radii
         RmajorFun, RminorFun % Functions for generating major/minor radii
+        MajorDilation, MajorRadiusFactor, isMajorDilated % Major dilation settings
         MinorDilation, MinorRadiusFactor, isMinorDilated % Minor dilation settings
         MajorArteries, MinorArteries % Lists of vessels which are arteries
         MediumVessels, MediumVesselRadiusThresh % Lists of larger minor vessels; these are surrounded by VRS

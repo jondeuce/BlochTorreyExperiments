@@ -1,3 +1,44 @@
+function wrap_string(str, len, dlm, newdlm = dlm)
+    isempty(str) && return str
+    parts = split(str, dlm)
+    out = ""
+    currlen = 0
+    for i in 1:length(parts)-1
+        out *= parts[i]
+        currlen += length(parts[i])
+        out = currlen >= len ? (currlen = 0; out * "\n") : out * newdlm
+    end
+    out *= parts[end]
+    return out
+end
+
+function partitionby(s::AbstractVector{S}, field) where {S}
+    seenindices = Set{Int}()
+    groups, groupindices = [], []
+    while length(seenindices) < length(s)
+        for i in 1:length(s)
+            i ∈ seenindices && continue
+            el1 = s[i]
+            idx = Int[i]
+            group = S[el1]
+            for j in 1:length(s)
+                ((i == j) || (j ∈ seenindices)) && continue
+                el = s[j]
+                if all(f -> (f == field) || (getfield(el1, f) == getfield(el, f)), fieldnames(S))
+                    push!(idx, j)
+                    push!(group, el)
+                end
+            end
+            for k in idx
+                push!(seenindices, k)
+            end
+            push!(groupindices, sort!(idx))
+            push!(groups, sort!(group; by = el -> getfield(el, field)))
+        end
+    end
+    return groups, groupindices
+end
+
 function default_savefigs(fig, fname, exts = [".png", ".pdf"])
     for ext in exts
         savefig(fig, fname * ext)
@@ -25,34 +66,125 @@ function plotgrids(exteriorgrids, torigrids, interiorgrids; fname = nothing, dis
     return fig
 end
 
-function mxplotomega(myelinprob, myelindomains, myelinsubdomains, bdry; titlestr = "Omega", fname = nothing)
+function mxplotomega(
+        myelinprob, myelindomains, myelinsubdomains, bdry;
+        titlestr = "Omega", fname = nothing, kwargs...
+    )
     omega = calcomega(myelinprob, myelinsubdomains)
-    mxsimpplot(getgrid.(myelindomains); newfigure = true, facecol = omega,
-        axis = Float64[mxaxis(bdry)...])
+    mxsimpplot(getgrid.(myelindomains);
+        facecol = omega, axis = Float64[mxaxis(bdry)...],
+        kwargs...)
     mxcall(:title, 0, titlestr)
     !(fname == nothing) && mxsavefig(fname)
     return nothing
 end
 
-function mxplotmagnitude(sols, btparams, myelindomains, bdry; titlestr = "Magnitude", fname = nothing)
-    Umagn = reduce(vcat, norm.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
-    @unpack R2_sp, R2_lp, R2_Tissue = btparams
-    caxis = (0.0, exp(-min(R2_sp, R2_lp, R2_Tissue) * sols[1].t[end]))
-    mxsimpplot(getgrid.(myelindomains); newfigure = true, facecol = Umagn,
-        axis = Float64[mxaxis(bdry)...], caxis = Float64[caxis...])
-    mxcall(:title, 0, titlestr)
-    !(fname == nothing) && mxsavefig(fname)
-    return nothing
-end
+###
+### Magnitude, phase, and longitudinal plotting
+###
 
-function mxplotphase(sols, btparams, myelindomains, bdry; titlestr = "Phase", fname = nothing)
-    Uphase = reduce(vcat, angle.(reinterpret(Vec{2,Float64}, s.u[end])) for s in sols)
-    mxsimpplot(getgrid.(myelindomains); newfigure = true, facecol = Uphase,
-        axis = Float64[mxaxis(bdry)...])
+trans(::Type{uType}, sol::ODESolution, t = sol.t[end]) where {uType} = transverse_signal(reinterpret(uType, sol(t)))
+long(::Type{uType}, sol::ODESolution, t = sol.t[end]) where {uType} = longitudinal_signal(reinterpret(uType, sol(t)))
+calctimes(sol::ODESolution, length::Int = 100) = range(sol.prob.tspan...; length = length)
+calctimes(sol::ODESolution, dt::Real) = sol.prob.tspan[1] : dt : sol.prob.tspan[2]
+calcmag(::Type{uType}, sols, ts = sols[1].prob.tspan[2]) where {uType} = reduce(vcat, reduce(hcat, norm.(trans(uType, s, t)) for t in ts) for s in sols)
+calcphase(::Type{uType}, sols, ts = sols[1].prob.tspan[2]) where {uType} = reduce(vcat, reduce(hcat, angle.(trans(uType, s, t)) for t in ts) for s in sols)
+calclong(::Type{uType}, sols, ts = sols[1].prob.tspan[2]) where {uType} = reduce(vcat, reduce(hcat, long(uType, s, t) for t in ts) for s in sols)
+
+function mxplotmagnitude(
+        ::Type{uType}, sols, btparams, myelindomains, bdry;
+        titlestr = "Magnitude", fname = nothing, kwargs...
+    ) where {uType <: FieldType}
+    Umagn = calcmag(uType, sols)
+    mxsimpplot(getgrid.(myelindomains);
+        facecol = Umagn, axis = Float64[mxaxis(bdry)...], caxis = Float64[0.0, maximum(Umagn)], kwargs...)
     mxcall(:title, 0, titlestr)
     !(fname == nothing) && mxsavefig(fname)
     return nothing
 end
+mxplotmagnitude(sols, btparams, myelindomains, bdry; kwargs...) =
+    mxplotmagnitude(Vec{2,Float64}, sols, btparams, myelindomains, bdry; kwargs...)
+
+function mxplotphase(
+        ::Type{uType}, sols, btparams, myelindomains, bdry;
+        titlestr = "Phase", fname = nothing, kwargs...
+    ) where {uType <: FieldType}
+    Uphase = calcphase(uType, sols)
+    mxsimpplot(getgrid.(myelindomains);
+        facecol = Uphase, axis = Float64[mxaxis(bdry)...], kwargs...)
+    mxcall(:title, 0, titlestr)
+    !(fname == nothing) && mxsavefig(fname)
+    return nothing
+end
+mxplotphase(sols, btparams, myelindomains, bdry; kwargs...) =
+    mxplotphase(Vec{2,Float64}, sols, btparams, myelindomains, bdry; kwargs...)
+
+function mxplotlongitudinal(
+        ::Type{uType}, sols, btparams, myelindomains, bdry;
+        titlestr = "Longitudinal", fname = nothing, steadystate = 1, kwargs...
+    ) where {uType <: Vec{3}}
+    Mz = steadystate .- calclong(uType, sols)
+    mxsimpplot(getgrid.(myelindomains);
+        facecol = Mz, axis = Float64[mxaxis(bdry)...], kwargs...)
+    mxcall(:title, 0, titlestr)
+    !(fname == nothing) && mxsavefig(fname)
+    return nothing
+end
+mxplotlongitudinal(sols, btparams, myelindomains, bdry; kwargs...) =
+    mxplotlongitudinal(Vec{2,Float64}, sols, btparams, myelindomains, bdry; kwargs...)
+
+###
+### Magnitude, phase, and longitudinal gifs
+###
+
+function mxgifmagnitude(
+        ::Type{uType}, sols, btparams, myelindomains, bdry;
+        titlestr = "Magnitude", fname = nothing, totaltime = 10.0, kwargs...
+    ) where {uType <: FieldType}
+    @assert !(fname == nothing)
+    ts = calctimes(sols[1], 2.5e-3) # unique!(sort!(round.(sols[1].t; digits=3))) # calctimes(sols[1], 100)
+    Umagn = calcmag(uType, sols, ts)
+    title = [titlestr * " (t = " * @sprintf("%7.2f", 1000*t) * " ms)" for t in ts]
+    mxsimpgif(getgrid.(myelindomains);
+        filename = fname, facecol = Umagn, caxistype = "all", title = title, imsize = 0.5 .* [1 1], imscale = 1.0, totaltime = totaltime, kwargs...)
+    return nothing
+end
+mxgifmagnitude(sols, btparams, myelindomains, bdry; kwargs...) =
+    mxgifmagnitude(Vec{2,Float64}, sols, btparams, myelindomains, bdry; kwargs...)
+
+function mxgifphase(
+        ::Type{uType}, sols, btparams, myelindomains, bdry;
+        titlestr = "Phase", fname = nothing, totaltime = 10.0, kwargs...
+    ) where {uType <: FieldType}
+    @assert !(fname == nothing)
+    ts = calctimes(sols[1], 2.5e-3) # unique!(sort!(round.(sols[1].t; digits=3))) # calctimes(sols[1], 100)
+    Uphase = calcphase(uType, sols, ts)
+    title = [titlestr * " (t = " * @sprintf("%7.2f", 1000*t) * " ms)" for t in ts]
+    mxsimpgif(getgrid.(myelindomains);
+        filename = fname, facecol = Uphase, caxistype = "all", title = title, imsize = 0.5 .* [1 1], imscale = 1.0, totaltime = totaltime, kwargs...)
+    return nothing
+end
+mxgifphase(sols, btparams, myelindomains, bdry; kwargs...) =
+    mxgifphase(Vec{2,Float64}, sols, btparams, myelindomains, bdry; kwargs...)
+
+function mxgiflongitudinal(
+        ::Type{uType}, sols, btparams, myelindomains, bdry;
+        titlestr = "Longitudinal", fname = nothing, steadystate = 1, totaltime = 10.0, kwargs...
+    ) where {uType <: Vec{3}}
+    @assert !(fname == nothing)
+    ts = calctimes(sols[1], 2.5e-3) # unique!(sort!(round.(sols[1].t; digits=3))) # calctimes(sols[1], 100)
+    Mz = steadystate .- calclong(uType, sols, ts)
+    title = [titlestr * " (t = " * @sprintf("%7.2f", 1000*t) * " ms)" for t in ts]
+    mxsimpgif(getgrid.(myelindomains);
+        filename = fname, facecol = Mz, caxistype = "all", title = title, imsize = 0.5 .* [1 1], imscale = 1.0, totaltime = totaltime, kwargs...)
+    return nothing
+end
+mxgiflongitudinal(sols, btparams, myelindomains, bdry; kwargs...) =
+    mxgiflongitudinal(Vec{2,Float64}, sols, btparams, myelindomains, bdry; kwargs...)
+
+###
+### Total signal plotting
+###
 
 function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bdry;
         titlestr = "Signal Magnitude vs. Time",
@@ -60,9 +192,13 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
         fname = nothing,
         disp = (fname == nothing)
     )
+    # Extract signals from last (0, nTE*TE) of simulation
+    signals = transverse_signal(calcsignal(sols, get_tpoints(opts, sols[1].prob.tspan), myelindomains))
+    S0 = norm(signals[1])
+    
+    # Default timespan/timepoints in range (0, nTE*TE)
     tspan = get_tspan(opts)
     ts = get_tpoints(opts)
-    signals = calcsignal(sols, ts, myelindomains)
 
     myelin_area = intersect_area(outercircles, bdry) - intersect_area(innercircles, bdry)
     total_area = area(bdry)
@@ -72,20 +208,20 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
     # likely to be anywhere on the grid, hence experience a decay rate R2_mono
     # on the average, where R2_mono is the area averaged R2 of each compartment
     R2_mono = (btparams.R2_sp * myelin_area + btparams.R2_lp * ext_area) / total_area
-    y_monoexp = @. total_area * exp(-ts * R2_mono)
+    y_monoexp = @. S0 * exp(-ts * R2_mono)
 
     # In the high diffusion & low permeability limit, spins are confined to
     # their separate regions and experience their compartment R2 only
-    y_biexp = @. ext_area * exp(-ts * btparams.R2_lp) + myelin_area * exp(-ts * btparams.R2_sp)
+    y_biexp = @. S0 * (ext_area / total_area) * exp(-ts * btparams.R2_lp) + S0 * (myelin_area / total_area) * exp(-ts * btparams.R2_sp)
 
     props = Dict{Symbol,Any}(
         :linewidth => 5, :marker => :circle, :markersize => 10,
         :grid => true, :minorgrid => true, :legend => :topright,
         :xticks => 1000 .* ts, :xrotation => -60, :xlims => 1000 .* tspan,
-        :labels => ["Simulated" "Bi-Exponential"],
+        :labels => ["Bi-Exponential" "Simulated"],
         :ylabel => "S(t) Magnitude", :xlabel => "Time [ms]",
         :title => titlestr)
-    fig = plot(1000 .* ts, [norm.(signals) y_biexp]; props...)        
+    fig = plot(1000 .* ts, [y_biexp norm.(signals)]; props...)
     !(fname == nothing) && default_savefigs(fig, fname)
     disp && display(fig)
 
@@ -93,40 +229,49 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
 end
 
 function plotsignal(tpoints, signals;
+        timeticks = range(tpoints[1], tpoints[end]; length = 65),
         titlestr = "Complex Signal vs. Time",
         apply_pi_correction = true,
         fname = nothing,
         disp = (fname == nothing)
     )
+    trans = transverse_signal(signals)
+    allfigs = []
 
-    props = Dict{Symbol,Any}(
-        :linewidth => 5, :marker => :circle, :markersize => 10,
+    mag_props = Dict{Symbol,Any}(
+        :seriestype => :line, :linewidth => 2, :marker => :none, #:marker => :circle, :markersize => 10,
         :grid => true, :minorgrid => true, :legend => :topright,
-        :xticks => 1000 .* tpoints, :xrotation => -60, :xlims => 1000 .* extrema(tpoints),
+        :xticks => 1000 .* timeticks,
+        :xrotation => -60, :xlims => 1000 .* extrema(tpoints),
         :formatter => x -> string(round(x; sigdigits = 3)),
         :labels => "Magnitude", :ylabel => L"$S(t)$ Magnitude", :xlabel => "Time [ms]",
         :title => titlestr)
-    xdata, ydata = 1000 .* tpoints, norm.(signals)
-    mag_fig = plot(xdata, ydata; props...)
+    xdata, ydata = 1000 .* tpoints, norm.(trans)
+    push!(allfigs, plot(xdata, ydata; mag_props...))
 
-    props = Dict{Symbol,Any}(
-        :linetype => :steppost, :m => :square, :ms => 5, :lw => 1, :ls => :solid, :lc => :red, :ytick => -180:30:180,
-        :grid => true, :minorgrid => true, :legend => :right,
-        :xticks => 1000 .* tpoints, :xrotation => -60, :xlims => 1000 .* extrema(tpoints),
-        :formatter => x -> string(round(x; sigdigits = 3)),
-        :labels => "Phase (deg)", :ylabel => L"$S(t)$ Phase (deg)", :xlabel => "Time [ms]")
-    xdata, ydata = 1000 .* tpoints, rad2deg.(angle.(signals))
+    pha_props = Dict{Symbol,Any}(mag_props...,
+        :seriestype => :steppost, :linewidth => 1, :marker => :none, #:m => :square, :ms => 5,
+        :linecolour => :red, :ytick => -180:30:180, :title => "",
+        :labels => "Phase (deg)", :ylabel => L"$S(t)$ Phase (deg)")
+    xdata, ydata = 1000 .* tpoints, rad2deg.(angle.(trans))
     if apply_pi_correction
         phase_corrections = ifelse.(isodd.(1:length(ydata)), -90, 90)
         ydata = ydata .+ phase_corrections
-        props = Dict(props...,
-            :ytick => :auto, #:linetype => :line,
+        pha_props = Dict{Symbol,Any}(pha_props...,
+            :ytick => :auto, #:seriestype => :line,
             :labels => L"$\pi$-corrected Phase (deg)", :ylabel => L"$S(t)$ $\pi$-corrected Phase (deg)")
     end
-    pha_fig = plot(xdata, ydata; props...)
+    push!(allfigs, plot(xdata, ydata; pha_props...))
 
-    fig = plot(mag_fig, pha_fig; layout = (2,1))
+    if eltype(signals) <: Vec{3}
+        long_props = Dict{Symbol,Any}(mag_props...,
+            :linecolour => :green, :title => "",
+            :labels => "Longitudinal", :ylabel => L"$S(t)$ Longitudinal")
+        xdata, ydata = 1000 .* tpoints, longitudinal.(signals)
+        push!(allfigs, plot(xdata, ydata; long_props...))
+    end
 
+    fig = plot(allfigs...; layout = (length(allfigs), 1))
     !(fname == nothing) && default_savefigs(fig, fname)
     disp && display(fig)
 
@@ -144,22 +289,18 @@ function plotSEcorr(
         fname = nothing,
         disp = (fname == nothing)
     )
-    tspan = get_tspan(opts)
-    ts = get_tpoints(opts)
-    signals = calcsignal(sols, ts, myelindomains)
-
+    signals = transverse_signal(calcsignal(sols, get_tpoints(opts, sols[1].prob.tspan), myelindomains))
     MWImaps, MWIdist, MWIpart = fitmwfmodel(signals, opts)
 
     if AVOID_MAT_PLOTS
         mwf = _getmwf(opts, MWImaps, MWIdist, MWIpart)
         T2Vals = 1000 .* get_T2vals(opts)
-        xtickvals = length(T2Vals) <= 60 ? T2Vals : T2Vals[1:2:end] # length cannot be more than 120
         
         props = Dict{Symbol,Any}(
             :seriestype => :sticks, :xscale => :log10,
             :linewidth => 5, :markersize => 5, :marker => :circle,
             :grid => true, :minorgrid => true, :legend => :none,
-            :xticks => xtickvals, :xrotation => -60,
+            :xrotation => -60, :xticks => length(T2Vals) <= 60 ? T2Vals : T2Vals[1:2:end], # length never more than 120
             :formatter => x -> string(round(x; sigdigits = 3)),
             :xlim => 1000 .* opts.T2Range,
             :xlabel => "T2 [ms]",
@@ -303,33 +444,6 @@ function plotMWFvsMethod(results::Dict; kwargs...)
     isempty(mwfvalues) && return nothing
     mwfvalues = convert(Vector{typeof(mwfvalues[1])}, mwfvalues)
     return plotMWFvsMethod(mwfvalues; kwargs...)
-end
-
-function partitionby(s::AbstractVector{S}, field) where {S}
-    seenindices = Set{Int}()
-    groups, groupindices = [], []
-    while length(seenindices) < length(s)
-        for i in 1:length(s)
-            i ∈ seenindices && continue
-            el1 = s[i]
-            idx = Int[i]
-            group = S[el1]
-            for j in 1:length(s)
-                ((i == j) || (j ∈ seenindices)) && continue
-                el = s[j]
-                if all(f -> (f == field) || (getfield(el1, f) == getfield(el, f)), fieldnames(S))
-                    push!(idx, j)
-                    push!(group, el)
-                end
-            end
-            for k in idx
-                push!(seenindices, k)
-            end
-            push!(groupindices, sort!(idx))
-            push!(groups, sort!(group; by = el -> getfield(el, field)))
-        end
-    end
-    return groups, groupindices
 end
 
 # Save plot

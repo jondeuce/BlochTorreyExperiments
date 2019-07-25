@@ -18,10 +18,10 @@ export huniform, fixmesh, boundedges, edges, edges!
 export dblock, drectangle, drectangle0, dsphere, dcircle, dshell
 export ddiff, dintersect, dunion
 
-include("src/utils.jl")
-include("src/delaunay.jl")
-include("src/distances.jl")
-include("src/distmesh2d.jl")
-include("src/kmg2d.jl")
+include("utils.jl")
+include("delaunay.jl")
+include("distances.jl")
+include("distmesh2d.jl")
+include("kmg2d.jl")
 
 end # module DistMesh

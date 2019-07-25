@@ -10,8 +10,8 @@ function plot_T2_dist(d; α = 0.05, σ = 0, T2Range = (1e-3, 2000e-3), nT2 = 120
     x = init_signal(d[:signals])
     x .+= σ.*randn(Random.MersenneTwister(0), size(x))
     τ = log10range(T2Range...; length = nT2);
-    @time y = project_onto_exp(x, τ, η, α)
-    @btime project_onto_exp($x, $τ, $η, $α)
+    @time y = ilaplace(x, τ, η, α)
+    @btime ilaplace($x, $τ, $η, $α)
     props = Dict(:legendfontsize => 14, :tickfontsize => 10, :minorgrid => true)
     @time display(plot(
         plot(1000 .* t, x;

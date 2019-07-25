@@ -1,0 +1,95 @@
+prec    = 32
+gpu     = false
+dir     = "."
+
+[data]
+train_data  = "./train"
+test_data   = "./test"
+batch_size  = 500
+test_size   = "auto" # Auto treats entire test set as one batch
+height      = "auto"
+channels    = 2 # Number of data channels
+# labels      = ["mwf", "T2iew/TE", "T2mw/TE", "alpha"] # Target labels
+# weights     = [1.0, 1.0, 1.0, 1.0] # Weights for loss function
+labels      = ["mwf", "iewf", "T2iew/TE", "T2mw/TE", "alpha"] # Target labels
+weights     = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
+[data.filter]
+labels      = [ "K", "nTE"]
+lower       = [ 0.0,  32.0 ]
+upper       = [ 0.1,  48.0 ]
+[data.preprocess]
+shuffle     = true
+SNR         = [50.0, 0.0] # Additive random noise
+[data.preprocess.chunk]
+apply       = true
+size        = 32
+[data.preprocess.peel]
+biexp       = false # peel before applying wavelet
+makefrac    = true # convert component magnitudes to fractions
+TEfast      = 0.015 # Approximate fast decay mode
+TEslow      = 0.063 # Approximate slow decay mode
+periodic    = false # subtract linear term to make signal periodic
+[data.preprocess.wavelet]
+apply       = false # Apply wavelet preprocessing
+nterms      = 24 # number of terms to keep
+[data.preprocess.ilaplace]
+apply       = true # Apply ilaplace preprocessing
+T2Range     = [0.001, 1.0] # T2 distribution range
+nT2         = 32 # Number of exponentials in T2 distribution
+alpha       = 0.1 # Tikhonov regularization parameter
+[data.preprocess.PCA]
+apply       = false # Apply PCA preprocessing
+
+[model]
+# name      = "ConvResNet"
+# name      = "ResidualDenseNet"
+name      = "TestModel4"
+# name      = "ResNet"
+loss      = "l2"
+acc       = "rmse"
+act       = "relu"
+Nout      = 5 # number of output labels
+scale     = "auto"
+offset    = "auto"
+# dropout   = false
+# softmax   = false
+# batchnorm = true
+# Nf        = [4, 8, 8] # num features for conv layers
+# Nd        = [25, 25, 25, 25, 25]
+# Npool     = 3 # pooling size
+# Nkern     = 5 # kernel size
+[model.densenet]
+dropout   = false
+batchnorm = false
+groupnorm = false
+factory   = "batchconv" # Factory type ("conv" or "batchconv")
+batchmode = "post" # Pre-, post-, or hybrid normalization for "batchconv" factory
+Nkern     = 3 # Convolution kernel size
+Nconv     = 2 # Convolutions per BatchConvConnection
+Nfeat     = 4 # Number of features to upsample to from 1-feature input
+Nblock    = 2 # Number of blocks in densely connected RDB layer
+Ndense    = 2 # Number of blocks in GlobalFeatureFusion concatenation layer
+Nglobal   = 2 # Number of GlobalFeatureFusion concatenation layers
+Nstride   = 1 # Stride following GlobalFeatureFusion layer
+[model.resnet]
+type      = "ResNet18" # ResNet type
+Nfilt     = 4 # Number of initial filters
+
+[optimizer]
+epochs  = 1000
+savemod = 1
+testmod = 1
+[optimizer.ADAM]
+lr      = 0.001
+beta    = [0.9, 0.999]
+decay   = 0.0
+[optimizer.SGD]
+lr      = 1e-3
+rho     = 0.9
+decay   = 0.0
+
+[plot]
+# scale     = [100.0, 1.0, 1.0, 1.0] # scale labels before plotting
+# units     = ["%", "ms/ms", "ms/ms", "deg"] # label units, after scaling
+scale     = [100.0, 100.0, 1.0, 1.0, 1.0] # scale labels before plotting
+units     = ["%", "%", "ms/ms", "ms/ms", "deg"] # label units, after scaling

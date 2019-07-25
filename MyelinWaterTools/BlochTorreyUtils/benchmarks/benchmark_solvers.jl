@@ -1,5 +1,6 @@
 include(realpath(joinpath(@__DIR__,"../../initpaths.jl")))
 using Test, BenchmarkTools
+using Parameters: @unpack
 # using SparseArrays, LinearAlgebra, Statistics
 # using BlochTorreyUtils, BlochTorreySolvers, MWFUtils
 # using GeometryUtils, JuAFEM # needed for loading grids
@@ -22,7 +23,7 @@ function setup()
     grids = BSON.load(joinpath(BTHOME, "BlochTorreyResults/Experiments/MyelinWaterOrientation/geom_sweep_2/2019-02-15-T-13-45-04-394__N-10_g-0.7500_p-0.7000__grids.bson"))
 
     G, C = typeof(grids[:exteriorgrids][1]), typeof(grids[:outercircles][1])
-    myelinprob, myelinsubdomains, myelindomains = createdomains(
+    @unpack myelinprob, myelinsubdomains, myelindomains = createdomains(
         default_btparams,
         Vector{G}(grids[:exteriorgrids][:]), Vector{G}(grids[:torigrids][:]), Vector{G}(grids[:interiorgrids][:]),
         Vector{C}(grids[:outercircles][:]), Vector{C}(grids[:innercircles][:])

@@ -1,19 +1,17 @@
 module MWFUtils
 
-# using OrdinaryDiffEq, DiffEqOperators, Sundials
-# using Parameters: @with_kw, @unpack
-
 const AVOID_MAT_PLOTS = true # avoid external matlab calls, if possible
 
 using Reexport
 @reexport using BlochTorreyUtils
 @reexport using CirclePackingUtils
-# @reexport using MATLABPlots
+@reexport using MATLABPlots
 @reexport using StatsPlots
-using LaTeXStrings
+@reexport using LaTeXStrings
+@reexport using BenchmarkTools
 
-using IterableTables, DataFrames
-import BSON, CSV, Dates
+import BSON, Dates, DrWatson
+export BSON, Dates, DrWatson
 
 # For curve fitting/optimization in calculating MWF
 import ForwardDiff
@@ -21,26 +19,23 @@ import LsqFit
 import BlackBoxOptim
 
 export packcircles
-export creategeometry, loadgeometry
-export createdomains
+export creategeometry, loadgeometry, createdomains
 export calcomegas, calcomega
 export calcsignals, calcsignal
-export solveblochtorrey, default_algorithm
+export solveblochtorrey, saveblochtorrey, default_algorithm
 export plotcircles, plotgrids, plotSEcorr, plotbiexp, plotsignal, plotMWFvsAngle, plotMWFvsMethod
-export mxplotomega, mxplotmagnitude, mxplotphase
+export mxplotomega, mxplotmagnitude, mxplotphase, mxplotlongitudinal, mxgifmagnitude, mxgifphase, mxgiflongitudinal
 export mxsavefig, getnow
 
 export AbstractMWIFittingModel, NNLSRegression, TwoPoolMagnToMagn, ThreePoolMagnToMagn, ThreePoolCplxToMagn, ThreePoolCplxToCplx
+export AbstractGeometry, AbstractMyelinatedFibresGeometry, AbstractPackedFibresGeometry, PeriodicPackedFibres, SingleFibre
 export getmwf, fitmwfmodel, mwimodel, initialparams, compareMWFmethods
 export blank_results_dict, load_results_dict
+export wrap_string, partitionby
 
-include("src/mwftypes.jl")
-include("src/mwfutils.jl")
-include("src/mwfmodels.jl")
-include("src/mwfplotutils.jl")
-
-# TODO: deprecate MWFResults
-# export MWFResults
-# include("src/mwfresults.jl")
+include("mwftypes.jl")
+include("mwfutils.jl")
+include("mwfmodels.jl")
+include("mwfplotutils.jl")
 
 end # module MWFUtils
