@@ -17,8 +17,7 @@ make_reproduce(
     include("BlochTorreyExperiments/MyelinWaterTools/scripts/GenerateGrids-run.jl")
     """
 )
-
-gitdir() = realpath(joinpath(DrWatson.projectdir(), "..")) * "/"
+gitdir() = realpath(DrWatson.projectdir(".."))
 
 function runcreategeometry(params; numreps = 5)
     # BlochTorreyParameters

@@ -33,9 +33,9 @@ export getmwf, fitmwfmodel, mwimodel, initialparams, compareMWFmethods
 export blank_results_dict, load_results_dict
 export wrap_string, partitionby
 
-include("src/mwftypes.jl")
-include("src/mwfutils.jl")
-include("src/mwfmodels.jl")
-include("src/mwfplotutils.jl")
+include("mwftypes.jl")
+include("mwfutils.jl")
+include("mwfmodels.jl")
+include("mwfplotutils.jl")
 
 end # module MWFUtils
