@@ -220,7 +220,7 @@ function runsimulation!(results, sweepparams, geom)
     sols, myelinprob, myelinsubdomains, myelindomains, solverparams_dict = runsolve(btparams, sweepparams, geom)
     
     # Sample solution signals
-    dt = sweepparams[:TE]/10 # TODO how many samples to save?
+    dt = sweepparams[:TE]/20 # TODO how many samples to save?
     tpoints = cpmg_savetimes(sols[1].prob.tspan, dt, sweepparams[:TE], sweepparams[:TR], sweepparams[:nTE], sweepparams[:nTR])
     signals = calcsignal(sols, tpoints, myelindomains)
 
@@ -345,13 +345,13 @@ function runsimulation!(results, sweepparams, geom)
         @warn sprint(showerror, e, catch_backtrace())
     end
 
-    # Plot biexponential signal compared with true signal
+    # Plot multiexponential signal compared with true signal
     try
         if mwfmodels != nothing && !isempty(mwfmodels)
-            plotbiexp(sols, btparams, myelindomains,
+            plotmultiexp(sols, btparams, myelindomains,
                 geom.outercircles, geom.innercircles, geom.bdry;
                 titlestr = "Signal Magnitude (" * titleparamstr * ")",
-                opts = mwfmodels[1], fname = "sig/" * fname * ".biexp")
+                opts = mwfmodels[1], fname = "sig/" * fname * ".multiexp")
         end
         plotsignal(tpoints, signals;
             timeticks = cpmg_savetimes(sols[1].prob.tspan, sweepparams[:TE]/2, sweepparams[:TE], sweepparams[:TR], sweepparams[:nTE], sweepparams[:nTR]),

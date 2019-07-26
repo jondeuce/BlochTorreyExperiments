@@ -326,10 +326,10 @@ function label_fun(s::String, d::Dict)::Float64
         d[:mwfvalues][:exact]
     elseif s == "iewf" # intra/extra-cellular (large pool/axonal + tissue) water fraction
         1 - d[:mwfvalues][:exact]
-    elseif s == "ewf" # extra-cellular (tissue) water fraction
-        1 - d[:btparams_dict][:AxonPDensity]
     elseif s == "iwf" # intra-cellular (large pool/axonal) water fraction
         d[:btparams_dict][:AxonPDensity] - d[:mwfvalues][:exact]
+    elseif s == "ewf" # extra-cellular (tissue) water fraction
+        1 - d[:btparams_dict][:AxonPDensity]
     elseif s == "T2mw" || s == "T2sp" # myelin-water (small pool) T2
         inv(d[:btparams_dict][:R2_sp])
     elseif s == "T2iw" || s == "T2lp" || s == "T2ax" # intra-cellular (large pool/axonal) T2

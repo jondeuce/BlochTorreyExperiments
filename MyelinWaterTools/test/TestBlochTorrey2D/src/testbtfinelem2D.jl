@@ -29,7 +29,7 @@ function testbtfinelem2D(opts::BlochTorreyParameters{T};
         mxplotmagnitude(sols, opts, myelindomains, bdry; titlestr = "Magnitude: " * paramstr)
         mxplotphase(sols, opts, myelindomains, bdry; titlestr = "Phase: " * paramstr)
         # plotSEcorr(sols, opts, myelindomains, fname = "SEcorr")
-        # plotbiexp(sols, opts, myelindomains, outercircles, innercircles, bdry; titlestr = "Signal: " * paramstr, fname = "signal")
+        # plotmultiexp(sols, opts, myelindomains, outercircles, innercircles, bdry; titlestr = "Signal: " * paramstr, fname = "signal")
     end
     # mwfvalues, signals = compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry)
 

@@ -186,7 +186,7 @@ mxgiflongitudinal(sols, btparams, myelindomains, bdry; kwargs...) =
 ### Total signal plotting
 ###
 
-function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bdry;
+function plotmultiexp(sols, btparams, myelindomains, outercircles, innercircles, bdry;
         titlestr = "Signal Magnitude vs. Time",
         opts = NNLSRegression(PlotDist = !AVOID_MAT_PLOTS),
         fname = nothing,
@@ -200,28 +200,37 @@ function plotbiexp(sols, btparams, myelindomains, outercircles, innercircles, bd
     tspan = get_tspan(opts)
     ts = get_tpoints(opts)
 
-    myelin_area = intersect_area(outercircles, bdry) - intersect_area(innercircles, bdry)
+    # Extract area fractions
+    outercircles_area = intersect_area(outercircles, bdry)
+    innercircles_area = intersect_area(innercircles, bdry)
     total_area = area(bdry)
-    ext_area = total_area - myelin_area
+    mwf = (outercircles_area - innercircles_area) / total_area  # myelin (small pool) water fraction
+    iwf = innercircles_area / total_area # intra-cellular (large pool/axonal) water fraction
+    ewf = 1 - outercircles_area / total_area  # extra-cellular (tissue) water fraction
 
-    # In the high diffusion & high permeability limit, spins are equally
-    # likely to be anywhere on the grid, hence experience a decay rate R2_mono
+    # Extract relaxation rates
+    R2_mw = btparams.R2_sp # myelin-water (small pool) T2
+    R2_iw = btparams.R2_lp # intra-cellular (large pool/axonal) T2
+    R2_ew = btparams.R2_Tissue # extra-cellular (tissue) T2
+
+    # In the high diffusion & high permeability limit, spins are equally likely
+    # to be anywhere on the grid, and therefore experience a decay rate R2_mono
     # on the average, where R2_mono is the area averaged R2 of each compartment
-    R2_mono = (btparams.R2_sp * myelin_area + btparams.R2_lp * ext_area) / total_area
+    R2_mono = mwf * R2_mw + iwf * R2_iw + ewf * R2_ew
     y_monoexp = @. S0 * exp(-ts * R2_mono)
 
     # In the high diffusion & low permeability limit, spins are confined to
     # their separate regions and experience their compartment R2 only
-    y_biexp = @. S0 * (ext_area / total_area) * exp(-ts * btparams.R2_lp) + S0 * (myelin_area / total_area) * exp(-ts * btparams.R2_sp)
+    y_multiexp = @. S0 * (mwf * exp(-ts * R2_mw) + iwf * exp(-ts * R2_iw) + ewf * exp(-ts * R2_ew))
 
     props = Dict{Symbol,Any}(
-        :linewidth => 5, :marker => :circle, :markersize => 10,
+        :linewidth => 4, :marker => :circle, :markersize => 10,
         :grid => true, :minorgrid => true, :legend => :topright,
         :xticks => 1000 .* ts, :xrotation => -60, :xlims => 1000 .* tspan,
-        :labels => ["Bi-Exponential" "Simulated"],
+        :labels => ["Multi-Exponential" "Mono-Exponential" "Simulated"],
         :ylabel => "S(t) Magnitude", :xlabel => "Time [ms]",
         :title => titlestr)
-    fig = plot(1000 .* ts, [y_biexp norm.(signals)]; props...)
+    fig = plot(1000 .* ts, [y_multiexp y_monoexp norm.(signals)]; props...)
     !(fname == nothing) && default_savefigs(fig, fname)
     disp && display(fig)
 

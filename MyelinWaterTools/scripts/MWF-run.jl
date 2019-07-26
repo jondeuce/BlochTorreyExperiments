@@ -226,13 +226,13 @@ function runsimulation!(results, params)
 
     try
         if !isempty(mwfmodels)
-            plotbiexp(sols, btparams, myelindomains,
+            plotmultiexp(sols, btparams, myelindomains,
                 geom.outercircles, geom.innercircles, geom.bdry;
                 titlestr = "Signal Magnitude (" * titleparamstr * ")",
                 opts = mwfmodels[1], fname = "sig/" * fname * ".signalmag")
         end
     catch e
-        @warn "Error plotting biexponential"
+        @warn "Error plotting multiexponential"
         @warn sprint(showerror, e, catch_backtrace())
     end
 
