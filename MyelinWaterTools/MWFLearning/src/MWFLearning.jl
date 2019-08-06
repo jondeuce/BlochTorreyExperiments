@@ -10,6 +10,8 @@ export Flux,      NNlib,      Tracker,      Optimise, DrWatson, BSON, TOML, Date
 using Statistics: mean, median, cov, std, var
 using StatsBase: quantile
 import MultivariateStats
+import Interpolations
+import FFTW
 
 using Reexport
 

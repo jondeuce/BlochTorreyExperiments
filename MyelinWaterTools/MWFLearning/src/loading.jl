@@ -4,6 +4,7 @@
 
 abstract type AbstractDataProcessing end
 struct SignalChunkingProcessing <: AbstractDataProcessing end
+struct SignalZipperProcessing <: AbstractDataProcessing end
 struct PCAProcessing <: AbstractDataProcessing end
 struct iLaplaceProcessing <: AbstractDataProcessing end
 struct WaveletProcessing <: AbstractDataProcessing end
@@ -28,6 +29,7 @@ function prepare_data(settings::Dict)
     
     processing_types = AbstractDataProcessing[]
     settings["data"]["preprocess"]["chunk"]["apply"]    && push!(processing_types, SignalChunkingProcessing())
+    settings["data"]["preprocess"]["zipper"]["apply"]   && push!(processing_types, SignalZipperProcessing())
     settings["data"]["preprocess"]["ilaplace"]["apply"] && push!(processing_types, iLaplaceProcessing())
     settings["data"]["preprocess"]["wavelet"]["apply"]  && push!(processing_types, WaveletProcessing())
     isempty(processing_types) && error("No processing selected")
@@ -95,7 +97,7 @@ function init_data(::SignalChunkingProcessing, settings::Dict, ds::AbstractVecto
     T, TC = Float64, ComplexF64
     VT, VC, MT, MC = Vector{T}, Vector{TC}, Matrix{T}, Matrix{TC}
     SNR       = settings["data"]["preprocess"]["SNR"] :: VT
-    chunksize = settings["data"]["preprocess"]["chunk"]["size"] :: Int
+    chunk = settings["data"]["preprocess"]["chunk"]["size"] :: Int
 
     PLOT_COUNT, PLOT_LIMIT = 0, 3
     PLOT_FUN = (b, TE, SNR, chunk) -> begin
@@ -109,7 +111,7 @@ function init_data(::SignalChunkingProcessing, settings::Dict, ds::AbstractVecto
     end
 
     # N_CHUNKS = 6
-    # function chunks(b, chunk)
+    # function makechunks(b, chunk)
     #     @assert 2*chunk <= length(b)
     #     n = length(b)
     #     r = round.(Int, range(1, n-chunk+1, length=4))
@@ -120,7 +122,7 @@ function init_data(::SignalChunkingProcessing, settings::Dict, ds::AbstractVecto
     # end
 
     N_CHUNKS = 1
-    chunks(b, chunk) = b[1:chunk]
+    makechunks(b, chunk) = b[1:chunk]
 
     out = reduce(hcat, begin
         TE      = d[:sweepparams][:TE] :: T
@@ -132,12 +134,58 @@ function init_data(::SignalChunkingProcessing, settings::Dict, ds::AbstractVecto
             add_noise!(@views(Z[:,j]), z, SNR[j])
         end
         b       = abs.(Z ./ Z[1:1, ..]) :: MT
-        b       = reduce(hcat, chunks(b[:,j], chunksize) for j in 1:size(b,2))
-        PLOT_FUN(b, TE, SNR, chunksize)
+        b       = reduce(hcat, makechunks(b[:,j], chunk) for j in 1:size(b,2))
+        PLOT_FUN(b, TE, SNR, chunk)
         b
     end for d in ds)
     
     return reshape(out, size(out, 1), 1, N_CHUNKS, :)
+end
+
+function init_data(::SignalZipperProcessing, settings::Dict, ds::AbstractVector{<:Dict})
+    T, TC = Float64, ComplexF64
+    VT, VC, MT, MC, AT = Vector{T}, Vector{TC}, Matrix{T}, Matrix{TC}, Array{T,3}
+    SNR   = settings["data"]["preprocess"]["SNR"] :: VT
+    chunk = settings["data"]["preprocess"]["zipper"]["size"] :: Int
+
+    PLOT_COUNT, PLOT_LIMIT = 0, 3
+    PLOT_FUN = (b, TE, SNR, chunk) -> begin
+        if PLOT_COUNT < PLOT_LIMIT
+            p1 = plot(0:chunk-1, [b[:,1,1,j] for j in partition(1:size(b,2), length(SNR))]; line = (2,), m = (:c, :black, 3), leg = :none)
+            p2 = plot(0:chunk-1, [b[:,1,2,j] for j in partition(1:size(b,2), length(SNR))]; line = (2,), m = (:r, :black, 3), leg = :none)
+            p = plot(p1, p2; layout = (2,1), title = "SNR = " * string(SNR))
+            display(p)
+            PLOT_COUNT += 1
+        end
+    end
+
+    out = reduce((x,y) -> cat(x, y; dims = 4), begin
+        TE  = d[:sweepparams][:TE] :: T
+        nTE = d[:sweepparams][:nTE] :: Int
+        z   = cplx_signal(complex.(transverse.(d[:signals])) :: VC, nTE) :: VC
+        Z   = repeat(z, 1, length(SNR)) :: MC
+        for j in 1:length(SNR)
+            add_noise!(@views(Z[:,j]), z, SNR[j])
+        end
+
+        mag = abs.(Z./Z[1:1,..]) :: MT
+        mag = mag[1:chunk,   ..] :: MT
+        top = mag[1:2:chunk, ..] :: MT
+        bot = mag[2:2:chunk, ..] :: MT
+        b   = similar(mag, chunk, 1, 2, length(SNR))
+        for j in 1:size(mag, 2)
+            itp_top = Interpolations.CubicSplineInterpolation(1:2:chunk, @views(top[:,j]), extrapolation_bc=Interpolations.Line())
+            itp_bot = Interpolations.CubicSplineInterpolation(2:2:chunk, @views(bot[:,j]), extrapolation_bc=Interpolations.Line())
+            @views b[:,1,1,j] .= mag[:,j] .- (itp_top.(1:chunk) .+ itp_bot.(1:chunk)) ./ 2 # Mean-subtracted magnitude
+            @views b[:,1,1,j] .= abs.(FFTW.fft(b[:,1,1,j])) # Apply fft
+            @views b[:,1,2,j] .= [top[end:-1:1,j]; bot[:,j]] # Reordered magnitude
+        end
+
+        PLOT_FUN(b, TE, SNR, chunk)
+        b
+    end for d in ds)
+    
+    return out
 end
 
 function init_data(::iLaplaceProcessing, settings::Dict, ds::AbstractVector{<:Dict})

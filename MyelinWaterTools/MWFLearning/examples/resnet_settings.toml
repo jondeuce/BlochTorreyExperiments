@@ -14,14 +14,17 @@ channels    = 2 # Number of data channels
 labels      = ["mwf", "iewf", "T2iew/TE", "T2mw/TE", "alpha"] # Target labels
 weights     = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
 [data.filter]
-labels      = [ "K", "nTE"]
+labels      = [ "K", "nTE" ]
 lower       = [ 0.0,  32.0 ]
 upper       = [ 0.1,  48.0 ]
 [data.preprocess]
 shuffle     = true
 SNR         = [50.0, 0.0] # Additive random noise
-[data.preprocess.chunk]
+[data.preprocess.zipper]
 apply       = true
+size        = 32
+[data.preprocess.chunk]
+apply       = false
 size        = 32
 [data.preprocess.peel]
 biexp       = false # peel before applying wavelet
@@ -33,7 +36,7 @@ periodic    = false # subtract linear term to make signal periodic
 apply       = false # Apply wavelet preprocessing
 nterms      = 24 # number of terms to keep
 [data.preprocess.ilaplace]
-apply       = true # Apply ilaplace preprocessing
+apply       = false # Apply ilaplace preprocessing
 T2Range     = [0.001, 1.0] # T2 distribution range
 nT2         = 32 # Number of exponentials in T2 distribution
 alpha       = 0.1 # Tikhonov regularization parameter
@@ -45,6 +48,7 @@ apply       = false # Apply PCA preprocessing
 # name      = "ResidualDenseNet"
 name      = "TestModel4"
 # name      = "ResNet"
+# name      = "BasicHeight32Model1"
 loss      = "l2"
 acc       = "rmse"
 act       = "relu"
@@ -60,7 +64,7 @@ offset    = "auto"
 # Nkern     = 5 # kernel size
 [model.densenet]
 dropout   = false
-batchnorm = false
+batchnorm = true
 groupnorm = false
 factory   = "batchconv" # Factory type ("conv" or "batchconv")
 batchmode = "post" # Pre-, post-, or hybrid normalization for "batchconv" factory
@@ -80,13 +84,13 @@ epochs  = 1000
 savemod = 1
 testmod = 1
 [optimizer.ADAM]
-lr      = 0.001
+lr      = 2e-3
 beta    = [0.9, 0.999]
-decay   = 0.0
+decay   = 1e-5
 [optimizer.SGD]
 lr      = 1e-3
 rho     = 0.9
-decay   = 0.0
+decay   = 1e-5
 
 [plot]
 # scale     = [100.0, 1.0, 1.0, 1.0] # scale labels before plotting

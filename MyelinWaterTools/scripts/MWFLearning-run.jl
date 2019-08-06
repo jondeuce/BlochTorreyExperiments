@@ -2,7 +2,7 @@
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 Pkg.instantiate()
-# include(joinpath(@__DIR__, "../initpaths.jl"))
+include(joinpath(@__DIR__, "../initpaths.jl"))
 
 using Printf
 using Statistics: mean, median, std
@@ -12,10 +12,12 @@ using Base.Iterators: repeated, partition
 using MWFLearning
 # using CuArrays
 using StatsPlots
-pyplot(size=(800,600))
+pyplot(size=(800,450))
 
 # Utils
 getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
+gitdir() = realpath(DrWatson.projectdir(".."))
+gitdir() = realpath(DrWatson.projectdir(".."))
 gitdir() = realpath(DrWatson.projectdir(".."))
 savebson(filename, data::Dict) = @elapsed BSON.bson(filename, data)
 
@@ -150,7 +152,7 @@ opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADA
 # LRfun(e) = lr(opt)
 
 # Drop learning rate every LRDROPRATE epochs
-LRDROPRATE, LRDROPFACTOR = 50, √10
+LRDROPRATE, LRDROPFACTOR = 50, 10^(1/4)
 LRfun(e) = mod(e, LRDROPRATE) == 0 ? lr(opt) / LRDROPFACTOR : lr(opt)
 
 # # Learning rate finder
@@ -169,7 +171,7 @@ LRfun(e) = mod(e, LRDROPRATE) == 0 ? lr(opt) / LRDROPFACTOR : lr(opt)
 
 # Callbacks
 CB_EPOCH = 0 # global callback epoch count
-CB_EPOCH_RATE = 5 # rate of per epoch callback updates
+CB_EPOCH_RATE = 25 # rate of per epoch callback updates
 CB_EPOCH_CHECK(last_epoch) = CB_EPOCH >= last_epoch + CB_EPOCH_RATE
 loop_errs = Dict(
     :testing => Dict(:epoch => Int[], :acc => T[]))
@@ -255,12 +257,10 @@ const CONVERGED_THRESH = typemax(Int) # Never stop
 BEST_ACC = 0.0
 LAST_IMPROVED_EPOCH = 0
 
-@info("Beginning training loop...")
-
-try
+train_loop! = function()
     for epoch in CB_EPOCH .+ (1:settings["optimizer"]["epochs"])
         global BEST_ACC, LAST_IMPROVED_EPOCH, CB_EPOCH
-        global CB_EPOCH = epoch
+        CB_EPOCH = epoch
         
         # Update learning rate and exit if it has become to small
         last_lr = lr(opt)
@@ -331,6 +331,11 @@ try
         #     break
         # end
     end
+end
+
+@info("Beginning training loop...")
+try
+    train_loop!()
 catch e
     if e isa InterruptException
         @warn "Training interrupted by user; breaking out of loop..."
@@ -360,44 +365,64 @@ savefig(fig, "plots/" * FILE_PREFIX * "lossvslearningrate.png")
 =#
 
 @info "Plotting prediction histograms..."
-prediction_hist = function(i)
-    scale = settings["plot"]["scale"][i]
-    units = settings["plot"]["units"][i]
-    err = scale .* (model_labels[i,:] .- true_labels[i,:])
-    histogram(err;
-        grid = true, minorgrid = true, titlefontsize = 10,
-        label = settings["data"]["labels"][i] * " ($units)",
-        title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
-    )
+prediction_hist = function()
+    pred_hist = function(i)
+        scale = settings["plot"]["scale"][i]
+        units = settings["plot"]["units"][i]
+        err = scale .* (model_labels[i,:] .- true_labels[i,:])
+        histogram(err;
+            grid = true, minorgrid = true, titlefontsize = 10,
+            label = settings["data"]["labels"][i] * " ($units)",
+            title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
+        )
+    end
+    plot([pred_hist(i) for i in 1:size(model_labels, 1)]...)
 end
-fig = plot([prediction_hist(i) for i in 1:size(model_labels, 1)]...)
+fig = prediction_hist()
 display(fig)
 savefig(fig, "plots/" * FILE_PREFIX * "labelhistograms.png")
 
 @info "Plotting prediction scatter plots..."
-prediction_scatter = function(i)
-    scale = settings["plot"]["scale"][i]
-    units = settings["plot"]["units"][i]
-    datascale = scale * settings["model"]["scale"][i]
-    p = scatter(scale * true_labels[i,:], scale * model_labels[i,:];
-        marker = :circle, grid = true, minorgrid = true, titlefontsize = 10,
-        label = settings["data"]["labels"][i] * " ($units)",
-        # title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
-    )
-    plot!(p, identity, ylims(p)...; line = (:dash, 2, :red), label = L"y = x")
+prediction_scatter = function()
+    pred_scatter = function(i)
+        scale = settings["plot"]["scale"][i]
+        units = settings["plot"]["units"][i]
+        datascale = scale * settings["model"]["scale"][i]
+        p = scatter(scale * true_labels[i,:], scale * model_labels[i,:];
+            marker = :circle, grid = true, minorgrid = true, titlefontsize = 10,
+            label = settings["data"]["labels"][i] * " ($units)",
+            # title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
+        )
+        plot!(p, identity, ylims(p)...; line = (:dash, 2, :red), label = L"y = x")
+    end
+    plot([pred_scatter(i) for i in 1:size(model_labels, 1)]...)
 end
-fig = plot([prediction_scatter(i) for i in 1:size(model_labels, 1)]...)
+fig = prediction_scatter()
 display(fig)
 savefig(fig, "plots/" * FILE_PREFIX * "labelscatter.png")
 
-nothing
+#=
+let
+    err = model_labels .- true_labels
+    mwf_err = err[1,:]
+    sp = data_set[:testing_data_dicts][1][:sweepparams]
+    datadicts = data_set[:testing_data_dicts]
+    xdata = (d -> d[:sweepparams][:T2lp]).(datadicts) - (d -> d[:sweepparams][:T2tiss]).(datadicts)
+    p = scatter(xdata, abs.(mwf_err); xlabel = "T2lp - T2tiss", ylabel = "|mwf error|")
+end
+=#
 
-# let
-#     err = Flux.data(model(test_set[1])) .- test_set[2]
-#     mwf_err = err[1,:]
-#     for k in keys(data_set[:testing_data_dicts][1][:sweepparams])
-#         xdata = data_set[:testing_data_dicts] .|> d -> d[:sweepparams][k]
-#         p = scatter(xdata, abs.(mwf_err); m = (10, :c), xlabel = string(k), ylabel = "mwf_err")
-#         display(p)
-#     end
-# end
+#=
+let
+    err = model_labels .- true_labels
+    mwf_err = err[1,:]
+    sp = data_set[:testing_data_dicts][1][:sweepparams]
+    for k in keys(sp)
+        xdata = data_set[:testing_data_dicts] .|> d -> d[:sweepparams][k]
+        p1 = scatter(xdata, abs.(mwf_err); xlabel = string(k), ylabel = "|mwf error|")
+        p2 = scatter(xdata, mwf_err; xlabel = string(k), ylabel = "mwf error")
+        p = plot(p1, p2; layout = (1,2), m = (10, :c))
+        display(p)
+    end
+end
+=#

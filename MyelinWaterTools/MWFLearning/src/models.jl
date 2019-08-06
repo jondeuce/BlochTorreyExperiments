@@ -1,12 +1,13 @@
 get_model(settings::Dict) =
-    settings["model"]["name"] == "ConvResNet"       ?   conv_resnet(settings) :
-    settings["model"]["name"] == "ResidualDenseNet" ?   residual_dense_net(settings) :
-    settings["model"]["name"] == "Keras1DSeqClass"  ?   keras_1D_sequence_classification(settings) :
-    settings["model"]["name"] == "TestModel1"       ?   test_model_1(settings) :
-    settings["model"]["name"] == "TestModel2"       ?   test_model_2(settings) :
-    settings["model"]["name"] == "TestModel3"       ?   test_model_3(settings) :
-    settings["model"]["name"] == "TestModel4"       ?   test_model_4(settings) :
-    settings["model"]["name"] == "ResNet"           ?   resnet(settings) :
+    settings["model"]["name"] == "ConvResNet"          ? conv_resnet(settings) :
+    settings["model"]["name"] == "ResidualDenseNet"    ? residual_dense_net(settings) :
+    settings["model"]["name"] == "Keras1DSeqClass"     ? keras_1D_sequence_classification(settings) :
+    settings["model"]["name"] == "TestModel1"          ? test_model_1(settings) :
+    settings["model"]["name"] == "TestModel2"          ? test_model_2(settings) :
+    settings["model"]["name"] == "TestModel3"          ? test_model_3(settings) :
+    settings["model"]["name"] == "TestModel4"          ? test_model_4(settings) :
+    settings["model"]["name"] == "ResNet"              ? resnet(settings) :
+    settings["model"]["name"] == "BasicHeight32Model1" ? basic_height32_model_1(settings) :
     error("Unknown model: " * settings["model"]["name"])
 
 get_activation(str::String) =
@@ -376,7 +377,7 @@ function test_model_4(settings)
 
     # Residual network
     globalfeaturenet = Flux.Chain(
-        ChannelwiseDense(H, C => C),
+        # ChannelwiseDense(H, C => C),
         # Flux.Conv((1,1), C => C, identity; init = xavier_uniform, pad = (0,0), stride = (2,1)), # spatial downsampling
         Flux.Conv((Nkern,1), C => Nfeat, actfun; init = xavier_uniform, pad = ((Nkern,1).-1).÷2), # channel upsampling
         # Flux.Conv((Nkern,1), C => Nfeat, actfun; init = xavier_uniform, pad = ((Nkern,1).-1).÷2, stride = (2,1)), # spatial downsampling, channel upsampling
@@ -447,4 +448,46 @@ function resnet(settings)
     resnet = resnetX(top_in, bottom_in; initial_filters = Nfilt)
 
     return resnet
+end
+
+function basic_height32_model_1(settings)
+    VT     :: Type   = settings["prec"] == 64 ? Vector{Float64} : Vector{Float32}
+    H      :: Int    = settings["data"]["height"] :: Int # Data height
+    C      :: Int    = settings["data"]["channels"] :: Int # Number of channels
+    Nout   :: Int    = settings["model"]["Nout"] :: Int # Number of outputs
+    type   :: Symbol = settings["model"]["resnet"]["type"] :: String |> Symbol # Factory type for BatchConvConnection
+    Nfilt  :: Int    = settings["model"]["resnet"]["Nfilt"] :: Int # Number of features to upsample to from 1-feature input
+    scale  :: VT     = settings["model"]["scale"] :: Vector |> VT # Parameter scales
+    offset :: VT     = settings["model"]["offset"] :: Vector |> VT # Parameter offsets
+    
+    @assert H == 32 # Model height should be 32
+
+    ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> offset)
+
+    c1 = Flux.DepthwiseConv((7,1), 2=>4; pad = (3*1,0), dilation = 1)
+    c2 = Flux.DepthwiseConv((7,1), 2=>4; pad = (3*2,0), dilation = 2)
+    c3 = Flux.DepthwiseConv((7,1), 2=>4; pad = (3*3,0), dilation = 3)
+    c4 = Flux.DepthwiseConv((7,1), 2=>4; pad = (3*4,0), dilation = 4)
+    CatConvLayers = @λ(x -> cat(c1(x), c2(x), c3(x), c4(x); dims = 3))
+
+    model = Flux.Chain(
+        CatConvLayers,
+        Flux.BatchNorm(16, Flux.relu),
+        Flux.Conv((3,1), 16=>16; pad = (1,0), stride = 2),
+        Flux.BatchNorm(16, Flux.relu),
+        Flux.Conv((3,1), 16=>16; pad = (1,0), stride = 2),
+        Flux.BatchNorm(16, Flux.relu),
+        Flux.Conv((3,1), 16=>16; pad = (1,0), stride = 2),
+        # Flux.MaxPool((3,1)),
+        # Flux.MeanPool((3,1)),
+        DenseResize(),
+        Flux.Dense(64, Nout),
+        ParamsScale(),
+        @λ(x -> vcat(
+            Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
+            Flux.relu.(x[3:5,:]), # Positive parameters
+        )),
+    )
+
+    return model
 end
