@@ -464,24 +464,29 @@ function basic_height32_model_1(settings)
 
     ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> offset)
 
-    c1 = Flux.DepthwiseConv((7,1), 2=>4; pad = (3*1,0), dilation = 1)
-    c2 = Flux.DepthwiseConv((7,1), 2=>4; pad = (3*2,0), dilation = 2)
-    c3 = Flux.DepthwiseConv((7,1), 2=>4; pad = (3*3,0), dilation = 3)
-    c4 = Flux.DepthwiseConv((7,1), 2=>4; pad = (3*4,0), dilation = 4)
-    CatConvLayers = @λ(x -> cat(c1(x), c2(x), c3(x), c4(x); dims = 3))
+    CatConvLayers = let k = 5
+        c1 = Flux.DepthwiseConv((k,1), 2=>8; pad = ((k÷2)*1,0), dilation = 1)
+        c2 = Flux.DepthwiseConv((k,1), 2=>8; pad = ((k÷2)*2,0), dilation = 2)
+        c3 = Flux.DepthwiseConv((k,1), 2=>8; pad = ((k÷2)*3,0), dilation = 3)
+        c4 = Flux.DepthwiseConv((k,1), 2=>8; pad = ((k÷2)*4,0), dilation = 4)
+        @λ(x -> cat(c1(x), c2(x), c3(x), c4(x); dims = 3))
+    end
 
     model = Flux.Chain(
         CatConvLayers,
-        Flux.BatchNorm(16, Flux.relu),
-        Flux.Conv((3,1), 16=>16; pad = (1,0), stride = 2),
-        Flux.BatchNorm(16, Flux.relu),
-        Flux.Conv((3,1), 16=>16; pad = (1,0), stride = 2),
-        Flux.BatchNorm(16, Flux.relu),
-        Flux.Conv((3,1), 16=>16; pad = (1,0), stride = 2),
+        Flux.BatchNorm(32, Flux.relu),
+        Flux.Conv((3,1), 32=>32; pad = (1,0), stride = 2),
+        # Flux.BatchNorm(32, Flux.relu),
+        # Flux.Conv((3,1), 32=>32; pad = (1,0), stride = 2),
+        # Flux.BatchNorm(32, Flux.relu),
+        # Flux.Conv((3,1), 32=>32; pad = (1,0), stride = 2),
+        # Flux.BatchNorm(32, Flux.relu),
+        # Flux.Conv((3,1), 32=>32; pad = (1,0), stride = 2),
         # Flux.MaxPool((3,1)),
         # Flux.MeanPool((3,1)),
+        # Flux.Dropout(0.3),
         DenseResize(),
-        Flux.Dense(64, Nout),
+        Flux.Dense(512, Nout),
         ParamsScale(),
         @λ(x -> vcat(
             Flux.softmax(x[1:2,:]), # Positive fractions with unit sum

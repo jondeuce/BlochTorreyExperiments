@@ -133,7 +133,8 @@ function init_data(::SignalChunkingProcessing, settings::Dict, ds::AbstractVecto
         for j in 1:length(SNR)
             add_noise!(@views(Z[:,j]), z, SNR[j])
         end
-        b       = abs.(Z ./ Z[1:1, ..]) :: MT
+        # b       = abs.(Z ./ Z[1:1, ..]) :: MT
+        b       = abs.(Z) :: MT
         b       = reduce(hcat, makechunks(b[:,j], chunk) for j in 1:size(b,2))
         PLOT_FUN(b, TE, SNR, chunk)
         b
@@ -168,17 +169,20 @@ function init_data(::SignalZipperProcessing, settings::Dict, ds::AbstractVector{
             add_noise!(@views(Z[:,j]), z, SNR[j])
         end
 
-        mag = abs.(Z./Z[1:1,..]) :: MT
+        # mag = abs.(Z ./ Z[1:1,..]) :: MT
+        mag = abs.(Z) :: MT
         mag = mag[1:chunk,   ..] :: MT
         top = mag[1:2:chunk, ..] :: MT
         bot = mag[2:2:chunk, ..] :: MT
         b   = similar(mag, chunk, 1, 2, length(SNR))
         for j in 1:size(mag, 2)
-            itp_top = Interpolations.CubicSplineInterpolation(1:2:chunk, @views(top[:,j]), extrapolation_bc=Interpolations.Line())
-            itp_bot = Interpolations.CubicSplineInterpolation(2:2:chunk, @views(bot[:,j]), extrapolation_bc=Interpolations.Line())
-            @views b[:,1,1,j] .= mag[:,j] .- (itp_top.(1:chunk) .+ itp_bot.(1:chunk)) ./ 2 # Mean-subtracted magnitude
-            @views b[:,1,1,j] .= abs.(FFTW.fft(b[:,1,1,j])) # Apply fft
-            @views b[:,1,2,j] .= [top[end:-1:1,j]; bot[:,j]] # Reordered magnitude
+            itp_top = Interpolations.CubicSplineInterpolation(1:2:chunk, @views(top[:,j]), extrapolation_bc = Interpolations.Line())
+            itp_bot = Interpolations.CubicSplineInterpolation(2:2:chunk, @views(bot[:,j]), extrapolation_bc = Interpolations.Line())
+            μ = (itp_top.(1:chunk) .+ itp_bot.(1:chunk))./2
+            @views b[:,1,1,j] .= mag[:,j] .- μ # Mean-subtracted magnitude
+            # @views b[:,1,1,j] .= abs.(FFTW.fft(b[:,1,1,j])) # Apply fft
+            @views b[:,1,2,j] .= μ # Magnitude mean
+            # @views b[:,1,2,j] .= [top[end:-1:1,j]; bot[:,j]] # Reordered magnitude
         end
 
         PLOT_FUN(b, TE, SNR, chunk)
@@ -220,7 +224,8 @@ function init_data(::iLaplaceProcessing, settings::Dict, ds::AbstractVector{<:Di
         for j in 1:length(SNR)
             add_noise!(@views(Z[:,j]), z, SNR[j])
         end
-        b       = abs.(Z ./ Z[1:1, ..]) :: MT
+        # b       = abs.(Z ./ Z[1:1, ..]) :: MT
+        b       = abs.(Z) :: MT
         T2      = log10range(T2Range...; length = nT2) :: VT
         x       = ilaplace!(bufdict[nTE], b, T2, TE, alpha) :: MT
         PLOT_FUN(b, x, TE, nTE, T2)
@@ -323,7 +328,8 @@ function init_data(::WaveletProcessing, settings::Dict, ds::AbstractVector{<:Dic
         for j in 1:length(SNR)
             add_noise!(@views(Z[:,j]), z, SNR[j])
         end
-        b = abs.(Z ./ Z[1:1, ..]) :: MT
+        # b = abs.(Z ./ Z[1:1, ..]) :: MT
+        b = abs.(Z) :: MT
 
         reduce(hcat, process_signal(b[:,j], SNR[j]) for j in 1:size(b,2))
     end for d in ds)

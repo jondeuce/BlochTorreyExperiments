@@ -136,9 +136,9 @@ lr!(opt, α) = (opt.eta = α; opt.eta)
 lr(opt::Flux.Optimiser) = lr(opt[1])
 lr!(opt::Flux.Optimiser, α) = lr!(opt[1], α)
 
-opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
+# opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
 # opt = Flux.Momentum(settings["optimizer"]["SGD"]["lr"], settings["optimizer"]["SGD"]["rho"])
-# opt = Flux.ADAMW(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,), settings["optimizer"]["ADAM"]["decay"])
+opt = Flux.ADAMW(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,), settings["optimizer"]["ADAM"]["decay"])
 # opt = MomentumW(settings["optimizer"]["SGD"]["lr"], settings["optimizer"]["SGD"]["rho"], settings["optimizer"]["SGD"]["decay"])
 
 # opt = Flux.Nesterov(1e-1)
@@ -152,7 +152,7 @@ opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADA
 # LRfun(e) = lr(opt)
 
 # Drop learning rate every LRDROPRATE epochs
-LRDROPRATE, LRDROPFACTOR = 50, 10^(1/4)
+LRDROPRATE, LRDROPFACTOR = 100, 10^(1/4)
 LRfun(e) = mod(e, LRDROPRATE) == 0 ? lr(opt) / LRDROPFACTOR : lr(opt)
 
 # # Learning rate finder
@@ -401,6 +401,27 @@ fig = prediction_scatter()
 display(fig)
 savefig(fig, "plots/" * FILE_PREFIX * "labelscatter.png")
 
+@info "Plotting forward simulation error plots..."
+forward_plot = function()
+    forward_rmse = function(i)
+        y = sum(test_set[1][:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
+        z_class = MWFLearning.myelin_prop(test_set[2][:,i]...) # Forward simulation of true parameters
+        z_model = MWFLearning.myelin_prop(model_labels[:,i]...) # Forward simulation of model predicted parameters
+        return (e_class = rmsd(y, z_class), e_model = rmsd(y, z_model))
+    end
+    errors = [forward_rmse(i) for i in 1:batchsize(test_set[1])]
+    e_class = (e -> e.e_class).(errors)
+    e_model = (e -> e.e_model).(errors)
+    p = scatter([e_class e_model];
+        labels = ["RMSE: Classical" "RMSE: Model"],
+        marker = [:circle :square],
+        grid = true, minorgrid = true, titlefontsize = 10, ylim = (0, 0.05)
+    )
+end
+fig = forward_plot()
+display(fig)
+savefig(fig, "plots/" * FILE_PREFIX * "forwarderror.png")
+
 #=
 let
     err = model_labels .- true_labels
@@ -422,6 +443,22 @@ let
         p1 = scatter(xdata, abs.(mwf_err); xlabel = string(k), ylabel = "|mwf error|")
         p2 = scatter(xdata, mwf_err; xlabel = string(k), ylabel = "mwf error")
         p = plot(p1, p2; layout = (1,2), m = (10, :c))
+        display(p)
+    end
+end
+=#
+
+#=
+let
+    for i in rand(1:batchsize(test_set[1]), 10)
+        y = sum(test_set[1][:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
+        z_model = MWFLearning.myelin_prop(model_labels[:,i]...) # Forward simulation of model predicted parameters
+        z_class = MWFLearning.myelin_prop(test_set[2][:,i]...) # Forward simulation of true parameters
+
+        p1 = plot(1:32, [y z_model z_class]; labels = ["True" "Learned" "Classical"], line = (3,))
+        p2 = plot(1:32, abs.([y .- z_model y .- z_class]); labels = ["Error: Learned" "Error: Classical"], line = (3,))
+        p = plot(p1, p2; layout = (2,1))
+        
         display(p)
     end
 end

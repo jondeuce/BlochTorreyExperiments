@@ -83,7 +83,12 @@ function cplx_signal(z::AbstractVecOrMat{C}, nTE::Int = size(z,1) - 1) where {C 
     n = size(z,1)
     dt = (n-1) ÷ nTE
     @assert n == 1 + dt * nTE
-    return z[n - dt * (nTE-1) : dt : n, ..]
+    # Extract last nTE echoes, and normalize by the first point |S0| = |S(t=0)|.
+    # This sets |S(t=0)| = 1 for any domain, but allows all measurable points,
+    # i.e. S(t=TE), S(T=2TE), ..., to be unnormalized.
+    Z = z[n - dt * (nTE-1) : dt : n, ..]
+    Z ./= abs.(z[1:1, ..])
+    return Z
 end
 
 """
@@ -110,6 +115,57 @@ Add gaussian noise with signal-to-noise ratio `SNR` proportional to the first ti
 add_noise!(out::AbstractVecOrMat, z::AbstractVecOrMat, SNR) = out .= z .+ noise_level(z, SNR) .* randn(eltype(z), size(z))
 add_noise!(z::AbstractVecOrMat, SNR) = add_noise!(z, z, SNR)
 add_noise(z::AbstractVecOrMat, SNR) = add_noise!(copy(z), z, SNR)
+
+
+"""
+    myelin_prop(...)
+"""
+function myelin_prop(
+        mwf::T    = T(0.25),
+        iewf::T   = T(1 - mwf),
+        rT2iew::T = T(63e-3/10e-3),
+        rT2mw::T  = T(15e-3/10e-3),
+        alpha::T  = T(170.0),
+        rT1iew::T = T(10_000e-3/10e-3), # By default, assume T1 effects are negligeable
+        rT1mw::T  = T(10_000e-3/10e-3), # By default, assume T1 effects are negligeable
+        nTE::Int  = 32,
+    ) where {T}
+
+    M = mwf  .* forward_prop(rT2mw, rT1mw, alpha, nTE) .+
+        iewf .* forward_prop(rT2iew, rT1iew, alpha, nTE)
+    
+    return (m -> √(m[1]^2 + m[2]^2)).(M)
+end
+
+"""
+    forward_prop(...)
+"""
+function forward_prop(
+        rT2::T   = T(65e-3),
+        rT1::T   = T(10_000e-3), # By default, assume T1 effects are negligeable
+        alpha::T = T(170.0),
+        nTE::Int = 32
+    ) where {T}
+
+    m0 = @SVector [0, -one(T), 0]
+    dm = @SVector [0,  0, one(T)]
+    u0 = dm - m0
+
+    R = @SMatrix [exp(-inv(2*rT2)) 0 0; 0 exp(-inv(2*rT2)) 0; 0 0 exp(-inv(2*rT1))]
+    A = @SMatrix [1 0 0; 0 cosd(alpha) -sind(alpha); 0 sind(alpha) cosd(alpha)]
+    step1 = (m) -> dm - R * (dm - A  * (dm - R * (dm - m)))
+    step2 = (m) -> dm - R * (dm - A' * (dm - R * (dm - m)))
+
+    M = zeros(typeof(m0), nTE)
+    M[1] = step1(m0)
+    M[2] = step2(M[1])
+    for ii = 3:2:nTE
+        M[ii  ] = step1(M[ii-1])
+        M[ii+1] = step2(M[ii  ])
+    end
+
+    return M
+end
 
 """
  Kaiming uniform initialization.
