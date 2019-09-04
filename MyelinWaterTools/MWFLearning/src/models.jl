@@ -1,13 +1,14 @@
 get_model(settings::Dict) =
-    settings["model"]["name"] == "ConvResNet"          ? conv_resnet(settings) :
-    settings["model"]["name"] == "ResidualDenseNet"    ? residual_dense_net(settings) :
-    settings["model"]["name"] == "Keras1DSeqClass"     ? keras_1D_sequence_classification(settings) :
-    settings["model"]["name"] == "TestModel1"          ? test_model_1(settings) :
-    settings["model"]["name"] == "TestModel2"          ? test_model_2(settings) :
-    settings["model"]["name"] == "TestModel3"          ? test_model_3(settings) :
-    settings["model"]["name"] == "TestModel4"          ? test_model_4(settings) :
-    settings["model"]["name"] == "ResNet"              ? resnet(settings) :
-    settings["model"]["name"] == "BasicHeight32Model1" ? basic_height32_model_1(settings) :
+    settings["model"]["name"] == "ConvResNet"              ? conv_resnet(settings) :
+    settings["model"]["name"] == "ResidualDenseNet"        ? residual_dense_net(settings) :
+    settings["model"]["name"] == "Keras1DSeqClass"         ? keras_1D_sequence_classification(settings) :
+    settings["model"]["name"] == "TestModel1"              ? test_model_1(settings) :
+    settings["model"]["name"] == "TestModel2"              ? test_model_2(settings) :
+    settings["model"]["name"] == "TestModel3"              ? test_model_3(settings) :
+    settings["model"]["name"] == "TestModel4"              ? test_model_4(settings) :
+    settings["model"]["name"] == "ResNet"                  ? resnet(settings) :
+    settings["model"]["name"] == "BasicHeight32Model1"     ? basic_height32_model_1(settings) :
+    settings["model"]["name"] == "BasicHeight32Generator1" ? basic_height32_generator_1(settings) :
     error("Unknown model: " * settings["model"]["name"])
 
 get_activation(str::String) =
@@ -492,6 +493,63 @@ function basic_height32_model_1(settings)
             Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
             Flux.relu.(x[3:5,:]), # Positive parameters
         )),
+    )
+
+    return model
+end
+
+function basic_height32_generator_1(settings)
+    T      :: Type   = settings["prec"] == 64 ? Float64 : Float32
+    VT     :: Type   = settings["prec"] == 64 ? Vector{Float64} : Vector{Float32}
+    H      :: Int    = settings["data"]["height"] :: Int # Data height
+    C      :: Int    = settings["data"]["channels"] :: Int # Number of channels
+    Nout   :: Int    = settings["model"]["Nout"] :: Int # Number of outputs
+    type   :: Symbol = settings["model"]["resnet"]["type"] :: String |> Symbol # Factory type for BatchConvConnection
+    Nfilt  :: Int    = settings["model"]["resnet"]["Nfilt"] :: Int # Number of features to upsample to from 1-feature input
+    scale  :: VT     = settings["model"]["scale"] :: Vector |> VT # Parameter scales
+    offset :: VT     = settings["model"]["offset"] :: Vector |> VT # Parameter offsets
+    
+    @assert H == 32 # Model height should be 32
+
+    ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> offset)
+
+    function forward_physics(x::Matrix{T}) where {T}
+        rT1, nTE = T(1000.0), 32 # Fixed params
+        Smw  = zeros(Vec{3,T}, nTE) # Buffer for myelin signal
+        Siew = zeros(Vec{3,T}, nTE) # Buffer for IE water signal
+        M    = zeros(T, nTE, size(x,2)) # Total signal magnitude
+        for j in 1:size(x,2)
+            mwf, iewf, rT2iew, rT2mw, alpha = x[1,j], x[2,j], x[3,j], x[4,j], x[5,j]
+            forward_prop!(Smw,  rT2mw,  rT1, alpha, nTE)
+            forward_prop!(Siew, rT2iew, rT1, alpha, nTE)
+            @views M[:,j] .= norm.(transverse.(mwf .* Smw .+ iewf .* Siew))
+        end
+        return M
+    end
+
+    ForwardProp = @λ(x -> forward_physics(x))
+
+    model = Flux.Chain(
+        ForwardProp,
+        # CatConvLayers,
+        # Flux.BatchNorm(32, Flux.relu),
+        # Flux.Conv((3,1), 32=>32; pad = (1,0), stride = 2),
+        # # Flux.BatchNorm(32, Flux.relu),
+        # # Flux.Conv((3,1), 32=>32; pad = (1,0), stride = 2),
+        # # Flux.BatchNorm(32, Flux.relu),
+        # # Flux.Conv((3,1), 32=>32; pad = (1,0), stride = 2),
+        # # Flux.BatchNorm(32, Flux.relu),
+        # # Flux.Conv((3,1), 32=>32; pad = (1,0), stride = 2),
+        # # Flux.MaxPool((3,1)),
+        # # Flux.MeanPool((3,1)),
+        # # Flux.Dropout(0.3),
+        # DenseResize(),
+        # Flux.Dense(512, Nout),
+        # ParamsScale(),
+        # @λ(x -> vcat(
+        #     Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
+        #     Flux.relu.(x[3:5,:]), # Positive parameters
+        # )),
     )
 
     return model

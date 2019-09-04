@@ -140,24 +140,31 @@ end
 """
     forward_prop(...)
 """
-function forward_prop(
-        rT2::T   = T(65e-3),
-        rT1::T   = T(10_000e-3), # By default, assume T1 effects are negligeable
+function forward_prop!(
+        M::AbstractVector{Vec{3,T}},
+        rT2::T   = T(65e-3 / 10e-3),
+        rT1::T   = T(10_000e-3 / 10e-3), # By default, assume T1 effects are negligeable
         alpha::T = T(170.0),
         nTE::Int = 32
     ) where {T}
 
-    m0 = @SVector [0, -one(T), 0]
-    dm = @SVector [0,  0, one(T)]
-    u0 = dm - m0
+    @assert length(M) == nTE
 
-    R = @SMatrix [exp(-inv(2*rT2)) 0 0; 0 exp(-inv(2*rT2)) 0; 0 0 exp(-inv(2*rT1))]
-    A = @SMatrix [1 0 0; 0 cosd(alpha) -sind(alpha); 0 sind(alpha) cosd(alpha)]
-    step1 = (m) -> dm - R * (dm - A  * (dm - R * (dm - m)))
-    step2 = (m) -> dm - R * (dm - A' * (dm - R * (dm - m)))
+    m₀ = Vec{3,T}((0, -1, 0))
+    m∞ = Vec{3,T}((0, 0, 1))
 
-    M = zeros(typeof(m0), nTE)
-    M[1] = step1(m0)
+    # By Tensors.jl convention, this specifies the transpose rotation matrix
+    At = Tensor{2,3,T}((
+        one(T),  zero(T),      zero(T),
+        zero(T), cosd(alpha), -sind(alpha),
+        zero(T), sind(alpha),  cosd(alpha)))
+    A  = transpose(At)
+    R  = Vec{3,T}((exp(-inv(2*rT2)), exp(-inv(2*rT2)), exp(-inv(2*rT1))))
+
+    step1 = (m) -> m∞ - R ⊙ (m∞ - A  ⋅ (m∞ - R ⊙ (m∞ - m)))
+    step2 = (m) -> m∞ - R ⊙ (m∞ - A' ⋅ (m∞ - R ⊙ (m∞ - m)))
+
+    M[1] = step1(m₀)
     M[2] = step2(M[1])
     for ii = 3:2:nTE
         M[ii  ] = step1(M[ii-1])
@@ -166,6 +173,8 @@ function forward_prop(
 
     return M
 end
+forward_prop(rT2::T, rT1::T, alpha::T, nTE::Int) where {T} =
+    forward_prop!(zeros(Vec{3,T}, nTE), rT2, rT1, alpha, nTE)
 
 """
  Kaiming uniform initialization.
