@@ -116,7 +116,6 @@ add_noise!(out::AbstractVecOrMat, z::AbstractVecOrMat, SNR) = out .= z .+ noise_
 add_noise!(z::AbstractVecOrMat, SNR) = add_noise!(z, z, SNR)
 add_noise(z::AbstractVecOrMat, SNR) = add_noise!(copy(z), z, SNR)
 
-
 """
     myelin_prop(...)
 """

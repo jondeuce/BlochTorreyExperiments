@@ -9,8 +9,10 @@ get_model(settings::Dict) =
     settings["model"]["name"] == "ResNet"                  ? resnet(settings) :
     settings["model"]["name"] == "BasicHeight32Model1"     ? basic_height32_model_1(settings) :
     settings["model"]["name"] == "BasicHeight32Generator1" ? basic_height32_generator_1(settings) :
+    settings["model"]["name"] == "BasicHeight32Generator2" ? basic_height32_generator_2(settings) :
+    settings["model"]["name"] == "BasicDCGAN1"             ? basic_DCGAN_1(settings) :
     error("Unknown model: " * settings["model"]["name"])
-
+    
 get_activation(str::String) =
     str == "relu"      ? NNlib.relu :
     str == "sigma"     ? NNlib.σ :
@@ -498,6 +500,21 @@ function basic_height32_model_1(settings)
     return model
 end
 
+function forward_physics(x::Matrix{T}) where {T}
+    rT1, nTE = T(1_000e-3 / 10e-3), 32 # Fixed params
+    Smw  = zeros(Vec{3,T}, nTE) # Buffer for myelin signal
+    Siew = zeros(Vec{3,T}, nTE) # Buffer for IE water signal
+    M    = zeros(T, nTE, size(x,2)) # Total signal magnitude
+    for j in 1:size(x,2)
+        mwf, iewf, rT2iew, rT2mw, alpha = x[1,j], x[2,j], x[3,j], x[4,j], x[5,j]
+        forward_prop!(Smw,  rT2mw,  rT1, alpha, nTE)
+        forward_prop!(Siew, rT2iew, rT1, alpha, nTE)
+        @views M[:,j] .= norm.(transverse.(mwf .* Smw .+ iewf .* Siew))
+    end
+    return M
+end
+ForwardProp() = @λ(x -> forward_physics(x))
+
 function basic_height32_generator_1(settings)
     T      :: Type   = settings["prec"] == 64 ? Float64 : Float32
     VT     :: Type   = settings["prec"] == 64 ? Vector{Float64} : Vector{Float32}
@@ -509,48 +526,238 @@ function basic_height32_generator_1(settings)
     scale  :: VT     = settings["model"]["scale"] :: Vector |> VT # Parameter scales
     offset :: VT     = settings["model"]["offset"] :: Vector |> VT # Parameter offsets
     
+    θ = Nout
     @assert H == 32 # Model height should be 32
 
-    ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> offset)
+    ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> offset) # Scales approx [-1,1] to param range
+    InverseParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> inv.(scale), initβ = (args...) -> -offset./scale) # Scales param range to approx [-1,1]
 
-    function forward_physics(x::Matrix{T}) where {T}
-        rT1, nTE = T(1000.0), 32 # Fixed params
-        Smw  = zeros(Vec{3,T}, nTE) # Buffer for myelin signal
-        Siew = zeros(Vec{3,T}, nTE) # Buffer for IE water signal
-        M    = zeros(T, nTE, size(x,2)) # Total signal magnitude
-        for j in 1:size(x,2)
-            mwf, iewf, rT2iew, rT2mw, alpha = x[1,j], x[2,j], x[3,j], x[4,j], x[5,j]
-            forward_prop!(Smw,  rT2mw,  rT1, alpha, nTE)
-            forward_prop!(Siew, rT2iew, rT1, alpha, nTE)
-            @views M[:,j] .= norm.(transverse.(mwf .* Smw .+ iewf .* Siew))
-        end
-        return M
+    EvenSigns = cospi.(0:31) |> VT
+    OddSigns = cospi.(1:32) |> VT
+    function Corrections(F = 64, C = 8, k = 3, p = 5, σ = Flux.relu)
+        Flux.Chain(
+            InverseParamsScale(),
+            Flux.Dense(θ, F, σ),
+            ChannelResize(1),
+            Flux.Conv((1,1), 1=>C; pad = (0,0)),
+            # Flux.Dense(θ, 32*C, σ),
+            # ChannelResize(C),
+            IdentitySkip(
+                Flux.Chain(
+                    Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    @λ(x -> σ.(x)),
+                    Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    # Flux.BatchNorm(C),
+                    # Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    # Flux.BatchNorm(C, σ),
+                    # Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    # Flux.BatchNorm(C),
+                ),
+            ),
+            Flux.Conv((k,1), 1C=>2C; pad = (k÷2,0)),
+            Flux.MeanPool((p,1); pad = (p÷2,0), stride = 4),
+            IdentitySkip(
+                Flux.Chain(
+                    Flux.Conv((k,1), 2C=>2C; pad = (k÷2,0)),
+                    @λ(x -> σ.(x)),
+                    Flux.Conv((k,1), 2C=>2C; pad = (k÷2,0)),
+                    # Flux.BatchNorm(2C),
+                    # Flux.Conv((k,1), 2C=>2C; pad = (k÷2,0)),
+                    # Flux.BatchNorm(2C, σ),
+                    # Flux.Conv((k,1), 2C=>2C; pad = (k÷2,0)),
+                    # Flux.BatchNorm(2C),
+                ),
+            ),
+            Flux.Conv((k,1), 2C=>4C; pad = (k÷2,0)),
+            Flux.MeanPool((p,1); pad = (p÷2,0), stride = 4),
+            # Flux.Conv((1,1), C=>1; pad = (0,0)),
+            DenseResize(),
+            Flux.Dense((F÷16)*4C, 32),
+            # @λ(x -> EvenSigns .* x), # Corrections typically alternate sign
+        )
     end
-
-    ForwardProp = @λ(x -> forward_physics(x))
-
+    
     model = Flux.Chain(
-        ForwardProp,
-        # CatConvLayers,
-        # Flux.BatchNorm(32, Flux.relu),
-        # Flux.Conv((3,1), 32=>32; pad = (1,0), stride = 2),
-        # # Flux.BatchNorm(32, Flux.relu),
-        # # Flux.Conv((3,1), 32=>32; pad = (1,0), stride = 2),
-        # # Flux.BatchNorm(32, Flux.relu),
-        # # Flux.Conv((3,1), 32=>32; pad = (1,0), stride = 2),
-        # # Flux.BatchNorm(32, Flux.relu),
-        # # Flux.Conv((3,1), 32=>32; pad = (1,0), stride = 2),
-        # # Flux.MaxPool((3,1)),
-        # # Flux.MeanPool((3,1)),
-        # # Flux.Dropout(0.3),
-        # DenseResize(),
-        # Flux.Dense(512, Nout),
-        # ParamsScale(),
-        # @λ(x -> vcat(
-        #     Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
-        #     Flux.relu.(x[3:5,:]), # Positive parameters
-        # )),
+        Sumout(
+            ForwardProp(),
+            Corrections(),
+        ),
+        @λ(x -> Flux.relu.(x)),
     )
 
     return model
+end
+
+function basic_height32_generator_2(settings)
+    T      :: Type   = settings["prec"] == 64 ? Float64 : Float32
+    VT     :: Type   = settings["prec"] == 64 ? Vector{Float64} : Vector{Float32}
+    H      :: Int    = settings["data"]["height"] :: Int # Data height
+    C      :: Int    = settings["data"]["channels"] :: Int # Number of channels
+    Nout   :: Int    = settings["model"]["Nout"] :: Int # Number of outputs
+    type   :: Symbol = settings["model"]["resnet"]["type"] :: String |> Symbol # Factory type for BatchConvConnection
+    Nfilt  :: Int    = settings["model"]["resnet"]["Nfilt"] :: Int # Number of features to upsample to from 1-feature input
+    scale  :: VT     = settings["model"]["scale"] :: Vector |> VT # Parameter scales
+    offset :: VT     = settings["model"]["offset"] :: Vector |> VT # Parameter offsets
+    
+    θ = Nout
+    @assert H == 32 # Model height should be 32
+
+    ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> scale, initβ = (args...) -> offset) # Scales approx [-1,1] to param range
+    InverseParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> inv.(scale), initβ = (args...) -> -offset./scale) # Scales param range to approx [-1,1]
+
+    OddSigns  = 1:H .|> n -> isodd(n)  ? one(T) : -one(T)
+    EvenSigns = 1:H .|> n -> iseven(n) ? one(T) : -one(T)
+    function ResRefinement(F = 32, C = 16, R = 4, k = 3, σ = Flux.relu)
+        Flux.Chain(
+            [IdentitySkip(
+                Flux.Chain(
+                    ChannelResize(1),
+                    Flux.Conv((1,1), 1=>C; pad = (0,0)), # Upsample channels
+                    # Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    # @λ(x -> σ.(x)),
+                    # Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    Flux.BatchNorm(C),
+                    Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    Flux.BatchNorm(C, σ),
+                    Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    Flux.BatchNorm(C),
+                    Flux.Conv((1,1), C=>1; pad = (0,0)), # Downsample channels
+                    DenseResize(),
+                ),
+            ) for i in 1:R]...,
+        )
+    end
+
+    function ResCorrection(F = 32, C = 16, R = 4, k = 3, p = 5, σ = Flux.relu)
+        Flux.Chain(
+            InverseParamsScale(),
+            Flux.Dense(θ, F, σ),
+            ChannelResize(1),
+            Flux.Conv((1,1), 1=>C; pad = (0,0)),
+            [IdentitySkip(
+                Flux.Chain(
+                    # Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    # @λ(x -> σ.(x)),
+                    # Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    Flux.BatchNorm(C),
+                    Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    Flux.BatchNorm(C, σ),
+                    Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    Flux.BatchNorm(C),
+                ),
+            ) for i in 1:R]...,
+            Flux.MeanPool((p,1); pad = (p÷2,0), stride = 4),
+            DenseResize(),
+            Flux.Dense((F÷4)*C, H),
+            @λ(x -> OddSigns .* x), # Corrections typically alternate sign
+        )
+    end
+
+    function DenseCorrection(Fs = (16,16,32,32), σ = Flux.leakyrelu)
+        Fs = (θ, Fs...)
+        Flux.Chain(
+            InverseParamsScale(),
+            [Flux.Chain(
+                Flux.Dense(Fs[i], Fs[i+1], σ),
+                ChannelResize(1),
+                Flux.BatchNorm(1),
+                DenseResize(),
+            ) for i in 1:length(Fs)-1]...,
+            Flux.Dense(Fs[end], H, σ),
+            @λ(x -> OddSigns .* x), # Corrections typically alternate sign
+        )
+    end
+    
+    function RecurseCorrect(layer)
+        return Flux.Chain(
+            Sumout(
+                layer,
+                DenseCorrection(),
+            ),
+            ResRefinement(),
+        )
+    end
+
+    model = Flux.Chain(
+        ForwardProp() |> RecurseCorrect,
+        # ForwardProp() |> RecurseCorrect |> RecurseCorrect |> RecurseCorrect |> RecurseCorrect,
+        @λ(x -> Flux.relu.(x)),
+    )
+
+    return model
+end
+
+function basic_DCGAN_1(settings)
+    T      :: Type   = settings["prec"] == 64 ? Float64 : Float32
+    VT     :: Type   = settings["prec"] == 64 ? Vector{Float64} : Vector{Float32}
+    H      :: Int    = settings["data"]["height"] :: Int # Data height
+    C      :: Int    = settings["data"]["channels"] :: Int # Number of channels
+    Nout   :: Int    = settings["model"]["Nout"] :: Int # Number of outputs
+    type   :: Symbol = settings["model"]["resnet"]["type"] :: String |> Symbol # Factory type for BatchConvConnection
+    Nfilt  :: Int    = settings["model"]["resnet"]["Nfilt"] :: Int # Number of features to upsample to from 1-feature input
+    scale  :: VT     = settings["model"]["scale"] :: Vector |> VT # Parameter scales
+    offset :: VT     = settings["model"]["offset"] :: Vector |> VT # Parameter offsets
+    
+    @assert H == 32 # Model height should be 32
+    @assert mod(H, 8) == 0 # Must be divisible by 8
+    θ = Nout # Number of physical parameters
+
+    ParamsScale() = Flux.Diagonal(scale, offset) # Scales approx [-0.5,0.5] to param range
+    InverseParamsScale() = Flux.Diagonal(inv.(scale), .-offset./scale) # Scales param range to approx [-1,1]
+
+    OddSigns  = 1:H .|> n -> isodd(n)  ? one(T) : -one(T)
+    EvenSigns = 1:H .|> n -> iseven(n) ? one(T) : -one(T)
+
+    function Generator()
+        C,  k  = 32, (3,1)
+        s1, p1 = (1,1), (1,1,0,0)
+        s2, p2 = (2,1), (1,0,0,0) # Note: asymmetric padding
+        return Sumout(
+            ForwardProp(),
+            Flux.Chain(
+                InverseParamsScale(),
+                Flux.Dense(θ, (H÷8) * C),
+                ChannelResize(C),
+                Flux.ConvTranspose(k, C => C÷2; pad = p2, stride = s2), # Output height: H÷4
+                Flux.BatchNorm(C÷2),
+                @λ(x -> Flux.relu.(x)),
+                Flux.ConvTranspose(k, C÷2 => C÷4; pad = p2, stride = s2), # Output height: H÷2
+                Flux.BatchNorm(C÷4),
+                @λ(x -> Flux.relu.(x)),
+                Flux.ConvTranspose(k, C÷4 => 1; pad = p2, stride = s2), # Output height: H
+                DenseResize(),
+                Flux.Diagonal(H; initα = (args...) -> T(0.02) .* randn(T, args...), initβ = (args...) -> zeros(T, args...)),
+            ),
+        )
+    end
+
+    function Discriminator()
+        C, k, p = 8, (3,1), (1,0)
+        s1, s2 = (1,1), (2,1)
+        return Flux.Chain(
+            ChannelResize(1),
+            Flux.Conv(k, 1 => C; pad = p, stride = s1), # Output height: H
+            @λ(x -> Flux.leakyrelu.(x, T(0.2))),
+            Flux.Conv(k, C => 2C; pad = p, stride = s2), # Output height: H÷2
+            Flux.BatchNorm(2C),
+            @λ(x -> Flux.leakyrelu.(x, T(0.2))),
+            Flux.Conv(k, 2C => 3C; pad = p, stride = s2), # Output height: H÷4
+            Flux.BatchNorm(3C),
+            @λ(x -> Flux.leakyrelu.(x, T(0.2))),
+            Flux.Conv(k, 3C => 4C; pad = p, stride = s2), # Output height: H÷8
+            Flux.BatchNorm(4C),
+            @λ(x -> Flux.leakyrelu.(x, T(0.2))),
+            DenseResize(),
+            Flux.Dense(4C * (H÷8), 1, Flux.sigmoid),
+        )
+    end
+    
+    # Current best loss:
+    #   testing:  0.289 (99.6568 %)
+    sampler = ParamsScale()
+    Z = B -> sampler(rand(T, θ, B) .- T(0.5))
+    G = Flux.Chain(Generator(), @λ(x -> Flux.relu.(x)))
+    D = Discriminator()
+
+    return @ntuple(G, D, Z)
 end

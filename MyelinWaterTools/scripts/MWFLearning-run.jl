@@ -41,39 +41,54 @@ clearsavefolders(folders = savefolders) = for (k,f) in folders; rm.(joinpath.(f,
 
 # Load and prepare signal data
 @info "Preparing data..."
-make_minibatch(x, y, idxs) = (x[.., idxs], y[.., idxs])
+
+# Labels (outputs) and features (inputs)
+features, labels = @λ(batch -> batch[1]), @λ(batch -> batch[2])
+signals, thetas = @λ(batch -> batch[1]), @λ(batch -> batch[2])
+if settings["model"]["problem"] == "forward"
+    signals, thetas = thetas, signals
+end
+
 const data_set = prepare_data(settings)
 GPU && (for k in (:training_data, :testing_data, :training_labels, :testing_labels); data_set[k] = Flux.gpu(data_set[k]); end)
 
-const train_batches = partition(1:batchsize(data_set[:training_data]), settings["data"]["batch_size"]);
-const train_set = [make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches];
-# const train_set = [([make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches][1]...,)]; # For overtraining testing (set batch size small, too)
-const test_set = make_minibatch(data_set[:testing_data], data_set[:testing_labels], 1:settings["data"]["test_size"]);
+make_minibatch(signals, thetas, idxs) =
+    settings["model"]["problem"] == "forward" ?
+        (thetas[:, idxs], signals[:, 1, 1, idxs]) :
+        (signals[.., idxs], thetas[.., idxs])
+train_batches = partition(1:batchsize(data_set[:training_data]), settings["data"]["batch_size"]);
+train_set = [make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches];
+# train_set = [([make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_batches][1]...,)]; # For overtraining testing (set batch size small, too)
+test_set = make_minibatch(data_set[:testing_data], data_set[:testing_labels], 1:settings["data"]["test_size"]);
+
+# # Construct model
+# @info "Constructing model..."
+# model = MWFLearning.get_model(settings);
+# model = GPU ? Flux.gpu(model) : model;
+# model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"));
 
 # Construct model
 @info "Constructing model..."
-model = MWFLearning.get_model(settings);
-model = GPU ? Flux.gpu(model) : model;
-model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"));
+model, discrm, sampler = MWFLearning.get_model(settings);
+model  = GPU ? Flux.gpu(model)  : model;
+discrm = GPU ? Flux.gpu(discrm) : discrm;
+model_summary(model,  joinpath(savefolders["models"], FILE_PREFIX * "generator.architecture.txt"));
+model_summary(discrm, joinpath(savefolders["models"], FILE_PREFIX * "discriminator.architecture.txt"));
 
 #=
 Plot example data
 @info "Plotting random data samples..."
 plot_random_data_samples = () -> begin
     plot_xdata =
-        settings["data"]["preprocess"]["PCA"]["apply"] ?
-            collect(1:heightsize(test_set[1])) :
         settings["data"]["preprocess"]["ilaplace"]["apply"] ?
             log10range(settings["data"]["preprocess"]["ilaplace"]["T2Range"]...; length = settings["data"]["preprocess"]["ilaplace"]["nT2"]) :
-        settings["data"]["preprocess"]["wavelet"]["apply"] ?
-            collect(1:heightsize(test_set[1])) :
         settings["data"]["preprocess"]["chunk"]["apply"] ?
             collect(1:settings["data"]["preprocess"]["chunk"]["size"]) :
-            collect(1:heightsize(test_set[1])) # Default
+            collect(1:heightsize(features(test_set))) # Default
     plot_ydata =
         settings["data"]["preprocess"]["wavelet"]["apply"] ?
-            test_set[1][end - settings["data"]["preprocess"]["wavelet"]["nterms"] + 1 : end, ..] :
-            test_set[1] # default
+            features(test_set)[end - settings["data"]["preprocess"]["wavelet"]["nterms"] + 1 : end, ..] :
+            features(test_set) # default
     fig = plot([
         plot(plot_xdata, Flux.cpu(plot_ydata[:,1,:,i]);
             xscale = settings["data"]["preprocess"]["ilaplace"]["apply"] ? :log10 : :identity,
@@ -89,8 +104,8 @@ savefig(plot_random_data_samples(), "plots/" * FILE_PREFIX * "datasamples.png")
 =#
 
 # Compute parameter density, defined as the number of Flux.params / number of training label datapoints
-test_dofs = length(test_set[2])
-train_dofs = sum(batch -> length(batch[2]), train_set)
+test_dofs = length(labels(test_set))
+train_dofs = sum(batch -> length(labels(batch)), train_set)
 param_dofs = sum(length, Flux.params(model))
 test_param_density = param_dofs / test_dofs
 train_param_density = param_dofs / train_dofs
@@ -98,7 +113,9 @@ train_param_density = param_dofs / train_dofs
 @info @sprintf("Training parameter density: %d/%d (%.2f %%)", param_dofs, train_dofs, 100 * train_param_density)
 
 # Loss and accuracy function
-const labelweights = inv.(settings["model"]["scale"]) .* unitsum(settings["data"]["weights"]) |> VT
+const labelweights = settings["model"]["problem"] == "forward" ?
+    ones(size(labels(test_set), 1)) |> VT :
+    inv.(settings["model"]["scale"]) .* unitsum(settings["data"]["weights"]) |> VT
 LabelWeights()::CVT = GPU ? Flux.gpu(copy(labelweights)) : copy(labelweights) |> CVT
 
 l1 = @λ (x,y) -> sum(abs, LabelWeights()::CVT .* (model(x) .- y))
@@ -136,9 +153,9 @@ lr!(opt, α) = (opt.eta = α; opt.eta)
 lr(opt::Flux.Optimiser) = lr(opt[1])
 lr!(opt::Flux.Optimiser, α) = lr!(opt[1], α)
 
-# opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
+opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
 # opt = Flux.Momentum(settings["optimizer"]["SGD"]["lr"], settings["optimizer"]["SGD"]["rho"])
-opt = Flux.ADAMW(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,), settings["optimizer"]["ADAM"]["decay"])
+# opt = Flux.ADAMW(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,), settings["optimizer"]["ADAM"]["decay"])
 # opt = MomentumW(settings["optimizer"]["SGD"]["lr"], settings["optimizer"]["SGD"]["rho"], settings["optimizer"]["SGD"]["decay"])
 
 # opt = Flux.Nesterov(1e-1)
@@ -148,12 +165,12 @@ opt = Flux.ADAMW(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["AD
 # opt = Flux.Momentum(1e-4, 0.9)
 # opt = Flux.Optimiser(Flux.Momentum(0.1, 0.9), Flux.WeightDecay(1e-4))
 
-# # Fixed learning rate
-# LRfun(e) = lr(opt)
+# Fixed learning rate
+LRfun(e) = lr(opt)
 
-# Drop learning rate every LRDROPRATE epochs
-LRDROPRATE, LRDROPFACTOR = 100, 10^(1/4)
-LRfun(e) = mod(e, LRDROPRATE) == 0 ? lr(opt) / LRDROPFACTOR : lr(opt)
+# # Drop learning rate every LRDROPRATE epochs
+# LRDROPRATE, LRDROPFACTOR = 100, 10^(1/4)
+# LRfun(e) = mod(e, LRDROPRATE) == 0 ? lr(opt) / LRDROPFACTOR : lr(opt)
 
 # # Learning rate finder
 # LRfun(e) = e <= settings["optimizer"]["epochs"] ?
@@ -169,22 +186,26 @@ LRfun(e) = mod(e, LRDROPRATE) == 0 ? lr(opt) / LRDROPFACTOR : lr(opt)
 #     2*LRWIDTH + 1 <= e <= 2*LRWIDTH + LRTAIL ? linspace(2*LRWIDTH, 2*LRWIDTH + LRTAIL, LRSTART,   LRMIN)(e) :
 #             LRMIN
 
-# Callbacks
-CB_EPOCH = 0 # global callback epoch count
-CB_EPOCH_RATE = 25 # rate of per epoch callback updates
-CB_EPOCH_CHECK(last_epoch) = CB_EPOCH >= last_epoch + CB_EPOCH_RATE
+# Global error dicts
 loop_errs = Dict(
     :testing => Dict(:epoch => Int[], :acc => T[]))
 errs = Dict(
     :training => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]),
     :testing => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]))
+
+# Callbacks
+CB_EPOCH = 0 # global callback epoch count
+CB_EPOCH_RATE = 25 # rate of per epoch callback updates
+CB_EPOCH_CHECK(last_epoch) = CB_EPOCH >= last_epoch + CB_EPOCH_RATE
 function err_subplots(k,v)
     @unpack epoch, loss, acc, labelerr = v
     labelerr = permutedims(reduce(hcat, labelerr))
     labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
-    p1 = plot(epoch, loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright, ylim = (minimum(loss), quantile(loss, 0.90)))
-    p2 = plot(epoch, acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)", lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,  ylim = (90, 100))
-    p3 = plot(epoch, labelerr; title = "Label Error ($k: rel. %)",                                     lw = 3, titlefontsize = 10, label = labelnames, legend = :topleft,  ylim = (max(0, minimum(labelerr) - 0.5), min(50, quantile(vec(labelerr), 0.90))))
+    labelcolor = permutedims(RGB[cgrad(:darkrainbow)[z] for z in range(0.0, 1.0, length = size(labelerr,2))])
+    labellegend = settings["model"]["problem"] == "forward" ? nothing : :topleft
+    p1 = plot(epoch, loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",                      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright,   ylim = (minimum(loss), quantile(loss, 0.95)))
+    p2 = plot(epoch, acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)",                 lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,    ylim = (clamp(maximum(acc), 50, 99) - 0.5, 100))
+    p3 = plot(epoch, labelerr; title = "Label Error ($k: rel. %)",                                     c = labelcolor, lw = 3, titlefontsize = 10, label = labelnames, legend = labellegend, ylim = (max(0, minimum(vec(labelerr)) - 1.0), min(50, 1.2 * maximum(labelerr[end,:])))) #min(50, quantile(vec(labelerr), 0.90))
     (k == :testing) && plot!(p2, loop_errs[:testing][:epoch] .+ 1, loop_errs[:testing][:acc]; label = "loop acc", lw = 2) # Epochs shifted by 1 since accuracy is evaluated after a training within an epoch, whereas callbacks above are called before training
     plot(p1, p2, p3; layout = (1,3))
 end
@@ -346,8 +367,15 @@ catch e
 end
 
 @info "Computing resulting labels..."
-model_labels = model(test_set[1]) |> Flux.data |> Flux.cpu |> deepcopy
-true_labels = test_set[2] |> Flux.cpu |> deepcopy
+true_signals  = signals(test_set)  |> Flux.cpu |> deepcopy
+true_thetas   = thetas(test_set)   |> Flux.cpu |> deepcopy
+model_signals = features(test_set) |> Flux.data |> Flux.cpu |> deepcopy
+model_thetas  = model(features(test_set)) |> Flux.data |> Flux.cpu |> deepcopy
+if settings["model"]["problem"] == "forward"
+    model_signals, model_thetas = model_thetas, model_signals
+end
+
+error("got here")
 
 #=
 @info "Plotting errors vs. learning rate..."
@@ -369,14 +397,14 @@ prediction_hist = function()
     pred_hist = function(i)
         scale = settings["plot"]["scale"][i]
         units = settings["plot"]["units"][i]
-        err = scale .* (model_labels[i,:] .- true_labels[i,:])
+        err = scale .* (model_thetas[i,:] .- true_thetas[i,:])
         histogram(err;
             grid = true, minorgrid = true, titlefontsize = 10,
             label = settings["data"]["labels"][i] * " ($units)",
             title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
         )
     end
-    plot([pred_hist(i) for i in 1:size(model_labels, 1)]...)
+    plot([pred_hist(i) for i in 1:size(model_thetas, 1)]...)
 end
 fig = prediction_hist()
 display(fig)
@@ -388,14 +416,14 @@ prediction_scatter = function()
         scale = settings["plot"]["scale"][i]
         units = settings["plot"]["units"][i]
         datascale = scale * settings["model"]["scale"][i]
-        p = scatter(scale * true_labels[i,:], scale * model_labels[i,:];
+        p = scatter(scale * true_thetas[i,:], scale * model_thetas[i,:];
             marker = :circle, grid = true, minorgrid = true, titlefontsize = 10,
             label = settings["data"]["labels"][i] * " ($units)",
             # title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
         )
         plot!(p, identity, ylims(p)...; line = (:dash, 2, :red), label = L"y = x")
     end
-    plot([pred_scatter(i) for i in 1:size(model_labels, 1)]...)
+    plot([pred_scatter(i) for i in 1:size(model_thetas, 1)]...)
 end
 fig = prediction_scatter()
 display(fig)
@@ -404,12 +432,14 @@ savefig(fig, "plots/" * FILE_PREFIX * "labelscatter.png")
 @info "Plotting forward simulation error plots..."
 forward_plot = function()
     forward_rmse = function(i)
-        y = sum(test_set[1][:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
-        z_class = MWFLearning.myelin_prop(test_set[2][:,i]...) # Forward simulation of true parameters
-        z_model = MWFLearning.myelin_prop(model_labels[:,i]...) # Forward simulation of model predicted parameters
+        y = sum(signals(test_set)[:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
+        z_class = MWFLearning.myelin_prop(true_thetas[:,i]...) # Forward simulation of true parameters
+        z_model =
+            settings["model"]["problem"] == "forward" ? model_signals : # Forward simulated signal from trained model
+            MWFLearning.myelin_prop(model_thetas[:,i]...) # Forward simulation of model predicted parameters
         return (e_class = rmsd(y, z_class), e_model = rmsd(y, z_model))
     end
-    errors = [forward_rmse(i) for i in 1:batchsize(test_set[1])]
+    errors = [forward_rmse(i) for i in 1:batchsize(features(test_set))]
     e_class = (e -> e.e_class).(errors)
     e_model = (e -> e.e_model).(errors)
     p = scatter([e_class e_model];
@@ -424,7 +454,7 @@ savefig(fig, "plots/" * FILE_PREFIX * "forwarderror.png")
 
 #=
 let
-    err = model_labels .- true_labels
+    err = model_thetas .- true_thetas
     mwf_err = err[1,:]
     sp = data_set[:testing_data_dicts][1][:sweepparams]
     datadicts = data_set[:testing_data_dicts]
@@ -435,7 +465,7 @@ end
 
 #=
 let
-    err = model_labels .- true_labels
+    err = model_thetas .- true_thetas
     mwf_err = err[1,:]
     sp = data_set[:testing_data_dicts][1][:sweepparams]
     for k in keys(sp)
@@ -452,7 +482,7 @@ end
 let
     for i in rand(1:batchsize(test_set[1]), 10)
         y = sum(test_set[1][:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
-        z_model = MWFLearning.myelin_prop(model_labels[:,i]...) # Forward simulation of model predicted parameters
+        z_model = MWFLearning.myelin_prop(model_thetas[:,i]...) # Forward simulation of model predicted parameters
         z_class = MWFLearning.myelin_prop(test_set[2][:,i]...) # Forward simulation of true parameters
 
         p1 = plot(1:32, [y z_model z_class]; labels = ["True" "Learned" "Classical"], line = (3,))

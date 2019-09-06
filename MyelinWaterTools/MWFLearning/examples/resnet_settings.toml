@@ -11,8 +11,8 @@ height      = "auto"
 channels    = 2 # Number of data channels
 # labels      = ["mwf", "T2iew/TE", "T2mw/TE", "alpha"] # Target labels
 # weights     = [1.0, 1.0, 1.0, 1.0] # Weights for loss function
-labels      = ["mwf", "iewf", "T2iew/TE", "T2mw/TE", "alpha"] # Target labels
-weights     = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
+labels      = ["mwf", "iewf", "T2iew/TE", "T2mw/TE", "alpha", "logTE*K"] # Target labels
+weights     = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
 [data.filter]
 labels      = [ "K", "nTE" ]
 lower       = [ 0.0,  32.0 ]
@@ -49,11 +49,13 @@ apply       = false # Apply PCA preprocessing
 # name      = "TestModel4"
 # name      = "ResNet"
 # name      = "BasicHeight32Model1"
-name      = "BasicHeight32Generator1"
+# name      = "BasicHeight32Generator1"
+name      = "BasicDCGAN1"
+problem   = "forward" # forward (params to signal) or inverse (signal to params)
 loss      = "l2"
 acc       = "rmse"
 act       = "relu"
-Nout      = 5 # number of output labels
+Nout      = 6 # number of output labels
 scale     = "auto"
 offset    = "auto"
 # dropout   = false
@@ -81,7 +83,7 @@ type      = "ResNet18" # ResNet type
 Nfilt     = 4 # Number of initial filters
 
 [optimizer]
-epochs  = 500
+epochs  = 5000
 savemod = 1
 testmod = 1
 [optimizer.ADAM]
@@ -96,5 +98,7 @@ decay   = 1e-5
 [plot]
 # scale     = [100.0, 1.0, 1.0, 1.0] # scale labels before plotting
 # units     = ["%", "ms/ms", "ms/ms", "deg"] # label units, after scaling
-scale     = [100.0, 100.0, 1.0, 1.0, 1.0] # scale labels before plotting
-units     = ["%", "%", "ms/ms", "ms/ms", "deg"] # label units, after scaling
+# scale     = [100.0, 100.0, 1.0, 1.0, 1.0] # scale labels before plotting
+# units     = ["%", "%", "ms/ms", "ms/ms", "deg"] # label units, after scaling
+scale     = [100.0, 100.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
+units     = ["%", "%", "ms/ms", "ms/ms", "deg", "log(s*um/s)"] # label units, after scaling
