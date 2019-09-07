@@ -23,9 +23,9 @@ function prepare_data(settings::Dict)
     filter!(filter_bad_data, testing_data_dicts)
 
     SNR = settings["data"]["preprocess"]["SNR"]
-    training_labels = init_labels(settings, training_data_dicts)
-    testing_labels = init_labels(settings, testing_data_dicts)
-    @assert size(training_labels, 1) == size(testing_labels, 1)
+    training_thetas = init_labels(settings, training_data_dicts)
+    testing_thetas = init_labels(settings, testing_data_dicts)
+    @assert size(training_thetas, 1) == size(testing_thetas, 1)
     
     processing_types = AbstractDataProcessing[]
     settings["data"]["preprocess"]["chunk"]["apply"]    && push!(processing_types, SignalChunkingProcessing())
@@ -44,36 +44,36 @@ function prepare_data(settings::Dict)
     end
 
     # Duplicate labels, if data has been duplicated
-    if batchsize(testing_data) > batchsize(testing_labels)
+    if batchsize(testing_data) > batchsize(testing_thetas)
         duplicate_data(x::AbstractMatrix, rep) = x |> z -> repeat(z, rep, 1) |> z -> reshape(z, size(x, 1), :)
         duplicate_data(x::AbstractVector, rep) = x |> permutedims |> z -> repeat(z, rep, 1) |> vec
-        rep = batchsize(testing_data) ÷ batchsize(testing_labels)
-        training_labels, testing_labels, training_data_dicts, testing_data_dicts = map(
+        rep = batchsize(testing_data) ÷ batchsize(testing_thetas)
+        training_thetas, testing_thetas, training_data_dicts, testing_data_dicts = map(
             data -> duplicate_data(data, rep),
-            (training_labels, testing_labels, training_data_dicts, testing_data_dicts))
+            (training_thetas, testing_thetas, training_data_dicts, testing_data_dicts))
     end
 
     # Shuffle data and labels
     if settings["data"]["preprocess"]["shuffle"] == true
         i_train, i_test = Random.shuffle(1:batchsize(training_data)), Random.shuffle(1:batchsize(testing_data))
-        training_data, training_labels, training_data_dicts = training_data[:,:,:,i_train], training_labels[:,i_train], training_data_dicts[i_train]
-        testing_data, testing_labels, testing_data_dicts = testing_data[:,:,:,i_test], testing_labels[:,i_test], testing_data_dicts[i_test]
+        training_data, training_thetas, training_data_dicts = training_data[:,:,:,i_train], training_thetas[:,i_train], training_data_dicts[i_train]
+        testing_data, testing_thetas, testing_data_dicts = testing_data[:,:,:,i_test], testing_thetas[:,i_test], testing_data_dicts[i_test]
     end
     
     # Redundancy check
     @assert heightsize(training_data) == heightsize(testing_data)
-    @assert batchsize(training_data) == batchsize(training_labels)
-    @assert batchsize(testing_data) == batchsize(testing_labels)
+    @assert batchsize(training_data) == batchsize(training_thetas)
+    @assert batchsize(testing_data) == batchsize(testing_thetas)
 
     # Compute numerical properties of labels
-    labels_props = init_labels_props(settings, hcat(training_labels, testing_labels))
+    labels_props = init_labels_props(settings, hcat(training_thetas, testing_thetas))
 
     # Set output type
     T  = settings["prec"] == 64 ? Float64 : Float32
     VT = Vector{T}
-    training_data, testing_data, training_labels, testing_labels = map(
+    training_data, testing_data, training_thetas, testing_thetas = map(
         x -> to_float_type_T(T, x),
-        (training_data, testing_data, training_labels, testing_labels))
+        (training_data, testing_data, training_thetas, testing_thetas))
     
     # Set "auto" fields
     (settings["data"]["height"]    == "auto") && (settings["data"]["height"]    = heightsize(training_data) :: Int)
@@ -84,7 +84,7 @@ function prepare_data(settings::Dict)
     return @dict(
         training_data_dicts, testing_data_dicts,
         training_data, testing_data,
-        training_labels, testing_labels,
+        training_thetas, testing_thetas,
         labels_props)
 end
 prepare_data(settings_file::String) = prepare_data(TOML.parsefile(settings_file))

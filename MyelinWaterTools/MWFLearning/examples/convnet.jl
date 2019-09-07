@@ -26,8 +26,8 @@ print_size(i) = prnt[] ?
 make_minibatch(x, y, idxs) = (x[:,:,idxs], y[:,:,idxs])
 data_set = prepare_data(settings)
 train_mb_idxs = partition(1:size(data_set[:training_data], 3), settings["data"]["batch_size"])
-train_set = [make_minibatch(data_set[:training_data], data_set[:training_labels], i) for i in train_mb_idxs]
-test_set = make_minibatch(data_set[:testing_data], data_set[:testing_labels], 1:size(data_set[:testing_data], 3))
+train_set = [make_minibatch(data_set[:training_data], data_set[:training_thetas], i) for i in train_mb_idxs]
+test_set = make_minibatch(data_set[:testing_data], data_set[:testing_thetas], 1:size(data_set[:testing_data], 3))
 
 # Define our model. This is the example model from the Keras documentation,
 # "Sequence classification with 1D convolutions", at the following url:

@@ -44,62 +44,38 @@ clearsavefolders(folders = savefolders) = for (k,f) in folders; rm.(joinpath.(f,
 const data_set = prepare_data(settings)
 GPU && (for k in (:training_data, :testing_data, :training_thetas, :testing_thetas); data_set[k] = Flux.gpu(data_set[k]); end)
 
-train_set, test_set = if settings["model"]["problem"] == "forward"
-    flatten = x -> reshape(x, :, batchsize(x))
-    training_batches(data_set[:training_thetas], flatten(data_set[:training_data]), settings["data"]["batch_size"]),
-    testing_batches(data_set[:testing_thetas], flatten(data_set[:testing_data]))
-else
-    training_batches(data_set[:training_data], data_set[:training_thetas], settings["data"]["batch_size"]),
-    testing_batches(data_set[:testing_data], data_set[:testing_thetas])
-end
-
-# Labels (outputs) and features (inputs)
-features, labels = @λ(batch -> batch[1]), @λ(batch -> batch[2])
-signals, thetas = @λ(batch -> batch[1]), @λ(batch -> batch[2])
-if settings["model"]["problem"] == "forward"; signals, thetas = thetas, signals; end
+flatsignal = x -> reshape(x, :, batchsize(x))
+train_fwd = training_batches(data_set[:training_thetas], flatsignal(data_set[:training_data]), settings["data"]["batch_size"])
+train_inv = training_batches(data_set[:training_data], data_set[:training_thetas], settings["data"]["batch_size"])
+test_fwd = testing_batches(data_set[:testing_thetas], flatsignal(data_set[:testing_data]))
+test_inv = testing_batches(data_set[:testing_data], data_set[:testing_thetas])
 
 # Construct model
 @info "Constructing model..."
-model = MWFLearning.get_model(settings);
-model = GPU ? Flux.gpu(model) : model;
-model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"));
-param_summary(model, train_set, test_set)
-
-# # Construct model
-# @info "Constructing model..."
-# model, discrm, sampler = MWFLearning.get_model(settings);
-# model  = GPU ? Flux.gpu(model)  : model;
-# discrm = GPU ? Flux.gpu(discrm) : discrm;
-# model_summary(model,  joinpath(savefolders["models"], FILE_PREFIX * "generator.architecture.txt"));
-# model_summary(discrm, joinpath(savefolders["models"], FILE_PREFIX * "discriminator.architecture.txt"));
-# param_summary(model, train_set, test_set);
-# param_summary(discrm, train_set, test_set);
+genatr, discrm, sampler = MWFLearning.get_model(settings);
+genatr = GPU ? Flux.gpu(genatr) : genatr;
+discrm = GPU ? Flux.gpu(discrm) : discrm;
+model_summary(genatr,  joinpath(savefolders["models"], FILE_PREFIX * "generator.architecture.txt"));
+model_summary(discrm, joinpath(savefolders["models"], FILE_PREFIX * "discriminator.architecture.txt"));
+param_summary(genatr, train_fwd, test_fwd);
+param_summary(discrm, train_fwd, test_fwd);
 
 # Loss and accuracy function
-function getlabelweights()::Union{CVT, Nothing}
-    if settings["model"]["problem"] == "forward"
-        nothing
-    else
-        w = inv.(settings["model"]["scale"]) .* unitsum(settings["data"]["weights"]) |> copy |> VT
-        w = (GPU ? Flux.gpu(w) : w) |> CVT
-    end
+function thetaweights()::CVT
+    w = inv.(settings["model"]["scale"]) .* unitsum(settings["data"]["weights"]) |> copy |> VT
+    w = (GPU ? Flux.gpu(w) : w) |> CVT
+    return w::CVT
 end
-@unpack loss, accuracy, labelacc = makelosses(model, settings["model"]["loss"], getlabelweights())
+fwdloss, fwdacc, fwdlabelacc = makelosses(genatr, settings["model"]["loss"])
+Gloss = @λ (x,z) -> mean(-log.(discrm(x)) .- log.(1 .- discrm(genatr(z))))
+Dloss = @λ (z) -> mean(-log.(discrm(genatr(z))))
 
-opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
-# opt = Flux.Momentum(settings["optimizer"]["SGD"]["lr"], settings["optimizer"]["SGD"]["rho"])
-# opt = Flux.ADAMW(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,), settings["optimizer"]["ADAM"]["decay"])
-# opt = MomentumW(settings["optimizer"]["SGD"]["lr"], settings["optimizer"]["SGD"]["rho"], settings["optimizer"]["SGD"]["decay"])
-
-# opt = Flux.Nesterov(1e-1)
-# opt = Flux.ADAM(3e-4, (0.9, 0.999))
-# opt = Flux.ADAMW(1e-2, (0.9, 0.999), 1e-5)
-# opt = MWFLearning.AdaBound(1e-3, (0.9, 0.999), 1e-5, 1e-3)
-# opt = Flux.Momentum(1e-4, 0.9)
-# opt = Flux.Optimiser(Flux.Momentum(0.1, 0.9), Flux.WeightDecay(1e-4))
-
-# Fixed learning rate
-LRfun(e) = MWFLearning.fixedlr(e,opt)
+fwdopt = Flux.ADAM(1e-3, (0.9, 0.999))
+Gopt = Flux.ADAM(2e-4, (0.5, 0.999))
+Dopt = Flux.ADAM(2e-4, (0.5, 0.999))
+fwdlrfun(e) = MWFLearning.fixedlr(e,fwdopt)
+Glrfun(e) = MWFLearning.fixedlr(e,fwdopt)
+Dlrfun(e) = MWFLearning.fixedlr(e,fwdopt)
 
 # Global error dicts
 loop_errs = Dict(
@@ -128,7 +104,7 @@ train_err_cb = let LAST_EPOCH = 0
     function()
         CB_EPOCH_CHECK(LAST_EPOCH) ? (LAST_EPOCH = CB_EPOCH) : return nothing
         update_time = @elapsed begin
-            currloss, curracc, currlaberr = mean([Flux.cpu(Flux.data(loss(b...))) for b in train_set]), mean([Flux.cpu(Flux.data(accuracy(b...))) for b in train_set]), mean([Flux.cpu(Flux.data(labelacc(b...))) for b in train_set])
+            currloss, curracc, currlaberr = mean([Flux.cpu(Flux.data(fwdloss(b...))) for b in train_fwd]), mean([Flux.cpu(Flux.data(fwdacc(b...))) for b in train_fwd]), mean([Flux.cpu(Flux.data(fwdlabelacc(b...))) for b in train_fwd])
             push!(errs[:training][:epoch], LAST_EPOCH)
             push!(errs[:training][:loss], currloss)
             push!(errs[:training][:acc], curracc)
@@ -141,7 +117,7 @@ test_err_cb = let LAST_EPOCH = 0
     function()
         CB_EPOCH_CHECK(LAST_EPOCH) ? (LAST_EPOCH = CB_EPOCH) : return nothing
         update_time = @elapsed begin
-            currloss, curracc, currlaberr = Flux.cpu(Flux.data(loss(test_set...))), Flux.cpu(Flux.data(accuracy(test_set...))), Flux.cpu(Flux.data(labelacc(test_set...)))
+            currloss, curracc, currlaberr = Flux.cpu(Flux.data(fwdloss(test_fwd...))), Flux.cpu(Flux.data(fwdacc(test_fwd...))), Flux.cpu(Flux.data(fwdlabelacc(test_fwd...)))
             push!(errs[:testing][:epoch], LAST_EPOCH)
             push!(errs[:testing][:loss], currloss)
             push!(errs[:testing][:acc], curracc)
@@ -166,8 +142,8 @@ plot_errs_cb = let LAST_EPOCH = 0
     end
 end
 checkpoint_model_opt_cb = function()
-    save_time = @elapsed let opt = MWFLearning.opt_to_cpu(opt, Flux.params(model)), model = Flux.cpu(model)
-        savebson("models/" * FILE_PREFIX * "model-checkpoint.bson", @dict(model, opt))
+    save_time = @elapsed let fwdopt = MWFLearning.opt_to_cpu(fwdopt, Flux.params(genatr)), genatr = Flux.cpu(genatr)
+        savebson("models/" * FILE_PREFIX * "genatr-checkpoint.bson", @dict(genatr, fwdopt))
     end
     @info @sprintf("[%d] -> Model checkpoint... (%d ms)", CB_EPOCH, 1000 * save_time)
 end
@@ -178,7 +154,7 @@ checkpoint_errs_cb = function()
     @info @sprintf("[%d] -> Error checkpoint... (%d ms)", CB_EPOCH, 1000 * save_time)
 end
 
-cbs = Flux.Optimise.runall([
+gencbs = Flux.Optimise.runall([
     test_err_cb,
     train_err_cb,
     plot_errs_cb,
@@ -199,43 +175,43 @@ train_loop! = function()
         CB_EPOCH = epoch
         
         # Update learning rate and exit if it has become to small
-        last_lr = lr(opt)
-        curr_lr = lr!(opt, LRfun(epoch))
+        last_lr = lr(fwdopt)
+        curr_lr = lr!(fwdopt, fwdlrfun(epoch))
         
         (epoch == 1)         &&  @info(" -> Initial learning rate: " * @sprintf("%.2e", curr_lr))
         (last_lr != curr_lr) &&  @info(" -> Learning rate updated: " * @sprintf("%.2e", last_lr) * " --> "  * @sprintf("%.2e", curr_lr))
-        (lr(opt) < 1e-6)     && (@info(" -> Early-exiting: Learning rate has dropped below 1e-6"); break)
+        (lr(fwdopt) < 1e-6)  && (@info(" -> Early-exiting: Learning rate has dropped below 1e-6"); break)
 
-        # Train for a single epoch
-        train_time = @elapsed Flux.train!(loss, Flux.params(model), train_set, opt; cb = cbs) # CuArrays.@sync
-        
-        # Calculate accuracy:
+        # Train supervised generator loss for one epoch
+        train_time = @elapsed Flux.train!(fwdloss, Flux.params(genatr), train_fwd, fwdopt; cb = gencbs) # CuArrays.@sync
         acc_time = @elapsed begin
-            acc = Flux.cpu(Flux.data(accuracy(test_set...))) # CuArrays.@sync
+            acc = Flux.cpu(Flux.data(fwdacc(test_fwd...))) # CuArrays.@sync
             push!(loop_errs[:testing][:epoch], epoch)
             push!(loop_errs[:testing][:acc], acc)
         end
-        @info @sprintf("[%d] (%d ms): Test accuracy: %.4f (%d ms)", epoch, 1000 * train_time, acc, 1000 * acc_time)
+        @info @sprintf("[%d] (%d ms):         Label accuracy: %.4f (%d ms)", epoch, 1000 * train_time, acc, 1000 * acc_time)
 
+        discrm_train_set = [(sampler(batchsize(features(b))),) for b in train_fwd]
+        discrm_test_set  = (sampler(batchsize(features(test_fwd))),)
+        genatr_train_set = tuple.(labels.(train_fwd), sampler.(batchsize.(labels.(train_fwd))))
+        genatr_test_set = (labels(test_fwd), sampler(batchsize(labels(test_fwd))))
+        
+        # Discriminator loss
+        train_time = @elapsed Flux.train!(Gloss, Flux.params(genatr), genatr_train_set, Gopt) # CuArrays.@sync
+        Dloss_time = @elapsed test_Dloss = Flux.cpu(Flux.data(Dloss(discrm_test_set...))) # CuArrays.@sync
+        @info @sprintf("[%d] (%d ms): Discriminator accuracy: %.4f (%d ms)", epoch, 1000 * train_time, test_Dloss, 1000 * Dloss_time)
+        
+        # Generator loss
+        train_time = @elapsed Flux.train!(Dloss, Flux.params(discrm), discrm_train_set, Dopt) # CuArrays.@sync
+        Gloss_time = @elapsed test_Gloss = Flux.cpu(Flux.data(Gloss(genatr_test_set...))) # CuArrays.@sync
+        @info @sprintf("[%d] (%d ms):     Generator accuracy: %.4f (%d ms)", epoch, 1000 * train_time, test_Gloss, 1000 * Gloss_time)
+        
         # If this is the best accuracy we've seen so far, save the model out
         if acc >= BEST_ACC
             BEST_ACC = acc
             LAST_IMPROVED_EPOCH = epoch
-
-            # try
-            #     # TODO access to undefined reference error?
-            #     save_time = @elapsed let opt = MWFLearning.opt_to_cpu(opt, Flux.params(model)), model = Flux.cpu(model)
-            #         savebson("models/" * FILE_PREFIX * "model.bson", @dict(model, opt, epoch, acc))
-            #     end
-            #     # @info " -> New best accuracy; model saved ($(round(1000*save_time; digits = 2)) ms)"
-            #     @info @sprintf("[%d] -> New best accuracy; model saved (%d ms)", epoch, 1000 * save_time)
-            # catch e
-            #     @warn "Error saving model"
-            #     @warn sprint(showerror, e, catch_backtrace())
-            # end
-
             try
-                save_time = @elapsed let weights = Flux.cpu.(Flux.data.(Flux.params(model)))
+                save_time = @elapsed let weights = Flux.cpu.(Flux.data.(Flux.params(genatr)))
                     savebson("weights/" * FILE_PREFIX * "weights.bson", @dict(weights, epoch, acc))
                 end
                 # @info " -> New best accuracy; weights saved ($(round(1000*save_time; digits = 2)) ms)"
@@ -245,20 +221,6 @@ train_loop! = function()
                 @warn sprint(showerror, e, catch_backtrace())
             end
         end
-
-        # # If we haven't seen improvement in 5 epochs, drop our learning rate:
-        # if epoch - LAST_IMPROVED_EPOCH >= DROP_ETA_THRESH && lr(opt) > 1e-6
-        #     lr!(opt, lr(opt)/2)
-        #     @warn(" -> Haven't improved in $DROP_ETA_THRESH iters; dropping learning rate to $(lr(opt))")
-        # 
-        #     # After dropping learning rate, give it a few epochs to improve
-        #     LAST_IMPROVED_EPOCH = epoch
-        # end
-
-        # if epoch - LAST_IMPROVED_EPOCH >= CONVERGED_THRESH
-        #     @warn(" -> Haven't improved in $CONVERGED_THRESH iters; model has converged")
-        #     break
-        # end
     end
 end
 
@@ -275,11 +237,11 @@ catch e
 end
 
 @info "Computing resulting labels..."
-true_signals  = signals(test_set)  |> Flux.cpu |> deepcopy
-true_thetas   = thetas(test_set)   |> Flux.cpu |> deepcopy
-model_signals = features(test_set) |> Flux.data |> Flux.cpu |> deepcopy
-model_thetas  = model(features(test_set)) |> Flux.data |> Flux.cpu |> deepcopy
-if settings["model"]["problem"] == "forward"; model_signals, model_thetas = model_thetas, model_signals; end
+true_signals   = labels(test_fwd)   |> Flux.cpu |> deepcopy
+true_thetas    = features(test_fwd) |> Flux.cpu |> deepcopy
+genatr_signals = labels(test_fwd)   |> Flux.data |> Flux.cpu |> deepcopy
+genatr_thetas  = genatr(features(test_fwd)) |> Flux.data |> Flux.cpu |> deepcopy
+if settings["model"]["problem"] == "forward"; genatr_signals, genatr_thetas = genatr_thetas, genatr_signals; end
 
 error("got here")
 
@@ -287,14 +249,14 @@ prediction_hist = function()
     pred_hist = function(i)
         scale = settings["plot"]["scale"][i]
         units = settings["plot"]["units"][i]
-        err = scale .* (model_thetas[i,:] .- true_thetas[i,:])
+        err = scale .* (genatr_thetas[i,:] .- true_thetas[i,:])
         histogram(err;
             grid = true, minorgrid = true, titlefontsize = 10,
             label = settings["data"]["labels"][i] * " ($units)",
             title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
         )
     end
-    plot([pred_hist(i) for i in 1:size(model_thetas, 1)]...)
+    plot([pred_hist(i) for i in 1:size(genatr_thetas, 1)]...)
 end
 @info "Plotting prediction histograms..."
 fig = prediction_hist()
@@ -305,14 +267,14 @@ prediction_scatter = function()
         scale = settings["plot"]["scale"][i]
         units = settings["plot"]["units"][i]
         datascale = scale * settings["model"]["scale"][i]
-        p = scatter(scale * true_thetas[i,:], scale * model_thetas[i,:];
+        p = scatter(scale * true_thetas[i,:], scale * genatr_thetas[i,:];
             marker = :circle, grid = true, minorgrid = true, titlefontsize = 10,
             label = settings["data"]["labels"][i] * " ($units)",
             # title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
         )
         plot!(p, identity, ylims(p)...; line = (:dash, 2, :red), label = L"y = x")
     end
-    plot([pred_scatter(i) for i in 1:size(model_thetas, 1)]...)
+    plot([pred_scatter(i) for i in 1:size(genatr_thetas, 1)]...)
 end
 @info "Plotting prediction scatter plots..."
 fig = prediction_scatter()
@@ -320,17 +282,17 @@ display(fig) && savefig(fig, "plots/" * FILE_PREFIX * "labelscatter.png")
 
 forward_plot = function()
     forward_rmse = function(i)
-        y = sum(signals(test_set)[:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
+        y = sum(signals(test_fwd)[:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
         z_class = MWFLearning.myelin_prop(true_thetas[:,i]...) # Forward simulation of true parameters
-        z_model =
-            settings["model"]["problem"] == "forward" ? model_signals : # Forward simulated signal from trained model
-            MWFLearning.myelin_prop(model_thetas[:,i]...) # Forward simulation of model predicted parameters
-        return (e_class = rmsd(y, z_class), e_model = rmsd(y, z_model))
+        z_genatr =
+            settings["model"]["problem"] == "forward" ? genatr_signals : # Forward simulated signal from trained genatr
+            MWFLearning.myelin_prop(genatr_thetas[:,i]...) # Forward simulation of genatr predicted parameters
+        return (e_class = rmsd(y, z_class), e_genatr = rmsd(y, z_genatr))
     end
-    errors = [forward_rmse(i) for i in 1:batchsize(features(test_set))]
+    errors = [forward_rmse(i) for i in 1:batchsize(features(test_fwd))]
     e_class = (e -> e.e_class).(errors)
-    e_model = (e -> e.e_model).(errors)
-    p = scatter([e_class e_model];
+    e_genatr = (e -> e.e_genatr).(errors)
+    p = scatter([e_class e_genatr];
         labels = ["RMSE: Classical" "RMSE: Model"],
         marker = [:circle :square],
         grid = true, minorgrid = true, titlefontsize = 10, ylim = (0, 0.05)
@@ -341,7 +303,7 @@ fig = forward_plot()
 display(fig) && savefig(fig, "plots/" * FILE_PREFIX * "forwarderror.png")
 
 errorvslr = function()
-    x = [LRfun.(errs[:training][:epoch]), LRfun.(errs[:testing][:epoch])]
+    x = [fwdlrfun.(errs[:training][:epoch]), fwdlrfun.(errs[:testing][:epoch])]
     y = [errs[:training][:loss], errs[:testing][:loss]]
     plot(
         plot(x, (e -> log10.(e .- minimum(e) .+ 1e-6)).(y); xscale = :log10, ylabel = "stretched loss ($(settings["model"]["loss"]))", label = ["training" "testing"]),
@@ -354,7 +316,7 @@ end
 # display(fig) && savefig(fig, "plots/" * FILE_PREFIX * "lossvslearningrate.png")
 
 errorvsthetas = function()
-    err = model_thetas .- true_thetas
+    err = genatr_thetas .- true_thetas
     mwf_err = err[1,:]
     sp = data_set[:testing_data_dicts][1][:sweepparams]
     for k in keys(sp)

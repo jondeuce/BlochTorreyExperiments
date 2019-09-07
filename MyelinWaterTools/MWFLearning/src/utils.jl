@@ -2,6 +2,72 @@
 # Utils
 # ---------------------------------------------------------------------------- #
 
+# Batching
+make_minibatch(features, labels, idxs) = (features[.., idxs], labels[.., idxs])
+function training_batches(features, labels, minibatchsize; overtrain = false)
+    @assert batchsize(features) == batchsize(labels)
+    batches = partition(1:batchsize(features), minibatchsize)
+    if overtrain
+        train_set = [make_minibatch(features, labels, batches[1])]
+    else
+        train_set = [make_minibatch(features, labels, b) for b in batches]
+    end
+end
+testing_batches(features, labels) = make_minibatch(features, labels, :)
+features(batch) = batch[1]
+labels(batch) = batch[2]
+
+function param_summary(model, train_set, test_set)
+    test_dofs = length(test_set[2])
+    train_dofs = sum(batch -> length(batch[2]), train_set)
+    param_dofs = sum(length, Flux.params(model))
+    test_param_density = param_dofs / test_dofs
+    train_param_density = param_dofs / train_dofs
+    @info @sprintf(" Testing parameter density: %d/%d (%.2f %%)", param_dofs, test_dofs, 100 * test_param_density)
+    @info @sprintf("Training parameter density: %d/%d (%.2f %%)", param_dofs, train_dofs, 100 * train_param_density)
+end
+
+# Losses
+function makelosses(model, losstype, weights = nothing)
+    l1 = weights == nothing ? @λ((x,y) -> sum(abs, model(x) .- y))  : @λ((x,y) -> sum(abs, weights .* (model(x) .- y)))
+    l2 = weights == nothing ? @λ((x,y) -> sum(abs2, model(x) .- y)) : @λ((x,y) -> sum(abs2, weights .* (model(x) .- y)))
+    crossent = @λ((x,y) -> Flux.crossentropy(model(x), y))
+    mae = @λ((x,y) -> l1(x,y) * 1 // length(y))
+    mse = @λ((x,y) -> l2(x,y) * 1 // length(y))
+    rmse = @λ((x,y) -> sqrt(mse(x,y)))
+    mincrossent = @λ (y) -> -sum(y .* log.(y))
+    
+    lossdict = Dict("l1" => l1, "l2" => l2, "crossent" => crossent, "mae" => mae, "mse" => mse, "rmse" => rmse, "mincrossent" => mincrossent)
+    if losstype ∉ keys(lossdict)
+        @warn "Unknown loss $(losstype); defaulting to mse"
+        losstype = "mse"
+    end
+
+    loss = lossdict[losstype]
+    accloss = losstype == "crossent" ? @λ((x,y) -> loss(x,y) - mincrossent(y)) : rmse # default
+    accuracy = @λ((x,y) -> 100 - 100 * accloss(x,y))
+    labelacc = @λ((x,y) -> 100 .* vec(mean(abs.(model(x) .- y); dims = 2) ./ (maximum(abs.(y); dims = 2) .- minimum(abs.(y); dims = 2))))
+    # labelacc = @λ((x,y) -> 100 .* vec(mean(abs.((model(x) .- y) ./ y); dims = 2)))
+    # labelacc = @λ((x,y) -> 100 .* vec(mean(abs.(model(x) .- y); dims = 2) ./ maximum(abs.(y); dims = 2)))
+    
+    return @ntuple(loss, accuracy, labelacc)
+end
+
+# Optimizer
+lr(opt) = opt.eta
+lr!(opt, α) = (opt.eta = α; opt.eta)
+lr(opt::Flux.Optimiser) = lr(opt[1])
+lr!(opt::Flux.Optimiser, α) = lr!(opt[1], α)
+
+fixedlr(e,opt) = lr(opt) # Fixed learning rate
+geometriclr(e,opt,rate=100,factor=10^(1/4)) = mod(e, rate) == 0 ? lr(opt) / factor : lr(opt) # Drop lr every `rate` epochs
+findlr(e,opt,epochs=100,minlr=1e-6,maxlr=0.5) = e <= epochs ? logspace(1,epochs,minlr,maxlr)(e) : maxlr # Learning rate finder
+cyclelr(e,opt,lrstart=1e-5,lrmin=1e-6,lrmax=1e-2,lrwidth=50,lrtail=5) = # Learning rate cycling
+                     e <=   lrwidth          ? linspace(        1,            lrwidth, lrstart,   lrmax)(e) :
+      lrwidth + 1 <= e <= 2*lrwidth          ? linspace(  lrwidth,          2*lrwidth,   lrmax, lrstart)(e) :
+    2*lrwidth + 1 <= e <= 2*lrwidth + lrtail ? linspace(2*lrwidth, 2*lrwidth + lrtail, lrstart,   lrmin)(e) :
+    lrmin
+
 """
     batchsize(x::AbstractArray)
 
