@@ -507,8 +507,10 @@ function forward_physics(x::Matrix{T}) where {T}
     M    = zeros(T, nTE, size(x,2)) # Total signal magnitude
     for j in 1:size(x,2)
         mwf, iewf, rT2iew, rT2mw, alpha = x[1,j], x[2,j], x[3,j], x[4,j], x[5,j]
-        forward_prop!(Smw,  rT2mw,  rT1, alpha, nTE)
-        forward_prop!(Siew, rT2iew, rT1, alpha, nTE)
+        rT1iew, rT1mw = x[7,j], x[8,j]
+        # rT1iew, rT1mw = rT1, rT1
+        forward_prop!(Smw,  rT2mw,  rT1mw,  alpha, nTE)
+        forward_prop!(Siew, rT2iew, rT1iew, alpha, nTE)
         @views M[:,j] .= norm.(transverse.(mwf .* Smw .+ iewf .* Siew))
     end
     return M
@@ -719,10 +721,10 @@ function basic_DCGAN_1(settings)
                 Flux.Dense(θ, (H÷8) * C),
                 ChannelResize(C),
                 Flux.ConvTranspose(k, C => C÷2; pad = p2, stride = s2), # Output height: H÷4
-                Flux.BatchNorm(C÷2),
+                # Flux.BatchNorm(C÷2),
                 @λ(x -> Flux.relu.(x)),
                 Flux.ConvTranspose(k, C÷2 => C÷4; pad = p2, stride = s2), # Output height: H÷2
-                Flux.BatchNorm(C÷4),
+                # Flux.BatchNorm(C÷4),
                 @λ(x -> Flux.relu.(x)),
                 Flux.ConvTranspose(k, C÷4 => 1; pad = p2, stride = s2), # Output height: H
                 DenseResize(),
@@ -739,21 +741,19 @@ function basic_DCGAN_1(settings)
             Flux.Conv(k, 1 => C; pad = p, stride = s1), # Output height: H
             @λ(x -> Flux.leakyrelu.(x, T(0.2))),
             Flux.Conv(k, C => 2C; pad = p, stride = s2), # Output height: H÷2
-            Flux.BatchNorm(2C),
+            # Flux.BatchNorm(2C),
             @λ(x -> Flux.leakyrelu.(x, T(0.2))),
-            Flux.Conv(k, 2C => 3C; pad = p, stride = s2), # Output height: H÷4
-            Flux.BatchNorm(3C),
+            Flux.Conv(k, 2C => 4C; pad = p, stride = s2), # Output height: H÷4
+            # Flux.BatchNorm(4C),
             @λ(x -> Flux.leakyrelu.(x, T(0.2))),
-            Flux.Conv(k, 3C => 4C; pad = p, stride = s2), # Output height: H÷8
-            Flux.BatchNorm(4C),
+            Flux.Conv(k, 4C => 8C; pad = p, stride = s2), # Output height: H÷8
+            # Flux.BatchNorm(8C),
             @λ(x -> Flux.leakyrelu.(x, T(0.2))),
             DenseResize(),
-            Flux.Dense(4C * (H÷8), 1, Flux.sigmoid),
+            Flux.Dense(8C * (H÷8), 1, Flux.sigmoid),
         )
     end
-    
-    # Current best loss:
-    #   testing:  0.289 (99.6568 %)
+
     sampler = ParamsScale()
     Z = B -> sampler(rand(T, θ, B) .- T(0.5))
     G = Flux.Chain(Generator(), @λ(x -> Flux.relu.(x)))

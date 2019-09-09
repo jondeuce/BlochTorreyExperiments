@@ -400,6 +400,13 @@ function label_fun(s::String, d::Dict)::Float64
         iwf, mwf, ewf = label_fun("iwf", d), label_fun("mwf", d), label_fun("ewf", d) # area fractions
         R2av = (iwf * R2_lp + mwf * R2_sp + ewf * R2_Tissue) # area-weighted average
         inv(R2av) # R2av -> T2av
+    elseif s == "T1mw" || s == "T1sp" # myelin-water (small pool) T1
+        inv(d[:btparams_dict][:R1_sp])
+    elseif s == "T1iew" # inverse of area-averaged R1 for intra/extra-cellular (large pool/axonal + tissue) water
+        @unpack R1_lp, R1_Tissue = d[:btparams_dict] # R1 values
+        iwf, ewf = label_fun("iwf", d), label_fun("ewf", d) # area fractions
+        R1iew = (iwf * R1_lp + ewf * R1_Tissue) / (iwf + ewf) # area-weighted average
+        inv(R1iew) # R1iew -> T1iew
     elseif s == "Dav" # area-averaged D-coeff for whole domain
         @unpack D_Axon, D_Sheath, D_Tissue = d[:btparams_dict] # D values
         iwf, mwf, ewf = label_fun("iwf", d), label_fun("mwf", d), label_fun("ewf", d) # area fractions

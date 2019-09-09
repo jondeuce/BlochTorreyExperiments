@@ -50,11 +50,21 @@ train_inv = training_batches(data_set[:training_data], data_set[:training_thetas
 test_fwd = testing_batches(data_set[:testing_thetas], flatsignal(data_set[:testing_data]))
 test_inv = testing_batches(data_set[:testing_data], data_set[:testing_thetas])
 
+real_train_set() = tuple.(labels.(train_fwd))
+fake_train_set() = tuple.(sampler.(batchsize.(features.(train_fwd))))
+pair_train_set() = tuple.(labels.(train_fwd), sampler.(batchsize.(features.(train_fwd))))
+real_test_set()  = tuple(labels(test_fwd))
+fake_test_set()  = tuple(sampler(batchsize(features(test_fwd))))
+pair_test_set()  = tuple(labels(test_fwd), sampler(batchsize(features(test_fwd))))
+
 # Construct model
 @info "Constructing model..."
 genatr, discrm, sampler = MWFLearning.get_model(settings);
 genatr = GPU ? Flux.gpu(genatr) : genatr;
 discrm = GPU ? Flux.gpu(discrm) : discrm;
+Dparams, Gparams = Flux.params(discrm), Flux.params(genatr)
+DGparams = Flux.Tracker.Params([collect(Dparams); collect(Gparams)])
+
 model_summary(genatr,  joinpath(savefolders["models"], FILE_PREFIX * "generator.architecture.txt"));
 model_summary(discrm, joinpath(savefolders["models"], FILE_PREFIX * "discriminator.architecture.txt"));
 param_summary(genatr, train_fwd, test_fwd);
@@ -67,26 +77,30 @@ function thetaweights()::CVT
     return w::CVT
 end
 fwdloss, fwdacc, fwdlabelacc = makelosses(genatr, settings["model"]["loss"])
-Gloss = @λ (x,z) -> mean(-log.(discrm(x)) .- log.(1 .- discrm(genatr(z))))
-Dloss = @λ (z) -> mean(-log.(discrm(genatr(z))))
+Gloss = @λ (z) -> mean(.-log.(discrm(genatr(z))))
+Dloss = @λ (x,z) -> mean(.-log.(discrm(x)) .- log.(1 .- discrm(genatr(z))))
+realDloss = @λ (x) -> mean(.-log.(discrm(x)))
+fakeDloss = @λ (z) -> mean(.-log.(1 .- discrm(genatr(z))))
 
-fwdopt = Flux.ADAM(1e-3, (0.9, 0.999))
-Gopt = Flux.ADAM(2e-4, (0.5, 0.999))
-Dopt = Flux.ADAM(2e-4, (0.5, 0.999))
+fwdopt   = Flux.ADAM(1e-3, (0.9, 0.999))
+Gopt     = Flux.ADAM(2e-4, (0.5, 0.999))
+Dopt     = Flux.ADAM(2e-4, (0.5, 0.999))
+realDopt = Flux.ADAM(2e-4, (0.5, 0.999))
+fakeDopt = Flux.ADAM(2e-4, (0.5, 0.999))
 fwdlrfun(e) = MWFLearning.fixedlr(e,fwdopt)
 Glrfun(e) = MWFLearning.fixedlr(e,fwdopt)
 Dlrfun(e) = MWFLearning.fixedlr(e,fwdopt)
 
 # Global error dicts
 loop_errs = Dict(
-    :testing => Dict(:epoch => Int[], :acc => T[]))
+    :testing => Dict(:epoch => Int[], :acc => T[], :Gloss => T[], :Dloss => T[], :D_x => T[], :D_G_z => T[]))
 errs = Dict(
     :training => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]),
     :testing => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]))
 
 # Callbacks
 CB_EPOCH = 0 # global callback epoch count
-CB_EPOCH_RATE = 25 # rate of per epoch callback updates
+CB_EPOCH_RATE = 5 # rate of per epoch callback updates
 CB_EPOCH_CHECK(last_epoch) = CB_EPOCH >= last_epoch + CB_EPOCH_RATE
 function err_subplots(k,v)
     @unpack epoch, loss, acc, labelerr = v
@@ -153,6 +167,23 @@ checkpoint_errs_cb = function()
     end
     @info @sprintf("[%d] -> Error checkpoint... (%d ms)", CB_EPOCH, 1000 * save_time)
 end
+plot_gan_losses_cb = let LAST_EPOCH = 0
+    function()
+        try
+            CB_EPOCH_CHECK(LAST_EPOCH) ? (LAST_EPOCH = CB_EPOCH) : return nothing
+            plot_time = @elapsed begin
+                epochs, gloss, dloss = loop_errs[:testing][:epoch], loop_errs[:testing][:Gloss], loop_errs[:testing][:Dloss]
+                d_x, d_g_z = loop_errs[:testing][:D_x], loop_errs[:testing][:D_G_z]
+                fig = plot(epochs, [gloss dloss d_x d_g_z]; label = ["G Loss" "D loss" "D(x)" "D(G(z))"], lw = 3)
+                savefig(fig, "plots/" * FILE_PREFIX * "ganloss.png")
+                display(fig)
+            end
+            @info @sprintf("[%d] -> Plotting progress... (%d ms)", LAST_EPOCH, 1000 * plot_time)
+        catch e
+            @info @sprintf("[%d] -> PLOTTING FAILED...", LAST_EPOCH)
+        end
+    end
+end
 
 gencbs = Flux.Optimise.runall([
     test_err_cb,
@@ -182,30 +213,44 @@ train_loop! = function()
         (last_lr != curr_lr) &&  @info(" -> Learning rate updated: " * @sprintf("%.2e", last_lr) * " --> "  * @sprintf("%.2e", curr_lr))
         (lr(fwdopt) < 1e-6)  && (@info(" -> Early-exiting: Learning rate has dropped below 1e-6"); break)
 
-        # Train supervised generator loss for one epoch
-        train_time = @elapsed Flux.train!(fwdloss, Flux.params(genatr), train_fwd, fwdopt; cb = gencbs) # CuArrays.@sync
-        acc_time = @elapsed begin
-            acc = Flux.cpu(Flux.data(fwdacc(test_fwd...))) # CuArrays.@sync
-            push!(loop_errs[:testing][:epoch], epoch)
-            push!(loop_errs[:testing][:acc], acc)
-        end
-        @info @sprintf("[%d] (%d ms):         Label accuracy: %.4f (%d ms)", epoch, 1000 * train_time, acc, 1000 * acc_time)
+        # Supervised generator training
+        train_time = @elapsed Flux.train!(fwdloss, Gparams, train_fwd, fwdopt; cb = gencbs) # CuArrays.@sync
+        # train_time = @elapsed gencbs()
+        acc_time = @elapsed acc = Flux.cpu(Flux.data(fwdacc(test_fwd...))) # CuArrays.@sync
+        @info @sprintf("[%d] (%4d ms): Label accuracy: %.4f (%d ms)", epoch, 1000 * train_time, acc, 1000 * acc_time)
 
-        discrm_train_set = [(sampler(batchsize(features(b))),) for b in train_fwd]
-        discrm_test_set  = (sampler(batchsize(features(test_fwd))),)
-        genatr_train_set = tuple.(labels.(train_fwd), sampler.(batchsize.(labels.(train_fwd))))
-        genatr_test_set = (labels(test_fwd), sampler(batchsize(labels(test_fwd))))
+        # Generator training
+        train_time = @elapsed Flux.train!(Gloss, Gparams, fake_train_set(), Gopt) # CuArrays.@sync
+        Gloss_time = @elapsed test_Gloss = Flux.cpu(Flux.data(Gloss(fake_test_set()...))) # CuArrays.@sync
+        @info @sprintf("[%d] (%4d ms): Generator loss: %.4f (%d ms)", epoch, 1000 * train_time, test_Gloss, 1000 * Gloss_time)
+
+        # # Discriminator training
+        # train_time = @elapsed Flux.train!(Dloss, Dparams, pair_train_set(), Dopt) # CuArrays.@sync
+        # Dloss_time = @elapsed test_Dloss = Flux.cpu(Flux.data(Dloss(pair_test_set()...))) # CuArrays.@sync
+        # @info @sprintf("[%d] (%4d ms):   Discrim loss: %.4f (%d ms)", epoch, 1000 * train_time, test_Dloss, 1000 * Dloss_time)
         
-        # Discriminator loss
-        train_time = @elapsed Flux.train!(Gloss, Flux.params(genatr), genatr_train_set, Gopt) # CuArrays.@sync
-        Dloss_time = @elapsed test_Dloss = Flux.cpu(Flux.data(Dloss(discrm_test_set...))) # CuArrays.@sync
-        @info @sprintf("[%d] (%d ms): Discriminator accuracy: %.4f (%d ms)", epoch, 1000 * train_time, test_Dloss, 1000 * Dloss_time)
+        # Alternating discriminator training
+        train_time = @elapsed for _ in 1:3
+            all_train_time  = @elapsed Flux.train!(Dloss, Dparams, pair_train_set(), Dopt) # CuArrays.@sync
+            # real_train_time = @elapsed Flux.train!(realDloss, Dparams, real_train_set(), realDopt) # CuArrays.@sync
+            # fake_train_time = @elapsed Flux.train!(fakeDloss, Dparams, fake_train_set(), fakeDopt) # CuArrays.@sync
+        end
+        Dloss_time = @elapsed test_Dloss = Flux.cpu(Flux.data(Dloss(pair_test_set()...))) # CuArrays.@sync
+        @info @sprintf("[%d] (%4d ms):   Discrim loss: %.4f (%d ms)", epoch, 1000 * train_time, test_Dloss, 1000 * Dloss_time)
         
-        # Generator loss
-        train_time = @elapsed Flux.train!(Dloss, Flux.params(discrm), discrm_train_set, Dopt) # CuArrays.@sync
-        Gloss_time = @elapsed test_Gloss = Flux.cpu(Flux.data(Gloss(genatr_test_set...))) # CuArrays.@sync
-        @info @sprintf("[%d] (%d ms):     Generator accuracy: %.4f (%d ms)", epoch, 1000 * train_time, test_Gloss, 1000 * Gloss_time)
+        # Discriminator performance
+        Dperf_time = @elapsed D_x, D_G_z = mean(Flux.data(discrm(real_test_set()...))), mean(Flux.data(discrm(genatr(fake_test_set()...))))
+        @info @sprintf("[%d] (%4d ms):  D(x), D(G(z)): %.4f, %.4f", epoch, 1000 * Dperf_time, D_x, D_G_z)
         
+        # Update testing errors
+        push!(loop_errs[:testing][:epoch], epoch)
+        push!(loop_errs[:testing][:acc], acc)
+        push!(loop_errs[:testing][:Gloss], test_Gloss)
+        push!(loop_errs[:testing][:Dloss], test_Dloss)
+        push!(loop_errs[:testing][:D_x], D_x)
+        push!(loop_errs[:testing][:D_G_z], D_G_z)
+        plot_gan_losses_cb()
+
         # If this is the best accuracy we've seen so far, save the model out
         if acc >= BEST_ACC
             BEST_ACC = acc
