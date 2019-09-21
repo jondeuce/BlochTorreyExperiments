@@ -11,15 +11,7 @@ using Base.Iterators: repeated, partition
 
 using MWFLearning
 # using CuArrays
-using StatsPlots
 pyplot(size=(800,450))
-
-# Utils
-getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
-gitdir() = realpath(DrWatson.projectdir(".."))
-gitdir() = realpath(DrWatson.projectdir(".."))
-gitdir() = realpath(DrWatson.projectdir(".."))
-savebson(filename, data::Dict) = @elapsed BSON.bson(filename, data)
 
 # Settings
 const settings_file = "settings.toml"
@@ -65,7 +57,7 @@ discrm = GPU ? Flux.gpu(discrm) : discrm;
 Dparams, Gparams = Flux.params(discrm), Flux.params(genatr)
 DGparams = Flux.Tracker.Params([collect(Dparams); collect(Gparams)])
 
-model_summary(genatr,  joinpath(savefolders["models"], FILE_PREFIX * "generator.architecture.txt"));
+model_summary(genatr, joinpath(savefolders["models"], FILE_PREFIX * "generator.architecture.txt"));
 model_summary(discrm, joinpath(savefolders["models"], FILE_PREFIX * "discriminator.architecture.txt"));
 param_summary(genatr, train_fwd, test_fwd);
 param_summary(discrm, train_fwd, test_fwd);
@@ -91,133 +83,62 @@ fwdlrfun(e) = MWFLearning.fixedlr(e,fwdopt)
 Glrfun(e) = MWFLearning.fixedlr(e,fwdopt)
 Dlrfun(e) = MWFLearning.fixedlr(e,fwdopt)
 
-# Global error dicts
-loop_errs = Dict(
-    :testing => Dict(:epoch => Int[], :acc => T[], :Gloss => T[], :Dloss => T[], :D_x => T[], :D_G_z => T[]))
-errs = Dict(
-    :training => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]),
-    :testing => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]))
+# Global training state, accumulators, etc.
+state = Dict(
+    :epoch                => 0,
+    :best_acc             => 0.0,
+    :last_improved_epoch  => 0,
+    :acc_thresh           => 100.0, # Never stop
+    :drop_lr_thresh       => typemax(Int), # Drop step size after this many stagnant epochs
+    :converged_thresh     => typemax(Int), # Call model converged after this many stagnant epochs
+    :loop => Dict( # Values which are updated within the training loop explicitly
+        :epoch => Int[], :acc => T[], :Gloss => T[], :Dloss => T[], :D_x => T[], :D_G_z => T[]),
+    :callbacks => Dict( # Values which are updated within callbacks (should not be touched in training loop)
+        :training => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]),
+        :testing => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]))
+)
 
-# Callbacks
-CB_EPOCH = 0 # global callback epoch count
-CB_EPOCH_RATE = 5 # rate of per epoch callback updates
-CB_EPOCH_CHECK(last_epoch) = CB_EPOCH >= last_epoch + CB_EPOCH_RATE
-function err_subplots(k,v)
-    @unpack epoch, loss, acc, labelerr = v
-    labelerr = permutedims(reduce(hcat, labelerr))
-    labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
-    labelcolor = permutedims(RGB[cgrad(:darkrainbow)[z] for z in range(0.0, 1.0, length = size(labelerr,2))])
-    labellegend = settings["model"]["problem"] == "forward" ? nothing : :topleft
-    p1 = plot(epoch, loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",                      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright,   ylim = (minimum(loss), quantile(loss, 0.95)))
-    p2 = plot(epoch, acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)",                 lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,    ylim = (clamp(maximum(acc), 50, 99) - 0.5, 100))
-    p3 = plot(epoch, labelerr; title = "Label Error ($k: rel. %)",                                     c = labelcolor, lw = 3, titlefontsize = 10, label = labelnames, legend = labellegend, ylim = (max(0, minimum(vec(labelerr)) - 1.0), min(50, 1.2 * maximum(labelerr[end,:])))) #min(50, quantile(vec(labelerr), 0.90))
-    (k == :testing) && plot!(p2, loop_errs[:testing][:epoch] .+ 1, loop_errs[:testing][:acc]; label = "loop acc", lw = 2) # Epochs shifted by 1 since accuracy is evaluated after a training within an epoch, whereas callbacks above are called before training
-    plot(p1, p2, p3; layout = (1,3))
-end
-train_err_cb = let LAST_EPOCH = 0
-    function()
-        CB_EPOCH_CHECK(LAST_EPOCH) ? (LAST_EPOCH = CB_EPOCH) : return nothing
-        update_time = @elapsed begin
-            currloss, curracc, currlaberr = mean([Flux.cpu(Flux.data(fwdloss(b...))) for b in train_fwd]), mean([Flux.cpu(Flux.data(fwdacc(b...))) for b in train_fwd]), mean([Flux.cpu(Flux.data(fwdlabelacc(b...))) for b in train_fwd])
-            push!(errs[:training][:epoch], LAST_EPOCH)
-            push!(errs[:training][:loss], currloss)
-            push!(errs[:training][:acc], curracc)
-            push!(errs[:training][:labelerr], currlaberr)
-        end
-        @info @sprintf("[%d] -> Updating training error... (%d ms)", LAST_EPOCH, 1000 * update_time)
-    end
-end
-test_err_cb = let LAST_EPOCH = 0
-    function()
-        CB_EPOCH_CHECK(LAST_EPOCH) ? (LAST_EPOCH = CB_EPOCH) : return nothing
-        update_time = @elapsed begin
-            currloss, curracc, currlaberr = Flux.cpu(Flux.data(fwdloss(test_fwd...))), Flux.cpu(Flux.data(fwdacc(test_fwd...))), Flux.cpu(Flux.data(fwdlabelacc(test_fwd...)))
-            push!(errs[:testing][:epoch], LAST_EPOCH)
-            push!(errs[:testing][:loss], currloss)
-            push!(errs[:testing][:acc], curracc)
-            push!(errs[:testing][:labelerr], currlaberr)
-        end
-        @info @sprintf("[%d] -> Updating testing error... (%d ms)", LAST_EPOCH, 1000 * update_time)
-    end
-end
-plot_errs_cb = let LAST_EPOCH = 0
-    function()
-        try
-            CB_EPOCH_CHECK(LAST_EPOCH) ? (LAST_EPOCH = CB_EPOCH) : return nothing
-            plot_time = @elapsed begin
-                fig = plot([err_subplots(k,v) for (k,v) in errs]...; layout = (length(errs), 1))
-                savefig(fig, "plots/" * FILE_PREFIX * "errs.png")
-                display(fig)
-            end
-            @info @sprintf("[%d] -> Plotting progress... (%d ms)", LAST_EPOCH, 1000 * plot_time)
-        catch e
-            @info @sprintf("[%d] -> PLOTTING FAILED...", LAST_EPOCH)
-        end
-    end
-end
-checkpoint_model_opt_cb = function()
-    save_time = @elapsed let fwdopt = MWFLearning.opt_to_cpu(fwdopt, Flux.params(genatr)), genatr = Flux.cpu(genatr)
-        savebson("models/" * FILE_PREFIX * "genatr-checkpoint.bson", @dict(genatr, fwdopt))
-    end
-    @info @sprintf("[%d] -> Model checkpoint... (%d ms)", CB_EPOCH, 1000 * save_time)
-end
-checkpoint_errs_cb = function()
-    save_time = @elapsed let errs = deepcopy(errs)
-        savebson("log/" * FILE_PREFIX * "errors.bson", @dict(errs))
-    end
-    @info @sprintf("[%d] -> Error checkpoint... (%d ms)", CB_EPOCH, 1000 * save_time)
-end
-plot_gan_losses_cb = let LAST_EPOCH = 0
-    function()
-        try
-            CB_EPOCH_CHECK(LAST_EPOCH) ? (LAST_EPOCH = CB_EPOCH) : return nothing
-            plot_time = @elapsed begin
-                epochs, gloss, dloss = loop_errs[:testing][:epoch], loop_errs[:testing][:Gloss], loop_errs[:testing][:Dloss]
-                d_x, d_g_z = loop_errs[:testing][:D_x], loop_errs[:testing][:D_G_z]
-                fig = plot(epochs, [gloss dloss d_x d_g_z]; label = ["G Loss" "D loss" "D(x)" "D(G(z))"], lw = 3)
-                savefig(fig, "plots/" * FILE_PREFIX * "ganloss.png")
-                display(fig)
-            end
-            @info @sprintf("[%d] -> Plotting progress... (%d ms)", LAST_EPOCH, 1000 * plot_time)
-        catch e
-            @info @sprintf("[%d] -> PLOTTING FAILED...", LAST_EPOCH)
-        end
-    end
-end
+update_lr_cb            = MWFLearning.make_update_lr_cb(state, fwdopt, fwdlrfun)
+test_err_cb             = MWFLearning.make_test_err_cb(state, fwdloss, fwdacc, fwdlabelacc, test_fwd)
+train_err_cb            = MWFLearning.make_train_err_cb(state, fwdloss, fwdacc, fwdlabelacc, train_fwd)
+plot_errs_cb            = MWFLearning.make_plot_errs_cb(state, "plots/" * FILE_PREFIX * "errs.png"; labelnames = permutedims(settings["data"]["labels"]), labellegend = (settings["model"]["problem"] == "forward" ? nothing : :topleft))
+plot_gan_losses_cb      = MWFLearning.make_plot_gan_losses_cb(state, "plots/" * FILE_PREFIX * "ganloss.png")
+checkpoint_state_cb     = MWFLearning.make_checkpoint_state_cb(state, "log/" * FILE_PREFIX * "errors.bson")
+save_best_model_cb      = MWFLearning.make_save_best_model_cb(state, genatr, "weights/" * FILE_PREFIX * "weights.bson")
+checkpoint_model_opt_cb = MWFLearning.make_checkpoint_model_opt_cb(state, genatr, fwdopt, "models/" * FILE_PREFIX * "genatr-checkpoint.bson")
 
-gencbs = Flux.Optimise.runall([
-    test_err_cb,
-    train_err_cb,
-    plot_errs_cb,
-    Flux.throttle(checkpoint_errs_cb, 60),
+pretraincbs = Flux.Optimise.runall([
+    update_lr_cb,
+])
+
+posttraincbs = Flux.Optimise.runall([
+    epochthrottle(test_err_cb, state, 5),
+    epochthrottle(train_err_cb, state, 5),
+    epochthrottle(plot_errs_cb, state, 5),
+    Flux.throttle(checkpoint_state_cb, 60),
     # Flux.throttle(checkpoint_model_opt_cb, 120),
 ])
 
-# Training Loop
-const ACC_THRESH = 100.0 # Never stop
-const DROP_ETA_THRESH = typemax(Int) # Never stop
-const CONVERGED_THRESH = typemax(Int) # Never stop
-BEST_ACC = 0.0
-LAST_IMPROVED_EPOCH = 0
+loopcbs = Flux.Optimise.runall([
+    save_best_model_cb,
+    epochthrottle(plot_gan_losses_cb, state, 5),
+])
 
+# Training Loop
 train_loop! = function()
-    for epoch in CB_EPOCH .+ (1:settings["optimizer"]["epochs"])
-        global BEST_ACC, LAST_IMPROVED_EPOCH, CB_EPOCH
-        CB_EPOCH = epoch
+    for epoch in state[:epoch] .+ (1:settings["optimizer"]["epochs"])
+        state[:epoch] = epoch
         
-        # Update learning rate and exit if it has become to small
-        last_lr = lr(fwdopt)
-        curr_lr = lr!(fwdopt, fwdlrfun(epoch))
-        
-        (epoch == 1)         &&  @info(" -> Initial learning rate: " * @sprintf("%.2e", curr_lr))
-        (last_lr != curr_lr) &&  @info(" -> Learning rate updated: " * @sprintf("%.2e", last_lr) * " --> "  * @sprintf("%.2e", curr_lr))
-        (lr(fwdopt) < 1e-6)  && (@info(" -> Early-exiting: Learning rate has dropped below 1e-6"); break)
+        # Call pre-training callbacks
+        pretraincbs()
 
         # Supervised generator training
-        train_time = @elapsed Flux.train!(fwdloss, Gparams, train_fwd, fwdopt; cb = gencbs) # CuArrays.@sync
-        # train_time = @elapsed gencbs()
+        train_time = @elapsed Flux.train!(fwdloss, Gparams, train_fwd, fwdopt) # CuArrays.@sync
         acc_time = @elapsed acc = Flux.cpu(Flux.data(fwdacc(test_fwd...))) # CuArrays.@sync
         @info @sprintf("[%d] (%4d ms): Label accuracy: %.4f (%d ms)", epoch, 1000 * train_time, acc, 1000 * acc_time)
+
+        # Call post-training callbacks
+        posttraincbs()
 
         # Generator training
         train_time = @elapsed Flux.train!(Gloss, Gparams, fake_train_set(), Gopt) # CuArrays.@sync
@@ -242,30 +163,14 @@ train_loop! = function()
         Dperf_time = @elapsed D_x, D_G_z = mean(Flux.data(discrm(real_test_set()...))), mean(Flux.data(discrm(genatr(fake_test_set()...))))
         @info @sprintf("[%d] (%4d ms):  D(x), D(G(z)): %.4f, %.4f", epoch, 1000 * Dperf_time, D_x, D_G_z)
         
-        # Update testing errors
-        push!(loop_errs[:testing][:epoch], epoch)
-        push!(loop_errs[:testing][:acc], acc)
-        push!(loop_errs[:testing][:Gloss], test_Gloss)
-        push!(loop_errs[:testing][:Dloss], test_Dloss)
-        push!(loop_errs[:testing][:D_x], D_x)
-        push!(loop_errs[:testing][:D_G_z], D_G_z)
-        plot_gan_losses_cb()
-
-        # If this is the best accuracy we've seen so far, save the model out
-        if acc >= BEST_ACC
-            BEST_ACC = acc
-            LAST_IMPROVED_EPOCH = epoch
-            try
-                save_time = @elapsed let weights = Flux.cpu.(Flux.data.(Flux.params(genatr)))
-                    savebson("weights/" * FILE_PREFIX * "weights.bson", @dict(weights, epoch, acc))
-                end
-                # @info " -> New best accuracy; weights saved ($(round(1000*save_time; digits = 2)) ms)"
-                @info @sprintf("[%d] -> New best accuracy; weights saved (%d ms)", epoch, 1000 * save_time)
-            catch e
-                @warn "Error saving weights"
-                @warn sprint(showerror, e, catch_backtrace())
-            end
-        end
+        # Update loop values
+        push!(state[:loop][:epoch], epoch)
+        push!(state[:loop][:acc], acc)
+        push!(state[:loop][:Gloss], test_Gloss)
+        push!(state[:loop][:Dloss], test_Dloss)
+        push!(state[:loop][:D_x], D_x)
+        push!(state[:loop][:D_G_z], D_G_z)
+        loopcbs()
     end
 end
 
@@ -274,7 +179,9 @@ try
     train_loop!()
 catch e
     if e isa InterruptException
-        @warn "Training interrupted by user; breaking out of loop..."
+        @info "Training interrupted by user; breaking out of loop..."
+    elseif e isa Flux.Optimise.StopException
+        @info "Training stopped by callback..."
     else
         @warn "Error during training..."
         @warn sprint(showerror, e, catch_backtrace())
@@ -348,8 +255,8 @@ fig = forward_plot()
 display(fig) && savefig(fig, "plots/" * FILE_PREFIX * "forwarderror.png")
 
 errorvslr = function()
-    x = [fwdlrfun.(errs[:training][:epoch]), fwdlrfun.(errs[:testing][:epoch])]
-    y = [errs[:training][:loss], errs[:testing][:loss]]
+    x = [fwdlrfun.(state[:callbacks][:training][:epoch]), fwdlrfun.(state[:callbacks][:testing][:epoch])]
+    y = [state[:callbacks][:training][:loss], state[:callbacks][:testing][:loss]]
     plot(
         plot(x, (e -> log10.(e .- minimum(e) .+ 1e-6)).(y); xscale = :log10, ylabel = "stretched loss ($(settings["model"]["loss"]))", label = ["training" "testing"]),
         plot(x, (e -> log10.(e)).(y); xscale = :log10, xlabel = "learning rate", ylabel = "loss ($(settings["model"]["loss"]))", label = ["training" "testing"]);

@@ -14,13 +14,6 @@ using MWFLearning
 using StatsPlots
 pyplot(size=(800,450))
 
-# Utils
-getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
-gitdir() = realpath(DrWatson.projectdir(".."))
-gitdir() = realpath(DrWatson.projectdir(".."))
-gitdir() = realpath(DrWatson.projectdir(".."))
-savebson(filename, data::Dict) = @elapsed BSON.bson(filename, data)
-
 # Settings
 const settings_file = "settings.toml"
 const settings = verify_settings(TOML.parsefile(settings_file))

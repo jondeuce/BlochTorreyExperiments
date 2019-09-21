@@ -29,12 +29,14 @@ export plot, plot!, mean, median, cov, std, var, quantile
 @reexport using Wavelets
 @reexport using NNLS
 @reexport using Printf
+@reexport using StatsPlots
 
 using DrWatson: @dict, @ntuple
 using Parameters: @unpack
 using LegibleLambdas: @λ
 export @dict, @ntuple, @unpack, @λ
 
+export getnow, savebson, epochthrottle
 export verify_settings, model_summary, get_model, get_activation
 export make_minibatch, training_batches, testing_batches, param_summary, makelosses, lr, lr!, features, labels
 export heightsize, batchsize, channelsize, log10range, linspace, logspace, unitsum

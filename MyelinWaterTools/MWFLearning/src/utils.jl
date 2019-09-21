@@ -2,6 +2,11 @@
 # Utils
 # ---------------------------------------------------------------------------- #
 
+# Saving, formatting
+getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
+savebson(filename, data::Dict) = @elapsed BSON.bson(filename, data)
+# gitdir() = realpath(DrWatson.projectdir(".."))
+
 # Batching
 make_minibatch(features, labels, idxs) = (features[.., idxs], labels[.., idxs])
 function training_batches(features, labels, minibatchsize; overtrain = false)
@@ -242,54 +247,190 @@ forward_prop(rT2::T, rT1::T, alpha::T, nTE::Int) where {T} =
     forward_prop!(zeros(Vec{3,T}, nTE), rT2, rT1, alpha, nTE)
 
 """
- Kaiming uniform initialization.
- """
- function kaiming_uniform(T::Type, dims; gain = 1)
-    fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
-    bound = sqrt(3) * gain / sqrt(fan_in)
-    return rand(Uniform(-bound, bound), dims) |> Array{T}
- end
- kaiming_uniform(T::Type, dims...; kwargs...) = kaiming_uniform(T::Type, dims; kwargs...)
- kaiming_uniform(args...; kwargs...) = kaiming_uniform(Float32, args...; kwargs...)
- 
- """
- Kaiming normal initialization.
- """
- function kaiming_normal(T::Type, dims; gain = 1)
-    fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
-    std = gain / sqrt(fan_in)
-    return rand(Normal(0, std), dims) |> Array{T}
- end
- kaiming_normal(T::Type, dims...; kwargs...) = kaiming_normal(T::Type, dims; kwargs...)
- kaiming_normal(args...; kwargs...) = kaiming_normal(Float32, args...; kwargs...)
- 
- """
- Xavier uniform initialization.
- """
- function xavier_uniform(T::Type, dims; gain = 1)
-    fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
-    fan_out = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end-1]
-    bound = sqrt(3) * gain * sqrt(2 / (fan_in + fan_out))
-    return rand(Uniform(-bound, bound), dims) |> Array{T}
- end
- xavier_uniform(T::Type, dims...; kwargs...) = xavier_uniform(T::Type, dims; kwargs...)
- xavier_uniform(args...; kwargs...) = xavier_uniform(Float32, args...; kwargs...)
- 
- """
- Xavier normal initialization.
- """
- function xavier_normal(T::Type, dims; gain = 1)
-    fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
-    fan_out = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end-1]
-    std = gain * sqrt(2 / (fan_in + fan_out))
-    return rand(Normal(0, std), dims) |> Array{T}
- end
- xavier_normal(T::Type, dims...; kwargs...) = xavier_normal(T::Type, dims; kwargs...)
- xavier_normal(args...; kwargs...) = xavier_normal(Float32, args...; kwargs...)
- 
- # Override flux defaults
- Flux.glorot_uniform(dims...) = xavier_uniform(Float32, dims...)
- Flux.glorot_uniform(T::Type, dims...) = xavier_uniform(T, dims...)
- Flux.glorot_normal(dims...) = xavier_normal(Float32, dims...)
- Flux.glorot_normal(T::Type, dims...) = xavier_normal(T, dims...)
- 
+Kaiming uniform initialization.
+"""
+function kaiming_uniform(T::Type, dims; gain = 1)
+   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
+   bound = sqrt(3) * gain / sqrt(fan_in)
+   return rand(Uniform(-bound, bound), dims) |> Array{T}
+end
+kaiming_uniform(T::Type, dims...; kwargs...) = kaiming_uniform(T::Type, dims; kwargs...)
+kaiming_uniform(args...; kwargs...) = kaiming_uniform(Float32, args...; kwargs...)
+
+"""
+Kaiming normal initialization.
+"""
+function kaiming_normal(T::Type, dims; gain = 1)
+   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
+   std = gain / sqrt(fan_in)
+   return rand(Normal(0, std), dims) |> Array{T}
+end
+kaiming_normal(T::Type, dims...; kwargs...) = kaiming_normal(T::Type, dims; kwargs...)
+kaiming_normal(args...; kwargs...) = kaiming_normal(Float32, args...; kwargs...)
+
+"""
+Xavier uniform initialization.
+"""
+function xavier_uniform(T::Type, dims; gain = 1)
+   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
+   fan_out = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end-1]
+   bound = sqrt(3) * gain * sqrt(2 / (fan_in + fan_out))
+   return rand(Uniform(-bound, bound), dims) |> Array{T}
+end
+xavier_uniform(T::Type, dims...; kwargs...) = xavier_uniform(T::Type, dims; kwargs...)
+xavier_uniform(args...; kwargs...) = xavier_uniform(Float32, args...; kwargs...)
+
+"""
+Xavier normal initialization.
+"""
+function xavier_normal(T::Type, dims; gain = 1)
+   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
+   fan_out = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end-1]
+   std = gain * sqrt(2 / (fan_in + fan_out))
+   return rand(Normal(0, std), dims) |> Array{T}
+end
+xavier_normal(T::Type, dims...; kwargs...) = xavier_normal(T::Type, dims; kwargs...)
+xavier_normal(args...; kwargs...) = xavier_normal(Float32, args...; kwargs...)
+
+# Override flux defaults
+Flux.glorot_uniform(dims...) = xavier_uniform(Float32, dims...)
+Flux.glorot_uniform(T::Type, dims...) = xavier_uniform(T, dims...)
+Flux.glorot_normal(dims...) = xavier_normal(Float32, dims...)
+Flux.glorot_normal(T::Type, dims...) = xavier_normal(T, dims...)
+
+####
+#### Callbacks
+####
+
+function epochthrottle(f, state, epoch_rate)
+    last_epoch = 0
+    function epochthrottled(args...; kwargs...)
+        epoch = state[:epoch]
+        if epoch >= last_epoch + epoch_rate
+            last_epoch = epoch
+            f(args...; kwargs...)
+        else
+            nothing
+        end
+    end
+end
+
+function make_test_err_cb(state, loss, accuracy, labelacc, test_set)
+    function()
+        update_time = @elapsed begin
+            currloss, curracc, currlaberr = Flux.cpu(Flux.data(loss(test_set...))), Flux.cpu(Flux.data(accuracy(test_set...))), Flux.cpu(Flux.data(labelacc(test_set...)))
+            push!(state[:callbacks][:testing][:epoch], state[:epoch])
+            push!(state[:callbacks][:testing][:loss], currloss)
+            push!(state[:callbacks][:testing][:acc], curracc)
+            push!(state[:callbacks][:testing][:labelerr], currlaberr)
+        end
+        @info @sprintf("[%d] -> Updating testing error... (%d ms)", state[:epoch], 1000 * update_time)
+    end
+end
+function make_train_err_cb(state, loss, accuracy, labelacc, train_set)
+    function()
+        update_time = @elapsed begin
+            currloss, curracc, currlaberr = mean([Flux.cpu(Flux.data(loss(b...))) for b in train_set]), mean([Flux.cpu(Flux.data(accuracy(b...))) for b in train_set]), mean([Flux.cpu(Flux.data(labelacc(b...))) for b in train_set])
+            push!(state[:callbacks][:training][:epoch], state[:epoch])
+            push!(state[:callbacks][:training][:loss], currloss)
+            push!(state[:callbacks][:training][:acc], curracc)
+            push!(state[:callbacks][:training][:labelerr], currlaberr)
+        end
+        @info @sprintf("[%d] -> Updating training error... (%d ms)", state[:epoch], 1000 * update_time)
+    end
+end
+function make_plot_errs_cb(state, filename = nothing; labelnames = "", labellegend = nothing)
+    function err_subplots(k,v)
+        @unpack epoch, loss, acc, labelerr = v
+        labelerr = permutedims(reduce(hcat, labelerr))
+        labelcolor = permutedims(RGB[cgrad(:darkrainbow)[z] for z in range(0.0, 1.0, length = size(labelerr,2))])
+        p1 = plot(epoch, loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",                      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright,   ylim = (minimum(loss), quantile(loss, 0.95)))
+        p2 = plot(epoch, acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)",                 lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,    ylim = (clamp(maximum(acc), 50, 99) - 0.5, 100))
+        p3 = plot(epoch, labelerr; title = "Label Error ($k: rel. %)",                                     c = labelcolor, lw = 3, titlefontsize = 10, label = labelnames, legend = labellegend, ylim = (max(0, minimum(vec(labelerr)) - 1.0), min(50, 1.2 * maximum(labelerr[end,:])))) #min(50, quantile(vec(labelerr), 0.90))
+        (k == :testing) && plot!(p2, state[:loop][:epoch], state[:loop][:acc]; label = "loop acc", lw = 2)
+        plot(p1, p2, p3; layout = (1,3))
+    end
+    function()
+        try
+            plot_time = @elapsed begin
+                fig = plot([err_subplots(k,v) for (k,v) in state[:callbacks]]...; layout = (length(state[:callbacks]), 1))
+                !(filename === nothing) && savefig(fig, filename)
+                display(fig)
+            end
+            @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[:epoch], 1000 * plot_time)
+        catch e
+            @info @sprintf("[%d] -> PLOTTING FAILED...", state[:epoch])
+        end
+    end
+end
+function make_checkpoint_model_opt_cb(state, model, opt, filename)
+    function()
+        save_time = @elapsed let opt = MWFLearning.opt_to_cpu(opt, Flux.params(model)), model = Flux.cpu(model)
+            savebson(filename, @dict(model, opt))
+        end
+        @info @sprintf("[%d] -> Model checkpoint... (%d ms)", state[:epoch], 1000 * save_time)
+    end
+end
+function make_checkpoint_state_cb(state, filename)
+    function()
+        save_time = @elapsed let state = deepcopy(state)
+            savebson(filename, @dict(state))
+        end
+        @info @sprintf("[%d] -> Error checkpoint... (%d ms)", state[:epoch], 1000 * save_time)
+    end
+end
+function make_plot_gan_losses_cb(state, filename = nothing)
+    function()
+        try
+            plot_time = @elapsed begin
+                @unpack epoch, Gloss, Dloss, D_x, D_G_z = state[:loop]
+                fig = plot(epoch, [Gloss Dloss D_x D_G_z]; label = ["G Loss" "D loss" "D(x)" "D(G(z))"], lw = 3)
+                !(filename === nothing) && savefig(fig, filename)
+                display(fig)
+            end
+            @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[:epoch], 1000 * plot_time)
+        catch e
+            @info @sprintf("[%d] -> PLOTTING FAILED...", state[:epoch])
+        end
+    end
+end
+function make_update_lr_cb(state, opt, lrfun; lrcutoff = 1e-6)
+    last_lr = nothing
+    curr_lr = 0.0
+    function()
+        # Update learning rate and exit if it has become to small
+        curr_lr = lr!(opt, lrfun(state[:epoch]))
+        if curr_lr < lrcutoff
+            @info(" -> Early-exiting: Learning rate has dropped below cutoff = $lrcutoff")
+            Flux.stop()
+        end
+        if last_lr === nothing
+            @info(" -> Initial learning rate: " * @sprintf("%.2e", curr_lr))
+        elseif last_lr != curr_lr
+            @info(" -> Learning rate updated: " * @sprintf("%.2e", last_lr) * " --> "  * @sprintf("%.2e", curr_lr))
+        end
+        last_lr = curr_lr
+        return nothing
+    end
+end
+function make_save_best_model_cb(state, model, filename)
+    function()
+        # If this is the best accuracy we've seen so far, save the model out
+        epoch, acc = state[:epoch], state[:loop][:acc][end]
+        if acc >= state[:best_acc]
+            state[:best_acc] = acc
+            state[:last_improved_epoch] = epoch
+            try
+                save_time = @elapsed let weights = Flux.cpu.(Flux.data.(Flux.params(model)))
+                    savebson(filename, @dict(weights, epoch, acc))
+                end
+                # @info " -> New best accuracy; weights saved ($(round(1000*save_time; digits = 2)) ms)"
+                @info @sprintf("[%d] -> New best accuracy; weights saved (%d ms)", epoch, 1000 * save_time)
+            catch e
+                @warn "Error saving weights"
+                @warn sprint(showerror, e, catch_backtrace())
+            end
+        end
+        nothing
+    end
+end

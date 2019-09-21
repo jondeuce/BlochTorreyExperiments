@@ -1,26 +1,46 @@
-get_model(settings::Dict) =
-    settings["model"]["name"] == "ConvResNet"              ? conv_resnet(settings) :
-    settings["model"]["name"] == "ResidualDenseNet"        ? residual_dense_net(settings) :
-    settings["model"]["name"] == "Keras1DSeqClass"         ? keras_1D_sequence_classification(settings) :
-    settings["model"]["name"] == "TestModel1"              ? test_model_1(settings) :
-    settings["model"]["name"] == "TestModel2"              ? test_model_2(settings) :
-    settings["model"]["name"] == "TestModel3"              ? test_model_3(settings) :
-    settings["model"]["name"] == "TestModel4"              ? test_model_4(settings) :
-    settings["model"]["name"] == "ResNet"                  ? resnet(settings) :
-    settings["model"]["name"] == "BasicHeight32Model1"     ? basic_height32_model_1(settings) :
-    settings["model"]["name"] == "BasicHeight32Generator1" ? basic_height32_generator_1(settings) :
-    settings["model"]["name"] == "BasicHeight32Generator2" ? basic_height32_generator_2(settings) :
-    settings["model"]["name"] == "BasicDCGAN1"             ? basic_DCGAN_1(settings) :
-    error("Unknown model: " * settings["model"]["name"])
-    
-get_activation(str::String) =
-    str == "relu"      ? NNlib.relu :
-    str == "sigma"     ? NNlib.σ :
-    str == "leakyrelu" ? NNlib.leakyrelu :
-    str == "elu"       ? NNlib.elu :
-    str == "swish"     ? NNlib.swish :
-    str == "softplus"  ? NNlib.softplus :
-    (@warn("Unkown activation function $str; defaulting to softplus"); NNlib.softplus)
+const model_dict = Dict(
+    "ConvResNet"              => conv_resnet,
+    "ResidualDenseNet"        => residual_dense_net,
+    "Keras1DSeqClass"         => keras_1D_sequence_classification,
+    "TestModel1"              => test_model_1,
+    "TestModel2"              => test_model_2,
+    "TestModel3"              => test_model_3,
+    "TestModel4"              => test_model_4,
+    "ResNet"                  => resnet,
+    "BasicHeight32Model1"     => basic_height32_model_1,
+    "BasicHeight32Generator1" => basic_height32_generator_1,
+    "BasicHeight32Generator2" => basic_height32_generator_2,
+    "BasicDCGAN1"             => basic_DCGAN_1,
+)
+function get_model(settings::Dict)
+    T = settings["prec"] == 64 ? Float64 : Float32
+    models = []
+    for (name, model) in settings["model"]
+        if name ∈ keys(model_dict)
+            kwargs = make_model_kwargs(T, model)
+            push!(models, model_dict[name](T; kwargs...))
+        end
+    end
+    models    
+end
+
+make_model_kwargs(::Type{T}, m::Dict) where {T} = Dict(Symbol.(keys(m)) .=> clean_model_kwargs.(T, values(m)))
+clean_model_kwargs(::Type{T}, x) where {T} = error("Unsupported model parameter $x") # fallback
+clean_model_kwargs(::Type{T}, x::Bool) where {T} = x
+clean_model_kwargs(::Type{T}, x::Integer) where {T} = Int(x)
+clean_model_kwargs(::Type{T}, x::AbstractString) where {T} = Symbol(x)
+clean_model_kwargs(::Type{T}, x::AbstractFloat) where {T} = T(x)
+clean_model_kwargs(::Type{T}, x::Vector{Tx}) where {T, Tx} = clean_model_kwargs.(T, x)
+
+const activation_dict = Dict(
+    "relu"      => NNlib.relu,
+    "sigma"     => NNlib.σ,
+    "leakyrelu" => NNlib.leakyrelu,
+    "elu"       => NNlib.elu,
+    "swish"     => NNlib.swish,
+    "softplus"  => NNlib.softplus,
+)
+get_activation(str::String) = activation_dict[str]
 
 """
 See "Sequence classification with 1D convolutions" at the following url:
@@ -689,16 +709,13 @@ function basic_height32_generator_2(settings)
     return model
 end
 
-function basic_DCGAN_1(settings)
-    T      :: Type   = settings["prec"] == 64 ? Float64 : Float32
-    VT     :: Type   = settings["prec"] == 64 ? Vector{Float64} : Vector{Float32}
-    H      :: Int    = settings["data"]["height"] :: Int # Data height
-    C      :: Int    = settings["data"]["channels"] :: Int # Number of channels
-    Nout   :: Int    = settings["model"]["Nout"] :: Int # Number of outputs
-    type   :: Symbol = settings["model"]["resnet"]["type"] :: String |> Symbol # Factory type for BatchConvConnection
-    Nfilt  :: Int    = settings["model"]["resnet"]["Nfilt"] :: Int # Number of features to upsample to from 1-feature input
-    scale  :: VT     = settings["model"]["scale"] :: Vector |> VT # Parameter scales
-    offset :: VT     = settings["model"]["offset"] :: Vector |> VT # Parameter offsets
+function basic_DCGAN_1(::Type{T} = Float32;
+        H      :: Int = 32, #settings["data"]["height"] :: Int # Data height
+        C      :: Int = 1,  #settings["data"]["channels"] :: Int # Number of channels
+        Nout   :: Int = 8,  #settings["model"]["Nout"] :: Int # Number of outputs
+        # scale  :: VT  = 32, #settings["model"]["scale"] :: Vector |> VT # Parameter scales
+        # offset :: VT  = 32, #settings["model"]["offset"] :: Vector |> VT # Parameter offsets
+    ) where {T}
     
     @assert H == 32 # Model height should be 32
     @assert mod(H, 8) == 0 # Must be divisible by 8

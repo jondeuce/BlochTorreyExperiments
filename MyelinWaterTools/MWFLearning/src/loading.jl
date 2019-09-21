@@ -62,6 +62,7 @@ function prepare_data(settings::Dict)
     
     # Redundancy check
     @assert heightsize(training_data) == heightsize(testing_data)
+    @assert channelsize(training_data) == channelsize(testing_data)
     @assert batchsize(training_data) == batchsize(training_thetas)
     @assert batchsize(testing_data) == batchsize(testing_thetas)
 
@@ -76,8 +77,9 @@ function prepare_data(settings::Dict)
         (training_data, testing_data, training_thetas, testing_thetas))
     
     # Set "auto" fields
-    (settings["data"]["height"]    == "auto") && (settings["data"]["height"]    = heightsize(training_data) :: Int)
     (settings["data"]["test_size"] == "auto") && (settings["data"]["test_size"] = batchsize(testing_data) :: Int)
+    (settings["data"]["height"]    == "auto") && (settings["data"]["height"]    = heightsize(training_data) :: Int)
+    (settings["data"]["channels"]  == "auto") && (settings["data"]["channels"]  = channelsize(training_data) :: Int)
     (settings["model"]["scale"]    == "auto") && (settings["model"]["scale"]    = convert(VT, labels_props[:width]) :: VT)
     (settings["model"]["offset"]   == "auto") && (settings["model"]["offset"]   = convert(VT, labels_props[:mean]) :: VT)
 
