@@ -39,10 +39,10 @@ GPU && (for k in (:training_data, :testing_data, :training_thetas, :testing_thet
 
 train_set, test_set = if settings["model"]["problem"] == "forward"
     flatten = x -> reshape(x, :, batchsize(x))
-    training_batches(data_set[:training_thetas], flatten(data_set[:training_data]), settings["data"]["batch_size"]),
+    training_batches(data_set[:training_thetas], flatten(data_set[:training_data]), settings["data"]["train_batch"]),
     testing_batches(data_set[:testing_thetas], flatten(data_set[:testing_data]))
 else
-    training_batches(data_set[:training_data], data_set[:training_thetas], settings["data"]["batch_size"]),
+    training_batches(data_set[:training_data], data_set[:training_thetas], settings["data"]["train_batch"]),
     testing_batches(data_set[:testing_data], data_set[:testing_thetas])
 end
 
@@ -53,14 +53,14 @@ if settings["model"]["problem"] == "forward"; signals, thetas = thetas, signals;
 
 # Construct model
 @info "Constructing model..."
-model = MWFLearning.get_model(settings);
+model = MWFLearning.make_models(settings);
 model = GPU ? Flux.gpu(model) : model;
 model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"));
 param_summary(model, train_set, test_set)
 
 # # Construct model
 # @info "Constructing model..."
-# model, discrm, sampler = MWFLearning.get_model(settings);
+# model, discrm, sampler = MWFLearning.make_models(settings);
 # model  = GPU ? Flux.gpu(model)  : model;
 # discrm = GPU ? Flux.gpu(discrm) : discrm;
 # model_summary(model,  joinpath(savefolders["models"], FILE_PREFIX * "generator.architecture.txt"));
@@ -73,7 +73,7 @@ function getlabelweights()::Union{CVT, Nothing}
     if settings["model"]["problem"] == "forward"
         nothing
     else
-        w = inv.(settings["model"]["scale"]) .* unitsum(settings["data"]["weights"]) |> copy |> VT
+        w = inv.(settings["data"]["info"]["labwidth"]) .* unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT
         w = (GPU ? Flux.gpu(w) : w) |> CVT
     end
 end
@@ -108,7 +108,7 @@ CB_EPOCH_CHECK(last_epoch) = CB_EPOCH >= last_epoch + CB_EPOCH_RATE
 function err_subplots(k,v)
     @unpack epoch, loss, acc, labelerr = v
     labelerr = permutedims(reduce(hcat, labelerr))
-    labelnames = permutedims(settings["data"]["labels"]) # .* " (" .* settings["plot"]["units"] .* ")"
+    labelnames = permutedims(settings["data"]["info"]["labnames"]) # .* " (" .* settings["data"]["info"]["labunits"] .* ")"
     labelcolor = permutedims(RGB[cgrad(:darkrainbow)[z] for z in range(0.0, 1.0, length = size(labelerr,2))])
     labellegend = settings["model"]["problem"] == "forward" ? nothing : :topleft
     p1 = plot(epoch, loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",                      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright,   ylim = (minimum(loss), quantile(loss, 0.95)))
@@ -278,12 +278,12 @@ error("got here")
 
 prediction_hist = function()
     pred_hist = function(i)
-        scale = settings["plot"]["scale"][i]
-        units = settings["plot"]["units"][i]
+        scale = settings["data"]["info"]["labwidth"][i]
+        units = settings["data"]["info"]["labunits"][i]
         err = scale .* (model_thetas[i,:] .- true_thetas[i,:])
         histogram(err;
             grid = true, minorgrid = true, titlefontsize = 10,
-            label = settings["data"]["labels"][i] * " ($units)",
+            label = settings["data"]["info"]["labnames"][i] * " ($units)",
             title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
         )
     end
@@ -295,12 +295,12 @@ display(fig) && savefig(fig, "plots/" * FILE_PREFIX * "labelhistograms.png")
 
 prediction_scatter = function()
     pred_scatter = function(i)
-        scale = settings["plot"]["scale"][i]
-        units = settings["plot"]["units"][i]
-        datascale = scale * settings["model"]["scale"][i]
+        scale = settings["data"]["info"]["labwidth"][i]
+        units = settings["data"]["info"]["labunits"][i]
+        datascale = scale * settings["data"]["info"]["labwidth"][i]
         p = scatter(scale * true_thetas[i,:], scale * model_thetas[i,:];
             marker = :circle, grid = true, minorgrid = true, titlefontsize = 10,
-            label = settings["data"]["labels"][i] * " ($units)",
+            label = settings["data"]["info"]["labnames"][i] * " ($units)",
             # title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
         )
         plot!(p, identity, ylims(p)...; line = (:dash, 2, :red), label = L"y = x")

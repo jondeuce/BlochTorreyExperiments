@@ -52,7 +52,7 @@ pair_test_set()  = tuple(labels(test_fwd), sampler(batchsize(features(test_fwd))
 # Construct model
 @info "Constructing model..."
 
-m = MWFLearning.make_models(settings)
+m = MWFLearning.make_models(settings)[1]
 error("here")
 
 genatr, discrm, sampler = MWFLearning.make_models(settings)[1];
@@ -105,7 +105,7 @@ state = Dict(
 update_lr_cb            = MWFLearning.make_update_lr_cb(state, fwdopt, fwdlrfun)
 test_err_cb             = MWFLearning.make_test_err_cb(state, fwdloss, fwdacc, fwdlabelacc, test_fwd)
 train_err_cb            = MWFLearning.make_train_err_cb(state, fwdloss, fwdacc, fwdlabelacc, train_fwd)
-plot_errs_cb            = MWFLearning.make_plot_errs_cb(state, "plots/" * FILE_PREFIX * "errs.png"; labelnames = permutedims(settings["data"]["info"]["labnames"]), labellegend = (settings["model"]["problem"] == "forward" ? nothing : :topleft))
+plot_errs_cb            = MWFLearning.make_plot_errs_cb(state, "plots/" * FILE_PREFIX * "errs.png"; labelnames = permutedims(settings["data"]["info"]["labnames"]), labellegend = :topleft)
 plot_gan_losses_cb      = MWFLearning.make_plot_gan_losses_cb(state, "plots/" * FILE_PREFIX * "ganloss.png")
 checkpoint_state_cb     = MWFLearning.make_checkpoint_state_cb(state, "log/" * FILE_PREFIX * "errors.bson")
 save_best_model_cb      = MWFLearning.make_save_best_model_cb(state, genatr, "weights/" * FILE_PREFIX * "weights.bson")
@@ -197,7 +197,6 @@ true_signals   = labels(test_fwd)   |> Flux.cpu |> deepcopy
 true_thetas    = features(test_fwd) |> Flux.cpu |> deepcopy
 genatr_signals = labels(test_fwd)   |> Flux.data |> Flux.cpu |> deepcopy
 genatr_thetas  = genatr(features(test_fwd)) |> Flux.data |> Flux.cpu |> deepcopy
-if settings["model"]["problem"] == "forward"; genatr_signals, genatr_thetas = genatr_thetas, genatr_signals; end
 
 error("got here")
 

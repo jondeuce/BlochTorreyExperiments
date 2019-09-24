@@ -26,36 +26,14 @@ upper       = [ 1.00,  48.0 ]
 [data.preprocess]
 shuffle     = true
 SNR         = [50.0, 0.0] # Additive random noise
-[data.preprocess.zipper]
-apply       = false
-size        = 32
 [data.preprocess.chunk]
 apply       = true
 size        = 32
-[data.preprocess.peel]
-biexp       = false # peel before applying wavelet
-makefrac    = true # convert component magnitudes to fractions
-TEfast      = 0.015 # Approximate fast decay mode
-TEslow      = 0.063 # Approximate slow decay mode
-periodic    = false # subtract linear term to make signal periodic
-[data.preprocess.wavelet]
-apply       = false # Apply wavelet preprocessing
-nterms      = 24 # number of terms to keep
-[data.preprocess.ilaplace]
-apply       = false # Apply ilaplace preprocessing
-T2Range     = [0.001, 1.0] # T2 distribution range
-nT2         = 32 # Number of exponentials in T2 distribution
-alpha       = 0.1 # Tikhonov regularization parameter
-[data.preprocess.PCA]
-apply       = false # Apply PCA preprocessing
 
 [model]
-problem   = "forward" # forward (params to signal) or inverse (signal to params)
-loss      = "l2"
+loss      = "KL"
 acc       = "rmse"
-[model.DeepResNet]
-type      = "ResNet18" # ResNet type
-nfilt     = 4 # Number of initial filters
+[model.LIGOCVAE]
 
 [optimizer]
 epochs  = 5000

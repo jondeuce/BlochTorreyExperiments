@@ -16,7 +16,7 @@ function prepare_data(settings::Dict)
     # Filtering out undesired data
     filter_bad_data = (d) -> all(map(
         (label, lower, upper) -> lower <= label_fun(label, d) :: Float64 <= upper,
-        settings["data"]["filter"]["labels"] :: Vector{String},
+        settings["data"]["filter"]["labnames"] :: Vector{String},
         settings["data"]["filter"]["lower"]  :: Vector{Float64},
         settings["data"]["filter"]["upper"]  :: Vector{Float64}))
     filter!(filter_bad_data, training_data_dicts)
@@ -28,17 +28,18 @@ function prepare_data(settings::Dict)
     @assert size(training_thetas, 1) == size(testing_thetas, 1)
     
     processing_types = AbstractDataProcessing[]
-    settings["data"]["preprocess"]["chunk"]["apply"]    && push!(processing_types, SignalChunkingProcessing())
-    settings["data"]["preprocess"]["zipper"]["apply"]   && push!(processing_types, SignalZipperProcessing())
-    settings["data"]["preprocess"]["ilaplace"]["apply"] && push!(processing_types, iLaplaceProcessing())
-    settings["data"]["preprocess"]["wavelet"]["apply"]  && push!(processing_types, WaveletProcessing())
+    checkapply(settings, key) = haskey(settings["data"]["preprocess"], key) && (settings["data"]["preprocess"][key]["apply"] :: Bool)
+    checkapply(settings, "chunk")    && push!(processing_types, SignalChunkingProcessing())
+    checkapply(settings, "zipper")   && push!(processing_types, SignalZipperProcessing())
+    checkapply(settings, "ilaplace") && push!(processing_types, iLaplaceProcessing())
+    checkapply(settings, "wavelet")  && push!(processing_types, WaveletProcessing())
     isempty(processing_types) && error("No processing selected")
 
     init_all_data(d) = cat(init_data.(processing_types, Ref(settings), Ref(d))...; dims = 3)
     training_data = init_all_data(training_data_dicts)
     testing_data = init_all_data(testing_data_dicts)
     
-    if settings["data"]["preprocess"]["PCA"]["apply"] == true
+    if checkapply(settings, "PCA")
         @unpack training_data, testing_data =
             init_data(PCAProcessing(), training_data, testing_data)
     end
@@ -54,7 +55,7 @@ function prepare_data(settings::Dict)
     end
 
     # Shuffle data and labels
-    if settings["data"]["preprocess"]["shuffle"] == true
+    if settings["data"]["preprocess"]["shuffle"] :: Bool
         i_train, i_test = Random.shuffle(1:batchsize(training_data)), Random.shuffle(1:batchsize(testing_data))
         training_data, training_thetas, training_data_dicts = training_data[:,:,:,i_train], training_thetas[:,i_train], training_data_dicts[i_train]
         testing_data, testing_thetas, testing_data_dicts = testing_data[:,:,:,i_test], testing_thetas[:,i_test], testing_data_dicts[i_test]
@@ -70,18 +71,20 @@ function prepare_data(settings::Dict)
     labels_props = init_labels_props(settings, hcat(training_thetas, testing_thetas))
 
     # Set output type
-    T  = settings["prec"] == 64 ? Float64 : Float32
+    T = settings["prec"] == 64 ? Float64 : Float32
     VT = Vector{T}
     training_data, testing_data, training_thetas, testing_thetas = map(
         x -> to_float_type_T(T, x),
         (training_data, testing_data, training_thetas, testing_thetas))
     
     # Set "auto" fields
-    (settings["data"]["test_size"] == "auto") && (settings["data"]["test_size"] = batchsize(testing_data) :: Int)
-    (settings["data"]["height"]    == "auto") && (settings["data"]["height"]    = heightsize(training_data) :: Int)
-    (settings["data"]["channels"]  == "auto") && (settings["data"]["channels"]  = channelsize(training_data) :: Int)
-    (settings["model"]["scale"]    == "auto") && (settings["model"]["scale"]    = convert(VT, labels_props[:width]) :: VT)
-    (settings["model"]["offset"]   == "auto") && (settings["model"]["offset"]   = convert(VT, labels_props[:mean]) :: VT)
+    setauto!(d, field, val) = d[field] == "auto" ? (d[field] = val) : d[field]
+    setauto!(settings["data"], "test_batch", batchsize(testing_data)) :: Int
+    setauto!(settings["data"]["info"], "nfeatures", heightsize(training_data)) :: Int
+    setauto!(settings["data"]["info"], "nchannels", channelsize(training_data)) :: Int
+    setauto!(settings["data"]["info"], "nlabels", size(training_thetas, 1)) :: Int
+    setauto!(settings["data"]["info"], "labwidth", convert(VT, labels_props[:width])) :: VT
+    setauto!(settings["data"]["info"], "labmean", convert(VT, labels_props[:mean])) :: VT
 
     return @dict(
         training_data_dicts, testing_data_dicts,
@@ -432,7 +435,7 @@ function label_fun(s::String, d::Dict)::Float64
 end
 
 function init_labels(settings::Dict, ds::AbstractVector{<:Dict})
-    label_names = settings["data"]["labels"] :: Vector{String}
+    label_names = settings["data"]["info"]["labnames"] :: Vector{String}
     labels = zeros(Float64, length(label_names), length(ds))
     for j in 1:length(ds)
         d = ds[j] :: Dict

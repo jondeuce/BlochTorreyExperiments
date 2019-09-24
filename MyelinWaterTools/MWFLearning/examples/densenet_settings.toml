@@ -53,9 +53,18 @@ apply       = false # Apply PCA preprocessing
 problem   = "forward" # forward (params to signal) or inverse (signal to params)
 loss      = "l2"
 acc       = "rmse"
-[model.DeepResNet]
-type      = "ResNet18" # ResNet type
-nfilt     = 4 # Number of initial filters
+[model.ResidualDenseNet]
+act       = "relu"
+dropout   = false
+batchnorm = true
+groupnorm = false
+batchmode = "pre"
+factory   = "batchconv"
+Nkern     = 3
+Nconv     = 2
+Nfeat     = 4
+Nblock    = 2
+Ndense    = 2
 
 [optimizer]
 epochs  = 5000

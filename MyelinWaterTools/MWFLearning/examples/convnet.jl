@@ -25,7 +25,7 @@ print_size(i) = prnt[] ?
 @info "Preparing data..."
 make_minibatch(x, y, idxs) = (x[:,:,idxs], y[:,:,idxs])
 data_set = prepare_data(settings)
-train_mb_idxs = partition(1:size(data_set[:training_data], 3), settings["data"]["batch_size"])
+train_mb_idxs = partition(1:size(data_set[:training_data], 3), settings["data"]["train_batch"])
 train_set = [make_minibatch(data_set[:training_data], data_set[:training_thetas], i) for i in train_mb_idxs]
 test_set = make_minibatch(data_set[:testing_data], data_set[:testing_thetas], 1:size(data_set[:testing_data], 3))
 
