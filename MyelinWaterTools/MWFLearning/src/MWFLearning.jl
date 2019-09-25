@@ -37,10 +37,10 @@ using LegibleLambdas: @λ
 export @dict, @ntuple, @unpack, @λ
 
 export getnow, savebson, epochthrottle
-export verify_settings, model_summary, make_models, get_activation
-export make_minibatch, training_batches, testing_batches, param_summary, makelosses, lr, lr!, features, labels
+export make_model, make_activation, model_summary, model_string
+export make_minibatch, training_batches, testing_batches, param_summary, make_losses, lr, lr!, features, labels
 export heightsize, batchsize, channelsize, log10range, linspace, logspace, unitsum
-export prepare_data, label_fun, init_data, init_labels, init_signal
+export prepare_data, label_fun, init_data, init_labels
 
 # Layers
 export MomentumW, AdaBound

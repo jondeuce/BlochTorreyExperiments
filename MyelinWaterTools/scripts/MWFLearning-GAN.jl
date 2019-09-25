@@ -15,7 +15,7 @@ pyplot(size=(800,450))
 
 # Settings
 const settings_file = "settings.toml"
-const settings = verify_settings(TOML.parsefile(settings_file))
+const settings = TOML.parsefile(settings_file)
 
 const DATE_PREFIX = getnow() * "."
 const FILE_PREFIX = DATE_PREFIX * DrWatson.savename(settings["model"]) * "."
@@ -52,10 +52,10 @@ pair_test_set()  = tuple(labels(test_fwd), sampler(batchsize(features(test_fwd))
 # Construct model
 @info "Constructing model..."
 
-m = MWFLearning.make_models(settings)
+m = MWFLearning.make_model(settings)
 error("here")
 
-genatr, discrm, sampler = MWFLearning.make_models(settings)[1];
+genatr, discrm, sampler = MWFLearning.make_model(settings)[1];
 genatr = GPU ? Flux.gpu(genatr) : genatr;
 discrm = GPU ? Flux.gpu(discrm) : discrm;
 Dparams, Gparams = Flux.params(discrm), Flux.params(genatr)
@@ -72,7 +72,7 @@ function thetaweights()::CVT
     w = (GPU ? Flux.gpu(w) : w) |> CVT
     return w::CVT
 end
-fwdloss, fwdacc, fwdlabelacc = makelosses(genatr, settings["model"]["loss"])
+fwdloss, fwdacc, fwdlabelacc = make_losses(genatr, settings["model"]["loss"])
 Gloss = @λ (z) -> mean(.-log.(discrm(genatr(z))))
 Dloss = @λ (x,z) -> mean(.-log.(discrm(x)) .- log.(1 .- discrm(genatr(z))))
 realDloss = @λ (x) -> mean(.-log.(discrm(x)))
@@ -203,7 +203,7 @@ error("got here")
 
 prediction_hist = function()
     pred_hist = function(i)
-        scale = settings["data"]["info"]["labwidth"][i]
+        scale = settings["data"]["info"]["labscale"][i]
         units = settings["data"]["info"]["labunits"][i]
         err = scale .* (genatr_thetas[i,:] .- true_thetas[i,:])
         histogram(err;
@@ -220,9 +220,8 @@ display(fig) && savefig(fig, "plots/" * FILE_PREFIX * "labelhistograms.png")
 
 prediction_scatter = function()
     pred_scatter = function(i)
-        scale = settings["data"]["info"]["labwidth"][i]
+        scale = settings["data"]["info"]["labscale"][i]
         units = settings["data"]["info"]["labunits"][i]
-        datascale = scale * settings["data"]["info"]["labwidth"][i]
         p = scatter(scale * true_thetas[i,:], scale * genatr_thetas[i,:];
             marker = :circle, grid = true, minorgrid = true, titlefontsize = 10,
             label = settings["data"]["info"]["labnames"][i] * " ($units)",

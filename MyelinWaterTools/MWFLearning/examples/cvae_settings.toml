@@ -15,10 +15,14 @@ nchannels   = "auto" # Number of input data channels
 nlabels     = "auto" # Number of output labels
 labmean     = "auto" # Label means
 labwidth    = "auto" # Label distribution widths
-labnames    = ["mwf", "iewf", "T2iew/TE", "T2mw/TE", "alpha", "logTE*K", "T1iew/TE", "T1mw/TE"] # Target labels
-labweights  = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
-labscale    = [100.0, 100.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
-labunits    = ["%", "%", "ms/ms", "ms/ms", "deg", "log(s*um/s)", "ms/ms", "ms/ms"] # label units, after scaling
+labnames    = ["mwf", "sind(alpha)"] # Target labels
+labweights  = [1.0, 1.0] # Weights for loss function
+labscale    = [100.0, 1.0] # scale labels before plotting
+labunits    = ["%", "sind(deg)"] # label units, after scaling
+# labnames    = ["mwf", "iewf", "T2iew/TE", "T2mw/TE", "alpha", "log(TE*K)", "T1iew/TE", "T1mw/TE"] # Target labels
+# labweights  = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
+# labscale    = [100.0, 100.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
+# labunits    = ["%", "%", "ms/ms", "ms/ms", "deg", "log(s*um/s)", "ms/ms", "ms/ms"] # label units, after scaling
 [data.filter]
 labnames    = [ "K",  "nTE" ]
 lower       = [ 0.00,  32.0 ]
@@ -31,9 +35,11 @@ apply       = true
 size        = 32
 
 [model]
-loss      = "KL"
+loss      = "l2"
 acc       = "rmse"
-[model.LIGOCVAE]
+[model.DenseLIGOCVAE]
+Zdim      = 15
+act       = "leakyrelu"
 
 [optimizer]
 epochs  = 5000

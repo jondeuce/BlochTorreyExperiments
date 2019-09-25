@@ -33,7 +33,7 @@ function param_summary(model, train_set, test_set)
 end
 
 # Losses
-function makelosses(model, losstype, weights = nothing)
+function make_losses(model, losstype, weights = nothing)
     l1 = weights == nothing ? @λ((x,y) -> sum(abs, model(x) .- y))  : @λ((x,y) -> sum(abs, weights .* (model(x) .- y)))
     l2 = weights == nothing ? @λ((x,y) -> sum(abs2, model(x) .- y)) : @λ((x,y) -> sum(abs2, weights .* (model(x) .- y)))
     crossent = @λ((x,y) -> Flux.crossentropy(model(x), y))
@@ -385,6 +385,21 @@ function make_plot_gan_losses_cb(state, filename = nothing)
             plot_time = @elapsed begin
                 @unpack epoch, Gloss, Dloss, D_x, D_G_z = state[:loop]
                 fig = plot(epoch, [Gloss Dloss D_x D_G_z]; label = ["G Loss" "D loss" "D(x)" "D(G(z))"], lw = 3)
+                !(filename === nothing) && savefig(fig, filename)
+                display(fig)
+            end
+            @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[:epoch], 1000 * plot_time)
+        catch e
+            @info @sprintf("[%d] -> PLOTTING FAILED...", state[:epoch])
+        end
+    end
+end
+function make_plot_ligocvae_losses_cb(state, filename = nothing)
+    function()
+        try
+            plot_time = @elapsed begin
+                @unpack epoch, loss, ELBO, KL = state[:loop]
+                fig = plot(epoch, [loss, ELBO, KL]; label = ["Total Loss" "ELBO" "KL"], lw = 3)
                 !(filename === nothing) && savefig(fig, filename)
                 display(fig)
             end

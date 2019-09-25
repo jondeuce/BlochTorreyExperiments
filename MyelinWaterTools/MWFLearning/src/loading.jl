@@ -358,25 +358,6 @@ function init_data(::PCAProcessing, training_data, testing_data)
 end
 
 # ---------------------------------------------------------------------------- #
-# Data loading utils
-# ---------------------------------------------------------------------------- #
-
-"""
-    verify_settings(settings::Dict)
-"""
-function verify_settings(settings::Dict)
-    # Expand vector properties in model
-    for (k,v) in settings["model"]
-        if v isa AbstractVector
-            for i in 1:length(v)
-                settings["model"][k * string(i)] = v[i]
-            end
-        end
-    end
-    return settings
-end
-
-# ---------------------------------------------------------------------------- #
 # Initialize labels
 # ---------------------------------------------------------------------------- #
 
@@ -416,8 +397,10 @@ function label_fun(s::String, d::Dict)::Float64
         @unpack D_Axon, D_Sheath, D_Tissue = d[:btparams_dict] # D values
         iwf, mwf, ewf = label_fun("iwf", d), label_fun("mwf", d), label_fun("ewf", d) # area fractions
         Dav = (iwf * D_Axon + mwf * D_Sheath + ewf * D_Tissue) # area-weighted average
-    elseif startswith(s, "log") # Logarithm of parameter
-        log10(label_fun(s[4:end], d))
+    elseif startswith(s, "log(") # Logarithm of parameter
+        log10(label_fun(s[5:end-1], d))
+    elseif startswith(s, "sind(") # Sine of angle (in degrees)
+        sind(label_fun(s[6:end-1], d))
     elseif startswith(s, "TE*") # Parameter relative to TE
         label_fun("TE", d) * label_fun(s[4:end], d)
     elseif endswith(s, "/TE") # Parameter relative to TE

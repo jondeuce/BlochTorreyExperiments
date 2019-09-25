@@ -16,7 +16,7 @@ pyplot(size=(800,450))
 
 # Settings
 const settings_file = "settings.toml"
-const settings = verify_settings(TOML.parsefile(settings_file))
+const settings = TOML.parsefile(settings_file)
 
 const DATE_PREFIX = getnow() * "."
 const FILE_PREFIX = DATE_PREFIX * DrWatson.savename(settings["model"]) * "."
@@ -53,14 +53,14 @@ if settings["model"]["problem"] == "forward"; signals, thetas = thetas, signals;
 
 # Construct model
 @info "Constructing model..."
-model = MWFLearning.make_models(settings);
+model = MWFLearning.make_model(settings);
 model = GPU ? Flux.gpu(model) : model;
 model_summary(model, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"));
 param_summary(model, train_set, test_set)
 
 # # Construct model
 # @info "Constructing model..."
-# model, discrm, sampler = MWFLearning.make_models(settings);
+# model, discrm, sampler = MWFLearning.make_model(settings);
 # model  = GPU ? Flux.gpu(model)  : model;
 # discrm = GPU ? Flux.gpu(discrm) : discrm;
 # model_summary(model,  joinpath(savefolders["models"], FILE_PREFIX * "generator.architecture.txt"));
@@ -77,7 +77,7 @@ function getlabelweights()::Union{CVT, Nothing}
         w = (GPU ? Flux.gpu(w) : w) |> CVT
     end
 end
-@unpack loss, accuracy, labelacc = makelosses(model, settings["model"]["loss"], getlabelweights())
+@unpack loss, accuracy, labelacc = make_losses(model, settings["model"]["loss"], getlabelweights())
 
 opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
 # opt = Flux.Momentum(settings["optimizer"]["SGD"]["lr"], settings["optimizer"]["SGD"]["rho"])

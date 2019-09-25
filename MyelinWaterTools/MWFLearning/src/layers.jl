@@ -74,6 +74,24 @@ function (mo::Sumout)(input::AbstractArray)
 end
 
 """
+    VCat(layer)
+`VCat` applys `DenseResize` to all inputs, concatenates the reshaped
+inputs along the first dimension, and forwards the result to `layer`
+"""
+struct VCat{F}
+    layer::F
+end
+Base.show(io::IO, v::VCat) = print(io, "VCat()")
+
+Flux.@treelike VCat
+
+function (v::VCat)(xs...)
+    DR = DenseResize()
+    y = vcat(DR.(xs)...)
+    return v.layer(y)
+end
+
+"""
 ChannelwiseDense
 """
 ChannelwiseDense(H::Int, ch::Pair, σ = identity) = Flux.Chain(DenseResize(), Flux.Dense(H*ch[1], H*ch[2], σ), ChannelResize(ch[2]))
@@ -254,16 +272,22 @@ DenseFeatureFusion(G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,1), σ = Flux.
 """
 Print model/layer
 """
-function model_summary(io::IO, model, filename = nothing; kwargs...)
+function model_summary(io::IO, models::AbstractArray; kwargs...)
+    for (i,m) in enumerate(models)
+        _model_summary(io, m; kwargs...)
+        _model_parameters(io, m)
+        (i < length(models)) && println(io, "")
+    end
+end
+function model_summary(models::AbstractArray, filename = nothing; kwargs...)
     @info "Model summary..."
     (filename != nothing) && open(filename, "w") do file
-        _model_summary(file, model; kwargs...)
-        _model_parameters(file, model)
+        model_summary(file, models; kwargs...)
     end
-    _model_summary(io, model; kwargs...)
-    _model_parameters(io, model)
+    model_summary(stdout, models; kwargs...)
 end
-model_summary(model, filename = nothing; kwargs...) = model_summary(stdout, model, filename; kwargs...)
+model_summary(model, filename = nothing; kwargs...) =
+    model_summary([model], filename; kwargs...)
 
 """
 Print model parameters following `_model_summary`
@@ -327,7 +351,15 @@ function _model_summary(io::IO, model::Sumout, depth::Int = 0; kwargs...)
     print(io, getindent(depth) * ")")
 end
 
-# Fallback method
+# SkipConnection
+function _model_summary(io::IO, model::VCat, depth::Int = 0; kwargs...)
+    println(io, getindent(depth) * "VCat(")
+    _model_summary(io, model.layer, depth+1; kwargs...)
+    println(io, "")
+    print(io, getindent(depth) * ")")
+end
+
+# Functions
 function _model_summary(io::IO, model::Function, depth::Int = 0; kwargs...)
     print(io, getindent(depth) * "@λ ")
     print(io, model)
