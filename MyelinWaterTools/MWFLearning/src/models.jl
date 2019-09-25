@@ -798,7 +798,6 @@ end
 Flux.@treelike LIGOCVAE
 Base.show(io::IO, m::LIGOCVAE) = model_summary(io, [m.E1, m.E2, m.D])
 
-resizevcat(x,y) = vcat(DenseResize()(x), DenseResize()(y))
 split_mean_std(μ) = (half = size(μ,1)÷2; return tuple(μ[1:half, ..], μ[half+1:end, ..]))
 sample_mv_normal(μ) = sample_mv_normal(split_mean_std(μ)...)
 sample_mv_normal(μ0::AbstractArray{T}, σ::AbstractArray{T}) where {T} = μ0 .+ σ .* randn(T, size(σ)) # Must pass `T` explicity; `eltype` returns `TrackedReal`
@@ -814,35 +813,35 @@ function (m::LIGOCVAE)(y)
 end
 
 # Cross-entropy loss function
-function H_LIGOCVAE(m::LIGOCVAE, x, y)
+function H_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where {T}
     μr0, σr = split_mean_std(m.E1(y))
     μq0, σq = split_mean_std(m.E2(x,y))
     zq = sample_mv_normal(μq0, σq)
     μx0, σx = split_mean_std(m.D(zq,y))
 
     σr2, σq2, σx2 = σr.^2, σq.^2, σx.^2 # Intermediate variables
-    KLdiv = mean(sum((σq2 .+ (μr0 .- μq0).^2) ./ σr2 .+ log.(σr2 ./ σq2); dims = 1)./2 .- size(zq,1)/2) # KL-divergence contribution to cross-entropy
-    ELBO = mean(sum(log.(σx2) .+ (x .- μx0).^2 ./ σx2; dims = 1)./2 .+ size(zq,1)*log(2π)/2) # Negative log-likelihood/ELBO contribution to cross-entropy
+    KLdiv = mean(sum((σq2 .+ (μr0 .- μq0).^2) ./ σr2 .+ log.(σr2 ./ σq2); dims = 1))/2 - T(size(zq,1)/2) # KL-divergence contribution to cross-entropy
+    ELBO = mean(sum(log.(σx2) .+ (x .- μx0).^2 ./ σx2; dims = 1))/2 + T(size(zq,1)*log(2π)/2) # Negative log-likelihood/ELBO contribution to cross-entropy
 
     return ELBO + KLdiv
 end
 
 # Negative log-likelihood/ELBO loss function
-function L_LIGOCVAE(m::LIGOCVAE, x, y)
+function L_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where {T}
     μq0, σq = split_mean_std(m.E2(x,y))
     zq = sample_mv_normal(μq0, σq)
     μx0, σx = split_mean_std(m.D(zq,y))
     σx2 = σx.^2
-    ELBO = mean(sum(log.(σx2) .+ (x .- μx0).^2 ./ σx2; dims = 1)./2 .+ size(zq,1)*log(2π)/2)
+    ELBO = mean(sum(log.(σx2) .+ (x .- μx0).^2 ./ σx2; dims = 1))/2 + T(size(zq,1)*log(2π)/2)
     return ELBO
 end
 
 # KL-divergence contribution to cross-entropy
-function KL_LIGOCVAE(m::LIGOCVAE, x, y)
+function KL_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where {T}
     μr0, σr = split_mean_std(m.E1(y))
     μq0, σq = split_mean_std(m.E2(x,y))
     σr2, σq2 = σr.^2, σq.^2
-    KLdiv = mean(sum((σq2 .+ (μr0 .- μq0).^2) ./ σr2 .+ log.(σr2 ./ σq2); dims = 1)./2 .- size(μq0,1)/2)
+    KLdiv = mean(sum((σq2 .+ (μr0 .- μq0).^2) ./ σr2 .+ log.(σr2 ./ σq2); dims = 1))/2 - T(size(μq0,1)/2)
     return KLdiv
 end
 
@@ -869,32 +868,29 @@ function DenseLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int 
     MvNormalSampler() = @λ(μ -> sample_mv_normal(μ))
 
     # Data/feature encoder r_θ1(z|y): y -> μ_r = (μ_r0, σ_r^2)
+    NE1 = [Ny*Cy, 32, 2*Zdim]
     E1 = Flux.Chain(
         DenseResize(),
-        Flux.Dense(Ny*Cy, 64, actfun),
-        Flux.Dense(64, 64, actfun),
-        Flux.Dense(64, 2*Zdim, actfun),
+        [Flux.Dense(NE1[i], NE1[i+1], actfun) for i in 1:length(NE1)-1]...,
         SoftplusStd(),
     )
 
     # Data/feature + parameter/label encoder q_φ(z|x,y): (x,y) -> μ_q = (μ_q0, σ_q^2)
+    NE2 = [Nx + Ny*Cy, 32, 2*Zdim]
     E2 = VCat(
         Flux.Chain(
             XYScale(),
-            Flux.Dense(Nx + Ny*Cy, 64, actfun),
-            Flux.Dense(64, 64, actfun),
-            Flux.Dense(64, 2*Zdim, actfun),
+            [Flux.Dense(NE2[i], NE2[i+1], actfun) for i in 1:length(NE2)-1]...,
             SoftplusStd(),
         )
     )
 
     # Latent space + data/feature decoder r_θ2(x|z,y): (z,y) -> μ_x = (μ_x0, σ_x^2)
+    ND = [Zdim + Ny*Cy, 32, 2*Nx]
     D = VCat(
         Flux.Chain(
             DenseResize(),
-            Flux.Dense(Zdim + Ny*Cy, 64, actfun),
-            Flux.Dense(64, 64, actfun),
-            Flux.Dense(64, 2*Nx, actfun),
+            [Flux.Dense(ND[i], ND[i+1], actfun) for i in 1:length(ND)-1]...,
             SoftplusStd(),
             MuStdScale(),
         )
@@ -902,96 +898,4 @@ function DenseLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int 
 
     m = LIGOCVAE(E1, E2, D)
     return @ntuple(m)
-end
-
-
-function _DenseLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
-        Zdim :: Int = 10, # Latent variable dimensions
-        act  :: Symbol = :leakyrelu, # Activation function
-    ) where {T}
-    
-    Ny, Cy, Nx = nfeatures, nchannels, nlabels
-    actfun = make_activation(act)
-
-    ParamsScale() = Flux.Diagonal(labwidth, labmean) # Scales approx [-0.5,0.5] to param range
-    InverseParamsScale() = Flux.Diagonal(inv.(labwidth), .-labmean./labwidth) # Scales param range to approx [-1,1]
-    xscaledown = InverseParamsScale()
-    xscaleup = ParamsScale()
-
-    SoftplusStd() = @λ(μ -> softplus_std(μ) .+ eltype(μ)(1e-2))
-    MvNormalSampler() = @λ(μ -> sample_mv_normal(μ))
-
-    # Data/feature encoder r_θ1(z|y): y -> μ_r = (μ_r0, σ_r^2)
-    E1 = Flux.Chain(
-        DenseResize(),
-        Flux.Dense(Ny*Cy, 64, actfun),
-        Flux.Dense(64, 64, actfun),
-        Flux.Dense(64, 2*Zdim, actfun),
-        SoftplusStd(),
-    )
-
-    # Data/feature + parameter/label encoder q_φ(z|x,y): (x,y) -> μ_q = (μ_q0, σ_q^2)
-    E2 = Flux.Chain(
-        DenseResize(),
-        Flux.Dense(Nx + Ny*Cy, 64, actfun),
-        Flux.Dense(64, 64, actfun),
-        Flux.Dense(64, 2*Zdim, actfun),
-        SoftplusStd(),
-    )
-
-    # Latent space + data/feature decoder r_θ2(x|z,y): (z,y) -> μ_x = (μ_x0, σ_x^2)
-    D = Flux.Chain(
-        DenseResize(),
-        Flux.Dense(Zdim + Ny*Cy, 64, actfun),
-        Flux.Dense(64, 64, actfun),
-        Flux.Dense(64, 2*Nx, actfun),
-        SoftplusStd(),
-    )
-
-    # Cross-entropy loss function
-    function H(x,y,E1,E2,D)
-        x = xscaledown(x)
-        μr0, σr = E1(y) |> split_mean_std
-        μq0, σq = E2(resizevcat(x,y)) |> split_mean_std
-        zq = sample_mv_normal(μq0, σq)
-        μx0, σx = D(resizevcat(zq,y)) |> split_mean_std
-
-        σr2, σq2, σx2 = σr.^2, σq.^2, σx.^2 # Intermediate variables
-        KLdiv = sum((σq2 .+ (μr0 .- μq0).^2) ./ σr2 .+ log.(σr2 ./ σq2); dims = 1)./2 .- Zdim/2 |> mean # KL-divergence contribution to cross-entropy
-        ELBO = sum(log.(σx2) .+ (x .- μx0).^2 ./ σx2; dims = 1)./2 .+ Zdim*log(2π)/2 |> mean # Negative log-likelihood/ELBO contribution to cross-entropy
-
-        return ELBO + KLdiv
-    end
-
-    # Negative log-likelihood/ELBO loss function
-    function L(x,y,E2,D)
-        x = xscaledown(x)
-        μq0, σq = E2(resizevcat(x,y)) |> split_mean_std
-        zq = sample_mv_normal(μq0, σq)
-        μx0, σx = D(resizevcat(zq,y)) |> split_mean_std
-        σx2 = σx.^2
-        ELBO = sum(log.(σx2) .+ (x .- μx0).^2 ./ σx2; dims = 1)./2 .+ Zdim*log(2π)/2 |> mean
-        return ELBO
-    end
-
-    # KL-divergence contribution to cross-entropy
-    function KL(x,y,E1,E2)
-        x = xscaledown(x)
-        μr0, σr = E1(y) |> split_mean_std
-        μq0, σq = E2(resizevcat(x,y)) |> split_mean_std
-        σr2, σq2 = σr.^2, σq.^2
-        KLdiv = sum((σq2 .+ (μr0 .- μq0).^2) ./ σr2 .+ log.(σr2 ./ σq2); dims = 1)./2 .- Zdim/2 |> mean
-        return KLdiv
-    end
-
-    # Model for testing
-    function m(y,E1,D)
-        μr0, σr = E1(y) |> Flux.data |> split_mean_std
-        zr = sample_mv_normal(μr0, σr)
-        μx0, σx = D(resizevcat(zr,y)) |> Flux.data |> split_mean_std
-        x = sample_mv_normal(μx0, σx)
-        return xscaleup(x)
-    end
-
-    return @ntuple(E1, E2, D, H, L, KL, m)
 end

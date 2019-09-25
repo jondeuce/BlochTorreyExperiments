@@ -398,8 +398,8 @@ function make_plot_ligocvae_losses_cb(state, filename = nothing)
     function()
         try
             plot_time = @elapsed begin
-                @unpack epoch, loss, ELBO, KL = state[:loop]
-                fig = plot(epoch, [loss, ELBO, KL]; label = ["Total Loss" "ELBO" "KL"], lw = 3)
+                @unpack epoch, ELBO, KL, loss = state[:loop]
+                fig = plot(epoch, [ELBO, KL, loss]; label = ["ELBO" "KL" "Total Loss"], lw = 3, c = [:blue :orange :green])
                 !(filename === nothing) && savefig(fig, filename)
                 display(fig)
             end

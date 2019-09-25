@@ -42,7 +42,7 @@ Zdim      = 15
 act       = "leakyrelu"
 
 [optimizer]
-epochs  = 5000
+epochs  = 10000
 savemod = 1
 testmod = 1
 [optimizer.ADAM]
