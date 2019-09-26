@@ -22,7 +22,6 @@ function prepare_data(settings::Dict)
     filter!(filter_bad_data, training_data_dicts)
     filter!(filter_bad_data, testing_data_dicts)
 
-    SNR = settings["data"]["preprocess"]["SNR"]
     training_thetas = init_labels(settings, training_data_dicts)
     testing_thetas = init_labels(settings, testing_data_dicts)
     @assert size(training_thetas, 1) == size(testing_thetas, 1)
@@ -101,7 +100,7 @@ prepare_data(settings_file::String) = prepare_data(TOML.parsefile(settings_file)
 function init_data(::SignalChunkingProcessing, settings::Dict, ds::AbstractVector{<:Dict})
     T, TC = Float64, ComplexF64
     VT, VC, MT, MC = Vector{T}, Vector{TC}, Matrix{T}, Matrix{TC}
-    SNR       = settings["data"]["preprocess"]["SNR"] :: VT
+    SNR   = settings["data"]["preprocess"]["SNR"] :: VT
     chunk = settings["data"]["preprocess"]["chunk"]["size"] :: Int
 
     PLOT_COUNT, PLOT_LIMIT = 0, 3
@@ -136,7 +135,7 @@ function init_data(::SignalChunkingProcessing, settings::Dict, ds::AbstractVecto
         z       = cplx_signal(signals, nTE) :: VC
         Z       = repeat(z, 1, length(SNR))
         for j in 1:length(SNR)
-            add_noise!(@views(Z[:,j]), z, SNR[j])
+            add_gaussian!(@views(Z[:,j]), z, SNR[j])
         end
         # b       = abs.(Z ./ Z[1:1, ..]) :: MT
         b       = abs.(Z) :: MT
@@ -171,7 +170,7 @@ function init_data(::SignalZipperProcessing, settings::Dict, ds::AbstractVector{
         z   = cplx_signal(complex.(transverse.(d[:signals])) :: VC, nTE) :: VC
         Z   = repeat(z, 1, length(SNR)) :: MC
         for j in 1:length(SNR)
-            add_noise!(@views(Z[:,j]), z, SNR[j])
+            add_gaussian!(@views(Z[:,j]), z, SNR[j])
         end
 
         # mag = abs.(Z ./ Z[1:1,..]) :: MT
@@ -227,7 +226,7 @@ function init_data(::iLaplaceProcessing, settings::Dict, ds::AbstractVector{<:Di
         z       = cplx_signal(signals, nTE) :: VC
         Z       = bufdict[nTE].Z :: MC
         for j in 1:length(SNR)
-            add_noise!(@views(Z[:,j]), z, SNR[j])
+            add_gaussian!(@views(Z[:,j]), z, SNR[j])
         end
         # b       = abs.(Z ./ Z[1:1, ..]) :: MT
         b       = abs.(Z) :: MT
@@ -331,7 +330,7 @@ function init_data(::WaveletProcessing, settings::Dict, ds::AbstractVector{<:Dic
         z = cplx_signal(signals, nTE) :: VC
         Z = repeat(z, 1, length(SNR)) :: MC
         for j in 1:length(SNR)
-            add_noise!(@views(Z[:,j]), z, SNR[j])
+            add_gaussian!(@views(Z[:,j]), z, SNR[j])
         end
         # b = abs.(Z ./ Z[1:1, ..]) :: MT
         b = abs.(Z) :: MT

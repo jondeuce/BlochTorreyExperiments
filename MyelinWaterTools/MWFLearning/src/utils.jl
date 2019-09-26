@@ -173,26 +173,39 @@ snr(x, n; dims = 1) = 10 .* log10.(sum(abs2, x; dims = dims) ./ sum(abs2, n; dim
     noise_level(z, SNR)
 
 Standard deviation of gaussian noise with a given `SNR` level, proportional to the first time point.
-    Note: `SNR = 0` is special cased to return a noise level of zero.
+    Note: `SNR` ≤ 0 is special cased to return a noise level of zero.
 """
-noise_level(z::AbstractVecOrMat{T}, SNR::Number) where {T} =
-    SNR == 0 ? 0 .* z[1:1, ..] : sqrt.(abs2.(z[1:1, ..]) ./ T(10^(SNR/10))) # Same for both real and complex
+noise_level(z::AbstractArray{T}, SNR::Number) where {T} =
+    SNR ≤ 0 ? 0 .* z[1:1, ..] : abs.(z[1:1, ..]) ./ T(10^(SNR/20)) # Works for both real and complex
+
+gaussian_noise(z::AbstractArray, SNR) = noise_level(z, SNR) .* randn(eltype(z), size(z))
 
 """
-    add_noise(z, SNR)
+    add_gaussian(z, SNR)
 
 Add gaussian noise with signal-to-noise ratio `SNR` proportional to the first time point.
 """
-add_noise!(out::AbstractVecOrMat, z::AbstractVecOrMat, SNR) = out .= z .+ noise_level(z, SNR) .* randn(eltype(z), size(z))
-add_noise!(z::AbstractVecOrMat, SNR) = add_noise!(z, z, SNR)
-add_noise(z::AbstractVecOrMat, SNR) = add_noise!(copy(z), z, SNR)
+add_gaussian!(out::AbstractArray, z::AbstractArray, SNR) = (out .= z .+ gaussian_noise(z, SNR); return out)
+add_gaussian!(z::AbstractArray, SNR) = (z .+= gaussian_noise(z, SNR); return z)
+add_gaussian(z::AbstractArray, SNR) = add_gaussian!(copy(z), z, SNR)
+
+"""
+    add_rician(z, SNR)
+
+Add rician noise with signal-to-noise ratio `SNR` proportional to the first time point.
+Always returns a real array.
+"""
+add_rician(m::AbstractArray{<:Real}, SNR) = add_rician(complex(m), SNR)
+add_rician(z::AbstractArray{<:Complex}, SNR) = abs.(add_gaussian(z, SNR))
+# add_rician(m::AbstractArray{<:Real}, SNR) = add_rician!(copy(m), SNR)
+# add_rician!(m::AbstractArray{<:Real}, SNR) = (gr = inv(√2) * gaussian_noise(m, SNR); gi = inv(√2) * gaussian_noise(m, SNR); m .= sqrt.(abs2.(m.+gr) .+ abs2.(gi)); return m)
 
 """
     myelin_prop(...)
 """
 function myelin_prop(
-        mwf::T    = T(0.25),
-        iewf::T   = T(1 - mwf),
+        mwf::T    = T(0.2),
+        iewf::T   = T(1-mwf),
         rT2iew::T = T(63e-3/10e-3),
         rT2mw::T  = T(15e-3/10e-3),
         alpha::T  = T(170.0),
@@ -345,7 +358,7 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "", labellege
         labelerr = permutedims(reduce(hcat, labelerr))
         labelcolor = permutedims(RGB[cgrad(:darkrainbow)[z] for z in range(0.0, 1.0, length = size(labelerr,2))])
         p1 = plot(epoch, loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",                      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright,   ylim = (minimum(loss), quantile(loss, 0.95)))
-        p2 = plot(epoch, acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)",                 lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,    ylim = (clamp(maximum(acc), 50, 99) - 0.5, 100))
+        p2 = plot(epoch, acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)",                 lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,    ylim = (clamp(maximum(acc), 50, 99) - 5.0, 100))
         p3 = plot(epoch, labelerr; title = "Label Error ($k: rel. %)",                                     c = labelcolor, lw = 3, titlefontsize = 10, label = labelnames, legend = labellegend, ylim = (max(0, minimum(vec(labelerr)) - 1.0), min(50, 1.2 * maximum(labelerr[end,:])))) #min(50, quantile(vec(labelerr), 0.90))
         (k == :testing) && plot!(p2, state[:loop][:epoch], state[:loop][:acc]; label = "loop acc", lw = 2)
         plot(p1, p2, p3; layout = (1,3))
@@ -399,7 +412,10 @@ function make_plot_ligocvae_losses_cb(state, filename = nothing)
         try
             plot_time = @elapsed begin
                 @unpack epoch, ELBO, KL, loss = state[:loop]
-                fig = plot(epoch, [ELBO, KL, loss]; label = ["ELBO" "KL" "Total Loss"], lw = 3, c = [:blue :orange :green])
+                fig = plot(epoch, [ELBO, KL, loss];
+                    title = L"Cross-entropy Loss $H$ vs. Epoch",
+                    label = [L"ELBO" L"KL" L"H = ELBO + KL"],
+                    legend = :best, lw = 3, c = [:blue :orange :green])
                 !(filename === nothing) && savefig(fig, filename)
                 display(fig)
             end

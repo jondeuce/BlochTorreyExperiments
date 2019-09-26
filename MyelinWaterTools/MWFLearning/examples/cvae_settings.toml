@@ -15,24 +15,26 @@ nchannels   = "auto" # Number of input data channels
 nlabels     = "auto" # Number of output labels
 labmean     = "auto" # Label means
 labwidth    = "auto" # Label distribution widths
-labnames    = ["mwf", "sind(alpha)"] # Target labels
-labweights  = [1.0, 1.0] # Weights for loss function
-labscale    = [100.0, 1.0] # scale labels before plotting
-labunits    = ["%", "sind(deg)"] # label units, after scaling
-# labnames    = ["mwf", "iewf", "T2iew/TE", "T2mw/TE", "alpha", "log(TE*K)", "T1iew/TE", "T1mw/TE"] # Target labels
-# labweights  = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
-# labscale    = [100.0, 100.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
-# labunits    = ["%", "%", "ms/ms", "ms/ms", "deg", "log(s*um/s)", "ms/ms", "ms/ms"] # label units, after scaling
+# labnames    = ["T2iew/TE", "alpha"] # Target labels
+# labweights  = [1.0, 1.0] # Weights for loss function
+# labscale    = [1.0, 1.0] # scale labels before plotting
+# labunits    = ["s/s", "°"] # label units, after scaling
+labnames    = ["mwf", "iewf", "T2iew/TE", "T2mw/TE", "alpha", "log(TE*K)", "T1iew/TE", "T1mw/TE"] # Target labels
+labweights  = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
+labscale    = [100.0, 100.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
+labunits    = ["%", "%", "s/s", "s/s", "°", "log(s*um/s)", "s/s", "s/s"] # label units, after scaling
 [data.filter]
 labnames    = [ "K",  "nTE" ]
 lower       = [ 0.00,  32.0 ]
 upper       = [ 1.00,  48.0 ]
 [data.preprocess]
 shuffle     = true
-SNR         = [50.0, 0.0] # Additive random noise
+SNR         = [0.0] # Gaussian noise on complex signal (0 == no noise)
 [data.preprocess.chunk]
 apply       = true
 size        = 32
+[data.postprocess]
+SNR         = 50.0 # Rician noise on magnitude signal (0 == no noise)
 
 [model]
 loss      = "l2"
@@ -42,7 +44,7 @@ Zdim      = 15
 act       = "leakyrelu"
 
 [optimizer]
-epochs  = 10000
+epochs  = 100000
 savemod = 1
 testmod = 1
 [optimizer.ADAM]

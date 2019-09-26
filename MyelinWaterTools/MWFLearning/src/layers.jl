@@ -76,20 +76,49 @@ end
 """
     VCat(layer)
 `VCat` applys `DenseResize` to all inputs, concatenates the reshaped
-inputs along the first dimension, and forwards the result to `layer`
+inputs along the first dimension, and forwards the result to `layer`.
 """
 struct VCat{F}
     layer::F
 end
-Base.show(io::IO, v::VCat) = print(io, "VCat()")
+Base.show(io::IO, v::VCat) = print(io, "VCat()") #TODO
 
 Flux.@treelike VCat
 
-function (v::VCat)(xs...)
+function (v::VCat)(xs::Tuple)
     DR = DenseResize()
     y = vcat(DR.(xs)...)
     return v.layer(y)
 end
+(v::VCat)(xs...) = v(xs)
+
+"""
+    MultiChain(layer)
+`MultiChain` applys input functions `fs` to all inputs, collecting the
+results as a tuple, forwarding this tuple to `layer`.
+"""
+struct MultiChain{FS<:Tuple,F}
+    fs::FS
+    layer::F
+    MultiChain(fs::Tuple, layer) = new{typeof(fs),typeof(layer)}(fs, layer)
+end
+Flux.@treelike MultiChain
+
+function MultiChain(args...)
+    @assert length(args) ≥ 2
+    MultiChain(args[1:end-1], args[end])
+end
+MultiChain(Nin::Int, layer) = MultiChain(ntuple(i -> identity, Nin), layer)
+
+Base.show(io::IO, m::MultiChain) = print(io, "MultiChain()") #TODO
+
+mc_call(fs::Tuple, xs::Tuple) = (first(fs)(first(xs)), mc_call(Base.tail(fs), Base.tail(xs))...)
+mc_call(fs::Tuple{}, xs::Tuple{}) = () # base case
+function (m::MultiChain)(xs::Tuple)
+    y = mc_call(m.fs, xs)
+    return m.layer(y)
+end
+(m::MultiChain)(xs...) = m(xs)
 
 """
 ChannelwiseDense
@@ -159,7 +188,7 @@ function BatchConvConnection(
         groupnorm::Bool = false,
         batchnorm::Bool = false,
     )
-    @assert numlayers >= 2
+    @assert numlayers >= 2 && !(groupnorm && batchnorm)
     CV(ch, σ = identity) = Flux.Conv(k, ch, σ; init = xavier_uniform, pad = (k.-1).÷2)
     BN(C,  σ = identity) = batchnorm ? Flux.BatchNorm(C, σ) : groupnorm ? Flux.GroupNorm(C, C÷2, σ) : identity
     AF() = @λ x -> σ.(x)
@@ -351,7 +380,19 @@ function _model_summary(io::IO, model::Sumout, depth::Int = 0; kwargs...)
     print(io, getindent(depth) * ")")
 end
 
-# SkipConnection
+# MultiChain
+function _model_summary(io::IO, model::MultiChain, depth::Int = 0; kwargs...)
+    println(io, getindent(depth) * "MultiChain(")
+    for (i,f) in enumerate(model.fs)
+        _model_summary(io, f, depth+1; kwargs...)
+        println(io, ",")
+    end
+    _model_summary(io, model.layer, depth+1; kwargs...)
+    println(io, "")
+    print(io, getindent(depth) * ")")
+end
+
+# VCat
 function _model_summary(io::IO, model::VCat, depth::Int = 0; kwargs...)
     println(io, getindent(depth) * "VCat(")
     _model_summary(io, model.layer, depth+1; kwargs...)

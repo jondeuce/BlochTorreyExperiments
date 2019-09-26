@@ -52,12 +52,13 @@ model_summary(m, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt
 param_summary(m, train_data, test_data);
 
 # Loss and accuracy function
-thetaweights()::CVT = inv.(settings["data"]["info"]["labwidth"]) .* unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT |> maybegpu |> CVT
-trainloss = @λ (d...) -> MWFLearning.H_LIGOCVAE(m, d...)
-testloss, testacc, testlabelacc = make_losses(m, settings["model"]["loss"], thetaweights())
+theta_weights()::CVT = inv.(settings["data"]["info"]["labwidth"]) .* unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT |> maybegpu |> CVT
+datanoise = (snr = T(settings["data"]["postprocess"]["SNR"]); snr ≤ 0 ? identity : @λ(y -> MWFLearning.add_rician(y, snr)))
+trainloss = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, datanoise(y))
+testloss, testacc, testlabelacc = make_losses(@λ(y -> m(datanoise(y); nsamples = 10)), settings["model"]["loss"], theta_weights())
 
 # Optimizer
-opt = Flux.ADAM(1e-3, (0.9, 0.999))
+opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
 lrfun(e) = MWFLearning.fixedlr(e,opt)
 
 # Global training state, accumulators, etc.
@@ -89,16 +90,16 @@ pretraincbs = Flux.Optimise.runall([
 ])
 
 posttraincbs = Flux.Optimise.runall([
-    epochthrottle(test_err_cb, state, 5),
-    epochthrottle(train_err_cb, state, 5),
-    epochthrottle(plot_errs_cb, state, 5),
-    # Flux.throttle(checkpoint_state_cb, 60),
+    epochthrottle(test_err_cb, state, 25),
+    epochthrottle(train_err_cb, state, 25),
+    epochthrottle(plot_errs_cb, state, 25),
+    epochthrottle(checkpoint_state_cb, state, 25),
     # Flux.throttle(checkpoint_model_opt_cb, 120),
 ])
 
 loopcbs = Flux.Optimise.runall([
     save_best_model_cb,
-    epochthrottle(plot_ligocvae_losses_cb, state, 5),
+    epochthrottle(plot_ligocvae_losses_cb, state, 25),
 ])
 
 # Training Loop
@@ -148,8 +149,8 @@ prediction_hist = function()
         units = settings["data"]["info"]["labunits"][i]
         err = scale .* (model_thetas[i,:] .- true_thetas[i,:])
         histogram(err;
-            grid = true, minorgrid = true, titlefontsize = 10,
-            label = settings["data"]["info"]["labnames"][i] * " ($units)",
+            grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
+            label = settings["data"]["info"]["labnames"][i] * " [$units]",
             title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
         )
     end
@@ -157,15 +158,15 @@ prediction_hist = function()
 end
 @info "Plotting prediction histograms..."
 fig = prediction_hist(); display(fig)
-# savefig(fig, "plots/" * FILE_PREFIX * "labelhistograms.png")
+savefig(fig, "plots/" * FILE_PREFIX * "theta.histogram.png")
 
 prediction_scatter = function()
     pred_scatter = function(i)
         scale = settings["data"]["info"]["labscale"][i]
         units = settings["data"]["info"]["labunits"][i]
         p = scatter(scale .* true_thetas[i,:], scale .* model_thetas[i,:];
-            marker = :circle, grid = true, minorgrid = true, titlefontsize = 10,
-            label = settings["data"]["info"]["labnames"][i] * " ($units)",
+            marker = :circle, grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
+            label = settings["data"]["info"]["labnames"][i] * " [$units]",
             # title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
         )
         plot!(p, identity, ylims(p)...; line = (:dash, 2, :red), label = L"y = x")
