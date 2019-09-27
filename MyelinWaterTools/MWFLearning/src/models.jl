@@ -827,22 +827,10 @@ function (m::LIGOCVAE)(y; nsamples::Int = 100)
     for i in 1:nsamples-1
         x .+= sample_rθ_posterior(μr0, σr)
     end
-    x ./= nsamples
+    (nsamples > 1) && (x ./= nsamples)
 
     Flux.testmode!(m, false)
     return x
-
-    # Zr = sample_mv_normal(μr0, σr, nsamples)
-    # Y  = repeat(DenseResize()(y), 1, 1, nsamples)
-    # Zr = reshape(permutedims(Zr, (1,3,2)), size(Zr,1), :)
-    # Y  = reshape(permutedims(Y,  (1,3,2)), size(Y,1),  :)
-    
-    # μx0, σx = m.D(Zr,Y) |> Flux.data |> split_mean_std
-    # x  = sample_mv_normal(μx0, σx)
-    # x  = reshape(x, size(x,1), nsamples, :)
-    # x  = reshape(mean(x; dims=2), size(x,1), :)
-
-    # return x
 end
 
 # Cross-entropy loss function

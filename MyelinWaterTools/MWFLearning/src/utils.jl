@@ -328,39 +328,60 @@ function epochthrottle(f, state, epoch_rate)
     end
 end
 
-function make_test_err_cb(state, loss, accuracy, labelacc, test_set)
+function log10ticks(a, b; baseticks = 1:10)
+    l, u = floor(Int, log10(a)), ceil(Int, log10(b))
+    ticks = unique!(vcat([10.0^x .* baseticks for x in l:u]...))
+    return filter!(x -> a ≤ x ≤ b, ticks)
+end
+function slidingindices(epoch, window = 100)
+    i1_window = findfirst(e -> e ≥ epoch[end] - window + 1, epoch)
+    i1_first  = findfirst(e -> e ≥ window, epoch)
+    (i1_first === nothing) && (i1_first = 1)
+    return min(i1_window, i1_first) : length(epoch)
+end
+
+function make_test_err_cb(state, lossfun, accfun, laberrfun, test_set)
     function()
         update_time = @elapsed begin
-            currloss, curracc, currlaberr = Flux.cpu(Flux.data(loss(test_set...))), Flux.cpu(Flux.data(accuracy(test_set...))), Flux.cpu(Flux.data(labelacc(test_set...)))
+            pushx!(d) = x -> push!(d, x)
             push!(state[:callbacks][:testing][:epoch], state[:epoch])
-            push!(state[:callbacks][:testing][:loss], currloss)
-            push!(state[:callbacks][:testing][:acc], curracc)
-            push!(state[:callbacks][:testing][:labelerr], currlaberr)
+            Flux.cpu(Flux.data(lossfun(test_set...)))   |> pushx!(state[:callbacks][:testing][:loss])
+            Flux.cpu(Flux.data(accfun(test_set...)))    |> pushx!(state[:callbacks][:testing][:acc])
+            Flux.cpu(Flux.data(laberrfun(test_set...))) |> pushx!(state[:callbacks][:testing][:labelerr])
         end
         @info @sprintf("[%d] -> Updating testing error... (%d ms)", state[:epoch], 1000 * update_time)
     end
 end
-function make_train_err_cb(state, loss, accuracy, labelacc, train_set)
+function make_train_err_cb(state, lossfun, accfun, laberrfun, train_set)
     function()
         update_time = @elapsed begin
-            currloss, curracc, currlaberr = mean([Flux.cpu(Flux.data(loss(b...))) for b in train_set]), mean([Flux.cpu(Flux.data(accuracy(b...))) for b in train_set]), mean([Flux.cpu(Flux.data(labelacc(b...))) for b in train_set])
+            pushx!(d) = x -> push!(d, x)
             push!(state[:callbacks][:training][:epoch], state[:epoch])
-            push!(state[:callbacks][:training][:loss], currloss)
-            push!(state[:callbacks][:training][:acc], curracc)
-            push!(state[:callbacks][:training][:labelerr], currlaberr)
+            mean([Flux.cpu(Flux.data(lossfun(b...)))   for b in train_set]) |> pushx!(state[:callbacks][:training][:loss])
+            mean([Flux.cpu(Flux.data(accfun(b...)))    for b in train_set]) |> pushx!(state[:callbacks][:training][:acc])
+            mean([Flux.cpu(Flux.data(laberrfun(b...))) for b in train_set]) |> pushx!(state[:callbacks][:training][:labelerr])
         end
         @info @sprintf("[%d] -> Updating training error... (%d ms)", state[:epoch], 1000 * update_time)
     end
 end
-function make_plot_errs_cb(state, filename = nothing; labelnames = "", labellegend = nothing)
+function make_plot_errs_cb(state, filename = nothing; labelnames = "")
     function err_subplots(k,v)
         @unpack epoch, loss, acc, labelerr = v
-        labelerr = permutedims(reduce(hcat, labelerr))
-        labelcolor = permutedims(RGB[cgrad(:darkrainbow)[z] for z in range(0.0, 1.0, length = size(labelerr,2))])
-        p1 = plot(epoch, loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",                      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright,   ylim = (minimum(loss), quantile(loss, 0.95)))
-        p2 = plot(epoch, acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)",                 lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,    ylim = (clamp(maximum(acc), 50, 99) - 5.0, 100))
-        p3 = plot(epoch, labelerr; title = "Label Error ($k: rel. %)",                                     c = labelcolor, lw = 3, titlefontsize = 10, label = labelnames, legend = labellegend, ylim = (max(0, minimum(vec(labelerr)) - 1.0), min(50, 1.2 * maximum(labelerr[end,:])))) #min(50, quantile(vec(labelerr), 0.90))
-        (k == :testing) && plot!(p2, state[:loop][:epoch], state[:loop][:acc]; label = "loop acc", lw = 2)
+        idx = slidingindices(epoch)
+        epoch, loss, acc, labelerr = epoch[idx], loss[idx], acc[idx], labelerr[idx,:]
+        
+        laberr = permutedims(reduce(hcat, labelerr))
+        labcol = permutedims(RGB[cgrad(:darkrainbow)[z] for z in range(0.0, 1.0, length = size(laberr,2))])
+        minloss, maxacc = round(minimum(loss); sigdigits = 4), round(maximum(acc); sigdigits = 4)
+        commonkw = (xscale = :log10, xticks = log10ticks(epoch[1], epoch[end]), xrotation = 75.0, xformatter = x->string(round(Int,x)), lw = 3, legend = :best, titlefontsize = 8, tickfontsize = 6, legendfontsize = 6)
+
+        p1 = plot(epoch, loss;   title = "Loss ($k: min = $minloss)", label = "loss", ylim = (minloss, quantile(loss, 0.95)), commonkw...)
+        p2 = plot(epoch, acc;    title = "Accuracy ($k: peak = $maxacc%)", label = "acc", yticks = 50:0.1:100, ylim = (clamp(maxacc, 50, 99) - 1.0, min(maxacc + 0.5, 100.0)), commonkw...)
+        p3 = plot(epoch, laberr; title = "Label Error ($k: rel. %)", label = labelnames, c = labcol, yticks = 0:100, ylim = (max(0, minimum(laberr) - 1.0), min(50, 1.2 * maximum(laberr[end,:]))), commonkw...) #min(50, quantile(vec(laberr), 0.90))
+        if k == :testing
+            idxloop = slidingindices(state[:loop][:epoch])
+            plot!(p2, state[:loop][:epoch][idxloop], state[:loop][:acc][idxloop]; label = "loop acc", lw = 1)
+        end
         plot(p1, p2, p3; layout = (1,3))
     end
     function()
@@ -412,10 +433,12 @@ function make_plot_ligocvae_losses_cb(state, filename = nothing)
         try
             plot_time = @elapsed begin
                 @unpack epoch, ELBO, KL, loss = state[:loop]
-                fig = plot(epoch, [ELBO, KL, loss];
+                idx = slidingindices(epoch)
+                fig = plot(epoch[idx], [ELBO[idx], KL[idx], loss[idx]];
                     title = L"Cross-entropy Loss $H$ vs. Epoch",
                     label = [L"ELBO" L"KL" L"H = ELBO + KL"],
-                    legend = :best, lw = 3, c = [:blue :orange :green])
+                    xaxis = (:log10, log10ticks(epoch[idx[1]], epoch[idx[end]])), xrotation = 60.0,
+                    legend = :best, lw = 3, c = [:blue :orange :green], formatter = x->string(round(Int,x)))
                 !(filename === nothing) && savefig(fig, filename)
                 display(fig)
             end

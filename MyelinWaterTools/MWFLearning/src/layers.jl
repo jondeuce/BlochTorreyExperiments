@@ -103,6 +103,7 @@ struct MultiChain{FS<:Tuple,F}
     MultiChain(fs::Tuple, layer) = new{typeof(fs),typeof(layer)}(fs, layer)
 end
 Flux.@treelike MultiChain
+Base.show(io::IO, m::MultiChain) = print(io, "MultiChain()") #TODO
 
 function MultiChain(args...)
     @assert length(args) ≥ 2
@@ -110,15 +111,11 @@ function MultiChain(args...)
 end
 MultiChain(Nin::Int, layer) = MultiChain(ntuple(i -> identity, Nin), layer)
 
-Base.show(io::IO, m::MultiChain) = print(io, "MultiChain()") #TODO
-
-mc_call(fs::Tuple, xs::Tuple) = (first(fs)(first(xs)), mc_call(Base.tail(fs), Base.tail(xs))...)
 mc_call(fs::Tuple{}, xs::Tuple{}) = () # base case
-function (m::MultiChain)(xs::Tuple)
-    y = mc_call(m.fs, xs)
-    return m.layer(y)
-end
+mc_call(fs::Tuple, xs::Tuple) = (first(fs)(first(xs)), mc_call(Base.tail(fs), Base.tail(xs))...)
+
 (m::MultiChain)(xs...) = m(xs)
+(m::MultiChain)(xs::Tuple) = m.layer(mc_call(m.fs, xs))
 
 """
 ChannelwiseDense
@@ -223,6 +220,10 @@ function DenseConnection(Factory, G0::Int, G::Int, C::Int; dims::Int = 3)
         Flux.Conv((1,1), G0 + C * G => G0, identity; init = xavier_uniform, pad = (0,0)),
     )
 end
+DenseConnection(G0::Int, G::Int, C::Int; dims::Int = 3, k::Tuple = (3,1), σ = Flux.relu) =
+    DenseConnection(
+        ch -> Flux.Conv(k, ch, σ; init = xavier_uniform, pad = (k.-1).÷2), # Default factory for RDB's
+        G0, G, C; dims = dims)
 
 """
 ResidualDenseBlock (Figure 3: https://arxiv.org/abs/1802.08797)

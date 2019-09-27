@@ -11,7 +11,7 @@ using Base.Iterators: repeated, partition
 
 using MWFLearning
 # using CuArrays
-pyplot(size=(800,450))
+pyplot(size=(800,600))
 
 # Settings
 const settings_file = "settings.toml"
@@ -55,7 +55,7 @@ param_summary(m, train_data, test_data);
 theta_weights()::CVT = inv.(settings["data"]["info"]["labwidth"]) .* unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT |> maybegpu |> CVT
 datanoise = (snr = T(settings["data"]["postprocess"]["SNR"]); snr ≤ 0 ? identity : @λ(y -> MWFLearning.add_rician(y, snr)))
 trainloss = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, datanoise(y))
-testloss, testacc, testlabelacc = make_losses(@λ(y -> m(datanoise(y); nsamples = 10)), settings["model"]["loss"], theta_weights())
+θloss, θacc, θerr = make_losses(@λ(y -> m(datanoise(y); nsamples = 10)), settings["model"]["loss"], theta_weights())
 
 # Optimizer
 opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
@@ -77,9 +77,9 @@ state = Dict(
 )
 
 update_lr_cb            = MWFLearning.make_update_lr_cb(state, opt, lrfun)
-test_err_cb             = MWFLearning.make_test_err_cb(state, testloss, testacc, testlabelacc, flipdata(test_data))
-train_err_cb            = MWFLearning.make_train_err_cb(state, testloss, testacc, testlabelacc, flipdata.(train_data))
-plot_errs_cb            = MWFLearning.make_plot_errs_cb(state, "plots/" * FILE_PREFIX * "errs.png"; labelnames = permutedims(settings["data"]["info"]["labnames"]), labellegend = :topleft)
+test_err_cb             = MWFLearning.make_test_err_cb(state, θloss, θacc, θerr, flipdata(test_data))
+train_err_cb            = MWFLearning.make_train_err_cb(state, θloss, θacc, θerr, flipdata.(train_data))
+plot_errs_cb            = MWFLearning.make_plot_errs_cb(state, "plots/" * FILE_PREFIX * "errs.png"; labelnames = permutedims(settings["data"]["info"]["labnames"]))
 plot_ligocvae_losses_cb = MWFLearning.make_plot_ligocvae_losses_cb(state, "plots/" * FILE_PREFIX * "ligocvae.png")
 checkpoint_state_cb     = MWFLearning.make_checkpoint_state_cb(state, "log/" * FILE_PREFIX * "errors.bson")
 checkpoint_model_opt_cb = MWFLearning.make_checkpoint_model_opt_cb(state, m, opt, "models/" * FILE_PREFIX * "model-checkpoint.bson")
@@ -109,7 +109,7 @@ train_loop! = function()
         
         pretraincbs() # pre-training callbacks
         train_time = @elapsed Flux.train!(trainloss, Flux.params(m), train_data, opt) # CuArrays.@sync
-        acc_time = @elapsed acc = testacc(flipdata(test_data)...) |> Flux.data |> Flux.cpu # CuArrays.@sync
+        acc_time = @elapsed acc = θacc(flipdata(test_data)...) |> Flux.data |> Flux.cpu # CuArrays.@sync
         posttraincbs() # post-training callbacks
         
         @info @sprintf("[%d] (%4d ms): Label accuracy: %.4f (%d ms)", epoch, 1000 * train_time, acc, 1000 * acc_time)
@@ -139,9 +139,11 @@ catch e
 end
 
 @info "Computing resulting labels..."
-true_signals = signals(test_data) |> Flux.cpu |> deepcopy
-true_thetas  = thetas(test_data) |> Flux.cpu |> deepcopy
-model_thetas = m(signals(test_data)) |> Flux.data |> Flux.cpu |> deepcopy
+map((p, pbest) -> Flux.data(p) .= pbest, Flux.params(m), BSON.load("weights/" * FILE_PREFIX * "weights.bson")[:weights]);
+true_signals = signals(test_data) |> Flux.cpu;
+true_thetas  = thetas(test_data) |> Flux.cpu;
+model_thetas = m(signals(test_data); nsamples = 1000) |> Flux.cpu;
+model_stds   = std([m(signals(test_data); nsamples = 1) |> Flux.cpu for _ in 1:1000]);
 
 prediction_hist = function()
     pred_hist = function(i)
@@ -177,8 +179,6 @@ end
 fig = prediction_scatter(); display(fig)
 savefig(fig, "plots/" * FILE_PREFIX * "theta.scatter.png")
 
-error("got here")
-
 forward_plot = function()
     forward_rmse = function(i)
         y = sum(signals(test_data)[:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
@@ -195,9 +195,9 @@ forward_plot = function()
         grid = true, minorgrid = true, titlefontsize = 10, ylim = (0, 0.05)
     )
 end
-@info "Plotting forward simulation error plots..."
-fig = forward_plot()
-display(fig) && savefig(fig, "plots/" * FILE_PREFIX * "forwarderror.png")
+# @info "Plotting forward simulation error plots..."
+# fig = forward_plot()
+# display(fig) && savefig(fig, "plots/" * FILE_PREFIX * "forwarderror.png")
 
 errorvslr = function()
     x = [lrfun.(state[:callbacks][:training][:epoch]), lrfun.(state[:callbacks][:testing][:epoch])]
@@ -212,16 +212,16 @@ end
 # fig = errorvslr()
 # display(fig) && savefig(fig, "plots/" * FILE_PREFIX * "lossvslearningrate.png")
 
-errorvsthetas = function()
-    err = model_thetas .- true_thetas
-    mwf_err = err[1,:]
+mwferrorvsthetas = function()
+    mwf_err = (model_thetas .- true_thetas)[1,:]
     sp = data_set[:testing_data_dicts][1][:sweepparams]
     for k in keys(sp)
-        xdata = data_set[:testing_data_dicts] .|> d -> d[:sweepparams][k]
+        xdata = (d -> d[:sweepparams][k]).(data_set[:testing_data_dicts])
         p1 = scatter(xdata, abs.(mwf_err); xlabel = string(k), ylabel = "|mwf error|")
         p2 = scatter(xdata, mwf_err; xlabel = string(k), ylabel = "mwf error")
         p = plot(p1, p2; layout = (1,2), m = (10, :c))
         display(p)
     end
 end
-# errorvsthetas()
+# @info "Plotting mwf error vs. thetas..."
+# mwferrorvsthetas()
