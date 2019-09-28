@@ -74,48 +74,39 @@ function (mo::Sumout)(input::AbstractArray)
 end
 
 """
-    VCat(layer)
-`VCat` applys `DenseResize` to all inputs, concatenates the reshaped
-inputs along the first dimension, and forwards the result to `layer`.
+    MultiInput(layers...)
+Applies `layers` to each element of a tuple input.
+    See: https://github.com/FluxML/Flux.jl/pull/776
 """
-struct VCat{F}
-    layer::F
+struct MultiInput{T<:Tuple}
+    layers::T
+    MultiInput(xs...) = new{typeof(xs)}(xs)
 end
-Base.show(io::IO, v::VCat) = print(io, "VCat()") #TODO
 
-Flux.@treelike VCat
+Flux.@forward MultiInput.layers Base.getindex, Base.length, Base.first, Base.last, Base.iterate, Base.lastindex
 
-function (v::VCat)(xs::Tuple)
-    DR = DenseResize()
-    y = vcat(DR.(xs)...)
-    return v.layer(y)
+Flux.children(m::MultiInput) = m.layers
+Flux.mapchildren(f, m::MultiInput) = MultiInput(f.(m.layers)...)
+
+(m::MultiInput)(xs) = map((layer, x) -> layer(x), m.layers, xs)
+
+Base.getindex(m::MultiInput, i::AbstractArray) = MultiInput(m.layers[i]...)
+
+function Base.show(io::IO, m::MultiInput)
+    print(io, "MultiInput(")
+    join(io, m.layers, ", ")
+    print(io, ")")
 end
-(v::VCat)(xs...) = v(xs)
 
 """
-    MultiChain(layer)
-`MultiChain` applys input functions `fs` to all inputs, collecting the
-results as a tuple, forwarding this tuple to `layer`.
+    Fanout(N::Int)
+Repeat input `x`, outputing an N-tuple.
+    See: https://github.com/FluxML/Flux.jl/pull/776
 """
-struct MultiChain{FS<:Tuple,F}
-    fs::FS
-    layer::F
-    MultiChain(fs::Tuple, layer) = new{typeof(fs),typeof(layer)}(fs, layer)
-end
-Flux.@treelike MultiChain
-Base.show(io::IO, m::MultiChain) = print(io, "MultiChain()") #TODO
-
-function MultiChain(args...)
-    @assert length(args) ≥ 2
-    MultiChain(args[1:end-1], args[end])
-end
-MultiChain(Nin::Int, layer) = MultiChain(ntuple(i -> identity, Nin), layer)
-
-mc_call(fs::Tuple{}, xs::Tuple{}) = () # base case
-mc_call(fs::Tuple, xs::Tuple) = (first(fs)(first(xs)), mc_call(Base.tail(fs), Base.tail(xs))...)
-
-(m::MultiChain)(xs...) = m(xs)
-(m::MultiChain)(xs::Tuple) = m.layer(mc_call(m.fs, xs))
+struct Fanout{N} end
+Fanout(N::Int) = Fanout{N}()
+(f::Fanout{N})(x) where {N} = ntuple(_ -> x, N)
+Base.show(io::IO, m::Fanout{N}) where {N} = print(io, "Fanout($N)")
 
 """
 ChannelwiseDense
@@ -349,6 +340,11 @@ function _model_summary(io::IO, model::Flux.Chain, depth::Int = 0; skipidentity 
     nothing
 end
 
+"""
+Indenting for layer `depth`
+"""
+getindent(depth) = reduce(*, ["    " for _ in 1:depth]; init = "")
+
 # SkipConnection
 function _model_summary(io::IO, model::Flux.SkipConnection, depth::Int = 0; kwargs...)
     println(io, getindent(depth) * "SkipConnection(")
@@ -381,23 +377,13 @@ function _model_summary(io::IO, model::Sumout, depth::Int = 0; kwargs...)
     print(io, getindent(depth) * ")")
 end
 
-# MultiChain
-function _model_summary(io::IO, model::MultiChain, depth::Int = 0; kwargs...)
-    println(io, getindent(depth) * "MultiChain(")
-    for (i,f) in enumerate(model.fs)
-        _model_summary(io, f, depth+1; kwargs...)
-        println(io, ",")
+# MultiInput
+function _model_summary(io::IO, model::MultiInput, depth::Int = 0; kwargs...)
+    println(io, getindent(depth) * "MultiInput(")
+    for (i,layer) in enumerate(model.layers)
+        _model_summary(io, layer, depth+1; kwargs...)
+        (i < length(model.layers)) ? println(io, ",") : println(io, "")
     end
-    _model_summary(io, model.layer, depth+1; kwargs...)
-    println(io, "")
-    print(io, getindent(depth) * ")")
-end
-
-# VCat
-function _model_summary(io::IO, model::VCat, depth::Int = 0; kwargs...)
-    println(io, getindent(depth) * "VCat(")
-    _model_summary(io, model.layer, depth+1; kwargs...)
-    println(io, "")
     print(io, getindent(depth) * ")")
 end
 
@@ -412,8 +398,3 @@ function _model_summary(io::IO, model, depth::Int = 0; kwargs...)
     print(io, getindent(depth))
     print(io, model)
 end
-
-"""
-Indenting for layer `depth`
-"""
-getindent(depth) = reduce(*, ["    " for _ in 1:depth]; init = "")

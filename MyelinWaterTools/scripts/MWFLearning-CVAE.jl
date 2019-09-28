@@ -37,22 +37,54 @@ const data_set = prepare_data(settings)
 maybegpu(x) = GPU ? Flux.gpu(x) : x
 for k in (:training_data, :testing_data, :training_thetas, :testing_thetas); data_set[k] = maybegpu(data_set[k]); end
 
-train_data = training_batches(data_set[:training_thetas], data_set[:training_data], settings["data"]["train_batch"])
-test_data = testing_batches(data_set[:testing_thetas], data_set[:testing_data])
+BT_train_data = training_batches(data_set[:training_thetas], data_set[:training_data], settings["data"]["train_batch"])
+BT_test_data = testing_batches(data_set[:testing_thetas], data_set[:testing_data])
 
-thetas, signals = features, labels
-flattensignals = @λ(x -> reshape(x, :, batchsize(x)))
-flatsignals = @λ(batch -> flattensignals(signals(batch)))
-flipdata = @λ(batch -> tuple(batch[2], batch[1]))
+const thetas_infer_idx = 1:length(settings["data"]["info"]["labinfer"])
+thetas = batch -> features(batch)[thetas_infer_idx, :]
+signals = batch -> labels(batch)
+flipbatch(batch) = (signals(batch), thetas(batch))
+
+# Lazy data loader for training on simulated data
+const mb_sampler_batch_size  = 250
+const mb_sampler_train_batch = 10
+function x_sampler()
+    out = zeros(T, 8, mb_sampler_batch_size)
+    for j in 1:size(out,2)
+        mwf    = MWFLearning.linearsampler(0.15, 0.3)
+        ewf    = MWFLearning.linearsampler(0.29, 0.32)
+        iwf    = 1 - (mwf + ewf)
+        alpha  = MWFLearning.linearsampler(120.0, 180.0)
+        K      = MWFLearning.log10sampler(1e-3, 1.0)
+        T2sp   = MWFLearning.linearsampler(10e-3, 20e-3)
+        T2lp   = MWFLearning.linearsampler(50e-3, 80e-3)
+        T2tiss = MWFLearning.linearsampler(50e-3, 80e-3)
+        T1sp   = MWFLearning.linearsampler(150e-3, 250e-3)
+        T1lp   = MWFLearning.linearsampler(949e-3, 1219e-3)
+        T1tiss = MWFLearning.linearsampler(949e-3, 1219e-3)
+        TE     = 10e-3
+        out[1,j] = mwf
+        out[2,j] = 1-mwf # iewf
+        out[3,j] = inv((iwf * inv(T2lp) + ewf * inv(T2tiss)) / (iwf + ewf)) / TE # T2iew/TE
+        out[4,j] = T2sp / TE # T2mw/TE
+        out[5,j] = alpha
+        out[6,j] = log10(TE*K)
+        out[7,j] = inv((iwf * inv(T1lp) + ewf * inv(T1tiss)) / (iwf + ewf)) / TE # T1iew/TE
+        out[8,j] = T1sp / TE # T1mw/TE
+    end
+    return out
+end
+y_sampler(x) = (y = MWFLearning.forward_physics(x); reshape(y, size(y,1), 1, 1, :))
+mb_sampler = MWFLearning.LazyMiniBatches(mb_sampler_train_batch, x_sampler, y_sampler)
 
 # Construct model
 @info "Constructing model..."
 @unpack m = MWFLearning.make_model(settings)[1] |> maybegpu;
 model_summary(m, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"));
-param_summary(m, train_data, test_data);
+param_summary(m, flipbatch.(BT_train_data), flipbatch(BT_test_data));
 
 # Loss and accuracy function
-theta_weights()::CVT = inv.(settings["data"]["info"]["labwidth"]) .* unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT |> maybegpu |> CVT
+theta_weights()::CVT = inv.(settings["data"]["info"]["labwidth"][thetas_infer_idx]) .* unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT |> maybegpu |> CVT
 datanoise = (snr = T(settings["data"]["postprocess"]["SNR"]); snr ≤ 0 ? identity : @λ(y -> MWFLearning.add_rician(y, snr)))
 trainloss = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, datanoise(y))
 θloss, θacc, θerr = make_losses(@λ(y -> m(datanoise(y); nsamples = 10)), settings["model"]["loss"], theta_weights())
@@ -77,9 +109,9 @@ state = Dict(
 )
 
 update_lr_cb            = MWFLearning.make_update_lr_cb(state, opt, lrfun)
-test_err_cb             = MWFLearning.make_test_err_cb(state, θloss, θacc, θerr, flipdata(test_data))
-train_err_cb            = MWFLearning.make_train_err_cb(state, θloss, θacc, θerr, flipdata.(train_data))
-plot_errs_cb            = MWFLearning.make_plot_errs_cb(state, "plots/" * FILE_PREFIX * "errs.png"; labelnames = permutedims(settings["data"]["info"]["labnames"]))
+test_err_cb             = MWFLearning.make_test_err_cb(state, θloss, θacc, θerr, flipbatch(BT_test_data))
+train_err_cb            = MWFLearning.make_train_err_cb(state, θloss, θacc, θerr, flipbatch.(BT_train_data))
+plot_errs_cb            = MWFLearning.make_plot_errs_cb(state, "plots/" * FILE_PREFIX * "errs.png"; labelnames = permutedims(settings["data"]["info"]["labinfer"]))
 plot_ligocvae_losses_cb = MWFLearning.make_plot_ligocvae_losses_cb(state, "plots/" * FILE_PREFIX * "ligocvae.png")
 checkpoint_state_cb     = MWFLearning.make_checkpoint_state_cb(state, "log/" * FILE_PREFIX * "errors.bson")
 checkpoint_model_opt_cb = MWFLearning.make_checkpoint_model_opt_cb(state, m, opt, "models/" * FILE_PREFIX * "model-checkpoint.bson")
@@ -102,6 +134,10 @@ loopcbs = Flux.Optimise.runall([
     epochthrottle(plot_ligocvae_losses_cb, state, 25),
 ])
 
+# Train using Bloch-Torrey training/testing data, or sampler data
+train_data, test_data = BT_train_data, BT_test_data
+# train_data, test_data = mb_sampler, rand(mb_sampler)
+
 # Training Loop
 train_loop! = function()
     for epoch in state[:epoch] .+ (1:settings["optimizer"]["epochs"])
@@ -109,7 +145,7 @@ train_loop! = function()
         
         pretraincbs() # pre-training callbacks
         train_time = @elapsed Flux.train!(trainloss, Flux.params(m), train_data, opt) # CuArrays.@sync
-        acc_time = @elapsed acc = θacc(flipdata(test_data)...) |> Flux.data |> Flux.cpu # CuArrays.@sync
+        acc_time = @elapsed acc = θacc(flipbatch(test_data)...) |> Flux.data |> Flux.cpu # CuArrays.@sync
         posttraincbs() # post-training callbacks
         
         @info @sprintf("[%d] (%4d ms): Label accuracy: %.4f (%d ms)", epoch, 1000 * train_time, acc, 1000 * acc_time)
@@ -140,10 +176,10 @@ end
 
 @info "Computing resulting labels..."
 map((p, pbest) -> Flux.data(p) .= pbest, Flux.params(m), BSON.load("weights/" * FILE_PREFIX * "weights.bson")[:weights]);
-true_signals = signals(test_data) |> Flux.cpu;
-true_thetas  = thetas(test_data) |> Flux.cpu;
-model_thetas = m(signals(test_data); nsamples = 1000) |> Flux.cpu;
-model_stds   = std([m(signals(test_data); nsamples = 1) |> Flux.cpu for _ in 1:1000]);
+true_signals = signals(BT_test_data) |> Flux.cpu;
+true_thetas  = thetas(BT_test_data) |> Flux.cpu;
+model_thetas = m(signals(BT_test_data); nsamples = 1000) |> Flux.cpu;
+model_stds   = std([m(signals(BT_test_data); nsamples = 1) |> Flux.cpu for _ in 1:1000]);
 
 prediction_hist = function()
     pred_hist = function(i)
@@ -152,7 +188,7 @@ prediction_hist = function()
         err = scale .* (model_thetas[i,:] .- true_thetas[i,:])
         histogram(err;
             grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
-            label = settings["data"]["info"]["labnames"][i] * " [$units]",
+            label = settings["data"]["info"]["labinfer"][i] * " [$units]",
             title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
         )
     end
@@ -168,7 +204,7 @@ prediction_scatter = function()
         units = settings["data"]["info"]["labunits"][i]
         p = scatter(scale .* true_thetas[i,:], scale .* model_thetas[i,:];
             marker = :circle, grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
-            label = settings["data"]["info"]["labnames"][i] * " [$units]",
+            label = settings["data"]["info"]["labinfer"][i] * " [$units]",
             # title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
         )
         plot!(p, identity, ylims(p)...; line = (:dash, 2, :red), label = L"y = x")
@@ -181,12 +217,12 @@ savefig(fig, "plots/" * FILE_PREFIX * "theta.scatter.png")
 
 forward_plot = function()
     forward_rmse = function(i)
-        y = sum(signals(test_data)[:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
+        y = sum(signals(BT_test_data)[:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
         z_class = MWFLearning.forward_physics(true_thetas[:,i:i]) # Forward simulation of true parameters
         z_model = MWFLearning.forward_physics(model_thetas[:,i:i]) # Forward simulation of model predicted parameters
         return (e_class = rmsd(y, z_class), e_model = rmsd(y, z_model))
     end
-    errors = [forward_rmse(i) for i in 1:batchsize(thetas(test_data))]
+    errors = [forward_rmse(i) for i in 1:batchsize(thetas(BT_test_data))]
     e_class = (e -> e.e_class).(errors)
     e_model = (e -> e.e_model).(errors)
     p = scatter([e_class e_model];

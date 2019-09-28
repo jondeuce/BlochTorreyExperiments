@@ -7,7 +7,7 @@ getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
 savebson(filename, data::Dict) = @elapsed BSON.bson(filename, data)
 # gitdir() = realpath(DrWatson.projectdir(".."))
 
-# Batching
+# Mini batching
 make_minibatch(features, labels, idxs) = (features[.., idxs], labels[.., idxs])
 function training_batches(features, labels, minibatchsize; overtrain = false)
     @assert batchsize(features) == batchsize(labels)
@@ -21,6 +21,36 @@ end
 testing_batches(features, labels) = make_minibatch(features, labels, :)
 features(batch) = batch[1]
 labels(batch) = batch[2]
+
+# Lazy mini batching
+struct LazyMiniBatches{xType,yType,X,Y}
+    len::Int
+    x_sampler::X
+    y_sampler::Y
+    function LazyMiniBatches(len::Int, x_sampler::X, y_sampler::Y) where {X,Y}
+        x = x_sampler()
+        y = y_sampler(x)
+        new{typeof(x), typeof(y), X, Y}(len, x_sampler, y_sampler)
+    end
+end
+function Random.rand(rng::AbstractRNG, d::Random.SamplerTrivial{<:LazyMiniBatches{xType,yType}}) where {xType,yType}
+    x = d[].x_sampler()  :: xType
+    y = d[].y_sampler(x) :: yType
+    return (x,y)
+end
+Base.length(S::LazyMiniBatches) = S.len
+Base.eltype(::Type{<:LazyMiniBatches{xType,yType}}) where {xType,yType} = Tuple{xType,yType}
+Base.iterate(S::LazyMiniBatches, state = 1) = state > S.len ? nothing : (rand(S), state+1)
+Base.iterate(rS::Iterators.Reverse{LazyMiniBatches}, state = rS.itr.len) = state < 1 ? nothing : (rand(rS.itr), state-1)
+# Base.firstindex(::LazyMiniBatches) = 1
+# Base.lastindex(S::LazyMiniBatches) = S.len
+# Base.getindex(S::LazyMiniBatches, i::Number) = rand(S)
+# Base.getindex(S::LazyMiniBatches, I) = [rand(S) for i in I]
+
+linearsampler(a,b) = a + rand() * (b - a)
+rangesampler(a,b,s=1) = rand(a:s:b)
+log10sampler(a,b) = 10^linearsampler(log10(a), log10(b))
+acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
 
 function param_summary(model, train_set, test_set)
     test_dofs = length(test_set[2])

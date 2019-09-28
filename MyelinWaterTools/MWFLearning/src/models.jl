@@ -13,6 +13,7 @@ const MODELNAMES = Set{String}([
     "BasicDCGAN1",
     "DenseLIGOCVAE",
     "ConvLIGOCVAE",
+    "RDNLIGOCVAE",
 ])
 const INFOFIELDS = Set{String}([
     # Data info fields passed as kwargs to all models
@@ -28,8 +29,7 @@ function make_model(settings::Dict, name::String)
     end
     return model_maker(T; kwargs...)
 end
-make_model(settings::Dict) =
-    [make_model(settings, name) for (name, model) in settings["model"] if name ∈ MODELNAMES]
+make_model(settings::Dict) = [make_model(settings, name) for name in keys(settings["model"]) if name ∈ MODELNAMES]
 
 function model_string(settings::Dict, name::String)
     # Enumerated and replace vector properties 
@@ -71,14 +71,13 @@ make_activation(str::String) = make_activation(Symbol(str))
     Semi-hard-coded forward physics model
 """
 function forward_physics(x::Matrix{T}) where {T}
-    rT1, nTE = T(1_000e-3 / 10e-3), 32 # Fixed params
+    nTE  = 32 # Number of echoes (fixed)
     Smw  = zeros(Vec{3,T}, nTE) # Buffer for myelin signal
     Siew = zeros(Vec{3,T}, nTE) # Buffer for IE water signal
     M    = zeros(T, nTE, size(x,2)) # Total signal magnitude
     for j in 1:size(x,2)
         mwf, iewf, rT2iew, rT2mw, alpha = x[1,j], x[2,j], x[3,j], x[4,j], x[5,j]
         rT1iew, rT1mw = x[7,j], x[8,j]
-        # rT1iew, rT1mw = rT1, rT1
         forward_prop!(Smw,  rT2mw,  rT1mw,  alpha, nTE)
         forward_prop!(Siew, rT2iew, rT1iew, alpha, nTE)
         @views M[:,j] .= norm.(transverse.(mwf .* Smw .+ iewf .* Siew))
@@ -819,7 +818,7 @@ function (m::LIGOCVAE)(y; nsamples::Int = 100)
     μr0, σr = m.E1(y) |> Flux.data |> split_mean_std
     function sample_rθ_posterior(μr0, σr)
         zr = sample_mv_normal(μr0, σr)
-        μx0, σx = m.D(zr,y) |> Flux.data |> split_mean_std
+        μx0, σx = m.D((zr,y)) |> Flux.data |> split_mean_std
         return sample_mv_normal(μx0, σx)
     end
 
@@ -836,34 +835,112 @@ end
 # Cross-entropy loss function
 function H_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where {T}
     μr0, σr = split_mean_std(m.E1(y))
-    μq0, σq = split_mean_std(m.E2(x,y))
+    μq0, σq = split_mean_std(m.E2((x,y)))
     zq = sample_mv_normal(μq0, σq)
-    μx0, σx = split_mean_std(m.D(zq,y))
+    μx0, σx = split_mean_std(m.D((zq,y)))
 
+    Zdim, Xout = size(zq,1), size(μx0,1)
     σr2, σq2, σx2 = square.(σr), square.(σq), square.(σx) # Intermediate variables
-    KLdiv = mean(sum((σq2 .+ square.(μr0 .- μq0)) ./ σr2 .+ log.(σr2 ./ σq2); dims = 1))/2 - T(size(zq,1)/2) # KL-divergence contribution to cross-entropy
-    ELBO = mean(sum(log.(σx2) .+ square.(x .- μx0) ./ σx2; dims = 1))/2 + T(size(zq,1)*log(2π)/2) # Negative log-likelihood/ELBO contribution to cross-entropy
+    KLdiv = mean(sum((σq2 .+ square.(μr0 .- μq0)) ./ σr2 .+ log.(σr2 ./ σq2); dims = 1))/2 - T(Zdim/2) # KL-divergence contribution to cross-entropy
+    ELBO = mean(sum(log.(σx2) .+ square.(x[1:Xout,:] .- μx0) ./ σx2; dims = 1))/2 + T(Zdim*log(2π)/2) # Negative log-likelihood/ELBO contribution to cross-entropy
 
     return ELBO + KLdiv
 end
 
 # Negative log-likelihood/ELBO loss function
 function L_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where {T}
-    μq0, σq = split_mean_std(m.E2(x,y))
+    μq0, σq = split_mean_std(m.E2((x,y)))
     zq = sample_mv_normal(μq0, σq)
-    μx0, σx = split_mean_std(m.D(zq,y))
+    μx0, σx = split_mean_std(m.D((zq,y)))
+    Zdim, Xout = size(zq,1), size(μx0,1)
     σx2 = square.(σx)
-    ELBO = mean(sum(log.(σx2) .+ square.(x .- μx0) ./ σx2; dims = 1))/2 + T(size(zq,1)*log(2π)/2)
+    ELBO = mean(sum(log.(σx2) .+ square.(x[1:Xout,:] .- μx0) ./ σx2; dims = 1))/2 + T(Zdim*log(2π)/2)
     return ELBO
 end
 
 # KL-divergence contribution to cross-entropy
 function KL_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where {T}
     μr0, σr = split_mean_std(m.E1(y))
-    μq0, σq = split_mean_std(m.E2(x,y))
+    μq0, σq = split_mean_std(m.E2((x,y)))
     σr2, σq2 = square.(σr), square.(σq)
-    KLdiv = mean(sum((σq2 .+ square.(μr0 .- μq0)) ./ σr2 .+ log.(σr2 ./ σq2); dims = 1))/2 - T(size(μq0,1)/2)
+    Zdim = size(μq0,1)
+    KLdiv = mean(sum((σq2 .+ square.(μr0 .- μq0)) ./ σr2 .+ log.(σr2 ./ σq2); dims = 1))/2 - T(Zdim/2)
     return KLdiv
+end
+
+function RDNLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
+        Xout :: Int = nlabels, # Number of output variables (can be used to marginalize over inputs)
+        Zdim :: Int = 10, # Latent variable dimensions
+        act  :: Symbol = :leakyrelu, # Activation function
+    ) where {T}
+
+    Ny, Cy, Nx = nfeatures, nchannels, nlabels
+    actfun = make_activation(act)
+    
+    MuStdScale() = Flux.Diagonal(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
+    XScale() = Flux.Diagonal(inv.(labwidth), -labmean./labwidth) # x scaled and shifted (x range -> [-0.5, 0.5])
+    Dσ(i,ND) = i == ND-1 ? identity : actfun # Activation functions for ND dense layers
+
+    PreprocessSignal(k = (3,1), ch = Cy=>8*Cy, N = 2) = Flux.Chain(
+        Flux.Conv((1,1), ch[1] => ch[2], identity; init = xavier_uniform, pad = (0,0)), # Expand channels
+        ResidualDenseBlock(ch[2], ch[2], N; dims = 3, k = k, σ = actfun), # RDB block
+        Flux.BatchNorm(ch[2], actfun), # Batchnorm + preactivation
+        Flux.Conv(k, ch[2] => ch[2], identity; init = xavier_uniform, pad = (k.-1).÷2, stride = 2), # Spatial downsampling
+        ResidualDenseBlock(ch[2], ch[2], N; dims = 3, k = k, σ = actfun), # RDB block
+        Flux.BatchNorm(ch[2], actfun), # Batchnorm + preactivation
+        Flux.Conv(k, ch[2] => ch[2], identity; init = xavier_uniform, pad = (k.-1).÷2, stride = 2), # Spatial downsampling
+        DenseResize(),
+    )
+
+    # Data/feature encoder r_θ1(z|y): y -> μ_r = (μ_r0, σ_r^2)
+    E1 = let Nout = 2*Zdim, k = (3,1), G = 8
+        Dy  = [G*Ny÷4, Ny, Nout]
+        NDy = length(Dy)
+        Flux.Chain(
+            PreprocessSignal(k, Cy=>G),
+            DenseResize(),
+            [Flux.Dense(Dy[i], Dy[i+1], Dσ(i,NDy)) for i in 1:NDy-1]...,
+            SoftplusStd(),
+        )
+    end
+
+    # Data/feature + parameter/label encoder q_φ(z|x,y): (x,y) -> μ_q = (μ_q0, σ_q^2)
+    E2 = let Nout = 2*Zdim, k = (3,1), G = 8
+        Dx  = [Nx, 2*Nx, 2*Nx, Nx]
+        Dxy = [Dx[end] + G*Ny÷4, Ny, Nout]
+        NDx, NDxy = length(Dx), length(Dxy)
+        Flux.Chain(
+            MultiInput(
+                Flux.Chain(
+                    XScale(), # x parameters scaled down to roughly [-0.5, 0.5]
+                    [Flux.Dense(Dx[i], Dx[i+1], Dσ(i,NDx)) for i in 1:NDx-1]...,
+                ),
+                PreprocessSignal(k, Cy=>G), # y signals preprocessed
+            ),
+            @λ(xy -> vcat(xy[1], xy[2])),
+            [Flux.Dense(Dxy[i], Dxy[i+1], Dσ(i,NDxy)) for i in 1:NDxy-1]...,
+            SoftplusStd(),
+        )
+    end
+
+    # Latent space + data/feature decoder r_θ2(x|z,y): (z,y) -> μ_x = (μ_x0, σ_x^2)
+    D = let Nout = 2*Xout, k = (3,1), G = 8
+        Dyz  = [Zdim + G*Ny÷4, Ny, Nout]
+        NDyz = length(Dyz)
+        Flux.Chain(
+            MultiInput(
+                identity, # z vector of latent variables unchanged
+                PreprocessSignal(k, Cy=>G), # y signals preprocessed
+            ),
+            @λ(zy -> vcat(zy[1], zy[2])),
+            [Flux.Dense(Dyz[i], Dyz[i+1], Dσ(i,NDyz)) for i in 1:NDyz-1]...,
+            SoftplusStd(),
+            MuStdScale(), # scale and shift μ_x = [μ_x0; σ_x] to x-space
+        )
+    end
+
+    m = LIGOCVAE(E1, E2, D)
+    return @ntuple(m)
 end
 
 function ConvLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
@@ -881,6 +958,7 @@ function ConvLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int =
     PreprocessSignal(k = (3,1), ch = Cy=>8*Cy, N = 2, BN = true, GN = false) = Flux.Chain(
         Flux.Conv((1,1), ch[1] => ch[2], identity; init = xavier_uniform, pad = (0,0)),
         BatchConvConnection(k, ch[2] => ch[2], actfun; mode = :post, numlayers = N, batchnorm = BN, groupnorm = GN),
+        DenseResize(),
     )
     # PreprocessSignal(args...) = identity
 
@@ -900,43 +978,31 @@ function ConvLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int =
     E2 = let Nout = 2*Zdim, k = (3,1), G = 4
         Nd = [Nx + G*Ny, Ny, Nout]
         AF(i) = i == length(Nd)-1 ? identity : actfun
-        MultiChain(
-            XScale(), # x parameters scaled down to roughly [-0.5, 0.5]
-            PreprocessSignal(k, Cy=>G), # y signals preprocessed
-            VCat(Flux.Chain(
-                [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
-                SoftplusStd(),
-            ))
+        Flux.Chain(
+            MultiInput(
+                XScale(), # x parameters scaled down to roughly [-0.5, 0.5]
+                PreprocessSignal(k, Cy=>G), # y signals preprocessed
+            ),
+            @λ(xy -> vcat(xy[1], xy[2])),
+            [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
+            SoftplusStd(),
         )
-        # VCat(
-            # Flux.Chain(
-                # XYScale(),
-                # [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
-                # SoftplusStd(),
-            # )
-        # )
     end
 
     # Latent space + data/feature decoder r_θ2(x|z,y): (z,y) -> μ_x = (μ_x0, σ_x^2)
     D = let Nout = 2*Nx, k = (3,1), G = 4
         Nd = [Zdim + G*Ny, Ny, Nout]
         AF(i) = i == length(Nd)-1 ? identity : actfun
-        MultiChain(
-            identity, # z vector of latent variables unchanged
-            PreprocessSignal(k, Cy=>G), # y signals preprocessed
-            VCat(Flux.Chain(
-                [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
-                SoftplusStd(),
-                MuStdScale(), # scale and shift μ_x = [μ_x0; σ_x] to x-space
-            ))
+        Flux.Chain(
+            MultiInput(
+                identity, # z vector of latent variables unchanged
+                PreprocessSignal(k, Cy=>G), # y signals preprocessed
+            ),
+            @λ(zy -> vcat(zy[1], zy[2])),
+            [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
+            SoftplusStd(),
+            MuStdScale(), # scale and shift μ_x = [μ_x0; σ_x] to x-space
         )
-        # VCat(
-            # Flux.Chain(
-                # [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
-                # SoftplusStd(),
-                # MuStdScale(),
-            # )
-        # )
     end
 
     m = LIGOCVAE(E1, E2, D)
@@ -953,6 +1019,7 @@ function DenseLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int 
 
     MuStdScale() = Flux.Diagonal(T[labwidth; labwidth], T[labmean; zeros(T, Nx)]) # μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x:  scaled only
     XYScale() = Flux.Diagonal([inv.(labwidth); ones(T, Ny*Cy)], [-labmean./labwidth; zeros(T, Ny*Cy)]) # [x; y] vector -> x scaled and shifted (x range -> [-0.5, 0.5]), y unchanged
+    DR = DenseResize()
 
     # Data/feature encoder r_θ1(z|y): y -> μ_r = (μ_r0, σ_r^2)
     E1 = let Nin = Ny*Cy, Nout = 2*Zdim
@@ -969,12 +1036,11 @@ function DenseLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int 
     E2 = let Nin = Nx + Ny*Cy, Nout = 2*Zdim
         Nd = [Nin, Ny, Ny, Nout]
         AF(i) = i == length(Nd)-1 ? identity : actfun
-        VCat(
-            Flux.Chain(
-                XYScale(),
-                [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
-                SoftplusStd(),
-            )
+        Flux.Chain(
+            @λ(xy -> vcat(xy[1], DR(xy[2]))),
+            XYScale(),
+            [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
+            SoftplusStd(),
         )
     end
 
@@ -982,12 +1048,11 @@ function DenseLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int 
     D = let Nin = Zdim + Ny*Cy, Nout = 2*Nx
         Nd = [Nin, Ny, Ny, Nout]
         AF(i) = i == length(Nd)-1 ? identity : actfun
-        VCat(
-            Flux.Chain(
-                [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
-                SoftplusStd(),
-                MuStdScale(),
-            )
+        Flux.Chain(
+            @λ(zy -> vcat(zy[1], DR(zy[2]))),
+            [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
+            SoftplusStd(),
+            MuStdScale(),
         )
     end
 

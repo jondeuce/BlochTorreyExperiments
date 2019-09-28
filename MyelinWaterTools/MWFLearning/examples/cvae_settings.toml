@@ -18,11 +18,16 @@ labwidth    = "auto" # Label distribution widths
 # labnames    = ["T2iew/TE", "alpha"] # Target labels
 # labweights  = [1.0, 1.0] # Weights for loss function
 # labscale    = [1.0, 1.0] # scale labels before plotting
-# labunits    = ["s/s", "°"] # label units, after scaling
-labnames    = ["mwf", "iewf", "T2iew/TE", "T2mw/TE", "alpha", "log(TE*K)", "T1iew/TE", "T1mw/TE"] # Target labels
-labweights  = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
-labscale    = [100.0, 100.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
-labunits    = ["%", "%", "s/s", "s/s", "°", "log(s*um/s)", "s/s", "s/s"] # label units, after scaling
+# labunits    = ["ms/ms", "°"] # label units, after scaling
+# labnames    = ["mwf", "iewf", "T2iew/TE", "T2mw/TE", "alpha", "log(TE*K)", "T1iew/TE", "T1mw/TE"] # Target labels
+# labweights  = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
+# labscale    = [100.0, 100.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
+# labunits    = ["%", "%", "ms/ms", "ms/ms", "°", "log(ms*um/ms)", "ms/ms", "ms/ms"] # label units, after scaling
+labnames    = ["alpha", "log(TE*K)", "g_ratio", "mwf", "T2mw/TE", "T2iew/TE", "iwf", "ewf", "iewf", "T2iw/TE", "T2ew/TE", "T1mw/TE", "T1iw/TE", "T1ew/TE", "T1iew/TE"]
+labinfer    = ["alpha", "log(TE*K)", "g_ratio", "mwf", "T2mw/TE", "T2iew/TE"]
+labweights  = [1.0, 1.0, 1.0, 1.0,   1.0, 1.0] # Weights for loss function
+labscale    = [1.0, 1.0, 1.0, 100.0, 1.0, 1.0] # scale labels before plotting
+labunits    = ["°", "log(ms*um/ms)", "um/um", "%", "ms/ms", "ms/ms"] # label units, after scaling
 [data.filter]
 labnames    = [ "K",  "nTE" ]
 lower       = [ 0.00,  32.0 ]
@@ -34,13 +39,14 @@ SNR         = [0.0] # Gaussian noise on complex signal (0 == no noise)
 apply       = true
 size        = 32
 [data.postprocess]
-SNR         = 50.0 # Rician noise on magnitude signal (0 == no noise)
+SNR         = 100.0 # Rician noise on magnitude signal (0 == no noise)
 
 [model]
 loss      = "l2"
 acc       = "rmse"
-[model.DenseLIGOCVAE]
-Zdim      = 15
+[model.RDNLIGOCVAE]
+Xout      = 6
+Zdim      = 10
 act       = "leakyrelu"
 
 [optimizer]
