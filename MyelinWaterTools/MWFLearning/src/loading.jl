@@ -424,6 +424,8 @@ end
 
 function init_labels(settings::Dict, ds::AbstractVector{<:Dict})
     label_names = settings["data"]["info"]["labnames"] :: Vector{String}
+    label_infer = get!(settings["data"]["info"], "labinfer", copy(label_names)) :: Vector{String}
+    @assert label_infer == label_names[1:length(label_infer)]
     labels = zeros(Float64, length(label_names), length(ds))
     for j in 1:length(ds)
         d = ds[j] :: Dict

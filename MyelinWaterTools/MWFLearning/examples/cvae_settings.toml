@@ -23,8 +23,8 @@ labwidth    = "auto" # Label distribution widths
 # labweights  = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
 # labscale    = [100.0, 100.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
 # labunits    = ["%", "%", "ms/ms", "ms/ms", "°", "log(ms*um/ms)", "ms/ms", "ms/ms"] # label units, after scaling
-labnames    = ["alpha", "log(TE*K)", "g_ratio", "mwf", "T2mw/TE", "T2iew/TE", "iwf", "ewf", "iewf", "T2iw/TE", "T2ew/TE", "T1mw/TE", "T1iw/TE", "T1ew/TE", "T1iew/TE"]
-labinfer    = ["alpha", "log(TE*K)", "g_ratio", "mwf", "T2mw/TE", "T2iew/TE"]
+labnames    = ["alpha", "log(TE*K)", "gratio", "mwf", "T2mw/TE", "T2iew/TE", "iwf", "ewf", "iewf", "T2iw/TE", "T2ew/TE", "T1mw/TE", "T1iw/TE", "T1ew/TE", "T1iew/TE"]
+labinfer    = ["alpha", "log(TE*K)", "gratio", "mwf", "T2mw/TE", "T2iew/TE"]
 labweights  = [1.0, 1.0, 1.0, 1.0,   1.0, 1.0] # Weights for loss function
 labscale    = [1.0, 1.0, 1.0, 100.0, 1.0, 1.0] # scale labels before plotting
 labunits    = ["°", "log(ms*um/ms)", "um/um", "%", "ms/ms", "ms/ms"] # label units, after scaling
@@ -46,7 +46,7 @@ loss      = "l2"
 acc       = "rmse"
 [model.RDNLIGOCVAE]
 Xout      = 6
-Zdim      = 10
+Zdim      = 15
 act       = "leakyrelu"
 
 [optimizer]
@@ -54,7 +54,7 @@ epochs  = 100000
 savemod = 1
 testmod = 1
 [optimizer.ADAM]
-lr      = 1e-3
+lr      = 1e-4
 beta    = [0.9, 0.999]
 decay   = 1e-5
 [optimizer.SGD]
