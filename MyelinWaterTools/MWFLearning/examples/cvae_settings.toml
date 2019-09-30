@@ -44,17 +44,24 @@ SNR         = 100.0 # Rician noise on magnitude signal (0 == no noise)
 [model]
 loss      = "l2"
 acc       = "rmse"
-[model.RDNLIGOCVAE]
-Xout      = 6
-Zdim      = 15
+[model.DenseLIGOCVAE]
+Xout      = 6 # Number of learned labels
+Zdim      = 8 # Latent variable dimension
+Ndense    = [64, 64] # Sizes of inner dense layers
 act       = "leakyrelu"
+# [model.ConvLIGOCVAE]
+# Xout      = 6 # Number of learned labels
+# Zdim      = 15 # Latent variable dimension
+# Nfeat     = 8 # Number of convolutional channels
+# Ndown     = 1 # Optional striding for downsampling
+# act       = "leakyrelu"
 
 [optimizer]
 epochs  = 100000
 savemod = 1
 testmod = 1
 [optimizer.ADAM]
-lr      = 1e-4
+lr      = 1e-3
 beta    = [0.9, 0.999]
 decay   = 1e-5
 [optimizer.SGD]
