@@ -423,7 +423,12 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
             end
             @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[:epoch], 1000 * plot_time)
         catch e
-            @info @sprintf("[%d] -> PLOTTING FAILED...", state[:epoch])
+            if e isa InterruptException
+                rethrow(e) # Training interrupted by user
+            else
+                @info @sprintf("[%d] -> PLOTTING FAILED...", state[:epoch])
+                @warn sprint(showerror, e, catch_backtrace())
+            end
         end
     end
 end
@@ -454,7 +459,12 @@ function make_plot_gan_losses_cb(state, filename = nothing)
             end
             @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[:epoch], 1000 * plot_time)
         catch e
-            @info @sprintf("[%d] -> PLOTTING FAILED...", state[:epoch])
+            if e isa InterruptException
+                rethrow(e) # Training interrupted by user
+            else
+                @info @sprintf("[%d] -> PLOTTING FAILED...", state[:epoch])
+                @warn sprint(showerror, e, catch_backtrace())
+            end
         end
     end
 end
@@ -474,7 +484,12 @@ function make_plot_ligocvae_losses_cb(state, filename = nothing)
             end
             @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[:epoch], 1000 * plot_time)
         catch e
-            @info @sprintf("[%d] -> PLOTTING FAILED...", state[:epoch])
+            if e isa InterruptException
+                rethrow(e) # Training interrupted by user
+            else
+                @info @sprintf("[%d] -> PLOTTING FAILED...", state[:epoch])
+                @warn sprint(showerror, e, catch_backtrace())
+            end
         end
     end
 end
