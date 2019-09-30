@@ -175,14 +175,11 @@ catch e
 end
 
 @info "Computing resulting labels..."
-best_weights = BSON.load("weights/" * FILE_PREFIX * "weights.bson")[:weights];
-# best_weights = BSON.load("/home/jon/Dropbox/Matlab/UBCMRI/Experiments/MyelinWaterLearning/learning-test-1/weights/2019-09-27-T-15-27-43-996.acc=rmse_loss=l2_RDNLIGOCVAE_Zdim=15_act=leakyrelu.weights.bson")[:weights];
-# best_weights = BSON.load("/home/jon/Dropbox/Matlab/UBCMRI/Experiments/MyelinWaterLearning/learning-test-1/weights/2019-09-27-T-17-41-12-223.acc=rmse_loss=l2_RDNLIGOCVAE_Xout=6_Zdim=10_act=leakyrelu.weights.bson")[:weights];
-map((p, pbest) -> Flux.data(p) .= pbest, Flux.params(m), best_weights);
+best_model   = BSON.load("log/" * FILE_PREFIX * "model-best.bson")[:model];
 true_signals = signals(BT_test_data) |> Flux.cpu;
 true_thetas  = thetas(BT_test_data) |> Flux.cpu;
-model_thetas = m(signals(BT_test_data); nsamples = 1000) |> Flux.cpu;
-model_stds   = std([m(signals(BT_test_data); nsamples = 1) |> Flux.cpu for _ in 1:1000]);
+model_thetas = best_model(signals(BT_test_data); nsamples = 1000) |> Flux.cpu;
+model_stds   = std([best_model(signals(BT_test_data); nsamples = 1) |> Flux.cpu for _ in 1:1000]);
 
 prediction_hist = function()
     pred_hist = function(i)
