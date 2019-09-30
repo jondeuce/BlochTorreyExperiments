@@ -42,14 +42,17 @@ acc       = "rmse"
 # Ndense    = [64, 64] # Sizes of inner dense layers
 # act       = "leakyrelu"
 # [model.ConvLIGOCVAE]
-# Xout      = 6 # Number of learned labels
+# Xout      = 6  # Number of learned labels
 # Zdim      = 15 # Latent variable dimension
-# Nfeat     = 8 # Number of convolutional channels
-# Ndown     = 1 # Optional striding for downsampling
+# Nfeat     = 8  # Number of convolutional channels
+# Ndown     = 1  # Optional striding for downsampling
 # act       = "leakyrelu"
 [model.RDNLIGOCVAE]
-Xout      = 6 # Number of learned labels
-Zdim      = 8 # Latent variable dimension
+Xout      = 6  # Number of learned labels
+Zdim      = 20 # Latent variable dimension
+Nrdn      = 4  # Number of RDN + downsampling blocks
+Ncat      = 2  # Number of concat blocks within RDN
+Nfeat     = 16 # Number of convolutional channels + RDN growth rate
 act       = "leakyrelu"
 
 [optimizer]

@@ -179,7 +179,7 @@ best_model   = BSON.load("log/" * FILE_PREFIX * "model-best.bson")[:model];
 true_signals = signals(BT_test_data) |> Flux.cpu;
 true_thetas  = thetas(BT_test_data) |> Flux.cpu;
 model_thetas = best_model(signals(BT_test_data); nsamples = 1000) |> Flux.cpu;
-model_stds   = std([best_model(signals(BT_test_data); nsamples = 1) |> Flux.cpu for _ in 1:1000]);
+# model_stds = std([best_model(signals(BT_test_data); nsamples = 1) |> Flux.cpu for _ in 1:1000]);
 
 prediction_hist = function()
     pred_hist = function(i)

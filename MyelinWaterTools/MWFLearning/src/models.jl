@@ -871,6 +871,9 @@ end
 function RDNLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
         Xout :: Int = nlabels, # Number of output variables (can be used to marginalize over inputs)
         Zdim :: Int = 10, # Latent variable dimensions
+        Nrdn :: Int = 2, # Number of RDN + downsampling blocks
+        Ncat :: Int = 2, # Number of concat blocks within RDN
+        Nfeat:: Int = 8, # Number of convolutional channels + RDN growth rate
         act  :: Symbol = :leakyrelu, # Activation function
     ) where {T}
 
@@ -881,25 +884,22 @@ function RDNLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 
     XScale() = Flux.Diagonal(inv.(labwidth), -labmean./labwidth) # x scaled and shifted (x range -> [-0.5, 0.5])
     Dσ(i,ND) = i == ND-1 ? identity : actfun # Activation functions for ND dense layers
 
-    PreprocessSignal(k = (3,1), ch = 1=>8, N = 2) = Flux.Chain(
-        Flux.Conv((1,1), ch[1] => ch[2], identity; init = xavier_uniform, pad = (0,0)), # Expand channels
-        ResidualDenseBlock(ch[2], ch[2], N; dims = 3, k = k, σ = actfun), # RDB block
-        Flux.BatchNorm(ch[2], actfun), # Batchnorm + pre-activation
-        # @λ(x -> actfun.(x)), # Pre-activation only
-        Flux.Conv(k, ch[2] => ch[2], identity; init = xavier_uniform, pad = (k.-1).÷2, stride = 2), # Spatial downsampling
-        ResidualDenseBlock(ch[2], ch[2], N; dims = 3, k = k, σ = actfun), # RDB block
-        Flux.BatchNorm(ch[2], actfun), # Batchnorm + pre-activation
-        # @λ(x -> actfun.(x)), # Pre-activation only
-        Flux.Conv(k, ch[2] => ch[2], identity; init = xavier_uniform, pad = (k.-1).÷2, stride = 2), # Spatial downsampling
+    PreprocessSignal(k = (3,1), ch = 1=>8) = Flux.Chain(
+        Flux.Conv(k, ch[1] => ch[2], identity; init = xavier_uniform, pad = (k.-1).÷2), # Expand channels
+        reduce(vcat, [
+            ResidualDenseBlock(ch[2], ch[2], Ncat; dims = 3, k = k, σ = actfun), # RDB block
+            Flux.BatchNorm(ch[2], actfun), # Batchnorm + pre-activation
+            Flux.Conv(k, ch[2] => ch[2], identity; init = xavier_uniform, pad = (k.-1).÷2, stride = 2), # Spatial downsampling
+        ] for _ in 1:Nrdn)...,
         DenseResize(),
     )
 
     # Data/feature encoder r_θ1(z|y): y -> μ_r = (μ_r0, σ_r^2)
-    E1 = let Nout = 2*Zdim, k = (3,1), G = 8
-        Dy  = [G*Ny÷4, Ny, Nout]
+    E1 = let Nout = 2*Zdim, k = (3,1)
+        Dy  = [Nfeat*Ny÷(2^Nrdn), Ny, Nout]
         NDy = length(Dy)
         Flux.Chain(
-            PreprocessSignal(k, Cy=>G),
+            PreprocessSignal(k, Cy=>Nfeat),
             DenseResize(),
             [Flux.Dense(Dy[i], Dy[i+1], Dσ(i,NDy)) for i in 1:NDy-1]...,
             SoftplusStd(),
@@ -907,9 +907,9 @@ function RDNLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 
     end
 
     # Data/feature + parameter/label encoder q_φ(z|x,y): (x,y) -> μ_q = (μ_q0, σ_q^2)
-    E2 = let Nout = 2*Zdim, k = (3,1), G = 8
+    E2 = let Nout = 2*Zdim, k = (3,1)
         Dx  = [Nx, 2*Nx, 2*Nx, Nx]
-        Dxy = [Dx[end] + G*Ny÷4, Ny, Nout]
+        Dxy = [Dx[end] + Nfeat*Ny÷(2^Nrdn), Ny, Nout]
         NDx, NDxy = length(Dx), length(Dxy)
         Flux.Chain(
             MultiInput(
@@ -917,7 +917,7 @@ function RDNLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 
                     XScale(), # x parameters scaled down to roughly [-0.5, 0.5]
                     [Flux.Dense(Dx[i], Dx[i+1], Dσ(i,NDx)) for i in 1:NDx-1]...,
                 ),
-                PreprocessSignal(k, Cy=>G), # y signals preprocessed
+                PreprocessSignal(k, Cy=>Nfeat), # y signals preprocessed
             ),
             @λ(xy -> vcat(xy[1], xy[2])),
             [Flux.Dense(Dxy[i], Dxy[i+1], Dσ(i,NDxy)) for i in 1:NDxy-1]...,
@@ -926,13 +926,13 @@ function RDNLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 
     end
 
     # Latent space + data/feature decoder r_θ2(x|z,y): (z,y) -> μ_x = (μ_x0, σ_x^2)
-    D = let Nout = 2*Xout, k = (3,1), G = 8
-        Dyz  = [Zdim + G*Ny÷4, Ny, Nout]
+    D = let Nout = 2*Xout, k = (3,1)
+        Dyz  = [Zdim + Nfeat*Ny÷(2^Nrdn), Ny, Nout]
         NDyz = length(Dyz)
         Flux.Chain(
             MultiInput(
                 identity, # z vector of latent variables unchanged
-                PreprocessSignal(k, Cy=>G), # y signals preprocessed
+                PreprocessSignal(k, Cy=>Nfeat), # y signals preprocessed
             ),
             @λ(zy -> vcat(zy[1], zy[2])),
             [Flux.Dense(Dyz[i], Dyz[i+1], Dσ(i,NDyz)) for i in 1:NDyz-1]...,
