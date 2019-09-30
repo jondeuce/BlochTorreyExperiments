@@ -114,8 +114,8 @@ train_err_cb            = MWFLearning.make_train_err_cb(state, θloss, θacc, θ
 plot_errs_cb            = MWFLearning.make_plot_errs_cb(state, "plots/" * FILE_PREFIX * "errs.png"; labelnames = permutedims(settings["data"]["info"]["labinfer"]))
 plot_ligocvae_losses_cb = MWFLearning.make_plot_ligocvae_losses_cb(state, "plots/" * FILE_PREFIX * "ligocvae.png")
 checkpoint_state_cb     = MWFLearning.make_checkpoint_state_cb(state, "log/" * FILE_PREFIX * "errors.bson")
-checkpoint_model_opt_cb = MWFLearning.make_checkpoint_model_opt_cb(state, m, opt, "models/" * FILE_PREFIX * "model-checkpoint.bson")
-save_best_model_cb      = MWFLearning.make_save_best_model_cb(state, m, "weights/" * FILE_PREFIX * "weights.bson")
+save_best_model_cb      = MWFLearning.make_save_best_model_cb(state, m, opt, "log/" * FILE_PREFIX) # suffix set internally
+checkpoint_model_cb     = MWFLearning.make_checkpoint_model_cb(state, m, opt, "log/" * FILE_PREFIX) # suffix set internally
 
 pretraincbs = Flux.Optimise.runall([
     update_lr_cb,
@@ -125,13 +125,13 @@ posttraincbs = Flux.Optimise.runall([
     epochthrottle(test_err_cb, state, 25),
     epochthrottle(train_err_cb, state, 25),
     epochthrottle(plot_errs_cb, state, 25),
-    epochthrottle(checkpoint_state_cb, state, 25),
-    # Flux.throttle(checkpoint_model_opt_cb, 120),
 ])
 
 loopcbs = Flux.Optimise.runall([
     save_best_model_cb,
     epochthrottle(plot_ligocvae_losses_cb, state, 25),
+    epochthrottle(checkpoint_state_cb, state, 25),
+    epochthrottle(checkpoint_model_cb, state, 25),
 ])
 
 # Train using Bloch-Torrey training/testing data, or sampler data

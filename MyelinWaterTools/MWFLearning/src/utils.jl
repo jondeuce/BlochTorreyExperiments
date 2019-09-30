@@ -432,14 +432,6 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
         end
     end
 end
-function make_checkpoint_model_opt_cb(state, model, opt, filename)
-    function()
-        save_time = @elapsed let opt = MWFLearning.opt_to_cpu(opt, Flux.params(model)), model = Flux.cpu(model)
-            savebson(filename, @dict(model, opt))
-        end
-        @info @sprintf("[%d] -> Model checkpoint... (%d ms)", state[:epoch], 1000 * save_time)
-    end
-end
 function make_checkpoint_state_cb(state, filename)
     function()
         save_time = @elapsed let state = deepcopy(state)
@@ -512,23 +504,43 @@ function make_update_lr_cb(state, opt, lrfun; lrcutoff = 1e-6)
         return nothing
     end
 end
-function make_save_best_model_cb(state, model, filename)
+function make_save_best_model_cb(state, model, opt, filename)
     function()
         # If this is the best accuracy we've seen so far, save the model out
-        epoch, acc = state[:epoch], state[:loop][:acc][end]
-        if acc >= state[:best_acc]
-            state[:best_acc] = acc
-            state[:last_improved_epoch] = epoch
+        curr_epoch = state[:epoch]
+        curr_acc = state[:loop][:acc][end]
+        if curr_acc >= state[:best_acc]
+            state[:best_acc] = curr_acc
+            state[:last_improved_epoch] = curr_epoch
             try
-                save_time = @elapsed let weights = Flux.cpu.(Flux.data.(Flux.params(model)))
-                    savebson(filename, @dict(weights, epoch, acc))
+                save_time = @elapsed let model = Flux.cpu(model), opt = Flux.cpu(opt)
+                    weights = Flux.data.(Flux.params(model))
+                    savebson(filename * "weights-best.bson", @dict(weights))
+                    savebson(filename * "model-best.bson", @dict(model))
+                    # savebson(filename * "opt-best.bson", @dict(opt)) #TODO BSON optimizer saving broken
                 end
-                @info @sprintf("[%d] -> New best accuracy; weights saved (%d ms)", epoch, 1000 * save_time)
+                @info @sprintf("[%d] -> New best accuracy; weights saved (%d ms)", curr_epoch, 1000 * save_time)
             catch e
-                @warn "Error saving weights"
+                @warn "Error saving best model..."
                 @warn sprint(showerror, e, catch_backtrace())
             end
         end
         nothing
+    end
+end
+function make_checkpoint_model_cb(state, model, opt, filename)
+    function()
+        try
+            save_time = @elapsed let model = Flux.cpu(model), opt = Flux.cpu(opt)
+                weights = Flux.data.(Flux.params(model))
+                savebson(filename * "weights-checkpoint.bson", @dict(weights))
+                savebson(filename * "model-checkpoint.bson", @dict(model))
+                # savebson(filename * "opt-checkpoint.bson", @dict(opt)) #TODO BSON optimizer saving broken
+            end
+            @info @sprintf("[%d] -> Model checkpoint... (%d ms)", state[:epoch], 1000 * save_time)
+        catch e
+            @warn "Error checkpointing model..."
+            @warn sprint(showerror, e, catch_backtrace())
+        end
     end
 end

@@ -30,11 +30,9 @@ export plot, plot!, mean, median, cov, std, var, quantile
 @reexport using NNLS
 @reexport using Printf
 @reexport using StatsPlots
-
-using DrWatson: @dict, @ntuple
-using Parameters: @unpack
-using LegibleLambdas: @λ
-export @dict, @ntuple, @unpack, @λ
+@reexport using DrWatson
+@reexport using Parameters
+@reexport using LegibleLambdas
 
 export getnow, savebson, epochthrottle
 export make_model, make_activation, model_summary, model_string

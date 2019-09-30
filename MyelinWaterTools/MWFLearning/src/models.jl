@@ -881,7 +881,7 @@ function RDNLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 
     XScale() = Flux.Diagonal(inv.(labwidth), -labmean./labwidth) # x scaled and shifted (x range -> [-0.5, 0.5])
     Dσ(i,ND) = i == ND-1 ? identity : actfun # Activation functions for ND dense layers
 
-    PreprocessSignal(k = (3,1), ch = Cy=>8*Cy, N = 2) = Flux.Chain(
+    PreprocessSignal(k = (3,1), ch = 1=>8, N = 2) = Flux.Chain(
         Flux.Conv((1,1), ch[1] => ch[2], identity; init = xavier_uniform, pad = (0,0)), # Expand channels
         ResidualDenseBlock(ch[2], ch[2], N; dims = 3, k = k, σ = actfun), # RDB block
         Flux.BatchNorm(ch[2], actfun), # Batchnorm + preactivation
