@@ -944,30 +944,39 @@ function RDNLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 
 end
 
 function ConvLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
-        Zdim :: Int = 10, # Latent variable dimensions
-        act  :: Symbol = :leakyrelu, # Activation function
+        Xout   :: Int = nlabels, # Number of output variables (can be used to marginalize over inputs)
+        Zdim   :: Int = 10, # Latent variable dimensions
+        act    :: Symbol = :leakyrelu, # Activation function
+        Nfeat  :: Int = 8, # Number of convolutional channels
+        Ndown  :: Int = 1, # Optional striding for downsampling
     ) where {T}
 
     Ny, Cy, Nx = nfeatures, nchannels, nlabels
     actfun = make_activation(act)
 
-    MuStdScale() = Flux.Diagonal(T[labwidth; labwidth], T[labmean; zeros(T, Nx)]) # μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x:  scaled only
+    MuStdScale() = Flux.Diagonal(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
     XYScale() = Flux.Diagonal([inv.(labwidth); ones(T, Ny*Cy)], [-labmean./labwidth; zeros(T, Ny*Cy)]) # [x; y] vector -> x scaled and shifted (x range -> [-0.5, 0.5]), y unchanged
     XScale() = Flux.Diagonal(inv.(labwidth), -labmean./labwidth) # x scaled and shifted (x range -> [-0.5, 0.5])
 
-    PreprocessSignal(k = (3,1), ch = Cy=>8*Cy, N = 2, BN = true, GN = false) = Flux.Chain(
-        Flux.Conv((1,1), ch[1] => ch[2], identity; init = xavier_uniform, pad = (0,0)),
-        BatchConvConnection(k, ch[2] => ch[2], actfun; mode = :post, numlayers = N, batchnorm = BN, groupnorm = GN),
+    PreprocessSignal(k = (3,1), ch = 1=>8, N = 2, BN = true, GN = false) = Flux.Chain(
+        Flux.Conv((1,1), ch[1] => ch[2], identity; init = xavier_uniform, pad = (0,0)), # Channel upsample
+        IdentitySkip( # Residual connection
+            BatchConvConnection(k, ch[2] => ch[2], actfun; mode = :pre, numlayers = N, batchnorm = BN, groupnorm = GN),
+        ),
+        Flux.Conv(k, ch[2] => ch[2], identity; init = xavier_uniform, pad = (k.-1).÷2, stride = Ndown), # Spatial downsampling
+        IdentitySkip( # Residual connection
+            BatchConvConnection(k, ch[2] => ch[2], actfun; mode = :pre, numlayers = N, batchnorm = BN, groupnorm = GN),
+        ),
+        Flux.Conv(k, ch[2] => ch[2], identity; init = xavier_uniform, pad = (k.-1).÷2, stride = Ndown), # Spatial downsampling
         DenseResize(),
     )
-    # PreprocessSignal(args...) = identity
 
     # Data/feature encoder r_θ1(z|y): y -> μ_r = (μ_r0, σ_r^2)
-    E1 = let Nout = 2*Zdim, k = (3,1), G = 4
-        Nd = [G*Ny, Ny, Nout]
+    E1 = let Nout = 2*Zdim, k = (3,1), ch = Cy=>Nfeat
+        Nd = [ch[2]*Ny÷Ndown^2, Ny, Nout]
         AF(i) = i == length(Nd)-1 ? identity : actfun
         Flux.Chain(
-            PreprocessSignal(k, Cy=>G),
+            PreprocessSignal(k, ch),
             DenseResize(),
             [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
             SoftplusStd(),
@@ -975,13 +984,13 @@ function ConvLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int =
     end
 
     # Data/feature + parameter/label encoder q_φ(z|x,y): (x,y) -> μ_q = (μ_q0, σ_q^2)
-    E2 = let Nout = 2*Zdim, k = (3,1), G = 4
-        Nd = [Nx + G*Ny, Ny, Nout]
+    E2 = let Nout = 2*Zdim, k = (3,1), ch = Cy=>Nfeat
+        Nd = [Nx + ch[2]*Ny÷Ndown^2, Ny, Nout]
         AF(i) = i == length(Nd)-1 ? identity : actfun
         Flux.Chain(
             MultiInput(
                 XScale(), # x parameters scaled down to roughly [-0.5, 0.5]
-                PreprocessSignal(k, Cy=>G), # y signals preprocessed
+                PreprocessSignal(k, ch), # y signals preprocessed
             ),
             @λ(xy -> vcat(xy[1], xy[2])),
             [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
@@ -990,13 +999,13 @@ function ConvLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int =
     end
 
     # Latent space + data/feature decoder r_θ2(x|z,y): (z,y) -> μ_x = (μ_x0, σ_x^2)
-    D = let Nout = 2*Nx, k = (3,1), G = 4
-        Nd = [Zdim + G*Ny, Ny, Nout]
+    D = let Nout = 2*Xout, k = (3,1), ch = Cy=>Nfeat
+        Nd = [Zdim + ch[2]*Ny÷Ndown^2, Ny, Nout]
         AF(i) = i == length(Nd)-1 ? identity : actfun
         Flux.Chain(
             MultiInput(
                 identity, # z vector of latent variables unchanged
-                PreprocessSignal(k, Cy=>G), # y signals preprocessed
+                PreprocessSignal(k, ch), # y signals preprocessed
             ),
             @λ(zy -> vcat(zy[1], zy[2])),
             [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
@@ -1010,20 +1019,22 @@ function ConvLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int =
 end
 
 function DenseLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
-        Zdim :: Int = 10, # Latent variable dimensions
-        act  :: Symbol = :leakyrelu, # Activation function
+        Xout   :: Int = nlabels, # Number of output variables (can be used to marginalize over inputs)
+        Zdim   :: Int = 10, # Latent variable dimensions
+        Ndense :: Vector{Int} = [nfeatures], # Sizes of inner dense layers
+        act    :: Symbol = :leakyrelu, # Activation function
     ) where {T}
 
     Ny, Cy, Nx = nfeatures, nchannels, nlabels
     actfun = make_activation(act)
 
-    MuStdScale() = Flux.Diagonal(T[labwidth; labwidth], T[labmean; zeros(T, Nx)]) # μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x:  scaled only
+    MuStdScale() = Flux.Diagonal(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
     XYScale() = Flux.Diagonal([inv.(labwidth); ones(T, Ny*Cy)], [-labmean./labwidth; zeros(T, Ny*Cy)]) # [x; y] vector -> x scaled and shifted (x range -> [-0.5, 0.5]), y unchanged
     DR = DenseResize()
 
     # Data/feature encoder r_θ1(z|y): y -> μ_r = (μ_r0, σ_r^2)
     E1 = let Nin = Ny*Cy, Nout = 2*Zdim
-        Nd = [Nin, Ny, Ny, Nout]
+        Nd = [Nin, Ndense..., Nout]
         AF(i) = i == length(Nd)-1 ? identity : actfun
         Flux.Chain(
             DenseResize(),
@@ -1034,7 +1045,7 @@ function DenseLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int 
 
     # Data/feature + parameter/label encoder q_φ(z|x,y): (x,y) -> μ_q = (μ_q0, σ_q^2)
     E2 = let Nin = Nx + Ny*Cy, Nout = 2*Zdim
-        Nd = [Nin, Ny, Ny, Nout]
+        Nd = [Nin, Ndense..., Nout]
         AF(i) = i == length(Nd)-1 ? identity : actfun
         Flux.Chain(
             @λ(xy -> vcat(xy[1], DR(xy[2]))),
@@ -1045,8 +1056,8 @@ function DenseLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int 
     end
 
     # Latent space + data/feature decoder r_θ2(x|z,y): (z,y) -> μ_x = (μ_x0, σ_x^2)
-    D = let Nin = Zdim + Ny*Cy, Nout = 2*Nx
-        Nd = [Nin, Ny, Ny, Nout]
+    D = let Nin = Zdim + Ny*Cy, Nout = 2*Xout
+        Nd = [Nin, Ndense..., Nout]
         AF(i) = i == length(Nd)-1 ? identity : actfun
         Flux.Chain(
             @λ(zy -> vcat(zy[1], DR(zy[2]))),

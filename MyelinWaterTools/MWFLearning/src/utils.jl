@@ -406,7 +406,7 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
         commonkw = (xscale = :log10, xticks = log10ticks(epoch[1], epoch[end]), xrotation = 75.0, xformatter = x->string(round(Int,x)), lw = 3, legend = :best, titlefontsize = 8, tickfontsize = 6, legendfontsize = 6)
 
         p1 = plot(epoch, loss;   title = "Loss ($k: min = $minloss)", label = "loss", ylim = (minloss, quantile(loss, 0.95)), commonkw...)
-        p2 = plot(epoch, acc;    title = "Accuracy ($k: peak = $maxacc%)", label = "acc", yticks = 50:0.1:100, ylim = (clamp(maxacc, 50, 99) - 1.0, min(maxacc + 0.5, 100.0)), commonkw...)
+        p2 = plot(epoch, acc;    title = "Accuracy ($k: peak = $maxacc%)", label = "acc", yticks = 50:0.1:100, ylim = (clamp(maxacc, 50, 99) - 1.0, min(maxacc + 0.3, 100.0)), commonkw...)
         p3 = plot(epoch, laberr; title = "Label Error ($k: rel. %)", label = labelnames, c = labcol, yticks = 0:100, ylim = (max(0, minimum(laberr) - 1.0), min(50, 1.2 * maximum(laberr[end,:]))), commonkw...) #min(50, quantile(vec(laberr), 0.90))
         if k == :testing
             idxloop = slidingindices(state[:loop][:epoch])
@@ -523,7 +523,6 @@ function make_save_best_model_cb(state, model, filename)
                 save_time = @elapsed let weights = Flux.cpu.(Flux.data.(Flux.params(model)))
                     savebson(filename, @dict(weights, epoch, acc))
                 end
-                # @info " -> New best accuracy; weights saved ($(round(1000*save_time; digits = 2)) ms)"
                 @info @sprintf("[%d] -> New best accuracy; weights saved (%d ms)", epoch, 1000 * save_time)
             catch e
                 @warn "Error saving weights"
