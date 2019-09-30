@@ -513,13 +513,13 @@ function make_save_best_model_cb(state, model, opt, filename)
             state[:best_acc] = curr_acc
             state[:last_improved_epoch] = curr_epoch
             try
-                save_time = @elapsed let model = Flux.cpu(model), opt = Flux.cpu(opt)
+                save_time = @elapsed let model = Flux.cpu(deepcopy(model)), opt = Flux.cpu(deepcopy(opt))
                     weights = Flux.data.(Flux.params(model))
                     savebson(filename * "weights-best.bson", @dict(weights))
                     savebson(filename * "model-best.bson", @dict(model))
                     # savebson(filename * "opt-best.bson", @dict(opt)) #TODO BSON optimizer saving broken
                 end
-                @info @sprintf("[%d] -> New best accuracy; weights saved (%d ms)", curr_epoch, 1000 * save_time)
+                @info @sprintf("[%d] -> New best accuracy; model saved (%d ms)", curr_epoch, 1000 * save_time)
             catch e
                 @warn "Error saving best model..."
                 @warn sprint(showerror, e, catch_backtrace())
@@ -531,7 +531,7 @@ end
 function make_checkpoint_model_cb(state, model, opt, filename)
     function()
         try
-            save_time = @elapsed let model = Flux.cpu(model), opt = Flux.cpu(opt)
+            save_time = @elapsed let model = Flux.cpu(deepcopy(model)), opt = Flux.cpu(deepcopy(opt))
                 weights = Flux.data.(Flux.params(model))
                 savebson(filename * "weights-checkpoint.bson", @dict(weights))
                 savebson(filename * "model-checkpoint.bson", @dict(model))

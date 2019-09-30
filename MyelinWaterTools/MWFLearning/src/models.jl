@@ -884,10 +884,12 @@ function RDNLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 
     PreprocessSignal(k = (3,1), ch = 1=>8, N = 2) = Flux.Chain(
         Flux.Conv((1,1), ch[1] => ch[2], identity; init = xavier_uniform, pad = (0,0)), # Expand channels
         ResidualDenseBlock(ch[2], ch[2], N; dims = 3, k = k, σ = actfun), # RDB block
-        Flux.BatchNorm(ch[2], actfun), # Batchnorm + preactivation
+        Flux.BatchNorm(ch[2], actfun), # Batchnorm + pre-activation
+        # @λ(x -> actfun.(x)), # Pre-activation only
         Flux.Conv(k, ch[2] => ch[2], identity; init = xavier_uniform, pad = (k.-1).÷2, stride = 2), # Spatial downsampling
         ResidualDenseBlock(ch[2], ch[2], N; dims = 3, k = k, σ = actfun), # RDB block
-        Flux.BatchNorm(ch[2], actfun), # Batchnorm + preactivation
+        Flux.BatchNorm(ch[2], actfun), # Batchnorm + pre-activation
+        # @λ(x -> actfun.(x)), # Pre-activation only
         Flux.Conv(k, ch[2] => ch[2], identity; init = xavier_uniform, pad = (k.-1).÷2, stride = 2), # Spatial downsampling
         DenseResize(),
     )
