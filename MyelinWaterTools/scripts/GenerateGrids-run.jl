@@ -90,12 +90,13 @@ function main(iters = 1000)
     # Parameter sampler
     sweep_params_sampler() = Dict{Symbol,Union{Float64,Int}}(
         :numfibres => rand(5:30),
-        :mvf       => 0.10 + 0.30 * rand())
-    
+        :mvf       => 0.01 + (0.40 - 0.01) * rand(),
+    )
+
     # Parameters to sweep over
     sweep_params = [sweep_params_sampler() for _ in 1:iters]
     sweep_params = sort(sweep_params; by = d -> (d[:numfibres], d[:mvf]))
-    
+
     for (i,params) in enumerate(sweep_params)
         try
             @info "Generating geometry $i/$(length(sweep_params)) at $(Dates.now()): $(DrWatson.savename("", params; connector = ", "))"
