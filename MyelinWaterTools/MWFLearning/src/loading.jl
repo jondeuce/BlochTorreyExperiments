@@ -361,14 +361,26 @@ end
 # ---------------------------------------------------------------------------- #
 
 function label_fun(s::String, d::Dict)::Float64
-    if s == "mwf" # myelin (small pool) water fraction
+    if s == "mvf" # myelin (small pool) volume fraction
+        g, eta = d[:btparams_dict][:g_ratio], d[:btparams_dict][:AxonPDensity]
+        (1 - g^2) * eta
+    elseif s == "ivf" # intra-cellular (large pool/axonal) volume fraction
+        g, eta = d[:btparams_dict][:g_ratio], d[:btparams_dict][:AxonPDensity]
+        g^2 * eta
+    elseif s == "evf" # extra-cellular (tissue) volume fraction
+        1 - d[:btparams_dict][:AxonPDensity]
+    elseif s == "ievf" # intra/extra-cellular (large pool/axonal + tissue) volume fraction
+        1 - label_fun("mvf", d)
+    elseif s == "mwf" # myelin (small pool) water fraction
         d[:mwfvalues][:exact]
     elseif s == "iewf" # intra/extra-cellular (large pool/axonal + tissue) water fraction
         1 - d[:mwfvalues][:exact]
     elseif s == "iwf" # intra-cellular (large pool/axonal) water fraction
-        d[:btparams_dict][:AxonPDensity] - d[:mwfvalues][:exact]
+        p_r = d[:btparams_dict][:PD_sp] / d[:btparams_dict][:PD_lp] # relative proton density
+        d[:mwfvalues][:exact] * label_fun("ivf", d) / (p_r * label_fun("mvf", d))
     elseif s == "ewf" # extra-cellular (tissue) water fraction
-        1 - d[:btparams_dict][:AxonPDensity]
+        p_r = d[:btparams_dict][:PD_sp] / d[:btparams_dict][:PD_lp] # relative proton density
+        d[:mwfvalues][:exact] * label_fun("evf", d) / (p_r * label_fun("mvf", d))
     elseif s == "g" || s == "gratio" # g-ratio of fibre
         d[:btparams_dict][:g_ratio]
     elseif s == "T2mw" || s == "T2sp" # myelin-water (small pool) T2
@@ -379,13 +391,13 @@ function label_fun(s::String, d::Dict)::Float64
         inv(d[:btparams_dict][:R2_Tissue])
     elseif s == "T2iew" # inverse of area-averaged R2 for intra/extra-cellular (large pool/axonal + tissue) water
         @unpack R2_lp, R2_Tissue = d[:btparams_dict] # R2 values
-        iwf, ewf = label_fun("iwf", d), label_fun("ewf", d) # area fractions
-        R2iew = (iwf * R2_lp + ewf * R2_Tissue) / (iwf + ewf) # area-weighted average
+        ivf, evf = label_fun("ivf", d), label_fun("evf", d) # area fractions
+        R2iew = (ivf * R2_lp + evf * R2_Tissue) / (ivf + evf) # area-weighted average
         inv(R2iew) # R2iew -> T2iew
     elseif s == "T2av" # inverse of area-averaged R2 for whole domain
         @unpack R2_lp, R2_sp, R2_Tissue = d[:btparams_dict] # R2 values
-        iwf, mwf, ewf = label_fun("iwf", d), label_fun("mwf", d), label_fun("ewf", d) # area fractions
-        R2av = (iwf * R2_lp + mwf * R2_sp + ewf * R2_Tissue) # area-weighted average
+        ivf, mvf, evf = label_fun("ivf", d), label_fun("mvf", d), label_fun("evf", d) # area fractions
+        R2av = (ivf * R2_lp + mvf * R2_sp + evf * R2_Tissue) # area-weighted average
         inv(R2av) # R2av -> T2av
     elseif s == "T1mw" || s == "T1sp" # myelin-water (small pool) T1
         inv(d[:btparams_dict][:R1_sp])
@@ -395,13 +407,13 @@ function label_fun(s::String, d::Dict)::Float64
         inv(d[:btparams_dict][:R2_Tissue])
     elseif s == "T1iew" # inverse of area-averaged R1 for intra/extra-cellular (large pool/axonal + tissue) water
         @unpack R1_lp, R1_Tissue = d[:btparams_dict] # R1 values
-        iwf, ewf = label_fun("iwf", d), label_fun("ewf", d) # area fractions
-        R1iew = (iwf * R1_lp + ewf * R1_Tissue) / (iwf + ewf) # area-weighted average
+        ivf, evf = label_fun("ivf", d), label_fun("evf", d) # area fractions
+        R1iew = (ivf * R1_lp + evf * R1_Tissue) / (ivf + evf) # area-weighted average
         inv(R1iew) # R1iew -> T1iew
     elseif s == "Dav" # area-averaged D-coeff for whole domain
         @unpack D_Axon, D_Sheath, D_Tissue = d[:btparams_dict] # D values
-        iwf, mwf, ewf = label_fun("iwf", d), label_fun("mwf", d), label_fun("ewf", d) # area fractions
-        Dav = (iwf * D_Axon + mwf * D_Sheath + ewf * D_Tissue) # area-weighted average
+        ivf, mvf, evf = label_fun("ivf", d), label_fun("mvf", d), label_fun("evf", d) # area fractions
+        Dav = (ivf * D_Axon + mvf * D_Sheath + evf * D_Tissue) # area-weighted average
     elseif startswith(s, "log(") # Logarithm of parameter
         log10(label_fun(s[5:end-1], d))
     elseif startswith(s, "sind(") # Sine of angle (in degrees)

@@ -179,7 +179,7 @@ function runsimulation!(results, params)
     end
 
     # Compute MWF values
-    mwfvalues, signals = compareMWFmethods(sols, myelindomains,
+    mwfvalues, signals = compareMWFmethods(sols, myelindomains, btparams,
         geom.outercircles, geom.innercircles, geom.bdry;
         models = mwfmodels)
 

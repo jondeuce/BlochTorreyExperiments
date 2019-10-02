@@ -6,7 +6,8 @@
 function getmwf(outer::VecOfCircles{2}, inner::VecOfCircles{2}, bdry::Rectangle)
     myelin_area = intersect_area(outer, bdry) - intersect_area(inner, bdry)
     total_area = area(bdry)
-    return myelin_area/total_area
+    myelin_vol_frac = myelin_area / total_area
+    return myelin_vol_frac / (2 - myelin_vol_frac) # Assumes relative proton density PD_sp/PD_lp == 1/2
 end
 
 # Convert all signals to vectors of Vec{2}'s, representing the transverse magnetization
@@ -290,7 +291,7 @@ function _getmwf(modeltype::TwoPoolModel, modelfit, errors)
 end
 
 function compareMWFmethods(
-        sols, myelindomains, outercircles, innercircles, bdry;
+        sols, myelindomains, btparams, outercircles, innercircles, bdry;
         models::AbstractVector{<:AbstractMWIFittingModel} = [NNLSRegression(PlotDist = false), TwoPoolMagnToMagn(), ThreePoolMagnToMagn(), ThreePoolCplxToMagn(), ThreePoolCplxToCplx()]
     )
     if isempty(models)
@@ -298,7 +299,7 @@ function compareMWFmethods(
     end
 
     tspan = sols[1].prob.tspan
-    signals = [calcsignal(sols, get_tpoints(m, tspan), myelindomains) for m in models]
+    signals = [calcsignal(sols, get_tpoints(m, tspan), myelindomains, btparams) for m in models]
     mwfvalues = Dict(
         :exact => getmwf(outercircles, innercircles, bdry),
         [Symbol(typeof(m)) => getmwf(s, m) for (s,m) in zip(signals, models)]...

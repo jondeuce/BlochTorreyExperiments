@@ -93,7 +93,8 @@ const default_solverparams_dict = Dict(
     :nTR         => default_nTR,     # Number of repetitions for CPMGCallback (Default: 1)
     :tspan       => default_tspan,   # Solver time span (Default: (0.0, 320e-3); must start at zero)
     :reltol      => 1e-8,
-    :abstol      => 0.0);
+    :abstol      => 0.0,
+);
 
 const default_nnlsparams_dict = Dict(
     :TE          => default_TE,      # Echotime of signal
@@ -104,7 +105,8 @@ const default_nnlsparams_dict = Dict(
     :T2Range     => [5e-3, 2000e-3], # Range of T2 values used
     :SPWin       => [10e-3, 40e-3],  # Small pool window, i.e. myelin peak
     :MPWin       => [40e-3, 200e-3], # Intra/extracelluar water peak window
-    :PlotDist    => false);          # Plot resulting distribution in MATLAB
+    :PlotDist    => false,           # Plot resulting distribution in MATLAB
+);
 
 const default_mwfmodels = [
     # NNLSRegression(;default_nnlsparams_dict...), #TODO
@@ -137,27 +139,35 @@ log10sampler(a,b) = 10^linearsampler(log10(a), log10(b))
 acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
 
 const sweepparamsampler_settings = Dict{Symbol,Any}(
-    :theta  => (sampler = :acossampler,   args = (lb = 0.0,     ub = 90.0)),
+    :theta  => (sampler = :acossampler,   args = (lb = 0.0,     ub = 90.0)), # Uniformly random orientations => cosθ ~ Uniform(0,1)
     :alpha  => (sampler = :linearsampler, args = (lb = 120.0,   ub = 180.0)),
-    :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 1.0)),
-    :Dtiss  => (sampler = :log10sampler,  args = (lb = 1000.0,  ub = 2000.0)),
-    :Dmye   => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 1000.0)),
-    :Dax    => (sampler = :log10sampler,  args = (lb = 1000.0,  ub = 2000.0)),
+    :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 1e-3)),#TODO (lb = 1e-3,    ub = 3.0)),
+    :Dtiss  => (sampler = :log10sampler,  args = (lb = 1.0,     ub = 1.0)),#TODO (lb = 500.0,   ub = 500.0)), # Diffusion fixed relatively small for faster simulations
+    :Dmye   => (sampler = :log10sampler,  args = (lb = 1.0,     ub = 1.0)),#TODO (lb = 500.0,   ub = 500.0)), # Diffusion fixed relatively small for faster simulations
+    :Dax    => (sampler = :log10sampler,  args = (lb = 1.0,     ub = 1.0)),#TODO (lb = 500.0,   ub = 500.0)), # Diffusion fixed relatively small for faster simulations
     :FRD    => (sampler = :linearsampler, args = (lb = 0.5,     ub = 0.5)),
-    :TE     => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 10e-3)), # NOTE: for learning the resulting signals, TE should be fixed
-    :TR     => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), # Irrelevant; nTR = 1 below
-    :nTE    => (sampler = :rangesampler,  args = (lb = 32, ub = 48, step = 2)),
+    :TE     => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 10e-3)), # NOTE: Fixed time scale; only e.g. T2/TE is learned
+    :nTE    => (sampler = :rangesampler,  args = (lb = 64, ub = 64, step = 2)), # Simulate many echoes; can chop later
+    :TR     => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), # Irrelevant when nTR = 1 (set below)
     :nTR    => (sampler = :rangesampler,  args = (lb = 1,       ub = 1)), # Only simulate from t = 0 to t = nTE * TE
-    :T2sp   => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 20e-3)),
-    :T2lp   => (sampler = :linearsampler, args = (lb = 50e-3,   ub = 80e-3)),
-    :T2tiss => (sampler = :linearsampler, args = (lb = 50e-3,   ub = 80e-3)),
+    :T2sp   => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 70e-3)), # Bounds based on T2sp/TE when TE = 10ms (above), T2sp ∈ [10ms, 35ms], TE ∈ [5ms, 10ms]
+    :T2lp   => (sampler = :linearsampler, args = (lb = 50e-3,   ub = 180e-3)), # Bounds based on T2lp/TE when TE = 10ms (above), T2lp ∈ [50ms, 90ms], TE ∈ [5ms, 10ms]
+    #:T2tiss=> (sampler = :linearsampler, args = (lb = 50e-3,   ub = 90e-3)),
     :T1sp   => (sampler = :linearsampler, args = (lb = 150e-3,  ub = 250e-3)),
     :T1lp   => (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
-    :T1tiss => (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
+    #:T1tiss=> (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
 )
-sweepparamsampler() = Dict{Symbol,Union{Float64,Int}}(
+sweepparamsample() = Dict{Symbol,Union{Float64,Int}}(
     k => eval(Expr(:call, v.sampler, v.args...))
     for (k,v) in sweepparamsampler_settings)
+sweepparamconstraints(d) = d[:T2lp] ≥ 1.5*d[:T2sp] # Extreme T2sp and T2lp ranges above require this additional constraint to make sure each sample is realistic
+function sweepparamsampler()
+    d = sweepparamsample()
+    while !sweepparamconstraints(d)
+        d = sweepparamsample()
+    end
+    return d
+end
 
 ####
 #### Save metadata
@@ -210,10 +220,10 @@ function runsimulation!(results, sweepparams, geom)
         FRD_Sheath = sweepparams[:FRD],
         R2_sp = inv(sweepparams[:T2sp]),
         R2_lp = inv(sweepparams[:T2lp]),
-        R2_Tissue = inv(sweepparams[:T2tiss]),
+        R2_Tissue = inv(sweepparams[:T2lp]), #Force equal (else, set to inv(sweepparams[:T2tiss]))
         R1_sp = inv(sweepparams[:T1sp]),
         R1_lp = inv(sweepparams[:T1lp]),
-        R1_Tissue = inv(sweepparams[:T1tiss]),
+        R1_Tissue = inv(sweepparams[:T1lp]), #Force equal (else, set to inv(sweepparams[:T1tiss]))
         AxonPDensity = density,
         g_ratio = gratio,
     )
@@ -222,7 +232,9 @@ function runsimulation!(results, sweepparams, geom)
     # Sample solution signals
     dt = sweepparams[:TE]/20 # TODO how many samples to save?
     tpoints = cpmg_savetimes(sols[1].prob.tspan, dt, sweepparams[:TE], sweepparams[:TR], sweepparams[:nTE], sweepparams[:nTR])
-    signals = calcsignal(sols, tpoints, myelindomains)
+    subregion_names = string.(typeof.(getregion.(myelindomains)))
+    subregion_signals = calcsignals(sols, tpoints, myelindomains, btparams)
+    signals = sum(subregion_signals)
 
     # Common filename without suffix
     curr_time = MWFUtils.getnow()
@@ -239,7 +251,7 @@ function runsimulation!(results, sweepparams, geom)
                 typeof(model)(model; TE = sweepparams[:TE], nTE = sweepparams[:nTE])
             end
         end
-        mwfvalues, _ = compareMWFmethods(sols, myelindomains,
+        mwfvalues, _ = compareMWFmethods(sols, myelindomains, btparams,
             geom.outercircles, geom.innercircles, geom.bdry;
             models = mwfmodels)
     catch e
@@ -252,6 +264,8 @@ function runsimulation!(results, sweepparams, geom)
     push!(results[:solverparams_dict], solverparams_dict)
     push!(results[:sweepparams], sweepparams)
     push!(results[:tpoints], tpoints)
+    push!(results[:subregion_names], subregion_names)
+    push!(results[:subregion_signals], subregion_signals)
     push!(results[:signals], signals)
     # push!(results[:sols], sols) #TODO
     # push!(results[:myelinprob], myelinprob) #TODO
@@ -264,7 +278,7 @@ function runsimulation!(results, sweepparams, geom)
         btparams_dict = Dict(btparams)
         DrWatson.@tagsave(
             "measurables/" * fname * ".measurables.bson",
-            deepcopy(@dict(btparams_dict, solverparams_dict, sweepparams, tpoints, signals, mwfvalues)),
+            deepcopy(@dict(btparams_dict, solverparams_dict, sweepparams, tpoints, signals, mwfvalues, subregion_names, subregion_signals)),
             true, gitdir())
     catch e
         @warn "Error saving measurables"
@@ -377,11 +391,14 @@ function main(;iters::Int = typemax(Int))
         :solverparams_dict  => [],
         :tpoints            => [],
         :signals            => [],
+        :subregion_names    => [],
+        :subregion_signals  => [],
         # :sols               => [], #TODO
         # :myelinprob         => [], #TODO
         # :myelinsubdomains   => [], #TODO
         # :myelindomains      => [], #TODO
-        :mwfvalues          => [])
+        :mwfvalues          => [],
+    )
 
     all_sweepparams = (sweepparamsampler() for _ in 1:iters)
     for (i,sweepparams) in enumerate(all_sweepparams)
@@ -420,7 +437,7 @@ end
 ####
 
 results = main() #TODO iters
-@unpack sweepparams, btparams, solverparams_dict, tpoints, signals, mwfvalues = results;
+@unpack sweepparams, btparams, solverparams_dict, tpoints, signals, mwfvalues, subregion_names, subregion_signals = results;
 # @unpack sols, myelinprob, myelinsubdomains, myelindomains = results; #TODO
 btparams_dict = Dict.(btparams);
 
@@ -436,7 +453,7 @@ catch e
 end
 
 try
-    BSON.bson(SIM_START_TIME * ".allmeasurables.bson", deepcopy(@dict(tpoints, signals, mwfvalues)))
+    BSON.bson(SIM_START_TIME * ".allmeasurables.bson", deepcopy(@dict(tpoints, signals, mwfvalues, subregion_names, subregion_signals)))
 catch e
     @warn "Error saving measurables"
     @warn sprint(showerror, e, catch_backtrace())

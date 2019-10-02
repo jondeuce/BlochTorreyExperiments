@@ -193,7 +193,7 @@ function plotmultiexp(sols, btparams, myelindomains, outercircles, innercircles,
         disp = (fname == nothing)
     )
     # Extract signals from last (0, nTE*TE) of simulation
-    signals = transverse_signal(calcsignal(sols, get_tpoints(opts, sols[1].prob.tspan), myelindomains))
+    signals = transverse_signal(calcsignal(sols, get_tpoints(opts, sols[1].prob.tspan), myelindomains, btparams))
     S0 = norm(signals[1])
     
     # Default timespan/timepoints in range (0, nTE*TE)
@@ -204,9 +204,10 @@ function plotmultiexp(sols, btparams, myelindomains, outercircles, innercircles,
     outercircles_area = intersect_area(outercircles, bdry)
     innercircles_area = intersect_area(innercircles, bdry)
     total_area = area(bdry)
-    mwf = (outercircles_area - innercircles_area) / total_area  # myelin (small pool) water fraction
-    iwf = innercircles_area / total_area # intra-cellular (large pool/axonal) water fraction
-    ewf = 1 - outercircles_area / total_area  # extra-cellular (tissue) water fraction
+    mvf = (outercircles_area - innercircles_area) / total_area  # myelin (small pool) volume fraction
+    ivf = innercircles_area / total_area # intra-cellular (large pool/axonal) volume fraction
+    evf = 1 - outercircles_area / total_area  # extra-cellular (tissue) volume fraction
+    mwf, iwf, ewf = mvf/(2-mvf), 2*ivf/(2-mvf), 2*evf/(2-mvf) # Assumes PD_sp/PD_lp == 1/2
 
     # Extract relaxation rates
     R2_mw = btparams.R2_sp # myelin-water (small pool) T2
@@ -216,7 +217,7 @@ function plotmultiexp(sols, btparams, myelindomains, outercircles, innercircles,
     # In the high diffusion & high permeability limit, spins are equally likely
     # to be anywhere on the grid, and therefore experience a decay rate R2_mono
     # on the average, where R2_mono is the area averaged R2 of each compartment
-    R2_mono = mwf * R2_mw + iwf * R2_iw + ewf * R2_ew
+    R2_mono = mvf * R2_mw + ivf * R2_iw + evf * R2_ew
     y_monoexp = @. S0 * exp(-ts * R2_mono)
 
     # In the high diffusion & low permeability limit, spins are confined to
@@ -298,7 +299,7 @@ function plotSEcorr(
         fname = nothing,
         disp = (fname == nothing)
     )
-    signals = transverse_signal(calcsignal(sols, get_tpoints(opts, sols[1].prob.tspan), myelindomains))
+    signals = transverse_signal(calcsignal(sols, get_tpoints(opts, sols[1].prob.tspan), myelindomains, btparams))
     MWImaps, MWIdist, MWIpart = fitmwfmodel(signals, opts)
 
     if AVOID_MAT_PLOTS

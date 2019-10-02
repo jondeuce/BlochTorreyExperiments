@@ -196,6 +196,10 @@ Lazy.@forward MyelinDomain.domain (fieldvectype, fieldfloattype, getgrid, getdof
 Lazy.@forward MyelinDomain.domain (factorize!,)
 Lazy.@forward MyelinDomain.domain (JuAFEM.ndofs, LinearAlgebra.norm, GeometryUtils.area)
 
+@inline protondensity(m::MyelinDomain{R}, btparams::BlochTorreyParameters) where {R <: AxonRegion} = btparams.PD_lp
+@inline protondensity(m::MyelinDomain{R}, btparams::BlochTorreyParameters) where {R <: TissueRegion} = btparams.PD_lp
+@inline protondensity(m::MyelinDomain{R}, btparams::BlochTorreyParameters) where {R <: MyelinRegion} = btparams.PD_sp
+
 function Base.show(io::IO, ::MIME"text/plain", m::MyelinDomain)
     print(io, "$(typeof(m)) with $(numfibres(m)) fibres and:")
     print(io, "\n  grid: "); show(io, getgrid(m))

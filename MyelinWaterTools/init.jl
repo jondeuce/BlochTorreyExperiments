@@ -28,7 +28,7 @@ using Profile
 ##### Plotting
 #####
 # NOTE: Must use pyplot() backend before using MATLAB (on some versions of Matlab);
-#       MATLAB is loaded within MWFUTils below, so it is best to invoke pyplot() now
+#       MATLAB is loaded within MWFUtils below, so it is best to invoke pyplot() now
 using StatsPlots; pyplot()
 
 #####

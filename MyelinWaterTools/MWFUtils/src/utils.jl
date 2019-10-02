@@ -35,7 +35,7 @@ function load_results_dict(;
         sols = [BSON.load(solfile)[:sol] for solfile in solfilebatch]
 
         @info "Computing MWF values"
-        mwfvalues, signals = compareMWFmethods(sols, myelindomains, outercircles, innercircles, bdry)
+        mwfvalues, signals = compareMWFmethods(sols, myelindomains, params, outercircles, innercircles, bdry)
         
         push!(results[:params], params)
         push!(results[:myelinprobs], myelinprob)
@@ -418,17 +418,19 @@ calcomega(myelinprob, myelinsubdomains) = reduce(vcat, calcomegas(myelinprob, my
 #       for the relative size of the region; the total signal is the sum of the
 #       signals returned here
 
-function calcsignals(sols, ts, myelindomains; steadystate = 1)
+function calcsignals(sols, ts, myelindomains, btparams; steadystate = 1)
     Signals = map(sols, myelindomains) do s, m
+        ρ = protondensity(m, btparams)
         if fieldvectype(m) <: Vec{3}
-            [integrate(shift_longitudinal(s(t), steadystate), m) for t in ts]
+            ρ .* [integrate(shift_longitudinal(s(t), steadystate), m) for t in ts]
         else
-            [integrate(s(t), m) for t in ts]
+            ρ .* [integrate(s(t), m) for t in ts]
         end
     end
     return Signals
 end
-calcsignal(sols, ts, myelindomains; kwargs...) = sum(calcsignals(sols, ts, myelindomains; kwargs...))
+calcsignal(sols, ts, myelindomains, btparams; kwargs...) =
+    sum(calcsignals(sols, ts, myelindomains, btparams; kwargs...))
 
 # ---------------------------------------------------------------------------- #
 # ODEProblem constructor and solver for ParabolicDomain's and MyelinDomain's

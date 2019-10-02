@@ -21,8 +21,15 @@ gitdir() = realpath(DrWatson.projectdir(".."))
 
 function runcreategeometry(params; numreps = 5)
     # BlochTorreyParameters
-    @unpack numfibres, gratio, density, mwf = params
-    btparams = BlochTorreyParameters{Float64}(AxonPDensity = density, g_ratio = gratio, MWF = mwf)
+    @unpack numfibres, gratio, density, mvf, mwf = params
+    btparams = BlochTorreyParameters{Float64}(
+        PD_lp = 1.0,
+        PD_sp = 0.5,
+        g_ratio = gratio,
+        AxonPDensity = density,
+        MVF = mvf,
+        MWF = mwf,
+    )
     
     # Attempt to generate `numreps` grids for given parameter set
     for _ in 1:numreps
@@ -82,20 +89,21 @@ function main(iters = 1000)
 
     # Parameter sampler
     sweep_params_sampler() = Dict{Symbol,Union{Float64,Int}}(
-        :numfibres => rand(9:30), #TODO
-        :mwf       => 0.15 + 0.15 * rand()) #TODO
+        :numfibres => rand(5:30),
+        :mvf       => 0.10 + 0.30 * rand())
     
     # Parameters to sweep over
     sweep_params = [sweep_params_sampler() for _ in 1:iters]
-    sweep_params = sort(sweep_params; by = d -> (d[:numfibres], d[:mwf]))
+    sweep_params = sort(sweep_params; by = d -> (d[:numfibres], d[:mvf]))
     
     for (i,params) in enumerate(sweep_params)
         try
             @info "Generating geometry $i/$(length(sweep_params)) at $(Dates.now()): $(DrWatson.savename("", params; connector = ", "))"
-            @unpack g_ratio, AxonPDensity = BlochTorreyUtils.optimal_g_ratio_packdensity_gridsearch(params[:mwf])
+            @unpack g_ratio, AxonPDensity = BlochTorreyUtils.optimal_g_ratio_packdensity_gridsearch(params[:mvf])
             geomparams = deepcopy(params)
             geomparams[:gratio] = g_ratio
             geomparams[:density] = AxonPDensity
+            geomparams[:mwf] = params[:mvf] / (2 - params[:mvf]) # Relative proton density is 1/2
             runcreategeometry(geomparams)
         catch e
             if e isa InterruptException
