@@ -83,7 +83,7 @@ function runcreategeometry(params; numreps = 5)
     return nothing
 end
 
-function main(iters = 1000)
+function main(;iters = 1000, randomorder = false)
     # Make subfolders
     mkpath.(("plots/circles", "plots/grids", "geom"))
 
@@ -94,8 +94,10 @@ function main(iters = 1000)
     )
 
     # Parameters to sweep over
-    sweep_params = [sweep_params_sampler() for _ in 1:iters]
-    sweep_params = sort(sweep_params; by = d -> (d[:numfibres], d[:mvf]))
+    sweep_params = (sweep_params_sampler() for _ in 1:iters)
+    if !randomorder
+        sweep_params = sort(collect(sweep_params); by = d -> (d[:numfibres], d[:mvf]))
+    end
 
     for (i,params) in enumerate(sweep_params)
         try
@@ -120,4 +122,4 @@ function main(iters = 1000)
     return nothing
 end
 
-main()
+main(;iters = typemax(Int), randomorder = true)
