@@ -432,10 +432,10 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
         end
     end
 end
-function make_checkpoint_state_cb(state, filename)
+function make_checkpoint_state_cb(state, filename = nothing)
     function()
         save_time = @elapsed let state = deepcopy(state)
-            savebson(filename, @dict(state))
+            !(filename === nothing) && savebson(filename, @dict(state))
         end
         @info @sprintf("[%d] -> Error checkpoint... (%d ms)", state[:epoch], 1000 * save_time)
     end
@@ -504,7 +504,7 @@ function make_update_lr_cb(state, opt, lrfun; lrcutoff = 1e-6)
         return nothing
     end
 end
-function make_save_best_model_cb(state, model, opt, filename)
+function make_save_best_model_cb(state, model, opt, filename = nothing)
     function()
         # If this is the best accuracy we've seen so far, save the model out
         curr_epoch = state[:epoch]
@@ -515,9 +515,9 @@ function make_save_best_model_cb(state, model, opt, filename)
             try
                 save_time = @elapsed let model = Flux.cpu(deepcopy(model)), opt = Flux.cpu(deepcopy(opt))
                     weights = Flux.data.(Flux.params(model))
-                    savebson(filename * "weights-best.bson", @dict(weights))
-                    savebson(filename * "model-best.bson", @dict(model))
-                    # savebson(filename * "opt-best.bson", @dict(opt)) #TODO BSON optimizer saving broken
+                    !(filename === nothing) && savebson(filename * "weights-best.bson", @dict(weights))
+                    !(filename === nothing) && savebson(filename * "model-best.bson", @dict(model))
+                    # !(filename === nothing) && savebson(filename * "opt-best.bson", @dict(opt)) #TODO BSON optimizer saving broken
                 end
                 @info @sprintf("[%d] -> New best accuracy; model saved (%d ms)", curr_epoch, 1000 * save_time)
             catch e
@@ -528,14 +528,14 @@ function make_save_best_model_cb(state, model, opt, filename)
         nothing
     end
 end
-function make_checkpoint_model_cb(state, model, opt, filename)
+function make_checkpoint_model_cb(state, model, opt, filename = nothing)
     function()
         try
             save_time = @elapsed let model = Flux.cpu(deepcopy(model)), opt = Flux.cpu(deepcopy(opt))
                 weights = Flux.data.(Flux.params(model))
-                savebson(filename * "weights-checkpoint.bson", @dict(weights))
-                savebson(filename * "model-checkpoint.bson", @dict(model))
-                # savebson(filename * "opt-checkpoint.bson", @dict(opt)) #TODO BSON optimizer saving broken
+                !(filename === nothing) && savebson(filename * "weights-checkpoint.bson", @dict(weights))
+                !(filename === nothing) && savebson(filename * "model-checkpoint.bson", @dict(model))
+                # !(filename === nothing) && savebson(filename * "opt-checkpoint.bson", @dict(opt)) #TODO BSON optimizer saving broken
             end
             @info @sprintf("[%d] -> Model checkpoint... (%d ms)", state[:epoch], 1000 * save_time)
         catch e

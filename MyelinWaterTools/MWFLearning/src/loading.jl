@@ -418,6 +418,8 @@ function label_fun(s::String, d::Dict)::Float64
         log10(label_fun(s[5:end-1], d))
     elseif startswith(s, "sind(") # Sine of angle (in degrees)
         sind(label_fun(s[6:end-1], d))
+    elseif startswith(s, "cosd(") # Cosine of angle (in degrees)
+        cosd(label_fun(s[6:end-1], d))
     elseif startswith(s, "TE*") # Parameter relative to TE
         label_fun("TE", d) * label_fun(s[4:end], d)
     elseif endswith(s, "/TE") # Parameter relative to TE

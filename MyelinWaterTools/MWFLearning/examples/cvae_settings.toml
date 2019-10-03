@@ -15,11 +15,11 @@ nchannels   = "auto" # Number of input data channels
 nlabels     = "auto" # Number of output labels
 labmean     = "auto" # Label means
 labwidth    = "auto" # Label distribution widths
-labnames    = ["alpha", "log(TE*K)", "gratio", "mwf", "T2mw/TE", "T2iew/TE", "iwf", "ewf", "iewf", "T2iw/TE", "T2ew/TE", "T1mw/TE", "T1iw/TE", "T1ew/TE", "T1iew/TE"]
-labinfer    = ["alpha", "log(TE*K)", "gratio", "mwf", "T2mw/TE", "T2iew/TE"]
-labweights  = [1.0, 1.0, 1.0, 1.0,   1.0, 1.0] # Weights for loss function
-labscale    = [1.0, 1.0, 1.0, 100.0, 1.0, 1.0] # scale labels before plotting
-labunits    = ["°", "log(ms*um/ms)", "um/um", "%", "ms/ms", "ms/ms"] # label units, after scaling
+labnames    = ["cosd(alpha)", "log(TE*K)", "gratio", "mwf", "T2mw/TE", "T2iew/TE", "iwf", "ewf", "iewf", "T2iw/TE", "T2ew/TE", "T1mw/TE", "T1iw/TE", "T1ew/TE", "T1iew/TE"]
+labinfer    = ["cosd(alpha)", "log(TE*K)", "gratio", "mwf", "T2mw/TE", "T2iew/TE"]
+labweights  = [1.0, 1.0, 1.0,   1.0,   1.0, 1.0] # Weights for loss function
+labscale    = [1.0, 1.0, 100.0, 100.0, 1.0, 1.0] # scale labels before plotting
+labunits    = ["cosd(°)", "log(um)", "%", "%", "ms/ms", "ms/ms"] # label units, after scaling
 [data.filter]
 labnames    = [ "K",  "nTE" ]
 lower       = [ 0.00,  32.0 ]

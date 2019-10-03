@@ -17,6 +17,7 @@ pyplot(size=(800,600))
 const settings_file = "settings.toml"
 const settings = TOML.parsefile(settings_file)
 
+const SAVE = false
 const DATE_PREFIX = getnow() * "."
 const FILE_PREFIX = DATE_PREFIX * model_string(settings) * "."
 const GPU = settings["gpu"] :: Bool
@@ -25,25 +26,25 @@ const VT  = Vector{T}
 const MT  = Matrix{T}
 const VMT = VecOrMat{T}
 const CVT = GPU ? CuVector{T} : Vector{T}
+maybegpu(x) = GPU ? Flux.gpu(x) : x
+savepath(folder, filename) = SAVE ? joinpath(savefolders[folder], FILE_PREFIX * filename) : nothing
 
-const savefoldernames = ["settings", "models", "weights", "log", "plots"]
+const savefoldernames = ["settings", "models", "log", "plots"]
 const savefolders = Dict{String,String}(savefoldernames .=> mkpath.(joinpath.(settings["dir"], savefoldernames)))
-cp(settings_file, joinpath(savefolders["settings"], FILE_PREFIX * "settings.toml"); force = true)
-clearsavefolders(folders = savefolders) = for (k,f) in folders; rm.(joinpath.(f, readdir(f))); end
+SAVE && cp(settings_file, savepath("settings", "settings.toml"); force = true)
 
 # Load and prepare signal data
 @info "Preparing data..."
 const data_set = prepare_data(settings)
-maybegpu(x) = GPU ? Flux.gpu(x) : x
-for k in (:training_data, :testing_data, :training_thetas, :testing_thetas); data_set[k] = maybegpu(data_set[k]); end
+map(k -> data_set[k] = maybegpu(data_set[k]), (:training_data, :testing_data, :training_thetas, :testing_thetas))
 
-BT_train_data = training_batches(data_set[:training_thetas], data_set[:training_data], settings["data"]["train_batch"])
-BT_test_data = testing_batches(data_set[:testing_thetas], data_set[:testing_data])
+const BT_train_data = training_batches(data_set[:training_thetas], data_set[:training_data], settings["data"]["train_batch"])
+const BT_test_data = testing_batches(data_set[:testing_thetas], data_set[:testing_data])
 
-const thetas_infer_idx = 1:length(settings["data"]["info"]["labinfer"])
+const thetas_infer_idx = 1:length(settings["data"]["info"]["labinfer"]) # thetas to learn during parameter inference
 thetas = batch -> features(batch)[thetas_infer_idx, :]
 signals = batch -> labels(batch)
-flipbatch(batch) = (signals(batch), thetas(batch))
+labelbatch(batch) = (signals(batch), thetas(batch))
 
 # Lazy data loader for training on simulated data
 const mb_sampler_batch_size  = 250
@@ -80,8 +81,8 @@ mb_sampler = MWFLearning.LazyMiniBatches(mb_sampler_train_batch, x_sampler, y_sa
 # Construct model
 @info "Constructing model..."
 @unpack m = MWFLearning.make_model(settings)[1] |> maybegpu;
-model_summary(m, joinpath(savefolders["models"], FILE_PREFIX * "architecture.txt"));
-param_summary(m, flipbatch.(BT_train_data), flipbatch(BT_test_data));
+model_summary(m, savepath("models", "architecture.txt"));
+param_summary(m, labelbatch.(BT_train_data), labelbatch(BT_test_data));
 
 # Loss and accuracy function
 theta_weights()::CVT = inv.(settings["data"]["info"]["labwidth"][thetas_infer_idx]) .* unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT |> maybegpu |> CVT
@@ -109,13 +110,13 @@ state = Dict(
 )
 
 update_lr_cb            = MWFLearning.make_update_lr_cb(state, opt, lrfun)
-test_err_cb             = MWFLearning.make_test_err_cb(state, θloss, θacc, θerr, flipbatch(BT_test_data))
-train_err_cb            = MWFLearning.make_train_err_cb(state, θloss, θacc, θerr, flipbatch.(BT_train_data))
-plot_errs_cb            = MWFLearning.make_plot_errs_cb(state, "plots/" * FILE_PREFIX * "errs.png"; labelnames = permutedims(settings["data"]["info"]["labinfer"]))
-plot_ligocvae_losses_cb = MWFLearning.make_plot_ligocvae_losses_cb(state, "plots/" * FILE_PREFIX * "ligocvae.png")
-checkpoint_state_cb     = MWFLearning.make_checkpoint_state_cb(state, "log/" * FILE_PREFIX * "errors.bson")
-save_best_model_cb      = MWFLearning.make_save_best_model_cb(state, m, opt, "log/" * FILE_PREFIX) # suffix set internally
-checkpoint_model_cb     = MWFLearning.make_checkpoint_model_cb(state, m, opt, "log/" * FILE_PREFIX) # suffix set internally
+test_err_cb             = MWFLearning.make_test_err_cb(state, θloss, θacc, θerr, labelbatch(BT_test_data))
+train_err_cb            = MWFLearning.make_train_err_cb(state, θloss, θacc, θerr, labelbatch.(BT_train_data))
+plot_errs_cb            = MWFLearning.make_plot_errs_cb(state, savepath("plots", "errs.png"); labelnames = permutedims(settings["data"]["info"]["labinfer"]))
+plot_ligocvae_losses_cb = MWFLearning.make_plot_ligocvae_losses_cb(state, savepath("plots", "ligocvae.png"))
+checkpoint_state_cb     = MWFLearning.make_checkpoint_state_cb(state, savepath("log", "errors.bson"))
+save_best_model_cb      = MWFLearning.make_save_best_model_cb(state, m, opt, savepath("log", "")) # suffix set internally
+checkpoint_model_cb     = MWFLearning.make_checkpoint_model_cb(state, m, opt, savepath("log", "")) # suffix set internally
 
 pretraincbs = Flux.Optimise.runall([
     update_lr_cb,
@@ -145,7 +146,7 @@ train_loop! = function()
         
         pretraincbs() # pre-training callbacks
         train_time = @elapsed Flux.train!(trainloss, Flux.params(m), train_data, opt) # CuArrays.@sync
-        acc_time = @elapsed acc = θacc(flipbatch(test_data)...) |> Flux.data |> Flux.cpu # CuArrays.@sync
+        acc_time = @elapsed acc = θacc(labelbatch(test_data)...) |> Flux.data |> Flux.cpu # CuArrays.@sync
         posttraincbs() # post-training callbacks
         
         @info @sprintf("[%d] (%4d ms): Label accuracy: %.4f (%d ms)", epoch, 1000 * train_time, acc, 1000 * acc_time)
@@ -175,11 +176,17 @@ catch e
 end
 
 @info "Computing resulting labels..."
-best_model   = BSON.load("log/" * FILE_PREFIX * "model-best.bson")[:model];
-true_signals = signals(BT_test_data) |> Flux.cpu;
+best_model   = SAVE ? BSON.load(savepath("log", "model-best.bson"))[:model] : deepcopy(m);
 true_thetas  = thetas(BT_test_data) |> Flux.cpu;
+true_signals = signals(BT_test_data) |> Flux.cpu;
 model_thetas = best_model(signals(BT_test_data); nsamples = 1000) |> Flux.cpu;
 # model_stds = std([best_model(signals(BT_test_data); nsamples = 1) |> Flux.cpu for _ in 1:1000]);
+
+# keep_indices = true_thetas[2,:] .≤ -3.5 # Keep small permeability only
+# true_thetas  = true_thetas[.., keep_indices]
+# true_signals = true_signals[.., keep_indices]
+# model_thetas = model_thetas[.., keep_indices]
+# # model_stds = model_stds[.., keep_indices]
 
 prediction_hist = function()
     pred_hist = function(i)
@@ -196,7 +203,7 @@ prediction_hist = function()
 end
 @info "Plotting prediction histograms..."
 fig = prediction_hist(); display(fig)
-savefig(fig, "plots/" * FILE_PREFIX * "theta.histogram.png")
+SAVE && savefig(fig, savepath("plots", "theta.histogram.png"))
 
 prediction_scatter = function()
     pred_scatter = function(i)
@@ -213,7 +220,25 @@ prediction_scatter = function()
 end
 @info "Plotting prediction scatter plots..."
 fig = prediction_scatter(); display(fig)
-savefig(fig, "plots/" * FILE_PREFIX * "theta.scatter.png")
+SAVE && savefig(fig, savepath("plots", "theta.scatter.png"))
+
+prediction_corrplot = function()
+    # cosalpha(x) = (out = copy(x); @views out[1,:] .= cosd.(out[1,:]); out)
+    θ = true_thetas .* settings["data"]["info"]["labscale"] |> permutedims
+    Δ = abs.(model_thetas .- true_thetas) .* settings["data"]["info"]["labscale"] |> permutedims
+    # θlabs = settings["data"]["info"]["labinfer"] .* " [" .* settings["data"]["info"]["labunits"] .* "]" |> permutedims
+    θlabs = settings["data"]["info"]["labinfer"] |> permutedims
+    Δlabs = θlabs .* " error"
+    θidx = 1:2
+    Δidx = 1:length(Δlabs)
+    corrdata = hcat(θ[..,θidx], Δ[..,Δidx])
+    corrlabs = hcat(θlabs[..,θidx], Δlabs[..,Δidx])
+    fig = corrplot(corrdata; label = corrlabs, fillcolor = :purple, markercolor = cgrad(:rainbow, :misc), xrotation = 45.0, guidefontsize = 8, tickfontsize = 8)
+    # savefig(fig, "tmp.pdf")
+end
+@info "Plotting correlation plots..."
+fig = prediction_corrplot(); display(fig)
+SAVE && savefig(fig, savepath("plots", "theta.corrplot.png"))
 
 forward_plot = function()
     forward_rmse = function(i)
@@ -233,7 +258,7 @@ forward_plot = function()
 end
 # @info "Plotting forward simulation error plots..."
 # fig = forward_plot()
-# display(fig) && savefig(fig, "plots/" * FILE_PREFIX * "forwarderror.png")
+# display(fig) && savefig(fig, savepath("plots", "forwarderror.png"))
 
 errorvslr = function()
     x = [lrfun.(state[:callbacks][:training][:epoch]), lrfun.(state[:callbacks][:testing][:epoch])]
@@ -246,7 +271,7 @@ errorvslr = function()
 end
 # @info "Plotting errors vs. learning rate..."
 # fig = errorvslr()
-# display(fig) && savefig(fig, "plots/" * FILE_PREFIX * "lossvslearningrate.png")
+# display(fig) && savefig(fig, savepath("plots", "lossvslearningrate.png"))
 
 mwferrorvsthetas = function()
     mwf_err = (model_thetas .- true_thetas)[1,:]
