@@ -162,11 +162,10 @@ sweepparamsample() = Dict{Symbol,Union{Float64,Int}}(
     for (k,v) in sweepparamsampler_settings)
 sweepparamconstraints(d) = d[:T2lp] ≥ 1.5*d[:T2sp] # Extreme T2sp and T2lp ranges above require this additional constraint to make sure each sample is realistic
 function sweepparamsampler()
-    d = sweepparamsample()
-    while !sweepparamconstraints(d)
+    while true
         d = sweepparamsample()
+        sweepparamconstraints(d) && return d
     end
-    return d
 end
 
 ####
@@ -210,6 +209,8 @@ function runsimulation!(results, sweepparams, geom)
     # @unpack alpha, theta, K, Dtiss, Dmye, Dax, FRD, TE, TR, nTE, nTR, T2sp, T2lp, T2tiss, T1sp, T1lp, T1tiss = sweepparams
     density = intersect_area(geom.outercircles, geom.bdry) / area(geom.bdry)
     gratio = radius(geom.innercircles[1]) / radius(geom.outercircles[1])
+    mvf = (1-gratio^2) * density # myelin volume fraction
+    mwf = mvf/(2-mvf) # myelin water fraction, assuming relative myelin proton density of 1/2
 
     btparams = BlochTorreyParameters(default_btparams;
         theta = deg2rad(sweepparams[:theta]),
@@ -226,6 +227,10 @@ function runsimulation!(results, sweepparams, geom)
         R1_Tissue = inv(sweepparams[:T1lp]), #Force equal (else, set to inv(sweepparams[:T1tiss]))
         AxonPDensity = density,
         g_ratio = gratio,
+        PD_lp = 1.0,
+        PD_sp = 0.5,
+        MVF = mvf,
+        MWF = mwf,
     )
     sols, myelinprob, myelinsubdomains, myelindomains, solverparams_dict = runsolve(btparams, sweepparams, geom)
     
@@ -233,59 +238,65 @@ function runsimulation!(results, sweepparams, geom)
     dt = sweepparams[:TE]/20 # TODO how many samples to save?
     tpoints = cpmg_savetimes(sols[1].prob.tspan, dt, sweepparams[:TE], sweepparams[:TR], sweepparams[:nTE], sweepparams[:nTR])
     subregion_names = string.(typeof.(getregion.(myelindomains)))
-    subregion_signals = calcsignals(sols, tpoints, myelindomains, btparams)
+    subregion_signals = calcsignals(sols, tpoints, btparams, myelindomains)
     signals = sum(subregion_signals)
 
     # Common filename without suffix
     curr_time = MWFUtils.getnow()
     fname = DrWatson.savename(curr_time, sweepparams)
     titleparamstr = wrap_string(DrWatson.savename("", sweepparams; connector = ", "), 50, ", ")
-    
+
     # Compare MWF values
-    mwfvalues, mwfmodels = nothing, nothing
-    try
-        mwfmodels = map(default_mwfmodels) do model
-            if model isa NNLSRegression
-                typeof(model)(model; TE = sweepparams[:TE], nTE = sweepparams[:nTE], RefConAngle = sweepparams[:alpha])
-            else
-                typeof(model)(model; TE = sweepparams[:TE], nTE = sweepparams[:nTE])
-            end
-        end
-        mwfvalues, _ = compareMWFmethods(sols, myelindomains, btparams,
-            geom.outercircles, geom.innercircles, geom.bdry;
-            models = mwfmodels)
-    catch e
-        @warn "Error comparing MWF methods"
-        @warn sprint(showerror, e, catch_backtrace())
-    end
+    # mwfvalues, mwfmodels = nothing, nothing
+    # try
+    #     mwfmodels = map(default_mwfmodels) do model
+    #         if model isa NNLSRegression
+    #             typeof(model)(model; TE = sweepparams[:TE], nTE = sweepparams[:nTE], RefConAngle = sweepparams[:alpha])
+    #         else
+    #             typeof(model)(model; TE = sweepparams[:TE], nTE = sweepparams[:nTE])
+    #         end
+    #     end
+    #     mwfvalues, _ = compareMWFmethods(sols, myelindomains, btparams,
+    #         geom.outercircles, geom.innercircles, geom.bdry;
+    #         models = mwfmodels)
+    # catch e
+    #     @warn "Error comparing MWF methods"
+    #     @warn sprint(showerror, e, catch_backtrace())
+    # end
+
+    # Compute exact MWF only
+    mwfmodels = nothing
+    mwfvalues = Dict(
+        :exact => getmwf(geom.outercircles, geom.innercircles, geom.bdry)
+    )
 
     # Update results struct and return
     push!(results[:btparams], btparams)
     push!(results[:solverparams_dict], solverparams_dict)
     push!(results[:sweepparams], sweepparams)
     push!(results[:tpoints], tpoints)
-    push!(results[:subregion_names], subregion_names)
-    push!(results[:subregion_signals], subregion_signals)
     push!(results[:signals], signals)
+    push!(results[:mwfvalues], mwfvalues)
+    # push!(results[:subregion_names], subregion_names) #TODO
+    # push!(results[:subregion_signals], subregion_signals) #TODO
     # push!(results[:sols], sols) #TODO
     # push!(results[:myelinprob], myelinprob) #TODO
     # push!(results[:myelinsubdomains], myelinsubdomains) #TODO
     # push!(results[:myelindomains], myelindomains) #TODO
-    push!(results[:mwfvalues], mwfvalues)
 
     # Save measurables
     try
         btparams_dict = Dict(btparams)
         DrWatson.@tagsave(
             "measurables/" * fname * ".measurables.bson",
-            deepcopy(@dict(btparams_dict, solverparams_dict, sweepparams, tpoints, signals, mwfvalues, subregion_names, subregion_signals)),
+            deepcopy(@dict(btparams_dict, solverparams_dict, sweepparams, tpoints, signals, mwfvalues)),
             true, gitdir())
     catch e
         @warn "Error saving measurables"
         @warn sprint(showerror, e, catch_backtrace())
     end
 
-    # # Save solution as vtk file # TODO should only be uncommented for testing
+    # # Save solution as vtk file (NOTE: should only be uncommented for testing)
     # try
     #     vtkfilepath = mkpath(joinpath("vtk/", fname))
     #     saveblochtorrey(myelindomains, sols; timepoints = tpoints, filename = joinpath(vtkfilepath, "vtksolution"))
@@ -382,7 +393,7 @@ end
 
 function main(;iters::Int = typemax(Int))
     # Make subfolders
-    mkpath.(("vtk", "mag", "phase", "long", "t2dist", "sig", "omega", "mwfplots", "measurables"))
+    map(mkpath, ("vtk", "mag", "phase", "long", "t2dist", "sig", "omega", "mwfplots", "measurables"))
 
     # Initialize results
     results = Dict{Symbol,Any}(
@@ -391,13 +402,13 @@ function main(;iters::Int = typemax(Int))
         :solverparams_dict  => [],
         :tpoints            => [],
         :signals            => [],
-        :subregion_names    => [],
-        :subregion_signals  => [],
-        # :sols               => [], #TODO
-        # :myelinprob         => [], #TODO
-        # :myelinsubdomains   => [], #TODO
-        # :myelindomains      => [], #TODO
         :mwfvalues          => [],
+        # :subregion_names    => [], #TODO: no point saving this for PermeableInterfaceRegion simulations
+        # :subregion_signals  => [], #TODO: no point saving this for PermeableInterfaceRegion simulations
+        # :sols               => [], #TODO: prefer not to save custom types / large memory footprint
+        # :myelinsubdomains   => [], #TODO: prefer not to save custom types / large memory footprint
+        # :myelindomains      => [], #TODO: prefer not to save custom types / large memory footprint
+        # :myelinprob         => [], #TODO: prefer not to save custom types
     )
 
     all_sweepparams = (sweepparamsampler() for _ in 1:iters)
@@ -436,8 +447,8 @@ end
 #### Run sweep
 ####
 
-results = main() #TODO iters
-@unpack sweepparams, btparams, solverparams_dict, tpoints, signals, mwfvalues, subregion_names, subregion_signals = results;
+results = main()
+@unpack sweepparams, btparams, solverparams_dict, tpoints, signals, mwfvalues = results;
 # @unpack sols, myelinprob, myelinsubdomains, myelindomains = results; #TODO
 btparams_dict = Dict.(btparams);
 
@@ -453,7 +464,7 @@ catch e
 end
 
 try
-    BSON.bson(SIM_START_TIME * ".allmeasurables.bson", deepcopy(@dict(tpoints, signals, mwfvalues, subregion_names, subregion_signals)))
+    BSON.bson(SIM_START_TIME * ".allmeasurables.bson", deepcopy(@dict(tpoints, signals, mwfvalues)))
 catch e
     @warn "Error saving measurables"
     @warn sprint(showerror, e, catch_backtrace())

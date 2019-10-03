@@ -418,19 +418,21 @@ calcomega(myelinprob, myelinsubdomains) = reduce(vcat, calcomegas(myelinprob, my
 #       for the relative size of the region; the total signal is the sum of the
 #       signals returned here
 
-function calcsignals(sols, ts, myelindomains, btparams; steadystate = 1)
-    Signals = map(sols, myelindomains) do s, m
-        ρ = protondensity(m, btparams)
-        if fieldvectype(m) <: Vec{3}
-            ρ .* [integrate(shift_longitudinal(s(t), steadystate), m) for t in ts]
+function calcsignals(sols, ts, btparams, myelindomains::AbstractVector{<:MyelinDomain{R,Tu,uType}}; steadystate = 1) where {R,Tu,uType}
+    signals = Vector{uType}[]
+    for (s,m) in zip(sols, myelindomains)
+        ρ = protondensity(btparams, m) :: Vector{Tu} # vector of nodal proton density values
+        signal = if fieldvectype(m) <: Vec{3}
+            uType[integrate(ρ .* shift_longitudinal(s(t), steadystate), m) :: uType for t in ts]
         else
-            ρ .* [integrate(s(t), m) for t in ts]
+            uType[integrate(ρ .* s(t), m) :: uType for t in ts]
         end
+        push!(signals, signal)
     end
-    return Signals
+    return signals
 end
-calcsignal(sols, ts, myelindomains, btparams; kwargs...) =
-    sum(calcsignals(sols, ts, myelindomains, btparams; kwargs...))
+calcsignal(sols, ts, btparams, myelindomains; kwargs...) =
+    sum(calcsignals(sols, ts, btparams, myelindomains; kwargs...))
 
 # ---------------------------------------------------------------------------- #
 # ODEProblem constructor and solver for ParabolicDomain's and MyelinDomain's

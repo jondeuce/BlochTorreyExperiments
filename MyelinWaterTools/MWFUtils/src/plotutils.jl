@@ -193,7 +193,7 @@ function plotmultiexp(sols, btparams, myelindomains, outercircles, innercircles,
         disp = (fname == nothing)
     )
     # Extract signals from last (0, nTE*TE) of simulation
-    signals = transverse_signal(calcsignal(sols, get_tpoints(opts, sols[1].prob.tspan), myelindomains, btparams))
+    signals = transverse_signal(calcsignal(sols, get_tpoints(opts, sols[1].prob.tspan), btparams, myelindomains))
     S0 = norm(signals[1])
     
     # Default timespan/timepoints in range (0, nTE*TE)
@@ -299,7 +299,7 @@ function plotSEcorr(
         fname = nothing,
         disp = (fname == nothing)
     )
-    signals = transverse_signal(calcsignal(sols, get_tpoints(opts, sols[1].prob.tspan), myelindomains, btparams))
+    signals = transverse_signal(calcsignal(sols, get_tpoints(opts, sols[1].prob.tspan), btparams, myelindomains))
     MWImaps, MWIdist, MWIpart = fitmwfmodel(signals, opts)
 
     if AVOID_MAT_PLOTS

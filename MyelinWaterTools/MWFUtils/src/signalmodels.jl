@@ -299,7 +299,7 @@ function compareMWFmethods(
     end
 
     tspan = sols[1].prob.tspan
-    signals = [calcsignal(sols, get_tpoints(m, tspan), myelindomains, btparams) for m in models]
+    signals = [calcsignal(sols, get_tpoints(m, tspan), btparams, myelindomains) for m in models]
     mwfvalues = Dict(
         :exact => getmwf(outercircles, innercircles, bdry),
         [Symbol(typeof(m)) => getmwf(s, m) for (s,m) in zip(signals, models)]...

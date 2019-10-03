@@ -126,18 +126,16 @@ integrate(u::AbstractVector{uType}, domain::AbstractDomain{Tu,uType}) where {Tu,
 integrate(u::AbstractVector{Tu}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = _integrate(u, domain)
 
 ####
-#### "Vectorized" interpolation and integration
+#### "Vectorized" interpolation
 ####
 
-interpolate!(U::VectorOfVectors, f::Function, domains::VectorOfDomains) = map!((u,d) -> interpolate!(u, f, d), U, U, domains)
-interpolate(f::Function, domains::VectorOfDomains{Tu,uType}) where {Tu,uType<:FieldType{Tu}} = interpolate!(VectorOfVectors{Tu}[zeros(Tu, ndofs(d)) for d in domains], f, domains)
-interpolate(f::Function, domains::VectorOfDomains{Tu,uType}) where {Tu,uType<:Complex{Tu}} = interpolate!(VectorOfVectors{uType}[zeros(uType, ndofs(d)) for d in domains], f, domains)
+# interpolate!(U::VectorOfVectors, f::Function, domains::VectorOfDomains) = map!((u,d) -> interpolate!(u, f, d), U, U, domains)
+# interpolate(f::Function, domains::VectorOfDomains{Tu,uType}) where {Tu,uType<:FieldType{Tu}} = interpolate!(VectorOfVectors{Tu}[zeros(Tu, ndofs(d)) for d in domains], f, domains)
+# interpolate(f::Function, domains::VectorOfDomains{Tu,uType}) where {Tu,uType<:Complex{Tu}} = interpolate!(VectorOfVectors{uType}[zeros(uType, ndofs(d)) for d in domains], f, domains)
 
-interpolate!(U::VectorOfVectors, u0::FieldType, domains::VectorOfDomains) = map!((u,d) -> interpolate!(u, u0, d), U, U, domains)
-interpolate(u0::uType, domains::VectorOfDomains{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = interpolate!(VectorOfVectors{Tu}[zeros(Tu, ndofs(d)) for d in domains], u0, domains)
-interpolate(u0::uType, domains::VectorOfDomains{Tu,uType}) where {Tu, uType<:Complex{Tu}} = interpolate!(VectorOfVectors{uType}[zeros(uType, ndofs(d)) for d in domains], u0, domains)
-
-integrate(U::VectorOfVectors, domains::VectorOfDomains) = sum(map((u,d) -> integrate(u,d), U, domains)) # Sum over integrals in each region
+# interpolate!(U::VectorOfVectors, u0::FieldType, domains::VectorOfDomains) = map!((u,d) -> interpolate!(u, u0, d), U, U, domains)
+# interpolate(u0::uType, domains::VectorOfDomains{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = interpolate!(VectorOfVectors{Tu}[zeros(Tu, ndofs(d)) for d in domains], u0, domains)
+# interpolate(u0::uType, domains::VectorOfDomains{Tu,uType}) where {Tu, uType<:Complex{Tu}} = interpolate!(VectorOfVectors{uType}[zeros(uType, ndofs(d)) for d in domains], u0, domains)
 
 # ---------------------------------------------------------------------------- #
 # ParabolicDomain methods
@@ -182,6 +180,10 @@ Base.show(io::IO, d::ParabolicDomain) = print(io, "$(typeof(d)) with $(ndofs(d))
 # MyelinDomain methods
 # ---------------------------------------------------------------------------- #
 
+Lazy.@forward MyelinDomain.domain (fieldvectype, fieldfloattype, getgrid, getdofhandler, getcellvalues, getfacevalues, getrefshape, getquadorder, getfuncinterporder, getgeominterporder, getmass, getmassfact, getstiffness)
+Lazy.@forward MyelinDomain.domain (factorize!,)
+Lazy.@forward MyelinDomain.domain (JuAFEM.ndofs, LinearAlgebra.norm, GeometryUtils.area)
+
 @inline getregion(m::MyelinDomain) = m.region
 @inline getdomain(m::MyelinDomain) = m.domain
 @inline getoutercircles(m::MyelinDomain) = m.outercircles
@@ -192,20 +194,32 @@ Base.show(io::IO, d::ParabolicDomain) = print(io, "$(typeof(d)) with $(ndofs(d))
 @inline getinnerradius(m::MyelinDomain, i::Int) = radius(getinnercircle(m,i))
 @inline numfibres(m::MyelinDomain) = length(getoutercircles(m))
 
-Lazy.@forward MyelinDomain.domain (fieldvectype, fieldfloattype, getgrid, getdofhandler, getcellvalues, getfacevalues, getrefshape, getquadorder, getfuncinterporder, getgeominterporder, getmass, getmassfact, getstiffness)
-Lazy.@forward MyelinDomain.domain (factorize!,)
-Lazy.@forward MyelinDomain.domain (JuAFEM.ndofs, LinearAlgebra.norm, GeometryUtils.area)
-
-function protondensity(m::MyelinDomain, btparams::BlochTorreyParameters)
-    R = getregion(m)
-    if R isa AxonRegion || R isa TissueRegion
-        btparams.PD_lp
-    elseif R isa MyelinRegion
-        btparams.PD_sp
+# Proton density for a given region. Homogeneous regions return a scalar value,
+# inhomogeneous regions return a vector of nodal values.
+function protondensity(p::BlochTorreyParameters, m::TriangularMyelinDomain{R,Tu,uType}) where {R,Tu,uType}
+    region = getregion(m)
+    if region isa AxonRegion || region isa TissueRegion
+        ρ = Tu(p.PD_lp)
+        fill(ρ, fielddim(uType) * getnnodes(getgrid(m))) :: Vector{Tu} # NOTE: assumes DOFs are nodal
+    elseif region isa MyelinRegion
+        ρ = Tu(p.PD_sp)
+        fill(ρ, fielddim(uType) * getnnodes(getgrid(m))) :: Vector{Tu} # NOTE: assumes DOFs are nodal
+    elseif region isa PermeableInterfaceRegion
+        subdomains = getdomain(m).metadata[:subdomains]
+        reduce(vcat, Vector{Tu}[protondensity(p,msub) for msub in subdomains]) :: Vector{Tu}
     else
-        error("Proton density is not defined for region $(getregion(m))")
+        error("Proton density is not defined for region $region")
     end
 end
+
+# TODO: these definitions cause a stack overflow?
+# protondensity(p::BlochTorreyParameters, m::MyelinDomain{AxonRegion}) = p.PD_lp
+# protondensity(p::BlochTorreyParameters, m::MyelinDomain{TissueRegion}) = p.PD_lp
+# protondensity(p::BlochTorreyParameters, m::MyelinDomain{MyelinRegion}) = p.PD_sp
+# function protondensity(p::BlochTorreyParameters, m::MyelinDomain{PermeableInterfaceRegion})
+#     subdomains = getdomain(m).metadata[:subdomains]
+#     reduce(vcat, [interpolate(protondensity(p,msub), getdomain(msub)) for msub in subdomains])
+# end
 
 function Base.show(io::IO, ::MIME"text/plain", m::MyelinDomain)
     print(io, "$(typeof(m)) with $(numfibres(m)) fibres and:")
@@ -296,7 +310,7 @@ function ParabolicDomain(
     # )
     domain.M = blockdiag(getmass.(ms)...)
     domain.K = blockdiag(getstiffness.(ms)...)
-    domain.metadata[:subdomains] = [deepcopy(getdomain(m).metadata) for m in ms]
+    domain.metadata[:subdomains] = deepcopy.(ms)
 
     # Find interface pairs
     cells, nodes = getcells(getgrid(domain)), getnodes(getgrid(domain))

@@ -40,8 +40,8 @@ include("callbacks.jl")
 # ---------------------------------------------------------------------------- #
 export normest1_norm, radiidistribution
 export doassemble!, factorize!, interpolate, interpolate!, integrate
-export fieldvectype, fieldfloattype, getgrid, getdomain, numfibres, createmyelindomains, omegamap
-export getmass, getmassfact, getstiffness
+export fieldvectype, fieldfloattype, getgrid, getdomain, numfibres, protondensity, createmyelindomains, omegamap
+export getmass, getmassfact, getstiffness,
        getdofhandler, getcellvalues, getfacevalues,
        getregion, getoutercircles, getinnercircles, getoutercircle, getinnercircle, getouterradius, getinnerradius
 export shift_longitudinal, shift_longitudinal!, pi_flip, pi_pulse!, apply_pulse!, cpmg_savetimes

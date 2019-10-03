@@ -2,16 +2,20 @@
 # AbstractExpmv
 # ---------------------------------------------------------------------------- #
 
+# From DiffEq Developer Documentation:
+# 
+#   Note: u_cache(c::Cache) = () and du_cache(c::Cache) = (c.k,c.du,c.fsalfirst) return the parts
+#   of the modifiable cache that are changed if the size of the ODE changes.
+# 
+#       http://devdocs.juliadiffeq.org/latest/contributing/adding_algorithms.html#Adding-new-algorithms-to-OrdinaryDiffEq-1
+# 
+# It appears this requirement might have changed, though, and that now DiffEq uses an internal
+# macro OrdinaryDiffEq.@cache to define these functions.
+
 abstract type AbstractExpmvAlgorithm <: OrdinaryDiffEq.OrdinaryDiffEqExponentialAlgorithm end
 
 OrdinaryDiffEq.isfsal(alg::AbstractExpmvAlgorithm) = true # "first same as last" property (default)
 OrdinaryDiffEq.alg_order(alg::AbstractExpmvAlgorithm) = 1 # Interpolation order (same as OrdinaryDiffEq.LinearExponential)
-
-# TODO
-# OrdinaryDiffEq.u_cache(c::ExpokitExpmvCache) = ()
-# OrdinaryDiffEq.du_cache(c::ExpokitExpmvCache) = (c.k,c.fsalfirst)
-# OrdinaryDiffEq.u_cache(c::HighamExpmvCache) = ()
-# OrdinaryDiffEq.du_cache(c::HighamExpmvCache) = (c.k,c.fsalfirst)
 
 # ---------------------------------------------------------------------------- #
 # ExpokitExpmv
@@ -32,7 +36,7 @@ struct ExpokitExpmvCache{uType,rateType,aType} <: OrdinaryDiffEq.OrdinaryDiffEqM
     anorm::aType
 end
 
-function OrdinaryDiffEq.alg_cache(alg::ExpokitExpmv,u,rate_prototype,uEltypeNoUnits,uBottomEltypeNoUnits,tTypeNoUnits,uprev,uprev2,f,t,dt,reltol,p,calck,::Type{Val{true}})
+function OrdinaryDiffEq.alg_cache(alg::ExpokitExpmv,u,rate_prototype,uEltypeNoUnits,uBottomEltypeNoUnits,tTypeNoUnits,uprev,uprev2,f,t,dt,reltol,p,calck,::Val{true})
     @unpack anorm, norm, opnorm = alg
     A = f.f # assume f to be an ODEFunction wrapped around a linear operator
     if anorm == nothing
@@ -81,7 +85,7 @@ end
 # struct ExpokitExpmvConstantCache{aType} <: OrdinaryDiffEq.OrdinaryDiffEqConstantCache
 #     anorm::aType
 # end
-# OrdinaryDiffEq.alg_cache(alg::ExpokitExpmv,u,rate_prototype,uEltypeNoUnits,uBottomEltypeNoUnits,tTypeNoUnits,uprev,uprev2,f,t,dt,reltol,p,calck,::Type{Val{false}}) = ExpokitExpmvConstantCache()
+# OrdinaryDiffEq.alg_cache(alg::ExpokitExpmv,u,rate_prototype,uEltypeNoUnits,uBottomEltypeNoUnits,tTypeNoUnits,uprev,uprev2,f,t,dt,reltol,p,calck,::Val{false}) = ExpokitExpmvConstantCache()
 #
 # function OrdinaryDiffEq.perform_step!(integrator,cache::ExpokitExpmvConstantCache,repeat_step=false)
 #     @unpack t,dt,uprev,u,f,p = integrator
@@ -132,7 +136,7 @@ struct HighamExpmvCache{uType,rateType,MType} <: OrdinaryDiffEq.OrdinaryDiffEqMu
     rtmp::rateType
     M::MType
 end
-function OrdinaryDiffEq.alg_cache(alg::HighamExpmv,u,rate_prototype,uEltypeNoUnits,uBottomEltypeNoUnits,tTypeNoUnits,uprev,uprev2,f,t,dt,reltol,p,calck,::Type{Val{true}})
+function OrdinaryDiffEq.alg_cache(alg::HighamExpmv,u,rate_prototype,uEltypeNoUnits,uBottomEltypeNoUnits,tTypeNoUnits,uprev,uprev2,f,t,dt,reltol,p,calck,::Val{true})
     @unpack M, b_columns, opnorm, precision, force_estm, check_positive, shift = alg
     A = f.f # assume f to be an ODEFunction wrapped around a matrix-free operator
     if M == nothing
@@ -184,7 +188,7 @@ end
 # struct HighamExpmvConstantCache{aType} <: OrdinaryDiffEq.OrdinaryDiffEqConstantCache
 #     anorm::aType
 # end
-# OrdinaryDiffEq.alg_cache(alg::HighamExpmv,u,rate_prototype,uEltypeNoUnits,uBottomEltypeNoUnits,tTypeNoUnits,uprev,uprev2,f,t,dt,reltol,p,calck,::Type{Val{false}}) = HighamExpmvConstantCache()
+# OrdinaryDiffEq.alg_cache(alg::HighamExpmv,u,rate_prototype,uEltypeNoUnits,uBottomEltypeNoUnits,tTypeNoUnits,uprev,uprev2,f,t,dt,reltol,p,calck,::Val{false}) = HighamExpmvConstantCache()
 #
 # function OrdinaryDiffEq.initialize!(integrator,cache::HighamExpmvConstantCache)
 #     integrator.kshortsize = 2
