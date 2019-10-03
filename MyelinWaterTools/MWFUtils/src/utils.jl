@@ -350,18 +350,15 @@ function creategeometry(::SingleFibre, btparams::BlochTorreyParameters{T} = Bloc
 end
 
 # Load geometry of packed circles on rectangular domain
-function loadgeometry(fname)
-    geom = BSON.load(fname)
-    G = Grid{2,3,Float64,3} # 2D triangular grid
-    C = Circle{2,Float64}
-    R = Rectangle{2,Float64}
-
-    # Check if `geom` is stored alongside other data
+function geometrytuple(geom::Dict)
     if haskey(geom, :geom) || haskey(geom, "geom")
-        @unpack geom = geom
+        @unpack geom = geom # Extract `geom` dict if stored alongside other metadata
     end
     
     # Ensure proper typing of grids, and return NamedTuple of data
+    G = Grid{2,3,Float64,3} # 2D triangular grid
+    C = Circle{2,Float64}
+    R = Rectangle{2,Float64}
     exteriorgrids = convert(Vector{G}, geom[:exteriorgrids][:])
     torigrids     = convert(Vector{G}, geom[:torigrids][:])
     interiorgrids = convert(Vector{G}, geom[:interiorgrids][:])
@@ -371,6 +368,7 @@ function loadgeometry(fname)
 
     return @ntuple(exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry)
 end
+loadgeometry(fname::String) = geometrytuple(BSON.load(fname))
 
 ####
 #### Create myelin domains from exteriorgrids, torigrids, and interiorgrids

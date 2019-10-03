@@ -32,34 +32,30 @@ function copy_and_load_geomfiles!(
         maxnnodes::Int = typemax(Int)
     )
     mkpath("geom")
-    geoms = []
+    geomdata = []
     storedgeomfilenames = filter(s->endswith(s, ".bson"), readdir("geom"))
 
     skipped_geoms = Int[]
     for (i,geomfile) in enumerate(geomfiles)
-        # load geom file and store locally
-        geom = loadgeometry(geomfile)
-        nnodes = sum(JuAFEM.getnnodes, geom.exteriorgrids) +
-                 sum(JuAFEM.getnnodes, geom.torigrids) +
-                 sum(JuAFEM.getnnodes, geom.interiorgrids)
-        if nnodes > maxnnodes
-            # Geometry is too large; skip it
-            push!(skipped_geoms, i)
+        geom = BSON.load(geomfile)
+        geom[:originalfile] = geomfile
+        if geom[:params][:Npts] > maxnnodes
+            push!(skipped_geoms, i) # Geometry is too large; skip it
             continue
         end
         if basename(geomfile) ∉ storedgeomfilenames
             DrWatson.@tagsave(
                 "geom/" * basename(geomfile),
-                deepcopy(@dict(geomfile, geom)),
+                deepcopy(geom),
                 true, gitdir())
         end
-        push!(geoms, geom)
+        push!(geomdata, geom)
     end
 
     # Update geomfiles, removing skipped geometries from list
     deleteat!(geomfiles, skipped_geoms)
 
-    return geoms
+    return geomdata
 end
 
 # Load geometries with at most `maxnnodes` number of nodes to avoid exceedingly long simulations
@@ -69,9 +65,10 @@ const geombasepaths = [
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-1/geom",
 ]
 const geomfiles = reduce(vcat, realpath.(joinpath.(gp, readdir(gp))) for gp in geombasepaths)
-const maxnnodes = 10_000; #TODO
-const geometries = copy_and_load_geomfiles!(geomfiles, maxnnodes);
-
+const maxnnodes = 15_000; #TODO
+const geomdata = copy_and_load_geomfiles!(geomfiles, maxnnodes);
+const geometries = geometrytuple.(geomdata);
+error("got here")
 ####
 #### Default solver parameters and MWF models
 ####

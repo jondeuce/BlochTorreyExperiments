@@ -116,7 +116,7 @@ function optimal_g_ratio_packdensity_gridsearch(mvf;
     g_ratio, AxonPDensity = Optim.minimizer(res)
     MVF = periodic_mvf(AxonPDensity, g_ratio)
 
-    if !isapprox(mvf, MVF; atol = 1e-3)
+    if !isapprox(mvf, MVF; rtol = 1e-3)
         @warn "Desired MVF ($mvf) couldn't be reached: MVF = $MVF"
     end
 
