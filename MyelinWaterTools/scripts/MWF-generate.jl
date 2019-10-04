@@ -68,7 +68,7 @@ const geomfiles = reduce(vcat, realpath.(joinpath.(gp, readdir(gp))) for gp in g
 const maxnnodes = 15_000; #TODO
 const geomdata = copy_and_load_geomfiles!(geomfiles, maxnnodes);
 const geometries = geometrytuple.(geomdata);
-error("got here")
+
 ####
 #### Default solver parameters and MWF models
 ####

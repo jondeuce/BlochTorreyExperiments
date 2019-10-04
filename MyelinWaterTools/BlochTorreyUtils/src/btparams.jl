@@ -89,36 +89,100 @@ function optimal_g_ratio_packdensity_linesearch(mvf;
     return @ntuple(g_ratio, AxonPDensity, MVF)
 end
 
-function optimal_g_ratio_packdensity_gridsearch(mvf;
-        g_ratio_goal = 0.78,
-        density_goal = 0.70,
-        g_ratio_bounds = (0.5, 0.9),
-        density_bounds = (0.6, 0.8)
+# Compute g-ratio and packing density from desired myelin volume fraction
+# using a refining grid search method. In the general case, this will produce
+# multiple solutions; the keyword `solution_choice` defines how the final
+# solution is chosen:
+#   :median - choose the solution which has g-ratio and density nearest to
+#             the median of all possible solutions
+#   :mean   - same as :median, with mean replacing median
+#   :random - return a random valid solution
+function optimal_g_ratio_packdensity_gridsearch(goal_mvf;
+        g_ratio_bounds = (0.60, 0.92),
+        density_bounds = (0.15, 0.82),
+        solution_choice = :median,
+        iterations = 3, #number of resolution doublings during grid search
     )
-    
-    x_goal = [g_ratio_goal, density_goal]
-    fun(x) =  sum(abs2, x .- x_goal)
-    fun_grad!(g, x) = (g .= 2 .* (x .- x_goal))
-    fun_hess!(h, x) = (h .= Matrix(I,2,2))
-
-    CON_FACT = 1e3 # Hack to make constraint more strongly enforced
-    con!(c, x) = (c[1] = CON_FACT * (x[1] - periodic_g_ratio(x[2], mvf)); c)
-    con_J!(J, x) = (J[1,1] = CON_FACT; J[1,2] = -CON_FACT * mvf / (2 * x[2]^2 * periodic_g_ratio(x[2], mvf)); J)
-    con_H!(h, x, λ) = h[2,2] += λ[1] * CON_FACT * (mvf^2 / (4 * x[2]^4 * periodic_g_ratio(x[2], mvf)^3) + mvf / (x[2]^3 * periodic_g_ratio(x[2], mvf)))
-    
-    x0 = [g_ratio_goal, density_goal]
-    lx = [g_ratio_bounds[1], density_bounds[1]]
-    ux = [g_ratio_bounds[2], density_bounds[2]]
-    df = Optim.TwiceDifferentiable(fun, fun_grad!, fun_hess!, x0)
-    dfc = Optim.TwiceDifferentiableConstraints(con!, con_J!, con_H!, lx, ux, [0.0], [0.0])
-    res = Optim.optimize(df, dfc, x0, Optim.IPNewton())
-    
-    g_ratio, AxonPDensity = Optim.minimizer(res)
-    MVF = periodic_mvf(AxonPDensity, g_ratio)
-
-    if !isapprox(mvf, MVF; rtol = 1e-3)
-        @warn "Desired MVF ($mvf) couldn't be reached: MVF = $MVF"
+    mvf_min = (1 - g_ratio_bounds[2]^2) * density_bounds[1]
+    mvf_max = (1 - g_ratio_bounds[1]^2) * density_bounds[2]
+    if !(mvf_min <= goal_mvf <= mvf_max)
+        error("Goal mvf doesn't permit a solution for the given " *
+              "g-ratio and density bounds; need mvf in [$mvf_min, $mvf_max]")
     end
+    if solution_choice ∉ (:mean, :median, :random)
+        error("Solution choice method must be one of :mean, :median, :random")
+    end
+
+    function F(gratio, density, mvf)
+        return (1 - gratio^2) * density - mvf
+    end
+    ax1 = MDBM.Axis(range(g_ratio_bounds..., length = 10), "g") # initial grid in g-direction
+    ax2 = MDBM.Axis(range(density_bounds..., length = 10), "d") # initial grid in d-direction
+    prob = MDBM.MDBM_Problem((g,d) -> F(g,d,goal_mvf), [ax1,ax2])
+    MDBM.solve!(prob, iterations)
+    g_sol, d_sol = MDBM.getinterpolatedsolution(prob) # approximate interpolated solution points
+
+    function fixed_point_iter!(gbuf,dbuf,g,d,mvf)
+        gbuf .= sqrt.(1 .- mvf ./ d) # new g value
+        dbuf = mvf ./ (1 .- g.^2) # new d value
+        g .= clamp.((gbuf .+ g) ./ 2, g_ratio_bounds...)
+        d .= clamp.((dbuf .+ d) ./ 2, density_bounds...)
+        return nothing
+    end
+
+    # Perform a simple fixed point iteration to increase accuracy
+    # and to ensure candidate solutions are within desired bounds
+    gbuf, dbuf = copy(g_sol), copy(d_sol)
+    while maximum(abs, F.(g_sol, d_sol, goal_mvf)) > 1e-14
+        fixed_point_iter!(gbuf, dbuf, g_sol, d_sol, goal_mvf)
+    end
+
+    g_ratio, AxonPDensity = if solution_choice == :random
+        rand(g_sol), rand(d_sol)
+    else
+        goal_g, goal_d = if solution_choice == :median
+            median(g_sol), median(d_sol)
+        elseif solution_choice == :mean
+            mean(g_sol), mean(d_sol)
+        end
+        _, index = findmin((g_sol .- goal_g).^2 .+ (d_sol .- goal_d).^2)
+        g_sol[index], d_sol[index]
+    end
+    MVF = goal_mvf
 
     return @ntuple(g_ratio, AxonPDensity, MVF)
 end
+
+# function optimal_g_ratio_packdensity_gridsearch(goal_mvf;
+#         g_ratio_goal = 0.78,
+#         density_goal = 0.70,
+#         g_ratio_bounds = (0.5, 0.9),
+#         density_bounds = (0.6, 0.8)
+#     )
+#     
+#     x_goal = [g_ratio_goal, density_goal]
+#     fun(x) =  sum(abs2, x .- x_goal)
+#     fun_grad!(g, x) = (g .= 2 .* (x .- x_goal))
+#     fun_hess!(h, x) = (h .= Matrix(I,2,2))
+# 
+#     CON_FACT = 1e3 # Hack to make constraint more strongly enforced
+#     con!(c, x) = (c[1] = CON_FACT * (x[1] - periodic_g_ratio(x[2], goal_mvf)); c)
+#     con_J!(J, x) = (J[1,1] = CON_FACT; J[1,2] = -CON_FACT * goal_mvf / (2 * x[2]^2 * periodic_g_ratio(x[2], goal_mvf)); J)
+#     con_H!(h, x, λ) = h[2,2] += λ[1] * CON_FACT * (goal_mvf^2 / (4 * x[2]^4 * periodic_g_ratio(x[2], goal_mvf)^3) + goal_mvf / (x[2]^3 * periodic_g_ratio(x[2], goal_mvf)))
+#     
+#     x0 = [g_ratio_goal, density_goal]
+#     lx = [g_ratio_bounds[1], density_bounds[1]]
+#     ux = [g_ratio_bounds[2], density_bounds[2]]
+#     df = Optim.TwiceDifferentiable(fun, fun_grad!, fun_hess!, x0)
+#     dfc = Optim.TwiceDifferentiableConstraints(con!, con_J!, con_H!, lx, ux, [0.0], [0.0])
+#     res = Optim.optimize(df, dfc, x0, Optim.IPNewton())
+#     
+#     g_ratio, AxonPDensity = Optim.minimizer(res)
+#     MVF = periodic_mvf(AxonPDensity, g_ratio)
+# 
+#     if !isapprox(goal_mvf, MVF; rtol = 1e-3)
+#         @warn "Desired MVF ($goal_mvf) couldn't be reached: MVF = $MVF"
+#     end
+# 
+#     return @ntuple(g_ratio, AxonPDensity, MVF)
+# end

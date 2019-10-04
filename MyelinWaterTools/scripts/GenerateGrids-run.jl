@@ -9,7 +9,7 @@ using StatsPlots
 pyplot(size=(1200,900), leg = false, grid = false, labels = nothing)
 using GlobalUtils
 using MWFUtils
-
+error("got here")
 # Initialize project packages
 include(joinpath(@__DIR__, "../init.jl"))
 make_reproduce(
@@ -85,12 +85,12 @@ end
 
 function main(;iters = 1000, randomorder = false)
     # Make subfolders
-    mkpath.(("plots/circles", "plots/grids", "geom"))
+    map(mkpath, ("plots/circles", "plots/grids", "geom"))
 
     # Parameter sampler
     sweep_params_sampler() = Dict{Symbol,Union{Float64,Int}}(
         :numfibres => rand(5:30),
-        :mvf       => 0.01 + (0.40 - 0.01) * rand(),
+        :mvf       => 0.025 + (0.40 - 0.025) * rand(),
     )
 
     # Parameters to sweep over
@@ -102,11 +102,18 @@ function main(;iters = 1000, randomorder = false)
     for (i,params) in enumerate(sweep_params)
         try
             @info "Generating geometry $i/$(length(sweep_params)) at $(Dates.now()): $(DrWatson.savename("", params; connector = ", "))"
-            @unpack g_ratio, AxonPDensity = BlochTorreyUtils.optimal_g_ratio_packdensity_gridsearch(params[:mvf])
+            @unpack g_ratio, AxonPDensity = BlochTorreyUtils.optimal_g_ratio_packdensity_gridsearch(
+                params[:mvf];
+                g_ratio_bounds = (0.60, 0.92), # mvf = (1-g^2)*η. These bounds permit mvf solutions
+                density_bounds = (0.15, 0.82), # approximately in the range [2.5%, 50%]
+                solution_choice = :random,
+                iterations = 5,
+            )
             geomparams = deepcopy(params)
             geomparams[:gratio] = g_ratio
             geomparams[:density] = AxonPDensity
-            geomparams[:mwf] = params[:mvf] / (2 - params[:mvf]) # Relative proton density is 1/2
+            geomparams[:mvf] = (1 - geomparams[:gratio]^2) * geomparams[:density] # mvf to be simulated
+            geomparams[:mwf] = geomparams[:mvf] / (2 - geomparams[:mvf]) # assumes relative proton density == 1/2
             runcreategeometry(geomparams)
         catch e
             if e isa InterruptException
@@ -123,3 +130,29 @@ function main(;iters = 1000, randomorder = false)
 end
 
 main(;iters = typemax(Int), randomorder = true)
+
+# # Renaming + resaving mislabeled geometries
+# geomdata = []
+# geomfiles = joinpath.("geom", filter(s->endswith(s, ".bson"), readdir("geom")))
+# 
+# for (i,geomfile) in enumerate(geomfiles)
+#     geom = BSON.load(geomfile)
+# 
+#     A_out = sum(c->intersect_area(c,geom[:bdry]), geom[:outercircles])
+#     A_in = sum(c->intersect_area(c,geom[:bdry]), geom[:innercircles])
+#     A_bdry = area(geom[:bdry])
+#     mvf = (A_out - A_in) / A_bdry
+#     mwf = mvf / (2 - mvf)
+#     geom[:params][:mvf] = mvf
+#     geom[:params][:mwf] = mwf
+#     
+#     # Save generated geometry, tagging file with git commit
+#     fname = DrWatson.savename(basename(geomfile)[1:25], geom[:params])
+#     DrWatson.@tagsave(
+#         "geom-renamed/" * fname * ".geom.bson",
+#         geom,
+#         true, # safe saving (don't overwrite existing files)
+#         gitdir())
+#     
+#     push!(geomdata, geom)
+# end
