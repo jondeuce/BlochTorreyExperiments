@@ -1,15 +1,15 @@
 # Activate project and load packages for this script
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
-Pkg.instantiate()
 include(joinpath(@__DIR__, "../initpaths.jl"))
+Pkg.instantiate()
 
 # NOTE: must load pyplot backend BEFORE loading MATLAB in MWFUtils/init.jl
 using StatsPlots
 pyplot(size=(1200,900), leg = false, grid = false, labels = nothing)
 using GlobalUtils
 using MWFUtils
-error("got here")
+
 # Initialize project packages
 include(joinpath(@__DIR__, "../init.jl"))
 make_reproduce(

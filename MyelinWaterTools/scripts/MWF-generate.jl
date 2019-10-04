@@ -28,7 +28,7 @@ gitdir() = realpath(DrWatson.projectdir(".."))
 ####
 
 function copy_and_load_geomfiles!(
-        geomfiles::AbstractVector{String},
+        geomfiles::AbstractVector{String};
         maxnnodes::Int = typemax(Int)
     )
     mkpath("geom")
@@ -65,8 +65,7 @@ const geombasepaths = [
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-1/geom",
 ]
 const geomfiles = reduce(vcat, realpath.(joinpath.(gp, readdir(gp))) for gp in geombasepaths)
-const maxnnodes = 15_000; #TODO
-const geomdata = copy_and_load_geomfiles!(geomfiles, maxnnodes);
+const geomdata = copy_and_load_geomfiles!(geomfiles; maxnnodes = 15_000);
 const geometries = geometrytuple.(geomdata);
 
 ####
