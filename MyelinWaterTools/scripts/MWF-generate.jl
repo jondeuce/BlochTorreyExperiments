@@ -45,7 +45,7 @@ function copy_and_load_geomfiles!(
         end
         if basename(geomfile) ∉ storedgeomfilenames
             DrWatson.@tagsave(
-                "geom/" * basename(geomfile),
+                joinpath("geom", basename(geomfile)),
                 deepcopy(geom),
                 true, gitdir())
         end
@@ -57,16 +57,39 @@ function copy_and_load_geomfiles!(
 
     return geomdata
 end
+function copy_and_load_random_geom(
+        geomdirs::Vector{String};
+        maxnnodes::Int = typemax(Int), # max allowable nodes
+        binwidth = 2.5/100, # mwf bin width
+    )
+    mkpath("geom")
+    parse_mwf(g) = parse(Float64, match(r"mwf=(0.[0-9]+)", g).captures[1]) # extract mwf from filename
+    parse_Npts(g) = parse(Int, match(r"Npts=([0-9]+)", g).captures[1]) # extract Npts from filename
+    
+    # Parse geometry files from given directory and choose a random file uniformly based on the mwf
+    geomfiles = reduce(vcat, [map(g -> joinpath(gdir, g), filter(s -> endswith(s, ".bson"), readdir(gdir))) for gdir in geomdirs]) # read geom filenames
+    data = [(mwf = parse_mwf(g), geomfile = g) for g in geomfiles if parse_Npts(g) <= maxnnodes] # filter filenames
+    data_binned = [filter(d -> lb ≤ d.mwf < lb + binwidth, data) for lb in 0.0:binwidth:1.0] # bin filenames by mwf value
+    filter!(!isempty, data_binned) # remove empty bins
+    geomfile = rand(rand(data_binned)).geomfile # sample uniformly randomly within a randomly chosen bin
+    
+    # Load the geometry, and save a copy of it in the current directory
+    geom = BSON.load(geomfile) # load geometry
+    geom[:originalfile] = geomfile # tag geometry with original filename
+    BSON.bson(joinpath("geom", basename(geomfile)), deepcopy(geom))    
+    return geom
+end
+copy_and_load_random_geom(geomdir::String; kwargs...) = copy_and_load_random_geom([geomdir]; kwargs...)
 
 # Load geometries with at most `maxnnodes` number of nodes to avoid exceedingly long simulations
 const geombasepaths = [
-    realpath("./geom"),
-    # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-2/geom",
-    # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-1/geom",
+    # realpath("./geom"),
+    # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-3/geom",
+    "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-4/geom",
 ]
 const geomfiles = reduce(vcat, realpath.(joinpath.(gp, readdir(gp))) for gp in geombasepaths)
-const geomdata = copy_and_load_geomfiles!(geomfiles; maxnnodes = 15_000);
-const geometries = geometrytuple.(geomdata);
+const maxnnodes = 15_000
+# const geomdata = copy_and_load_geomfiles!(geomfiles; maxnnodes = maxnnodes);
 
 ####
 #### Default solver parameters and MWF models
@@ -137,10 +160,10 @@ acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
 const sweepparamsampler_settings = Dict{Symbol,Any}(
     :theta  => (sampler = :acossampler,   args = (lb = 0.0,     ub = 90.0)), # Uniformly random orientations => cosθ ~ Uniform(0,1)
     :alpha  => (sampler = :linearsampler, args = (lb = 120.0,   ub = 180.0)),
-    :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 1e-3)),#TODO (lb = 1e-3,    ub = 3.0)),
-    :Dtiss  => (sampler = :log10sampler,  args = (lb = 1.0,     ub = 1.0)),#TODO (lb = 500.0,   ub = 500.0)), # Diffusion fixed relatively small for faster simulations
-    :Dmye   => (sampler = :log10sampler,  args = (lb = 1.0,     ub = 1.0)),#TODO (lb = 500.0,   ub = 500.0)), # Diffusion fixed relatively small for faster simulations
-    :Dax    => (sampler = :log10sampler,  args = (lb = 1.0,     ub = 1.0)),#TODO (lb = 500.0,   ub = 500.0)), # Diffusion fixed relatively small for faster simulations
+    :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 10.0)),
+    :Dtiss  => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 500.0)), # Diffusion fixed relatively small for faster simulations
+    :Dmye   => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 500.0)), # Diffusion fixed relatively small for faster simulations
+    :Dax    => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 500.0)), # Diffusion fixed relatively small for faster simulations
     :FRD    => (sampler = :linearsampler, args = (lb = 0.5,     ub = 0.5)),
     :TE     => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 10e-3)), # NOTE: Fixed time scale; only e.g. T2/TE is learned
     :nTE    => (sampler = :rangesampler,  args = (lb = 64, ub = 64, step = 2)), # Simulate many echoes; can chop later
@@ -409,18 +432,18 @@ function main(;iters::Int = typemax(Int))
 
     all_sweepparams = (sweepparamsampler() for _ in 1:iters)
     for (i,sweepparams) in enumerate(all_sweepparams)
-        geomnumber = rand(1:length(geometries))
-        geom = geometries[geomnumber]
+        geom = copy_and_load_random_geom(geombasepaths; maxnnodes = maxnnodes)
+        # geom = rand(geomdata)
         tspan = (0.0, sweepparams[:nTE] * sweepparams[:TE] + (sweepparams[:nTR] - 1) * sweepparams[:TR])
         try
             println("\n")
             @info "Running simulation $i/$(length(all_sweepparams)) at $(Dates.now()):"
             @info "    Sweep parameters:    " * DrWatson.savename("", sweepparams; connector = ", ")
-            @info "    Geometry info:       Geom #$geomnumber - " * basename(geomfiles[geomnumber])
+            @info "    Geometry filename:   " * basename(geom[:originalfile])
             @info "    Simulation timespan: (0.0 ms, $(round(1000 .* tspan[2]; digits=3)) ms)"
             
             tic = Dates.now()
-            runsimulation!(results, sweepparams, geom)
+            runsimulation!(results, sweepparams, geometrytuple(geom))
             toc = Dates.now()
             Δt = Dates.canonicalize(Dates.CompoundPeriod(toc - tic))
 
