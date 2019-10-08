@@ -17,7 +17,7 @@ pyplot(size=(800,600))
 const settings_file = "settings.toml"
 const settings = TOML.parsefile(settings_file)
 
-const SAVE = false
+const SAVE = true
 const DATE_PREFIX = getnow() * "."
 const FILE_PREFIX = DATE_PREFIX * model_string(settings) * "."
 const GPU = settings["gpu"] :: Bool
@@ -48,34 +48,62 @@ labelbatch(batch) = (signals(batch), thetas(batch))
 
 # Lazy data loader for training on simulated data
 const mb_sampler_batch_size  = 250
-const mb_sampler_train_batch = 10
+const mb_sampler_train_batch = 20
 function x_sampler()
-    out = zeros(T, 8, mb_sampler_batch_size)
+    out = zeros(T, 14, mb_sampler_batch_size)
     for j in 1:size(out,2)
-        mwf    = MWFLearning.linearsampler(0.15, 0.3)
-        ewf    = MWFLearning.linearsampler(0.29, 0.32)
-        iwf    = 1 - (mwf + ewf)
+        mvf    = MWFLearning.linearsampler(0.025, 0.4)
+        g      = MWFLearning.linearsampler(0.60, 0.92) # sqrt(1 - mvf/η)
+        η      = mvf / (1 - g^2) # MWFLearning.linearsampler(0.15, 0.82)
+        # Above is faster/produces approx similar distbn than using BlochTorreyUtils.optimal_g_ratio_packdensity_gridsearch
+        # g, η   = BlochTorreyUtils.optimal_g_ratio_packdensity_gridsearch(mvf;
+        #     g_ratio_bounds = (0.60, 0.92), density_bounds = (0.15, 0.82),
+        #     solution_choice = :random, iterations = 5)
+        evf    = 1 - η
+        ivf    = 1 - (mvf + evf)
+        mwf    =  mvf / (2evf + 2ivf + mvf)
+        ewf    = 2evf / (2evf + 2ivf + mvf)
+        iwf    = 2ivf / (2evf + 2ivf + mvf)
         alpha  = MWFLearning.linearsampler(120.0, 180.0)
-        K      = MWFLearning.log10sampler(1e-3, 1.0)
-        T2sp   = MWFLearning.linearsampler(10e-3, 20e-3)
-        T2lp   = MWFLearning.linearsampler(50e-3, 80e-3)
-        T2tiss = MWFLearning.linearsampler(50e-3, 80e-3)
+        K      = MWFLearning.log10sampler(1e-3, 10.0)
+        T2sp = MWFLearning.linearsampler(10e-3, 70e-3)
+        T2lp = MWFLearning.linearsampler(50e-3, 180e-3)
+        while !(T2lp ≥ 1.5*T2sp) # Enforce constraint
+            T2sp = MWFLearning.linearsampler(10e-3, 70e-3)
+            T2lp = MWFLearning.linearsampler(50e-3, 180e-3)
+        end
         T1sp   = MWFLearning.linearsampler(150e-3, 250e-3)
         T1lp   = MWFLearning.linearsampler(949e-3, 1219e-3)
-        T1tiss = MWFLearning.linearsampler(949e-3, 1219e-3)
+        T2tiss = T2lp # MWFLearning.linearsampler(50e-3, 180e-3)
+        T1tiss = T1lp # MWFLearning.linearsampler(949e-3, 1219e-3)
         TE     = 10e-3
-        out[1,j] = mwf
-        out[2,j] = 1-mwf # iewf
-        out[3,j] = inv((iwf * inv(T2lp) + ewf * inv(T2tiss)) / (iwf + ewf)) / TE # T2iew/TE
-        out[4,j] = T2sp / TE # T2mw/TE
-        out[5,j] = alpha
-        out[6,j] = log10(TE*K)
-        out[7,j] = inv((iwf * inv(T1lp) + ewf * inv(T1tiss)) / (iwf + ewf)) / TE # T1iew/TE
-        out[8,j] = T1sp / TE # T1mw/TE
+        out[1,j]  = cosd(alpha) # cosd(alpha)
+        out[2,j]  = g # gratio
+        out[3,j]  = mwf # mwf
+        out[4,j]  = T2sp / TE # T2mw/TE
+        out[5,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
+        out[6,j]  = iwf # iwf
+        out[7,j]  = ewf # ewf
+        out[8,j]  = iwf + ewf # iewf
+        out[9,j]  = T2lp / TE # T2iw/TE
+        out[10,j] = T2tiss / TE # T2ew/TE
+        out[11,j] = T1sp / TE # T1mw/TE
+        out[12,j] = T1lp / TE # T1iw/TE
+        out[13,j] = T1tiss / TE # T1ew/TE
+        out[14,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
+        #out[1,j] = mwf
+        #out[2,j] = 1 - mwf # iewf
+        #out[3,j] = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
+        #out[4,j] = T2sp / TE # T2mw/TE
+        #out[5,j] = alpha
+        #out[6,j] = log10(TE*K)
+        #out[7,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
+        #out[8,j] = T1sp / TE # T1mw/TE
     end
     return out
 end
-y_sampler(x) = (y = MWFLearning.forward_physics(x); reshape(y, size(y,1), 1, 1, :))
+# y_sampler(x) = (y = MWFLearning.forward_physics_8arg(x); reshape(y, size(y,1), 1, 1, :))
+y_sampler(x) = (y = MWFLearning.forward_physics_14arg(x); reshape(y, size(y,1), 1, 1, :))
 mb_sampler = MWFLearning.LazyMiniBatches(mb_sampler_train_batch, x_sampler, y_sampler)
 
 # Construct model
@@ -136,8 +164,8 @@ loopcbs = Flux.Optimise.runall([
 ])
 
 # Train using Bloch-Torrey training/testing data, or sampler data
-train_data, test_data = BT_train_data, BT_test_data
-# train_data, test_data = mb_sampler, rand(mb_sampler)
+# train_data, test_data = BT_train_data, BT_test_data
+train_data, test_data = mb_sampler, rand(mb_sampler)
 
 # Training Loop
 train_loop! = function()
@@ -243,8 +271,8 @@ SAVE && savefig(fig, savepath("plots", "theta.corrplot.png"))
 forward_plot = function()
     forward_rmse = function(i)
         y = sum(signals(BT_test_data)[:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
-        z_class = MWFLearning.forward_physics(true_thetas[:,i:i]) # Forward simulation of true parameters
-        z_model = MWFLearning.forward_physics(model_thetas[:,i:i]) # Forward simulation of model predicted parameters
+        z_class = MWFLearning.forward_physics_14arg(true_thetas[:,i:i]) # Forward simulation of true parameters
+        z_model = MWFLearning.forward_physics_14arg(model_thetas[:,i:i]) # Forward simulation of model predicted parameters
         return (e_class = rmsd(y, z_class), e_model = rmsd(y, z_model))
     end
     errors = [forward_rmse(i) for i in 1:batchsize(thetas(BT_test_data))]

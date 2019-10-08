@@ -68,23 +68,51 @@ make_activation(name::Symbol) = ACTIVATIONS[name]
 make_activation(str::String) = make_activation(Symbol(str))
 
 """
-    Semi-hard-coded forward physics model
+    Hard-coded forward physics model given matrix of parameters
 """
-function forward_physics(x::Matrix{T}) where {T}
+function forward_physics_8arg(x::Matrix{T}) where {T}
     nTE  = 32 # Number of echoes (fixed)
     Smw  = zeros(Vec{3,T}, nTE) # Buffer for myelin signal
     Siew = zeros(Vec{3,T}, nTE) # Buffer for IE water signal
     M    = zeros(T, nTE, size(x,2)) # Total signal magnitude
     for j in 1:size(x,2)
-        mwf, iewf, rT2iew, rT2mw, alpha = x[1,j], x[2,j], x[3,j], x[4,j], x[5,j]
-        rT1iew, rT1mw = x[7,j], x[8,j]
+        mwf, iewf, rT2iew, rT2mw, alpha, _, rT1iew, rT1mw = x[1,j], x[2,j], x[3,j], x[4,j], x[5,j], x[6,j], x[7,j], x[8,j]
         forward_prop!(Smw,  rT2mw,  rT1mw,  alpha, nTE)
         forward_prop!(Siew, rT2iew, rT1iew, alpha, nTE)
         @views M[:,j] .= norm.(transverse.(mwf .* Smw .+ iewf .* Siew))
     end
     return M
 end
-ForwardProp() = @λ(x -> forward_physics(x))
+function forward_physics_14arg(x::Matrix{T}) where {T}
+    nTE  = 32 # Number of echoes (fixed)
+    Smw  = zeros(Vec{3,T}, nTE) # Buffer for myelin signal
+    Siw  = zeros(Vec{3,T}, nTE) # Buffer for intra-axonal water signal
+    Sew  = zeros(Vec{3,T}, nTE) # Buffer for extra-axonal water signal
+    M    = zeros(T, nTE, size(x,2)) # Total signal magnitude
+    for j in 1:size(x,2)
+        alpha    = acosd(x[1,j])
+        gratio   = x[2,j]
+        mwf      = x[3,j]
+        rT2mw    = x[4,j]
+        rT2iew   = x[5,j]
+        iwf      = x[6,j]
+        ewf      = x[7,j]
+        iewf     = x[8,j]
+        rT2iw    = x[9,j]
+        rT2ew    = x[10,j]
+        rT1mw    = x[11,j]
+        rT1iw    = x[12,j]
+        rT1ew    = x[13,j]
+        rT1iew   = x[14,j]
+        forward_prop!(Smw, rT2mw, rT1mw, alpha, nTE)
+        forward_prop!(Siw, rT2iw, rT1iw, alpha, nTE)
+        forward_prop!(Sew, rT2ew, rT1ew, alpha, nTE)
+        @views M[:,j] .= norm.(transverse.(mwf .* Smw .+ iwf .* Siw .+ ewf .* Sew))
+    end
+    return M
+end
+ForwardProp8Arg() = @λ(x -> forward_physics_8arg(x))
+ForwardProp14Arg() = @λ(x -> forward_physics_14arg(x))
 
 """
     Sequence classification with 1D convolutions:
@@ -616,7 +644,7 @@ function BasicHeight32Generator1(::Type{T} = Float32;
     
     model = Flux.Chain(
         Sumout(
-            ForwardProp(),
+            ForwardProp8Arg(),
             Corrections(),
         ),
         @λ(x -> Flux.relu.(x)),
@@ -711,8 +739,8 @@ function BasicHeight32Generator2(::Type{T} = Float32;
     end
 
     model = Flux.Chain(
-        ForwardProp() |> RecurseCorrect,
-        # ForwardProp() |> RecurseCorrect |> RecurseCorrect |> RecurseCorrect |> RecurseCorrect,
+        ForwardProp8Arg() |> RecurseCorrect,
+        # ForwardProp8Arg() |> RecurseCorrect |> RecurseCorrect |> RecurseCorrect |> RecurseCorrect,
         @λ(x -> Flux.relu.(x)),
     )
 
@@ -737,7 +765,7 @@ function BasicDCGAN1(::Type{T} = Float32;
         s1, p1 = (1,1), (1,1,0,0)
         s2, p2 = (2,1), (1,0,0,0) # Note: asymmetric padding
         return Sumout(
-            ForwardProp(),
+            ForwardProp8Arg(),
             Flux.Chain(
                 InverseParamsScale(),
                 Flux.Dense(θ, (H÷8) * C),
@@ -806,6 +834,7 @@ MvNormalSampler() = @λ(μ -> sample_mv_normal(μ))
 
 map_std(f, μ) = map_std(f, split_mean_std(μ)...)
 map_std(f, μ0, σ) = vcat(μ0, f.(σ))
+ExpStd() = @λ(μ -> map_std(exp, μ))
 SoftplusStd() = @λ(μ -> map_std(Flux.softplus, μ))
 
 # Flux is MUCH faster differentiating broadcasted square.(x) than x.^2 for some reason...
@@ -840,10 +869,14 @@ function H_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where
     μx0, σx = split_mean_std(m.D((zq,y)))
 
     Zdim, Xout = size(zq,1), size(μx0,1)
-    σr2, σq2, σx2 = square.(σr), square.(σq), square.(σx) # Intermediate variables
-    KLdiv = mean(sum((σq2 .+ square.(μr0 .- μq0)) ./ σr2 .+ log.(σr2 ./ σq2); dims = 1))/2 - T(Zdim/2) # KL-divergence contribution to cross-entropy
-    ELBO = mean(sum(log.(σx2) .+ square.(x[1:Xout,:] .- μx0) ./ σx2; dims = 1))/2 + T(Zdim*log(2π)/2) # Negative log-likelihood/ELBO contribution to cross-entropy
+    # σr2, σq2, σx2 = square.(σr), square.(σq), square.(σx) # Intermediate variables
+    # KLdiv = mean(sum((σq2 .+ square.(μr0 .- μq0)) ./ σr2 .+ log.(σr2 ./ σq2); dims = 1))/2 - T(Zdim/2) # KL-divergence contribution to cross-entropy
+    # ELBO = mean(sum(log.(σx2) .+ square.(x[1:Xout,:] .- μx0) ./ σx2; dims = 1))/2 + T(Zdim*log(2π)/2) # Negative log-likelihood/ELBO contribution to cross-entropy
 
+    σr2, σq2 = square.(σr), square.(σq) # Intermediate variables
+    KLdiv = mean(sum((σq2 .+ square.(μr0 .- μq0)) ./ σr2 .+ log.(σr2 ./ σq2); dims = 1))/2 - T(Zdim/2) # KL-divergence contribution to cross-entropy
+    ELBO = mean(sum(2 .* log.(σx) .+ square.((x[1:Xout,:] .- μx0) ./ σx); dims = 1))/2 + T(Zdim*log(2π)/2)
+    
     return ELBO + KLdiv
 end
 
@@ -853,8 +886,9 @@ function L_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where
     zq = sample_mv_normal(μq0, σq)
     μx0, σx = split_mean_std(m.D((zq,y)))
     Zdim, Xout = size(zq,1), size(μx0,1)
-    σx2 = square.(σx)
-    ELBO = mean(sum(log.(σx2) .+ square.(x[1:Xout,:] .- μx0) ./ σx2; dims = 1))/2 + T(Zdim*log(2π)/2)
+    # σx2 = square.(σx)
+    # ELBO = mean(sum(log.(σx2) .+ square.(x[1:Xout,:] .- μx0) ./ σx2; dims = 1))/2 + T(Zdim*log(2π)/2)
+    ELBO = mean(sum(2 .* log.(σx) .+ square.((x[1:Xout,:] .- μx0) ./ σx); dims = 1))/2 + T(Zdim*log(2π)/2)
     return ELBO
 end
 
