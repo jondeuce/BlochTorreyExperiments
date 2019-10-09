@@ -6,7 +6,7 @@ dir     = "."
 val_data    = "./val"
 test_data   = "./test"
 train_data  = "./train"
-val_batch   = "auto" # Auto treats entire test set as one batch
+val_batch   = "auto" # Auto treats entire validation set as one batch
 test_batch  = "auto" # Auto treats entire test set as one batch
 train_batch = 250
 [data.info]
@@ -45,7 +45,7 @@ acc       = "rmse"
 Xout      = 5 # Number of learned labels
 # Xout    = 6 # Number of learned labels
 Zdim      = 20 # Latent variable dimension
-Ndense    = [128, 128, 128, 128] # Sizes of inner dense layers
+Ndense    = [128, 128] # Sizes of inner dense layers
 act       = "leakyrelu"
 # [model.ConvLIGOCVAE]
 # Xout      = 6  # Number of learned labels

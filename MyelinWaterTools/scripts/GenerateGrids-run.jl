@@ -102,12 +102,11 @@ function main(;iters = 1000, randomorder = false)
     for (i,params) in enumerate(sweep_params)
         try
             @info "Generating geometry $i/$(length(sweep_params)) at $(Dates.now()): $(DrWatson.savename("", params; connector = ", "))"
-            @unpack g_ratio, AxonPDensity = BlochTorreyUtils.optimal_g_ratio_packdensity_gridsearch(
+            @unpack g_ratio, AxonPDensity = BlochTorreyUtils.optimal_g_ratio_packdensity(
                 params[:mvf];
                 g_ratio_bounds = (0.60, 0.92), # mvf = (1-g^2)*η. These bounds permit mvf solutions
                 density_bounds = (0.15, 0.82), # approximately in the range [2.5%, 50%]
                 solution_choice = :random,
-                iterations = 5,
             )
             geomparams = deepcopy(params)
             geomparams[:gratio] = g_ratio

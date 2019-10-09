@@ -47,18 +47,15 @@ signals = batch -> labels(batch)
 labelbatch(batch) = (signals(batch), thetas(batch))
 
 # Lazy data loader for training on simulated data
-const mb_sampler_batch_size  = 250
-const mb_sampler_train_batch = 20
+const MB_sampler_batch_size  = 500 # Number of simulated signals in one training batch
+const MB_sampler_train_batch = 5   # Number of training batches per epoch
 function x_sampler()
-    out = zeros(T, 14, mb_sampler_batch_size)
+    out = zeros(T, 14, MB_sampler_batch_size)
     for j in 1:size(out,2)
+        g_bounds, η_bounds = (0.60, 0.92), (0.15, 0.82)
         mvf    = MWFLearning.linearsampler(0.025, 0.4)
-        g      = MWFLearning.linearsampler(0.60, 0.92) # sqrt(1 - mvf/η)
-        η      = mvf / (1 - g^2) # MWFLearning.linearsampler(0.15, 0.82)
-        # Above is faster/produces approx similar distbn than using BlochTorreyUtils.optimal_g_ratio_packdensity_gridsearch
-        # g, η   = BlochTorreyUtils.optimal_g_ratio_packdensity_gridsearch(mvf;
-        #     g_ratio_bounds = (0.60, 0.92), density_bounds = (0.15, 0.82),
-        #     solution_choice = :random, iterations = 5)
+        η      = min(mvf / (1 - g_bounds[2]^2), η_bounds[2]) # Maximum density for given bounds
+        g      = sqrt(1 - mvf/η) # g-ratio corresponding to maximum density
         evf    = 1 - η
         ivf    = 1 - (mvf + evf)
         mwf    =  mvf / (2evf + 2ivf + mvf)
@@ -66,8 +63,8 @@ function x_sampler()
         iwf    = 2ivf / (2evf + 2ivf + mvf)
         alpha  = MWFLearning.linearsampler(120.0, 180.0)
         K      = MWFLearning.log10sampler(1e-3, 10.0)
-        T2sp = MWFLearning.linearsampler(10e-3, 70e-3)
-        T2lp = MWFLearning.linearsampler(50e-3, 180e-3)
+        T2sp   = MWFLearning.linearsampler(10e-3, 70e-3)
+        T2lp   = MWFLearning.linearsampler(50e-3, 180e-3)
         while !(T2lp ≥ 1.5*T2sp) # Enforce constraint
             T2sp = MWFLearning.linearsampler(10e-3, 70e-3)
             T2lp = MWFLearning.linearsampler(50e-3, 180e-3)
@@ -104,13 +101,17 @@ function x_sampler()
 end
 # y_sampler(x) = (y = MWFLearning.forward_physics_8arg(x); reshape(y, size(y,1), 1, 1, :))
 y_sampler(x) = (y = MWFLearning.forward_physics_14arg(x); reshape(y, size(y,1), 1, 1, :))
-mb_sampler = MWFLearning.LazyMiniBatches(mb_sampler_train_batch, x_sampler, y_sampler)
+MB_sampler = MWFLearning.LazyMiniBatches(MB_sampler_train_batch, x_sampler, y_sampler)
+
+# Train using Bloch-Torrey training/testing data, or sampler data
+# train_data, test_data = BT_train_data, BT_test_data
+train_data, test_data = MB_sampler, rand(MB_sampler)
 
 # Construct model
 @info "Constructing model..."
 @unpack m = MWFLearning.make_model(settings)[1] |> maybegpu;
 model_summary(m, savepath("models", "architecture.txt"));
-param_summary(m, labelbatch.(BT_train_data), labelbatch(BT_test_data));
+param_summary(m, labelbatch.(train_data), labelbatch(test_data));
 
 # Loss and accuracy function
 theta_weights()::CVT = inv.(settings["data"]["info"]["labwidth"][thetas_infer_idx]) .* unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT |> maybegpu |> CVT
@@ -138,8 +139,8 @@ state = Dict(
 )
 
 update_lr_cb            = MWFLearning.make_update_lr_cb(state, opt, lrfun)
-test_err_cb             = MWFLearning.make_test_err_cb(state, θloss, θacc, θerr, labelbatch(BT_test_data))
-train_err_cb            = MWFLearning.make_train_err_cb(state, θloss, θacc, θerr, labelbatch.(BT_train_data))
+test_err_cb             = MWFLearning.make_test_err_cb(state, θloss, θacc, θerr, labelbatch(test_data))
+train_err_cb            = MWFLearning.make_train_err_cb(state, θloss, θacc, θerr, labelbatch.(train_data))
 plot_errs_cb            = MWFLearning.make_plot_errs_cb(state, savepath("plots", "errs.png"); labelnames = permutedims(settings["data"]["info"]["labinfer"]))
 plot_ligocvae_losses_cb = MWFLearning.make_plot_ligocvae_losses_cb(state, savepath("plots", "ligocvae.png"))
 checkpoint_state_cb     = MWFLearning.make_checkpoint_state_cb(state, savepath("log", "errors.bson"))
@@ -162,10 +163,6 @@ loopcbs = Flux.Optimise.runall([
     epochthrottle(checkpoint_state_cb, state, 25),
     epochthrottle(checkpoint_model_cb, state, 25),
 ])
-
-# Train using Bloch-Torrey training/testing data, or sampler data
-# train_data, test_data = BT_train_data, BT_test_data
-train_data, test_data = mb_sampler, rand(mb_sampler)
 
 # Training Loop
 train_loop! = function()
@@ -205,10 +202,10 @@ end
 
 @info "Computing resulting labels..."
 best_model   = SAVE ? BSON.load(savepath("log", "model-best.bson"))[:model] : deepcopy(m);
-true_thetas  = thetas(BT_test_data) |> Flux.cpu;
-true_signals = signals(BT_test_data) |> Flux.cpu;
-model_thetas = best_model(signals(BT_test_data); nsamples = 1000) |> Flux.cpu;
-# model_stds = std([best_model(signals(BT_test_data); nsamples = 1) |> Flux.cpu for _ in 1:1000]);
+true_thetas  = thetas(test_data) |> Flux.cpu;
+true_signals = signals(test_data) |> Flux.cpu;
+model_thetas = best_model(signals(test_data); nsamples = 1000) |> Flux.cpu;
+# model_stds = std([best_model(signals(test_data); nsamples = 1) |> Flux.cpu for _ in 1:1000]);
 
 # keep_indices = true_thetas[2,:] .≤ -3.5 # Keep small permeability only
 # true_thetas  = true_thetas[.., keep_indices]
@@ -270,12 +267,12 @@ SAVE && savefig(fig, savepath("plots", "theta.corrplot.png"))
 
 forward_plot = function()
     forward_rmse = function(i)
-        y = sum(signals(BT_test_data)[:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
+        y = sum(signals(test_data)[:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
         z_class = MWFLearning.forward_physics_14arg(true_thetas[:,i:i]) # Forward simulation of true parameters
         z_model = MWFLearning.forward_physics_14arg(model_thetas[:,i:i]) # Forward simulation of model predicted parameters
         return (e_class = rmsd(y, z_class), e_model = rmsd(y, z_model))
     end
-    errors = [forward_rmse(i) for i in 1:batchsize(thetas(BT_test_data))]
+    errors = [forward_rmse(i) for i in 1:batchsize(thetas(test_data))]
     e_class = (e -> e.e_class).(errors)
     e_model = (e -> e.e_model).(errors)
     p = scatter([e_class e_model];
