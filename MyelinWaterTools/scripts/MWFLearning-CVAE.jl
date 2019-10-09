@@ -54,8 +54,10 @@ function x_sampler()
     for j in 1:size(out,2)
         g_bounds, η_bounds = (0.60, 0.92), (0.15, 0.82)
         mvf    = MWFLearning.linearsampler(0.025, 0.4)
-        η      = min(mvf / (1 - g_bounds[2]^2), η_bounds[2]) # Maximum density for given bounds
-        g      = sqrt(1 - mvf/η) # g-ratio corresponding to maximum density
+        # η      = min(mvf / (1 - g_bounds[2]^2), η_bounds[2]) # Maximum density for given bounds
+        # g      = sqrt(1 - mvf/η) # g-ratio corresponding to maximum density
+        g      = MWFLearning.linearsampler(g_bounds...) # Uniformly random g-ratio
+        η      = mvf / (1 - g^2) # MWFLearning.linearsampler(η_bounds...)
         evf    = 1 - η
         ivf    = 1 - (mvf + evf)
         mwf    =  mvf / (2evf + 2ivf + mvf)
