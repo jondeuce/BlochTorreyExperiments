@@ -45,7 +45,7 @@ acc       = "rmse"
 Xout      = 5 # Number of learned labels
 # Xout    = 6 # Number of learned labels
 Zdim      = 20 # Latent variable dimension
-Ndense    = [128, 128] # Sizes of inner dense layers
+Ndense    = [128, 128, 128, 128, 128, 128] # Sizes of inner dense layers
 act       = "leakyrelu"
 # [model.ConvLIGOCVAE]
 # Xout      = 6  # Number of learned labels
@@ -66,7 +66,7 @@ epochs  = 100000
 savemod = 1
 testmod = 1
 [optimizer.ADAM]
-lr      = 1e-3
+lr      = 1e-4
 beta    = [0.9, 0.999]
 decay   = 1e-5
 [optimizer.SGD]
