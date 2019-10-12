@@ -112,8 +112,7 @@ train_data, test_data = MB_sampler, (x -> x[.., 1:MB_test_batch_size]).(rand(MB_
 
 # Construct model
 @info "Constructing model..."
-# @unpack m = MWFLearning.make_model(settings)[1] |> maybegpu;
-m = BSON.load("log/2019-10-07-T-18-45-09-415.acc=rmse_loss=l2_DenseLIGOCVAE_Ndense1=128_Ndense2=128_Ndense3=128_Ndense4=128_Xout=5_Zdim=20_act=leakyrelu.model-best.bson")[:model] |> deepcopy
+@unpack m = MWFLearning.make_model(settings)[1] |> maybegpu;
 model_summary(m, savepath("models", "architecture.txt"));
 param_summary(m, labelbatch.(train_data), labelbatch(test_data));
 
@@ -156,16 +155,16 @@ pretraincbs = Flux.Optimise.runall([
 ])
 
 posttraincbs = Flux.Optimise.runall([
-    epochthrottle(test_err_cb, state, 25),
-    epochthrottle(train_err_cb, state, 25),
-    epochthrottle(plot_errs_cb, state, 25),
+    epochthrottle(test_err_cb, state, 10),
+    epochthrottle(train_err_cb, state, 10),
+    epochthrottle(plot_errs_cb, state, 10),
 ])
 
 loopcbs = Flux.Optimise.runall([
     save_best_model_cb,
-    epochthrottle(plot_ligocvae_losses_cb, state, 25),
-    epochthrottle(checkpoint_state_cb, state, 25),
-    epochthrottle(checkpoint_model_cb, state, 25),
+    epochthrottle(plot_ligocvae_losses_cb, state, 10),
+    epochthrottle(checkpoint_state_cb, state, 10),
+    epochthrottle(checkpoint_model_cb, state, 10),
 ])
 
 # Training Loop
