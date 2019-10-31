@@ -47,10 +47,11 @@ signals = batch -> labels(batch)
 labelbatch(batch) = (signals(batch), thetas(batch))
 
 # Lazy data loader for training on simulated data
-const MB_sampler_batch_size  = 500 # Number of simulated signals in one training batch
-const MB_sampler_train_batch = 5   # Number of training batches per epoch
+const MB_train_batch_size  = 10_000 # Number of simulated signals in one training batch
+const MB_test_batch_size   = 500    # Number of simulated signals in one testing batch
+const MB_num_train_batches = 10     # Number of training batches per epoch
 function x_sampler()
-    out = zeros(T, 14, MB_sampler_batch_size)
+    out = zeros(T, 14, MB_train_batch_size)
     for j in 1:size(out,2)
         g_bounds, η_bounds = (0.60, 0.92), (0.15, 0.82)
         mvf    = MWFLearning.linearsampler(0.025, 0.4)
@@ -103,11 +104,11 @@ function x_sampler()
 end
 # y_sampler(x) = (y = MWFLearning.forward_physics_8arg(x); reshape(y, size(y,1), 1, 1, :))
 y_sampler(x) = (y = MWFLearning.forward_physics_14arg(x); reshape(y, size(y,1), 1, 1, :))
-MB_sampler = MWFLearning.LazyMiniBatches(MB_sampler_train_batch, x_sampler, y_sampler)
+MB_sampler = MWFLearning.LazyMiniBatches(MB_num_train_batches, x_sampler, y_sampler)
 
 # Train using Bloch-Torrey training/testing data, or sampler data
 # train_data, test_data = BT_train_data, BT_test_data
-train_data, test_data = MB_sampler, rand(MB_sampler)
+train_data, test_data = MB_sampler, (x -> x[.., 1:MB_test_batch_size]).(rand(MB_sampler))
 
 # Construct model
 @info "Constructing model..."
@@ -154,16 +155,16 @@ pretraincbs = Flux.Optimise.runall([
 ])
 
 posttraincbs = Flux.Optimise.runall([
-    epochthrottle(test_err_cb, state, 25),
-    epochthrottle(train_err_cb, state, 25),
-    epochthrottle(plot_errs_cb, state, 25),
+    epochthrottle(test_err_cb, state, 10),
+    epochthrottle(train_err_cb, state, 10),
+    epochthrottle(plot_errs_cb, state, 10),
 ])
 
 loopcbs = Flux.Optimise.runall([
     save_best_model_cb,
-    epochthrottle(plot_ligocvae_losses_cb, state, 25),
-    epochthrottle(checkpoint_state_cb, state, 25),
-    epochthrottle(checkpoint_model_cb, state, 25),
+    epochthrottle(plot_ligocvae_losses_cb, state, 10),
+    epochthrottle(checkpoint_state_cb, state, 10),
+    epochthrottle(checkpoint_model_cb, state, 10),
 ])
 
 # Training Loop
