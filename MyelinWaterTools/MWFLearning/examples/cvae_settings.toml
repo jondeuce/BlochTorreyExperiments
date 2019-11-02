@@ -20,15 +20,17 @@ labwidth    = "auto" # Label distribution widths
 # labweights  = [1.0, 1.0, 1.0,   1.0,   1.0, 1.0] # Weights for loss function
 # labscale    = [1.0, 1.0, 100.0, 100.0, 1.0, 1.0] # scale labels before plotting
 # labunits    = ["cosd(°)", "log(um)", "%", "%", "ms/ms", "ms/ms"] # label units, after scaling
-labnames    = ["cosd(alpha)", "gratio", "mwf", "T2mw/TE", "T2iew/TE", "iwf", "ewf", "iewf", "T2iw/TE", "T2ew/TE", "T1mw/TE", "T1iw/TE", "T1ew/TE", "T1iew/TE"]
-labinfer    = ["cosd(alpha)", "gratio", "mwf", "T2mw/TE", "T2iew/TE"]
-labweights  = [1.0, 1.0,   1.0,   1.0, 1.0] # Weights for loss function
-labscale    = [1.0, 100.0, 100.0, 1.0, 1.0] # scale labels before plotting
-labunits    = ["cosd(°)", "%", "%", "ms/ms", "ms/ms"] # label units, after scaling
+# labnames    = ["cosd(alpha)", "gratio", "mwf", "T2mw/TE", "T2iew/TE", "iwf", "ewf", "iewf", "T2iw/TE", "T2ew/TE", "T1mw/TE", "T1iw/TE", "T1ew/TE", "T1iew/TE"]
+# labinfer    = ["cosd(alpha)", "gratio", "mwf", "T2mw/TE", "T2iew/TE"]
+labnames    = ["cosd(alpha)", "gratio", "mwf", "T2mw/TE", "T2iew/TE", "log(TE*K)", "iwf", "ewf", "iewf", "T2iw/TE", "T2ew/TE", "T1mw/TE", "T1iw/TE", "T1ew/TE", "T1iew/TE"]
+labinfer    = ["cosd(alpha)", "gratio", "mwf", "T2mw/TE", "T2iew/TE", "log(TE*K)"]
+labweights  = [1.0, 1.0,   1.0,   1.0, 1.0, 1.0] # Weights for loss function
+labscale    = [1.0, 100.0, 100.0, 1.0, 1.0, 1.0] # scale labels before plotting
+labunits    = ["cosd(°)", "%", "%", "ms/ms", "ms/ms", "log(um)"] # label units, after scaling
 [data.filter]
-labnames    = [ "K",  "nTE" ]
-lower       = [ 0.00,  32.0 ]
-upper       = [ 1.00,  64.0 ]
+labnames    = [ "nTE" ] # "K"
+lower       = [  32.0 ] # 0.00
+upper       = [  64.0 ] # 1.00
 [data.preprocess]
 shuffle     = true
 SNR         = [0.0] # Gaussian noise on complex signal (0 == no noise)
@@ -41,9 +43,11 @@ SNR         = 100.0 # Rician noise on magnitude signal (0 == no noise)
 [model]
 loss      = "l2"
 acc       = "rmse"
+# [model.load]
+# path      = "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/ismrm2020/pretrained-dense-model-with-perm/2019-11-01-T-16-12-14-111.acc=rmse_loss=l2_DenseLIGOCVAE_Ndense1=128_Ndense2=128_Ndense3=128_Ndense4=128_Ndense5=128_Ndense6=128_Xout=6_Zdim=20_act=leakyrelu.model-checkpoint.bson"
 [model.DenseLIGOCVAE]
-Xout      = 5 # Number of learned labels
-# Xout    = 6 # Number of learned labels
+# Xout    = 5 # Number of learned labels
+Xout      = 6 # Number of learned labels
 Zdim      = 20 # Latent variable dimension
 Ndense    = [128, 128, 128, 128, 128, 128] # Sizes of inner dense layers
 act       = "leakyrelu"
