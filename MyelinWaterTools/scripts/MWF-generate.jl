@@ -2,7 +2,7 @@
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 include(joinpath(@__DIR__, "../initpaths.jl"))
-Pkg.instantiate()
+# Pkg.instantiate()
 
 # NOTE: must load pyplot backend BEFORE loading MATLAB in init.jl
 using StatsPlots
@@ -83,9 +83,10 @@ copy_and_load_random_geom(geomdir::String; kwargs...) = copy_and_load_random_geo
 
 # Load geometries with at most `maxnnodes` number of nodes to avoid exceedingly long simulations
 const geombasepaths = [
-    realpath("./geom"),
+    # realpath("./geom"),
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-3/geom",
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-4/geom",
+    "/arc/project/st-arausch-1/jcd1994/experiments/diff-med-1-input-data/geom",
 ]
 const geomfiles = reduce(vcat, realpath.(joinpath.(gp, readdir(gp))) for gp in geombasepaths)
 const maxnnodes = 15_000
