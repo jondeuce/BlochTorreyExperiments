@@ -47,11 +47,11 @@ signals = batch -> labels(batch)
 labelbatch(batch) = (signals(batch), thetas(batch))
 
 # Lazy data loader for training on simulated data
-const MB_train_batch_size  = 10_000 # Number of simulated signals in one training batch
-const MB_test_batch_size   = 500    # Number of simulated signals in one testing batch
-const MB_num_train_batches = 10     # Number of training batches per epoch
+const MB_train_batch_size  = 500 # Number of simulated signals in one training batch
+const MB_test_batch_size   = 500 # Number of simulated signals in one testing batch
+const MB_num_train_batches = 10  # Number of training batches per epoch
 function x_sampler()
-    out = zeros(T, 14, MB_train_batch_size)
+    out = zeros(T, 15, MB_train_batch_size)
     for j in 1:size(out,2)
         g_bounds, η_bounds = (0.60, 0.92), (0.15, 0.82)
         mvf    = MWFLearning.linearsampler(0.025, 0.4)
@@ -65,7 +65,7 @@ function x_sampler()
         ewf    = 2evf / (2evf + 2ivf + mvf)
         iwf    = 2ivf / (2evf + 2ivf + mvf)
         alpha  = MWFLearning.linearsampler(120.0, 180.0)
-        K      = MWFLearning.log10sampler(1e-3, 10.0)
+        K      = 1e-3 # Fix mock signals at constant near-zero permeability (lower bound of MWFLearning.log10sampler(1e-3, 10.0))
         T2sp   = MWFLearning.linearsampler(10e-3, 70e-3)
         T2lp   = MWFLearning.linearsampler(50e-3, 180e-3)
         while !(T2lp ≥ 1.5*T2sp) # Enforce constraint
@@ -82,15 +82,30 @@ function x_sampler()
         out[3,j]  = mwf # mwf
         out[4,j]  = T2sp / TE # T2mw/TE
         out[5,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
-        out[6,j]  = iwf # iwf
-        out[7,j]  = ewf # ewf
-        out[8,j]  = iwf + ewf # iewf
-        out[9,j]  = T2lp / TE # T2iw/TE
-        out[10,j] = T2tiss / TE # T2ew/TE
-        out[11,j] = T1sp / TE # T1mw/TE
-        out[12,j] = T1lp / TE # T1iw/TE
-        out[13,j] = T1tiss / TE # T1ew/TE
-        out[14,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
+        out[6,j]  = log10(TE*K) # log(TE*Kperm)
+        out[7,j]  = iwf # iwf
+        out[8,j]  = ewf # ewf
+        out[9,j]  = iwf + ewf # iewf
+        out[10,j] = T2lp / TE # T2iw/TE
+        out[11,j] = T2tiss / TE # T2ew/TE
+        out[12,j] = T1sp / TE # T1mw/TE
+        out[13,j] = T1lp / TE # T1iw/TE
+        out[14,j] = T1tiss / TE # T1ew/TE
+        out[15,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
+        # out[1,j]  = cosd(alpha) # cosd(alpha)
+        # out[2,j]  = g # gratio
+        # out[3,j]  = mwf # mwf
+        # out[4,j]  = T2sp / TE # T2mw/TE
+        # out[5,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
+        # out[6,j]  = iwf # iwf
+        # out[7,j]  = ewf # ewf
+        # out[8,j]  = iwf + ewf # iewf
+        # out[9,j]  = T2lp / TE # T2iw/TE
+        # out[10,j] = T2tiss / TE # T2ew/TE
+        # out[11,j] = T1sp / TE # T1mw/TE
+        # out[12,j] = T1lp / TE # T1iw/TE
+        # out[13,j] = T1tiss / TE # T1ew/TE
+        # out[14,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
         #out[1,j] = mwf
         #out[2,j] = 1 - mwf # iewf
         #out[3,j] = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
@@ -103,12 +118,13 @@ function x_sampler()
     return out
 end
 # y_sampler(x) = (y = MWFLearning.forward_physics_8arg(x); reshape(y, size(y,1), 1, 1, :))
-y_sampler(x) = (y = MWFLearning.forward_physics_14arg(x); reshape(y, size(y,1), 1, 1, :))
+# y_sampler(x) = (y = MWFLearning.forward_physics_14arg(x); reshape(y, size(y,1), 1, 1, :))
+y_sampler(x) = (y = MWFLearning.forward_physics_15arg(x); reshape(y, size(y,1), 1, 1, :))
 MB_sampler = MWFLearning.LazyMiniBatches(MB_num_train_batches, x_sampler, y_sampler)
 
 # Train using Bloch-Torrey training/testing data, or sampler data
-# train_data, test_data = BT_train_data, BT_test_data
-train_data, test_data = MB_sampler, (x -> x[.., 1:MB_test_batch_size]).(rand(MB_sampler))
+train_data, test_data = BT_train_data, BT_test_data
+# train_data, test_data = MB_sampler, (x -> x[.., 1:MB_test_batch_size]).(rand(MB_sampler))
 
 # Construct model
 @info "Constructing model..."
@@ -173,7 +189,10 @@ train_loop! = function()
         state[:epoch] = epoch
         
         pretraincbs() # pre-training callbacks
-        train_time = @elapsed Flux.train!(trainloss, Flux.params(m), train_data, opt) # CuArrays.@sync
+        train_time = @elapsed begin
+            Flux.train!(trainloss, Flux.params(m), MB_sampler, opt) # CuArrays.@sync
+            Flux.train!(trainloss, Flux.params(m), BT_train_data, opt) # CuArrays.@sync
+        end
         acc_time = @elapsed acc = θacc(labelbatch(test_data)...) |> Flux.data |> Flux.cpu # CuArrays.@sync
         posttraincbs() # post-training callbacks
         

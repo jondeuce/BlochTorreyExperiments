@@ -1,4 +1,5 @@
 const MODELNAMES = Set{String}([
+    "load",
     "ConvResNet",
     "ResidualDenseNet",
     "Keras1DSeqClass",
@@ -17,32 +18,41 @@ const MODELNAMES = Set{String}([
 ])
 const INFOFIELDS = Set{String}([
     # Data info fields passed as kwargs to all models
-    "nfeatures", "nchannels", "nlabels", "labmean", "labwidth"
+    "nfeatures", "nchannels", "nlabels", "labmean", "labwidth",
 ])
 
 function make_model(settings::Dict, name::String)
-    T = settings["prec"] == 64 ? Float64 : Float32
-    model_maker = eval(Symbol(name))
-    kwargs = make_model_kwargs(T, settings["model"][name])
-    for key in INFOFIELDS
-        kwargs[Symbol(key)] = clean_model_arg(T, settings["data"]["info"][key])
+    if name == "load"
+        m = BSON.load(settings["model"][name]["path"])[:model]
+        return @ntuple(m)
+    else
+        T = settings["prec"] == 64 ? Float64 : Float32
+        model_maker = eval(Symbol(name))
+        kwargs = make_model_kwargs(T, settings["model"][name])
+        for key in INFOFIELDS
+            kwargs[Symbol(key)] = clean_model_arg(T, settings["data"]["info"][key])
+        end
+        return model_maker(T; kwargs...)
     end
-    return model_maker(T; kwargs...)
 end
 make_model(settings::Dict) = [make_model(settings, name) for name in keys(settings["model"]) if name ∈ MODELNAMES]
 
 function model_string(settings::Dict, name::String)
-    # Enumerated and replace vector properties 
-    d = deepcopy(settings["model"][name])
-    for (k,v) in deepcopy(d)
-        if v isa AbstractVector
-            for i in 1:length(v)
-                d[k * string(i)] = v[i]
+    if name == "load"
+        return basename(settings["model"][name]["path"])
+    else
+        # Enumerated and replace vector properties 
+        d = deepcopy(settings["model"][name])
+        for (k,v) in deepcopy(d)
+            if v isa AbstractVector
+                for i in 1:length(v)
+                    d[k * string(i)] = v[i]
+                end
+                delete!(d, k)
             end
-            delete!(d, k)
         end
+        return name * "_" * DrWatson.savename(d)
     end
-    return name * "_" * DrWatson.savename(d)
 end
 model_string(settings::Dict) =
     DrWatson.savename(settings["model"]) * "_" * join(
@@ -111,8 +121,38 @@ function forward_physics_14arg(x::Matrix{T}) where {T}
     end
     return M
 end
+function forward_physics_15arg(x::Matrix{T}) where {T}
+    nTE  = 32 # Number of echoes (fixed)
+    Smw  = zeros(Vec{3,T}, nTE) # Buffer for myelin signal
+    Siw  = zeros(Vec{3,T}, nTE) # Buffer for intra-axonal water signal
+    Sew  = zeros(Vec{3,T}, nTE) # Buffer for extra-axonal water signal
+    M    = zeros(T, nTE, size(x,2)) # Total signal magnitude
+    for j in 1:size(x,2)
+        alpha    = acosd(x[1,j])
+        gratio   = x[2,j]
+        mwf      = x[3,j]
+        rT2mw    = x[4,j]
+        rT2iew   = x[5,j]
+        Kperm    = x[6,j]
+        iwf      = x[7,j]
+        ewf      = x[8,j]
+        iewf     = x[9,j]
+        rT2iw    = x[10,j]
+        rT2ew    = x[11,j]
+        rT1mw    = x[12,j]
+        rT1iw    = x[13,j]
+        rT1ew    = x[14,j]
+        rT1iew   = x[15,j]
+        forward_prop!(Smw, rT2mw, rT1mw, alpha, nTE)
+        forward_prop!(Siw, rT2iw, rT1iw, alpha, nTE)
+        forward_prop!(Sew, rT2ew, rT1ew, alpha, nTE)
+        @views M[:,j] .= norm.(transverse.(mwf .* Smw .+ iwf .* Siw .+ ewf .* Sew))
+    end
+    return M
+end
 ForwardProp8Arg() = @λ(x -> forward_physics_8arg(x))
 ForwardProp14Arg() = @λ(x -> forward_physics_14arg(x))
+ForwardProp15Arg() = @λ(x -> forward_physics_15arg(x))
 
 """
     Sequence classification with 1D convolutions:
