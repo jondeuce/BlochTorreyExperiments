@@ -1,4 +1,4 @@
-# Initialize project/code loading
+# Initialization project/code loading
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 # Pkg.instantiate()
@@ -11,21 +11,24 @@ using Base.Iterators: repeated, partition
 
 using MWFLearning
 # using CuArrays
-pyplot(size=(800,600))
+# pyplot(size=(800,600))
+pyplot(size=(1600,900))
 
 # Settings
 const settings_file = "settings.toml"
 const settings = TOML.parsefile(settings_file)
 
-const SAVE = true
 const DATE_PREFIX = getnow() * "."
 const FILE_PREFIX = DATE_PREFIX * model_string(settings) * "."
-const GPU = settings["gpu"] :: Bool
-const T   = settings["prec"] == 64 ? Float64 : Float32
-const VT  = Vector{T}
-const MT  = Matrix{T}
-const VMT = VecOrMat{T}
-const CVT = GPU ? CuVector{T} : Vector{T}
+const SCRIPT_TIME_START = Dates.now()
+const SCRIPT_TIMEOUT = Dates.Second(ceil(Int, 3600 * settings["timeout"]))
+const SAVE = settings["save"] :: Bool
+const GPU  = settings["gpu"] :: Bool
+const T    = settings["prec"] == 64 ? Float64 : Float32
+const VT   = Vector{T}
+const MT   = Matrix{T}
+const VMT  = VecOrMat{T}
+const CVT  = GPU ? CuVector{T} : Vector{T}
 maybegpu(x) = GPU ? Flux.gpu(x) : x
 savepath(folder, filename) = SAVE ? joinpath(savefolders[folder], FILE_PREFIX * filename) : nothing
 
@@ -49,7 +52,7 @@ labelbatch(batch) = (signals(batch), thetas(batch))
 # Lazy data loader for training on simulated data
 const MB_train_batch_size  = 500 # Number of simulated signals in one training batch
 const MB_test_batch_size   = 500 # Number of simulated signals in one testing batch
-const MB_num_train_batches = 10  # Number of training batches per epoch
+const MB_num_train_batches = 20  # Number of training batches per epoch
 function x_sampler()
     out = zeros(T, 15, MB_train_batch_size)
     for j in 1:size(out,2)
@@ -77,27 +80,12 @@ function x_sampler()
         T2tiss = T2lp # MWFLearning.linearsampler(50e-3, 180e-3)
         T1tiss = T1lp # MWFLearning.linearsampler(949e-3, 1219e-3)
         TE     = 10e-3
-        out[1,j]  = log10(TE*K) # log(TE*Kperm)
-        out[2,j]  = cosd(alpha) # cosd(alpha)
-        out[3,j]  = g # gratio
-        out[4,j]  = mwf # mwf
-        out[5,j]  = T2sp / TE # T2mw/TE
-        out[6,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
-        out[7,j]  = iwf # iwf
-        out[8,j]  = ewf # ewf
-        out[9,j]  = iwf + ewf # iewf
-        out[10,j] = T2lp / TE # T2iw/TE
-        out[11,j] = T2tiss / TE # T2ew/TE
-        out[12,j] = T1sp / TE # T1mw/TE
-        out[13,j] = T1lp / TE # T1iw/TE
-        out[14,j] = T1tiss / TE # T1ew/TE
-        out[15,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
-        # out[1,j]  = cosd(alpha) # cosd(alpha)
-        # out[2,j]  = g # gratio
-        # out[3,j]  = mwf # mwf
-        # out[4,j]  = T2sp / TE # T2mw/TE
-        # out[5,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
-        # out[6,j]  = log10(TE*K) # log(TE*Kperm)
+        # out[1,j]  = log10(TE*K) # log(TE*Kperm)
+        # out[2,j]  = cosd(alpha) # cosd(alpha)
+        # out[3,j]  = g # gratio
+        # out[4,j]  = mwf # mwf
+        # out[5,j]  = T2sp / TE # T2mw/TE
+        # out[6,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
         # out[7,j]  = iwf # iwf
         # out[8,j]  = ewf # ewf
         # out[9,j]  = iwf + ewf # iewf
@@ -107,6 +95,21 @@ function x_sampler()
         # out[13,j] = T1lp / TE # T1iw/TE
         # out[14,j] = T1tiss / TE # T1ew/TE
         # out[15,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
+        out[1,j]  = cosd(alpha) # cosd(alpha)
+        out[2,j]  = g # gratio
+        out[3,j]  = mwf # mwf
+        out[4,j]  = T2sp / TE # T2mw/TE
+        out[5,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
+        out[6,j]  = log10(TE*K) # log(TE*Kperm)
+        out[7,j]  = iwf # iwf
+        out[8,j]  = ewf # ewf
+        out[9,j]  = iwf + ewf # iewf
+        out[10,j] = T2lp / TE # T2iw/TE
+        out[11,j] = T2tiss / TE # T2ew/TE
+        out[12,j] = T1sp / TE # T1mw/TE
+        out[13,j] = T1lp / TE # T1iw/TE
+        out[14,j] = T1tiss / TE # T1ew/TE
+        out[15,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
         # out[1,j]  = cosd(alpha) # cosd(alpha)
         # out[2,j]  = g # gratio
         # out[3,j]  = mwf # mwf
@@ -134,8 +137,8 @@ function x_sampler()
 end
 # y_sampler(x) = (y = MWFLearning.forward_physics_8arg(x); reshape(y, size(y,1), 1, 1, :))
 # y_sampler(x) = (y = MWFLearning.forward_physics_14arg(x); reshape(y, size(y,1), 1, 1, :))
-# y_sampler(x) = (y = MWFLearning.forward_physics_15arg(x); reshape(y, size(y,1), 1, 1, :))
-y_sampler(x) = (y = MWFLearning.forward_physics_15arg_Kperm(x); reshape(y, size(y,1), 1, 1, :))
+y_sampler(x) = (y = MWFLearning.forward_physics_15arg(x); reshape(y, size(y,1), 1, 1, :))
+# y_sampler(x) = (y = MWFLearning.forward_physics_15arg_Kperm(x); reshape(y, size(y,1), 1, 1, :))
 MB_sampler = MWFLearning.LazyMiniBatches(MB_num_train_batches, x_sampler, y_sampler)
 
 # Train using Bloch-Torrey training/testing data, or sampler data
@@ -202,8 +205,11 @@ loopcbs = Flux.Optimise.runall([
 # Training Loop
 train_loop! = function()
     for epoch in state[:epoch] .+ (1:settings["optimizer"]["epochs"])
-        state[:epoch] = epoch
+        # Check for timeout
+        (Dates.now() - SCRIPT_TIME_START > SCRIPT_TIMEOUT) && break
         
+        # Train on mock and simulated data
+        state[:epoch] = epoch
         pretraincbs() # pre-training callbacks
         train_time = @elapsed begin
             Flux.train!(trainloss, Flux.params(m), MB_sampler, opt) # CuArrays.@sync
@@ -292,7 +298,7 @@ prediction_corrplot = function()
     # θlabs = settings["data"]["info"]["labinfer"] .* " [" .* settings["data"]["info"]["labunits"] .* "]" |> permutedims
     θlabs = settings["data"]["info"]["labinfer"] |> permutedims
     Δlabs = θlabs .* " error"
-    θidx = 1:2
+    θidx = 1:length(θlabs) # 1:2
     Δidx = 1:length(Δlabs)
     corrdata = hcat(θ[..,θidx], Δ[..,Δidx])
     corrlabs = hcat(θlabs[..,θidx], Δlabs[..,Δidx])
