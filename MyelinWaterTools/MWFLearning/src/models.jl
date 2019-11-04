@@ -150,9 +150,36 @@ function forward_physics_15arg(x::Matrix{T}) where {T}
     end
     return M
 end
+function forward_physics_15arg_Kperm(x::Matrix{T}) where {T}
+    nTE  = 32 # Number of echoes (fixed)
+    Smw  = zeros(Vec{3,T}, nTE) # Buffer for myelin signal
+    Siw  = zeros(Vec{3,T}, nTE) # Buffer for intra-axonal water signal
+    Sew  = zeros(Vec{3,T}, nTE) # Buffer for extra-axonal water signal
+    M    = zeros(T, nTE, size(x,2)) # Total signal magnitude
+    for j in 1:size(x,2)
+        Kperm    = x[1,j]
+        alpha    = acosd(x[2,j])
+        gratio   = x[3,j]
+        mwf      = x[4,j]
+        rT2mw    = x[5,j]
+        rT2iew   = x[6,j]
+        iwf      = x[7,j]
+        ewf      = x[8,j]
+        iewf     = x[9,j]
+        rT2iw    = x[10,j]
+        rT2ew    = x[11,j]
+        rT1mw    = x[12,j]
+        rT1iw    = x[13,j]
+        rT1ew    = x[14,j]
+        rT1iew   = x[15,j]
+        forward_prop!(Smw, rT2mw, rT1mw, alpha, nTE)
+        forward_prop!(Siw, rT2iw, rT1iw, alpha, nTE)
+        forward_prop!(Sew, rT2ew, rT1ew, alpha, nTE)
+        @views M[:,j] .= norm.(transverse.(mwf .* Smw .+ iwf .* Siw .+ ewf .* Sew))
+    end
+    return M
+end
 ForwardProp8Arg() = @λ(x -> forward_physics_8arg(x))
-ForwardProp14Arg() = @λ(x -> forward_physics_14arg(x))
-ForwardProp15Arg() = @λ(x -> forward_physics_15arg(x))
 
 """
     Sequence classification with 1D convolutions:

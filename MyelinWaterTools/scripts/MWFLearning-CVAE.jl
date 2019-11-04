@@ -1,7 +1,7 @@
 # Initialize project/code loading
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
-Pkg.instantiate()
+# Pkg.instantiate()
 include(joinpath(@__DIR__, "../initpaths.jl"))
 
 using Printf
@@ -77,12 +77,12 @@ function x_sampler()
         T2tiss = T2lp # MWFLearning.linearsampler(50e-3, 180e-3)
         T1tiss = T1lp # MWFLearning.linearsampler(949e-3, 1219e-3)
         TE     = 10e-3
-        out[1,j]  = cosd(alpha) # cosd(alpha)
-        out[2,j]  = g # gratio
-        out[3,j]  = mwf # mwf
-        out[4,j]  = T2sp / TE # T2mw/TE
-        out[5,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
-        out[6,j]  = log10(TE*K) # log(TE*Kperm)
+        out[1,j]  = log10(TE*K) # log(TE*Kperm)
+        out[2,j]  = cosd(alpha) # cosd(alpha)
+        out[3,j]  = g # gratio
+        out[4,j]  = mwf # mwf
+        out[5,j]  = T2sp / TE # T2mw/TE
+        out[6,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
         out[7,j]  = iwf # iwf
         out[8,j]  = ewf # ewf
         out[9,j]  = iwf + ewf # iewf
@@ -92,6 +92,21 @@ function x_sampler()
         out[13,j] = T1lp / TE # T1iw/TE
         out[14,j] = T1tiss / TE # T1ew/TE
         out[15,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
+        # out[1,j]  = cosd(alpha) # cosd(alpha)
+        # out[2,j]  = g # gratio
+        # out[3,j]  = mwf # mwf
+        # out[4,j]  = T2sp / TE # T2mw/TE
+        # out[5,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
+        # out[6,j]  = log10(TE*K) # log(TE*Kperm)
+        # out[7,j]  = iwf # iwf
+        # out[8,j]  = ewf # ewf
+        # out[9,j]  = iwf + ewf # iewf
+        # out[10,j] = T2lp / TE # T2iw/TE
+        # out[11,j] = T2tiss / TE # T2ew/TE
+        # out[12,j] = T1sp / TE # T1mw/TE
+        # out[13,j] = T1lp / TE # T1iw/TE
+        # out[14,j] = T1tiss / TE # T1ew/TE
+        # out[15,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
         # out[1,j]  = cosd(alpha) # cosd(alpha)
         # out[2,j]  = g # gratio
         # out[3,j]  = mwf # mwf
@@ -119,7 +134,8 @@ function x_sampler()
 end
 # y_sampler(x) = (y = MWFLearning.forward_physics_8arg(x); reshape(y, size(y,1), 1, 1, :))
 # y_sampler(x) = (y = MWFLearning.forward_physics_14arg(x); reshape(y, size(y,1), 1, 1, :))
-y_sampler(x) = (y = MWFLearning.forward_physics_15arg(x); reshape(y, size(y,1), 1, 1, :))
+# y_sampler(x) = (y = MWFLearning.forward_physics_15arg(x); reshape(y, size(y,1), 1, 1, :))
+y_sampler(x) = (y = MWFLearning.forward_physics_15arg_Kperm(x); reshape(y, size(y,1), 1, 1, :))
 MB_sampler = MWFLearning.LazyMiniBatches(MB_num_train_batches, x_sampler, y_sampler)
 
 # Train using Bloch-Torrey training/testing data, or sampler data
