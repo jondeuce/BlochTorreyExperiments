@@ -39,7 +39,12 @@ make_model(settings::Dict) = [make_model(settings, name) for name in keys(settin
 
 function model_string(settings::Dict, name::String)
     if name == "load"
-        return basename(settings["model"][name]["path"])
+        mstring = splitext(basename(settings["model"][name]["path"]))[1]
+        dateregex = r"\d\d\d\d-\d\d-\d\d-T-\d\d-\d\d-\d\d-\d\d\d."
+        endswith(mstring, ".model-best") && (mstring = mstring[1:end-11])
+        endswith(mstring, ".model-checkpoint") && (mstring = mstring[1:end-17])
+        (match(dateregex, mstring, 1) != nothing) && (mstring = mstring[27:end])
+        mstring
     else
         # Enumerated and replace vector properties 
         d = deepcopy(settings["model"][name])
@@ -51,7 +56,7 @@ function model_string(settings::Dict, name::String)
                 delete!(d, k)
             end
         end
-        return name * "_" * DrWatson.savename(d)
+        mstring = name * "_" * DrWatson.savename(d)
     end
 end
 model_string(settings::Dict) =
