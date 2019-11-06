@@ -912,25 +912,30 @@ SoftplusStd() = @λ(μ -> map_std(Flux.softplus, μ))
 # Flux is MUCH faster differentiating broadcasted square.(x) than x.^2 for some reason...
 square(x) = x*x
 
-function (m::LIGOCVAE)(y; nsamples::Int = 100)
-    @assert nsamples ≥ 1
+function (m::LIGOCVAE)(y; nsamples::Int = 100, calcstd = false)
+    n, min_n = nsamples, ifelse(calcstd, 2, 1)
+    @assert n ≥ min_n
     Flux.testmode!(m, true)
 
     μr0, σr = m.E1(y) |> Flux.data |> split_mean_std
-    function sample_rθ_posterior(μr0, σr)
+    function sample_rθ_posterior()
         zr = sample_mv_normal(μr0, σr)
         μx0, σx = m.D((zr,y)) |> Flux.data |> split_mean_std
         return sample_mv_normal(μx0, σx)
     end
 
-    x = sample_rθ_posterior(μr0, σr)
-    for i in 1:nsamples-1
-        x .+= sample_rθ_posterior(μr0, σr)
+    Σx = sample_rθ_posterior()
+    Σx² = Σx.^2
+    for i in 1:n-1
+        x = sample_rθ_posterior()
+        Σx .+= x
+        calcstd && (Σx² .+= x.^2)
     end
-    (nsamples > 1) && (x ./= nsamples)
-
     Flux.testmode!(m, false)
-    return x
+
+    μx = Σx ./ n
+    σx = calcstd ? (n/(n-1)) .* sqrt.((Σx²./n .- μx.*μx)) : nothing
+    return calcstd ? vcat(μx, σx) : μx
 end
 
 # Cross-entropy loss function
