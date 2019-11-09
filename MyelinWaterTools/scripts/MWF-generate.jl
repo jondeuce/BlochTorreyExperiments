@@ -86,7 +86,7 @@ const geombasepaths = [
     # realpath("./geom"),
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-3/geom",
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-4/geom",
-    "/arc/project/st-arausch-1/jcd1994/experiments/diff-med-1-input-data/geom",
+    "/arc/project/st-arausch-1/jcd1994/ismrm2020/experiments/diff-med-1-input-data/geom",
 ]
 const geomfiles = reduce(vcat, realpath.(joinpath.(gp, readdir(gp))) for gp in geombasepaths)
 const maxnnodes = 15_000
