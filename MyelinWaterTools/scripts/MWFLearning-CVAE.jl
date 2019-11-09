@@ -11,8 +11,8 @@ using Base.Iterators: repeated, partition
 
 using MWFLearning
 # using CuArrays
-# pyplot(size=(800,600))
-pyplot(size=(1600,900))
+pyplot(size=(800,600))
+# pyplot(size=(1600,900))
 
 # Settings
 const settings_file = "settings.toml"
@@ -21,7 +21,7 @@ const settings = TOML.parsefile(settings_file)
 const DATE_PREFIX = getnow() * "."
 const FILE_PREFIX = DATE_PREFIX * model_string(settings) * "."
 const SCRIPT_TIME_START = Dates.now()
-const SCRIPT_TIMEOUT = Dates.Second(ceil(Int, 3600 * settings["timeout"]))
+const SCRIPT_TIMEOUT = settings["timeout"] == 0 ? Dates.Second(typemax(Int)) : Dates.Second(ceil(Int, 3600 * settings["timeout"]))
 const SAVE = settings["save"] :: Bool
 const GPU  = settings["gpu"] :: Bool
 const T    = settings["prec"] == 64 ? Float64 : Float32
@@ -246,27 +246,36 @@ end
 
 @info "Computing resulting labels..."
 best_model   = SAVE ? BSON.load(savepath("log", "model-best.bson"))[:model] : deepcopy(m);
-true_thetas  = thetas(test_data) |> Flux.cpu;
-true_signals = signals(test_data) |> Flux.cpu;
-model_thetas = best_model(signals(test_data); nsamples = 1000) |> Flux.cpu;
-# model_stds = std([best_model(signals(test_data); nsamples = 1) |> Flux.cpu for _ in 1:1000]);
+eval_data = test_data
+# eval_data = (hcat(thetas.(BT_train_data)..., thetas(BT_test_data)), cat(signals.(BT_train_data)..., signals(BT_test_data); dims = 4))
+true_thetas  = thetas(eval_data) |> Flux.cpu;
+true_signals = signals(eval_data) |> Flux.cpu;
+model_mu_std = best_model(true_signals; nsamples = 1000, stddev = true) |> Flux.cpu;
+model_thetas, model_stds = model_mu_std[1:end÷2, ..], model_mu_std[end÷2+1:end, ..];
 
 # keep_indices = true_thetas[2,:] .≤ -3.5 # Keep small permeability only
 # true_thetas  = true_thetas[.., keep_indices]
 # true_signals = true_signals[.., keep_indices]
 # model_thetas = model_thetas[.., keep_indices]
-# # model_stds = model_stds[.., keep_indices]
+# model_stds   = model_stds[.., keep_indices]
+
+true_thetas = repeat(thetas(eval_data)[:,2:2], 1,500);
+true_signals = repeat(signals(eval_data)[:,:,:,2:2], 1,1,1,500);
+model_thetas = best_model(true_signals; nsamples = 1, stddev = false) |> Flux.cpu;
 
 prediction_hist = function()
     pred_hist = function(i)
         scale = settings["data"]["info"]["labscale"][i]
         units = settings["data"]["info"]["labunits"][i]
         err = scale .* (model_thetas[i,:] .- true_thetas[i,:])
-        histogram(err;
+        abs_μ, μ = round(mean(abs.(err)); sigdigits = 2), round(mean(err); sigdigits = 2)
+        σ, IQR = round(std(err); sigdigits = 2), round(iqr(err); sigdigits = 2)
+        p = histogram(err; nbins = 100, normalized = true,
             grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
             label = settings["data"]["info"]["labinfer"][i] * " [$units]",
-            title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
+            title = "|μ| = $abs_μ, μ = $μ, σ = $σ", #, IQR = $IQR",
         )
+        p = xlims!(p, μ - 3σ, μ + 3σ)
     end
     plot([pred_hist(i) for i in 1:size(model_thetas, 1)]...)
 end
@@ -291,6 +300,60 @@ end
 fig = prediction_scatter(); display(fig)
 SAVE && savefig(fig, savepath("plots", "theta.scatter.png"))
 
+prediction_ribbon = function()
+    pred_ribbon = function(i)
+        scale = settings["data"]["info"]["labscale"][i]
+        units = settings["data"]["info"]["labunits"][i]
+
+        isort = sortperm(true_thetas[i,:]);
+        x = scale .* true_thetas[i, isort];
+        y = scale .* model_thetas[i, isort];
+        _idx = partition(1:length(x), length(x)÷20)
+        _x = [mean(x[idx]) for idx in _idx]; #_x = [x[1]; _x; x[end]]
+        _y = [mean(y[idx]) for idx in _idx]; #_y = [y[1]; _y; y[end]]
+        _σ = [std(y[idx] .- x[idx]) for idx in _idx]; #_σ = [0; _σ; 0]
+
+        p = plot(_x, _y; ribbon = _σ,
+            fillalpha = 0.5,
+            marker = :dot, markersize = 2, grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
+            label = settings["data"]["info"]["labinfer"][i] * " [$units]",
+        )
+        p = plot!(p, identity, ylims(p)...; line = (:dash, 2, :red), label = L"y = x")
+        p = xlims!(p, _x[1], _x[end])
+    end
+    plot([pred_ribbon(i) for i in 1:size(model_thetas, 1)]...)
+end
+@info "Plotting prediction ribbon plots..."
+fig = prediction_ribbon(); display(fig)
+SAVE && savefig(fig, savepath("plots", "theta.ribbon.png"))
+
+prediction_hist_single = function()
+    pred_hist_single = function(i)
+        scale = settings["data"]["info"]["labscale"][i]
+        units = settings["data"]["info"]["labunits"][i]
+        err = scale .* (model_thetas[i,:] .- true_thetas[i,:])
+        abs_μ, μ = round(mean(abs.(err)); sigdigits = 2), round(mean(err); sigdigits = 2)
+        σ, IQR = round(std(err); sigdigits = 2), round(iqr(err); sigdigits = 2)
+        
+        p = histogram(scale .* model_thetas[i,:]; nbins = 20, normalized = true,
+            grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
+            label = settings["data"]["info"]["labinfer"][i] * " [$units]",
+            title = "|μ| = $abs_μ, μ = $μ, σ = $σ", #, IQR = $IQR",
+        )
+    end
+    
+    # t = [settings["data"]["info"]["labinfer"][i] * " = $(round(true_thetas[i,1];sigdigits=3)) [" * settings["data"]["info"]["labunits"][i] * "]" for i in 1:5]
+    t = [L"\cos\alpha = -0.95", L"g = 0.74", L"MWF = 0.23", L"T_2^{MW}/TE = 3.0", L"T_2^{IEW}/TE = 10.0"]
+    t = join(t, "\n")
+    plot(
+        [pred_hist_single(i) for i in 1:size(model_thetas, 1)]...,
+        plot(true_signals[:,1,1,1]; title = "MSE Signal vs. Echo Number", xlims = (1,32), titlefontsize = 10, label = "Example MSE Signal", annotate = (22,0.5,t))
+    )
+end
+@info "Plotting prediction histograms..."
+fig = prediction_hist_single(); display(fig)
+SAVE && savefig(fig, savepath("plots", "theta.histogram.single.png"))
+
 prediction_corrplot = function()
     # cosalpha(x) = (out = copy(x); @views out[1,:] .= cosd.(out[1,:]); out)
     θ = true_thetas .* settings["data"]["info"]["labscale"] |> permutedims
@@ -311,12 +374,12 @@ SAVE && savefig(fig, savepath("plots", "theta.corrplot.png"))
 
 forward_plot = function()
     forward_rmse = function(i)
-        y = sum(signals(test_data)[:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
+        y = sum(signals(eval_data)[:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
         z_class = MWFLearning.forward_physics_14arg(true_thetas[:,i:i]) # Forward simulation of true parameters
         z_model = MWFLearning.forward_physics_14arg(model_thetas[:,i:i]) # Forward simulation of model predicted parameters
         return (e_class = rmsd(y, z_class), e_model = rmsd(y, z_model))
     end
-    errors = [forward_rmse(i) for i in 1:batchsize(thetas(test_data))]
+    errors = [forward_rmse(i) for i in 1:batchsize(thetas(eval_data))]
     e_class = (e -> e.e_class).(errors)
     e_model = (e -> e.e_model).(errors)
     p = scatter([e_class e_model];
