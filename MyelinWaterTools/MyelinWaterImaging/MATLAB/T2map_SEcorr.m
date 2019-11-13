@@ -373,6 +373,8 @@ if waitbar
     % Print message on finish with image name and total run time
     name = inputname(1);
     fprintf('%s completed in %2.0f hours, %2.0f minutes\n',name,floor(toc(tstart)/3600),(toc(tstart)/3600-floor(toc(tstart)/3600))*60)
+else
+    toc(tstart);
 end
 
 end
