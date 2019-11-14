@@ -55,7 +55,7 @@ mat = mxcall(:EPGdecaycurve, 1, Float64.(values(args))...);
 n = 10
 M = 1e4 .* reshape(exp.(.-(1/6.0).*(1:32)) .+ exp.(.-(1/2.5).*(1:32)), 1, 1, 1, :);
 image = repeat(M, n, n, n, 1);
-@time jl = T2Dist.Rewrite.T2map_SEcorr(image);
+jl = T2Dist.Rewrite.T2map_SEcorr(image);
 mat = mxcall(:T2map_SEcorr, 2, image, "waitbar", "no");
 
 for k in keys(jl[1])

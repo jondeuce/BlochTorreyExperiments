@@ -31,7 +31,8 @@ while chi2(end)<(Chi2Factor*chi2_min)
     chi2=[chi2,sum(residuals.^2)];
 end
 % Smooth the chi2(mu) curve using spline fit
-mu_spline=0:0.001:mu(end);
+% mu_spline=0:0.001:mu(end); %JD
+mu_spline=0:0.1e-6:mu(end); %JD
 chi2_spline=interp1(mu,chi2,mu_spline,'spline');
 % Find the index of the minimum chi-squared satisfying the increase factor
 [dummy,min_ind]=min(abs(chi2_spline-(Chi2Factor*chi2_min)));

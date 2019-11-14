@@ -22,8 +22,8 @@ prandvec(n) = sin.(1:n)
 ####
 
 n = 100;
-C = prandmat(n);
-d = prandvec(n);
+C = randn(n,n); #prandmat(n);
+d = randn(n); #prandvec(n);
 Chi2Factor = 1.02;
 work = T2Dist.Rewrite.lsqnonneg_reg_work(C, d, Chi2Factor);
 @benchmark T2Dist.Rewrite.lsqnonneg_reg!($work, $C, $d, $Chi2Factor)
@@ -35,7 +35,7 @@ work = T2Dist.Rewrite.lsqnonneg_reg_work(C, d, Chi2Factor);
 ETL, TE, T2, T1 = 32, 10e-3, 20e-3, 1000e-3;
 num_states, te, t2, t1 = 32, 10e-3, 20e-3, 1000e-3;
 flip_angle, num_pulses, refcon = 165.0, 32, 175.0;
-work = T2Dist.Rewrite.EPGdecaycurve_work(ETL, flip_angle, TE, T2, T1, refcon);
+work = T2Dist.Rewrite.EPGdecaycurve_work(ETL);
 
 @benchmark T2Dist.Rewrite.relaxmat_action!($work, $num_states, $te, $t2, $t1)
 @benchmark begin

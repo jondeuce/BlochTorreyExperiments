@@ -5,7 +5,7 @@
 module Rewrite
 
 using LinearAlgebra, Statistics, SparseArrays, StaticArrays
-using NNLS, Dierckx, Distances, Optim
+using NNLS, Dierckx, Distances, Optim, Roots
 using DrWatson: @ntuple
 using Parameters, Printf, TimerOutputs
 

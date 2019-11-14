@@ -8,22 +8,21 @@ T2: Transverse relaxation time (seconds)
 T1: Longitudinal relaxation time (seconds)
 refcon: Value of Refocusing Pulse Control Angle
 """
-function EPGdecaycurve_work(ETL, flip_angle, TE, T2, T1, refcon)
+function EPGdecaycurve_work(ETL)
     M = zeros(ComplexF64, 3*ETL)
     M_tmp = zeros(ComplexF64, 3*ETL)
     decay_curve = zeros(ETL)
     return @ntuple(M, M_tmp, decay_curve)
 end
 
-EPGdecaycurve(ETL, flip_angle, TE, T2, T1, refcon) = EPGdecaycurve!(
-    EPGdecaycurve_work(ETL, flip_angle, TE, T2, T1, refcon),
-    ETL, flip_angle, TE, T2, T1, refcon
-)
+EPGdecaycurve(ETL, flip_angle, TE, T2, T1, refcon) =
+    EPGdecaycurve!(EPGdecaycurve_work(ETL), ETL, flip_angle, TE, T2, T1, refcon)
 
 function EPGdecaycurve!(work, ETL, flip_angle, TE, T2, T1, refcon)
     # Unpack workspace
     @unpack M, M_tmp, decay_curve = work
     @assert length(M_tmp) == length(M) == 3*ETL
+    M .= 0 # Zero initial vector
     _M = reinterpret(SVector{3,ComplexF64}, M) # View of M as vector of SVector's
 
     # Initialize magnetization phase state vector (MPSV) and set all
@@ -43,14 +42,18 @@ function EPGdecaycurve!(work, ETL, flip_angle, TE, T2, T1, refcon)
     # Perform flip-relax sequence ETL-1 times
     for i = 2:ETL
         # Perform the flip
-        flipmat_action!(work, ETL, T2mat)
+        @timeit TIMER "flipmat_action!" begin
+            flipmat_action!(work, ETL, T2mat)
+        end
         
         # Record the magnitude of the population of F1* as the echo amplitude
         # and allow for relaxation
         decay_curve[i] = abs(M[2]) * exp(-(TE/2)/T2)
         
         # Allow time evolution of magnetization between pulses
-        relaxmat_action!(work, ETL, TE, T2, T1)
+        @timeit TIMER "relaxmat_action!" begin
+            relaxmat_action!(work, ETL, TE, T2, T1)
+        end
     end
 
     return decay_curve
@@ -65,7 +68,7 @@ function flipmat_action!(work, num_states, T2mat)
     @assert length(M) == 3*num_states
 
     _M = reinterpret(SVector{3,ComplexF64}, M)
-    @inbounds for i in 1:num_states
+    @inbounds @simd for i in 1:num_states
         _M[i] = T2mat * _M[i]
     end
 
@@ -95,10 +98,10 @@ function relaxmat_action!(work, num_states, te, t2, t1)
     
     E2, E1 = exp(-te/t2), exp(-te/t1)
     M_tmp[1] = E2 * M[2] # F1* --> F1
-    @inbounds for i in 3:3:3*num_states-3
+    @inbounds @simd for i in 3:3:3*num_states-3
         M_tmp[i-1] = E2 * M[i+2] # F(n)* --> F(n-1)*
-        M_tmp[i  ] = E1 * M[i  ] # Z(n) --> Z(n)
-        M_tmp[i+1] = E2 * M[i-2] # F(n) --> F(n+1)
+        M_tmp[i  ] = E1 * M[i  ] # Z(n)  --> Z(n)
+        M_tmp[i+1] = E2 * M[i-2] # F(n)  --> F(n+1)
     end
     M_tmp[end-1] = 0
     M_tmp[end] = E1 * M[end]
