@@ -38,7 +38,9 @@ function lsqnonneg_reg!(work, C, d, Chi2Factor)
     d_smooth_bottom .= 0
 
     # Find non-regularized solution
-    lsqnonneg!(nnls_work, C, d)
+    @timeit_debug TIMER "Non-reg. lsqnonneg!" begin
+        lsqnonneg!(nnls_work, C, d)
+    end
     mul!(d_backproj, C, nnls_work.x)
     resid .= d .- d_backproj
     chi2_min = sum(abs2, resid)
@@ -58,7 +60,9 @@ function lsqnonneg_reg!(work, C, d, Chi2Factor)
 
         # Compute T2 distribution with smoothing
         set_diag!(C_smooth_bottom, mu_cache[end])
-        lsqnonneg!(nnls_work_smooth, C_smooth, d_smooth)
+        @timeit_debug TIMER "Regularized lsqnonneg!" begin
+            lsqnonneg!(nnls_work_smooth, C_smooth, d_smooth)
+        end
         
         # Find predicted curve and calculate residuals and chi-squared
         mul!(d_backproj, C, nnls_work_smooth.x)
@@ -72,7 +76,9 @@ function lsqnonneg_reg!(work, C, d, Chi2Factor)
 
     # Compute the regularized solution
     set_diag!(C_smooth_bottom, mu)
-    lsqnonneg!(nnls_work_smooth, C_smooth, d_smooth)
+    @timeit_debug TIMER "Final reg. lsqnonneg!" begin
+        lsqnonneg!(nnls_work_smooth, C_smooth, d_smooth)
+    end
     mul!(d_backproj, C, nnls_work_smooth.x)
     resid .= d .- d_backproj
     chi2_final = sum(abs2, resid)
@@ -85,5 +91,5 @@ function lsqnonneg_reg!(work, C, d, Chi2Factor)
     work.mu_opt[] = mu
     work.chi2fact_opt[] = Chi2FactorActual
 
-    return (x = work.x, mu = work.mu_opt, Chi2FactorActual = work.chi2fact_opt)
+    return (x = work.x, mu = work.mu_opt[], Chi2FactorActual = work.chi2fact_opt[])
 end

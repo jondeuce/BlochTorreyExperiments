@@ -120,10 +120,12 @@ Ver. 3.3, August 2013
 """
 function T2map_SEcorr(image::Array{Float64,4}; kwargs...)
     reset_timer!(TIMER)
-    out = @timeit TIMER "T2map_SEcorr" begin
+    out = @timeit_debug TIMER "T2map_SEcorr" begin
         _T2map_SEcorr(image, Options(nTE = size(image, 4), kwargs...))
     end
-    println("\n"); show(TIMER); println("\n")
+    if timeit_debug_enabled()
+        println("\n"); show(TIMER); println("\n")
+    end
     return out
 end
 
@@ -176,7 +178,7 @@ function _T2map_SEcorr(image::Array{Float64,4}, opts::Options)
     t2_dist_work = t2_distribution_work(basis_decay, decay_data, opts)
     
     # Initialize parameters and variable for angle optimization
-    @timeit TIMER "Initialization" begin
+    @timeit_debug TIMER "Initialization" begin
         if faset === nothing
             # Loop to compute basis for each angle
             for i = 1:nAngles
@@ -211,7 +213,7 @@ function _T2map_SEcorr(image::Array{Float64,4}, opts::Options)
         # Find optimum flip angle
         # =====================================================
         alpha_opt = if faset === nothing
-            @timeit TIMER "Optimize Flip Angle" begin
+            @timeit_debug TIMER "Optimize Flip Angle" begin
                 optimize_flip_angle!(opt_flip_angle_work, basis_angles, flip_angles, decay_data, T2_times, opts)
             end
         else
@@ -222,7 +224,7 @@ function _T2map_SEcorr(image::Array{Float64,4}, opts::Options)
         # Fit basis matrix using optimized alpha
         # =====================================================
         if faset === nothing
-            @timeit TIMER "Compute Final NNLS Basis" begin
+            @timeit_debug TIMER "Compute Final NNLS Basis" begin
                 calc_basis_decay!(basis_decay_work, basis_decay, alpha_opt, T2_times, opts)
             end
         end
@@ -232,7 +234,7 @@ function _T2map_SEcorr(image::Array{Float64,4}, opts::Options)
         # =========================================================
         
         # Find distribution depending on regularization routine
-        T2_dis, mu_opt, chi2fact_opt = @timeit TIMER "Calculate T2 Dist" begin
+        T2_dis, mu_opt, chi2fact_opt = @timeit_debug TIMER "Calculate T2 Dist" begin
             fit_t2_distribution!(t2_dist_work, basis_decay, decay_data, opts)
         end
 
@@ -270,7 +272,7 @@ function calc_basis_decay!(work, basis_decay, flip_angle, T2_times, o::Options)
     @assert length(T2_times) == size(basis_decay,2) == o.nT2
     @assert size(basis_decay,1) == o.nTE
     @inbounds for j = 1:o.nT2
-        @timeit TIMER "EPGdecaycurve!" begin
+        @timeit_debug TIMER "EPGdecaycurve!" begin
             if o.TE == "variable"
                 EPGdecaycurve_vTE!(work, o.nTE, flip_angle, o.vTEparam..., T2_times[j], o.T1, o.RefCon)
             else
@@ -285,13 +287,13 @@ function calc_basis_decay!(work, basis_decay, flip_angle, T2_times, o::Options)
 end
 
 function optimize_flip_angle!(work, basis_angles, flip_angles, decay_data, T2_times, o::Options)
-    @timeit TIMER "Fit each NNLS Basis" begin
+    @timeit_debug TIMER "Fit each NNLS Basis" begin
         # Fit each basis and find chi-squared
         for i = 1:o.nAngles
-            @timeit TIMER "lsqnonneg!" begin
+            @timeit_debug TIMER "lsqnonneg!" begin
                 lsqnonneg!(work.nnls_work, basis_angles[i], decay_data)
             end
-            @timeit TIMER "chi2_alpha[i]" begin
+            @timeit_debug TIMER "chi2_alpha[i]" begin
                 T2_dis_ls = work.nnls_work.x
                 mul!(work.decay_pred, basis_angles[i], T2_dis_ls)
                 work.chi2_alpha[i] = sqeuclidean(decay_data, work.decay_pred)
@@ -299,7 +301,7 @@ function optimize_flip_angle!(work, basis_angles, flip_angles, decay_data, T2_ti
         end
     end
     
-    alpha_opt, chi2_alpha_opt = @timeit TIMER "Spline Opt" begin
+    alpha_opt, chi2_alpha_opt = @timeit_debug TIMER "Spline Opt" begin
         # Find the minimum chi-squared and the corresponding angle
         spline_opt(flip_angles, work.chi2_alpha)
     end
