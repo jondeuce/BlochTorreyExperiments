@@ -42,16 +42,14 @@
     @assert SetFlipAngle isa Nothing || 0.0 < SetFlipAngle <= 180.0
     
     nCores::Int = Threads.nthreads()
-    @assert 1 <= nCores
+    @assert nCores == Threads.nthreads()
     
-    Save_regparam::String = "no"
-    @assert Save_regparam ∈ ("yes", "no")
+    Save_regparam::Bool = false
     
-    Save_NNLS_basis::String = "no"
-    @assert Save_NNLS_basis ∈ ("yes", "no")
+    Save_NNLS_basis::Bool = false
     
-    Waitbar::String = "no"
-    @assert Waitbar == "no" # Not implemented
+    Waitbar::Bool = false
+    @assert !Waitbar # Not implemented
 end
 
 """
@@ -134,11 +132,6 @@ function _T2map_SEcorr(image::Array{Float64,4}, opts::Options)
     # Parse inputs and apply default values when necessary
     # =========================================================================
     @unpack TE, nTE, T1, RefCon, Threshold, Chi2Factor, nT2, T2Range, MinRefAngle, nAngles, Reg, nCores = opts
-    TE1, TE2, nTE1 = TE == "variable" ? opts.vTEparam : (TE, TE, nTE÷2)
-    faset = opts.SetFlipAngle
-    savereg = opts.Save_regparam == "yes"
-    saveNNLS = opts.Save_NNLS_basis == "yes"
-    waitbar = opts.Waitbar == "yes"
 
     # =========================================================================
     # Initialize all the data
@@ -147,46 +140,27 @@ function _T2map_SEcorr(image::Array{Float64,4}, opts::Options)
     
     # Initialize map matrices
     nrows, ncols, nslices, nechs = size(image)
-    gdn = fill(NaN, nrows, ncols, nslices)
-    ggm = fill(NaN, nrows, ncols, nslices)
-    gva = fill(NaN, nrows, ncols, nslices)
-    SNR = fill(NaN, nrows, ncols, nslices)
-    FNR = fill(NaN, nrows, ncols, nslices)
-    alpha = fill(NaN, nrows, ncols, nslices)
+    maps = (
+        gdn = fill(NaN, nrows, ncols, nslices),
+        ggm = fill(NaN, nrows, ncols, nslices),
+        gva = fill(NaN, nrows, ncols, nslices),
+        SNR = fill(NaN, nrows, ncols, nslices),
+        FNR = fill(NaN, nrows, ncols, nslices),
+        alpha = fill(NaN, nrows, ncols, nslices),
+        mu = (opts.Save_regparam ? fill(NaN, nrows, ncols, nslices) : nothing),
+        chi2factor = (opts.Save_regparam ? fill(NaN, nrows, ncols, nslices) : nothing),
+        NNLS_basis = (opts.Save_NNLS_basis ? fill(NaN, nrows, ncols, nslices, nechs, nT2) : nothing),
+    )
     distributions = fill(NaN, nrows, ncols, nslices, nT2)
-    mu = savereg ? fill(NaN, nrows, ncols, nslices) : nothing
-    chi2factor = savereg ? fill(NaN, nrows, ncols, nslices) : nothing
-    NNLS_basis = saveNNLS ? fill(NaN, nrows, ncols, nslices, nechs, nT2) : nothing
-    
+    global_buffers = [global_buffer_maker(opts) for _ in 1:Threads.nthreads()]
+
     # =========================================================================
     # Find the basis matrices for each flip angle
     # =========================================================================
     
-    # Read-only buffers
-    T2_times = 10.0 .^ range(log10(T2Range[1]), log10(T2Range[2]), length = nT2)
-    flip_angles = range(MinRefAngle, 180.0, length = nAngles)
-    basis_angles = [zeros(nechs, nT2) for _ in 1:nAngles] # 1xnAngles vector that will contain the decay bases of each angle
-    
-    # Read/write buffers
-    basis_decay = zeros(nechs, nT2)
-    decay_data = zeros(nechs)
-    decay_calc = zeros(nechs)
-    residuals = zeros(nechs)
-
-    basis_decay_work = calc_basis_decay_work(opts)
-    opt_flip_angle_work = (nnls_work = lsqnonneg_work(basis_decay, decay_data), chi2_alpha = zeros(nAngles), decay_pred = zeros(nechs))
-    t2_dist_work = t2_distribution_work(basis_decay, decay_data, opts)
-    
     # Initialize parameters and variable for angle optimization
     @timeit_debug TIMER "Initialization" begin
-        if faset === nothing
-            # Loop to compute basis for each angle
-            for i = 1:nAngles
-                calc_basis_decay!(basis_decay_work, basis_angles[i], flip_angles[i], T2_times, opts)
-            end
-        else
-            calc_basis_decay!(basis_decay_work, basis_decay, faset, T2_times, opts)
-        end
+        initialize_basis_decay!.(global_buffers, Ref(opts))
     end
 
     # =========================================================================
@@ -194,77 +168,100 @@ function _T2map_SEcorr(image::Array{Float64,4}, opts::Options)
     # =========================================================================
     
     # Main triple for-loop to run through each pixel in the image
-    for row = 1:nrows, col = 1:ncols, slice = 1:nslices
+    Threads.@threads for row = 1:nrows
+        global_buffer = global_buffers[Threads.threadid()]
         
-        if col == 1 && slice == 1
-            @printf("Starting row %3d/%3d, -- Time: %2.0f hours, %2.0f minutes\n",
-                row, nrows, floor(toc(tstart)/3600), (toc(tstart)/3600-floor(toc(tstart)/3600))*60)
-        end
+        hour, min = floor(toc(tstart)/3600), (toc(tstart)/3600-floor(toc(tstart)/3600))*60
+        println("Starting row $row/$nrows on thread $(Threads.threadid()) -- Time: $hour hours, $min minutes\n")
         
-        # Skip low signal pixels
-        if image[row,col,slice,1] < Threshold
-            continue
-        end
-        
-        # Extract decay curve from the pixel
-        decay_data .= image[row,col,slice,:]
-        
-        # =====================================================
-        # Find optimum flip angle
-        # =====================================================
-        alpha_opt = if faset === nothing
-            @timeit_debug TIMER "Optimize Flip Angle" begin
-                optimize_flip_angle!(opt_flip_angle_work, basis_angles, flip_angles, decay_data, T2_times, opts)
+        for col = 1:ncols, slice = 1:nslices
+            
+            # Skip low signal pixels
+            if image[row,col,slice,1] < Threshold
+                continue
             end
-        else
-            faset
-        end
-
-        # =====================================================
-        # Fit basis matrix using optimized alpha
-        # =====================================================
-        if faset === nothing
-            @timeit_debug TIMER "Compute Final NNLS Basis" begin
-                calc_basis_decay!(basis_decay_work, basis_decay, alpha_opt, T2_times, opts)
+            
+            # Extract decay curve from the pixel
+            global_buffer.decay_data .= image[row,col,slice,:]
+            
+            # =====================================================
+            # Find optimum flip angle
+            # =====================================================
+            if opts.SetFlipAngle === nothing
+                @timeit_debug TIMER "Optimize Flip Angle" begin
+                    optimize_flip_angle!(global_buffer, opts)
+                end
             end
-        end
 
-        # =========================================================
-        # Calculate T2 distribution and global parameters
-        # =========================================================
-        
-        # Find distribution depending on regularization routine
-        T2_dis, mu_opt, chi2fact_opt = @timeit_debug TIMER "Calculate T2 Dist" begin
-            fit_t2_distribution!(t2_dist_work, basis_decay, decay_data, opts)
-        end
+            # =====================================================
+            # Fit basis matrix using optimized alpha
+            # =====================================================
+            if opts.SetFlipAngle === nothing
+                @timeit_debug TIMER "Compute Final NNLS Basis" begin
+                    fit_basis_decay!(global_buffer, opts)
+                end
+            end
 
-        # Save global values
-        distributions[row,col,slice,:] .= T2_dis
-        alpha[row,col,slice] = alpha_opt
-        savereg && (mu[row,col,slice] = mu_opt)
-        savereg && (chi2factor[row,col,slice] = chi2fact_opt)
-        saveNNLS && (NNLS_basis[row,col,slice,:,:] .= basis_decay)
-        
-        # Compute parameters of distribution
-        mul!(decay_calc, basis_decay, T2_dis)
-        residuals .= decay_calc .- decay_data
-        gdn[row,col,slice] = sum(T2_dis)
-        ggm[row,col,slice] = exp(dot(T2_dis, log.(T2_times)) / sum(T2_dis))
-        gva[row,col,slice] = exp(sum((log.(T2_times) .- log(ggm[row,col,slice])).^2 .* T2_dis) / sum(T2_dis)) - 1
-        FNR[row,col,slice] = sum(T2_dis) / sqrt(var(residuals))
-        SNR[row,col,slice] = maximum(decay_data) / sqrt(var(residuals))
+            # =========================================================
+            # Calculate T2 distribution and global parameters
+            # =========================================================
+            @timeit_debug TIMER "Calculate T2 Dist" begin
+                fit_t2_distribution!(global_buffer, opts)
+            end
+
+            # =========================================================
+            # Save results
+            # =========================================================
+            save_results!(global_buffer, maps, distributions, opts, row, col, slice)
+        end
     end
-
-    # Assign outputs
-    maps = @ntuple(gdn, ggm, gva, alpha, FNR, mu, chi2factor, NNLS_basis)
 
     return @ntuple(maps, distributions)
 end
 
-function calc_basis_decay_work(o::Options)
+global_buffer_maker(o::Options) = (
+    T2_times = (10.0 .^ range(log10(o.T2Range[1]), log10(o.T2Range[2]); length = o.nT2)),
+    flip_angles = range(o.MinRefAngle, 180.0; length = o.nAngles),
+    basis_angles = [zeros(o.nTE, o.nT2) for _ in 1:o.nAngles],
+    basis_decay = zeros(o.nTE, o.nT2),
+    decay_data = zeros(o.nTE),
+    decay_calc = zeros(o.nTE),
+    residuals = zeros(o.nTE),
+    basis_decay_work = calc_epg_decay_work(o),
+    opt_flip_angle_work = (
+        nnls_work = lsqnonneg_work(zeros(o.nTE, o.nT2), zeros(o.nTE)),
+        chi2_alpha = zeros(o.nAngles),
+        decay_pred = zeros(o.nTE),
+    ),
+    t2_dist_work = t2_distribution_work(zeros(o.nTE, o.nT2), zeros(o.nTE), o),
+    alpha_opt = (o.SetFlipAngle === nothing ? Ref(NaN) : Ref(o.SetFlipAngle)),
+    chi2_alpha_opt = Ref(NaN),
+    T2_dis = zeros(o.nT2),
+    mu_opt = Ref(NaN),
+    chi2fact_opt = Ref(NaN),
+)
+
+function calc_epg_decay_work(o::Options)
     return o.TE == "variable" ?
         EPGdecaycurve_vTE_work(o.nTE) :
         EPGdecaycurve_work(o.nTE)
+end
+
+function initialize_basis_decay!(global_buffer, o::Options)
+    @unpack basis_decay_work, basis_angles, basis_decay, flip_angles, T2_times = global_buffer
+    if o.SetFlipAngle === nothing
+        # Loop to compute basis for each angle
+        @inbounds for i = 1:o.nAngles
+            calc_basis_decay!(basis_decay_work, basis_angles[i], flip_angles[i], T2_times, o)
+        end
+    else
+        calc_basis_decay!(basis_decay_work, basis_decay, o.SetFlipAngle, T2_times, o)
+    end
+end
+
+function fit_basis_decay!(global_buffer, o::Options)
+    @unpack basis_decay_work, basis_decay, alpha_opt, T2_times = global_buffer
+    calc_basis_decay!(basis_decay_work, basis_decay, alpha_opt[], T2_times, o)
 end
 
 function calc_basis_decay!(work, basis_decay, flip_angle, T2_times, o::Options)
@@ -286,27 +283,29 @@ function calc_basis_decay!(work, basis_decay, flip_angle, T2_times, o::Options)
     return basis_decay
 end
 
-function optimize_flip_angle!(work, basis_angles, flip_angles, decay_data, T2_times, o::Options)
+function optimize_flip_angle!(global_buffer, o::Options)
+    @unpack opt_flip_angle_work, basis_angles, flip_angles, decay_data, T2_times = global_buffer
+    @unpack nnls_work, decay_pred, chi2_alpha = opt_flip_angle_work
+    @unpack alpha_opt, chi2_alpha_opt = global_buffer
+
     @timeit_debug TIMER "Fit each NNLS Basis" begin
         # Fit each basis and find chi-squared
         for i = 1:o.nAngles
             @timeit_debug TIMER "lsqnonneg!" begin
-                lsqnonneg!(work.nnls_work, basis_angles[i], decay_data)
+                lsqnonneg!(nnls_work, basis_angles[i], decay_data)
             end
-            @timeit_debug TIMER "chi2_alpha[i]" begin
-                T2_dis_ls = work.nnls_work.x
-                mul!(work.decay_pred, basis_angles[i], T2_dis_ls)
-                work.chi2_alpha[i] = sqeuclidean(decay_data, work.decay_pred)
-            end
+            T2_dis_ls = nnls_work.x
+            mul!(decay_pred, basis_angles[i], T2_dis_ls)
+            chi2_alpha[i] = sqeuclidean(decay_data, decay_pred)
         end
     end
     
-    alpha_opt, chi2_alpha_opt = @timeit_debug TIMER "Spline Opt" begin
+    @timeit_debug TIMER "Spline Opt" begin
         # Find the minimum chi-squared and the corresponding angle
-        spline_opt(flip_angles, work.chi2_alpha)
+        alpha_opt[], chi2_alpha_opt[] = spline_opt(flip_angles, chi2_alpha)
     end
 
-    return alpha_opt
+    return alpha_opt[]
 end
 
 function t2_distribution_work(basis_decay, decay_data, o::Options)
@@ -322,18 +321,50 @@ function t2_distribution_work(basis_decay, decay_data, o::Options)
     end
 end
 
-function fit_t2_distribution!(work, basis_decay, decay_data, o::Options)
+function fit_t2_distribution!(global_buffer, o::Options)
+    @unpack t2_dist_work, basis_decay, decay_data = global_buffer
+    @unpack T2_dis, mu_opt, chi2fact_opt = global_buffer
     if o.Reg == "no"
         # Fit T2 distribution using unregularized NNLS
-        lsqnonneg!(work, basis_decay, decay_data)
-        (T2_dis = work.x, mu_opt = NaN, chi2fact_opt = 1.0)
+        lsqnonneg!(t2_dist_work, basis_decay, decay_data)
+        T2_dis .= t2_dist_work.x
+        mu_opt[] = NaN
+        chi2fact_opt[] = 1.0
     elseif o.Reg == "chi2"
         # Fit T2 distribution using chi2 based regularized NNLS
-        out = lsqnonneg_reg!(work, basis_decay, decay_data, o.Chi2Factor)
-        (T2_dis = work.x, mu_opt = work.mu_opt, chi2fact_opt = work.chi2fact_opt)
+        out = lsqnonneg_reg!(t2_dist_work, basis_decay, decay_data, o.Chi2Factor)
+        T2_dis .= t2_dist_work.x
+        mu_opt[] = t2_dist_work.mu_opt[]
+        chi2fact_opt[] = t2_dist_work.chi2fact_opt[]
     elseif o.Reg == "lcurve"
         # Fit T2 distribution using lcurve based regularization
-        lsqnonneg_lcurve!(work, basis_decay, decay_data)
-        (T2_dis = work.x, mu_opt = work.mu_opt, chi2fact_opt = work.chi2fact_opt)
+        lsqnonneg_lcurve!(t2_dist_work, basis_decay, decay_data)
+        T2_dis .= t2_dist_work.x
+        mu_opt[] = t2_dist_work.mu_opt[]
+        chi2fact_opt[] = t2_dist_work.chi2fact_opt[]
     end
+end
+
+function save_results!(global_buffer, maps, distributions, opts, idx...)
+    @unpack T2_dis, T2_times, decay_data, decay_calc, basis_decay, residuals, alpha_opt, mu_opt, chi2fact_opt = global_buffer
+    
+    # Save distribution
+    distributions[idx...,:] .= T2_dis
+
+    # Update buffers
+    mul!(decay_calc, basis_decay, T2_dis)
+    residuals .= decay_calc .- decay_data
+    
+    # Compute parameters of distribution
+    maps.gdn[idx...] = sum(T2_dis)
+    maps.ggm[idx...] = exp(dot(T2_dis, log.(T2_times)) / sum(T2_dis))
+    maps.gva[idx...] = exp(sum((log.(T2_times) .- log(maps.ggm[idx...])).^2 .* T2_dis) / sum(T2_dis)) - 1
+    maps.SNR[idx...] = maximum(decay_data) / sqrt(var(residuals))
+    maps.FNR[idx...] = sum(T2_dis) / sqrt(var(residuals))
+    maps.alpha[idx...] = alpha_opt[]
+    opts.Save_regparam && (maps.mu[idx...] = mu_opt[])
+    opts.Save_regparam && (maps.chi2factor[idx...] = chi2fact_opt[])
+    opts.Save_NNLS_basis && (maps.NNLS_basis[idx...,:,:] .= basis_decay)
+
+    return global_buffer
 end

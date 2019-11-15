@@ -33,7 +33,7 @@ work = T2Dist.Rewrite.lsqnonneg_reg_work(C, d, Chi2Factor);
 @benchmark T2Dist.Classic.lsqnonneg_reg($C, $d, $Chi2Factor)
 
 ####
-#### relaxmat, flipmat, and EPGdecaycurve
+#### Relaxation matrix action
 ####
 ETL, TE, T2, T1 = 32, 10e-3, 20e-3, 1000e-3;
 num_states, TE, T2, T1 = 32, 10e-3, 20e-3, 1000e-3;
@@ -46,27 +46,26 @@ work = T2Dist.Rewrite.EPGdecaycurve_work(ETL);
     T_r * $(work.M)
 end
 
-all_res = let work = (M = randn(ComplexF64, 3*num_states), M_tmp = randn(ComplexF64, 3*num_states))
+all_res = let work = (M = randn(ComplexF64, 3*num_states),)
     [T2Dist.Rewrite.relaxmat_action!(work, num_states, E2, E1, Val(N)) for N in 1:2]
 end;
 @assert all([all_res[i] ≈ all_res[i+1] for i in 1:length(all_res)-1])
 
 @benchmark T2Dist.Rewrite.relaxmat_action!($work, $num_states, $TE, $T2, $T1, Val(1))
-@btime T2Dist.Rewrite.relaxmat_action!($work, $num_states, $E2, $E1, Val(1));
-@btime T2Dist.Rewrite.relaxmat_action!($work, $num_states, $E2, $E1, Val(1));
-@btime T2Dist.Rewrite.relaxmat_action!($work, $num_states, $E2, $E1, Val(2));
-@btime T2Dist.Rewrite.relaxmat_action!($work, $num_states, $E2, $E1, Val(2));
+@btime T2Dist.Rewrite.relaxmat_action!($work, $num_states, $E2, $E1);
+@btime T2Dist.Rewrite.relaxmat_action!($work, $num_states, $E2, $E1);
 
 ####
-#### EPGdecaycurve
+#### Flip angle matrix action
 ####
 T2mat = T2Dist.Rewrite.element_flip_mat(flip_angle * (refcon/180));
 @benchmark begin
     T2Dist.Rewrite.flipmat_action!($work, $num_states, $T2mat);
 end
 _, T_p = T2Dist.Classic.flipmat(deg2rad(flip_angle), num_pulses, refcon); # Sparse flip matrix
+M_tmp = similar(work.M);
 @benchmark begin
-    mul!($(work.M_tmp), $T_p, $(work.M))
+    mul!($M_tmp, $T_p, $(work.M))
 end
 
 T2mat = T2Dist.Rewrite.element_flip_mat(flip_angle * (refcon/180));
@@ -77,17 +76,21 @@ end;
 
 T2mat_elems = (real(T2mat[1,1]), real(T2mat[2,1]), -imag(T2mat[3,1]), -imag(T2mat[1,3]), real(T2mat[3,3]))
 work = (M = randn(ComplexF64, 3*num_states), Mr = randn(3*num_states), Mi = randn(3*num_states))
-@btime T2Dist.Rewrite.flipmat_action!($work, $num_states, $T2mat, Val(1));
-@btime T2Dist.Rewrite.flipmat_action!($work, $num_states, $T2mat, Val(2));
-@btime T2Dist.Rewrite.flipmat_action!($work, $num_states, $T2mat, Val(3));
-@btime T2Dist.Rewrite.flipmat_action!($work, $num_states, $T2mat, Val(4));
-@btime T2Dist.Rewrite.flipmat_action!($work, $num_states, $T2mat, Val(5));
-@btime T2Dist.Rewrite.flipmat_action!($work, $num_states, $T2mat, Val(6));
-@btime T2Dist.Rewrite.flipmat_action!($work, $num_states, $T2mat, Val(7));
-@btime T2Dist.Rewrite.flipmat_action!($work, $num_states, $T2mat, Val(8));
-@btime T2Dist.Rewrite.flipmat_action!($work, $num_states, $T2mat, Val(9));
+@btime T2Dist.Rewrite.flipmat_action!($work, $num_states, $T2mat);
 
 ####
 #### EPGdecaycurve
 ####
 @benchmark T2Dist.Rewrite.EPGdecaycurve!($work, $ETL, $flip_angle, $TE, $T2, $T1, $refcon)
+
+A = randn(3,3,3,5,5);
+b = randn(5,5);
+@btime view($A,1,2,3,:,:) .= $b;
+
+####
+#### Multithreading
+####
+
+Threads.@threads for i = 1:10
+    println("i = $i on thread $(Threads.threadid())")
+end

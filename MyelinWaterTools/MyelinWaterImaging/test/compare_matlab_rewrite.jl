@@ -26,11 +26,9 @@ flip_angle, num_pulses, refcon = 165.0, 32, 175.0;
 E2, E1 = exp(-TE/T2), exp(-TE/T1);
 
 M = randn(ComplexF64, 3*num_states);
-M_tmp = randn(ComplexF64, 3*num_states);
-
-work = (M=copy(M), M_tmp=copy(M_tmp));
-T2Dist.Rewrite.relaxmat_action!(work, num_states, TE, T2, T2);
-T_r = T2Dist.Classic.relaxmat(num_states, TE, T2, T2); # Compare with classic T_r sparse relaxation matrix
+work = (M=copy(M),);
+T2Dist.Rewrite.relaxmat_action!(work, num_states, E2, E1);
+T_r = T2Dist.Classic.relaxmat(num_states, TE, T2, T1); # Compare with classic T_r sparse relaxation matrix
 @assert T_r * M ≈ work.M
 
 work = (M=copy(M),);
@@ -53,10 +51,11 @@ mat = mxcall(:EPGdecaycurve, 1, Float64.(values(args))...);
 #### T2map_SEcorr
 ####
 
-n = 10
+n = 32
 M = 1e4 .* reshape(exp.(.-(1/6.0).*(1:32)) .+ exp.(.-(1/2.5).*(1:32)), 1, 1, 1, :);
 image = repeat(M, n, n, n, 1);
-@time jl = T2Dist.Rewrite.T2map_SEcorr(image);
+t = @elapsed jl = T2Dist.Rewrite.T2map_SEcorr(image);
+@show t, 1e6 * t/n^3
 mat = mxcall(:T2map_SEcorr, 2, image, "waitbar", "no");
 
 for k in keys(jl[1])
