@@ -102,4 +102,6 @@ maps.mgm=mgm;
 % name=inputname(1);
 % fprintf('%s completed in %s\n',name,time);
 
+toc(tstart);
+
 end

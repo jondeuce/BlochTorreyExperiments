@@ -3,6 +3,16 @@ const TIMER = TimerOutput()
 
 tic() = time_ns()
 toc(t) = (time_ns() - t)/1e9
+ndigits(x) = ceil(Int, log10(x))
+logrange(a::T, b::T, len::Int) where {T} = T(10) .^ range(log10(a), log10(b); length = len)
+normcdf(x::T) where {T} = erfc(-x/sqrt(T(2)))/2
+
+function hour_min_sec(t)
+    hour = floor(Int, t/3600)
+    min = floor(Int, (t - 3600*hour)/60)
+    sec = round(Int, t - 3600*hour - 60*min)
+    return @ntuple(hour, min, sec)
+end
 
 function lsqnonneg!(work, C, d)
     NNLS.load!(work, C, d)
@@ -46,7 +56,7 @@ function spline_opt_brute(X::AbstractVector, Y::AbstractVector)
     deg_spline = min(3, length(X)-1)
     spl = Spline1D(X, Y; k = deg_spline)
     Xs = range(X[1], X[end], length = 100_000)
-    # Xs = X[1]:0.001:X[end]
+    # Xs = X[1]:eltype(X)(0.001):X[end]
     Ys = spl.(Xs)
     y, index = findmin(Ys)
     x = Xs[index]
@@ -64,7 +74,8 @@ function spline_root_brute(X::AbstractVector, Y::AbstractVector, value = 0)
     @assert length(X) == length(Y) && length(X) > 1
     deg_spline = min(3, length(X)-1)
     spl = Spline1D(X, Y; k=deg_spline)
-    Xs = 0.0:0.001:X[end]
+    Xs = range(X[1], X[end], length = 100_000)
+    # Xs = Xs[1]:eltype(X)(0.001):X[end]
     _, ind = findmin(abs.(spl.(Xs) .- value))
     return Xs[ind]
 end

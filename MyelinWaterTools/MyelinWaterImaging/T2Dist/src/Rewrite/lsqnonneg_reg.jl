@@ -2,21 +2,16 @@
 x = LSQNONNEG_REG(C, d, Chi2Factor) returns the regularized NNLS solution x
 that incurrs an increase in chi^2 by a factor of Chi2Factor.
 """
-function lsqnonneg_reg(C, d, Chi2Factor)
-    work = lsqnonneg_reg_work(C, d, Chi2Factor)
-    lsqnonneg_reg!(work, C, d, Chi2Factor)
-end
-
-function lsqnonneg_reg_work(C, d, Chi2Factor)
-    d_backproj = zeros(size(d))
-    resid = zeros(size(d))
+function lsqnonneg_reg_work(C::AbstractMatrix{T}, d::AbstractVecOrMat{T}) where {T}
+    d_backproj = zeros(T ,size(d))
+    resid = zeros(T ,size(d))
     nnls_work = NNLSWorkspace(C, d)
-    C_smooth = [copy(C); zeros(size(C))]
-    d_smooth = [copy(d); zeros(size(d))]
+    C_smooth = [copy(C); zeros(T ,size(C))]
+    d_smooth = [copy(d); zeros(T ,size(d))]
     nnls_work_smooth = NNLSWorkspace(C_smooth, d_smooth)
-    x = zeros(size(C,2))
-    mu_opt = Ref(NaN)
-    chi2fact_opt = Ref(NaN)
+    x = zeros(T ,size(C,2))
+    mu_opt = Ref(T(NaN))
+    chi2fact_opt = Ref(T(NaN))
     return @ntuple(
         d_backproj, resid, nnls_work,
         C_smooth, d_smooth, nnls_work_smooth,
@@ -24,7 +19,12 @@ function lsqnonneg_reg_work(C, d, Chi2Factor)
     )
 end
 
-function lsqnonneg_reg!(work, C, d, Chi2Factor)
+function lsqnonneg_reg(C, d, Chi2Factor)
+    work = lsqnonneg_reg_work(C, d)
+    lsqnonneg_reg!(work, C, d, Chi2Factor)
+end
+
+function lsqnonneg_reg!(work, C::AbstractMatrix{T}, d::AbstractVecOrMat{T}, Chi2Factor::T) where {T}
     # Unpack workspace
     @unpack nnls_work, d_backproj, resid = work
     @unpack nnls_work_smooth, C_smooth, d_smooth = work
@@ -46,7 +46,7 @@ function lsqnonneg_reg!(work, C, d, Chi2Factor)
     chi2_min = sum(abs2, resid)
 
     # Initialzation of various components
-    mu_cache = [0.0]
+    mu_cache = [zero(T)]
     chi2_cache = [chi2_min]
 
     # Minimize energy of spectrum; loop to find largest mu that keeps chi-squared in desired range
@@ -55,7 +55,7 @@ function lsqnonneg_reg!(work, C, d, Chi2Factor)
         if mu_cache[end] > 0
             push!(mu_cache, 2*mu_cache[end])
         else
-            push!(mu_cache, 0.001)
+            push!(mu_cache, T(0.001))
         end
 
         # Compute T2 distribution with smoothing

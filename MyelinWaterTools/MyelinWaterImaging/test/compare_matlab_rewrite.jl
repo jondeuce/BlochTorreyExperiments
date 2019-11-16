@@ -1,6 +1,6 @@
 using Test, BenchmarkTools
 using Parameters: @unpack
-using MATLAB
+using MATLAB, MAT
 using T2Dist
 
 # "Pseuodo-random" numbers
@@ -51,19 +51,45 @@ mat = mxcall(:EPGdecaycurve, 1, Float64.(values(args))...);
 #### T2map_SEcorr
 ####
 
-n = 32
+n = 10
 M = 1e4 .* reshape(exp.(.-(1/6.0).*(1:32)) .+ exp.(.-(1/2.5).*(1:32)), 1, 1, 1, :);
 image = repeat(M, n, n, n, 1);
-t = @elapsed jl = T2Dist.Rewrite.T2map_SEcorr(image);
-@show t, 1e6 * t/n^3
+# image = Float32.(image);
+time_jl = @elapsed(jl = T2Dist.Rewrite.T2map_SEcorr(image)); @show time_jl; @show time_jl * 1e6/n^3;
 mat = mxcall(:T2map_SEcorr, 2, image, "waitbar", "no");
 
-for k in keys(jl[1])
-    s = string(k)
-    if haskey(mat[1], s)
-        @assert isapprox(jl[1][k], mat[1][s]; rtol = 1e-4)
-    end
+for s in keys(jl[1])
+    haskey(mat[1], s) && @assert isapprox(jl[1][s], mat[1][s]; rtol = 1e-4)
 end
 @assert isapprox(jl[2], mat[2]; rtol = 1e-4)
+
+# T2map_SEpart
+m = 64;
+t2d = jl[2][1,1,1,:]; #mat[2][1,1,1,:];
+t2dist = repeat(reshape(t2d,1,1,1,:), m, m, m, 1);
+@time jlp = T2Dist.Rewrite.T2part_SEcorr(t2dist);
+# @btime T2Dist.Rewrite.T2part_SEcorr($t2dist);
+matp = mxcall(:T2part_SEcorr, 1, t2dist);
+for s in keys(jlp)
+    haskey(matp, s) && @assert isapprox(jlp[s], matp[s])
+end
+
+####
+#### Real MWI example
+####
+base_filename = "/home/jdoucette/Documents/code/MWIProcessing/Example_48echo_8msTE/ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1"
+data = MAT.matread(base_filename * ".mat");
+maps, dist = T2Dist.Rewrite.T2map_SEcorr(
+    data["img"];
+    TE = 8e-3,
+);
+MAT.matwrite(base_filename * ".t2maps.jl.mat", maps);
+MAT.matwrite(base_filename * ".t2dist.jl.mat", Dict("dist" => dist));
+
+using StatsPlots
+rand_ijk() = (i = rand(1:size(data["img"],1)), j = rand(1:size(data["img"],2)), k = rand(1:size(data["img"],3)))
+rand_valid() = (ijk = rand_ijk(); while data["img"][ijk...,1] < 200; ijk = rand_ijk(); end; ijk)
+
+plot(dist[rand_valid()...,:])
 
 nothing

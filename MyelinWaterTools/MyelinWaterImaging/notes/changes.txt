@@ -1,2 +1,4 @@
 Notable changes:
--
+- Sparse mat-mul --> for-loop
+- NNLS --> julia native NNLS, pre-allocating memory
+- multithreading

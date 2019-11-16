@@ -1,14 +1,14 @@
 """
-    Options structure for T2map_SEcorr
+    T2mapOptions structure for T2map_SEcorr
 """
-@with_kw struct Options @deftype Float64
-    TE::Union{Float64, String} = 0.010
-    @assert TE isa Float64 ? 0.0001 <= TE <= 1.0 : TE == "variable"
+@with_kw struct T2mapOptions{T} @deftype T
+    TE::Union{T, String} = T(0.010)
+    @assert TE isa String ? TE == "variable" : 0.0001 <= TE <= 1.0
     
     nTE::Int = 32
     @assert nTE >= 1
     
-    vTEparam::Tuple{Float64,Float64,Int} = (0.01, 0.05, 16)
+    vTEparam::Tuple{T,T,Int} = (0.01, 0.05, 16)
     @assert vTEparam[2] > vTEparam[1] && vTEparam[1] * round(Int, vTEparam[2]/vTEparam[1]) ≈ vTEparam[2] && vTEparam[3] < nTE
     
     T1 = 1.0
@@ -26,7 +26,7 @@
     nT2::Int = 40
     @assert 10 <= nT2 <= 120
     
-    T2Range::Tuple{Float64,Float64} = (0.015, 2.0)
+    T2Range::Tuple{T,T} = (0.015, 2.0)
     @assert 0.001 <= T2Range[1] < T2Range[2] <= 10.0
     
     MinRefAngle = 50.0
@@ -38,7 +38,7 @@
     Reg::String = "chi2"
     @assert Reg ∈ ("no", "chi2", "lcurve")
     
-    SetFlipAngle::Union{Float64,Nothing} = nothing
+    SetFlipAngle::Union{T,Nothing} = nothing
     @assert SetFlipAngle isa Nothing || 0.0 < SetFlipAngle <= 180.0
     
     nCores::Int = Threads.nthreads()
@@ -51,60 +51,62 @@
     Waitbar::Bool = false
     @assert !Waitbar # Not implemented
 end
+T2mapOptions(args...; kwargs...) = T2mapOptions{Float64}(args...; kwargs...)
 
 """
-[maps,distributions] = T2map_SEcorr(image, opts)
+maps, distributions = T2map_SEcorr(image; kwargs...)
 
 Description:
   Uses NNLS to compute T2 distributions in the presence of stimulated
-  echos by optimizing the refocusing pulse flip angle.  Records parameter
+  echos by optimizing the refocusing pulse flip angle. Records parameter
   maps and T2 distributions for further partitioning.
 
 Inputs:
-  image: 4-D array with intensity data as (row,column,slice,echo)
-  opts: A series of optional Property/Value pairs to modify settings.
+  image: 4-D array with intensity data as (row, column, slice, echo)
+  kwargs: A series of optional keyword argument settings.
     Defaults are given in brackets:
       "TE": Interecho spacing, usually set to one number, but may also
             be set to "variable" for sequences with 2 interecho spacings
             (see "vTEparam"). (0.01)
-      "vTEparam": [TE1,TE2,number of echoes at TE1]. Only applied when
+      "vTEparam": (TE1, TE2, number of echoes at TE1). Only applied when
                   "TE" set to "variable". TE2 must be and integer
-                  multiple of TE1. ([0.01,0.05,16])
+                  multiple of TE1. ((0.01, 0.05, 16))
       "nT2": Number of T2 times to use (40)
-      "T2Range": Min and Max T2 values ([0.015,2.000])
-      "T1": Assumed value of T1 (1)
-      "Threshold": First echo intensity cutoff for empty voxels (200)
+      "T2Range": Min and Max T2 values ((0.015, 2.0))
+      "T1": Assumed value of T1 (1.0)
+      "Threshold": First echo intensity cutoff for empty voxels (200.0)
       "Reg": Regularization routine to use, options are:
              "no": do not regularize the solution
              "chi2": use Chi2Factor based regularization (default)
              "lcurve": use L-Curve based regularization
       "Chi2Factor": Constraint on chi^2 used for regularization (Reg must
                     be set to "chi2"!) (1.02)
-      "RefCon": Refocusing Pulse Control Angle (180)
-      "MinRefAngle": Minimum refocusing angle for EPG optimization (50)
+      "RefCon": Refocusing Pulse Control Angle (180.0)
+      "MinRefAngle": Minimum refocusing angle for EPG optimization (50.0)
       "nAngles": Number of angles used in EPG optimization (8)
       "SetFlipAngle": Instead of optimizing flip angle, uses this flip
-                      angle for all voxels (not set)
+                      angle for all voxels (nothing)
       "nCores": Number of processor cores to use (6)
-      "Save_regparam": yes/no option to include the regularization
+      "Save_regparam": true/false option to include the regularization
                        paramter mu and the resulting chi^2 factor as
                        two outputs within the maps structure (mu=NaN and
-                       chi2factor=1 if Reg=no) ("no")
-      "Save_NNLS_basis": yes/no option to include a 5-D matrix of NNLS
+                       chi2factor=1 if false) (false)
+      "Save_NNLS_basis": true/false option to include a 5-D array of NNLS
                          basis matrices as another output within the maps
-                         structure ("no")
-      "Waitbar": yes/no option determining whether a progress bar is
-                 generated.  Selecting "no" will also suppress any
-                 mesages printed to the command window. ("yes")
+                         structure (false)
+      "Waitbar": true/false option determining whether a progress bar is
+                 generated. Selecting false will also suppress any
+                 mesages printed to the command window. (false)
 
 Ouputs:
-  maps: Structure containing 3D maps of the following parameters
-      -gdn, general density
-      -ggm, general geometric mean
-      -gva, general variance
-      -FNR, fit to noise ratio (gdn/stdev(residuals))
-      -alpha, refocusing pulse flip angle
-  distributions: 4-D matrix containing T2 distributions.
+  maps: Named tuple containing 3D maps with the following fields:
+      -gdn: general density
+      -ggm: general geometric mean
+      -gva: general variance
+      -SNR: signal to noise ratio (maximum(signal)/stdev(residuals))
+      -FNR: fit to noise ratio (gdn/stdev(residuals))
+      -alpha: refocusing pulse flip angle
+  distributions: 4-D array containing T2 distributions.
 
 External Calls:
   EPGdecaycurve.m
@@ -116,10 +118,10 @@ Created by Thomas Prasloski
 email: tprasloski@gmail.com
 Ver. 3.3, August 2013
 """
-function T2map_SEcorr(image::Array{Float64,4}; kwargs...)
+function T2map_SEcorr(image::Array{T,4}; kwargs...) where {T}
     reset_timer!(TIMER)
     out = @timeit_debug TIMER "T2map_SEcorr" begin
-        _T2map_SEcorr(image, Options(nTE = size(image, 4), kwargs...))
+        _T2map_SEcorr(image, T2mapOptions{T}(;nTE = size(image, 4), kwargs...))
     end
     if timeit_debug_enabled()
         println("\n"); show(TIMER); println("\n")
@@ -127,32 +129,24 @@ function T2map_SEcorr(image::Array{Float64,4}; kwargs...)
     return out
 end
 
-function _T2map_SEcorr(image::Array{Float64,4}, opts::Options)
+function _T2map_SEcorr(image::Array{T,4}, opts::T2mapOptions{T}) where {T}
     # =========================================================================
-    # Parse inputs and apply default values when necessary
+    # Initialize output data structures and thread-local buffers
     # =========================================================================
-    @unpack TE, nTE, T1, RefCon, Threshold, Chi2Factor, nT2, T2Range, MinRefAngle, nAngles, Reg, nCores = opts
-
-    # =========================================================================
-    # Initialize all the data
-    # =========================================================================
-    tstart = tic() # Start the clock
-    
-    # Initialize map matrices
     nrows, ncols, nslices, nechs = size(image)
-    maps = (
-        gdn = fill(NaN, nrows, ncols, nslices),
-        ggm = fill(NaN, nrows, ncols, nslices),
-        gva = fill(NaN, nrows, ncols, nslices),
-        SNR = fill(NaN, nrows, ncols, nslices),
-        FNR = fill(NaN, nrows, ncols, nslices),
-        alpha = fill(NaN, nrows, ncols, nslices),
-        mu = (opts.Save_regparam ? fill(NaN, nrows, ncols, nslices) : nothing),
-        chi2factor = (opts.Save_regparam ? fill(NaN, nrows, ncols, nslices) : nothing),
-        NNLS_basis = (opts.Save_NNLS_basis ? fill(NaN, nrows, ncols, nslices, nechs, nT2) : nothing),
+    maps = Dict(
+        "gdn" => fill(T(NaN), nrows, ncols, nslices),
+        "ggm" => fill(T(NaN), nrows, ncols, nslices),
+        "gva" => fill(T(NaN), nrows, ncols, nslices),
+        "SNR" => fill(T(NaN), nrows, ncols, nslices),
+        "FNR" => fill(T(NaN), nrows, ncols, nslices),
+        "alpha" => fill(T(NaN), nrows, ncols, nslices),
+        "mu" => (opts.Save_regparam ? fill(T(NaN), nrows, ncols, nslices) : nothing),
+        "chi2factor" => (opts.Save_regparam ? fill(T(NaN), nrows, ncols, nslices) : nothing),
+        "NNLS_basis" => (opts.Save_NNLS_basis ? fill(T(NaN), nrows, ncols, nslices, nechs, opts.nT2) : nothing),
     )
-    distributions = fill(NaN, nrows, ncols, nslices, nT2)
-    global_buffers = [global_buffer_maker(opts) for _ in 1:Threads.nthreads()]
+    distributions = fill(T(NaN), nrows, ncols, nslices, opts.nT2)
+    thread_buffers = [thread_buffer_maker(opts) for _ in 1:Threads.nthreads()]
 
     # =========================================================================
     # Find the basis matrices for each flip angle
@@ -160,114 +154,133 @@ function _T2map_SEcorr(image::Array{Float64,4}, opts::Options)
     
     # Initialize parameters and variable for angle optimization
     @timeit_debug TIMER "Initialization" begin
-        initialize_basis_decay!.(global_buffers, Ref(opts))
+        for i in 1:length(thread_buffers)
+            init_epg_decay_basis!(thread_buffers[i], opts)
+        end
     end
 
     # =========================================================================
     # Process all pixels
     # =========================================================================
+    loop_start_time = tic()
     
-    # Main triple for-loop to run through each pixel in the image
-    Threads.@threads for row = 1:nrows
-        global_buffer = global_buffers[Threads.threadid()]
+    Threads.@threads for row in 1:nrows
+        # Obtain thread-local buffer and print progress summary
+        thread_buffer = thread_buffers[Threads.threadid()]
+        update_progress!(thread_buffer, toc(loop_start_time), row, nrows)
         
-        hour, min = floor(toc(tstart)/3600), (toc(tstart)/3600-floor(toc(tstart)/3600))*60
-        println("Starting row $row/$nrows on thread $(Threads.threadid()) -- Time: $hour hours, $min minutes\n")
-        
-        for col = 1:ncols, slice = 1:nslices
-            
+        for col in 1:ncols, slice in 1:nslices
             # Skip low signal pixels
-            if image[row,col,slice,1] < Threshold
+            if image[row,col,slice,1] < opts.Threshold
                 continue
             end
             
             # Extract decay curve from the pixel
-            global_buffer.decay_data .= image[row,col,slice,:]
+            @inbounds for i in 1:opts.nTE
+                thread_buffer.decay_data[i] = image[row,col,slice,i]
+            end
             
-            # =====================================================
             # Find optimum flip angle
-            # =====================================================
             if opts.SetFlipAngle === nothing
                 @timeit_debug TIMER "Optimize Flip Angle" begin
-                    optimize_flip_angle!(global_buffer, opts)
+                    optimize_flip_angle!(thread_buffer, opts)
                 end
             end
 
-            # =====================================================
-            # Fit basis matrix using optimized alpha
-            # =====================================================
+            # Fit decay basis using optimized alpha
             if opts.SetFlipAngle === nothing
                 @timeit_debug TIMER "Compute Final NNLS Basis" begin
-                    fit_basis_decay!(global_buffer, opts)
+                    fit_epg_decay_basis!(thread_buffer, opts)
                 end
             end
 
-            # =========================================================
-            # Calculate T2 distribution and global parameters
-            # =========================================================
+            # Calculate T2 distribution and map parameters
             @timeit_debug TIMER "Calculate T2 Dist" begin
-                fit_t2_distribution!(global_buffer, opts)
+                fit_t2_distribution!(thread_buffer, opts)
             end
 
-            # =========================================================
-            # Save results
-            # =========================================================
-            save_results!(global_buffer, maps, distributions, opts, row, col, slice)
+            # Save loop results to outputs
+            save_results!(thread_buffer, maps, distributions, opts, row, col, slice)
         end
     end
 
     return @ntuple(maps, distributions)
 end
 
-global_buffer_maker(o::Options) = (
-    T2_times = (10.0 .^ range(log10(o.T2Range[1]), log10(o.T2Range[2]); length = o.nT2)),
-    flip_angles = range(o.MinRefAngle, 180.0; length = o.nAngles),
-    basis_angles = [zeros(o.nTE, o.nT2) for _ in 1:o.nAngles],
-    basis_decay = zeros(o.nTE, o.nT2),
-    decay_data = zeros(o.nTE),
-    decay_calc = zeros(o.nTE),
-    residuals = zeros(o.nTE),
-    basis_decay_work = calc_epg_decay_work(o),
-    opt_flip_angle_work = (
-        nnls_work = lsqnonneg_work(zeros(o.nTE, o.nT2), zeros(o.nTE)),
-        chi2_alpha = zeros(o.nAngles),
-        decay_pred = zeros(o.nTE),
-    ),
-    t2_dist_work = t2_distribution_work(zeros(o.nTE, o.nT2), zeros(o.nTE), o),
-    alpha_opt = (o.SetFlipAngle === nothing ? Ref(NaN) : Ref(o.SetFlipAngle)),
-    chi2_alpha_opt = Ref(NaN),
-    T2_dis = zeros(o.nT2),
-    mu_opt = Ref(NaN),
-    chi2fact_opt = Ref(NaN),
+# =========================================================
+# Make thread-local buffers
+# =========================================================
+thread_buffer_maker(o::T2mapOptions{T}) where {T} = (
+    row_counter = Ref(0),
+    T2_times = logrange(o.T2Range..., o.nT2),
+    flip_angles = range(o.MinRefAngle, T(180); length = o.nAngles),
+    basis_angles = [zeros(T, o.nTE, o.nT2) for _ in 1:o.nAngles],
+    decay_basis = zeros(T, o.nTE, o.nT2),
+    decay_data = zeros(T, o.nTE),
+    decay_calc = zeros(T, o.nTE),
+    residuals = zeros(T, o.nTE),
+    decay_basis_work = epg_decay_basis_work(o),
+    flip_angle_work = optimize_flip_angle_work(o),
+    t2_dist_work = t2_distribution_work(o),
+    alpha_opt = (o.SetFlipAngle === nothing ? Ref(T(NaN)) : Ref(o.SetFlipAngle)),
+    chi2_alpha_opt = Ref(T(NaN)),
+    T2_dis = zeros(T, o.nT2),
+    mu_opt = Ref(T(NaN)),
+    chi2fact_opt = Ref(T(NaN)),
 )
 
-function calc_epg_decay_work(o::Options)
-    return o.TE == "variable" ?
-        EPGdecaycurve_vTE_work(o.nTE) :
-        EPGdecaycurve_work(o.nTE)
+# =========================================================
+# Progress printing
+# =========================================================
+function update_progress!(thread_buffer, time_elapsed, row, nrows)
+    @unpack row_counter = thread_buffer
+    est_complete = row_counter[] == 0 ? 0.0 :
+        (nrows - row_counter[]) * (time_elapsed / row_counter[]) / Threads.nthreads()
+    h0, m0, s0 = hour_min_sec(time_elapsed)
+    h1, m1, s1 = hour_min_sec(max(est_complete - time_elapsed, 0.0))
+    dr, dt = ndigits(nrows), ndigits(Threads.nthreads())
+    println(join([
+        "Row: $(lpad(row,dr))/$(lpad(nrows,dr)) (Thread $(lpad(Threads.threadid(),dt)))",
+        "Elapsed Time: $(lpad(h0,2,"0"))h:$(lpad(m0,2,"0"))m:$(lpad(s0,2,"0"))s",
+        "Time Remaining: $(lpad(h1,2,"0"))h:$(lpad(m1,2,"0"))m:$(lpad(s1,2,"0"))s",
+    ], " -- "))
+    row_counter[] += 1
 end
 
-function initialize_basis_decay!(global_buffer, o::Options)
-    @unpack basis_decay_work, basis_angles, basis_decay, flip_angles, T2_times = global_buffer
+# =========================================================
+# EPG decay curve fitting
+# =========================================================
+epg_decay_basis_work(o::T2mapOptions{T}) where {T} =
+    o.TE == "variable" ?
+        EPGdecaycurve_vTE_work(T, o.nTE) :
+        EPGdecaycurve_work(T, o.nTE)
+
+function init_epg_decay_basis!(thread_buffer, o::T2mapOptions)
+    @unpack decay_basis_work, basis_angles, decay_basis, flip_angles, T2_times = thread_buffer
+    
     if o.SetFlipAngle === nothing
         # Loop to compute basis for each angle
         @inbounds for i = 1:o.nAngles
-            calc_basis_decay!(basis_decay_work, basis_angles[i], flip_angles[i], T2_times, o)
+            epg_decay_basis!(decay_basis_work, basis_angles[i], flip_angles[i], T2_times, o::T2mapOptions)
         end
     else
-        calc_basis_decay!(basis_decay_work, basis_decay, o.SetFlipAngle, T2_times, o)
+        epg_decay_basis!(decay_basis_work, decay_basis, o.SetFlipAngle, T2_times, o::T2mapOptions)
     end
+
+    return nothing
 end
 
-function fit_basis_decay!(global_buffer, o::Options)
-    @unpack basis_decay_work, basis_decay, alpha_opt, T2_times = global_buffer
-    calc_basis_decay!(basis_decay_work, basis_decay, alpha_opt[], T2_times, o)
+function fit_epg_decay_basis!(thread_buffer, o::T2mapOptions)
+    @unpack decay_basis_work, decay_basis, alpha_opt, T2_times = thread_buffer
+    epg_decay_basis!(decay_basis_work, decay_basis, alpha_opt[], T2_times, o::T2mapOptions)
+    return nothing
 end
 
-function calc_basis_decay!(work, basis_decay, flip_angle, T2_times, o::Options)
+function epg_decay_basis!(work, decay_basis, flip_angle, T2_times, o::T2mapOptions)
+    @assert length(T2_times) == size(decay_basis,2) == o.nT2
+    @assert size(decay_basis,1) == o.nTE
+    
     # Compute the NNLS basis over T2 space
-    @assert length(T2_times) == size(basis_decay,2) == o.nT2
-    @assert size(basis_decay,1) == o.nTE
     @inbounds for j = 1:o.nT2
         @timeit_debug TIMER "EPGdecaycurve!" begin
             if o.TE == "variable"
@@ -277,19 +290,29 @@ function calc_basis_decay!(work, basis_decay, flip_angle, T2_times, o::Options)
             end
         end
         for i = 1:o.nTE
-            basis_decay[i,j] = work.decay_curve[i]
+            decay_basis[i,j] = work.decay_curve[i]
         end
     end
-    return basis_decay
+
+    return nothing
 end
 
-function optimize_flip_angle!(global_buffer, o::Options)
-    @unpack opt_flip_angle_work, basis_angles, flip_angles, decay_data, T2_times = global_buffer
-    @unpack nnls_work, decay_pred, chi2_alpha = opt_flip_angle_work
-    @unpack alpha_opt, chi2_alpha_opt = global_buffer
+# =========================================================
+# Flip angle optimization
+# =========================================================
+optimize_flip_angle_work(o::T2mapOptions{T}) where {T} = (
+    nnls_work = lsqnonneg_work(zeros(T, o.nTE, o.nT2), zeros(T, o.nTE)),
+    chi2_alpha = zeros(T, o.nAngles),
+    decay_pred = zeros(T, o.nTE),
+)
 
+function optimize_flip_angle!(thread_buffer, o::T2mapOptions)
+    @unpack flip_angle_work, basis_angles, flip_angles, decay_data, T2_times = thread_buffer
+    @unpack nnls_work, decay_pred, chi2_alpha = flip_angle_work
+    @unpack alpha_opt, chi2_alpha_opt = thread_buffer
+
+    # Fit each decay basis and find chi-squared
     @timeit_debug TIMER "Fit each NNLS Basis" begin
-        # Fit each basis and find chi-squared
         for i = 1:o.nAngles
             @timeit_debug TIMER "lsqnonneg!" begin
                 lsqnonneg!(nnls_work, basis_angles[i], decay_data)
@@ -305,66 +328,93 @@ function optimize_flip_angle!(global_buffer, o::Options)
         alpha_opt[], chi2_alpha_opt[] = spline_opt(flip_angles, chi2_alpha)
     end
 
-    return alpha_opt[]
+    return nothing
 end
 
-function t2_distribution_work(basis_decay, decay_data, o::Options)
-    if o.Reg == "no"
+# =========================================================
+# T2-distribution fitting
+# =========================================================
+function t2_distribution_work(o::T2mapOptions{T}) where {T}
+    decay_basis_buffer = zeros(T, o.nTE, o.nT2)
+    decay_data_buffer = zeros(T, o.nTE)
+
+    work = if o.Reg == "no"
         # Fit T2 distribution using unregularized NNLS
-        lsqnonneg_work(basis_decay, decay_data)
+        lsqnonneg_work(decay_basis_buffer, decay_data_buffer)
     elseif o.Reg == "chi2"
         # Fit T2 distribution using chi2 based regularized NNLS
-        lsqnonneg_reg_work(basis_decay, decay_data, o.Chi2Factor)
+        lsqnonneg_reg_work(decay_basis_buffer, decay_data_buffer)
     elseif o.Reg == "lcurve"
         # Fit T2 distribution using lcurve based regularization
-        lsqnonneg_lcurve_work(basis_decay, decay_data)
+        lsqnonneg_lcurve_work(decay_basis_buffer, decay_data_buffer)
     end
+
+    return work
 end
 
-function fit_t2_distribution!(global_buffer, o::Options)
-    @unpack t2_dist_work, basis_decay, decay_data = global_buffer
-    @unpack T2_dis, mu_opt, chi2fact_opt = global_buffer
+function fit_t2_distribution!(thread_buffer, o::T2mapOptions{T}) where {T}
+    @unpack t2_dist_work, decay_basis, decay_data = thread_buffer
+    @unpack T2_dis, mu_opt, chi2fact_opt = thread_buffer
+
     if o.Reg == "no"
         # Fit T2 distribution using unregularized NNLS
-        lsqnonneg!(t2_dist_work, basis_decay, decay_data)
+        lsqnonneg!(t2_dist_work, decay_basis, decay_data)
         T2_dis .= t2_dist_work.x
-        mu_opt[] = NaN
-        chi2fact_opt[] = 1.0
+        mu_opt[] = T(NaN)
+        chi2fact_opt[] = one(T)
     elseif o.Reg == "chi2"
         # Fit T2 distribution using chi2 based regularized NNLS
-        out = lsqnonneg_reg!(t2_dist_work, basis_decay, decay_data, o.Chi2Factor)
+        out = lsqnonneg_reg!(t2_dist_work, decay_basis, decay_data, o.Chi2Factor)
         T2_dis .= t2_dist_work.x
         mu_opt[] = t2_dist_work.mu_opt[]
         chi2fact_opt[] = t2_dist_work.chi2fact_opt[]
     elseif o.Reg == "lcurve"
         # Fit T2 distribution using lcurve based regularization
-        lsqnonneg_lcurve!(t2_dist_work, basis_decay, decay_data)
+        lsqnonneg_lcurve!(t2_dist_work, decay_basis, decay_data)
         T2_dis .= t2_dist_work.x
         mu_opt[] = t2_dist_work.mu_opt[]
         chi2fact_opt[] = t2_dist_work.chi2fact_opt[]
     end
+
+    return nothing
 end
 
-function save_results!(global_buffer, maps, distributions, opts, idx...)
-    @unpack T2_dis, T2_times, decay_data, decay_calc, basis_decay, residuals, alpha_opt, mu_opt, chi2fact_opt = global_buffer
-    
-    # Save distribution
-    distributions[idx...,:] .= T2_dis
+# =========================================================
+# Save thread local results to output maps
+# =========================================================
+function save_results!(thread_buffer, maps, distributions, o::T2mapOptions, i...)
+    @unpack T2_dis, T2_times, decay_data, decay_calc, decay_basis, residuals, alpha_opt, mu_opt, chi2fact_opt = thread_buffer
+    @unpack gdn, ggm, gva, SNR, FNR, alpha, mu, chi2factor, NNLS_basis = maps
 
     # Update buffers
-    mul!(decay_calc, basis_decay, T2_dis)
+    mul!(decay_calc, decay_basis, T2_dis)
     residuals .= decay_calc .- decay_data
     
-    # Compute parameters of distribution
-    maps.gdn[idx...] = sum(T2_dis)
-    maps.ggm[idx...] = exp(dot(T2_dis, log.(T2_times)) / sum(T2_dis))
-    maps.gva[idx...] = exp(sum((log.(T2_times) .- log(maps.ggm[idx...])).^2 .* T2_dis) / sum(T2_dis)) - 1
-    maps.SNR[idx...] = maximum(decay_data) / sqrt(var(residuals))
-    maps.FNR[idx...] = sum(T2_dis) / sqrt(var(residuals))
-    maps.alpha[idx...] = alpha_opt[]
-    opts.Save_regparam && (maps.mu[idx...] = mu_opt[])
-    opts.Save_regparam && (maps.chi2factor[idx...] = chi2fact_opt[])
-    opts.Save_NNLS_basis && (maps.NNLS_basis[idx...,:,:] .= basis_decay)
+    # Compute and save parameters of distribution
+    gdn[i...] = sum(T2_dis)
+    ggm[i...] = exp(dot(T2_dis, log.(T2_times)) / sum(T2_dis))
+    gva[i...] = exp(sum((log.(T2_times) .- log(ggm[i...])).^2 .* T2_dis) / sum(T2_dis)) - 1
+    SNR[i...] = maximum(decay_data) / sqrt(var(residuals))
+    FNR[i...] = sum(T2_dis) / sqrt(var(residuals))
+    alpha[i...] = alpha_opt[]
 
-    return global_buffer
+    # Save distribution
+    @inbounds for j in 1:o.nT2
+        distributions[i...,j] = T2_dis[j]
+    end
+
+    # Optionally save regularization parameters
+    if o.Save_regparam
+        mu[i...] = mu_opt[]
+        chi2factor[i...] = chi2fact_opt[]
+    end
+
+    # Optionally save NNLS basis
+    if o.Save_NNLS_basis
+        @inbounds for j in 1:o.nTE, k in 1:o.nT2
+            NNLS_basis[i...,j,k] .= decay_basis[j,k]
+        end
+    end
+
+    return nothing
 end
