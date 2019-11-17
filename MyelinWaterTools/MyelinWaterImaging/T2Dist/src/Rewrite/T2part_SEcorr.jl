@@ -2,20 +2,23 @@
     T2partOptions structure for T2map_SEcorr
 """
 @with_kw struct T2partOptions{T} @deftype T
+    nT2::Int # required parameter
+    @assert nT2 > 1
+
+    GridSize::NTuple{3,Int} # required parameter
+    @assert all(GridSize .>= 1)
+
     T2Range::NTuple{2,T} = (0.015, 2.0)
     @assert 0.001 <= T2Range[1] < T2Range[2] <= 10.0
 
-    nT2::Int = 40
-    @assert nT2 >= 1
-    
     spwin::NTuple{2,T} = (0.015, 0.040)
     @assert spwin[1] < spwin[2]
-    
+
     mpwin::NTuple{2,T} = (0.040, 0.200)
     @assert mpwin[1] < mpwin[2]
-    
+
     Sigmoid::Union{T,Nothing} = nothing
-    @assert Sigmoid isa Nothing || Sigmoid > 0
+    @assert Sigmoid isa Nothing || Sigmoid > 0.0
 end
 T2partOptions(args...; kwargs...) = T2partOptions{Float64}(args...; kwargs...)
 
@@ -41,11 +44,11 @@ Inputs:
                  is no sigmoid weighting)
 
 Ouputs:
-  maps: a named tuple containing the following 3D data maps as fields:
-      -sfr (small pool (myelin water) fraction)
-      -sgm (small pool (myelin water) geometric mean)
-      -mfr (medium pool (intra/extra water) fraction)
-      -mgm (medium pool (intra/extra water) geometric mean)
+  maps: a dictionary containing the following 3D data maps as fields:
+      "sfr": (small pool (myelin water) fraction)
+      "sgm": (small pool (myelin water) geometric mean)
+      "mfr": (medium pool (intra/extra water) fraction)
+      "mgm": (medium pool (intra/extra water) geometric mean)
 
 External Calls:
   none
@@ -57,7 +60,11 @@ Ver. 1.2, August 2012
 function T2part_SEcorr(T2distributions::Array{T,4}; kwargs...) where {T}
     reset_timer!(TIMER)
     out = @timeit_debug TIMER "T2part_SEcorr" begin
-        _T2part_SEcorr(T2distributions, T2partOptions{T}(;nT2 = size(T2distributions, 4), kwargs...))
+        _T2part_SEcorr(T2distributions, T2partOptions{T}(;
+            GridSize = size(T2distributions)[1:3],
+            nT2 = size(T2distributions, 4),
+            kwargs...
+        ))
     end
     if timeit_debug_enabled()
         println("\n"); show(TIMER); println("\n")
@@ -66,23 +73,21 @@ function T2part_SEcorr(T2distributions::Array{T,4}; kwargs...) where {T}
 end
 
 function _T2part_SEcorr(T2distributions::Array{T,4}, opts::T2partOptions{T}) where {T}
-
-    nrows, ncols, nslices, nT2 = size(T2distributions)
-    maps = Dict(
-        "sfr" => fill(T(NaN), nrows, ncols, nslices),
-        "sgm" => fill(T(NaN), nrows, ncols, nslices),
-        "mfr" => fill(T(NaN), nrows, ncols, nslices),
-        "mgm" => fill(T(NaN), nrows, ncols, nslices),
-    )
+    @assert size(T2distributions) == (opts.GridSize..., opts.nT2)
+    maps = Dict{String, Array{T}}()
+    maps["sfr"] = fill(T(NaN), opts.GridSize...)
+    maps["sgm"] = fill(T(NaN), opts.GridSize...)
+    maps["mfr"] = fill(T(NaN), opts.GridSize...)
+    maps["mgm"] = fill(T(NaN), opts.GridSize...)
     thread_buffers = [thread_buffer_maker(opts) for _ in 1:Threads.nthreads()]
 
-    Threads.@threads for row in 1:nrows
+    Threads.@threads for row in 1:opts.GridSize[1]
         thread_buffer = thread_buffers[Threads.threadid()]
-        @inbounds for col in 1:ncols, slice in 1:nslices
+        @inbounds for col in 1:opts.GridSize[2], slice in 1:opts.GridSize[3]
             for i in 1:opts.nT2
                 thread_buffer.dist[i] = T2distributions[row,col,slice,i]
             end
-            calc_maps!(thread_buffer, maps, opts, row, col, slice)
+            update_maps!(thread_buffer, maps, opts, row, col, slice)
         end
     end
 
@@ -100,18 +105,16 @@ function thread_buffer_maker(o::T2partOptions{T}) where {T}
     logT2_times = log.(T2_times)
     logT2_times_sp = logT2_times[sp[1]:sp[2]]
     logT2_times_mp = logT2_times[mp[1]:mp[2]]
-    weights = make_weights(o)
+    weights = sigmoid_weights(o)
     return @ntuple(dist, T2_times, sp, mp, logT2_times_sp, logT2_times_mp, weights)
 end
 
-function make_weights(o::T2partOptions{T}) where {T}
+function sigmoid_weights(o::T2partOptions{T}) where {T}
     if !(o.Sigmoid === nothing)
         # Curve reaches 50% at T2_50perc and is (k and 1-k)*100 percent at T2_50perc +/- T2_kperc  
-        k = T(0.1)
-        T2_kperc = o.Sigmoid
-        T2_50perc = o.spwin[2]
+        k, T2_kperc, T2_50perc = T(0.1), o.Sigmoid, o.spwin[2]
         sigma = abs(T2_kperc / (sqrt(T(2)) * erfinv(2*k-1)))
-        1 .- normcdf.(o.T2_times, T2_50perc, sigma)
+        normccdf.((logrange(o.T2Range..., o.nT2) .- T2_50perc) ./ sigma)
     else
         nothing
     end
@@ -120,7 +123,7 @@ end
 # =========================================================
 # Save thread local results to output maps
 # =========================================================
-function calc_maps!(thread_buffer, maps, o::T2partOptions, i...)
+function update_maps!(thread_buffer, maps, o::T2partOptions, i...)
     @unpack dist, T2_times, sp, mp, logT2_times_sp, logT2_times_mp, weights = thread_buffer
     @unpack sfr, sgm, mfr, mgm = maps
     @views dist_sp, dist_mp = dist[sp[1]:sp[2]], dist[mp[1]:mp[2]]
@@ -139,7 +142,7 @@ end
 
 # Micro-optimizations for above map calculations. Timing shows very little speedup;
 # probably not worth sacrificing readability
-function calc_maps_opt!(thread_buffer, maps, o::T2partOptions{T}, i...) where {T}
+function update_maps_opt!(thread_buffer, maps, o::T2partOptions{T}, i...) where {T}
     @unpack dist, T2_times, sp, mp, logT2_times_sp, logT2_times_mp, weights = thread_buffer
     @unpack sfr, sgm, mfr, mgm = maps
 

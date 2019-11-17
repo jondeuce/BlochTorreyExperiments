@@ -2,52 +2,55 @@
     T2mapOptions structure for T2map_SEcorr
 """
 @with_kw struct T2mapOptions{T} @deftype T
-    TE::Union{T, String} = T(0.010)
-    @assert TE isa String ? TE == "variable" : 0.0001 <= TE <= 1.0
-    
-    nTE::Int = 32
-    @assert nTE >= 1
-    
-    vTEparam::Tuple{T,T,Int} = (0.01, 0.05, 16)
-    @assert vTEparam[2] > vTEparam[1] && vTEparam[1] * round(Int, vTEparam[2]/vTEparam[1]) ≈ vTEparam[2] && vTEparam[3] < nTE
-    
+    nTE::Int # required parameter
+    @assert nTE > 1
+
+    GridSize::NTuple{3,Int} # required parameter
+    @assert all(GridSize .>= 1)
+
+    TE::Union{T, Nothing} = 0.010
+    @assert TE isa Nothing || 0.0001 <= TE <= 1.0
+
+    vTEparam::Union{Tuple{T,T,Int}, Nothing} = (0.010, 0.050, nTE÷2)
+    @assert vTEparam isa Nothing || (vTEparam[1] < vTEparam[2] && vTEparam[3] < nTE && vTEparam[1] * round(Int, vTEparam[2]/vTEparam[1]) ≈ vTEparam[2])
+
     T1 = 1.0
     @assert 0.001 <= T1 <= 10.0
-    
+
     RefCon = 180.0
     @assert 1.0 <= RefCon <= 180.0
-    
+
     Threshold = 200.0
     @assert Threshold >= 0.0
-    
+
     Chi2Factor = 1.02
     @assert Chi2Factor > 1
-    
+
     nT2::Int = 40
     @assert 10 <= nT2 <= 120
-    
+
     T2Range::Tuple{T,T} = (0.015, 2.0)
     @assert 0.001 <= T2Range[1] < T2Range[2] <= 10.0
-    
+
     MinRefAngle = 50.0
     @assert 1.0 < MinRefAngle < 180.0
-    
+
     nAngles::Int = 8
     @assert nAngles > 1
-    
+
     Reg::String = "chi2"
     @assert Reg ∈ ("no", "chi2", "lcurve")
-    
+
     SetFlipAngle::Union{T,Nothing} = nothing
     @assert SetFlipAngle isa Nothing || 0.0 < SetFlipAngle <= 180.0
-    
+
     nCores::Int = Threads.nthreads()
     @assert nCores == Threads.nthreads()
-    
+
     Save_regparam::Bool = false
-    
+
     Save_NNLS_basis::Bool = false
-    
+
     Waitbar::Bool = false
     @assert !Waitbar # Not implemented
 end
@@ -66,11 +69,11 @@ Inputs:
   kwargs: A series of optional keyword argument settings.
     Defaults are given in brackets:
       "TE": Interecho spacing, usually set to one number, but may also
-            be set to "variable" for sequences with 2 interecho spacings
-            (see "vTEparam"). (0.01)
+            be left unset for sequences with 2 interecho spacings
+            (see "vTEparam"). (nothing)
       "vTEparam": (TE1, TE2, number of echoes at TE1). Only applied when
-                  "TE" set to "variable". TE2 must be and integer
-                  multiple of TE1. ((0.01, 0.05, 16))
+                  "TE" set to nothing. TE2 must be an integer
+                  multiple of TE1. (nothing)
       "nT2": Number of T2 times to use (40)
       "T2Range": Min and Max T2 values ((0.015, 2.0))
       "T1": Assumed value of T1 (1.0)
@@ -99,13 +102,16 @@ Inputs:
                  mesages printed to the command window. (false)
 
 Ouputs:
-  maps: Named tuple containing 3D maps with the following fields:
-      -gdn: general density
-      -ggm: general geometric mean
-      -gva: general variance
-      -SNR: signal to noise ratio (maximum(signal)/stdev(residuals))
-      -FNR: fit to noise ratio (gdn/stdev(residuals))
-      -alpha: refocusing pulse flip angle
+  maps: dictionary containing 3D maps with the following fields:
+      "gdn": general density
+      "ggm": general geometric mean
+      "gva": general variance
+      "SNR": signal to noise ratio (maximum(signal)/stdev(residuals))
+      "FNR": fit to noise ratio (gdn/stdev(residuals))
+      "alpha": refocusing pulse flip angle
+      "mu": (optional) regularization parameter from NNLS fit
+      "chi2factor": (optional) chi^2 increase factor from NNLS fit
+      "NNLS_basis": (optional) decay basis from EPGdecaycurve
   distributions: 4-D array containing T2 distributions.
 
 External Calls:
@@ -121,7 +127,11 @@ Ver. 3.3, August 2013
 function T2map_SEcorr(image::Array{T,4}; kwargs...) where {T}
     reset_timer!(TIMER)
     out = @timeit_debug TIMER "T2map_SEcorr" begin
-        _T2map_SEcorr(image, T2mapOptions{T}(;nTE = size(image, 4), kwargs...))
+        _T2map_SEcorr(image, T2mapOptions{T}(;
+            GridSize = size(image)[1:3],
+            nTE = size(image, 4),
+            kwargs...
+        ))
     end
     if timeit_debug_enabled()
         println("\n"); show(TIMER); println("\n")
@@ -133,19 +143,18 @@ function _T2map_SEcorr(image::Array{T,4}, opts::T2mapOptions{T}) where {T}
     # =========================================================================
     # Initialize output data structures and thread-local buffers
     # =========================================================================
-    nrows, ncols, nslices, nechs = size(image)
-    maps = Dict(
-        "gdn" => fill(T(NaN), nrows, ncols, nslices),
-        "ggm" => fill(T(NaN), nrows, ncols, nslices),
-        "gva" => fill(T(NaN), nrows, ncols, nslices),
-        "SNR" => fill(T(NaN), nrows, ncols, nslices),
-        "FNR" => fill(T(NaN), nrows, ncols, nslices),
-        "alpha" => fill(T(NaN), nrows, ncols, nslices),
-        "mu" => (opts.Save_regparam ? fill(T(NaN), nrows, ncols, nslices) : nothing),
-        "chi2factor" => (opts.Save_regparam ? fill(T(NaN), nrows, ncols, nslices) : nothing),
-        "NNLS_basis" => (opts.Save_NNLS_basis ? fill(T(NaN), nrows, ncols, nslices, nechs, opts.nT2) : nothing),
-    )
-    distributions = fill(T(NaN), nrows, ncols, nslices, opts.nT2)
+    @assert size(image) == (opts.GridSize..., opts.nTE)
+    maps = Dict{String, Array{T}}()
+    maps["gdn"] = fill(T(NaN), opts.GridSize...)
+    maps["ggm"] = fill(T(NaN), opts.GridSize...)
+    maps["gva"] = fill(T(NaN), opts.GridSize...)
+    maps["SNR"] = fill(T(NaN), opts.GridSize...)
+    maps["FNR"] = fill(T(NaN), opts.GridSize...)
+    maps["alpha"] = fill(T(NaN), opts.GridSize...)
+    opts.Save_regparam && (maps["mu"] = fill(T(NaN), opts.GridSize...))
+    opts.Save_regparam && (maps["chi2factor"] = fill(T(NaN), opts.GridSize...))
+    opts.Save_NNLS_basis && (maps["NNLS_basis"] = fill(T(NaN), opts.GridSize..., opts.nTE, opts.nT2))
+    distributions = fill(T(NaN), opts.GridSize..., opts.nT2)
     thread_buffers = [thread_buffer_maker(opts) for _ in 1:Threads.nthreads()]
 
     # =========================================================================
@@ -164,14 +173,14 @@ function _T2map_SEcorr(image::Array{T,4}, opts::T2mapOptions{T}) where {T}
     # =========================================================================
     loop_start_time = tic()
     
-    Threads.@threads for row in 1:nrows
+    Threads.@threads for row in 1:opts.GridSize[1]
         # Obtain thread-local buffer and print progress summary
         thread_buffer = thread_buffers[Threads.threadid()]
-        update_progress!(thread_buffer, toc(loop_start_time), row, nrows)
+        update_progress!(thread_buffer, toc(loop_start_time), row, opts.GridSize[1])
         
-        for col in 1:ncols, slice in 1:nslices
+        for col in 1:opts.GridSize[2], slice in 1:opts.GridSize[3]
             # Skip low signal pixels
-            if image[row,col,slice,1] < opts.Threshold
+            @inbounds if image[row,col,slice,1] < opts.Threshold
                 continue
             end
             
@@ -251,7 +260,7 @@ end
 # EPG decay curve fitting
 # =========================================================
 epg_decay_basis_work(o::T2mapOptions{T}) where {T} =
-    o.TE == "variable" ?
+    o.TE === nothing ?
         EPGdecaycurve_vTE_work(T, o.nTE) :
         EPGdecaycurve_work(T, o.nTE)
 
@@ -283,7 +292,7 @@ function epg_decay_basis!(work, decay_basis, flip_angle, T2_times, o::T2mapOptio
     # Compute the NNLS basis over T2 space
     @inbounds for j = 1:o.nT2
         @timeit_debug TIMER "EPGdecaycurve!" begin
-            if o.TE == "variable"
+            if o.TE === nothing
                 EPGdecaycurve_vTE!(work, o.nTE, flip_angle, o.vTEparam..., T2_times[j], o.T1, o.RefCon)
             else
                 EPGdecaycurve!(work, o.nTE, flip_angle, o.TE, T2_times[j], o.T1, o.RefCon)
@@ -384,13 +393,13 @@ end
 # =========================================================
 function save_results!(thread_buffer, maps, distributions, o::T2mapOptions, i...)
     @unpack T2_dis, T2_times, decay_data, decay_calc, decay_basis, residuals, alpha_opt, mu_opt, chi2fact_opt = thread_buffer
-    @unpack gdn, ggm, gva, SNR, FNR, alpha, mu, chi2factor, NNLS_basis = maps
-
+    
     # Update buffers
     mul!(decay_calc, decay_basis, T2_dis)
     residuals .= decay_calc .- decay_data
     
     # Compute and save parameters of distribution
+    @unpack gdn, ggm, gva, SNR, FNR, alpha = maps
     gdn[i...] = sum(T2_dis)
     ggm[i...] = exp(dot(T2_dis, log.(T2_times)) / sum(T2_dis))
     gva[i...] = exp(sum((log.(T2_times) .- log(ggm[i...])).^2 .* T2_dis) / sum(T2_dis)) - 1
@@ -405,12 +414,14 @@ function save_results!(thread_buffer, maps, distributions, o::T2mapOptions, i...
 
     # Optionally save regularization parameters
     if o.Save_regparam
+        @unpack mu, chi2factor = maps
         mu[i...] = mu_opt[]
         chi2factor[i...] = chi2fact_opt[]
     end
 
     # Optionally save NNLS basis
     if o.Save_NNLS_basis
+        @unpack NNLS_basis = maps
         @inbounds for j in 1:o.nTE, k in 1:o.nT2
             NNLS_basis[i...,j,k] .= decay_basis[j,k]
         end

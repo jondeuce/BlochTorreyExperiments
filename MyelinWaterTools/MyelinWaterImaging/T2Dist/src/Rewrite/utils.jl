@@ -1,11 +1,25 @@
-# Global timer object
-const TIMER = TimerOutput()
-
-tic() = time_ns()
-toc(t) = (time_ns() - t)/1e9
+####
+#### Miscellaneous utils
+####
 ndigits(x) = ceil(Int, log10(x))
 logrange(a::T, b::T, len::Int) where {T} = T(10) .^ range(log10(a), log10(b); length = len)
 normcdf(x::T) where {T} = erfc(-x/sqrt(T(2)))/2
+normccdf(x::T) where {T} = erfc(x/sqrt(T(2)))/2
+
+function set_diag!(A::AbstractMatrix, val)
+    @inbounds for i in 1:min(size(A)...)
+        A[i,i] = val
+    end
+    return A
+end
+
+####
+#### Timing utilities
+####
+const TIMER = TimerOutput() # Global timer object
+
+tic() = time_ns()
+toc(t) = (time_ns() - t)/1e9
 
 function hour_min_sec(t)
     hour = floor(Int, t/3600)
@@ -14,6 +28,9 @@ function hour_min_sec(t)
     return @ntuple(hour, min, sec)
 end
 
+####
+#### NNLS utilities
+####
 function lsqnonneg!(work, C, d)
     NNLS.load!(work, C, d)
     NNLS.solve!(work)
@@ -22,13 +39,9 @@ end
 lsqnonneg_work(C, d) = NNLS.NNLSWorkspace(C, d)
 lsqnonneg(C, d) = lsqnonneg!(lsqnonneg_work(C, d), C, d)
 
-function set_diag!(A::AbstractMatrix, val)
-    @inbounds for i in 1:min(size(A)...)
-        A[i,i] = val
-    end
-    A
-end
-
+####
+#### Spline minimization
+####
 function spline_opt(X::AbstractVector, Y::AbstractVector)
     @assert length(X) == length(Y) && length(X) > 1
     deg_spline = min(3, length(X)-1)
@@ -63,6 +76,9 @@ function spline_opt_brute(X::AbstractVector, Y::AbstractVector)
     return @ntuple(x, y)
 end
 
+####
+#### Spline root-finding
+####
 function spline_root(X::AbstractVector, Y::AbstractVector, value = 0)
     @assert length(X) == length(Y) && length(X) > 1
     deg_spline = min(3, length(X)-1)

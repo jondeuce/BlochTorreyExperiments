@@ -27,13 +27,13 @@ E2, E1 = exp(-TE/T2), exp(-TE/T1);
 
 M = randn(ComplexF64, 3*num_states);
 work = (M=copy(M),);
-T2Dist.Rewrite.relaxmat_action!(work, num_states, E2, E1);
+T2Dist.Rewrite.relaxmat_action!(work.M, num_states, E2, E1);
 T_r = T2Dist.Classic.relaxmat(num_states, TE, T2, T1); # Compare with classic T_r sparse relaxation matrix
 @assert T_r * M ≈ work.M
 
 work = (M=copy(M),);
 T2mat = T2Dist.Rewrite.element_flip_mat(flip_angle * (refcon/180));
-T2Dist.Rewrite.flipmat_action!(work, num_states, T2mat);
+T2Dist.Rewrite.flipmat_action!(work.M, num_states, T2mat);
 _, T_p = T2Dist.Classic.flipmat(deg2rad(flip_angle), num_pulses, refcon); # Compare with classic T_p sparse flip matrix
 @assert T_p * M ≈ work.M
 
@@ -53,8 +53,7 @@ mat = mxcall(:EPGdecaycurve, 1, Float64.(values(args))...);
 
 n = 10
 M = 1e4 .* reshape(exp.(.-(1/6.0).*(1:32)) .+ exp.(.-(1/2.5).*(1:32)), 1, 1, 1, :);
-image = repeat(M, n, n, n, 1);
-# image = Float32.(image);
+image = repeat(M, n, n, n, 1); # image = Float32.(image);
 time_jl = @elapsed(jl = T2Dist.Rewrite.T2map_SEcorr(image)); @show time_jl; @show time_jl * 1e6/n^3;
 mat = mxcall(:T2map_SEcorr, 2, image, "waitbar", "no");
 
@@ -67,9 +66,9 @@ end
 m = 64;
 t2d = jl[2][1,1,1,:]; #mat[2][1,1,1,:];
 t2dist = repeat(reshape(t2d,1,1,1,:), m, m, m, 1);
-@time jlp = T2Dist.Rewrite.T2part_SEcorr(t2dist);
+@time jlp = T2Dist.Rewrite.T2part_SEcorr(t2dist; Sigmoid = 0.2);
 # @btime T2Dist.Rewrite.T2part_SEcorr($t2dist);
-matp = mxcall(:T2part_SEcorr, 1, t2dist);
+matp = mxcall(:T2part_SEcorr, 1, t2dist, "Sigmoid", 0.2);
 for s in keys(jlp)
     haskey(matp, s) && @assert isapprox(jlp[s], matp[s])
 end

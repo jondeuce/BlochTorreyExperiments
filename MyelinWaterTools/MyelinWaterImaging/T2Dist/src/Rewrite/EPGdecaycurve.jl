@@ -21,9 +21,9 @@ EPGdecaycurve(ETL::Int, flip_angle::T, TE::T, T2::T, T1::T, refcon::T) where {T}
 function EPGdecaycurve!(work, ETL::Int, flip_angle::T, TE::T, T2::T, T1::T, refcon::T) where {T}
     # Unpack workspace
     @unpack M, decay_curve = work
-    @assert length(M) == 3*ETL
-    M .= 0 # Zero initial vector
-    
+    @assert ETL > 1 && length(M) == 3*ETL && length(decay_curve) == ETL
+    M .= 0 # zero initial vector
+
     # Precompute compute element flip matrices and other
     E2, E1, E2_half = exp(-TE/T2), exp(-TE/T1), exp(-(TE/2)/T2)
     T1mat = element_flip_mat(flip_angle)
@@ -33,30 +33,30 @@ function EPGdecaycurve!(work, ETL::Int, flip_angle::T, TE::T, T2::T, T1::T, refc
     # Initialize magnetization phase state vector (MPSV) and set all
     # magnetization in the F1 state.
     @inbounds M[1] = E2_half * sind(flip_angle/2)
-    
+
     # Apply first refocusing pulse and get first echo amplitude
     _M = reinterpret(SVector{3,Complex{T}}, M) # View of M as vector of SVector's
     @inbounds _M[1] = T1mat * _M[1]
     @inbounds decay_curve[1] = E2_half * abs(M[2])
-    
+
     # Apply relaxation matrix
-    relaxmat_action!(work, ETL, E2, E1)
-    
+    relaxmat_action!(M, ETL, E2, E1)
+
     # Perform flip-relax sequence ETL-1 times
-    @timeit_debug TIMER "Flip-Relax sequence" begin
+    @timeit_debug TIMER "Flip-Relax Sequence" begin
         @inbounds for i = 2:ETL
             # Perform the flip
             # @timeit_debug TIMER "flipmat_action!" begin
-            flipmat_action!(work, ETL, T2mat_elements)
+            flipmat_action!(M, ETL, T2mat_elements)
             # end
-            
+
             # Record the magnitude of the population of F1* as the echo amplitude
             # and allow for relaxation
             decay_curve[i] = E2_half * abs(M[2])
-            
+
             # Allow time evolution of magnetization between pulses
             # @timeit_debug TIMER "relaxmat_action!" begin
-            relaxmat_action!(work, ETL, E2, E1)
+            relaxmat_action!(M, ETL, E2, E1)
             # end
         end
     end
@@ -76,8 +76,7 @@ element_flip_mat(α::T) where {T} =
 Computes the action of the transition matrix that describes the effect of the refocusing pulse
 on the magnetization phase state vector, as given by Hennig (1988), but corrected by Jones (1997).
 """
-function flipmat_action!(work, num_states, T2mat_elements)
-    @unpack M = work
+function flipmat_action!(M, num_states, T2mat_elements)
     @assert length(M) == 3*num_states
 
     # Optimized rotation matrix multiplication loop, specialized for the specific
@@ -113,10 +112,9 @@ end
 Computes the action of the relaxation matrix that describes the time evolution of the
 magnetization phase state vector after each refocusing pulse as described by Hennig (1988)
 """
-function relaxmat_action!(work, num_states, E2, E1)
-    @unpack M = work
+function relaxmat_action!(M, num_states, E2, E1)
     @assert length(M) == 3*num_states
-        
+
     # Optimized relaxation matrix loop
     @inbounds mprev = M[1]
     @inbounds M[1] = E2 * M[2] # F1* --> F1

@@ -187,7 +187,7 @@ end
 %==========================================================================
 % Main triple for-loop to run through each pixel in the image
 
-USE_PARALLEL = true;
+USE_PARALLEL = false;
 poolopenflag = ~isempty(gcp('nocreate'));
 
 if USE_PARALLEL && ~poolopenflag
@@ -219,8 +219,8 @@ try
         ppm = [];
     end
     
-    parfor row = 1:nrows % USE_PARALLEL
-    %for row = 1:nrows
+    % parfor row = 1:nrows % USE_PARALLEL
+    for row = 1:nrows
         gdn = nan*ones(ncols,nslices);
         ggm = nan*ones(ncols,nslices);
         gva = nan*ones(ncols,nslices);
