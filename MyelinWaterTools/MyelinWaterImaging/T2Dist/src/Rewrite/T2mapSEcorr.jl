@@ -1,5 +1,5 @@
 """
-    T2mapOptions structure for T2map_SEcorr
+    T2mapOptions structure for T2mapSEcorr
 """
 @with_kw struct T2mapOptions{T} @deftype T
     nTE::Int # required parameter
@@ -11,8 +11,11 @@
     TE::Union{T, Nothing} = 0.010
     @assert TE isa Nothing || 0.0001 <= TE <= 1.0
 
-    vTEparam::Union{Tuple{T,T,Int}, Nothing} = (0.010, 0.050, nTE÷2)
-    @assert vTEparam isa Nothing || (vTEparam[1] < vTEparam[2] && vTEparam[3] < nTE && vTEparam[1] * round(Int, vTEparam[2]/vTEparam[1]) ≈ vTEparam[2])
+    TE1::Union{T, Nothing} = nothing
+    TE2::Union{T, Nothing} = nothing
+    nTE1::Union{Int, Nothing} = nothing
+    @assert all((TE1, TE2, nTE1) .=== nothing) || all((TE1, TE2, nTE1) .!== nothing)
+    @assert TE1 isa Nothing || (TE1 < TE2 && nTE1 < nTE && TE1 * round(Int, TE2/TE1) ≈ TE2)
 
     T1 = 1.0
     @assert 0.001 <= T1 <= 10.0
@@ -43,21 +46,23 @@
 
     SetFlipAngle::Union{T,Nothing} = nothing
     @assert SetFlipAngle isa Nothing || 0.0 < SetFlipAngle <= 180.0
+    
+    SaveRegParam::Bool = false
+    
+    SaveNNLSBasis::Bool = false
 
-    nCores::Int = Threads.nthreads()
-    @assert nCores == Threads.nthreads()
+    # No longer used (set JULIA_NUM_THREADS externally)
+    # nCores::Int = Threads.nthreads()
+    # @assert nCores == Threads.nthreads()
 
-    Save_regparam::Bool = false
-
-    Save_NNLS_basis::Bool = false
-
-    Waitbar::Bool = false
-    @assert !Waitbar # Not implemented
+    # Not implemented
+    # Waitbar::Bool = false
+    # @assert !Waitbar # Not implemented
 end
 T2mapOptions(args...; kwargs...) = T2mapOptions{Float64}(args...; kwargs...)
 
 """
-maps, distributions = T2map_SEcorr(image; kwargs...)
+maps, distributions = T2mapSEcorr(image; kwargs...)
 
 Description:
   Uses NNLS to compute T2 distributions in the presence of stimulated
@@ -90,11 +95,11 @@ Inputs:
       "SetFlipAngle": Instead of optimizing flip angle, uses this flip
                       angle for all voxels (nothing)
       "nCores": Number of processor cores to use (6)
-      "Save_regparam": true/false option to include the regularization
+      "SaveRegParam":  true/false option to include the regularization
                        paramter mu and the resulting chi^2 factor as
                        two outputs within the maps structure (mu=NaN and
                        chi2factor=1 if false) (false)
-      "Save_NNLS_basis": true/false option to include a 5-D array of NNLS
+      "SaveNNLSBasis":   true/false option to include a 5-D array of NNLS
                          basis matrices as another output within the maps
                          structure (false)
       "Waitbar": true/false option determining whether a progress bar is
@@ -124,10 +129,10 @@ Created by Thomas Prasloski
 email: tprasloski@gmail.com
 Ver. 3.3, August 2013
 """
-function T2map_SEcorr(image::Array{T,4}; kwargs...) where {T}
+function T2mapSEcorr(image::Array{T,4}; kwargs...) where {T}
     reset_timer!(TIMER)
-    out = @timeit_debug TIMER "T2map_SEcorr" begin
-        _T2map_SEcorr(image, T2mapOptions{T}(;
+    out = @timeit_debug TIMER "T2mapSEcorr" begin
+        _T2mapSEcorr(image, T2mapOptions{T}(;
             GridSize = size(image)[1:3],
             nTE = size(image, 4),
             kwargs...
@@ -139,7 +144,7 @@ function T2map_SEcorr(image::Array{T,4}; kwargs...) where {T}
     return out
 end
 
-function _T2map_SEcorr(image::Array{T,4}, opts::T2mapOptions{T}) where {T}
+function _T2mapSEcorr(image::Array{T,4}, opts::T2mapOptions{T}) where {T}
     # =========================================================================
     # Initialize output data structures and thread-local buffers
     # =========================================================================
@@ -151,9 +156,9 @@ function _T2map_SEcorr(image::Array{T,4}, opts::T2mapOptions{T}) where {T}
     maps["SNR"] = fill(T(NaN), opts.GridSize...)
     maps["FNR"] = fill(T(NaN), opts.GridSize...)
     maps["alpha"] = fill(T(NaN), opts.GridSize...)
-    opts.Save_regparam && (maps["mu"] = fill(T(NaN), opts.GridSize...))
-    opts.Save_regparam && (maps["chi2factor"] = fill(T(NaN), opts.GridSize...))
-    opts.Save_NNLS_basis && (maps["NNLS_basis"] = fill(T(NaN), opts.GridSize..., opts.nTE, opts.nT2))
+    opts.SaveRegParam && (maps["mu"] = fill(T(NaN), opts.GridSize...))
+    opts.SaveRegParam && (maps["chi2factor"] = fill(T(NaN), opts.GridSize...))
+    opts.SaveNNLSBasis && (maps["NNLS_basis"] = fill(T(NaN), opts.GridSize..., opts.nTE, opts.nT2))
     distributions = fill(T(NaN), opts.GridSize..., opts.nT2)
     thread_buffers = [thread_buffer_maker(opts) for _ in 1:Threads.nthreads()]
 
@@ -179,12 +184,12 @@ function _T2map_SEcorr(image::Array{T,4}, opts::T2mapOptions{T}) where {T}
         update_progress!(thread_buffer, toc(loop_start_time), row, opts.GridSize[1])
         
         for col in 1:opts.GridSize[2], slice in 1:opts.GridSize[3]
-            # Skip low signal pixels
+            # Skip low signal voxels
             @inbounds if image[row,col,slice,1] < opts.Threshold
                 continue
             end
             
-            # Extract decay curve from the pixel
+            # Extract decay curve from the voxel
             @inbounds for i in 1:opts.nTE
                 thread_buffer.decay_data[i] = image[row,col,slice,i]
             end
@@ -293,7 +298,7 @@ function epg_decay_basis!(work, decay_basis, flip_angle, T2_times, o::T2mapOptio
     @inbounds for j = 1:o.nT2
         @timeit_debug TIMER "EPGdecaycurve!" begin
             if o.TE === nothing
-                EPGdecaycurve_vTE!(work, o.nTE, flip_angle, o.vTEparam..., T2_times[j], o.T1, o.RefCon)
+                EPGdecaycurve_vTE!(work, o.nTE, flip_angle, o.TE1, o.TE2, o.nTE1, T2_times[j], o.T1, o.RefCon)
             else
                 EPGdecaycurve!(work, o.nTE, flip_angle, o.TE, T2_times[j], o.T1, o.RefCon)
             end
@@ -413,14 +418,14 @@ function save_results!(thread_buffer, maps, distributions, o::T2mapOptions, i...
     end
 
     # Optionally save regularization parameters
-    if o.Save_regparam
+    if o.SaveRegParam
         @unpack mu, chi2factor = maps
         mu[i...] = mu_opt[]
         chi2factor[i...] = chi2fact_opt[]
     end
 
     # Optionally save NNLS basis
-    if o.Save_NNLS_basis
+    if o.SaveNNLSBasis
         @unpack NNLS_basis = maps
         @inbounds for j in 1:o.nTE, k in 1:o.nT2
             NNLS_basis[i...,j,k] .= decay_basis[j,k]

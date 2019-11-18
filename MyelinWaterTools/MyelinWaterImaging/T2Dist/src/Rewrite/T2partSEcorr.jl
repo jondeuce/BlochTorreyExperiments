@@ -1,5 +1,5 @@
 """
-    T2partOptions structure for T2map_SEcorr
+    T2partOptions structure for T2mapSEcorr
 """
 @with_kw struct T2partOptions{T} @deftype T
     nT2::Int # required parameter
@@ -11,11 +11,11 @@
     T2Range::NTuple{2,T} = (0.015, 2.0)
     @assert 0.001 <= T2Range[1] < T2Range[2] <= 10.0
 
-    spwin::NTuple{2,T} = (0.015, 0.040)
-    @assert spwin[1] < spwin[2]
+    SPWin::NTuple{2,T} = (0.015, 0.040)
+    @assert SPWin[1] < SPWin[2]
 
-    mpwin::NTuple{2,T} = (0.040, 0.200)
-    @assert mpwin[1] < mpwin[2]
+    MPWin::NTuple{2,T} = (0.040, 0.200)
+    @assert MPWin[1] < MPWin[2]
 
     Sigmoid::Union{T,Nothing} = nothing
     @assert Sigmoid isa Nothing || Sigmoid > 0.0
@@ -23,10 +23,10 @@ end
 T2partOptions(args...; kwargs...) = T2partOptions{Float64}(args...; kwargs...)
 
 """
-maps = T2part_SEcorr(T2distributions; kwargs...)
+maps = T2partSEcorr(T2distributions; kwargs...)
 
 Description:
-  Analyzes T2 distributions produced by T2map_SEcorr to produce data maps
+  Analyzes T2 distributions produced by T2mapSEcorr to produce data maps
   of a series of parameters.
 
 Inputs:
@@ -35,11 +35,11 @@ Inputs:
     Defaults are given in brackets:
       "nT2":     Number of T2 values in distribution (size(T2distributions, 4))
       "T2Range": Min and Max T2 values of distribution ([0.015,2.000])
-      "spwin":   Min and Max of the short peak window ([0.015,0.040])
-      "mpwin":   Min and Max of the middle peak window ([0.040,0.200])
+      "SPWin":   Min and Max of the short peak window ([0.015,0.040])
+      "MPWin":   Min and Max of the middle peak window ([0.040,0.200])
       "Sigmoid": Apply sigmoidal weighting to the upper limit of the 
                  short peak window. Value is the delta-T2 parameter 
-                 (distance in seconds on either side of the spwin upper 
+                 (distance in seconds on either side of the SPWin upper 
                  limit where sigmoid curve reaches 10% and 90%). (Default
                  is no sigmoid weighting)
 
@@ -57,10 +57,10 @@ Created by Thomas Prasloski
 email: tprasloski@gmail.com
 Ver. 1.2, August 2012
 """
-function T2part_SEcorr(T2distributions::Array{T,4}; kwargs...) where {T}
+function T2partSEcorr(T2distributions::Array{T,4}; kwargs...) where {T}
     reset_timer!(TIMER)
-    out = @timeit_debug TIMER "T2part_SEcorr" begin
-        _T2part_SEcorr(T2distributions, T2partOptions{T}(;
+    out = @timeit_debug TIMER "T2partSEcorr" begin
+        _T2partSEcorr(T2distributions, T2partOptions{T}(;
             GridSize = size(T2distributions)[1:3],
             nT2 = size(T2distributions, 4),
             kwargs...
@@ -72,7 +72,7 @@ function T2part_SEcorr(T2distributions::Array{T,4}; kwargs...) where {T}
     return out
 end
 
-function _T2part_SEcorr(T2distributions::Array{T,4}, opts::T2partOptions{T}) where {T}
+function _T2partSEcorr(T2distributions::Array{T,4}, opts::T2partOptions{T}) where {T}
     @assert size(T2distributions) == (opts.GridSize..., opts.nT2)
     maps = Dict{String, Array{T}}()
     maps["sfr"] = fill(T(NaN), opts.GridSize...)
@@ -100,8 +100,8 @@ end
 function thread_buffer_maker(o::T2partOptions{T}) where {T}
     dist = zeros(T, o.nT2)
     T2_times = logrange(o.T2Range..., o.nT2)
-    sp = (findfirst(t -> t >= o.spwin[1], T2_times), findlast(t -> t <= o.spwin[2], T2_times))
-    mp = (findfirst(t -> t >= o.mpwin[1], T2_times), findlast(t -> t <= o.mpwin[2], T2_times))
+    sp = (findfirst(t -> t >= o.SPWin[1], T2_times), findlast(t -> t <= o.SPWin[2], T2_times))
+    mp = (findfirst(t -> t >= o.MPWin[1], T2_times), findlast(t -> t <= o.MPWin[2], T2_times))
     logT2_times = log.(T2_times)
     logT2_times_sp = logT2_times[sp[1]:sp[2]]
     logT2_times_mp = logT2_times[mp[1]:mp[2]]
@@ -112,7 +112,7 @@ end
 function sigmoid_weights(o::T2partOptions{T}) where {T}
     if !(o.Sigmoid === nothing)
         # Curve reaches 50% at T2_50perc and is (k and 1-k)*100 percent at T2_50perc +/- T2_kperc  
-        k, T2_kperc, T2_50perc = T(0.1), o.Sigmoid, o.spwin[2]
+        k, T2_kperc, T2_50perc = T(0.1), o.Sigmoid, o.SPWin[2]
         sigma = abs(T2_kperc / (sqrt(T(2)) * erfinv(2*k-1)))
         normccdf.((logrange(o.T2Range..., o.nT2) .- T2_50perc) ./ sigma)
     else
