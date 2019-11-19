@@ -11,7 +11,7 @@
     T2Range::NTuple{2,T} = (0.015, 2.0)
     @assert 0.001 <= T2Range[1] < T2Range[2] <= 10.0
 
-    SPWin::NTuple{2,T} = (0.015, 0.040)
+    SPWin::NTuple{2,T} = (0.014, 0.040)
     @assert SPWin[1] < SPWin[2]
 
     MPWin::NTuple{2,T} = (0.040, 0.200)
@@ -84,6 +84,9 @@ function _T2partSEcorr(T2distributions::Array{T,4}, opts::T2partOptions{T}) wher
     Threads.@threads for row in 1:opts.GridSize[1]
         thread_buffer = thread_buffers[Threads.threadid()]
         @inbounds for col in 1:opts.GridSize[2], slice in 1:opts.GridSize[3]
+            if any(isnan, @views(T2distributions[row,col,slice,:]))
+                continue
+            end
             for i in 1:opts.nT2
                 thread_buffer.dist[i] = T2distributions[row,col,slice,i]
             end

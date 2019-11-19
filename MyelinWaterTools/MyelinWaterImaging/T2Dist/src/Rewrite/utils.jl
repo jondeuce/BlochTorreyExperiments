@@ -24,7 +24,7 @@ toc(t) = (time_ns() - t)/1e9
 function hour_min_sec(t)
     hour = floor(Int, t/3600)
     min = floor(Int, (t - 3600*hour)/60)
-    sec = round(Int, t - 3600*hour - 60*min)
+    sec = floor(Int, t - 3600*hour - 60*min)
     return @ntuple(hour, min, sec)
 end
 

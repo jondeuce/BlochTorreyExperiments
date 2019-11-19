@@ -11,11 +11,11 @@
     TE::Union{T, Nothing} = 0.010
     @assert TE isa Nothing || 0.0001 <= TE <= 1.0
 
-    TE1::Union{T, Nothing} = nothing
-    TE2::Union{T, Nothing} = nothing
-    nTE1::Union{Int, Nothing} = nothing
-    @assert all((TE1, TE2, nTE1) .=== nothing) || all((TE1, TE2, nTE1) .!== nothing)
-    @assert TE1 isa Nothing || (TE1 < TE2 && nTE1 < nTE && TE1 * round(Int, TE2/TE1) ≈ TE2)
+    vTEParam::Union{Tuple{T,T,Int}, Nothing} = nothing
+    @assert vTEParam isa Nothing || begin
+        TE1 = vTEParam[1]; TE2 = vTEParam[2]; nTE1 = vTEParam[3]
+        TE1 < TE2 && nTE1 < nTE && TE1 * round(Int, TE2/TE1) ≈ TE2
+    end
 
     T1 = 1.0
     @assert 0.001 <= T1 <= 10.0
@@ -160,7 +160,7 @@ function _T2mapSEcorr(image::Array{T,4}, opts::T2mapOptions{T}) where {T}
     opts.SaveRegParam && (maps["chi2factor"] = fill(T(NaN), opts.GridSize...))
     opts.SaveNNLSBasis && (maps["NNLS_basis"] = fill(T(NaN), opts.GridSize..., opts.nTE, opts.nT2))
     distributions = fill(T(NaN), opts.GridSize..., opts.nT2)
-    thread_buffers = [thread_buffer_maker(opts) for _ in 1:Threads.nthreads()]
+    thread_buffers = [thread_buffer_maker(image, opts) for _ in 1:Threads.nthreads()]
 
     # =========================================================================
     # Find the basis matrices for each flip angle
@@ -178,54 +178,71 @@ function _T2mapSEcorr(image::Array{T,4}, opts::T2mapOptions{T}) where {T}
     # =========================================================================
     loop_start_time = tic()
     
-    Threads.@threads for row in 1:opts.GridSize[1]
-        # Obtain thread-local buffer and print progress summary
-        thread_buffer = thread_buffers[Threads.threadid()]
-        update_progress!(thread_buffer, toc(loop_start_time), row, opts.GridSize[1])
-        
-        for col in 1:opts.GridSize[2], slice in 1:opts.GridSize[3]
-            # Skip low signal voxels
-            @inbounds if image[row,col,slice,1] < opts.Threshold
-                continue
-            end
-            
-            # Extract decay curve from the voxel
-            @inbounds for i in 1:opts.nTE
-                thread_buffer.decay_data[i] = image[row,col,slice,i]
-            end
-            
-            # Find optimum flip angle
-            if opts.SetFlipAngle === nothing
-                @timeit_debug TIMER "Optimize Flip Angle" begin
-                    optimize_flip_angle!(thread_buffer, opts)
-                end
-            end
-
-            # Fit decay basis using optimized alpha
-            if opts.SetFlipAngle === nothing
-                @timeit_debug TIMER "Compute Final NNLS Basis" begin
-                    fit_epg_decay_basis!(thread_buffer, opts)
-                end
-            end
-
-            # Calculate T2 distribution and map parameters
-            @timeit_debug TIMER "Calculate T2 Dist" begin
-                fit_t2_distribution!(thread_buffer, opts)
-            end
-
-            # Save loop results to outputs
-            save_results!(thread_buffer, maps, distributions, opts, row, col, slice)
+    for slice in 1:opts.GridSize[3]
+        if thread_buffers[1].slice_weights[slice] == 0
+            # This slice contains only low signal voxels; skip it
+            continue
         end
+
+        Threads.@threads for col in 1:opts.GridSize[2]
+            # Obtain thread-local buffer
+            thread_buffer = thread_buffers[Threads.threadid()]
+            for row in 1:opts.GridSize[1]
+                # Execute voxelwise analysis
+                loop_body!(thread_buffer, maps, distributions, image, opts, row, col, slice)
+            end
+        end
+
+        # Print progress
+        update_progress!(thread_buffers[1], toc(loop_start_time), slice, opts.GridSize[3])
     end
 
     return @ntuple(maps, distributions)
 end
 
+function loop_body!(thread_buffer, maps, distributions, image, opts, row, col, slice)
+    # Skip low signal voxels
+    @inbounds if image[row,col,slice,1] < opts.Threshold
+        return nothing
+    end
+    
+    # Extract decay curve from the voxel
+    @inbounds for i in 1:opts.nTE
+        thread_buffer.decay_data[i] = image[row,col,slice,i]
+    end
+    
+    # Find optimum flip angle
+    if opts.SetFlipAngle === nothing
+        @timeit_debug TIMER "Optimize Flip Angle" begin
+            optimize_flip_angle!(thread_buffer, opts)
+        end
+    end
+
+    # Fit decay basis using optimized alpha
+    if opts.SetFlipAngle === nothing
+        @timeit_debug TIMER "Compute Final NNLS Basis" begin
+            fit_epg_decay_basis!(thread_buffer, opts)
+        end
+    end
+
+    # Calculate T2 distribution and map parameters
+    @timeit_debug TIMER "Calculate T2 Dist" begin
+        fit_t2_distribution!(thread_buffer, opts)
+    end
+
+    # Save loop results to outputs
+    save_results!(thread_buffer, maps, distributions, opts, row, col, slice)
+end
+
 # =========================================================
 # Make thread-local buffers
 # =========================================================
-thread_buffer_maker(o::T2mapOptions{T}) where {T} = (
-    row_counter = Ref(0),
+thread_buffer_maker(image::Array{T,4}, o::T2mapOptions{T}) where {T} = (
+    last_weight = Ref(0),
+    curr_weight = Ref(0),
+    row_weights = vec(sum(x -> x >= o.Threshold, @views(image[:,:,:,1]); dims = (2,3))),
+    slice_weights = vec(sum(x -> x >= o.Threshold, @views(image[:,:,:,1]); dims = (1,2))),
+    total_weight = sum(x -> x >= o.Threshold, @views(image[:,:,:,1])),
     T2_times = logrange(o.T2Range..., o.nT2),
     flip_angles = range(o.MinRefAngle, T(180); length = o.nAngles),
     basis_angles = [zeros(T, o.nTE, o.nT2) for _ in 1:o.nAngles],
@@ -246,19 +263,22 @@ thread_buffer_maker(o::T2mapOptions{T}) where {T} = (
 # =========================================================
 # Progress printing
 # =========================================================
-function update_progress!(thread_buffer, time_elapsed, row, nrows)
-    @unpack row_counter = thread_buffer
-    est_complete = row_counter[] == 0 ? 0.0 :
-        (nrows - row_counter[]) * (time_elapsed / row_counter[]) / Threads.nthreads()
-    h0, m0, s0 = hour_min_sec(time_elapsed)
-    h1, m1, s1 = hour_min_sec(max(est_complete - time_elapsed, 0.0))
-    dr, dt = ndigits(nrows), ndigits(Threads.nthreads())
-    println(join([
-        "Row: $(lpad(row,dr))/$(lpad(nrows,dr)) (Thread $(lpad(Threads.threadid(),dt)))",
-        "Elapsed Time: $(lpad(h0,2,"0"))h:$(lpad(m0,2,"0"))m:$(lpad(s0,2,"0"))s",
-        "Time Remaining: $(lpad(h1,2,"0"))h:$(lpad(m1,2,"0"))m:$(lpad(s1,2,"0"))s",
-    ], " -- "))
-    row_counter[] += 1
+function update_progress!(thread_buffer, time_elapsed, slice, nslices)
+    @unpack curr_weight, last_weight, slice_weights, total_weight = thread_buffer
+    last_weight[]  = curr_weight[]
+    curr_weight[] += slice_weights[slice]
+    if curr_weight[] - last_weight[] > 0
+        est_complete = (total_weight / curr_weight[]) * time_elapsed
+        h0, m0, s0 = hour_min_sec(time_elapsed)
+        h1, m1, s1 = hour_min_sec(max(est_complete - time_elapsed, 0.0))
+        dr, dt = ndigits(nslices), ndigits(Threads.nthreads())
+        println(join([
+            "Slice: $(lpad(slice,dr))/$(lpad(nslices,dr))", #(Thread $(lpad(Threads.threadid(),dt)))",
+            "Elapsed Time: $(lpad(h0,2,"0"))h:$(lpad(m0,2,"0"))m:$(lpad(s0,2,"0"))s",
+            "Est. Time Remaining: $(lpad(h1,2,"0"))h:$(lpad(m1,2,"0"))m:$(lpad(s1,2,"0"))s",
+        ], " -- "))
+    end
+    return nothing
 end
 
 # =========================================================
@@ -298,7 +318,7 @@ function epg_decay_basis!(work, decay_basis, flip_angle, T2_times, o::T2mapOptio
     @inbounds for j = 1:o.nT2
         @timeit_debug TIMER "EPGdecaycurve!" begin
             if o.TE === nothing
-                EPGdecaycurve_vTE!(work, o.nTE, flip_angle, o.TE1, o.TE2, o.nTE1, T2_times[j], o.T1, o.RefCon)
+                EPGdecaycurve_vTE!(work, o.nTE, flip_angle, o.vTEParam..., T2_times[j], o.T1, o.RefCon)
             else
                 EPGdecaycurve!(work, o.nTE, flip_angle, o.TE, T2_times[j], o.T1, o.RefCon)
             end

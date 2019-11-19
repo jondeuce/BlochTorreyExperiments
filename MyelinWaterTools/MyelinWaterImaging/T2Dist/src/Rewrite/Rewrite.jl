@@ -7,6 +7,7 @@ module Rewrite
 using LinearAlgebra, SpecialFunctions, Statistics, StaticArrays
 using NNLS, Dierckx, Distances, Optim, Roots
 using Parameters, TimerOutputs, ArgParse
+using MAT
 using DrWatson: @ntuple
 
 include("utils.jl")
