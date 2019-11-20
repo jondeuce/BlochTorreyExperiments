@@ -1,8 +1,15 @@
 parse_or_convert(::Type{T}, s::AbstractString) where {T} = parse(T, s)
 parse_or_convert(::Type{T}, x) where {T} = convert(T, x)
 _strip_union_nothing(T::Type{Union{Tin, Nothing}}) where {Tin} = Tin
+_strip_union_nothing(T::Type) = T
 _get_tuple_type(T::Type{Union{Tup, Nothing}}) where {Tup <: Tuple} = Tup
 _get_tuple_type(::Type{Tup}) where {Tup <: Tuple} = Tup
+
+const ALLOWED_FILE_SUFFIXES = [".mat"]
+filter_valid(filenames) = filter(s -> any(endswith.(s, ALLOWED_FILE_SUFFIXES)), filenames)
+chop_suffix(filename::AbstractString) = 
+    endswith(filename, ".mat") ? filename[1:end-4] :
+    error("Currently only .mat files are supported")
 
 function filter_parsed_args(parsed_args, options_type)
     kwargs = deepcopy(parsed_args)
@@ -31,19 +38,22 @@ function filter_parsed_args(parsed_args, options_type)
 end
 
 function sorted_arg_table_entries(options...)
-    fields = [Symbol[fieldnames(typeof(o))...] for o in options]
-    types = [Any[fieldtypes(typeof(o))...] for o in options]
-    values = [getfield.(Ref(o), f) for (f,o) in zip(fields, options)]
-    fields, values, types = reduce(vcat, fields), reduce(vcat, values), reduce(vcat, types)
+    # fields = [Symbol[fieldnames(typeof(o))...] for o in options]
+    # types = [Any[fieldtypes(typeof(o))...] for o in options]
+    # values = [getfield.(Ref(o), f) for (f,o) in zip(fields, options)]
+    # fields, values, types = reduce(vcat, fields), reduce(vcat, values), reduce(vcat, types)
+    fields, types, values = Symbol[], Type[], Any[]
+    for o in options, (f,T) in zip(fieldnames(typeof(o)), fieldtypes(typeof(o)))
+        push!(fields, f)
+        push!(types, T)
+        push!(values, getfield(o, f))
+    end
     args = []
-    for (k, v, T) in sort(collect(zip(fields, values, types)); by = x -> x[1])
-        if k === :nTE || k === :nT2 || k === :GridSize
-            continue
-        end
+    for (k, v, T) in sort!(collect(zip(fields, values, types)); by = first)
+        # Skip automatically determined parameters
+        (k === :nTE || k === :GridSize) && continue
         push!(args, "--" * string(k))
-        if T === Bool
-            push!(args, Dict(:action => :store_true, :help => "optional flag (default: false)"))
-        elseif T <: Union{<:Tuple, Nothing}
+        if T <: Union{<:Tuple, Nothing}
             fields = fieldtypes(_get_tuple_type(T))
             if v === nothing
                 push!(args, Dict(:nargs => length(fields), :default => v))
@@ -75,10 +85,10 @@ function create_settings()
             help = "compute T2 distribution from input image, a multi-echo 4D array"
             action = :store_true
         "--T2part"
-            help = "analyze input T2 distribution to produce parameter maps; if --T2map flag is also passed, T2 distributions are first computed from the multi-echo input image"
+            help = "analyze T2 distribution to produce parameter maps; if --T2map flag is also passed, T2 distributions are first computed from the multi-echo input"
             action = :store_true
         "--quiet", "-q"
-            help = "print minimal information - such as current progress - to the terminal"
+            help = "print minimal information - such as current progress - to the terminal (note: overrides --Verbose flag in T2mapSEcorr)"
             action = :store_true
     end
 
@@ -86,20 +96,15 @@ function create_settings()
         "T2mapSEcorr/T2partSEcorr arguments",
         "internal arguments",
     )
-    map_opts = T2mapOptions{Float64}(nTE = 32, GridSize = (1,1,1))
-    part_opts = T2partOptions{Float64}(nT2 = 40, GridSize = (1,1,1))
-    add_arg_table(settings, sorted_arg_table_entries(map_opts, part_opts)...)
+    t2map_opts = T2mapOptions{Float64}(nTE = 32, GridSize = (1,1,1))
+    t2part_opts = T2partOptions{Float64}(nT2 = t2map_opts.nT2, GridSize = (1,1,1))
+    tmp = sorted_arg_table_entries(t2map_opts, t2part_opts)
+    add_arg_table(settings, tmp...)
 
     return settings
 end
 
-const VALID_SUFFIXES = [".mat"]
-filter_valid(filenames) = filter(s -> any(endswith.(s, VALID_SUFFIXES)), filenames)
-chop_suffix(filename::AbstractString) = 
-    endswith(filename, ".mat") ? filename[1:end-4] :
-    error("Currently only .mat files are supported")
-
-function load_images(parsed_args)
+function get_file_info(parsed_args)
     @unpack input, output = parsed_args    
 
     inputfiles = if length(input) == 1 && isdir(input[1])
@@ -107,10 +112,7 @@ function load_images(parsed_args)
     else
         filter_valid(input)
     end
-
-    if isempty(inputfiles)
-        error("No valid files were found for processing. Note that currently only .mat files are supported")
-    end
+    isempty(inputfiles) && error("No valid files were found for processing. Note that currently only .mat files are supported")
 
     outputfolders = if isempty(output)
         dirname.(inputfiles)
@@ -118,60 +120,99 @@ function load_images(parsed_args)
         [output for _ in 1:length(inputfiles)]
     end
 
-    function load_image(filename)
-        print("Loading input file: $filename... ")
-        t = @elapsed image = if endswith(filename, ".mat")
-            data = MAT.matread(filename)
-            key = findfirst(x -> x isa AbstractArray{T,4} where {T}, data)
-            data[key]
-        else
-            error("Currently, only .mat files are supported")
-        end
-        println("Done ($(round(t; digits = 2)) seconds)")
-        return image
-    end
-    images = load_image.(inputfiles)
+    return @ntuple(inputfiles, outputfolders)
+end
 
-    return images, inputfiles, outputfolders
+function load_image(filename)
+    if endswith(filename, ".mat")
+        data = MAT.matread(filename)
+        key = findfirst(x -> x isa AbstractArray{T,4} where {T}, data)
+        data[key]
+    else
+        error("Currently, only .mat files are supported")
+    end
 end
 
 function main()
     settings = create_settings()
     parsed_args = parse_args(settings; as_symbols = true)
-    
-    println("Parsed args:")
-    for (arg, val) in parsed_args
-        @show arg, val
-    end
-
-    println("T2mapOptions args:")
     t2map_kwargs = filter_parsed_args(parsed_args, T2mapOptions{Float64})
-    for (arg, val) in t2map_kwargs
-        @show arg, val
-    end
-
-    println("T2partOptions args:")
     t2part_kwargs = filter_parsed_args(parsed_args, T2partOptions{Float64})
-    for (arg, val) in t2part_kwargs
-        @show arg, val
-    end
 
-    images, inputfiles, outputfolders = load_images(parsed_args)
-    for (image, filename, folder) in zip(images, inputfiles, outputfolders)
+    # Unpack parsed flags, overriding appropriate options fields
+    @unpack T2map, T2part, quiet = parsed_args
+    quiet && (t2map_kwargs[:Verbose] = !quiet) # Force Verbose == false
+    !T2map && (delete!(t2part_kwargs, :nT2)) # Infer nT2 from input T2 distbn
+
+    # println("Parsed args:")
+    # for (arg, val) in parsed_args
+    #     @show arg, val
+    # end
+
+    # println("T2mapOptions args:")
+    # for (arg, val) in t2map_kwargs
+    #     @show arg, val
+    # end
+
+    # println("T2partOptions args:")
+    # for (arg, val) in t2part_kwargs
+    #     @show arg, val
+    # end
+
+    # Get input file list and output folder list
+    inputfiles, outputfolders = get_file_info(parsed_args)
+
+    for (filename, folder) in zip(inputfiles, outputfolders)
         choppedfilename = chop_suffix(basename(filename))
 
-        dist = if parsed_args[:T2map]
-            maps, distributions = T2mapSEcorr(image; t2map_kwargs...)
-            MAT.matwrite(joinpath(folder, choppedfilename * ".t2maps.mat"), maps)
-            MAT.matwrite(joinpath(folder, choppedfilename * ".t2dist.mat"), Dict("dist" => distributions))
+        # Save settings files
+        for settingsfile in filter(s -> startswith(s, "@"), ARGS)
+            src = settingsfile[2:end]
+            dst = joinpath(folder, choppedfilename * "." * basename(src))
+            cp(src, dst; force = true)
+        end
+
+        # Load image(s)
+        !quiet && print("\n\n* Loading input file: $filename ... ")
+        t = @elapsed image = load_image(filename)
+        !quiet && println("Done ($(round(t; digits = 2)) seconds)")
+
+        dist = if T2map
+            # Compute T2 distribution from input 4D multi-echo image
+            !quiet && println("\n* Running T2mapSEcorr on file: $filename ... ")
+            t = @elapsed maps, distributions = T2mapSEcorr(image; t2map_kwargs...)
+            !quiet && println("* Done ($(round(t; digits = 2)) seconds)")
+            
+            # Save results to .mat files
+            savefile = joinpath(folder, choppedfilename * ".t2dist.mat")
+            !quiet && print("\n* Saving T2 distribution to file: $savefile ... ")
+            t = @elapsed MAT.matwrite(savefile, Dict("dist" => distributions))
+            !quiet && println("Done ($(round(t; digits = 2)) seconds)")
+            
+            savefile = joinpath(folder, choppedfilename * ".t2maps.mat")
+            !quiet && print("\n* Saving T2 parameter maps to file: $savefile ... ")
+            t = @elapsed MAT.matwrite(savefile, maps)
+            !quiet && println("Done ($(round(t; digits = 2)) seconds)")
+            
             distributions
         else
+            # Input image is the T2 distribution
             image
         end
 
-        if parsed_args[:T2part]
-            parts = T2partSEcorr(dist; t2part_kwargs...)
-            MAT.matwrite(joinpath(folder, choppedfilename * ".t2parts.mat"), parts)
+        if T2part
+            # Analyze T2 distribution to produce parameter maps
+            !quiet && (T2map ? print("\n* Running T2partSEcorr ... ") : print("\n* Running T2partSEcorr on file: $filename ... "))
+            t = @elapsed parts = T2partSEcorr(dist; t2part_kwargs...)
+            !quiet && println("Done ($(round(t; digits = 2)) seconds)")
+
+            # Save results to .mat file
+            savefile = joinpath(folder, choppedfilename * ".t2parts.mat")
+            !quiet && print("\n* Saving T2 parts maps to file: $savefile ... ")
+            t = @elapsed MAT.matwrite(savefile, parts)
+            !quiet && println("Done ($(round(t; digits = 2)) seconds)")
         end
     end
+
+    return nothing
 end

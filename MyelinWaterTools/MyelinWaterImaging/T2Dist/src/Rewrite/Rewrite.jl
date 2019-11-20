@@ -12,6 +12,7 @@ using DrWatson: @ntuple
 
 include("utils.jl")
 include("lsqnonneg_reg.jl")
+include("lsqnonneg_lcurve.jl")
 include("EPGdecaycurve.jl")
 include("T2mapSEcorr.jl")
 include("T2partSEcorr.jl")

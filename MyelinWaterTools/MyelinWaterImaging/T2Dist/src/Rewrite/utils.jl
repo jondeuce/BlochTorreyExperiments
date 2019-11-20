@@ -28,6 +28,11 @@ function hour_min_sec(t)
     return @ntuple(hour, min, sec)
 end
 
+function pretty_time(t)
+    hh, mm, ss = hour_min_sec(t)
+    return lpad(hh,2,"0") * "h:" * lpad(mm,2,"0") * "m:" * lpad(ss,2,"0") * "s"
+end
+
 ####
 #### NNLS utilities
 ####
@@ -48,8 +53,8 @@ function spline_opt(X::AbstractVector, Y::AbstractVector)
     spl = Spline1D(X, Y; k = deg_spline)
 
     function opt(a, b)
-        res = Optim.optimize(x->spl(x), a, b, Optim.Brent())
-        return Optim.minimizer(res), Optim.minimum(res)
+        opt_result = Optim.optimize(x->spl(x), a, b, Optim.Brent())
+        return Optim.minimizer(opt_result), Optim.minimum(opt_result)
     end
 
     knots = get_knots(spl)
@@ -68,8 +73,8 @@ function spline_opt_brute(X::AbstractVector, Y::AbstractVector)
     @assert length(X) == length(Y) && length(X) > 1
     deg_spline = min(3, length(X)-1)
     spl = Spline1D(X, Y; k = deg_spline)
-    Xs = range(X[1], X[end], length = 100_000)
-    # Xs = X[1]:eltype(X)(0.001):X[end]
+    # Xs = range(X[1], X[end], length = 100_000)
+    Xs = X[1]:eltype(X)(0.001):X[end]
     Ys = spl.(Xs)
     y, index = findmin(Ys)
     x = Xs[index]
@@ -90,8 +95,8 @@ function spline_root_brute(X::AbstractVector, Y::AbstractVector, value = 0)
     @assert length(X) == length(Y) && length(X) > 1
     deg_spline = min(3, length(X)-1)
     spl = Spline1D(X, Y; k=deg_spline)
-    Xs = range(X[1], X[end], length = 100_000)
-    # Xs = Xs[1]:eltype(X)(0.001):X[end]
+    # Xs = range(X[1], X[end], length = 100_000)
+    Xs = X[1]:eltype(X)(0.001):X[end]
     _, ind = findmin(abs.(spl.(Xs) .- value))
     return Xs[ind]
 end

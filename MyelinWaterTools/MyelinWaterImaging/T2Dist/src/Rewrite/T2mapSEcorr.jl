@@ -8,7 +8,7 @@
     GridSize::NTuple{3,Int} # required parameter
     @assert all(GridSize .>= 1)
 
-    TE::Union{T, Nothing} = 0.010
+    TE::Union{T, Nothing} = nothing
     @assert TE isa Nothing || 0.0001 <= TE <= 1.0
 
     vTEParam::Union{Tuple{T,T,Int}, Nothing} = nothing
@@ -16,6 +16,8 @@
         TE1 = vTEParam[1]; TE2 = vTEParam[2]; nTE1 = vTEParam[3]
         TE1 < TE2 && nTE1 < nTE && TE1 * round(Int, TE2/TE1) ≈ TE2
     end
+    
+    # @assert !(TE === nothing && vTEParam === nothing)
 
     T1 = 1.0
     @assert 0.001 <= T1 <= 10.0
@@ -51,13 +53,11 @@
     
     SaveNNLSBasis::Bool = false
 
+    Verbose::Bool = true
+
     # No longer used (set JULIA_NUM_THREADS externally)
     # nCores::Int = Threads.nthreads()
     # @assert nCores == Threads.nthreads()
-
-    # Not implemented
-    # Waitbar::Bool = false
-    # @assert !Waitbar # Not implemented
 end
 T2mapOptions(args...; kwargs...) = T2mapOptions{Float64}(args...; kwargs...)
 
@@ -111,8 +111,8 @@ Ouputs:
       "gdn": general density
       "ggm": general geometric mean
       "gva": general variance
-      "SNR": signal to noise ratio (maximum(signal)/stdev(residuals))
-      "FNR": fit to noise ratio (gdn/stdev(residuals))
+      "FNR": fit to noise ratio (gdn / sqrt(sum(abs2, residuals)/(o.nTE-1)))
+      "SNR": signal to noise ratio (maximum(signal) / stdev(residuals))
       "alpha": refocusing pulse flip angle
       "mu": (optional) regularization parameter from NNLS fit
       "chi2factor": (optional) chi^2 increase factor from NNLS fit
@@ -153,8 +153,8 @@ function _T2mapSEcorr(image::Array{T,4}, opts::T2mapOptions{T}) where {T}
     maps["gdn"] = fill(T(NaN), opts.GridSize...)
     maps["ggm"] = fill(T(NaN), opts.GridSize...)
     maps["gva"] = fill(T(NaN), opts.GridSize...)
-    maps["SNR"] = fill(T(NaN), opts.GridSize...)
     maps["FNR"] = fill(T(NaN), opts.GridSize...)
+    maps["SNR"] = fill(T(NaN), opts.GridSize...)
     maps["alpha"] = fill(T(NaN), opts.GridSize...)
     opts.SaveRegParam && (maps["mu"] = fill(T(NaN), opts.GridSize...))
     opts.SaveRegParam && (maps["chi2factor"] = fill(T(NaN), opts.GridSize...))
@@ -177,7 +177,7 @@ function _T2mapSEcorr(image::Array{T,4}, opts::T2mapOptions{T}) where {T}
     # Process all pixels
     # =========================================================================
     loop_start_time = tic()
-    
+
     for slice in 1:opts.GridSize[3]
         if thread_buffers[1].slice_weights[slice] == 0
             # This slice contains only low signal voxels; skip it
@@ -194,7 +194,7 @@ function _T2mapSEcorr(image::Array{T,4}, opts::T2mapOptions{T}) where {T}
         end
 
         # Print progress
-        update_progress!(thread_buffers[1], toc(loop_start_time), slice, opts.GridSize[3])
+        update_progress!(thread_buffers[1], toc(loop_start_time), slice, opts)
     end
 
     return @ntuple(maps, distributions)
@@ -205,12 +205,12 @@ function loop_body!(thread_buffer, maps, distributions, image, opts, row, col, s
     @inbounds if image[row,col,slice,1] < opts.Threshold
         return nothing
     end
-    
+
     # Extract decay curve from the voxel
     @inbounds for i in 1:opts.nTE
         thread_buffer.decay_data[i] = image[row,col,slice,i]
     end
-    
+
     # Find optimum flip angle
     if opts.SetFlipAngle === nothing
         @timeit_debug TIMER "Optimize Flip Angle" begin
@@ -263,19 +263,17 @@ thread_buffer_maker(image::Array{T,4}, o::T2mapOptions{T}) where {T} = (
 # =========================================================
 # Progress printing
 # =========================================================
-function update_progress!(thread_buffer, time_elapsed, slice, nslices)
+function update_progress!(thread_buffer, time_elapsed, slice, o::T2mapOptions)
     @unpack curr_weight, last_weight, slice_weights, total_weight = thread_buffer
     last_weight[]  = curr_weight[]
     curr_weight[] += slice_weights[slice]
-    if curr_weight[] - last_weight[] > 0
+    if o.Verbose
+        nslices = o.GridSize[3]
         est_complete = (total_weight / curr_weight[]) * time_elapsed
-        h0, m0, s0 = hour_min_sec(time_elapsed)
-        h1, m1, s1 = hour_min_sec(max(est_complete - time_elapsed, 0.0))
-        dr, dt = ndigits(nslices), ndigits(Threads.nthreads())
         println(join([
-            "Slice: $(lpad(slice,dr))/$(lpad(nslices,dr))", #(Thread $(lpad(Threads.threadid(),dt)))",
-            "Elapsed Time: $(lpad(h0,2,"0"))h:$(lpad(m0,2,"0"))m:$(lpad(s0,2,"0"))s",
-            "Est. Time Remaining: $(lpad(h1,2,"0"))h:$(lpad(m1,2,"0"))m:$(lpad(s1,2,"0"))s",
+            "* Slice: " * lpad(slice, ndigits(nslices)) * "/" * lpad(nslices, ndigits(nslices)),
+            "Elapsed Time: " * pretty_time(time_elapsed),
+            "Est. Time Remaining: " * pretty_time(max(est_complete - time_elapsed, 0.0)),
         ], " -- "))
     end
     return nothing
@@ -285,8 +283,8 @@ end
 # EPG decay curve fitting
 # =========================================================
 epg_decay_basis_work(o::T2mapOptions{T}) where {T} =
-    o.TE === nothing ?
-        EPGdecaycurve_vTE_work(T, o.nTE) :
+    o.vTEParam !== nothing ?
+        EPGdecaycurve_vTE_work(T, o.vTEParam...) :
         EPGdecaycurve_work(T, o.nTE)
 
 function init_epg_decay_basis!(thread_buffer, o::T2mapOptions)
@@ -317,7 +315,7 @@ function epg_decay_basis!(work, decay_basis, flip_angle, T2_times, o::T2mapOptio
     # Compute the NNLS basis over T2 space
     @inbounds for j = 1:o.nT2
         @timeit_debug TIMER "EPGdecaycurve!" begin
-            if o.TE === nothing
+            if o.vTEParam !== nothing
                 EPGdecaycurve_vTE!(work, o.nTE, flip_angle, o.vTEParam..., T2_times[j], o.T1, o.RefCon)
             else
                 EPGdecaycurve!(work, o.nTE, flip_angle, o.TE, T2_times[j], o.T1, o.RefCon)
@@ -356,7 +354,7 @@ function optimize_flip_angle!(thread_buffer, o::T2mapOptions)
             chi2_alpha[i] = sqeuclidean(decay_data, decay_pred)
         end
     end
-    
+
     @timeit_debug TIMER "Spline Opt" begin
         # Find the minimum chi-squared and the corresponding angle
         alpha_opt[], chi2_alpha_opt[] = spline_opt(flip_angles, chi2_alpha)
@@ -424,12 +422,12 @@ function save_results!(thread_buffer, maps, distributions, o::T2mapOptions, i...
     residuals .= decay_calc .- decay_data
     
     # Compute and save parameters of distribution
-    @unpack gdn, ggm, gva, SNR, FNR, alpha = maps
+    @unpack gdn, ggm, gva, FNR, SNR, alpha = maps
     gdn[i...] = sum(T2_dis)
     ggm[i...] = exp(dot(T2_dis, log.(T2_times)) / sum(T2_dis))
     gva[i...] = exp(sum((log.(T2_times) .- log(ggm[i...])).^2 .* T2_dis) / sum(T2_dis)) - 1
-    SNR[i...] = maximum(decay_data) / sqrt(var(residuals))
-    FNR[i...] = sum(T2_dis) / sqrt(var(residuals))
+    FNR[i...] = sum(T2_dis) / sqrt(sum(abs2, residuals)/(o.nTE-1))
+    SNR[i...] = maximum(decay_data) / std(residuals)
     alpha[i...] = alpha_opt[]
 
     # Save distribution

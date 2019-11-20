@@ -1,20 +1,24 @@
 """
-x = LSQNONNEG_REG(C, d, Chi2Factor) returns the regularized NNLS solution x
+LSQNONNEG_REG(C, d, Chi2Factor) returns the regularized NNLS solution x
 that incurrs an increase in chi^2 by a factor of Chi2Factor.
 """
-function lsqnonneg_reg_work(C::AbstractMatrix{T}, d::AbstractVecOrMat{T}) where {T}
-    d_backproj = zeros(T ,size(d))
-    resid = zeros(T ,size(d))
+function lsqnonneg_reg_work(C::AbstractMatrix{T}, d::AbstractVector{T}) where {T}
+    @assert size(C,1) == length(d)
+    d_backproj = zeros(T, length(d))
+    resid = zeros(T, length(d))
     nnls_work = NNLSWorkspace(C, d)
-    C_smooth = [copy(C); zeros(T ,size(C))]
-    d_smooth = [copy(d); zeros(T ,size(d))]
+    C_smooth = zeros(T, size(C,1) + size(C,2), size(C,2))
+    d_smooth = zeros(T, length(d) + size(C,2))
     nnls_work_smooth = NNLSWorkspace(C_smooth, d_smooth)
-    x = zeros(T ,size(C,2))
+    @views C_smooth_top, d_smooth_top = C_smooth[1:size(C,1), :], d_smooth[1:length(d)]
+    @views C_smooth_bottom, d_smooth_bottom = C_smooth[size(C,1)+1:end, :], d_smooth[length(d)+1:end]
+    x = zeros(T, size(C,2))
     mu_opt = Ref(T(NaN))
     chi2fact_opt = Ref(T(NaN))
     return @ntuple(
         d_backproj, resid, nnls_work,
         C_smooth, d_smooth, nnls_work_smooth,
+        C_smooth_top, C_smooth_bottom, d_smooth_bottom, d_smooth_top,
         x, mu_opt, chi2fact_opt
     )
 end
@@ -24,18 +28,17 @@ function lsqnonneg_reg(C, d, Chi2Factor)
     lsqnonneg_reg!(work, C, d, Chi2Factor)
 end
 
-function lsqnonneg_reg!(work, C::AbstractMatrix{T}, d::AbstractVecOrMat{T}, Chi2Factor::T) where {T}
+function lsqnonneg_reg!(work, C::AbstractMatrix{T}, d::AbstractVector{T}, Chi2Factor::T) where {T}
     # Unpack workspace
     @unpack nnls_work, d_backproj, resid = work
     @unpack nnls_work_smooth, C_smooth, d_smooth = work
-    
+    @unpack C_smooth_top, C_smooth_bottom, d_smooth_bottom, d_smooth_top = work
+
     # Assign top and bottom of C_smooth, d_smooth
-    @views C_smooth_top, d_smooth_top = C_smooth[1:end÷2, :], d_smooth[1:end÷2]
-    @views C_smooth_bottom, d_smooth_bottom = C_smooth[end÷2+1:end, :], d_smooth[end÷2+1:end]
-    C_smooth_top .= C
-    d_smooth_top .= d
-    C_smooth_bottom .= 0
-    d_smooth_bottom .= 0
+    @assert size(C,1) == length(d)
+    @assert size(C_smooth,1) == length(d_smooth) == size(C,1) + size(C,2)
+    C_smooth_top .= C; C_smooth_bottom .= 0
+    d_smooth_top .= d; d_smooth_bottom .= 0
 
     # Find non-regularized solution
     @timeit_debug TIMER "Non-reg. lsqnonneg!" begin
