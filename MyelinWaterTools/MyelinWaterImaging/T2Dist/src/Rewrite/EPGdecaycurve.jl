@@ -1,22 +1,24 @@
 """
-Computes the normalized echo decay curve for a MR spin echo sequence with the given parameters.
+decay_curve = EPGdecaycurve(ETL, flip_angle, TE, T2, T1, refcon)
 
-ETL: Echo train length (number of echos)
+Computes the normalized echo decay curve for a MR spin echo sequence with
+the given parameters.
+
+ETL:        Echo train length (number of echos)
 flip_angle: Angle of refocusing pulses (degrees)
-TE: Interecho time (seconds)
-T2: Transverse relaxation time (seconds)
-T1: Longitudinal relaxation time (seconds)
-refcon: Value of Refocusing Pulse Control Angle
+TE:         Interecho time (seconds)
+T2:         Transverse relaxation time (seconds)
+T1:         Longitudinal relaxation time (seconds)
+refcon:     Value of Refocusing Pulse Control Angle
 """
+EPGdecaycurve(ETL::Int, flip_angle::T, TE::T, T2::T, T1::T, refcon::T) where {T} =
+    EPGdecaycurve!(EPGdecaycurve_work(T, ETL), ETL, flip_angle, TE, T2, T1, refcon)
+
 function EPGdecaycurve_work(T, ETL)
     M = zeros(Complex{T}, 3*ETL)
     decay_curve = zeros(T, ETL)
     return @ntuple(M, decay_curve)
 end
-EPGdecaycurve_work(ETL) = EPGdecaycurve_work(Float64, ETL)
-
-EPGdecaycurve(ETL::Int, flip_angle::T, TE::T, T2::T, T1::T, refcon::T) where {T} =
-    EPGdecaycurve!(EPGdecaycurve_work(T, ETL), ETL, flip_angle, TE, T2, T1, refcon)
 
 function EPGdecaycurve!(work, ETL::Int, flip_angle::T, TE::T, T2::T, T1::T, refcon::T) where {T}
     # Unpack workspace

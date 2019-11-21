@@ -54,7 +54,8 @@ mat = mxcall(:EPGdecaycurve, 1, Float64.(values(args))...);
 n = 10
 M = 1e4 .* reshape(exp.(.-(1/6.0).*(1:32)) .+ exp.(.-(1/2.5).*(1:32)), 1, 1, 1, :);
 image = repeat(M, n, n, n, 1); # image = Float32.(image);
-time_jl = @elapsed(jl = T2Dist.Rewrite.T2mapSEcorr(image)); @show time_jl; @show time_jl * 1e6/n^3;
+time_jl = @elapsed(jl = T2Dist.Rewrite.T2mapSEcorr(image; TE = 10e-3, Reg = "chi2")); @show time_jl; @show time_jl * 1e6/n^3;
+# time_jl = @elapsed(jl = T2Dist.Rewrite.T2mapSEcorr(image; TE = 10e-3, Reg = "lcurve")); @show time_jl; @show time_jl * 1e6/n^3;
 mat = mxcall(:T2map_SEcorr, 2, image, "waitbar", "no");
 
 for s in keys(jl[1])

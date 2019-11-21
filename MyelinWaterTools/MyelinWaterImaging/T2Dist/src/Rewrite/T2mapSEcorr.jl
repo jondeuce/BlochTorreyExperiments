@@ -2,62 +2,82 @@
     T2mapOptions structure for T2mapSEcorr
 """
 @with_kw struct T2mapOptions{T} @deftype T
-    nTE::Int # required parameter
-    @assert nTE > 1
-
-    GridSize::NTuple{3,Int} # required parameter
+    # Size of first 3 dimensions of input 4D T2 distribution. Inferred automatically.
+    GridSize::NTuple{3,Int}
     @assert all(GridSize .>= 1)
 
-    TE::Union{T, Nothing} = nothing
-    @assert TE isa Nothing || 0.0001 <= TE <= 1.0
+    # Number of echoes in input signal. Inferred automatically as size(image, 4)
+    nTE::Int
+    @assert nTE > 1
 
+    # Interecho spacing
+    TE = 0.01
+    @assert 0.0001 <= TE <= 1.0
+
+    # Placeholder option; currently not implemented
     vTEParam::Union{Tuple{T,T,Int}, Nothing} = nothing
     @assert vTEParam isa Nothing || begin
         TE1 = vTEParam[1]; TE2 = vTEParam[2]; nTE1 = vTEParam[3]
         TE1 < TE2 && nTE1 < nTE && TE1 * round(Int, TE2/TE1) ≈ TE2
     end
-    
-    # @assert !(TE === nothing && vTEParam === nothing)
+    @assert vTEParam === nothing || error("Variable TE is not implemented")
 
+    # Assumed value of T1
     T1 = 1.0
     @assert 0.001 <= T1 <= 10.0
 
-    RefCon = 180.0
-    @assert 1.0 <= RefCon <= 180.0
-
+    # First echo intensity cutoff for empty voxels
     Threshold = 200.0
     @assert Threshold >= 0.0
 
+    # Constraint on chi^2 used for regularization (used when Reg == "chi2")
     Chi2Factor = 1.02
     @assert Chi2Factor > 1
 
+    # Number of T2 times to use
     nT2::Int = 40
     @assert 10 <= nT2 <= 120
 
+    # Min and max T2 values
     T2Range::Tuple{T,T} = (0.015, 2.0)
     @assert 0.001 <= T2Range[1] < T2Range[2] <= 10.0
 
+    # Refocusing pulse control angle
+    RefCon = 180.0
+    @assert 1.0 <= RefCon <= 180.0
+
+    # Minimum refocusing angle for EPG optimization
     MinRefAngle = 50.0
     @assert 1.0 < MinRefAngle < 180.0
 
+    # Number of angles used in EPG optimization
     nAngles::Int = 8
     @assert nAngles > 1
 
+    # Regularization routine to use:
+    #   "no":       No regularization of solution
+    #   "chi2":     Use Chi2Factor based regularization (default)
+    #   "lcurve":   Use L-Curve based regularization
     Reg::String = "chi2"
     @assert Reg ∈ ("no", "chi2", "lcurve")
-
+    
+    # Instead of optimizing flip angle, use this flip angle for all voxels
     SetFlipAngle::Union{T,Nothing} = nothing
     @assert SetFlipAngle isa Nothing || 0.0 < SetFlipAngle <= 180.0
-    
+
+    # true/false option to include the resulting regularization parameter
+    # mu and chi^2 factor as outputs within the maps dictionary
     SaveRegParam::Bool = false
-    
+
+    # true/false option to include a 5-D array of NNLS basis matrices 
+    # as an output within the maps dictionary
     SaveNNLSBasis::Bool = false
 
+    # Verbose printing of current progress to the console
     Verbose::Bool = true
 
-    # No longer used (set JULIA_NUM_THREADS externally)
-    # nCores::Int = Threads.nthreads()
-    # @assert nCores == Threads.nthreads()
+    # Number of processor cores to use (no longer used; set JULIA_NUM_THREADS externally)
+    # nCores::Int
 end
 T2mapOptions(args...; kwargs...) = T2mapOptions{Float64}(args...; kwargs...)
 
@@ -71,63 +91,37 @@ Description:
 
 Inputs:
   image: 4-D array with intensity data as (row, column, slice, echo)
-  kwargs: A series of optional keyword argument settings.
-    Defaults are given in brackets:
-      "TE": Interecho spacing, usually set to one number, but may also
-            be left unset for sequences with 2 interecho spacings
-            (see "vTEparam"). (nothing)
-      "vTEparam": (TE1, TE2, number of echoes at TE1). Only applied when
-                  "TE" set to nothing. TE2 must be an integer
-                  multiple of TE1. (nothing)
-      "nT2": Number of T2 times to use (40)
-      "T2Range": Min and Max T2 values ((0.015, 2.0))
-      "T1": Assumed value of T1 (1.0)
-      "Threshold": First echo intensity cutoff for empty voxels (200.0)
-      "Reg": Regularization routine to use, options are:
-             "no": do not regularize the solution
-             "chi2": use Chi2Factor based regularization (default)
-             "lcurve": use L-Curve based regularization
-      "Chi2Factor": Constraint on chi^2 used for regularization (Reg must
-                    be set to "chi2"!) (1.02)
-      "RefCon": Refocusing Pulse Control Angle (180.0)
-      "MinRefAngle": Minimum refocusing angle for EPG optimization (50.0)
-      "nAngles": Number of angles used in EPG optimization (8)
-      "SetFlipAngle": Instead of optimizing flip angle, uses this flip
-                      angle for all voxels (nothing)
-      "nCores": Number of processor cores to use (6)
-      "SaveRegParam":  true/false option to include the regularization
-                       paramter mu and the resulting chi^2 factor as
-                       two outputs within the maps structure (mu=NaN and
-                       chi2factor=1 if false) (false)
-      "SaveNNLSBasis":   true/false option to include a 5-D array of NNLS
-                         basis matrices as another output within the maps
-                         structure (false)
-      "Waitbar": true/false option determining whether a progress bar is
-                 generated. Selecting false will also suppress any
-                 mesages printed to the command window. (false)
+  kwargs: A series of optional keyword argument settings; see T2mapOptions
 
 Ouputs:
   maps: dictionary containing 3D maps with the following fields:
       "gdn": general density
       "ggm": general geometric mean
       "gva": general variance
-      "FNR": fit to noise ratio (gdn / sqrt(sum(abs2, residuals)/(o.nTE-1)))
-      "SNR": signal to noise ratio (maximum(signal) / stdev(residuals))
+      "FNR": fit to noise ratio = gdn / sqrt(sum(residuals.^2) / (nTE-1))
+      "SNR": signal to noise ratio = maximum(signal) / std(residuals)
       "alpha": refocusing pulse flip angle
       "mu": (optional) regularization parameter from NNLS fit
       "chi2factor": (optional) chi^2 increase factor from NNLS fit
       "NNLS_basis": (optional) decay basis from EPGdecaycurve
-  distributions: 4-D array containing T2 distributions.
+  distributions: 4-D array containing T2 distributions
 
 External Calls:
-  EPGdecaycurve.m
-  EPGdecaycurve_vTE.m
-  lsqnonneg_reg.m
-  lsqnonneg_lcurve.m
+  EPGdecaycurve.jl
+  EPGdecaycurve_vTE.jl
+  lsqnonneg_reg.jl
+  lsqnonneg_lcurve.jl
 
 Created by Thomas Prasloski
 email: tprasloski@gmail.com
 Ver. 3.3, August 2013
+
+Modified by Vanessa Wiggermann to enable processing on various matlab versions
+Feb 2019
+
+Adapted for Julia by Jonathan Doucette
+email: jdoucette@phas.ubc.ca
+Nov 2019
 """
 function T2mapSEcorr(image::Array{T,4}; kwargs...) where {T}
     reset_timer!(TIMER)
@@ -165,8 +159,6 @@ function _T2mapSEcorr(image::Array{T,4}, opts::T2mapOptions{T}) where {T}
     # =========================================================================
     # Find the basis matrices for each flip angle
     # =========================================================================
-    
-    # Initialize parameters and variable for angle optimization
     @timeit_debug TIMER "Initialization" begin
         for i in 1:length(thread_buffers)
             init_epg_decay_basis!(thread_buffers[i], opts)
@@ -177,6 +169,7 @@ function _T2mapSEcorr(image::Array{T,4}, opts::T2mapOptions{T}) where {T}
     # Process all pixels
     # =========================================================================
     loop_start_time = tic()
+    LinearAlgebra.BLAS.set_num_threads(1) # Prevent BLAS from stealing julia threads
 
     for slice in 1:opts.GridSize[3]
         if thread_buffers[1].slice_weights[slice] == 0
@@ -196,6 +189,8 @@ function _T2mapSEcorr(image::Array{T,4}, opts::T2mapOptions{T}) where {T}
         # Print progress
         update_progress!(thread_buffers[1], toc(loop_start_time), slice, opts)
     end
+    
+    LinearAlgebra.BLAS.set_num_threads(Threads.nthreads()) # Reset BLAS threads
 
     return @ntuple(maps, distributions)
 end
@@ -289,7 +284,7 @@ epg_decay_basis_work(o::T2mapOptions{T}) where {T} =
 
 function init_epg_decay_basis!(thread_buffer, o::T2mapOptions)
     @unpack decay_basis_work, basis_angles, decay_basis, flip_angles, T2_times = thread_buffer
-    
+
     if o.SetFlipAngle === nothing
         # Loop to compute basis for each angle
         @inbounds for i = 1:o.nAngles
@@ -311,7 +306,7 @@ end
 function epg_decay_basis!(work, decay_basis, flip_angle, T2_times, o::T2mapOptions)
     @assert length(T2_times) == size(decay_basis,2) == o.nT2
     @assert size(decay_basis,1) == o.nTE
-    
+
     # Compute the NNLS basis over T2 space
     @inbounds for j = 1:o.nT2
         @timeit_debug TIMER "EPGdecaycurve!" begin
@@ -416,11 +411,11 @@ end
 # =========================================================
 function save_results!(thread_buffer, maps, distributions, o::T2mapOptions, i...)
     @unpack T2_dis, T2_times, decay_data, decay_calc, decay_basis, residuals, alpha_opt, mu_opt, chi2fact_opt = thread_buffer
-    
+
     # Update buffers
     mul!(decay_calc, decay_basis, T2_dis)
     residuals .= decay_calc .- decay_data
-    
+
     # Compute and save parameters of distribution
     @unpack gdn, ggm, gva, FNR, SNR, alpha = maps
     gdn[i...] = sum(T2_dis)

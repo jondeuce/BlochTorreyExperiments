@@ -1,36 +1,80 @@
-parse_or_convert(::Type{T}, s::AbstractString) where {T} = parse(T, s)
-parse_or_convert(::Type{T}, x) where {T} = convert(T, x)
+# Helper functions
+_parse_or_convert(::Type{T}, s::AbstractString) where {T} = parse(T, s)
+_parse_or_convert(::Type{T}, x) where {T} = convert(T, x)
 _strip_union_nothing(T::Type{Union{Tin, Nothing}}) where {Tin} = Tin
 _strip_union_nothing(T::Type) = T
 _get_tuple_type(T::Type{Union{Tup, Nothing}}) where {Tup <: Tuple} = Tup
 _get_tuple_type(::Type{Tup}) where {Tup <: Tuple} = Tup
 
+# Allowed file types for loading
 const ALLOWED_FILE_SUFFIXES = [".mat"]
-filter_valid(filenames) = filter(s -> any(endswith.(s, ALLOWED_FILE_SUFFIXES)), filenames)
-chop_suffix(filename::AbstractString) = 
-    endswith(filename, ".mat") ? filename[1:end-4] :
-    error("Currently only .mat files are supported")
+const ALLOWED_FILE_SUFFIXES_STRING = join(ALLOWED_FILE_SUFFIXES, ", ", ", and ")
 
-function filter_parsed_args(parsed_args, options_type)
+filter_allowed(filenames) = filter(s -> any(endswith.(s, ALLOWED_FILE_SUFFIXES)), filenames)
+
+function chop_allowed_suffix(filename::AbstractString)
+    for suffix in ALLOWED_FILE_SUFFIXES
+        if endswith(filename, suffix)
+            return filename[1:end-length(suffix)]
+        end
+    end
+    error("Currently only $ALLOWED_FILE_SUFFIXES_STRING files are supported")
+end
+
+function get_file_info(parsed_args)
+    @unpack input, output = parsed_args    
+
+    inputfiles = if length(input) == 1 && isdir(input[1])
+        joinpath.(input[1], filter_allowed(readdir(input[1])))
+    else
+        filter_allowed(input)
+    end
+    isempty(inputfiles) && error("No valid files were found for processing. Note that currently only $ALLOWED_FILE_SUFFIXES_STRING files are supported")
+
+    outputfolders = if isempty(output)
+        dirname.(inputfiles)
+    else
+        [output for _ in 1:length(inputfiles)]
+    end
+
+    return @ntuple(inputfiles, outputfolders)
+end
+
+function load_image(filename)
+    if endswith(filename, ".mat")
+        data = MAT.matread(filename)
+        key = findfirst(x -> x isa AbstractArray{T,4} where {T}, data)
+        if key === nothing
+            error("No 4D array was found in the input file: $filename")
+        else
+            data[key]
+        end
+    else
+        error("Currently, only $ALLOWED_FILE_SUFFIXES_STRING files are supported")
+    end
+end
+
+function get_parsed_args_subset(parsed_args, options_type)
     kwargs = deepcopy(parsed_args)
-    fields, types = fieldnames(options_type), fieldtypes(options_type)
-    typemap = Dict{Symbol,Any}(fields .=> types)
+    fields = fieldnames(options_type)
+    types = fieldtypes(options_type)
+    typemap = Dict{Symbol,Type}(fields .=> types)
     for (k,v) in kwargs
         if k ∉ fields
             delete!(kwargs, k)
             continue
         end
-        if v isa AbstractString
+        if v isa AbstractString # parse v to appropriate type, which may not be String
             T = typemap[k]
             if !(T <: AbstractString)
-                kwargs[k] = parse_or_convert(_strip_union_nothing(T), v)
+                kwargs[k] = _parse_or_convert(_strip_union_nothing(T), v)
             end
-        elseif v isa AbstractVector
+        elseif v isa AbstractVector # convert AbstractVector v to appropriate Tuple type
             if isempty(v)
-                delete!(kwargs, k)
+                delete!(kwargs, k) # default v === nothing for a Tuple type results in an empty vector
             else
                 T = _get_tuple_type(typemap[k])
-                kwargs[k] = tuple(parse_or_convert.(fieldtypes(T), v)...)
+                kwargs[k] = tuple(_parse_or_convert.(fieldtypes(T), v)...) # each element should be individually parsed
             end
         end
     end
@@ -38,27 +82,20 @@ function filter_parsed_args(parsed_args, options_type)
 end
 
 function sorted_arg_table_entries(options...)
-    # fields = [Symbol[fieldnames(typeof(o))...] for o in options]
-    # types = [Any[fieldtypes(typeof(o))...] for o in options]
-    # values = [getfield.(Ref(o), f) for (f,o) in zip(fields, options)]
-    # fields, values, types = reduce(vcat, fields), reduce(vcat, values), reduce(vcat, types)
     fields, types, values = Symbol[], Type[], Any[]
     for o in options, (f,T) in zip(fieldnames(typeof(o)), fieldtypes(typeof(o)))
-        push!(fields, f)
-        push!(types, T)
-        push!(values, getfield(o, f))
+        push!(fields, f); push!(types, T); push!(values, getfield(o, f))
     end
     args = []
     for (k, v, T) in sort!(collect(zip(fields, values, types)); by = first)
-        # Skip automatically determined parameters
-        (k === :nTE || k === :GridSize) && continue
+        (k === :nTE || k === :GridSize) && continue # Skip automatically determined parameters
         push!(args, "--" * string(k))
         if T <: Union{<:Tuple, Nothing}
-            fields = fieldtypes(_get_tuple_type(T))
+            nargs = length(fieldtypes(_get_tuple_type(T)))
             if v === nothing
-                push!(args, Dict(:nargs => length(fields), :default => v))
+                push!(args, Dict(:nargs => nargs, :default => v))
             else
-                push!(args, Dict(:nargs => length(fields), :default => [v...]))
+                push!(args, Dict(:nargs => nargs, :default => [v...]))
             end
         else
             push!(args, Dict(:default => v))
@@ -67,7 +104,7 @@ function sorted_arg_table_entries(options...)
     return args
 end
 
-function create_settings()
+function create_argparse_settings()
     settings = ArgParseSettings(
         fromfile_prefix_chars = "@",
         error_on_conflict = false,
@@ -88,7 +125,7 @@ function create_settings()
             help = "analyze T2 distribution to produce parameter maps; if --T2map flag is also passed, T2 distributions are first computed from the multi-echo input"
             action = :store_true
         "--quiet", "-q"
-            help = "print minimal information - such as current progress - to the terminal (note: overrides --Verbose flag in T2mapSEcorr)"
+            help = "print minimal information (such as current progress) to the terminal. Note: 1) errors are not silenced, and 2) this flag overrides --Verbose flag in T2mapSEcorr"
             action = :store_true
     end
 
@@ -104,113 +141,78 @@ function create_settings()
     return settings
 end
 
-function get_file_info(parsed_args)
-    @unpack input, output = parsed_args    
-
-    inputfiles = if length(input) == 1 && isdir(input[1])
-        joinpath.(input[1], filter_valid(readdir(input[1])))
-    else
-        filter_valid(input)
-    end
-    isempty(inputfiles) && error("No valid files were found for processing. Note that currently only .mat files are supported")
-
-    outputfolders = if isempty(output)
-        dirname.(inputfiles)
-    else
-        [output for _ in 1:length(inputfiles)]
-    end
-
-    return @ntuple(inputfiles, outputfolders)
-end
-
-function load_image(filename)
-    if endswith(filename, ".mat")
-        data = MAT.matread(filename)
-        key = findfirst(x -> x isa AbstractArray{T,4} where {T}, data)
-        data[key]
-    else
-        error("Currently, only .mat files are supported")
-    end
-end
-
 function main()
-    settings = create_settings()
+    settings = create_argparse_settings()
     parsed_args = parse_args(settings; as_symbols = true)
-    t2map_kwargs = filter_parsed_args(parsed_args, T2mapOptions{Float64})
-    t2part_kwargs = filter_parsed_args(parsed_args, T2partOptions{Float64})
+    t2map_kwargs = get_parsed_args_subset(parsed_args, T2mapOptions{Float64})
+    t2part_kwargs = get_parsed_args_subset(parsed_args, T2partOptions{Float64})
 
     # Unpack parsed flags, overriding appropriate options fields
     @unpack T2map, T2part, quiet = parsed_args
     quiet && (t2map_kwargs[:Verbose] = !quiet) # Force Verbose == false
     !T2map && (delete!(t2part_kwargs, :nT2)) # Infer nT2 from input T2 distbn
 
-    # println("Parsed args:")
-    # for (arg, val) in parsed_args
-    #     @show arg, val
-    # end
-
-    # println("T2mapOptions args:")
-    # for (arg, val) in t2map_kwargs
-    #     @show arg, val
-    # end
-
-    # println("T2partOptions args:")
-    # for (arg, val) in t2part_kwargs
-    #     @show arg, val
-    # end
-
     # Get input file list and output folder list
     inputfiles, outputfolders = get_file_info(parsed_args)
 
     for (filename, folder) in zip(inputfiles, outputfolders)
-        choppedfilename = chop_suffix(basename(filename))
+        try
+            choppedfilename = chop_allowed_suffix(basename(filename))
+            mkpath(folder)
 
-        # Save settings files
-        for settingsfile in filter(s -> startswith(s, "@"), ARGS)
-            src = settingsfile[2:end]
-            dst = joinpath(folder, choppedfilename * "." * basename(src))
-            cp(src, dst; force = true)
-        end
+            # Save settings files
+            for settingsfile in filter(s -> startswith(s, "@"), ARGS)
+                src = settingsfile[2:end]
+                dst = joinpath(folder, choppedfilename * "." * basename(src))
+                cp(src, dst; force = true)
+            end
 
-        # Load image(s)
-        !quiet && print("\n\n* Loading input file: $filename ... ")
-        t = @elapsed image = load_image(filename)
-        !quiet && println("Done ($(round(t; digits = 2)) seconds)")
-
-        dist = if T2map
-            # Compute T2 distribution from input 4D multi-echo image
-            !quiet && println("\n* Running T2mapSEcorr on file: $filename ... ")
-            t = @elapsed maps, distributions = T2mapSEcorr(image; t2map_kwargs...)
-            !quiet && println("* Done ($(round(t; digits = 2)) seconds)")
-            
-            # Save results to .mat files
-            savefile = joinpath(folder, choppedfilename * ".t2dist.mat")
-            !quiet && print("\n* Saving T2 distribution to file: $savefile ... ")
-            t = @elapsed MAT.matwrite(savefile, Dict("dist" => distributions))
-            !quiet && println("Done ($(round(t; digits = 2)) seconds)")
-            
-            savefile = joinpath(folder, choppedfilename * ".t2maps.mat")
-            !quiet && print("\n* Saving T2 parameter maps to file: $savefile ... ")
-            t = @elapsed MAT.matwrite(savefile, maps)
-            !quiet && println("Done ($(round(t; digits = 2)) seconds)")
-            
-            distributions
-        else
-            # Input image is the T2 distribution
-            image
-        end
-
-        if T2part
-            # Analyze T2 distribution to produce parameter maps
-            !quiet && (T2map ? print("\n* Running T2partSEcorr ... ") : print("\n* Running T2partSEcorr on file: $filename ... "))
-            t = @elapsed parts = T2partSEcorr(dist; t2part_kwargs...)
+            # Load image(s)
+            !quiet && print("\n\n* Loading input file: $filename ... ")
+            t = @elapsed image = load_image(filename)
             !quiet && println("Done ($(round(t; digits = 2)) seconds)")
 
-            # Save results to .mat file
-            savefile = joinpath(folder, choppedfilename * ".t2parts.mat")
-            !quiet && print("\n* Saving T2 parts maps to file: $savefile ... ")
-            t = @elapsed MAT.matwrite(savefile, parts)
-            !quiet && println("Done ($(round(t; digits = 2)) seconds)")
+            dist = if T2map
+                # Compute T2 distribution from input 4D multi-echo image
+                !quiet && println("\n* Running T2mapSEcorr on file: $filename ... ")
+                t = @elapsed maps, distributions = T2mapSEcorr(image; t2map_kwargs...)
+                !quiet && println("* Done ($(round(t; digits = 2)) seconds)")
+                
+                # Save results to .mat files
+                savefile = joinpath(folder, choppedfilename * ".t2dist.mat")
+                !quiet && print("\n* Saving T2 distribution to file: $savefile ... ")
+                t = @elapsed MAT.matwrite(savefile, Dict("dist" => distributions))
+                !quiet && println("Done ($(round(t; digits = 2)) seconds)")
+                
+                savefile = joinpath(folder, choppedfilename * ".t2maps.mat")
+                !quiet && print("\n* Saving T2 parameter maps to file: $savefile ... ")
+                t = @elapsed MAT.matwrite(savefile, maps)
+                !quiet && println("Done ($(round(t; digits = 2)) seconds)")
+                
+                distributions
+            else
+                # Input image is the T2 distribution
+                image
+            end
+
+            if T2part
+                # Analyze T2 distribution to produce parameter maps
+                !quiet && (T2map ? print("\n* Running T2partSEcorr ... ") : print("\n* Running T2partSEcorr on file: $filename ... "))
+                t = @elapsed parts = T2partSEcorr(dist; t2part_kwargs...)
+                !quiet && println("Done ($(round(t; digits = 2)) seconds)")
+
+                # Save results to .mat file
+                savefile = joinpath(folder, choppedfilename * ".t2parts.mat")
+                !quiet && print("\n* Saving T2 parts maps to file: $savefile ... ")
+                t = @elapsed MAT.matwrite(savefile, parts)
+                !quiet && println("Done ($(round(t; digits = 2)) seconds)")
+            end
+        catch e
+            println("\n\n\n********************************************************************************\n")
+            @warn "Error during processing of file: $filename"
+            println("\n")
+            @warn sprint(showerror, e, catch_backtrace())
+            println("\n********************************************************************************\n")
         end
     end
 

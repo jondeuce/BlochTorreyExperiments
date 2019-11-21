@@ -2,21 +2,30 @@
     T2partOptions structure for T2mapSEcorr
 """
 @with_kw struct T2partOptions{T} @deftype T
-    nT2::Int # required parameter
-    @assert nT2 > 1
-
-    GridSize::NTuple{3,Int} # required parameter
+    # Size of first 3 dimensions of input 4D T2 distribution. Inferred automatically.
+    GridSize::NTuple{3,Int}
     @assert all(GridSize .>= 1)
 
+    # Number of T2 values in distribution. Inferred automatically as size(T2distributions, 4)
+    nT2::Int
+    @assert nT2 > 1
+
+    # Min and Max T2 values of distribution
     T2Range::NTuple{2,T} = (0.015, 2.0)
     @assert 0.001 <= T2Range[1] < T2Range[2] <= 10.0
-
+    
+    # Min and Max of the short peak window
     SPWin::NTuple{2,T} = (0.014, 0.040)
     @assert SPWin[1] < SPWin[2]
-
+    
+    # Min and Max of the middle peak window
     MPWin::NTuple{2,T} = (0.040, 0.200)
     @assert MPWin[1] < MPWin[2]
-
+    
+    # Apply sigmoidal weighting to the upper limit of the short peak window.
+    # Value is the delta-T2 parameter (distance in seconds on either side of
+    # the SPWin upper limit where sigmoid curve reaches 10% and 90%).
+    # Default is no sigmoid weighting.
     Sigmoid::Union{T,Nothing} = nothing
     @assert Sigmoid isa Nothing || Sigmoid > 0.0
 end
@@ -30,25 +39,15 @@ Description:
   of a series of parameters.
 
 Inputs:
-  T2distributions: 4-D array with data as (row,column,slice,T2 Amplitude)
-  ...: A series of optional Property/Value pairs to modify settings.
-    Defaults are given in brackets:
-      "nT2":     Number of T2 values in distribution (size(T2distributions, 4))
-      "T2Range": Min and Max T2 values of distribution ([0.015,2.000])
-      "SPWin":   Min and Max of the short peak window ([0.015,0.040])
-      "MPWin":   Min and Max of the middle peak window ([0.040,0.200])
-      "Sigmoid": Apply sigmoidal weighting to the upper limit of the 
-                 short peak window. Value is the delta-T2 parameter 
-                 (distance in seconds on either side of the SPWin upper 
-                 limit where sigmoid curve reaches 10% and 90%). (Default
-                 is no sigmoid weighting)
+  T2distributions: 4-D array with data as (row, column, slice, T2 Amplitude)
+  kwargs: A series of optional keyword argument settings; see T2partOptions
 
 Ouputs:
   maps: a dictionary containing the following 3D data maps as fields:
-      "sfr": (small pool (myelin water) fraction)
-      "sgm": (small pool (myelin water) geometric mean)
-      "mfr": (medium pool (intra/extra water) fraction)
-      "mgm": (medium pool (intra/extra water) geometric mean)
+      "sfr": small pool (myelin water) fraction
+      "sgm": small pool (myelin water) geometric mean
+      "mfr": medium pool (intra/extra water) fraction
+      "mgm": medium pool (intra/extra water) geometric mean
 
 External Calls:
   none
@@ -56,6 +55,10 @@ External Calls:
 Created by Thomas Prasloski
 email: tprasloski@gmail.com
 Ver. 1.2, August 2012
+
+Adapted for Julia by Jonathan Doucette
+email: jdoucette@phas.ubc.ca
+Nov 2019
 """
 function T2partSEcorr(T2distributions::Array{T,4}; kwargs...) where {T}
     reset_timer!(TIMER)
@@ -81,18 +84,22 @@ function _T2partSEcorr(T2distributions::Array{T,4}, opts::T2partOptions{T}) wher
     maps["mgm"] = fill(T(NaN), opts.GridSize...)
     thread_buffers = [thread_buffer_maker(opts) for _ in 1:Threads.nthreads()]
 
-    Threads.@threads for row in 1:opts.GridSize[1]
-        thread_buffer = thread_buffers[Threads.threadid()]
-        @inbounds for col in 1:opts.GridSize[2], slice in 1:opts.GridSize[3]
-            if any(isnan, @views(T2distributions[row,col,slice,:]))
-                continue
+    LinearAlgebra.BLAS.set_num_threads(1) # Prevent BLAS from stealing julia threads
+    for slice in 1:opts.GridSize[3]
+        Threads.@threads for col in 1:opts.GridSize[2]
+            thread_buffer = thread_buffers[Threads.threadid()]
+            @inbounds for row in 1:opts.GridSize[1]
+                if any(isnan, @views(T2distributions[row, col, slice, :]))
+                    continue
+                end
+                for i in 1:opts.nT2
+                    thread_buffer.dist[i] = T2distributions[row, col, slice, i]
+                end
+                update_maps!(thread_buffer, maps, opts, row, col, slice)
             end
-            for i in 1:opts.nT2
-                thread_buffer.dist[i] = T2distributions[row,col,slice,i]
-            end
-            update_maps!(thread_buffer, maps, opts, row, col, slice)
         end
     end
+    LinearAlgebra.BLAS.set_num_threads(Threads.nthreads()) # Reset BLAS threads
 
     return maps
 end
