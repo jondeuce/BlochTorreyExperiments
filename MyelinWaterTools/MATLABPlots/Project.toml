@@ -1,0 +1,12 @@
+name = "MATLABPlots"
+uuid = "5fb944d6-4b98-4a68-bfc4-cc0240869288"
+authors = ["Jonathan Doucette <jdoucette@phas.ubc.ca>"]
+version = "0.1.0"
+
+[deps]
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+DistMesh = "b4596390-acbb-11e9-1f4c-bf4694421f57"
+GeometryUtils = "7860413f-5c8e-458f-8095-9ece1177bf04"
+JuAFEM = "30d91d44-8115-11e8-1d28-c19a5ac16de8"
+MATLAB = "10e44e05-a98a-55b3-a45b-ba969058deb6"
+Reexport = "189a3867-3050-52da-a836-e630ba90ab69"

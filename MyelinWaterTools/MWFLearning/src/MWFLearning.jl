@@ -4,8 +4,8 @@
 
 module MWFLearning
 
-import Flux, Flux.NNlib, Flux.Tracker, Flux.Optimise, DrWatson, BSON, TOML, Dates
-export Flux,      NNlib,      Tracker,      Optimise, DrWatson, BSON, TOML, Dates
+import Flux, Flux.NNlib, Flux.Optimise, DrWatson, BSON, TOML, Dates
+export Flux,      NNlib,      Optimise, DrWatson, BSON, TOML, Dates
 
 using Statistics: mean, median, cov, std, var
 using StatsBase: quantile
@@ -14,6 +14,8 @@ using Tensors
 import MultivariateStats
 import Interpolations
 import FFTW
+import NonNegLeastSquares
+using NonNegLeastSquares: NNLS
 
 using Reexport
 
@@ -27,7 +29,6 @@ export plot, plot!, mean, median, cov, std, var, quantile
 @reexport using GeometryUtils
 @reexport using EllipsisNotation
 @reexport using Wavelets
-@reexport using NNLS
 @reexport using Printf
 @reexport using StatsPlots
 @reexport using DrWatson

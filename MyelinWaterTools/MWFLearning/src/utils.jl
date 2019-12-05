@@ -336,10 +336,10 @@ xavier_normal(T::Type, dims...; kwargs...) = xavier_normal(T::Type, dims; kwargs
 xavier_normal(args...; kwargs...) = xavier_normal(Float32, args...; kwargs...)
 
 # Override flux defaults
-Flux.glorot_uniform(dims...) = xavier_uniform(Float32, dims...)
-Flux.glorot_uniform(T::Type, dims...) = xavier_uniform(T, dims...)
-Flux.glorot_normal(dims...) = xavier_normal(Float32, dims...)
-Flux.glorot_normal(T::Type, dims...) = xavier_normal(T, dims...)
+# Flux.glorot_uniform(dims...) = xavier_uniform(Float32, dims...)
+# Flux.glorot_uniform(T::Type, dims...) = xavier_uniform(T, dims...)
+# Flux.glorot_normal(dims...) = xavier_normal(Float32, dims...)
+# Flux.glorot_normal(T::Type, dims...) = xavier_normal(T, dims...)
 
 ####
 #### Callbacks
