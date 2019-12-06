@@ -175,7 +175,7 @@ uuid = "fd0ad045-b25c-564e-8f9c-8ef5c5f21267"
 version = "0.3.0"
 
 [[GeometryUtils]]
-deps = ["DistMesh", "JuAFEM", "LineSearches", "LinearAlgebra", "Optim", "PolynomialRoots", "RecipesBase", "Reexport", "Rotations", "SparseArrays", "StaticArrays", "Statistics", "StatsBase", "Tensors"]
+deps = ["DistMesh", "JuAFEM", "LineSearches", "LinearAlgebra", "Optim", "PolynomialRoots", "RecipesBase", "Reexport", "Rotations", "SparseArrays", "StaticArrays", "Statistics", "StatsBase", "Tensors", "VoronoiDelaunay"]
 path = "../GeometryUtils"
 uuid = "7860413f-5c8e-458f-8095-9ece1177bf04"
 version = "0.1.0"
@@ -514,10 +514,12 @@ uuid = "19fa3120-7c27-5ec5-8db8-b0b0aa330d6f"
 version = "0.1.0"
 
 [[VoronoiDelaunay]]
-deps = ["Colors", "GeometricalPredicates", "Random"]
-git-tree-sha1 = "da5560a4c7c767476e85e2dbf4d8c8ca112e542b"
+deps = ["Colors", "GeometricalPredicates", "Random", "Test"]
+git-tree-sha1 = "2914d0085a001036d70edb9525458b3589fd11fe"
+repo-rev = "master"
+repo-url = "https://github.com/jondeuce/VoronoiDelaunay.jl"
 uuid = "72f80fcb-8c52-57d9-aff0-40c1a3526986"
-version = "0.4.0"
+version = "0.4.0+"
 
 [[WriteVTK]]
 deps = ["Base64", "CodecZlib", "LightXML", "Random", "TranscodingStreams"]

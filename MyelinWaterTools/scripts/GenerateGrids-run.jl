@@ -1,23 +1,18 @@
 # Activate project and load packages for this script
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
-include(joinpath(@__DIR__, "../initpaths.jl"))
 Pkg.instantiate()
 
-# NOTE: must load pyplot backend BEFORE loading MATLAB in MWFUtils/init.jl
-using StatsPlots
-pyplot(size=(1200,900), leg = false, grid = false, labels = nothing)
-using GlobalUtils
 using MWFUtils
-
-# Initialize project packages
-include(joinpath(@__DIR__, "../init.jl"))
+using GlobalUtils
 make_reproduce(
     """
     include("BlochTorreyExperiments/MyelinWaterTools/scripts/GenerateGrids-run.jl")
     """
 )
-gitdir() = realpath(DrWatson.projectdir(".."))
+
+pyplot(size=(1200,900), leg = false, grid = false, labels = nothing)
+gitdir() = realpath(DrWatson.projectdir("..")) # DrWatson package for tagged saving
 
 function runcreategeometry(params; numreps = 5)
     # BlochTorreyParameters
@@ -30,7 +25,7 @@ function runcreategeometry(params; numreps = 5)
         MVF = mvf,
         MWF = mwf,
     )
-    
+
     # Attempt to generate `numreps` grids for given parameter set
     for _ in 1:numreps
         try
@@ -45,6 +40,7 @@ function runcreategeometry(params; numreps = 5)
                 MAXITERS = 2000, #DEBUG
                 FIXPOINTSITERS = 1000, #DEBUG
                 FIXSUBSITERS = 950, #DEBUG
+                VERBOSE = true,
                 FORCEDENSITY = true, #DEBUG # error if desired density isn't reached
                 FORCEAREA = true, #DEBUG # error if the resulting grid area doesn't match the bdry area
                 FORCEQUALITY = true) #DEBUG # error if the resulting grid area have high enough quality
@@ -62,8 +58,8 @@ function runcreategeometry(params; numreps = 5)
             DrWatson.@tagsave(
                 "geom/" * fname * ".geom.bson",
                 Dict(:params => params, pairs(geom)...),
-                true, # safe saving (don't overwrite existing files)
-                gitdir())
+                safe = true, # safe saving (don't overwrite existing files)
+                gitpath = gitdir())
         catch e
             if e isa InterruptException
                 # User interrupt; rethrow and catch in main()
@@ -150,8 +146,8 @@ main(;iters = typemax(Int), randomorder = true)
 #     DrWatson.@tagsave(
 #         "geom-renamed/" * fname * ".geom.bson",
 #         geom,
-#         true, # safe saving (don't overwrite existing files)
-#         gitdir())
+#         safe = true, # safe saving (don't overwrite existing files)
+#         gitpath = gitdir())
 #     
 #     push!(geomdata, geom)
 # end

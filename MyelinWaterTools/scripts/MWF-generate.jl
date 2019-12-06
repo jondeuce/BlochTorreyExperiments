@@ -1,18 +1,11 @@
 # Activate project and load packages for this script
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
-include(joinpath(@__DIR__, "../initpaths.jl"))
-# Pkg.instantiate()
+Pkg.instantiate()
 
-# NOTE: must load pyplot backend BEFORE loading MATLAB in init.jl
-using StatsPlots
-pyplot(size=(1200,900))
-using GlobalUtils
 using MWFUtils
-mxcall(:cd, 0, pwd()) # Set MATLAB path (Note: pwd(), not @__DIR__)
+using GlobalUtils
 const SIM_START_TIME = MWFUtils.getnow()
-
-# Create reproduce file
 make_reproduce( # Creating backup file
     """
     include("BlochTorreyExperiments/MyelinWaterTools/scripts/MWF-generate.jl")
@@ -20,8 +13,9 @@ make_reproduce( # Creating backup file
     fname = SIM_START_TIME * ".reproduce.jl"
 )
 
-# DrWatson package for tagged saving
-gitdir() = realpath(DrWatson.projectdir(".."))
+pyplot(size=(1200,900))
+mxcall(:cd, 0, pwd()) # Set MATLAB path (Note: pwd(), not @__DIR__)
+gitdir() = realpath(DrWatson.projectdir("..")) # DrWatson package for tagged saving
 
 ####
 #### Geometries to sweep over
@@ -47,7 +41,7 @@ function copy_and_load_geomfiles!(
             DrWatson.@tagsave(
                 joinpath("geom", basename(geomfile)),
                 deepcopy(geom),
-                true, gitdir())
+                safe = true, gitpath = gitdir())
         end
         push!(geomdata, geom)
     end
@@ -85,8 +79,8 @@ copy_and_load_random_geom(geomdir::String; kwargs...) = copy_and_load_random_geo
 const geombasepaths = [
     # realpath("./geom"),
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-3/geom",
-    # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-4/geom",
-    "/arc/project/st-arausch-1/jcd1994/ismrm2020/experiments/diff-med-1-input-data/geom",
+    "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-4/geom",
+    # "/arc/project/st-arausch-1/jcd1994/ismrm2020/experiments/diff-med-1-input-data/geom",
 ]
 const geomfiles = reduce(vcat, realpath.(joinpath.(gp, readdir(gp))) for gp in geombasepaths)
 const maxnnodes = 15_000
@@ -195,7 +189,7 @@ end
 DrWatson.@tagsave(
     SIM_START_TIME * ".metadata.bson",
     deepcopy(@dict(sweepparamsampler_settings, geomfiles, default_mwfmodels_dict, default_btparams_dict, default_solverparams_dict, default_nnlsparams_dict, default_TE, default_nTE)),
-    true, gitdir())
+    safe = true, gitpath = gitdir())
 
 ####
 #### Simulation functions
@@ -310,7 +304,7 @@ function runsimulation!(results, sweepparams, geom)
         DrWatson.@tagsave(
             "measurables/" * fname * ".measurables.bson",
             deepcopy(@dict(btparams_dict, solverparams_dict, sweepparams, tpoints, signals, mwfvalues)),
-            true, gitdir())
+            safe = true, gitpath = gitdir())
     catch e
         @warn "Error saving measurables"
         @warn sprint(showerror, e, catch_backtrace())
@@ -467,32 +461,35 @@ end
 #### Run sweep
 ####
 
-results = main()
-@unpack sweepparams, btparams, solverparams_dict, tpoints, signals, mwfvalues = results;
-# @unpack sols, myelinprob, myelinsubdomains, myelindomains = results; #TODO
-btparams_dict = Dict.(btparams);
+main()
+nothing
+
+# results = main()
+# @unpack sweepparams, btparams, solverparams_dict, tpoints, signals, mwfvalues = results;
+# # @unpack sols, myelinprob, myelinsubdomains, myelindomains = results; #TODO
+# btparams_dict = Dict.(btparams);
 
 ####
 #### Plot and save derived quantities from results
 ####
 
-try
-    BSON.bson(SIM_START_TIME * ".allparams.bson", deepcopy(@dict(sweepparams, btparams_dict)))
-catch e
-    @warn "Error saving all BlochTorreyParameter's"
-    @warn sprint(showerror, e, catch_backtrace())
-end
+# try
+#     BSON.bson(SIM_START_TIME * ".allparams.bson", deepcopy(@dict(sweepparams, btparams_dict)))
+# catch e
+#     @warn "Error saving all BlochTorreyParameter's"
+#     @warn sprint(showerror, e, catch_backtrace())
+# end
 
-try
-    BSON.bson(SIM_START_TIME * ".allmeasurables.bson", deepcopy(@dict(tpoints, signals, mwfvalues)))
-catch e
-    @warn "Error saving measurables"
-    @warn sprint(showerror, e, catch_backtrace())
-end
+# try
+#     BSON.bson(SIM_START_TIME * ".allmeasurables.bson", deepcopy(@dict(tpoints, signals, mwfvalues)))
+# catch e
+#     @warn "Error saving measurables"
+#     @warn sprint(showerror, e, catch_backtrace())
+# end
 
-try
-    plotMWFvsMethod(results; disp = false, fname = "mwfplots/" * SIM_START_TIME * ".mwf")
-catch e
-    @warn "Error plotting MWF."
-    @warn sprint(showerror, e, catch_backtrace())
-end
+# try
+#     plotMWFvsMethod(results; disp = false, fname = "mwfplots/" * SIM_START_TIME * ".mwf")
+# catch e
+#     @warn "Error plotting MWF."
+#     @warn sprint(showerror, e, catch_backtrace())
+# end

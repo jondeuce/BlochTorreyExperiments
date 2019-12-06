@@ -113,7 +113,8 @@ function packcircles(btparams::BlochTorreyParameters = BlochTorreyParameters{Flo
         beta        = 1e-6, # mutual distance penalty weight
         lambda      = 1.0, # overlap penalty weight (or lagrange multiplier for constrained version)
         greedyiters = 100, # maximum iterations for greedy packing
-        maxattempts = 5 # maximum attempts for sampling radii + greedy packing + energy packing
+        maxattempts = 5, # maximum attempts for sampling radii + greedy packing + energy packing
+        verbose     = false,
     )
 
     # Initialize
@@ -121,14 +122,14 @@ function packcircles(btparams::BlochTorreyParameters = BlochTorreyParameters{Flo
     # @info "epsilon = $epsilon" #DEBUG
 
     for i in 1:maxattempts
-        println("\nPacking... (attempt $i/$maxattempts)\n")
+        verbose && println("\nPacking... (attempt $i/$maxattempts)\n")
         rs = rand(radiidistribution(btparams), Ncircles) # Initial radii distribution
         
-        print("GreedyCirclePacking: ")
-        @time greedycircles = GreedyCirclePacking.pack(rs; goaldensity = 1.0, iters = greedyiters)
+        verbose && print("GreedyCirclePacking: ")
+        greedycircles = GreedyCirclePacking.pack(rs; goaldensity = 1.0, iters = greedyiters)
 
-        # print("EnergyCirclePacking: ")
-        # @time energycircles = EnergyCirclePacking.pack(greedycircles;
+        # verbose && print("EnergyCirclePacking: ")
+        # energycircles = EnergyCirclePacking.pack(greedycircles;
         #     autodiff = false,
         #     secondorder = false,
         #     setcallback = false,
@@ -140,9 +141,9 @@ function packcircles(btparams::BlochTorreyParameters = BlochTorreyParameters{Flo
         # scaledcircles, domain, _ = CirclePackingUtils.scale_to_density(energycircles, goaldensity, distthresh; MODE = :corners)
         # η_curr = estimate_density(scaledcircles, domain)
         # 
-        # println("GreedyCirclePacking density:  $(estimate_density(greedycircles, domain))")
-        # println("EnergyCirclePacking density:  $(estimate_density(energycircles, domain))")
-        # println("Final scaled circles density: $(estimate_density(scaledcircles, domain))")
+        # verbose && println("GreedyCirclePacking density:  $(estimate_density(greedycircles, domain))")
+        # verbose && println("EnergyCirclePacking density:  $(estimate_density(energycircles, domain))")
+        # verbose && println("Final scaled circles density: $(estimate_density(scaledcircles, domain))")
 
         # Scale greedycircles apart before using as initial guess for PeriodicCirclePacking,
         # otherwise circles tend to get caught in local minima where they are close to tangent,
@@ -150,8 +151,8 @@ function packcircles(btparams::BlochTorreyParameters = BlochTorreyParameters{Flo
         # circles don't start out as tangent
         scaledgreedycircles = translate_shape.(greedycircles, 1.1)
 
-        print("PeriodicCirclePacking: ")
-        @time periodiccircles, initialdomain = PeriodicCirclePacking.pack(scaledgreedycircles;
+        verbose && print("PeriodicCirclePacking: ")
+        periodiccircles, initialdomain = PeriodicCirclePacking.pack(scaledgreedycircles;
             autodiff = false,
             secondorder = false,
             distancescale = btparams.R_mu,
@@ -163,13 +164,13 @@ function packcircles(btparams::BlochTorreyParameters = BlochTorreyParameters{Flo
         η_max = periodic_density(periodiccircles, initialdomain)
         η_curr = periodic_density(finalcircles, finaldomain)
 
-        println("")
-        println("Distance threshold: $distthresh")
-        println("Minimum myelin thickness: $(minimum(radius.(finalcircles))*(1-btparams.g_ratio))")
-        println("Minimum circles distance: $(minimum_signed_edge_distance(finalcircles))")
-        println("")
-        println("Periodic circles density: $η_max")
-        println("Final scaled circles density: $η_curr")
+        verbose && println("")
+        verbose && println("Distance threshold: $distthresh")
+        verbose && println("Minimum myelin thickness: $(minimum(radius.(finalcircles))*(1-btparams.g_ratio))")
+        verbose && println("Minimum circles distance: $(minimum_signed_edge_distance(finalcircles))")
+        verbose && println("")
+        verbose && println("Periodic circles density: $η_max")
+        verbose && println("Final scaled circles density: $η_curr")
         
         (η_curr ≈ goaldensity) && (circles = finalcircles; domain = finaldomain; break)
         (η_curr > η_best) && (η_best = η_curr; circles = finalcircles; domain = finaldomain)
@@ -197,15 +198,19 @@ function creategeometry(::PeriodicPackedFibres, btparams::BlochTorreyParameters{
         FIXPOINTSITERS = 500, #DEBUG
         DENSITYCTRLFREQ = 250, #DEBUG
         DELTAT = 0.1, #DEBUG
+        VERBOSE = false, #DEBUG
         FORCEDENSITY = false, # If this flag is true, an error is thrown if the reached packing density is not goaldensity
         FORCEAREA = false, # If this flag is true, an error is thrown if the resulting grid area doesn't match the bdry area
-        FORCEQUALITY = false # If this flag is true, an error is thrown if the resulting grid doesn't have high enough quality
+        FORCEQUALITY = false, # If this flag is true, an error is thrown if the resulting grid doesn't have high enough quality
     ) where {T}
 
     # Initial set of circles
     outercircles, initialbdry = packcircles(btparams;
-        Ncircles = Ncircles, maxattempts = maxpackiter,
-        goaldensity = goaldensity, distthresh = overlapthresh * btparams.R_mu)
+        Ncircles = Ncircles,
+        maxattempts = maxpackiter,
+        goaldensity = goaldensity,
+        distthresh = overlapthresh * btparams.R_mu,
+        verbose = VERBOSE)
     innercircles = scale_shape.(outercircles, btparams.g_ratio)
     allcircles = collect(Iterators.flatten(zip(outercircles, innercircles)))
 
@@ -263,7 +268,7 @@ function creategeometry(::PeriodicPackedFibres, btparams::BlochTorreyParameters{
         FIXPOINTSITERS = FIXPOINTSITERS,
         DENSITYCTRLFREQ = DENSITYCTRLFREQ,
         DELTAT = DELTAT,
-        VERBOSE = true,
+        VERBOSE = VERBOSE,
         DETERMINISTIC = true,
         PLOT = false,
         PLOTLAST = false)

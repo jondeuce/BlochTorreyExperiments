@@ -75,7 +75,7 @@ uuid = "a134a8b2-14d6-55f6-9291-3336d3ab0209"
 version = "0.5.0"
 
 [[BlochTorreyUtils]]
-deps = ["BlockArrays", "DiffEqBase", "DiffEqCallbacks", "DistMesh", "Distributions", "DrWatson", "ExpmV", "Expokit", "GeometryUtils", "JuAFEM", "Lazy", "LinearMaps", "MDBM", "Optim", "OrdinaryDiffEq", "Parameters", "Printf", "Random", "Reexport", "SuiteSparse", "WriteVTK"]
+deps = ["BlockArrays", "DiffEqBase", "DiffEqCallbacks", "DistMesh", "Distributions", "DrWatson", "ExpmV", "Expokit", "GeometryUtils", "JuAFEM", "Lazy", "LinearMaps", "MDBM", "Optim", "OrdinaryDiffEq", "Parameters", "Printf", "Random", "Reexport", "SuiteSparse", "VoronoiDelaunay", "WriteVTK"]
 path = "../BlochTorreyUtils"
 uuid = "0c7a1e50-026b-442a-b0e0-468c598a8155"
 version = "0.1.0"
@@ -98,7 +98,7 @@ uuid = "49dc2e85-a5d0-5ad3-a950-438e2897f1b9"
 version = "0.5.1"
 
 [[CirclePackingUtils]]
-deps = ["DiffResults", "DistMesh", "ForwardDiff", "GeometryUtils", "JuAFEM", "LineSearches", "LinearAlgebra", "Optim", "OrdinaryDiffEq", "Parameters", "Random", "Reexport", "Roots", "Statistics", "StatsFuns", "SteadyStateDiffEq", "Tensors"]
+deps = ["DiffResults", "DistMesh", "ForwardDiff", "GeometryUtils", "JuAFEM", "LineSearches", "LinearAlgebra", "Optim", "OrdinaryDiffEq", "Parameters", "Random", "Reexport", "Roots", "Statistics", "StatsFuns", "SteadyStateDiffEq", "Tensors", "VoronoiDelaunay"]
 path = "../CirclePackingUtils"
 uuid = "c9560edf-630f-4f0d-a7cd-be4fc65435d6"
 version = "0.1.0"
@@ -332,7 +332,7 @@ uuid = "4d00f742-c7ba-57c2-abde-4428a4b178cb"
 version = "0.7.6"
 
 [[GeometryUtils]]
-deps = ["DistMesh", "JuAFEM", "LineSearches", "LinearAlgebra", "Optim", "PolynomialRoots", "RecipesBase", "Reexport", "Rotations", "SparseArrays", "StaticArrays", "Statistics", "StatsBase", "Tensors"]
+deps = ["DistMesh", "JuAFEM", "LineSearches", "LinearAlgebra", "Optim", "PolynomialRoots", "RecipesBase", "Reexport", "Rotations", "SparseArrays", "StaticArrays", "Statistics", "StatsBase", "Tensors", "VoronoiDelaunay"]
 path = "../GeometryUtils"
 uuid = "7860413f-5c8e-458f-8095-9ece1177bf04"
 version = "0.1.0"
@@ -451,7 +451,7 @@ uuid = "10e44e05-a98a-55b3-a45b-ba969058deb6"
 version = "0.7.3"
 
 [[MATLABPlots]]
-deps = ["Dates", "DistMesh", "GeometryUtils", "JuAFEM", "MATLAB", "Reexport"]
+deps = ["Dates", "DistMesh", "GeometryUtils", "JuAFEM", "MATLAB", "Reexport", "VoronoiDelaunay"]
 path = "../MATLABPlots"
 uuid = "5fb944d6-4b98-4a68-bfc4-cc0240869288"
 version = "0.1.0"
@@ -849,10 +849,12 @@ uuid = "19fa3120-7c27-5ec5-8db8-b0b0aa330d6f"
 version = "0.1.0"
 
 [[VoronoiDelaunay]]
-deps = ["Colors", "GeometricalPredicates", "Random"]
-git-tree-sha1 = "da5560a4c7c767476e85e2dbf4d8c8ca112e542b"
+deps = ["Colors", "GeometricalPredicates", "Random", "Test"]
+git-tree-sha1 = "2914d0085a001036d70edb9525458b3589fd11fe"
+repo-rev = "master"
+repo-url = "https://github.com/jondeuce/VoronoiDelaunay.jl"
 uuid = "72f80fcb-8c52-57d9-aff0-40c1a3526986"
-version = "0.4.0"
+version = "0.4.0+"
 
 [[Widgets]]
 deps = ["Colors", "Dates", "Observables", "OrderedCollections"]
