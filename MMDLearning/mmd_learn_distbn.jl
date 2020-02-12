@@ -211,7 +211,12 @@ let niters = 100, m = settings["mmd"]["batchsize"]::Int
 end
 =#
 
-sampleX, sampleY, sampleθ = make_gmm_data_samplers(image);
+# sampleX, sampleY, sampleθ = make_gmm_data_samplers(image);
+sampleX, sampleY, sampleθ = make_toy_samplers(;
+    ntrain = settings["vae"]["batchsize"]::Int,
+    epsilon = 0.001,
+    power = 4.0,
+);
 
 model = let
     n      = settings["data"]["nsignal"]::Int

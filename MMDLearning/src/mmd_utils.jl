@@ -347,7 +347,7 @@ end;
 function make_toy_samplers(;
         input_noise = false,
         epsilon = nothing,
-        power = 3.0,
+        power = 4.0,
         ntrain = 1_000,
         ntest = ntrain,
         nval = ntrain,
@@ -365,7 +365,7 @@ function make_toy_samplers(;
         (batchsize) -> toy_signal_model(batchsize, nothing, power)
 
     # Sample data
-    _sampleY(batchsize) = toy_signal_model(batchsize, epsilon, power)
+    _sampleY(batchsize) = toy_signal_model(batchsize, epsilon, 2)
     Ytrain, Ytest, Yval = _sampleY(ntrain), _sampleY(ntest), _sampleY(nval)
     sampleY = function(batchsize; dataset = :train)
         dataset == :train ? (batchsize === nothing ? Ytrain : _sampleY(batchsize)) :

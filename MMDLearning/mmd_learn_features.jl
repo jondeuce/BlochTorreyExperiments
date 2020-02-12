@@ -9,8 +9,8 @@ include(joinpath(@__DIR__, "src", "mmd_utils.jl"))
 
 # sampleX, sampleY, sampleθ = make_gmm_data_samplers(image);
 sampleX, sampleY, sampleθ = make_toy_samplers(;
-    epsilon = 0.005,
     ntrain = settings["vae"]["batchsize"]::Int,
+    epsilon = 0.001,
 );
 
 # settings = TOML.parsefile(joinpath(@__DIR__, "src/default_settings.toml")); #TODO
@@ -174,7 +174,7 @@ function train_vae_model(
             # Periodically checkpoint + plot
             if time() - last_checkpoint[] >= saveperiod
                 last_checkpoint[] = time()
-                estr = lpad(epoch, min(ndigits(epochs), 5), "0")
+                estr = lpad(epoch, ndigits(epochs), "0")
                 @timeit timer "checkpoint progress" saveprogress(joinpath(outfolder, "checkpoint"), "checkpoint-", ".epoch.$estr")
                 @timeit timer "make plots" plothandles = makeplots()
                 @timeit timer "checkpoint plots" saveplots(joinpath(outfolder, "checkpoint"), "checkpoint-", ".epoch.$estr", plothandles)
