@@ -1,5 +1,0 @@
--use more repos
---MatlabTools should be separate
---MagnetizationPropagation should be renamed (BlochTorreyExperiments?)
---Move everything to github, but keep results on gitlab in a new, separate repo (BlochTorreyResults?)
---Don't delete old gitlab repos!

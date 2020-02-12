@@ -1,0 +1,41 @@
+[data]
+out       = "./output/tmp"
+ntheta    = 5
+nsignal   = 128
+theta_labels = ["freq", "phase", "offset", "amp", "tconst"]
+# nsignal   = 48
+# theta_labels = ["refcon", "alpha", "T2short", "dT2", "Ashort"]
+
+[prior]
+method    = "simultaneous_perturbation_stochastic_approximation"
+maxtime   = 1.0
+nterms    = 2
+batchsize = 100
+nbatches  = 10
+logsigma  = -6.0
+
+[mmd]
+logsigma   = -6.0
+batchsize  = 100
+stepsize   = 1e-3
+nbatches   = 10
+epochs     = 9999
+traintime  = 3600.0
+saveperiod = 60.0
+ndense     = 2
+zdim       = 48
+
+[vae]
+epochs     = 999_999
+batchsize  = 1_000
+nbatches   = 10
+traintime  = 36000.0
+saveperiod = 300.0
+mutations  = 0
+stepsize   = 1e-4
+stepdrop   = 1.0
+steprate   = 1000
+zdim       = 8
+hdim       = 128
+nhidden    = 0
+gamma      = 0.5
