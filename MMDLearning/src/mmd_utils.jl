@@ -170,17 +170,71 @@ function mmd_bandwidth_bruteopt(sampleX, sampleY, bounds; nsigma = 100, nevals =
     return logσ, [f(logσ) for logσ in logσ]
 end
 
-function mmd_bandwidth_optfun(logσ::Real, X, Y, niters = 1)
+function mmd_bandwidth_optfun(logσ::Real, X, Y)
+    m = size(X,2)
     σ = exp(logσ)
     γ = inv(2σ^2)
-    k = Δ -> exp(-γ*Δ)
-    MMDsq  = mean([mmd(k, X, Y) for _ in 1:niters])
-    MMDvar = mean([mmdvar(k, X, Y) for _ in 1:niters])
-    return MMDsq^2 / MMDvar
+    k(Δ) = exp(-γ*Δ)
+    MMDsq  = m * mmd(k, X, Y)
+    MMDvar = m^2 * mmdvar(k, X, Y)
+    ϵ = eps(typeof(MMDvar))
+    t = MMDsq / √max(MMDvar, ϵ) # avoid division by zero/negative
+    return t
 end
-mmd_bandwidth_optfun(logσ::AbstractVector, args...; kwargs...) = mmd_bandwidth_optfun(logσ[], args...; kwargs...)
 ∇mmd_bandwidth_optfun(logσ::Real, args...; kwargs...) = ForwardDiff.derivative(logσ -> mmd_bandwidth_optfun(logσ, args...; kwargs...), logσ)
+mmd_bandwidth_optfun(logσ::AbstractVector, args...; kwargs...) = mmd_bandwidth_optfun(logσ[], args...; kwargs...)
 ∇mmd_bandwidth_optfun(logσ::AbstractVector, args...; kwargs...) = [∇mmd_bandwidth_optfun(logσ[], args...; kwargs...)]
+
+function mmd_flux_bandwidth_optfun(logσ::AbstractVector, X, Y)
+    m = size(X,2)
+    MMDsq  = m * mmd_flux(logσ, X, Y)
+    MMDvar = m^2 * mmdvar_flux(logσ, X, Y)
+    
+    # Avoiding div by zero/negative:
+    #   m^2 * MMDvar >= ϵ  -->  m * MMDσ >= √ϵ
+    ϵ = eps(typeof(MMDvar))
+    t = MMDsq / √max(MMDvar, ϵ)
+    return t
+end
+function ∇mmd_flux_bandwidth_optfun(logσ::AbstractVector, args...; kwargs...)
+    if length(logσ) <= 16
+        ForwardDiff.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)
+    else
+        Flux.Zygote.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)[1]
+    end
+end
+∇mmd_flux_bandwidth_optfun_fwddiff(logσ::AbstractVector, args...; kwargs...) = ForwardDiff.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)
+∇mmd_flux_bandwidth_optfun_zygote(logσ::AbstractVector, args...; kwargs...) = Flux.Zygote.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)[1]
+
+#= (∇)mmd_(flux_)bandwidth_optfun speed + consistency testing
+for m in [32,64,128,256,512], nsigma in [16], a in [2.0]
+    logsigma = rand(nsigma)
+    X, Y = randn(2,m), a.*randn(2,m)
+    
+    if nsigma == 1
+        t1 = mmd_bandwidth_optfun(logsigma, X, Y)
+        t2 = mmd_flux_bandwidth_optfun(logsigma, X, Y)
+        # @show t1, t2
+        # @show t1-t2
+        @assert t1≈t2
+    end
+
+    g1 = nsigma == 1 ? ∇mmd_bandwidth_optfun(logsigma, X, Y) : nothing
+    g2 = ∇mmd_flux_bandwidth_optfun_fwddiff(logsigma, X, Y)
+    g3 = ∇mmd_flux_bandwidth_optfun_zygote(logsigma, X, Y)
+    # @show g1, g2, g3
+    # @show g1-g2, g2-g3
+    @assert (nsigma != 1 || g1≈g2) && g2≈g3
+
+    # @btime mmd_bandwidth_optfun($logsigma, $X, $Y)
+    # @btime mmd_flux_bandwidth_optfun($logsigma, $X, $Y)
+
+    @show m, nsigma
+    (nsigma == 1) && @btime ∇mmd_bandwidth_optfun($logsigma, $X, $Y)
+    @btime ∇mmd_flux_bandwidth_optfun_fwddiff($logsigma, $X, $Y)
+    @btime ∇mmd_flux_bandwidth_optfun_zygote($logsigma, $X, $Y)
+end
+=#
 
 ####
 #### GMM data samplers from learned prior
@@ -315,9 +369,11 @@ toy_signal_model(n::Int, args...; kwargs...) = toy_signal_model(toy_theta_sample
 
 function toy_theta_sampler(n::Int = 1)
     unif(a, b) = a .+ (b-a) .* rand(n)
-    
-    freq   = unif(1/64,  1/16)
+
+    # freq   = unif(1/64,  1/16)
+    freq   = unif(1/64,  1/64)
     phase  = unif( 0.0,    pi)
+    # phase  = unif( 0.0,   0.0)
     offset = unif( 0.25,  0.5)
     amp    = unif( 0.1,  0.25)
     tconst = unif(16.0, 128.0)

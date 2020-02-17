@@ -118,15 +118,15 @@ let niters = 5, m = 1000
     k = Δ -> exp(-gamma*Δ)
 
     noise_instance = (X, logϵ) -> exp.(logϵ) .* randn(size(X)) .* X[1:1,:]
-    add_noise = (X, logϵ) -> sqrt.((X .+ noise_instance(X, logϵ)).^2 .+ noise_instance(X, logϵ).^2)
-    loss = (X, Y, logϵ) -> mean([m * mmd(k, add_noise(X, logϵ), Y) for _ in 1:niters])
+    corrected_signal = (X, logϵ) -> sqrt.((X .+ noise_instance(X, logϵ)).^2 .+ noise_instance(X, logϵ).^2)
+    loss = (X, Y, logϵ) -> mean([m * mmd(k, corrected_signal(X, logϵ), Y) for _ in 1:niters])
     ∇loss = (X, Y, logϵ) -> ForwardDiff.gradient(logϵ -> loss(X, Y, logϵ), logϵ)
 
-    η = 1e-2
-    opt = Flux.ADAM(η)
+    lr = 1e-2
+    opt = Flux.ADAM(lr)
     logϵ = collect(range(-3.0, -7.5, length = n)) #fill(-6.0, n)
 
-    outfolder = settings["data"]["out"]
+    outfolder = settings["data"]["out"]::String
     callback = function(epoch, X, Y, logϵ)
         ℓ = loss(X, Y, logϵ)
         push!(df, [epoch, ℓ, copy(logϵ)])
@@ -178,135 +178,273 @@ end
 =#
 
 #=
-let niters = 100, m = settings["mmd"]["batchsize"]::Int
-    # a = 12.0
-    # w = a .* [1.01, 1.0, 1.03, 1.04, 0.95]
-    # sampleX = () -> 5 .+ 10 .* rand(length(w), m)
-    # sampleY = () -> 5 .+  w .* rand(length(w), m)
-    # noise = 0.0025
-    # sampleX, sampleY = make_gmm_data_samplers(gmm, bounds, bounds_trans, f, g; noise = noise)
+for _ in 1:25
+    let y = sampleY(1)
+        p = plot()
+        plot!(p, reduce(hcat, [decoder(encoder(y)) for _ in 1:10]); line = (:blue,), leg = :none)
+        plot!(y; line = (:red, 3))
+        display(p)
+    end
+end
+let
+    p = plot()
+    plot!(p, sampleY(2); lab="Y", line = (3, :blue))
+    plot!(p, sampleX(2); lab="X", line = (3, :red))
+    display(p)
+end
+=#
 
-    loss = logσ -> mmd_bandwidth_optfun(logσ, sampleX(m), sampleY(m), niters)
-    ∇loss = logσ -> ∇mmd_bandwidth_optfun(logσ, sampleX(m), sampleY(m), niters)
+#=
+let m = 512, nperms = 1024, nsamples = 64
+    logsigma_allowed = 0.0:0.25:5.0
+    best_res = Dict("P_alpha" => 0.0, "logsigma" => [])
+    
+    corrected_signal = function(X)
+        # out = model(X)
+        # dX, ϵ = out[1:end÷2, :], exp.(out[end÷2+1:end, :])
+        # ϵ1, ϵ2 = ϵ .* randn(size(X)), ϵ .* randn(size(X))
+        # Xϵ = @. sqrt((X + dX + ϵ1)^2 + ϵ2^2)
+        # Xϵ = Flux.softmax(Xϵ)
 
-    # initsweep = function(logσ)
-    #     t = loss(logσ)
-    #     @info logσ, t
-    #     return t
-    # end
-    # logσ_samples = range(-8.0, -4.0, length = 10)
-    # t_samples = [initsweep(logσ) for logσ in logσ_samples]
-    # logσ = [logσ_samples[findmax(t_samples)[2]]]
-    logσ = [-6.0]
+        dX = model(encoder(X))
+        Xϵ = @. Flux.σ(X + dX)
+        return Xϵ
+    end
 
-    η = 1e-2
-    opt = Flux.ADAM(η)
-    callback = epoch -> @info epoch, logσ[], loss(logσ)
-
-    callback(0)
-    for epoch in 1:10000 # settings["mmd"]["epochs"]::Int
-        Flux.Optimise.update!(opt, logσ, -∇loss(logσ))
-        callback(epoch)
+    for _ in 1:10_000
+        kernelargs = sort(sample(logsigma_allowed, rand(2:8); replace = false))
+        # kernelargs = [1.5, 3.75, 4.25, 5.0]
+        res = mmd_perm_test_power(
+            kernelargs,
+            m -> encoder(corrected_signal(sampleX(m))),
+            m -> encoder(sampleY(m; dataset = :test));
+            batchsize = m,
+            nperms = nperms,
+            nsamples = nsamples
+        )
+        if res.P_alpha_approx > best_res["P_alpha"]
+            best_res["P_alpha"] = res.P_alpha_approx
+            best_res["logsigma"] = copy(kernelargs)
+            @show best_res
+        end
+        plot(
+            mmd_perm_test_power_plot(res),
+            plot(kernelargs; title = "$kernelargs");
+            layout = (2,1),
+         ) |> display
     end
 end
 =#
 
 # sampleX, sampleY, sampleθ = make_gmm_data_samplers(image);
-sampleX, sampleY, sampleθ = make_toy_samplers(;
-    ntrain = settings["vae"]["batchsize"]::Int,
-    epsilon = 0.001,
-    power = 4.0,
-);
+sampleX, sampleY, sampleθ = make_toy_samplers(ntrain = settings["mmd"]["batchsize"]::Int, epsilon = 1e-3, power = 4.0);
+
+vae_model_dict = BSON.load("/scratch/st-arausch-1/jcd1994/MMD-Learning/toyvaeopt-v1/sweep/45/best-model.bson")
+# encoder = Flux.Chain(deepcopy(vae_model_dict["A"]), h -> ((μ, logσ) = (h[1:end÷2, :], h[end÷2+1:end, :]); μ .+ exp.(logσ) .* randn(size(logσ)...)))
+# encoder = Flux.Chain(deepcopy(vae_model_dict["A"]), h -> h[1:end÷2, :])
+# decoder = deepcopy(vae_model_dict["f"])
+encoder = identity
+decoder = identity
 
 model = let
-    n      = settings["data"]["nsignal"]::Int
-    ndense = settings["mmd"]["ndense"]::Int
-    zdim   = settings["mmd"]["zdim"]::Int
-
-    H    = [n; fill(zdim, ndense-1); 2n]
-    act  = x -> Flux.relu.(x)
-    Dins = [[act, Flux.Dense(H[i], H[i+1])] for i in 2:length(H)-1]
-    Din  = isempty(Dins) ? () : reduce(vcat, Dins)
+    n    = settings["data"]["nsignal"]::Int
+    Dz   = settings["mmd"]["zdim"]::Int
+    Dh   = settings["mmd"]["hdim"]::Int
+    Nh   = settings["mmd"]["nhidden"]::Int
+    act  = Flux.relu
+    hidden(nlayers) = [Flux.Dense(Dh, Dh, act) for _ in 1:nlayers]
 
     Flux.Chain(
-        Flux.Dense(H[1], H[2]),
-        Din...,
-        x -> tanh.(x),
-        # x -> relu.(x),
-        # Flux.Diagonal(0.1*randn(H[end]), -8 .+ 0.1*randn(H[end])),
-        Flux.Diagonal([fill(-0.01, H[end]÷2); ones(H[end]÷2)], [zeros(H[end]÷2); fill(-6.0, H[end]÷2)]),
-        # Flux.Diagonal(H[end]),
-        # x -> 0.01 .* x,
+        (encoder == identity ? Flux.Dense(n, Dh, act) : Flux.Dense(Dz, Dh, act)),
+        hidden(Nh)...,
+        # Flux.Dense(Dh, n),
+        Flux.Dense(Dh, n, tanh),
+        # Flux.Dense(Dh, n, Flux.σ),
+        x -> 0.1 .* x,
     ) |> Flux.f64
 end
 
-function train_mmd_model(
-        model,
-        sampleX,
-        sampleY;
-        n          = settings["data"]["nsignal"]::Int,
-        m          = settings["mmd"]["batchsize"]::Int,
-        lr         = settings["mmd"]["stepsize"]::Float64,
-        nbatches   = settings["mmd"]["nbatches"]::Int,
-        epochs     = settings["mmd"]["epochs"]::Int,
-        outfolder  = settings["data"]["out"]::String,
-        timeout    = settings["mmd"]["traintime"]::Float64,
-        logsigma   = settings["mmd"]["logsigma"]::Float64,
-        saveperiod = settings["mmd"]["saveperiod"]::Float64,
-        nperm = 100,
+# function corrected_signal(X) # Learning correction + noise
+#     out = model(encoder(X))
+#     dX, ϵ = out[1:end÷2, :], exp.(out[end÷2+1:end, :])
+#     ϵ1, ϵ2 = ϵ .* randn(size(X)), ϵ .* randn(size(X))
+#     Xϵ = @. sqrt((X + dX + ϵ1)^2 + ϵ2^2)
+#     # Xϵ = Flux.softmax(Xϵ)
+#     return Xϵ
+# end
+# additive_correction(X) = model(encoder(X))[1:end÷2,:]
+# noise_instance(X) = exp.(model(encoder(X))[end÷2+1:end,:]) .* randn(size(X))
+
+function corrected_signal(X) # Learning correction w/ fixed noise
+    dX = model(encoder(X))
+    ϵ1, ϵ2 = 1e-3 .* randn(size(X)), 1e-3 .* randn(size(X))
+    Xϵ = @. sqrt((X + dX + ϵ1)^2 + ϵ2^2)
+    return Xϵ
+end
+additive_correction(X) = model(encoder(X))
+noise_instance(X) = 1e-3 .* randn(size(X))
+
+# corrected_signal(X) = X + model(encoder(X)) # Learning correction only
+# additive_correction(X) = model(encoder(X))
+# noise_instance(X) = zero(X)
+
+sampleLatentX(m; kwargs...) = encoder(corrected_signal(sampleX(m; kwargs...)))
+sampleLatentY(m; kwargs...) = encoder(sampleY(m; kwargs...))
+
+# settings = TOML.parsefile(joinpath(@__DIR__, "src/default_settings.toml")); #TODO
+
+function train_mmd_kernel!(
+        logsigma,
+        X = nothing,
+        Y = nothing;
+        m          =  settings["mmd"]["batchsize"]          :: Int,
+        lr         =  settings["mmd"]["kernel"]["stepsize"] :: Float64,
+        nbatches   =  settings["mmd"]["kernel"]["nbatches"] :: Int,
+        epochs     =  settings["mmd"]["kernel"]["epochs"]   :: Int,
+        kernelloss =  settings["mmd"]["kernel"]["losstype"] :: String,
+        # outfolder  =  settings["data"]["out"]            :: String,
+        # timeout    =  settings["mmd"]["traintime"]       :: Float64,
+        # saveperiod =  settings["mmd"]["saveperiod"]      :: Float64,
     )
-    tstart = Dates.now()
-    df = DataFrame(epoch = Int[], time = Float64[], loss = Float64[])
 
-    sigma = logsigma !== nothing ? exp(logsigma) : √(median(vec(mean(abs2, sampleX(m) - sampleY(m); dims=1)))/2) # exp(-Δ/2σ^2) = 1/e --> σ = √(Δ/2) where Δ = median(mse)
-    gamma = inv(2*sigma^2)
-    k = Δ -> exp(-gamma*Δ)
-
-    correction_instance = X -> model(X)[1:n,:]
-    noise_instance = X -> exp.(model(X)[n+1:end,:]) .* randn(size(X))
-    add_noise = function(X)
-        out = model(X)
-        dX, ϵ = out[1:n, :], exp.(out[n+1:end, :])
-        ϵ1, ϵ2 = ϵ .* randn(size(X)), ϵ .* randn(size(X))
-        Xϵ = sqrt.((X .+ dX .+ ϵ1).^2 .+ ϵ2.^2)
-        return Xϵ ./ sum(Xϵ; dims = 1)
+    loss = if kernelloss == "tstatistic"
+        (logσ,X,Y) -> -mmd_flux_bandwidth_optfun(logσ, X, Y) # minimize -t = -MMDsq/MMDσ
+    elseif kernelloss == "MMD"
+        (logσ,X,Y) -> -m * mmd_flux(logσ, X, Y) # minimize -m*MMDsq
+    else
+        error("Unknown kernel loss: $kernelloss")
     end
 
-    loss = (X, Y) -> mean((_ -> m * mmd_flux(k, add_noise(X), Y)).(1:nbatches))
-    ∇loss = (X, Y) -> Flux.gradient(() -> loss(X, Y), Flux.params(model))
+    diffres = ForwardDiff.DiffResults.GradientResult(logsigma)
+    function gradloss(logσ, X, Y)
+        ForwardDiff.gradient!(diffres, _logσ -> loss(_logσ, X, Y), logσ)
+        return DiffResults.value(diffres), DiffResults.gradient(diffres)
+    end
+
+    callback = function(epoch, X, Y)
+        ℓ = loss(logsigma, X, Y)
+        MMDsq = m * mmd_flux(logsigma, X, Y)
+        MMDvar = m^2 * mmdvar_flux(logsigma, X, Y)
+        MMDσ = √max(MMDvar, eps(typeof(MMDvar)))
+        # @info epoch, ℓ, MMDsq/MMDσ, MMDsq, MMDσ, logsigma
+    end
+
     opt = Flux.ADAM(lr)
+    for epoch in 1:epochs
+        while true
+            _X = !isnothing(X) ? X : sampleLatentX(m)
+            _Y = !isnothing(Y) ? Y : sampleLatentY(m; dataset = :train)
+
+            if kernelloss == "tstatistic"
+                ℓ = loss(logsigma, _X, _Y)
+                if abs(ℓ) > 100
+                    # @info "$epoch, loss too large: ℓ = $ℓ"
+                    continue
+                elseif ℓ > 0
+                    # @info "$epoch, loss is positive: ℓ = $ℓ"
+                    continue
+                end
+            end
+
+            ℓ, ∇ℓ = gradloss(logsigma, _X, _Y)
+            Flux.Optimise.update!(opt, logsigma, ∇ℓ)
+            callback(epoch, _X, _Y)
+            break
+        end
+    end
+end
+
+function train_mmd_model(;
+        n           =  settings["data"]["nsignal"]        :: Int,
+        m           =  settings["mmd"]["batchsize"]       :: Int,
+        lr          =  settings["mmd"]["stepsize"]        :: Float64,
+        lrdrop      =  settings["mmd"]["stepdrop"]        :: Float64,
+        lrdroprate  =  settings["mmd"]["steprate"]        :: Int,
+        # powercutoff =  settings["mmd"]["powercutoff"]     :: Float64,
+        powerrate   =  settings["mmd"]["powerrate"]       :: Int,
+        lrthresh    =  0.9e-7,
+        nbatches    =  settings["mmd"]["nbatches"]        :: Int,
+        epochs      =  settings["mmd"]["epochs"]          :: Int,
+        outfolder   =  settings["data"]["out"]            :: String,
+        timeout     =  settings["mmd"]["traintime"]       :: Float64,
+        nbandwidth  =  settings["mmd"]["nbandwidth"]      :: Int,
+        logsigma    =  collect(range(-1.0, 1.0; length = nbandwidth)) :: Vector{Float64},
+        #logsigma   = (settings["mmd"]["logsigma"]|>copy) :: Vector{Float64},
+        saveperiod  =  settings["mmd"]["saveperiod"]      :: Float64,
+        nperms      =  settings["mmd"]["nperms"]          :: Int,
+        nsamples    =  settings["mmd"]["nsamples"]        :: Int,
+    )
+    tstart = Dates.now()
+    df = DataFrame(epoch = Int[], time = Float64[], loss = Float64[], c_alpha = Float64[], P_alpha = Float64[], t_perm = Float64[], rmse = Float64[], logsigma = Vector{Float64}[])
+
+    # lambda = 1e3
+    # Lap = diagm(1 => ones(n-1), 0 => -2*ones(n), -1 => ones(n-1))
+    # loss = (X, Y) -> m * mmd_flux(logsigma, corrected_signal(X), Y) + lambda * mean(abs2, Lap * additive_correction(X))
+    # loss = (X, Y) -> m * mmd_flux(logsigma, encoder(corrected_signal(X)), encoder(Y)) + lambda * mean(abs2, Lap * additive_correction(X))
+    # @show lambda * mean(abs2, Lap * additive_correction(sampleX(m)))
+
+    loss = (X, Y) -> m * mmd_flux(logsigma, corrected_signal(X), Y)
 
     callback = let
         last_time = Ref(time())
         last_checkpoint = Ref(time())
         function(epoch, X, Y)
-            ℓ = loss(X, Y)
-
             dt, last_time[] = time() - last_time[], time()
-            push!(df, [epoch, dt, ℓ])
-            @info "$epoch: loss = $(round(ℓ;sigdigits=6)), time = $(round(dt;sigdigits=3))s"
+
+            ℓ = loss(X, Y)
+            ϵ = noise_instance(X)
+            dX = additive_correction(X)
+            Xϵ = corrected_signal(X)
+
+            θ = sampleθ(m)
+            Yθ = toy_signal_model(θ, nothing, 2)
+            Xθ = toy_signal_model(θ, nothing, 4)
+            dXθ = additive_correction(Xθ)
+            Xθϵ = corrected_signal(Xθ)
+            rmse = sqrt(mean(abs2, Yθ - (Xθ + dXθ)))
+
+            permtest = mmd_perm_test_power(logsigma, m -> sampleLatentX(m), m -> sampleLatentY(m; dataset = :test), batchsize = m, nperms = nperms, nsamples = nsamples)
+            c_α = permtest.c_alpha
+            P_α = permtest.P_alpha_approx
+            t_perm = permtest.MMDsq / permtest.MMDσ
+
+            # Update and show progress
+            push!(df, [epoch, dt, ℓ, c_α, P_α, t_perm, rmse, copy(logsigma)])
+            show(stdout, last(df, 6)); println("\n")
 
             function makeplots()
-                s = x -> round(x; sigdigits = 3) # for plotting
+                s = x -> round(x; sigdigits = 4) # for plotting
                 try
-                    ϵ = noise_instance(X)
-                    dX = correction_instance(X)
-                    Xϵ = add_noise(X)
-                    pnoise = plot(mean(ϵ; dims = 2); yerr = std(ϵ; dims = 2), label = "noise vector");
-                    plot!(pnoise, mean(dX; dims = 2); yerr = std(dX; dims = 2), label = "correction vector"); display(pnoise)
-                    psig = plot(; title = "blue: real signals - red: simulated"); plot!(psig, Y[:,1:10]; c = :blue, leg = :none); plot!(psig, Xϵ[:,1:10]; c = :red, leg = :none); display(psig)
-                    ploss = plot(df.epoch, df.loss; title = "minimum loss = $(minimum(df.loss))", label = "m * MMDsq"); display(ploss)
-                    pwit = mmd_witness(Xϵ, Y, sigma); display(pwit)
-                    pheat = mmd_heatmap(Xϵ, Y, sigma)
+                    pnoise = plot()
+                    plot!(pnoise, mean(ϵ; dims = 2); yerr = std(ϵ; dims = 2), label = "noise vector");
+                    plot!(pnoise, mean(dX; dims = 2); yerr = std(dX; dims = 2), label = "correction vector");
+                    display(pnoise)
 
-                    # @unpack c_α, P_α, P_α_approx, MMDsq, MMDσ, c_α_samples, mmd_samples =
-                    #     mmd_permutation_test(k, () -> add_noise(sampleX(m)), () -> sampleY(m); niters = nperm)
-                    # pperm = plot()
-                    # density!(pperm,    c_α_samples; l = (4, :blue), label = "before: μ = $(s(mean(   c_α_samples))), σ = $(s(std(   c_α_samples)))")
-                    # density!(pperm, m.*mmd_samples; l = (4, :red),  label = "before: μ = $(s(mean(m.*mmd_samples))), σ = $(s(std(m.*mmd_samples)))")
-                    # display(pperm)
+                    nθplot = 2
+                    psig = plot(
+                        # [plot(Y[:,j]; c = :blue, lab = "Real signal Y") for j in 1:nθplot]...,
+                        [plot(hcat(Yθ[:,j], Xθϵ[:,j]); c = [:blue :red], lab = ["Goal Yθ" "Simulated Xθϵ"]) for j in 1:nθplot]...,
+                        [plot(hcat(Yθ[:,j] - Xθ[:,j], dXθ[:,j]); c = [:blue :red], lab = ["Goal Yθ-Xθ" "Simulated dXθ"]) for j in 1:nθplot]...,
+                        [plot(Yθ[:,j] - Xθ[:,j] - dXθ[:,j]; lab = "Yθ-(Xθ+dXθ)") for j in 1:nθplot]...;
+                        layout = (3, nθplot),
+                    );
+                    display(psig)
 
-                    return @ntuple(pnoise, psig, ploss, pwit, pheat)#, pperm)
+                    ploss = plot(
+                        plot(df.loss; title = "min loss = $(s(minimum(df.loss)))", label = "m * MMD^2"), #df.epoch
+                        plot(df.rmse; title = "min rmse = $(s(minimum(df.rmse)))", label = "rmse"), #df.epoch
+                        plot(df.t_perm; title = "max t = $(s(maximum(df.t_perm)))", label = "t = MMD^2/MMDσ"), #df.epoch
+                        plot(permutedims(reduce(hcat, df.logsigma)); label = ["logσ" fill(nothing,1,length(df.logsigma[1])-1)]),
+                    );
+                    display(ploss)
+
+                    # pwit = mmd_witness(Xϵ, Y, sigma)
+                    # pheat = mmd_heatmap(Xϵ, Y, sigma)
+
+                    pperm = mmd_perm_test_power_plot(permtest)
+                    display(pperm)
+
+                    return @ntuple(pnoise, psig, ploss, pperm) #pwit, pheat
                 catch e
                     @warn "Error plotting"
                     @warn sprint(showerror, e, catch_backtrace())
@@ -315,13 +453,13 @@ function train_mmd_model(
 
             function saveplots(savefolder, prefix, suffix, plothandles)
                 !isdir(savefolder) && mkpath(savefolder)
-                @unpack pnoise, psig, ploss, pwit, pheat = plothandles # pperm
+                @unpack pnoise, psig, ploss, pperm = plothandles #pwit, pheat
                 savefig(pnoise, joinpath(savefolder, "$(prefix)noise$(suffix).png"))
                 savefig(psig,   joinpath(savefolder, "$(prefix)signals$(suffix).png"))
                 savefig(ploss,  joinpath(savefolder, "$(prefix)loss$(suffix).png"))
-                savefig(pwit,   joinpath(savefolder, "$(prefix)witness$(suffix).png"))
-                savefig(pheat,  joinpath(savefolder, "$(prefix)heat$(suffix).png"))
-                #savefig(pperm, joinpath(savefolder, "$(prefix)perm$(suffix).png"))
+                # savefig(pwit,   joinpath(savefolder, "$(prefix)witness$(suffix).png"))
+                # savefig(pheat,  joinpath(savefolder, "$(prefix)heat$(suffix).png"))
+                savefig(pperm,  joinpath(savefolder, "$(prefix)perm$(suffix).png"))
             end
 
             function saveprogress(savefolder, prefix, suffix)
@@ -335,28 +473,57 @@ function train_mmd_model(
                 end
             end
 
+            # Check for best loss + save
+            # isbest = df.loss[end] <= minimum(df.loss)
+            isbest = df.rmse[end] <= minimum(df.rmse)
+            isbest && saveprogress(outfolder, "best-", "")
+
             if epoch == 0 || time() - last_checkpoint[] >= saveperiod
                 last_checkpoint[] = time()
                 estr = lpad(epoch, min(ndigits(epochs), 5), "0")
-                isbest = df.loss[end] <= minimum(df.loss)
                 saveprogress(joinpath(outfolder, "checkpoint"), "checkpoint-", ".epoch.$estr")
                 saveprogress(outfolder, "current-", "")
-                isbest && saveprogress(outfolder, "best-", "")
 
                 plothandles = makeplots()
                 saveplots(joinpath(outfolder, "checkpoint"), "checkpoint-", ".epoch.$estr", plothandles)
                 saveplots(outfolder, "current-", "", plothandles)
-                isbest && saveplots(outfolder, "best-", "", plothandles)
+                # isbest && saveplots(outfolder, "best-", "", plothandles)
+            end
+
+            if epoch > 0 && mod(epoch, lrdroprate) == 0
+                opt.eta /= lrdrop
+                if opt.eta >= lrthresh
+                    @info "$epoch: Dropping learning rate to $(opt.eta)"
+                else
+                    @info "$epoch: Learning rate dropped below $lrthresh, exiting..."
+                    throw(InterruptException())
+                end
+            end
+
+            # Optimise kernel bandwidths
+            # if df[end, :P_alpha] < powercutoff
+            if epoch > 0 && mod(epoch, powerrate) == 0
+                train_mmd_kernel!(logsigma)
+                # @time callback(epoch, X, Ytest)
             end
         end
     end
 
+    opt = Flux.ADAM(lr)
     callback(0, sampleX(m), sampleY(m; dataset = :test))
     for epoch in 1:epochs
         try
-            X, Ytrain, Ytest = sampleX(m), sampleY(m; dataset = :train), sampleY(m; dataset = :test)
-            Flux.train!(loss, Flux.params(model), [(X,Ytrain)], opt)
-            callback(epoch, X, Ytest)
+            # Minimize MMD^2
+            X = sampleX(m)
+            for _ in 1:nbatches #@time
+                Ytrain = sampleY(m; dataset = :train)
+                gs = Flux.gradient(() -> loss(X, Ytrain), Flux.params(model)) #@time
+                Flux.Optimise.update!(opt, Flux.params(model), gs)
+            end
+
+            Ytest = sampleY(m; dataset = :test)
+            callback(epoch, X, Ytest) #@time
+
             if Dates.now() - tstart >= Dates.Second(floor(Int, timeout))
                 @info "Exiting: training time exceeded $(DECAES.pretty_time(timeout)) at epoch $epoch/$epochs"
                 break
@@ -374,6 +541,14 @@ function train_mmd_model(
     return df
 end
 
-df = train_mmd_model(model, sampleX, sampleY)
+df = train_mmd_model()
+
+# df, logsigma = let
+#     logsigma = randn!(copy(settings["mmd"]["logsigma"]))
+#     # logsigma = randn(4)
+#     # logsigma = [-0.11354731812944348, -0.1462711814441279, -1.0141385069715343, 0.32264629940961265, 2.236591131623039, -0.1566347284678008, 0.37856592981236625, -0.3246088334724258]
+#     df = train_mmd_model(logsigma = logsigma)
+#     df, logsigma
+# end
 
 nothing

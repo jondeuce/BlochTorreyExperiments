@@ -1,4 +1,22 @@
-# Helper functions
+####
+#### Helper functions
+####
+
+# Smoothed version of max(x,e) for fixed e > 0
+smoothmax(x,e) = e + e * Flux.softplus((x-e) / e)
+
+function mix_columns(X::AbstractMatrix, Y::AbstractMatrix)
+    @assert size(X) == size(Y)
+    m = size(X, 2)
+    XY = hcat(X, Y)
+    idx = randperm(2m)
+    return (XY[:, idx[1:m]], XY[:, idx[m+1:end]])
+end
+
+function sample_columns(X::AbstractMatrix, batchsize)
+    X[:, sample(1:size(X,2), batchsize; replace = false)]
+end
+
 function column_mse(X::AbstractVecOrMat, Y::AbstractVecOrMat, i, j)
     @assert size(X) == size(Y) && 1 <= min(i,j) <= max(i,j) <= size(X,2)
     T = promote_type(eltype(X), eltype(Y))
@@ -58,18 +76,11 @@ function frob_norm2(X::AbstractArray)
     end
     return Σ
 end
-function mix_columns(X::AbstractMatrix, Y::AbstractMatrix)
-    @assert size(X) == size(Y)
-    m = size(X, 2)
-    XY = hcat(X, Y)
-    idx = randperm(2m)
-    return (XY[:, idx[1:m]], XY[:, idx[m+1:end]])
-end
-function sample_columns(X::AbstractMatrix, batchsize)
-    X[:, sample(1:size(X,2), batchsize; replace = false)]
-end
 
-# MMD using buffer matrices
+####
+#### MMD using buffer matrices
+####
+
 function kernel_pairwise!(Kxy::AbstractMatrix{T}, k, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, ::Val{skipdiag} = Val(false)) where {T,skipdiag}
     @assert size(X) == size(Y) && size(Kxy) == (size(X, 2), size(Y, 2))
     m = size(X, 2)
@@ -99,16 +110,16 @@ end
 function kernel_var_stats!(work, k, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
     @assert size(X) == size(Y)
     @unpack Kxx, Kyy, Kxy, Kyx, Kxx_e, Kyy_e, Kxy_e, Kyx_e = work
-    
+
     kernel_pairwise!(Kxx, k, X, X, Val(true))
     kernel_pairwise!(Kyy, k, Y, Y, Val(true))
     kernel_pairwise!(Kxy, k, X, Y, Val(false))
-    
+
     sum_columns!(Kxx_e, Kxx)
     sum_columns!(Kyy_e, Kyy)
     sum_columns!(Kxy_e, Kxy)
     sum_rows!(Kyx_e, Kxy)
-    
+
     Kxx_F2, Kyy_F2, Kxy_F2    = frob_norm2(Kxx), frob_norm2(Kyy), frob_norm2(Kxy)
     e_Kxx_e, e_Kyy_e, e_Kxy_e = sum(Kxx), sum(Kyy), sum(Kxy)
     e_Kxx_Kxy_e, e_Kyy_Kyx_e  = Kxx_e'Kxy_e, Kyy_e'Kyx_e
@@ -202,6 +213,7 @@ function mmdvar!(work, k, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
 
     return MMDvar
 end
+
 #=
 for a in [3,5,8], m in 30:10:100
     k = Δ -> exp(-Δ)
@@ -217,74 +229,10 @@ for a in [3,5,8], m in 30:10:100
 end
 =#
 
-# Flux differentiable MMD
-DiagmOp(x::AbstractVector) = diagm(x)
-Flux.Zygote.@adjoint function DiagmOp(x::AbstractVector)
-    return diagm(x)::AbstractMatrix, Δ::AbstractMatrix -> (diag(Δ),)
-end
-#=
-let
-    l = x -> sum(DiagmOp(x))
-    x = randn(3)
-    @show ngradient(l, x)[1]
-    @show Flux.gradient(l, x)
-    gradcheck(l, x)
-end
-=#
+####
+#### MMD without buffers
+####
 
-DiagOp(x::AbstractMatrix) = diag(x)
-Flux.Zygote.@adjoint function DiagOp(x::AbstractMatrix)
-    return diag(x)::AbstractVector, Δ -> (diagm(Δ[:]),) # why is Δ a matrix?
-end
-#=
-let
-    l = x -> sum(DiagOp(x))
-    x = randn(3,3)
-    @show ngradient(l, x)[1]
-    @show Flux.gradient(l, x)
-    gradcheck(l, x)
-end
-=#
-
-function mmd_flux(k, X::AbstractMatrix, Y::AbstractMatrix)
-    @assert size(X) == size(Y)
-    n, m = size(X)
-
-    # XX, XY, YY = X'X, X'Y, Y'Y
-    # xx, yy = LinearAlgebra.diag(XX), LinearAlgebra.diag(YY) # squared norms on diagonal
-    # Kxx = k.((xx .- 2 .* XX .+ xx')./n) # note: mean is over data length n, not number of data m
-    # Kyy = k.((yy .- 2 .* YY .+ yy')./n)
-    # Kxy = k.((xx .- 2 .* XY .+ yy')./n)
-    # Kxy = Kxy - LinearAlgebra.Diagonal(Kxy)
-
-    XX, XY, YY = X'X, X'Y, Y'Y
-    xx, yy = DiagOp(XX), DiagOp(YY) # squared norms on diagonal
-    Kxx = k.((xx .- 2 .* XX .+ xx')./n) # note: mean is over data length n, not number of data m
-    Kyy = k.((yy .- 2 .* YY .+ yy')./n)
-    Kxy = k.((xx .- 2 .* XY .+ yy')./n)
-    Kxy = Kxy - DiagmOp(DiagOp(Kxy))
-
-    # MMD²_U: MMD estimator which is a U-statistic
-    #   See: https://arxiv.org/pdf/1906.02104.pdf
-    e_Kxx_e = sum(Kxx) - m # assumes k(0) == 1
-    e_Kyy_e = sum(Kyy) - m # assumes k(0) == 1
-    e_Kxy_e = sum(Kxy)
-    MMDsq = (e_Kxx_e + e_Kyy_e - 2e_Kxy_e) / (m*(m-1))
-
-    return MMDsq
-end
-#=
-let
-    model = Flux.Dense(10,10)
-    X, Y = randn(10,100), randn(10,100)
-    k = d -> exp(-d)
-    loss = () -> mmd_flux(k, model(X), Y)
-    @btime $loss()
-    @btime Flux.gradient($loss, Flux.params($model))
-end
-=#
-
-# MMD without buffers
 function kernel_pairwise_sum(k, X::AbstractMatrix, Y::AbstractMatrix, ::Val{skipdiag} = Val(false)) where {skipdiag}
     # @assert size(X) == size(Y)
     m  = size(X, 2)
@@ -414,57 +362,456 @@ function mmdvar(k, X::AbstractMatrix, Y::AbstractMatrix)
 
     return MMDvar
 end
-#=
+
+#= mmdvar!, mmdvar, mmdvar_flux speed + consistency testing
 for a in [3], m in [30]
-    k = Δ -> exp(-Δ)
+    k = Δ -> exp(-Δ/2)
+    logsigma = [0.0]
+
     # sampleX = () -> randn(2,m)
     # sampleY = () -> ((1/√2) * [1 -1; 1 1] * [√a 0; 0 1/√a]) * randn(2,m)
     sampleX = () -> rand(2,m)
     sampleY = () -> [2-1/a; 1/a] .* rand(2,m)
     X, Y = sampleX(), sampleY()
-    v1 = @btime mmdvar!($(mmd_work(X, Y)), $k, $X, $Y)
     # @btime kernel_var_stats($k, $X, $Y)
+
+    v1 = @btime mmdvar!($(mmd_work(X, Y)), $k, $X, $Y)
     v2 = @btime mmdvar($k, $X, $Y)
-    @show v1, v2, v1-v2, (v1 - v2)/v1
+    v3 = @btime mmdvar_flux($logsigma, $X, $Y)
+    @show v1, v2, v3
+    @show v1-v2, v2-v3
+    @show (v1-v2)/v1, (v2-v3)/v2
 end
 =#
 
-#=
+#= mmd!, mmd, and mmd_flux consistency testing
 for m in [50]
-    k = Δ -> exp(-Δ)
+    k = Δ -> exp(-Δ/2)
+    logsigma = [0.0]
     X, Y = randn(2,m), 2 .* randn(2,m)
     v1 = mmd!(mmd_work(X, Y), k, X, Y)
     v2 = mmd(k, X, Y)
     v3 = mmd_flux(k, X, Y)
-    @assert v1 ≈ v2 && v2 ≈ v3
-    # @show v1, v2, v3, v1-v2, v2-v3
+    v4 = mmd_flux(logsigma, X, Y)
+    @assert v1 ≈ v2 && v2 ≈ v3 && v3≈v4
+    @show v1, v2, v3, v4
+    @show v1-v2, v2-v3, v3-v4
 end
 =#
 
-# Permutation testing
-function mmd_permutation_test(k, sampleX, sampleY; niters = 1000, alpha = 0.01)
-    n, m = size(sampleX())
-    c_α_samples = [m * mmd(k, mix_columns(sampleX(), sampleY())...) for _ in 1:niters]
-    c_α = quantile(c_α_samples, 1-alpha)
-    mmd_samples = [mmd(k, sampleX(), sampleY()) for _ in 1:niters]
-    P_α = count(MMD -> m * MMD > c_α, mmd_samples) / niters
+#= mmdvar qqplot testing
+for a in [4], m in [30], nsamples in [100]
+    s = x->round(x; sigdigits = 4)
+    qq(x,y) = qqplot(x, y; title = "a=$a, m=$m, nsamples=$nsamples, mean_x = $(s(mean(x))), mean_y = $(s(mean(y)))") |> display
+    
+    mean_var_samples = []
+    mean_mmdvar_samples = []
+    mean_mmdvar!_samples = []
+    mean_mmdvar_flux_samples = []
+
+    for _ in 1:1
+        k = Δ -> exp(-Δ/2)
+        logsigma = [0.0]
+        sampleX = () -> rand(2,m)
+        sampleY = () -> [2-1/a; 1/a] .* rand(2,m)
+        work = mmd_work(sampleX(), sampleY())
+
+        var_samples = [var([mmd(k, sampleX(), sampleY()) for _ in 1:nsamples]) for _ in 1:nsamples]
+        mmdvar_samples = [mmdvar(k, sampleX(), sampleY()) for _ in 1:nsamples]
+        mmdvar!_samples = [mmdvar!(work, k, sampleX(), sampleY()) for _ in 1:nsamples]
+        mmdvar_flux_samples = [mmdvar_flux(logsigma, sampleX(), sampleY()) for _ in 1:nsamples]
+
+        qq(mmdvar_samples, var_samples)
+        qq(mmdvar_samples, mmdvar!_samples)
+        qq(mmdvar_samples, mmdvar_flux_samples)
+        
+        push!(mean_var_samples, mean(var_samples))
+        push!(mean_mmdvar_samples, mean(mmdvar_samples))
+        push!(mean_mmdvar!_samples, mean(mmdvar!_samples))
+        push!(mean_mmdvar_flux_samples, mean(mmdvar_flux_samples))
+    end
+
+    # qq(mean_var_samples, mean_mmdvar_samples)
+    # qq(mean_var_samples, mean_mmdvar!_samples)
+    # qq(mean_var_samples, mean_mmdvar_flux_samples)
+end
+=#
+
+####
+#### Flux differentiable MMD
+####
+
+Flux.Zygote.@adjoint function LinearAlgebra.diag(x::AbstractMatrix)
+    return LinearAlgebra.diag(x), function(Δ)
+        # @show typeof(Δ), size(Δ) # Why is Δ a nx1 matrix? (something to do with adjoint... doesn't happen unless you have a loss like e.g. sum(diag(A)'))
+        # (LinearAlgebra.Diagonal(Δ),) # Should be this
+        (LinearAlgebra.Diagonal(reshape(Δ,:)),) # Need to reshape nx1 Δ to vector
+    end
+end
+Flux.Zygote.refresh()
+
+#=
+let
+    X = rand(2,2)
+    loss = (X) -> sum(abs2, LinearAlgebra.diag(X)')
+    @show gradient(loss, X)[1]
+    @show Diagonal(2X)
+end;
+=#
+
+function mmd_flux_kernel_matrices(logsigma::AbstractVector, X::AbstractMatrix, Y::AbstractMatrix)
+    @assert size(X) == size(Y)
+
+    n, m = size(X)
+    gamma = @. inv(-2n * exp(2 * logsigma)) # absorb -1/n factor into gamma = 1/2sigma^2 = 1/2exp(2logsigma)
+    gamma = reshape(gamma, 1, 1, :) # reshape for broadcasting
+
+    XX, XY, YY = X'X, X'Y, Y'Y
+    xx, yy = LinearAlgebra.diag(XX), LinearAlgebra.diag(YY) # squared norms on diagonal
+    Kxx = reshape(mean(@. exp(gamma * (xx - 2 * XX + xx')); dims = 3), m, m) # note: mean is over data length n, not number of data m
+    Kyy = reshape(mean(@. exp(gamma * (yy - 2 * YY + yy')); dims = 3), m, m)
+    Kxy = reshape(mean(@. exp(gamma * (xx - 2 * XY + yy')); dims = 3), m, m)
+
+    return @ntuple(Kxx, Kyy, Kxy)
+end
+
+function mmd_flux_kernel_matrices(k::Function, X::AbstractMatrix, Y::AbstractMatrix)
+    @assert size(X) == size(Y)
+
+    n = size(X,1)
+    XX, XY, YY = X'X, X'Y, Y'Y
+    xx, yy = LinearAlgebra.diag(XX), LinearAlgebra.diag(YY) # squared norms on diagonal
+    Kxx = k.((xx .- 2 .* XX .+ xx')./n) # note: mean is over data length n, not number of data m
+    Kyy = k.((yy .- 2 .* YY .+ yy')./n)
+    Kxy = k.((xx .- 2 .* XY .+ yy')./n)
+
+    return @ntuple(Kxx, Kyy, Kxy)
+end
+
+function mmd_flux_u_statistic(Kxx, Kyy, Kxy)
+    @assert size(Kxx) == size(Kyy) == size(Kxy)
+
+    # MMD²_U: MMD estimator which is a U-statistic
+    #   See: https://arxiv.org/pdf/1906.02104.pdf
+    m = size(Kxx,1)
+    e_Kxx_e = sum(Kxx) - m # assumes k(0) == 1 --> tr(Kxx) = m
+    e_Kyy_e = sum(Kyy) - m # assumes k(0) == 1 --> tr(Kyy) = m
+    e_Kxy_e = sum(Kxy) - tr(Kxy)
+    MMDsq = (e_Kxx_e + e_Kyy_e - 2e_Kxy_e) / (m*(m-1))
+
+    return MMDsq
+end
+
+function mmdvar_flux_u_statistic(Kxx, Kyy, Kxy)
+    @assert size(Kxx) == size(Kyy) == size(Kxy)
+
+    # Var[MMD²_U]: Variantes of U-statistic MMD estimator
+    #   See: https://arxiv.org/pdf/1906.02104.pdf
+    
+    m = size(Kxx,1)
+    m_2 = m*(m-1)
+    m_3 = m*(m-1)*(m-2)
+    m_4 = m*(m-1)*(m-2)*(m-3)
+
+    e_Kxx_e = sum(Kxx) - m # assumes k(0) == 1
+    e_Kyy_e = sum(Kyy) - m # assumes k(0) == 1
+    e_Kxy_e = sum(Kxy)
+    Kxx_F2 = sum(abs2, Kxx) - m # assumes k(0) == 1
+    Kyy_F2 = sum(abs2, Kyy) - m # assumes k(0) == 1
+    Kxy_F2 = sum(abs2, Kxy)
+    Kxx_e = reshape(sum(Kxx; dims = 2), :) .- 1 # assumes k(0) == 1
+    Kyy_e = reshape(sum(Kyy; dims = 2), :) .- 1 # assumes k(0) == 1
+    Kxy_e = reshape(sum(Kxy; dims = 2), :)
+    Kyx_e = reshape(sum(Kxy; dims = 1), :)
+    Kxx_e_F2 = sum(abs2, Kxx_e)
+    Kyy_e_F2 = sum(abs2, Kyy_e)
+    Kxy_e_F2 = sum(abs2, Kxy_e)
+    Kyx_e_F2 = sum(abs2, Kyx_e)
+    e_Kxx_Kxy_e = dot(Kxx_e, Kxy_e)
+    e_Kyy_Kyx_e = dot(Kyy_e, Kyx_e)
+
+    t1_4 = ((   4) / (m_4    )) * (Kxx_e_F2 + Kyy_e_F2)
+    t2_4 = ((4m^2) / (m_2^3  )) * (Kxy_e_F2 + Kyx_e_F2) # NOTE: typo in original paper: m^3*(m-1)^2 --> m^3*(m-1)^3 = m_2^3
+    t2_5 = ((  4m) / (m_2^3  )) * (Kxy_e_F2 + Kyx_e_F2) # NOTE: typo in original paper: m^3*(m-1)^2 --> m^3*(m-1)^3 = m_2^3
+    t2_6 = ((   4) / (m_2^3  )) * (Kxy_e_F2 + Kyx_e_F2) # NOTE: typo in original paper: m^3*(m-1)^2 --> m^3*(m-1)^3 = m_2^3
+    t3_4 = ((   8) / (m*m_3  )) * (e_Kxx_Kxy_e + e_Kyy_Kyx_e)
+    t4_5 = ((   8) / (m^2*m_3)) * ((e_Kxx_e + e_Kyy_e) * e_Kxy_e)
+    t5_4 = ((  4m) / (m_2*m_4)) * (e_Kxx_e^2 + e_Kyy_e^2)
+    t5_5 = ((   6) / (m_2*m_4)) * (e_Kxx_e^2 + e_Kyy_e^2)
+    t6_4 = ((  8m) / (m_2^3  )) * (e_Kxy_e^2)
+    t6_5 = ((  12) / (m_2^3  )) * (e_Kxy_e^2)
+    t7_4 = ((   2) / (m_4    )) * (Kxx_F2 + Kyy_F2)
+    t8_4 = ((4m^2) / (m_2^3  )) * (Kxy_F2)
+    t8_5 = ((  8m) / (m_2^3  )) * (Kxy_F2)
+    MMDvar = (((t1_4 + t2_4) - (t3_4 + t5_4 + t6_4 + t7_4 + t8_4)) + ((t4_5 + t5_5 + t6_5 + t8_5) - t2_5)) - t2_6 # NOTE: typo in original paper: t8_* sign flips
+
+    return MMDvar
+end
+
+function mmd_flux(
+        kernelargs::Union{<:Function, <:AbstractVector},
+        X::AbstractMatrix,
+        Y::AbstractMatrix
+    )
+    @assert size(X) == size(Y)
+    @unpack Kxx, Kyy, Kxy = mmd_flux_kernel_matrices(kernelargs, X, Y)
+    return mmd_flux_u_statistic(Kxx, Kyy, Kxy)
+end
+
+function mmdvar_flux(
+        kernelargs::Union{<:Function, <:AbstractVector},
+        X::AbstractMatrix,
+        Y::AbstractMatrix
+    )
+    @assert size(X) == size(Y)
+    @unpack Kxx, Kyy, Kxy = mmd_flux_kernel_matrices(kernelargs, X, Y)
+    return mmdvar_flux_u_statistic(Kxx, Kyy, Kxy)
+end
+
+#=
+let
+    rng = Random.seed!(0)
+    a = 5.0
+    X = a .* rand(10,10)
+    Y = a .* randn(10,10)
+    k = d -> exp(-d/2a^2)
+    loss1 = (X,Y) -> mmd_flux(k, X, Y)
+    loss2 = (X,Y) -> mmd_flux([log(a)], X, Y)
+    @show loss1(X,Y) ≈ loss2(X,Y)
+    @show gradcheck(loss1, X, Y)
+    @show gradcheck(loss2, X, Y)
+    Random.seed!(rng)
+end;
+=#
+
+#=
+let
+    model = Flux.Dense(10,10)
+    X, Y = randn(10,100), randn(10,100)
+    k = d -> exp(-d/2)
+    loss1 = () -> mmd_flux(k, model(X), Y)
+    loss2 = () -> mmd_flux(zeros(8), model(X), Y)
+    @btime $loss1()
+    @btime $loss2()
+    @btime Flux.gradient($loss1, $(Flux.params(model)))
+    @btime Flux.gradient($loss2, $(Flux.params(model)))
+end
+=#
+
+####
+#### Permutation testing
+####
+
+combine_kernel_matrices(Kxx, Kyy, Kxy) = [Kxx Kxy; Kxy' Kyy]
+split_kernel_matrices(K) = (Kxx = K[1:end÷2,1:end÷2], Kyy = K[end÷2+1:end,end÷2+1:end], Kxy = K[1:end÷2,end÷2+1:end])
+
+function perm_u_statistic(K)
+    m = size(K,1)÷2
+    @assert size(K) == (2m,2m)
+    p = randperm(2m)
+    mmd_flux_u_statistic(split_kernel_matrices(K[p,p])...)
+end
+
+function perm_u_statistic!(K, ipermvec)
+    m = size(K,1)÷2
+    @assert size(K) == (2m,2m) && length(ipermvec) == 2m
+ 
+    randperm!(ipermvec)
+    kxx = zero(eltype(K))
+    kyy = zero(eltype(K))
+    kxy = zero(eltype(K))
+
+    @inbounds for j in 1:2m
+        jp = ipermvec[j]
+        Xblock_j = jp <= m
+        @inbounds @simd for i in j+1:2m
+            ip = ipermvec[i]
+            Xblock_i = ip <= m
+            Kij = K[i,j]
+            kxx += ifelse( Xblock_i &&  Xblock_j, 2*Kij, zero(eltype(K)))
+            kyy += ifelse(!Xblock_i && !Xblock_j, 2*Kij, zero(eltype(K)))
+            kxy += ifelse((Xblock_i ⊻   Xblock_j) && ip - jp != m && jp - ip != m, Kij, zero(eltype(K)))
+        end
+    end
+
+    # randperm!(ipermvec)
+    # kxx_t = zeros(eltype(K), Threads.nthreads())
+    # kyy_t = zeros(eltype(K), Threads.nthreads())
+    # kxy_t = zeros(eltype(K), Threads.nthreads())
+
+    # Threads.@threads for j in 1:2m
+    #     @inbounds begin
+    #         tid = Threads.threadid()
+    #         kxx = kxx_t[tid]
+    #         kyy = kyy_t[tid]
+    #         kxy = kxy_t[tid]
+
+    #         jp = ipermvec[j]
+    #         Xblock_j = jp <= m
+    #         @inbounds @simd for i in 1:2m
+    #             ip = ipermvec[i]
+    #             Xblock_i = ip <= m
+    #             Kij = K[i,j]
+    #             kxx += ifelse(( Xblock_i &&  Xblock_j) && ip != jp, Kij, zero(eltype(K)))
+    #             kyy += ifelse((!Xblock_i && !Xblock_j) && ip != jp, Kij, zero(eltype(K)))
+    #             kxy += ifelse(( Xblock_i  ⊻  Xblock_j) && ip - jp != m && jp - ip != m, Kij, zero(eltype(K)))
+    #         end
+
+    #         kxx_t[tid] += kxx
+    #         kyy_t[tid] += kyy
+    #         kxy_t[tid] += kxy
+    #     end
+    # end
+
+    # kxx = sum(kxx_t)
+    # kyy = sum(kyy_t)
+    # kxy = sum(kxy_t)
+
+    return (kxx + kyy - 2kxy) / (m*(m-1))
+end
+
+function mmd_perm_test_brute(kernelargs, X, Y; nperms = size(X,2), alpha = 0.01)
+    m = size(X,2)
+    c_alpha_perms = [m * mmd_flux(kernelargs, mix_columns(X, Y)...) for _ in 1:nperms]
+    c_alpha = quantile(c_alpha_perms, 1-alpha)
+    MMDsq = mmd_flux(kernelargs, X, Y)
+    return @ntuple(MMDsq, c_alpha, c_alpha_perms)
+end
+
+function mmd_perm_test(kernelargs, X, Y; nperms = size(X,2), alpha = 0.01)
+    @unpack Kxx, Kyy, Kxy = mmd_flux_kernel_matrices(kernelargs, X, Y)
+    K = combine_kernel_matrices(Kxx, Kyy, Kxy)
+
+    m = size(X,2)
+    nt = Threads.nthreads()
+    c_alpha_perms = if nt > 1
+        # Compute c_α permutations in parallel
+        work = [zeros(Int, 2m) for _ in 1:nt]
+        c_alpha_perms = zeros(eltype(K), nperms)
+        Threads.@threads for i in 1:nperms
+            ipermvec = work[Threads.threadid()]
+            c_alpha_perms[i] = m * perm_u_statistic!(K, ipermvec)
+        end
+        c_alpha_perms
+    else
+        # Compute c_α permutations serially
+        ipermvec = zeros(Int, 2m)
+        c_alpha_perms = [m * perm_u_statistic!(K, ipermvec) for _ in 1:nperms]
+    end
+
+    c_alpha = quantile(c_alpha_perms, 1-alpha)
+    MMDsq = mmd_flux_u_statistic(Kxx, Kyy, Kxy)
+
+    return @ntuple(MMDsq, c_alpha, c_alpha_perms)
+end
+
+#=
+let a = 2.0
+    for m = [100, 250], nperms = [128, 1024]
+        X, Y = randn(2,m), a*randn(2,m)
+        k = d -> exp(-d)
+        @show m, nperms
+        # @btime mmd_perm_test_brute($k, $X, $Y; nperms = $nperms, alpha = 0.1)
+        @btime mmd_perm_test($k, $X, $Y; nperms = $nperms, alpha = 0.1)
+        qqplot(
+            mmd_perm_test_brute(k, X, Y; nperms = nperms, alpha = 0.1).c_alpha_perms,
+            mmd_perm_test(k, X, Y; nperms = nperms, alpha = 0.1).c_alpha_perms,
+        ) |> display
+    end
+end
+=#
+
+#=
+let m = 100
+    for a in 1.5:0.5:3
+        X, Y = randn(2,m), a*randn(2,m)
+        p = plot()
+
+        @time res1 = mmd_perm_test_brute(d->exp(-d), X, Y; nperms = 1000, alpha = 0.1)
+        @show a, res1.MMDsq, res1.c_alpha
+        density!(p, res1.c_alpha_perms; label = "brute")
+
+        @time res2 = mmd_perm_test(d->exp(-d), X, Y; nperms = 1000, alpha = 0.1)
+        @show a, res2.MMDsq, res2.c_alpha
+        density!(p, res2.c_alpha_perms; label = "fast")
+
+        display(p)
+        qqplot(res1.c_alpha_perms, res2.c_alpha_perms) |> display
+
+        p = plot()
+        density!(p, res2.c_alpha_perms; label = "c_α samples", line = (2,))
+        vline!(p, [res2.c_alpha]; label = "c_α", line = (2,))
+        vline!(p, [m * res2.MMDsq]; label = "MMD", line = (2,))
+        display(p)
+    end
+end
+=#
+
+function mmd_perm_test_power(
+        kernelargs,
+        sampleX,
+        sampleY;
+        batchsize = 100,
+        nperms = batchsize,
+        nsamples = 10,
+        alpha = 0.01
+    )
+    @unpack MMDsq, c_alpha, c_alpha_perms = mmd_perm_test(kernelargs, sampleX(batchsize), sampleY(batchsize); nperms = nperms, alpha = alpha)
+    mmd_samples = vcat(MMDsq, [mmd_flux(kernelargs, sampleX(batchsize), sampleY(batchsize)) for _ in 1:nsamples-1])
+
+    m = batchsize
+    P_alpha = count(MMDsq -> m * MMDsq > c_alpha, mmd_samples) / nsamples
 
     MMDsq = mean(mmd_samples)
     MMDvar = var(mmd_samples)
-    MMDσ = √(m * MMDvar)
-    z = √m * MMDsq / MMDσ - c_α / (√m * MMDσ)
-    P_α_approx = cdf(Normal(), z)
+    MMDσ = √MMDvar
+    z = MMDsq / MMDσ - c_alpha / (m * MMDσ)
+    P_alpha_approx = cdf(Normal(), z)
 
-    return @ntuple(c_α, P_α, P_α_approx, MMDsq, MMDσ, c_α_samples, mmd_samples)
+    return @ntuple(alpha, m, c_alpha, P_alpha, P_alpha_approx, MMDsq, MMDσ, c_alpha_perms, mmd_samples)
 end
 
-# Gradient testing
+function mmd_perm_test_power_plot(perm_test_results)
+    @unpack alpha, m, c_alpha, P_alpha, P_alpha_approx, MMDsq, MMDσ, c_alpha_perms, mmd_samples = perm_test_results
+
+    s = x -> string(round(x; sigdigits = 4))
+    p = plot(; title = "P_α = $(s(P_alpha)) ~ $(s(P_alpha_approx))")
+    density!(p, c_alpha_perms; label = "c_α samples", line = (3,:blue))
+    vline!(p, [c_alpha]; label = "c_α (α = $alpha)", line = (3,:blue))
+    density!(p, m .* mmd_samples; label = "m * MMD^2 samples", line = (3,:red))
+    vline!(p, [m * MMDsq]; label = "m * MMD^2 (σ = $(s(m * MMDσ)))", line = (3,:red))
+    vline!(p, m .* [MMDsq-MMDσ, MMDsq+MMDσ]; label = "", line = (2,:red,:dash))
+    
+    return p
+end
+
 #=
+let m = 100, nperms = 1024, nsamples = 128, ntrials = 10
+    # gamma = inv(2 * 2.0^2)
+    # kernelargs = d -> exp(-gamma * d)
+    kernelargs = log.([1.5, 1.0, 0.5])
+    for a in 1.1:0.1:1.3
+        @time all_res = map(1:ntrials) do _
+            mmd_perm_test_power(kernelargs, m->randn(2,m), m->a*randn(2,m);
+                batchsize = m, nperms = nperms, nsamples = nsamples)
+        end
+        c_alpha = mean(r->r.c_alpha, all_res); @show c_alpha
+        P_alpha = mean(r->r.P_alpha, all_res); @show P_alpha
+        P_alpha_approx = mean(r->r.P_alpha_approx, all_res); @show P_alpha_approx
+        mmd_perm_test_power_plot(all_res[1]) |> display
+    end
+end
+=#
+
+####
+#### Gradient testing
+####
+
 function ngradient(f, xs::AbstractArray...)
     grads = zero.(xs)
     for (x, Δ) in zip(xs, grads), i in 1:length(x)
-        δ = sqrt(eps())
         tmp = x[i]
+        δ = cbrt(eps()) # cbrt seems to be slightly better than sqrt; larger step size helps
         x[i] = tmp - δ/2
         y1 = f(xs...)
         x[i] = tmp + δ/2
@@ -475,13 +822,11 @@ function ngradient(f, xs::AbstractArray...)
     return grads
 end
 
-gradcheck(f, xs...) = all(isapprox.(ngradient(f, xs...), gradient(f, xs...), rtol = 1e-3, atol = 1e-16))
-
-gs = Flux.gradient(loss, X, Y)
-fs = ngradient(loss, X, Y)
-gradcheck(loss, X, Y)
-
-∇loss = (X, Y) -> Flux.gradient(() -> loss(X, Y), Flux.params(model))
-gs = collect(values(∇loss(X,Y).grads))
-fs = ngradient((ps...) -> loss(X, Y), Flux.params(model)...)
-=#
+function gradcheck(f, xs...)
+    dx0 = Flux.gradient(f, xs...)
+    dx1 = ngradient(f, xs...)
+    @show maximum.(abs, dx0)
+    @show maximum.(abs, dx1)
+    @show maximum.(abs, (dx0 .- dx1) ./ dx0)
+    all(isapprox.(dx0, dx1, rtol = 1e-4, atol = 0))
+end

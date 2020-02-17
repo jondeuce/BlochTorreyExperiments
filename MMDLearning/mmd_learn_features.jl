@@ -56,6 +56,7 @@ function train_vae_model(
         lr         = settings["vae"]["stepsize"]::Float64,
         lrdrop     = settings["vae"]["stepdrop"]::Float64,
         lrdroprate = settings["vae"]["steprate"]::Int,
+        lrthresh   = 0.9e-7,
         epochs     = settings["vae"]["epochs"]::Int,
         timeout    = settings["vae"]["traintime"]::Float64,
         saveperiod = settings["vae"]["saveperiod"]::Float64,
@@ -167,7 +168,7 @@ function train_vae_model(
             # Save model + progress each iteration
             @timeit timer "current progress" saveprogress(outfolder, "current-", "")
 
-            # Check for best loss + save 
+            # Check for best loss + save
             isbest = df.loss[end] <= minimum(df.loss)
             isbest && saveprogress(outfolder, "best-", "")
 
@@ -181,14 +182,12 @@ function train_vae_model(
                 @timeit timer "current plots" saveplots(outfolder, "current-", "", plothandles)
                 # isbest && saveplots(outfolder, "best-", "", plothandles)
 
-                # @info "$epoch: " * "time = $(round(dt; sigdigits=3))s, " * "loss = $(round(ℓ; sigdigits=6)), " * "KL = $(round(KL_q_p; sigdigits=6)), " * "-logP = $(round(-logP_x_z; sigdigits=6)), " * "rmse = $(round(rmse; sigdigits=3)), " * "mae = $(round(mae; sigdigits=3)), " * "ℓinf = $(round(ℓinf; sigdigits=3))"
                 show(stdout, timer); println("\n")
                 show(stdout, last(df, 6)); println("\n")
             end
 
             if epoch > 0 && mod(epoch, lrdroprate) == 0
                 opt.eta /= lrdrop
-                lrthresh = 0.9e-6
                 if opt.eta >= lrthresh
                     @info "$epoch: Dropping learning rate to $(opt.eta)"
                 else

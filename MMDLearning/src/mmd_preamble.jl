@@ -15,6 +15,11 @@ using StatsPlots
 pyplot(size = (800,600))
 # empty!(Revise.queue_errors);
 
+# ENV["GKSwstype"] = "nul"
+# using Images, StatsPlots
+# gr(size = (800,600))
+# plot(Gray.(adjust_histogram(img, LinearStretching())); aspect_ratio = 1, grid = :off)
+
 ####
 #### Load settings file
 ####

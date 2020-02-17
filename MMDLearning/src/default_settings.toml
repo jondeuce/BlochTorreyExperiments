@@ -6,24 +6,29 @@ theta_labels = ["freq", "phase", "offset", "amp", "tconst"]
 # nsignal   = 48
 # theta_labels = ["refcon", "alpha", "T2short", "dT2", "Ashort"]
 
-[prior]
-method    = "simultaneous_perturbation_stochastic_approximation"
-maxtime   = 1.0
-nterms    = 2
-batchsize = 100
-nbatches  = 10
-logsigma  = -6.0
-
 [mmd]
-logsigma   = -6.0
-batchsize  = 100
-stepsize   = 1e-3
+# logsigma   = [-1.0, -0.3, 0.3, 1.0]
+nbandwidth = 4
+stepsize   = 1e-4
+stepdrop   = 10.0
+steprate   = 10
+batchsize  = 128
 nbatches   = 10
 epochs     = 9999
-traintime  = 3600.0
-saveperiod = 60.0
-ndense     = 2
-zdim       = 48
+traintime  = 18000.0
+saveperiod = 1.0 #TODO
+# powercutoff = 0.01
+powerrate  = 50
+nperms     = 128
+nsamples   = 10
+zdim       = 8
+hdim       = 256
+nhidden    = 1
+[mmd.kernel]
+losstype   = "MMD"
+stepsize   = 1e-2
+epochs     = 100
+nbatches   = 1
 
 [vae]
 epochs     = 999_999
@@ -39,3 +44,11 @@ zdim       = 8
 hdim       = 128
 nhidden    = 0
 gamma      = 0.5
+
+[prior]
+method    = "simultaneous_perturbation_stochastic_approximation"
+maxtime   = 1.0
+nterms    = 2
+batchsize = 100
+nbatches  = 10
+logsigma  = -6.0
