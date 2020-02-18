@@ -371,19 +371,13 @@ function toy_theta_sampler(n::Int = 1)
     unif(a, b) = a .+ (b-a) .* rand(n)
 
     # freq   = unif(1/64,  1/16)
-    freq   = unif(1/64,  1/64)
+    # freq   = unif(1/64,  1/64)
+    freq   = unif(1/64,  1/32)
     phase  = unif( 0.0,    pi)
-    # phase  = unif( 0.0,   0.0)
     offset = unif( 0.25,  0.5)
     amp    = unif( 0.1,  0.25)
     tconst = unif(16.0, 128.0)
 
-    # freq   = fill((1/64 + 1/16)/2, n) #unif(1/64,  1/16)
-    # phase  = fill(( 0.0 + pi)/2, n) #unif( 0.0,    pi)
-    # offset = fill(( 0.25 + 0.5)/2, n) #unif( 0.25,  0.5)
-    # amp    = fill(( 0.1 + 0.25)/2, n) #unif( 0.1,  0.25)
-    # tconst = fill((16.0 + 128.0)/2, n) #unif(16.0, 128.0)
-    
     return permutedims(hcat(freq, phase, offset, amp, tconst))
 end
 

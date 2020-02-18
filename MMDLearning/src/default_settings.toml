@@ -7,16 +7,16 @@ theta_labels = ["freq", "phase", "offset", "amp", "tconst"]
 # theta_labels = ["refcon", "alpha", "T2short", "dT2", "Ashort"]
 
 [mmd]
-# logsigma   = [-1.0, -0.3, 0.3, 1.0]
-nbandwidth = 4
+# logsigma   = [-4.0, 0.0]
+nbandwidth = 2
 stepsize   = 1e-4
-stepdrop   = 10.0
-steprate   = 10
+stepdrop   = 2.0
+steprate   = 1000
 batchsize  = 128
 nbatches   = 10
 epochs     = 9999
 traintime  = 18000.0
-saveperiod = 1.0 #TODO
+saveperiod = 30.0
 # powercutoff = 0.01
 powerrate  = 50
 nperms     = 128

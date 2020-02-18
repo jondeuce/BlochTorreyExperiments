@@ -239,7 +239,7 @@ end
 # sampleX, sampleY, sampleθ = make_gmm_data_samplers(image);
 sampleX, sampleY, sampleθ = make_toy_samplers(ntrain = settings["mmd"]["batchsize"]::Int, epsilon = 1e-3, power = 4.0);
 
-vae_model_dict = BSON.load("/scratch/st-arausch-1/jcd1994/MMD-Learning/toyvaeopt-v1/sweep/45/best-model.bson")
+# vae_model_dict = BSON.load("/scratch/st-arausch-1/jcd1994/MMD-Learning/toyvaeopt-v1/sweep/45/best-model.bson")
 # encoder = Flux.Chain(deepcopy(vae_model_dict["A"]), h -> ((μ, logσ) = (h[1:end÷2, :], h[end÷2+1:end, :]); μ .+ exp.(logσ) .* randn(size(logσ)...)))
 # encoder = Flux.Chain(deepcopy(vae_model_dict["A"]), h -> h[1:end÷2, :])
 # decoder = deepcopy(vae_model_dict["f"])
@@ -254,35 +254,44 @@ model = let
     act  = Flux.relu
     hidden(nlayers) = [Flux.Dense(Dh, Dh, act) for _ in 1:nlayers]
 
+    # Slope/intercept for scaling dX to [-0.1,0.1], logσ to [-10,-2]
+    α = [fill(0.1, n); fill( 4.0, n)]
+    β = [fill(0.0, n); fill(-6.0, n)]
+
     Flux.Chain(
         (encoder == identity ? Flux.Dense(n, Dh, act) : Flux.Dense(Dz, Dh, act)),
         hidden(Nh)...,
         # Flux.Dense(Dh, n),
-        Flux.Dense(Dh, n, tanh),
+        # Flux.Dense(Dh, n, tanh),
         # Flux.Dense(Dh, n, Flux.σ),
-        x -> 0.1 .* x,
+        # x -> 0.1 .* x,
+        Flux.Dense(Dh, 2n, tanh),
+        x -> α .* x .+ β,
     ) |> Flux.f64
 end
 
-# function corrected_signal(X) # Learning correction + noise
-#     out = model(encoder(X))
-#     dX, ϵ = out[1:end÷2, :], exp.(out[end÷2+1:end, :])
-#     ϵ1, ϵ2 = ϵ .* randn(size(X)), ϵ .* randn(size(X))
-#     Xϵ = @. sqrt((X + dX + ϵ1)^2 + ϵ2^2)
-#     # Xϵ = Flux.softmax(Xϵ)
-#     return Xϵ
-# end
-# additive_correction(X) = model(encoder(X))[1:end÷2,:]
-# noise_instance(X) = exp.(model(encoder(X))[end÷2+1:end,:]) .* randn(size(X))
-
-function corrected_signal(X) # Learning correction w/ fixed noise
-    dX = model(encoder(X))
-    ϵ1, ϵ2 = 1e-3 .* randn(size(X)), 1e-3 .* randn(size(X))
-    Xϵ = @. sqrt((X + dX + ϵ1)^2 + ϵ2^2)
+function corrected_signal(X) # Learning correction + noise
+    out = model(encoder(X))
+    dX  = out[1:end÷2, :]
+    ϵ   = exp.(out[end÷2+1:end, :])
+    ϵR  = ϵ .* randn(size(X))
+    ϵI  = ϵ .* randn(size(X))
+    Xϵ  = @. sqrt((X + dX + ϵR)^2 + ϵI^2)
+    #Xϵ = Flux.softmax(Xϵ)
     return Xϵ
 end
-additive_correction(X) = model(encoder(X))
-noise_instance(X) = 1e-3 .* randn(size(X))
+additive_correction(X) = model(encoder(X))[1:end÷2,:]
+noise_instance(X) = exp.(model(encoder(X))[end÷2+1:end,:]) .* randn(size(X))
+
+# function corrected_signal(X) # Learning correction w/ fixed noise
+#     dX = model(encoder(X))
+#     ϵR = 1e-3 .* randn(size(X))
+#     ϵI = 1e-3 .* randn(size(X))
+#     Xϵ = @. sqrt((X + dX + ϵR)^2 + ϵI^2)
+#     return Xϵ
+# end
+# additive_correction(X) = model(encoder(X))
+# noise_instance(X) = 1e-3 .* randn(size(X))
 
 # corrected_signal(X) = X + model(encoder(X)) # Learning correction only
 # additive_correction(X) = model(encoder(X))
@@ -368,7 +377,7 @@ function train_mmd_model(;
         outfolder   =  settings["data"]["out"]            :: String,
         timeout     =  settings["mmd"]["traintime"]       :: Float64,
         nbandwidth  =  settings["mmd"]["nbandwidth"]      :: Int,
-        logsigma    =  collect(range(-1.0, 1.0; length = nbandwidth)) :: Vector{Float64},
+        logsigma    =  collect(range(-4.0, 0.0; length = nbandwidth)) :: Vector{Float64},
         #logsigma   = (settings["mmd"]["logsigma"]|>copy) :: Vector{Float64},
         saveperiod  =  settings["mmd"]["saveperiod"]      :: Float64,
         nperms      =  settings["mmd"]["nperms"]          :: Int,
@@ -418,7 +427,7 @@ function train_mmd_model(;
                     pnoise = plot()
                     plot!(pnoise, mean(ϵ; dims = 2); yerr = std(ϵ; dims = 2), label = "noise vector");
                     plot!(pnoise, mean(dX; dims = 2); yerr = std(dX; dims = 2), label = "correction vector");
-                    display(pnoise)
+                    # display(pnoise) #TODO
 
                     nθplot = 2
                     psig = plot(
@@ -428,21 +437,32 @@ function train_mmd_model(;
                         [plot(Yθ[:,j] - Xθ[:,j] - dXθ[:,j]; lab = "Yθ-(Xθ+dXθ)") for j in 1:nθplot]...;
                         layout = (3, nθplot),
                     );
-                    display(psig)
+                    # display(psig) #TODO
 
-                    ploss = plot(
-                        plot(df.loss; title = "min loss = $(s(minimum(df.loss)))", label = "m * MMD^2"), #df.epoch
-                        plot(df.rmse; title = "min rmse = $(s(minimum(df.rmse)))", label = "rmse"), #df.epoch
-                        plot(df.t_perm; title = "max t = $(s(maximum(df.t_perm)))", label = "t = MMD^2/MMDσ"), #df.epoch
-                        plot(permutedims(reduce(hcat, df.logsigma)); label = ["logσ" fill(nothing,1,length(df.logsigma[1])-1)]),
-                    );
-                    display(ploss)
+                    window = 100 #TODO
+                    dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, df)
+                    ploss = if !isempty(dfp)
+                        plosses = [
+                            plot(dfp.epoch, dfp.loss; title = "min loss = $(s(minimum(df.loss)))", label = "m * MMD^2"),
+                            plot(dfp.epoch, dfp.rmse; title = "min rmse = $(s(minimum(df.rmse)))", label = "rmse"),
+                            plot(dfp.epoch, dfp.t_perm; title = "median t = $(s(median(df.t_perm)))", label = "t = MMD^2/MMDσ"),
+                            plot(dfp.epoch, permutedims(reduce(hcat, dfp.logsigma)); label = ["logσ" fill(nothing, 1, length(df.logsigma[1])-1)]),
+                        ]
+                        foreach(plosses) do p
+                            (epoch >= lrdroprate) && vline!(p, lrdroprate:lrdroprate:epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
+                            plot!(p; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
+                        end
+                        plot(plosses...)
+                    else
+                        plot()
+                    end
+                    # display(ploss) #TODO
 
                     # pwit = mmd_witness(Xϵ, Y, sigma)
                     # pheat = mmd_heatmap(Xϵ, Y, sigma)
 
                     pperm = mmd_perm_test_power_plot(permtest)
-                    display(pperm)
+                    # display(pperm) #TODO
 
                     return @ntuple(pnoise, psig, ploss, pperm) #pwit, pheat
                 catch e
@@ -480,7 +500,7 @@ function train_mmd_model(;
 
             if epoch == 0 || time() - last_checkpoint[] >= saveperiod
                 last_checkpoint[] = time()
-                estr = lpad(epoch, min(ndigits(epochs), 5), "0")
+                estr = lpad(epoch, ndigits(epochs), "0")
                 saveprogress(joinpath(outfolder, "checkpoint"), "checkpoint-", ".epoch.$estr")
                 saveprogress(outfolder, "current-", "")
 
@@ -542,13 +562,5 @@ function train_mmd_model(;
 end
 
 df = train_mmd_model()
-
-# df, logsigma = let
-#     logsigma = randn!(copy(settings["mmd"]["logsigma"]))
-#     # logsigma = randn(4)
-#     # logsigma = [-0.11354731812944348, -0.1462711814441279, -1.0141385069715343, 0.32264629940961265, 2.236591131623039, -0.1566347284678008, 0.37856592981236625, -0.3246088334724258]
-#     df = train_mmd_model(logsigma = logsigma)
-#     df, logsigma
-# end
 
 nothing

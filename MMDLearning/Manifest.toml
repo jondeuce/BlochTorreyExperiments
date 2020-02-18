@@ -378,7 +378,7 @@ version = "0.5.1"
 deps = ["Arpack", "Clustering", "Compat", "DelimitedFiles", "Distributed", "Distributions", "FileIO", "JLD2", "LinearAlgebra", "Logging", "PDMats", "Printf", "RDatasets", "Random", "ScikitLearnBase", "SpecialFunctions", "Statistics", "StatsBase", "Test"]
 path = "/home/jcd1994/.julia/dev/GaussianMixtures"
 uuid = "cc18c42c-b769-54ff-9e2a-b28141a64aae"
-version = "0.3.0+"
+version = "0.3.1+"
 
 [[GeometryTypes]]
 deps = ["ColorTypes", "FixedPointNumbers", "LinearAlgebra", "StaticArrays"]
@@ -550,6 +550,12 @@ deps = ["ExprTools"]
 git-tree-sha1 = "916b850daad0d46b8c71f65f719c49957e9513ed"
 uuid = "78c3b35d-d492-501b-9361-3d52fe80e533"
 version = "0.7.1"
+
+[[MultivariateStats]]
+deps = ["Arpack", "LinearAlgebra", "SparseArrays", "Statistics", "StatsBase"]
+git-tree-sha1 = "352fae519b447bf52e6de627b89f448bcd469e4e"
+uuid = "6f286f6a-111f-5878-ab1e-185364afe411"
+version = "0.7.0"
 
 [[NIfTI]]
 deps = ["Base64", "GZip", "Mmap", "Test"]
@@ -824,9 +830,9 @@ uuid = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
 [[StatsBase]]
 deps = ["DataAPI", "DataStructures", "LinearAlgebra", "Missings", "Printf", "Random", "SortingAlgorithms", "SparseArrays", "Statistics"]
-git-tree-sha1 = "c53e809e63fe5cf5de13632090bc3520649c9950"
+git-tree-sha1 = "be5c7d45daa449d12868f4466dbf5882242cf2d9"
 uuid = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
-version = "0.32.0"
+version = "0.32.1"
 
 [[StatsFuns]]
 deps = ["Rmath", "SpecialFunctions"]
@@ -835,14 +841,20 @@ uuid = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 version = "0.9.4"
 
 [[StatsPlots]]
-deps = ["Clustering", "DataStructures", "DataValues", "Distributions", "Interpolations", "KernelDensity", "Observables", "Plots", "RecipesBase", "Reexport", "StatsBase", "Tables", "Widgets"]
-git-tree-sha1 = "9f3f096a310f25debaca9dbe6b4e0df7bb428fd0"
+deps = ["Clustering", "DataStructures", "DataValues", "Distributions", "Interpolations", "KernelDensity", "MultivariateStats", "Observables", "Plots", "RecipesBase", "Reexport", "StatsBase", "TableOperations", "Tables", "Widgets"]
+git-tree-sha1 = "8341b688660c94ca036217f77604277d3f9e1542"
 uuid = "f3b207a7-027a-5e70-b257-86293d7955fd"
-version = "0.12.0"
+version = "0.14.0"
 
 [[SuiteSparse]]
 deps = ["Libdl", "LinearAlgebra", "Serialization", "SparseArrays"]
 uuid = "4607b0f0-06f3-5cda-b6b1-a6196a1729e9"
+
+[[TableOperations]]
+deps = ["Tables", "Test"]
+git-tree-sha1 = "6fd99255d44d8d298e0b3909f4d3f568e5111245"
+uuid = "ab02a1b2-a7df-11e8-156e-fb1833f50b87"
+version = "0.2.0"
 
 [[TableTraits]]
 deps = ["IteratorInterfaceExtensions"]
