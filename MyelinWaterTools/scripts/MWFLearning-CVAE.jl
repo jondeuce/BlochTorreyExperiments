@@ -1,7 +1,7 @@
-# Initialize project/code loading
+# Initialization project/code loading
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
-Pkg.instantiate()
+# Pkg.instantiate()
 include(joinpath(@__DIR__, "../initpaths.jl"))
 
 using Printf
@@ -12,20 +12,23 @@ using Base.Iterators: repeated, partition
 using MWFLearning
 # using CuArrays
 pyplot(size=(800,600))
+# pyplot(size=(1600,900))
 
 # Settings
 const settings_file = "settings.toml"
 const settings = TOML.parsefile(settings_file)
 
-const SAVE = true
 const DATE_PREFIX = getnow() * "."
 const FILE_PREFIX = DATE_PREFIX * model_string(settings) * "."
-const GPU = settings["gpu"] :: Bool
-const T   = settings["prec"] == 64 ? Float64 : Float32
-const VT  = Vector{T}
-const MT  = Matrix{T}
-const VMT = VecOrMat{T}
-const CVT = GPU ? CuVector{T} : Vector{T}
+const SCRIPT_TIME_START = Dates.now()
+const SCRIPT_TIMEOUT = settings["timeout"] == 0 ? Dates.Second(typemax(Int)) : Dates.Second(ceil(Int, 3600 * settings["timeout"]))
+const SAVE = settings["save"] :: Bool
+const GPU  = settings["gpu"] :: Bool
+const T    = settings["prec"] == 64 ? Float64 : Float32
+const VT   = Vector{T}
+const MT   = Matrix{T}
+const VMT  = VecOrMat{T}
+const CVT  = GPU ? CuVector{T} : Vector{T}
 maybegpu(x) = GPU ? Flux.gpu(x) : x
 savepath(folder, filename) = SAVE ? joinpath(savefolders[folder], FILE_PREFIX * filename) : nothing
 
@@ -47,11 +50,11 @@ signals = batch -> labels(batch)
 labelbatch(batch) = (signals(batch), thetas(batch))
 
 # Lazy data loader for training on simulated data
-const MB_train_batch_size  = 10_000 # Number of simulated signals in one training batch
-const MB_test_batch_size   = 500    # Number of simulated signals in one testing batch
-const MB_num_train_batches = 10     # Number of training batches per epoch
+const MB_train_batch_size  = 500 # Number of simulated signals in one training batch
+const MB_test_batch_size   = 500 # Number of simulated signals in one testing batch
+const MB_num_train_batches = 20  # Number of training batches per epoch
 function x_sampler()
-    out = zeros(T, 14, MB_train_batch_size)
+    out = zeros(T, 15, MB_train_batch_size)
     for j in 1:size(out,2)
         g_bounds, η_bounds = (0.60, 0.92), (0.15, 0.82)
         mvf    = MWFLearning.linearsampler(0.025, 0.4)
@@ -65,7 +68,7 @@ function x_sampler()
         ewf    = 2evf / (2evf + 2ivf + mvf)
         iwf    = 2ivf / (2evf + 2ivf + mvf)
         alpha  = MWFLearning.linearsampler(120.0, 180.0)
-        K      = MWFLearning.log10sampler(1e-3, 10.0)
+        K      = 1e-3 # Fix mock signals at constant near-zero permeability (lower bound of MWFLearning.log10sampler(1e-3, 10.0))
         T2sp   = MWFLearning.linearsampler(10e-3, 70e-3)
         T2lp   = MWFLearning.linearsampler(50e-3, 180e-3)
         while !(T2lp ≥ 1.5*T2sp) # Enforce constraint
@@ -77,6 +80,36 @@ function x_sampler()
         T2tiss = T2lp # MWFLearning.linearsampler(50e-3, 180e-3)
         T1tiss = T1lp # MWFLearning.linearsampler(949e-3, 1219e-3)
         TE     = 10e-3
+        # out[1,j]  = log10(TE*K) # log(TE*Kperm)
+        # out[2,j]  = cosd(alpha) # cosd(alpha)
+        # out[3,j]  = g # gratio
+        # out[4,j]  = mwf # mwf
+        # out[5,j]  = T2sp / TE # T2mw/TE
+        # out[6,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
+        # out[7,j]  = iwf # iwf
+        # out[8,j]  = ewf # ewf
+        # out[9,j]  = iwf + ewf # iewf
+        # out[10,j] = T2lp / TE # T2iw/TE
+        # out[11,j] = T2tiss / TE # T2ew/TE
+        # out[12,j] = T1sp / TE # T1mw/TE
+        # out[13,j] = T1lp / TE # T1iw/TE
+        # out[14,j] = T1tiss / TE # T1ew/TE
+        # out[15,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
+        # out[1,j]  = cosd(alpha) # cosd(alpha)
+        # out[2,j]  = g # gratio
+        # out[3,j]  = mwf # mwf
+        # out[4,j]  = T2sp / TE # T2mw/TE
+        # out[5,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
+        # out[6,j]  = log10(TE*K) # log(TE*Kperm)
+        # out[7,j]  = iwf # iwf
+        # out[8,j]  = ewf # ewf
+        # out[9,j]  = iwf + ewf # iewf
+        # out[10,j] = T2lp / TE # T2iw/TE
+        # out[11,j] = T2tiss / TE # T2ew/TE
+        # out[12,j] = T1sp / TE # T1mw/TE
+        # out[13,j] = T1lp / TE # T1iw/TE
+        # out[14,j] = T1tiss / TE # T1ew/TE
+        # out[15,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
         out[1,j]  = cosd(alpha) # cosd(alpha)
         out[2,j]  = g # gratio
         out[3,j]  = mwf # mwf
@@ -91,19 +124,21 @@ function x_sampler()
         out[12,j] = T1lp / TE # T1iw/TE
         out[13,j] = T1tiss / TE # T1ew/TE
         out[14,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
-        #out[1,j] = mwf
-        #out[2,j] = 1 - mwf # iewf
-        #out[3,j] = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
-        #out[4,j] = T2sp / TE # T2mw/TE
-        #out[5,j] = alpha
-        #out[6,j] = log10(TE*K)
-        #out[7,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
-        #out[8,j] = T1sp / TE # T1mw/TE
+        # out[1,j] = mwf
+        # out[2,j] = 1 - mwf # iewf
+        # out[3,j] = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
+        # out[4,j] = T2sp / TE # T2mw/TE
+        # out[5,j] = alpha
+        # out[6,j] = log10(TE*K)
+        # out[7,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
+        # out[8,j] = T1sp / TE # T1mw/TE
     end
     return out
 end
 # y_sampler(x) = (y = MWFLearning.forward_physics_8arg(x); reshape(y, size(y,1), 1, 1, :))
 y_sampler(x) = (y = MWFLearning.forward_physics_14arg(x); reshape(y, size(y,1), 1, 1, :))
+# y_sampler(x) = (y = MWFLearning.forward_physics_15arg(x); reshape(y, size(y,1), 1, 1, :))
+# y_sampler(x) = (y = MWFLearning.forward_physics_15arg_Kperm(x); reshape(y, size(y,1), 1, 1, :))
 MB_sampler = MWFLearning.LazyMiniBatches(MB_num_train_batches, x_sampler, y_sampler)
 
 # Train using Bloch-Torrey training/testing data, or sampler data
@@ -170,10 +205,16 @@ loopcbs = Flux.Optimise.runall([
 # Training Loop
 train_loop! = function()
     for epoch in state[:epoch] .+ (1:settings["optimizer"]["epochs"])
-        state[:epoch] = epoch
+        # Check for timeout
+        (Dates.now() - SCRIPT_TIME_START > SCRIPT_TIMEOUT) && break
         
+        # Train on mock and simulated data
+        state[:epoch] = epoch
         pretraincbs() # pre-training callbacks
-        train_time = @elapsed Flux.train!(trainloss, Flux.params(m), train_data, opt) # CuArrays.@sync
+        train_time = @elapsed begin
+            Flux.train!(trainloss, Flux.params(m), MB_sampler, opt) # CuArrays.@sync
+            Flux.train!(trainloss, Flux.params(m), BT_train_data, opt) # CuArrays.@sync
+        end
         acc_time = @elapsed acc = θacc(labelbatch(test_data)...) |> Flux.data |> Flux.cpu # CuArrays.@sync
         posttraincbs() # post-training callbacks
         
@@ -205,27 +246,36 @@ end
 
 @info "Computing resulting labels..."
 best_model   = SAVE ? BSON.load(savepath("log", "model-best.bson"))[:model] : deepcopy(m);
-true_thetas  = thetas(test_data) |> Flux.cpu;
-true_signals = signals(test_data) |> Flux.cpu;
-model_thetas = best_model(signals(test_data); nsamples = 1000) |> Flux.cpu;
-# model_stds = std([best_model(signals(test_data); nsamples = 1) |> Flux.cpu for _ in 1:1000]);
+eval_data = test_data
+# eval_data = (hcat(thetas.(BT_train_data)..., thetas(BT_test_data)), cat(signals.(BT_train_data)..., signals(BT_test_data); dims = 4))
+true_thetas  = thetas(eval_data) |> Flux.cpu;
+true_signals = signals(eval_data) |> Flux.cpu;
+model_mu_std = best_model(true_signals; nsamples = 1000, stddev = true) |> Flux.cpu;
+model_thetas, model_stds = model_mu_std[1:end÷2, ..], model_mu_std[end÷2+1:end, ..];
 
 # keep_indices = true_thetas[2,:] .≤ -3.5 # Keep small permeability only
 # true_thetas  = true_thetas[.., keep_indices]
 # true_signals = true_signals[.., keep_indices]
 # model_thetas = model_thetas[.., keep_indices]
-# # model_stds = model_stds[.., keep_indices]
+# model_stds   = model_stds[.., keep_indices]
+
+true_thetas = repeat(thetas(eval_data)[:,2:2], 1,500);
+true_signals = repeat(signals(eval_data)[:,:,:,2:2], 1,1,1,500);
+model_thetas = best_model(true_signals; nsamples = 1, stddev = false) |> Flux.cpu;
 
 prediction_hist = function()
     pred_hist = function(i)
         scale = settings["data"]["info"]["labscale"][i]
         units = settings["data"]["info"]["labunits"][i]
         err = scale .* (model_thetas[i,:] .- true_thetas[i,:])
-        histogram(err;
+        abs_μ, μ = round(mean(abs.(err)); sigdigits = 2), round(mean(err); sigdigits = 2)
+        σ, IQR = round(std(err); sigdigits = 2), round(iqr(err); sigdigits = 2)
+        p = histogram(err; nbins = 100, normalized = true,
             grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
             label = settings["data"]["info"]["labinfer"][i] * " [$units]",
-            title = "|μ| = $(round(mean(abs.(err)); sigdigits = 2)), μ = $(round(mean(err); sigdigits = 2)), σ = $(round(std(err); sigdigits = 2))", #, IQR = $(round(iqr(err); sigdigits = 2))",
+            title = "|μ| = $abs_μ, μ = $μ, σ = $σ", #, IQR = $IQR",
         )
+        p = xlims!(p, μ - 3σ, μ + 3σ)
     end
     plot([pred_hist(i) for i in 1:size(model_thetas, 1)]...)
 end
@@ -250,6 +300,60 @@ end
 fig = prediction_scatter(); display(fig)
 SAVE && savefig(fig, savepath("plots", "theta.scatter.png"))
 
+prediction_ribbon = function()
+    pred_ribbon = function(i)
+        scale = settings["data"]["info"]["labscale"][i]
+        units = settings["data"]["info"]["labunits"][i]
+
+        isort = sortperm(true_thetas[i,:]);
+        x = scale .* true_thetas[i, isort];
+        y = scale .* model_thetas[i, isort];
+        _idx = partition(1:length(x), length(x)÷20)
+        _x = [mean(x[idx]) for idx in _idx]; #_x = [x[1]; _x; x[end]]
+        _y = [mean(y[idx]) for idx in _idx]; #_y = [y[1]; _y; y[end]]
+        _σ = [std(y[idx] .- x[idx]) for idx in _idx]; #_σ = [0; _σ; 0]
+
+        p = plot(_x, _y; ribbon = _σ,
+            fillalpha = 0.5,
+            marker = :dot, markersize = 2, grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
+            label = settings["data"]["info"]["labinfer"][i] * " [$units]",
+        )
+        p = plot!(p, identity, ylims(p)...; line = (:dash, 2, :red), label = L"y = x")
+        p = xlims!(p, _x[1], _x[end])
+    end
+    plot([pred_ribbon(i) for i in 1:size(model_thetas, 1)]...)
+end
+@info "Plotting prediction ribbon plots..."
+fig = prediction_ribbon(); display(fig)
+SAVE && savefig(fig, savepath("plots", "theta.ribbon.png"))
+
+prediction_hist_single = function()
+    pred_hist_single = function(i)
+        scale = settings["data"]["info"]["labscale"][i]
+        units = settings["data"]["info"]["labunits"][i]
+        err = scale .* (model_thetas[i,:] .- true_thetas[i,:])
+        abs_μ, μ = round(mean(abs.(err)); sigdigits = 2), round(mean(err); sigdigits = 2)
+        σ, IQR = round(std(err); sigdigits = 2), round(iqr(err); sigdigits = 2)
+        
+        p = histogram(scale .* model_thetas[i,:]; nbins = 20, normalized = true,
+            grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
+            label = settings["data"]["info"]["labinfer"][i] * " [$units]",
+            title = "|μ| = $abs_μ, μ = $μ, σ = $σ", #, IQR = $IQR",
+        )
+    end
+    
+    # t = [settings["data"]["info"]["labinfer"][i] * " = $(round(true_thetas[i,1];sigdigits=3)) [" * settings["data"]["info"]["labunits"][i] * "]" for i in 1:5]
+    t = [L"\cos\alpha = -0.95", L"g = 0.74", L"MWF = 0.23", L"T_2^{MW}/TE = 3.0", L"T_2^{IEW}/TE = 10.0"]
+    t = join(t, "\n")
+    plot(
+        [pred_hist_single(i) for i in 1:size(model_thetas, 1)]...,
+        plot(true_signals[:,1,1,1]; title = "MSE Signal vs. Echo Number", xlims = (1,32), titlefontsize = 10, label = "Example MSE Signal", annotate = (22,0.5,t))
+    )
+end
+@info "Plotting prediction histograms..."
+fig = prediction_hist_single(); display(fig)
+SAVE && savefig(fig, savepath("plots", "theta.histogram.single.png"))
+
 prediction_corrplot = function()
     # cosalpha(x) = (out = copy(x); @views out[1,:] .= cosd.(out[1,:]); out)
     θ = true_thetas .* settings["data"]["info"]["labscale"] |> permutedims
@@ -257,7 +361,7 @@ prediction_corrplot = function()
     # θlabs = settings["data"]["info"]["labinfer"] .* " [" .* settings["data"]["info"]["labunits"] .* "]" |> permutedims
     θlabs = settings["data"]["info"]["labinfer"] |> permutedims
     Δlabs = θlabs .* " error"
-    θidx = 1:2
+    θidx = 1:length(θlabs) # 1:2
     Δidx = 1:length(Δlabs)
     corrdata = hcat(θ[..,θidx], Δ[..,Δidx])
     corrlabs = hcat(θlabs[..,θidx], Δlabs[..,Δidx])
@@ -270,12 +374,12 @@ SAVE && savefig(fig, savepath("plots", "theta.corrplot.png"))
 
 forward_plot = function()
     forward_rmse = function(i)
-        y = sum(signals(test_data)[:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
+        y = sum(signals(eval_data)[:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
         z_class = MWFLearning.forward_physics_14arg(true_thetas[:,i:i]) # Forward simulation of true parameters
         z_model = MWFLearning.forward_physics_14arg(model_thetas[:,i:i]) # Forward simulation of model predicted parameters
         return (e_class = rmsd(y, z_class), e_model = rmsd(y, z_model))
     end
-    errors = [forward_rmse(i) for i in 1:batchsize(thetas(test_data))]
+    errors = [forward_rmse(i) for i in 1:batchsize(thetas(eval_data))]
     e_class = (e -> e.e_class).(errors)
     e_model = (e -> e.e_model).(errors)
     p = scatter([e_class e_model];

@@ -7,8 +7,10 @@ module CirclePackingUtils
 using Reexport
 @reexport using GeometryUtils
 
-using LinearAlgebra, Statistics, StatsFuns
+using LinearAlgebra, Random, Statistics, StatsFuns
 using DiffResults, Optim, LineSearches, ForwardDiff, Roots
+using OrdinaryDiffEq, SteadyStateDiffEq
+using Parameters: @unpack
 
 export estimate_density, opt_subdomain, scale_to_density, covariance_energy
 export tocircles, tocircles!, tovectors, tovectors!, initialize_origins, initialize_domain

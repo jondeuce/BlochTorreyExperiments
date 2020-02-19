@@ -8,7 +8,7 @@ function make_reproduce(
         fname = "reproduce.jl",
         force = false
     )
-    repo = LibGit2.GitRepo(joinpath(@__DIR__, "../.."))
+    repo = LibGit2.GitRepo(joinpath(@__DIR__, "../../.."))
     hash = LibGit2.GitHash(repo, "HEAD")
 
     exists = isfile(fname)

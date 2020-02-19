@@ -1,0 +1,21 @@
+name = "GeometryUtils"
+uuid = "7860413f-5c8e-458f-8095-9ece1177bf04"
+authors = ["Jonathan Doucette <jdoucette@phas.ubc.ca>"]
+version = "0.1.0"
+
+[deps]
+DistMesh = "b4596390-acbb-11e9-1f4c-bf4694421f57"
+JuAFEM = "30d91d44-8115-11e8-1d28-c19a5ac16de8"
+LineSearches = "d3d80556-e9d4-5f37-9878-2ab0fcc64255"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Optim = "429524aa-4258-5aef-a3af-852621145aeb"
+PolynomialRoots = "3a141323-8675-5d76-9d11-e1df1406c778"
+RecipesBase = "3cdcf5f2-1ef4-517c-9805-6587b60abb01"
+Reexport = "189a3867-3050-52da-a836-e630ba90ab69"
+Rotations = "6038ab10-8711-5258-84ad-4b1120ba62dc"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
+Tensors = "48a634ad-e948-5137-8d70-aa71f2a747f4"
+VoronoiDelaunay = "72f80fcb-8c52-57d9-aff0-40c1a3526986"

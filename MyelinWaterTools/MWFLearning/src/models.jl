@@ -1,4 +1,5 @@
 const MODELNAMES = Set{String}([
+    "load",
     "ConvResNet",
     "ResidualDenseNet",
     "Keras1DSeqClass",
@@ -17,32 +18,46 @@ const MODELNAMES = Set{String}([
 ])
 const INFOFIELDS = Set{String}([
     # Data info fields passed as kwargs to all models
-    "nfeatures", "nchannels", "nlabels", "labmean", "labwidth"
+    "nfeatures", "nchannels", "nlabels", "labmean", "labwidth",
 ])
 
 function make_model(settings::Dict, name::String)
-    T = settings["prec"] == 64 ? Float64 : Float32
-    model_maker = eval(Symbol(name))
-    kwargs = make_model_kwargs(T, settings["model"][name])
-    for key in INFOFIELDS
-        kwargs[Symbol(key)] = clean_model_arg(T, settings["data"]["info"][key])
+    if name == "load"
+        m = BSON.load(settings["model"][name]["path"])[:model]
+        return @ntuple(m)
+    else
+        T = settings["prec"] == 64 ? Float64 : Float32
+        model_maker = eval(Symbol(name))
+        kwargs = make_model_kwargs(T, settings["model"][name])
+        for key in INFOFIELDS
+            kwargs[Symbol(key)] = clean_model_arg(T, settings["data"]["info"][key])
+        end
+        return model_maker(T; kwargs...)
     end
-    return model_maker(T; kwargs...)
 end
 make_model(settings::Dict) = [make_model(settings, name) for name in keys(settings["model"]) if name ∈ MODELNAMES]
 
 function model_string(settings::Dict, name::String)
-    # Enumerated and replace vector properties 
-    d = deepcopy(settings["model"][name])
-    for (k,v) in deepcopy(d)
-        if v isa AbstractVector
-            for i in 1:length(v)
-                d[k * string(i)] = v[i]
+    if name == "load"
+        mstring = splitext(basename(settings["model"][name]["path"]))[1]
+        dateregex = r"\d\d\d\d-\d\d-\d\d-T-\d\d-\d\d-\d\d-\d\d\d."
+        endswith(mstring, ".model-best") && (mstring = mstring[1:end-11])
+        endswith(mstring, ".model-checkpoint") && (mstring = mstring[1:end-17])
+        (match(dateregex, mstring, 1) != nothing) && (mstring = mstring[27:end])
+        mstring
+    else
+        # Enumerated and replace vector properties 
+        d = deepcopy(settings["model"][name])
+        for (k,v) in deepcopy(d)
+            if v isa AbstractVector
+                for i in 1:length(v)
+                    d[k * string(i)] = v[i]
+                end
+                delete!(d, k)
             end
-            delete!(d, k)
         end
+        mstring = name * "_" * DrWatson.savename(d)
     end
-    return name * "_" * DrWatson.savename(d)
 end
 model_string(settings::Dict) =
     DrWatson.savename(settings["model"]) * "_" * join(
@@ -111,8 +126,65 @@ function forward_physics_14arg(x::Matrix{T}) where {T}
     end
     return M
 end
+function forward_physics_15arg(x::Matrix{T}) where {T}
+    nTE  = 32 # Number of echoes (fixed)
+    Smw  = zeros(Vec{3,T}, nTE) # Buffer for myelin signal
+    Siw  = zeros(Vec{3,T}, nTE) # Buffer for intra-axonal water signal
+    Sew  = zeros(Vec{3,T}, nTE) # Buffer for extra-axonal water signal
+    M    = zeros(T, nTE, size(x,2)) # Total signal magnitude
+    for j in 1:size(x,2)
+        alpha    = acosd(x[1,j])
+        gratio   = x[2,j]
+        mwf      = x[3,j]
+        rT2mw    = x[4,j]
+        rT2iew   = x[5,j]
+        Kperm    = x[6,j]
+        iwf      = x[7,j]
+        ewf      = x[8,j]
+        iewf     = x[9,j]
+        rT2iw    = x[10,j]
+        rT2ew    = x[11,j]
+        rT1mw    = x[12,j]
+        rT1iw    = x[13,j]
+        rT1ew    = x[14,j]
+        rT1iew   = x[15,j]
+        forward_prop!(Smw, rT2mw, rT1mw, alpha, nTE)
+        forward_prop!(Siw, rT2iw, rT1iw, alpha, nTE)
+        forward_prop!(Sew, rT2ew, rT1ew, alpha, nTE)
+        @views M[:,j] .= norm.(transverse.(mwf .* Smw .+ iwf .* Siw .+ ewf .* Sew))
+    end
+    return M
+end
+function forward_physics_15arg_Kperm(x::Matrix{T}) where {T}
+    nTE  = 32 # Number of echoes (fixed)
+    Smw  = zeros(Vec{3,T}, nTE) # Buffer for myelin signal
+    Siw  = zeros(Vec{3,T}, nTE) # Buffer for intra-axonal water signal
+    Sew  = zeros(Vec{3,T}, nTE) # Buffer for extra-axonal water signal
+    M    = zeros(T, nTE, size(x,2)) # Total signal magnitude
+    for j in 1:size(x,2)
+        Kperm    = x[1,j]
+        alpha    = acosd(x[2,j])
+        gratio   = x[3,j]
+        mwf      = x[4,j]
+        rT2mw    = x[5,j]
+        rT2iew   = x[6,j]
+        iwf      = x[7,j]
+        ewf      = x[8,j]
+        iewf     = x[9,j]
+        rT2iw    = x[10,j]
+        rT2ew    = x[11,j]
+        rT1mw    = x[12,j]
+        rT1iw    = x[13,j]
+        rT1ew    = x[14,j]
+        rT1iew   = x[15,j]
+        forward_prop!(Smw, rT2mw, rT1mw, alpha, nTE)
+        forward_prop!(Siw, rT2iw, rT1iw, alpha, nTE)
+        forward_prop!(Sew, rT2ew, rT1ew, alpha, nTE)
+        @views M[:,j] .= norm.(transverse.(mwf .* Smw .+ iwf .* Siw .+ ewf .* Sew))
+    end
+    return M
+end
 ForwardProp8Arg() = @λ(x -> forward_physics_8arg(x))
-ForwardProp14Arg() = @λ(x -> forward_physics_14arg(x))
 
 """
     Sequence classification with 1D convolutions:
@@ -840,25 +912,31 @@ SoftplusStd() = @λ(μ -> map_std(Flux.softplus, μ))
 # Flux is MUCH faster differentiating broadcasted square.(x) than x.^2 for some reason...
 square(x) = x*x
 
-function (m::LIGOCVAE)(y; nsamples::Int = 100)
-    @assert nsamples ≥ 1
+function (m::LIGOCVAE)(y; nsamples::Int = 100, stddev = false)
+    n, min_n = nsamples, ifelse(stddev, 2, 1)
+    @assert n ≥ min_n
     Flux.testmode!(m, true)
 
     μr0, σr = m.E1(y) |> Flux.data |> split_mean_std
-    function sample_rθ_posterior(μr0, σr)
+    function sample_rθ_posterior()
         zr = sample_mv_normal(μr0, σr)
         μx0, σx = m.D((zr,y)) |> Flux.data |> split_mean_std
         return sample_mv_normal(μx0, σx)
     end
 
-    x = sample_rθ_posterior(μr0, σr)
-    for i in 1:nsamples-1
-        x .+= sample_rθ_posterior(μr0, σr)
+    μx = sample_rθ_posterior()
+    μ, σ2x = zero(μx), zero(μx)
+    smooth(a, b, γ) = a + γ * (b - a)
+    for i in 2:n
+        x = sample_rθ_posterior()
+        μ .= μx
+        γ = inv(eltype(μx)(i))
+        μx .= smooth.(μx, x, γ)
+        σ2x .= smooth.(σ2x, (x .- μx) .* (x .- μ), γ)
     end
-    (nsamples > 1) && (x ./= nsamples)
-
     Flux.testmode!(m, false)
-    return x
+
+    return stddev ? vcat(μx, sqrt.(σ2x)) : μx
 end
 
 # Cross-entropy loss function

@@ -336,10 +336,10 @@ xavier_normal(T::Type, dims...; kwargs...) = xavier_normal(T::Type, dims; kwargs
 xavier_normal(args...; kwargs...) = xavier_normal(Float32, args...; kwargs...)
 
 # Override flux defaults
-Flux.glorot_uniform(dims...) = xavier_uniform(Float32, dims...)
-Flux.glorot_uniform(T::Type, dims...) = xavier_uniform(T, dims...)
-Flux.glorot_normal(dims...) = xavier_normal(Float32, dims...)
-Flux.glorot_normal(T::Type, dims...) = xavier_normal(T, dims...)
+# Flux.glorot_uniform(dims...) = xavier_uniform(Float32, dims...)
+# Flux.glorot_uniform(T::Type, dims...) = xavier_uniform(T, dims...)
+# Flux.glorot_normal(dims...) = xavier_normal(Float32, dims...)
+# Flux.glorot_normal(T::Type, dims...) = xavier_normal(T, dims...)
 
 ####
 #### Callbacks
@@ -401,7 +401,7 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
         epoch, loss, acc, labelerr = epoch[idx], loss[idx], acc[idx], labelerr[idx,:]
         
         laberr = permutedims(reduce(hcat, labelerr))
-        labcol = permutedims(RGB[cgrad(:darkrainbow)[z] for z in range(0.0, 1.0, length = size(laberr,2))])
+        labcol = size(laberr,2) == 1 ? :blue : permutedims(RGB[cgrad(:darkrainbow)[z] for z in range(0.0, 1.0, length = size(laberr,2))])
         minloss, maxacc = round(minimum(loss); sigdigits = 4), round(maximum(acc); sigdigits = 4)
         commonkw = (xscale = :log10, xticks = log10ticks(epoch[1], epoch[end]), xrotation = 75.0, xformatter = x->string(round(Int,x)), lw = 3, legend = :best, titlefontsize = 8, tickfontsize = 6, legendfontsize = 6)
 

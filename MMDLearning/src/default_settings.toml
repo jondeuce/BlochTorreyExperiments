@@ -1,0 +1,54 @@
+[data]
+out       = "./output/tmp"
+ntheta    = 5
+nsignal   = 128
+theta_labels = ["freq", "phase", "offset", "amp", "tconst"]
+# nsignal   = 48
+# theta_labels = ["refcon", "alpha", "T2short", "dT2", "Ashort"]
+
+[mmd]
+# logsigma   = [-4.0, 0.0]
+nbandwidth = 2
+stepsize   = 1e-4
+stepdrop   = 2.0
+steprate   = 1000
+batchsize  = 128
+nbatches   = 10
+epochs     = 9999
+traintime  = 18000.0
+saveperiod = 30.0
+# powercutoff = 0.01
+powerrate  = 50
+nperms     = 128
+nsamples   = 10
+zdim       = 8
+hdim       = 256
+nhidden    = 1
+[mmd.kernel]
+losstype   = "MMD"
+stepsize   = 1e-2
+epochs     = 100
+nbatches   = 1
+
+[vae]
+epochs     = 999_999
+batchsize  = 1_000
+nbatches   = 10
+traintime  = 36000.0
+saveperiod = 300.0
+mutations  = 0
+stepsize   = 1e-4
+stepdrop   = 1.0
+steprate   = 1000
+zdim       = 8
+hdim       = 128
+nhidden    = 0
+gamma      = 0.5
+
+[prior]
+method    = "simultaneous_perturbation_stochastic_approximation"
+maxtime   = 1.0
+nterms    = 2
+batchsize = 100
+nbatches  = 10
+logsigma  = -6.0

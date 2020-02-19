@@ -50,7 +50,8 @@ Non-learnable layer which scales input `x` by array `s`
 struct Scale{V}
     s::V
 end
-Scale(s::Flux.TrackedArray) = Scale(Flux.data(s)) # Layer is not learnable
+trainable(l::Scale) = () # Layer is not learnable
+# Scale(s::Flux.TrackedArray) = Scale(Flux.data(s)) # Layer is not learnable
 Flux.@treelike Scale
 (l::Scale)(x::AbstractArray) = x .* l.s
 Base.show(io::IO, l::Scale) = print(io, "Scale(", length(l.s), ")")
@@ -85,8 +86,7 @@ end
 
 Flux.@forward MultiInput.layers Base.getindex, Base.length, Base.first, Base.last, Base.iterate, Base.lastindex
 
-Flux.children(m::MultiInput) = m.layers
-Flux.mapchildren(f, m::MultiInput) = MultiInput(f.(m.layers)...)
+Flux.functor(m::MultiInput) = m.layers, ls -> MultiInput(ls...)
 
 (m::MultiInput)(xs) = map((layer, x) -> layer(x), m.layers, xs)
 
