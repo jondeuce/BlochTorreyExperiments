@@ -4,6 +4,7 @@
 Test/*
 GeometryGeneration/Images/*
 Results/*
+MMDLearning/output/*
 
 ####################
 ## Paraview files ##

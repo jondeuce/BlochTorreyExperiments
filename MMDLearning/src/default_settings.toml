@@ -8,22 +8,22 @@ theta_labels = ["freq", "phase", "offset", "amp", "tconst"]
 
 [mmd]
 # logsigma   = [-4.0, 0.0]
-nbandwidth = 2
-stepsize   = 1e-4
-stepdrop   = 2.0
-steprate   = 1000
-batchsize  = 128
+nbandwidth = 3 #TODO
+stepsize   = 1.0e-6 #TODO
+stepdrop   = 3.1623 #1.7783 #TODO
+steprate   = 2000 #TODO
+batchsize  = 512
 nbatches   = 10
-epochs     = 9999
-traintime  = 18000.0
-saveperiod = 30.0
+epochs     = 999_999
+traintime  = 1e9 #18000.0 #TODO
+saveperiod = 300.0 #TODO
 # powercutoff = 0.01
-powerrate  = 50
+powerrate  = 25 #TODO
 nperms     = 128
-nsamples   = 10
+nsamples   = 5
 zdim       = 8
 hdim       = 256
-nhidden    = 1
+nhidden    = 2
 [mmd.kernel]
 losstype   = "MMD"
 stepsize   = 1e-2

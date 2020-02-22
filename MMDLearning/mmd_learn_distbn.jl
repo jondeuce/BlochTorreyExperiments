@@ -269,6 +269,7 @@ model = let
         x -> α .* x .+ β,
     ) |> Flux.f64
 end
+model = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/2020-02-21T12:25:21.819/current-model.bson")["model"]) #TODO
 
 function corrected_signal(X) # Learning correction + noise
     out = model(encoder(X))
@@ -300,7 +301,16 @@ noise_instance(X) = exp.(model(encoder(X))[end÷2+1:end,:]) .* randn(size(X))
 sampleLatentX(m; kwargs...) = encoder(corrected_signal(sampleX(m; kwargs...)))
 sampleLatentY(m; kwargs...) = encoder(sampleY(m; kwargs...))
 
-# settings = TOML.parsefile(joinpath(@__DIR__, "src/default_settings.toml")); #TODO
+# cd(@__DIR__) #TODO
+settings = TOML.parsefile(joinpath(@__DIR__, "src/default_settings.toml")); #TODO
+let outpath = "./output/$(Dates.now())" #TODO
+    settings["data"]["out"] = outpath
+    !isdir(outpath) && mkpath(outpath)
+    open(joinpath(outpath, "settings.toml"); write = true) do io
+        TOML.print(io, settings)
+    end
+end
+# error("exiting...") #TODO
 
 function train_mmd_kernel!(
         logsigma,
@@ -371,32 +381,39 @@ function train_mmd_model(;
         lrdroprate  =  settings["mmd"]["steprate"]        :: Int,
         # powercutoff =  settings["mmd"]["powercutoff"]     :: Float64,
         powerrate   =  settings["mmd"]["powerrate"]       :: Int,
-        lrthresh    =  0.9e-7,
+        lrthresh    =  0.9e-7                             :: Float64,
         nbatches    =  settings["mmd"]["nbatches"]        :: Int,
         epochs      =  settings["mmd"]["epochs"]          :: Int,
         outfolder   =  settings["data"]["out"]            :: String,
         timeout     =  settings["mmd"]["traintime"]       :: Float64,
         nbandwidth  =  settings["mmd"]["nbandwidth"]      :: Int,
-        logsigma    =  collect(range(-4.0, 0.0; length = nbandwidth)) :: Vector{Float64},
+        logsigma    = (nbandwidth == 1 ? [-4.0] : collect(range(-4.0, 0.0; length = nbandwidth))) :: Vector{Float64},
         #logsigma   = (settings["mmd"]["logsigma"]|>copy) :: Vector{Float64},
         saveperiod  =  settings["mmd"]["saveperiod"]      :: Float64,
         nperms      =  settings["mmd"]["nperms"]          :: Int,
         nsamples    =  settings["mmd"]["nsamples"]        :: Int,
     )
     tstart = Dates.now()
-    df = DataFrame(epoch = Int[], time = Float64[], loss = Float64[], c_alpha = Float64[], P_alpha = Float64[], t_perm = Float64[], rmse = Float64[], logsigma = Vector{Float64}[])
 
-    # lambda = 1e3
-    # Lap = diagm(1 => ones(n-1), 0 => -2*ones(n), -1 => ones(n-1))
-    # loss = (X, Y) -> m * mmd_flux(logsigma, corrected_signal(X), Y) + lambda * mean(abs2, Lap * additive_correction(X))
-    # loss = (X, Y) -> m * mmd_flux(logsigma, encoder(corrected_signal(X)), encoder(Y)) + lambda * mean(abs2, Lap * additive_correction(X))
-    # @show lambda * mean(abs2, Lap * additive_correction(sampleX(m)))
+    df = DataFrame(
+        epoch    = Int[],
+        time     = Float64[],
+        loss     = Float64[],
+        c_alpha  = Float64[],
+        P_alpha  = Float64[],
+        t_perm   = Float64[],
+        rmse     = Float64[],
+        logsigma = Vector{Float64}[],
+        theta_fit_err = Union{Vector{Float64}, Missing}[],
+        signal_fit_rmse = Union{Float64, Missing}[],
+    )
 
     loss = (X, Y) -> m * mmd_flux(logsigma, corrected_signal(X), Y)
 
     callback = let
         last_time = Ref(time())
         last_checkpoint = Ref(time())
+        last_bbopt_checkpoint = Ref(time())
         function(epoch, X, Y)
             dt, last_time[] = time() - last_time[], time()
 
@@ -418,7 +435,7 @@ function train_mmd_model(;
             t_perm = permtest.MMDsq / permtest.MMDσ
 
             # Update and show progress
-            push!(df, [epoch, dt, ℓ, c_α, P_α, t_perm, rmse, copy(logsigma)])
+            push!(df, [epoch, dt, ℓ, c_α, P_α, t_perm, rmse, copy(logsigma), missing, missing])
             show(stdout, last(df, 6)); println("\n")
 
             function makeplots()
@@ -427,7 +444,7 @@ function train_mmd_model(;
                     pnoise = plot()
                     plot!(pnoise, mean(ϵ; dims = 2); yerr = std(ϵ; dims = 2), label = "noise vector");
                     plot!(pnoise, mean(dX; dims = 2); yerr = std(dX; dims = 2), label = "correction vector");
-                    # display(pnoise) #TODO
+                    display(pnoise) #TODO
 
                     nθplot = 2
                     psig = plot(
@@ -437,16 +454,16 @@ function train_mmd_model(;
                         [plot(Yθ[:,j] - Xθ[:,j] - dXθ[:,j]; lab = "Yθ-(Xθ+dXθ)") for j in 1:nθplot]...;
                         layout = (3, nθplot),
                     );
-                    # display(psig) #TODO
+                    display(psig) #TODO
 
                     window = 100 #TODO
                     dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, df)
                     ploss = if !isempty(dfp)
                         plosses = [
-                            plot(dfp.epoch, dfp.loss; title = "min loss = $(s(minimum(df.loss)))", label = "m * MMD^2"),
+                            plot(dfp.epoch, dfp.loss; title = "median loss = $(s(median(df.loss)))", label = "m * MMD^2"),
                             plot(dfp.epoch, dfp.rmse; title = "min rmse = $(s(minimum(df.rmse)))", label = "rmse"),
                             plot(dfp.epoch, dfp.t_perm; title = "median t = $(s(median(df.t_perm)))", label = "t = MMD^2/MMDσ"),
-                            plot(dfp.epoch, permutedims(reduce(hcat, dfp.logsigma)); label = ["logσ" fill(nothing, 1, length(df.logsigma[1])-1)]),
+                            plot(dfp.epoch, permutedims(reduce(hcat, dfp.logsigma)); title = "logσ vs. epoch"),
                         ]
                         foreach(plosses) do p
                             (epoch >= lrdroprate) && vline!(p, lrdroprate:lrdroprate:epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
@@ -456,15 +473,39 @@ function train_mmd_model(;
                     else
                         plot()
                     end
-                    # display(ploss) #TODO
+                    display(ploss) #TODO
 
-                    # pwit = mmd_witness(Xϵ, Y, sigma)
-                    # pheat = mmd_heatmap(Xϵ, Y, sigma)
+                    pwit = nothing #mmd_witness(Xϵ, Y, sigma)
+                    pheat = nothing #mmd_heatmap(Xϵ, Y, sigma)
 
                     pperm = mmd_perm_test_power_plot(permtest)
-                    # display(pperm) #TODO
+                    display(pperm) #TODO
 
-                    return @ntuple(pnoise, psig, ploss, pperm) #pwit, pheat
+                    pbbopt = nothing
+                    if epoch == 0 || time() - last_bbopt_checkpoint[] >= 15 * 60
+                        last_bbopt_checkpoint[] = time()
+
+                        nθbb = 32
+                        bbres = toy_theta_bboptimize(Yθ[:,1:nθbb], corrected_signal)
+                        Yθerr = best_fitness.(bbres)
+                        θbb = reduce(hcat, best_candidate.(bbres))
+                        Xθbb = reduce(hcat, corrected_signal.(toy_signal_model.(eachcol(θbb), nothing, 4)))
+
+                        θidx = sortperm(Yθerr)[1:nθbb÷2]
+                        df[end, :theta_fit_err] = mean(toy_theta_error(θ[:,θidx], θbb[:,θidx]); dims = 2) |> vec |> copy
+                        df[end, :signal_fit_rmse] = mean(Yθerr[θidx])
+                        dfp = filter(r -> !ismissing(r.theta_fit_err) && !ismissing(r.signal_fit_rmse), df)
+
+                        pbbopt = plot(
+                            plot(hcat(Yθ[:,θidx[1]], Xθbb[:,θidx[1]]); c = [:blue :red], lab = ["Goal Yθ" "Fit Xθϵ"]),
+                            sticks(sort(Yθerr); m = (:circle,4), lab = "fit rmse"), #|> p -> vline!(p, [find_cutoff(sort(Yθerr); pthresh = 1e-4)]; lab = "cutoff", line = (:black, :dash))),
+                            plot(dfp.epoch, permutedims(reduce(hcat, dfp.theta_fit_err)); title = "min max error = $(s(minimum(maximum.(dfp.theta_fit_err))))", label = "θ" .* string.(permutedims(1:size(θ,1)))),
+                            plot(dfp.epoch, dfp.signal_fit_rmse; title = "min rmse = $(s(minimum(dfp.signal_fit_rmse)))", label = "rmse"),
+                        )
+                        display(pbbopt)
+                    end
+
+                    return @ntuple(pnoise, psig, ploss, pperm, pwit, pheat, pbbopt)
                 catch e
                     @warn "Error plotting"
                     @warn sprint(showerror, e, catch_backtrace())
@@ -473,13 +514,14 @@ function train_mmd_model(;
 
             function saveplots(savefolder, prefix, suffix, plothandles)
                 !isdir(savefolder) && mkpath(savefolder)
-                @unpack pnoise, psig, ploss, pperm = plothandles #pwit, pheat
-                savefig(pnoise, joinpath(savefolder, "$(prefix)noise$(suffix).png"))
-                savefig(psig,   joinpath(savefolder, "$(prefix)signals$(suffix).png"))
-                savefig(ploss,  joinpath(savefolder, "$(prefix)loss$(suffix).png"))
-                # savefig(pwit,   joinpath(savefolder, "$(prefix)witness$(suffix).png"))
-                # savefig(pheat,  joinpath(savefolder, "$(prefix)heat$(suffix).png"))
-                savefig(pperm,  joinpath(savefolder, "$(prefix)perm$(suffix).png"))
+                @unpack pnoise, psig, ploss, pperm, pwit, pheat, pbbopt = plothandles
+                !isnothing(pnoise) && savefig(pnoise, joinpath(savefolder, "$(prefix)noise$(suffix).png"))
+                !isnothing(psig)   && savefig(psig,   joinpath(savefolder, "$(prefix)signals$(suffix).png"))
+                !isnothing(ploss)  && savefig(ploss,  joinpath(savefolder, "$(prefix)loss$(suffix).png"))
+                !isnothing(pwit)   && savefig(pwit,   joinpath(savefolder, "$(prefix)witness$(suffix).png"))
+                !isnothing(pheat)  && savefig(pheat,  joinpath(savefolder, "$(prefix)heat$(suffix).png"))
+                !isnothing(pperm)  && savefig(pperm,  joinpath(savefolder, "$(prefix)perm$(suffix).png"))
+                !isnothing(pbbopt) && savefig(pbbopt, joinpath(savefolder, "$(prefix)bbopt$(suffix).png"))
             end
 
             function saveprogress(savefolder, prefix, suffix)
@@ -521,10 +563,8 @@ function train_mmd_model(;
             end
 
             # Optimise kernel bandwidths
-            # if df[end, :P_alpha] < powercutoff
             if epoch > 0 && mod(epoch, powerrate) == 0
                 train_mmd_kernel!(logsigma)
-                # @time callback(epoch, X, Ytest)
             end
         end
     end

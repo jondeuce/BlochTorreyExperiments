@@ -5,14 +5,21 @@
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 
-using DECAES
-using LinearAlgebra, Statistics, Distributions, Random, GaussianMixtures
-using DrWatson, Parameters, BenchmarkTools, Dates, TimerOutputs
-using Optim, BlackBoxOptim, Flux, ForwardDiff
+using LinearAlgebra, Statistics, Random, SpecialFunctions
+using DrWatson, Parameters, BenchmarkTools, Dates, TimerOutputs, ThreadPools
 using TOML, BSON, DataFrames
+using Turing, MCMCChains, Distributions
+using BlackBoxOptim, Optim, ForwardDiff
+using Flux
+using DECAES
 using StatsPlots
+
 # pyplot(size = (500,400))
 pyplot(size = (800,600))
+
+# Turn off progress monitor.
+Turing.turnprogress(false)
+
 # empty!(Revise.queue_errors);
 
 # ENV["GKSwstype"] = "nul"
@@ -47,6 +54,7 @@ TOML.print(stdout, settings)
 #### Load image data
 ####
 
+#=
 const image   = DECAES.load_image("/project/st-arausch-1/jcd1994/MMD-Learning/data/masked-image-240x240x48x48.mat")
 const t2dist  = DECAES.load_image("/project/st-arausch-1/jcd1994/MMD-Learning/data/masked-image-240x240x48x48.t2dist.mat")
 const t2parts = DECAES.MAT.matread("/project/st-arausch-1/jcd1994/MMD-Learning/data/masked-image-240x240x48x48.t2parts.mat")
@@ -57,5 +65,6 @@ const opts    = T2mapOptions(
     T2Range    = (15e-3, 2.0),
     nT2        = 40,
 );
+=#
 
 nothing

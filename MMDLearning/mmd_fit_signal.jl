@@ -48,7 +48,8 @@ function test_signal_fit(signal::AbstractVector{T};
 end
 test_signal_fit(image::Array{T,4}, I::CartesianIndex; kwargs...) where {T} = test_signal_fit(image[I,:]; kwargs...)
 
-function make_save_dict(res::BlackBoxOptim.OptimizationResults)
+function make_save_dict(res)
+    # Results are BlackBoxOptim.OptimizationResults
     save_dict = Dict{String, Any}(
         "best_candidate"   => best_candidate(res),
         "best_fitness"     => best_fitness(res),

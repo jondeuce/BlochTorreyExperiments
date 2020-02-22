@@ -123,7 +123,8 @@ function plotting_callback(
     return nothing
 end
 
-function make_loss(image::Array{T,4};
+function make_loss(
+        image::Array{T,4};
         batchsize = settings["prior"]["batchsize"]::Int,
         nbatches = settings["prior"]["nbatches"]::Int,
     ) where {T}
