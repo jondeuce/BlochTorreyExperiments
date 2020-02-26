@@ -850,7 +850,7 @@ function mmd_perm_test_power(
 
     MMDsq = mean(mmd_samples)
     MMDvar = mean(mmdvar_samples) # var(mmd_samples) is less accurate for small nsamples
-    MMDσ = √MMDvar
+    MMDσ = √max(MMDvar, eps(typeof(MMDvar))/m^2) # ensure m^2*MMDvar >= ϵ
     z = MMDsq / MMDσ - c_alpha / (m * MMDσ)
     P_alpha_approx = cdf(Normal(), z)
 
