@@ -183,29 +183,25 @@ function mmd_bandwidth_optfun(logσ::Real, X, Y)
     return t
 end
 ∇mmd_bandwidth_optfun(logσ::Real, args...; kwargs...) = ForwardDiff.derivative(logσ -> mmd_bandwidth_optfun(logσ, args...; kwargs...), logσ)
-mmd_bandwidth_optfun(logσ::AbstractVector, args...; kwargs...) = mmd_bandwidth_optfun(logσ[], args...; kwargs...)
-∇mmd_bandwidth_optfun(logσ::AbstractVector, args...; kwargs...) = [∇mmd_bandwidth_optfun(logσ[], args...; kwargs...)]
 
-function mmd_flux_bandwidth_optfun(logσ::AbstractVector, X, Y)
-    m = size(X,2)
-    MMDsq  = m * mmd_flux(logσ, X, Y)
-    MMDvar = m^2 * mmdvar_flux(logσ, X, Y)
-    
+function mmd_flux_bandwidth_optfun(logσ::AbstractArray, X, Y)
     # Avoiding div by zero/negative:
     #   m^2 * MMDvar >= ϵ  -->  m * MMDσ >= √ϵ
+    MMDsq, MMDvar = mmd_and_mmdvar_flux(logσ, X, Y)
+    m = size(X,2)
     ϵ = eps(typeof(MMDvar))
-    t = MMDsq / √max(MMDvar, ϵ)
+    t = m*MMDsq / √max(m^2*MMDvar, ϵ)
     return t
 end
-function ∇mmd_flux_bandwidth_optfun(logσ::AbstractVector, args...; kwargs...)
+function ∇mmd_flux_bandwidth_optfun(logσ::AbstractArray, args...; kwargs...)
     if length(logσ) <= 16
         ForwardDiff.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)
     else
         Flux.Zygote.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)[1]
     end
 end
-∇mmd_flux_bandwidth_optfun_fwddiff(logσ::AbstractVector, args...; kwargs...) = ForwardDiff.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)
-∇mmd_flux_bandwidth_optfun_zygote(logσ::AbstractVector, args...; kwargs...) = Flux.Zygote.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)[1]
+∇mmd_flux_bandwidth_optfun_fwddiff(logσ::AbstractArray, args...; kwargs...) = ForwardDiff.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)
+∇mmd_flux_bandwidth_optfun_zygote(logσ::AbstractArray, args...; kwargs...) = Flux.Zygote.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)[1]
 
 #= (∇)mmd_(flux_)bandwidth_optfun speed + consistency testing
 for m in [32,64,128,256,512], nsigma in [16], a in [2.0]

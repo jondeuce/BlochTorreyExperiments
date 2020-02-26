@@ -37,9 +37,9 @@ version = "1.1.0"
 
 [[ArgParse]]
 deps = ["Logging", "TextWrap"]
-git-tree-sha1 = "0d571f3baf2bec1b7f8d7814d989ff875e67e926"
+git-tree-sha1 = "a8fc2e149cd6db276c76faebe197ccd3a92fb9ff"
 uuid = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
-version = "1.0.1"
+version = "1.1.0"
 
 [[Arpack]]
 deps = ["Arpack_jll", "Libdl", "LinearAlgebra"]
@@ -354,9 +354,9 @@ version = "1.2.0"
 
 [[FFTW_jll]]
 deps = ["Libdl", "Pkg"]
-git-tree-sha1 = "05674f209a6e3387dd103a945b0113eeb64b1a58"
+git-tree-sha1 = "ddb57f4cf125243b4aa4908c94d73a805f3cbf2c"
 uuid = "f5851436-0d7a-5f13-b9de-f02708fd171a"
-version = "3.3.9+3"
+version = "3.3.9+4"
 
 [[FileIO]]
 deps = ["Pkg"]
@@ -519,6 +519,12 @@ git-tree-sha1 = "d10de258d0c999350d433e4eed35201c9d790bcd"
 uuid = "5078a376-72f3-5289-bfd5-ec5146d43c02"
 version = "0.14.11"
 
+[[LazyStack]]
+deps = ["LinearAlgebra", "NamedDims", "OffsetArrays", "Test", "ZygoteRules"]
+git-tree-sha1 = "2e900f3ffe34c8b2c1543b62cc8a4a576c8549aa"
+uuid = "1fad7336-0346-5a1a-a56f-a06ba010965b"
+version = "0.0.5"
+
 [[LibGit2]]
 uuid = "76f85450-5226-5b5a-8eaa-529ad045b433"
 
@@ -543,9 +549,9 @@ uuid = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 
 [[LogDensityProblems]]
 deps = ["ArgCheck", "BenchmarkTools", "DiffResults", "DocStringExtensions", "Parameters", "Random", "Requires", "TransformVariables"]
-git-tree-sha1 = "76f423d36cd44773b7e16d802da172a74c8fe2c4"
+git-tree-sha1 = "5753c1197ce08a14dc6121379259e4b973afeec7"
 uuid = "6fdf6af0-433a-55f7-b3ed-c6c6e0b8df7c"
-version = "0.10.1"
+version = "0.10.2"
 
 [[Logging]]
 uuid = "56ddb016-857b-54e1-b83d-db4d58db5568"
@@ -642,6 +648,12 @@ version = "0.6.4"
 git-tree-sha1 = "928b8ca9b2791081dc71a51c55347c27c618760f"
 uuid = "77ba4419-2d1f-58cd-9bb1-8ffee604a2e3"
 version = "0.3.3"
+
+[[NamedDims]]
+deps = ["LinearAlgebra", "Pkg", "Requires", "Statistics"]
+git-tree-sha1 = "d7337c32d1a2993e3aaae549c4153b6d4a9c39f5"
+uuid = "356022a1-0364-5f58-8944-0da4b18d706f"
+version = "0.2.16"
 
 [[NearestNeighbors]]
 deps = ["Distances", "StaticArrays"]
@@ -937,6 +949,12 @@ deps = ["DataAPI", "DataValueInterfaces", "IteratorInterfaceExtensions", "Linear
 git-tree-sha1 = "22eea0f6619df63954b9404c8d47cd42c5d529f9"
 uuid = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
 version = "1.0.1"
+
+[[TensorCast]]
+deps = ["Compat", "LazyArrays", "LazyStack", "LinearAlgebra", "MacroTools", "OffsetArrays", "Random", "StaticArrays", "ZygoteRules"]
+git-tree-sha1 = "036614ce47bfa2eee4d774e5e25409bfc50af7d9"
+uuid = "02d47bb6-7ce6-556a-be16-bb1710789e2b"
+version = "0.2.1"
 
 [[Test]]
 deps = ["Distributed", "InteractiveUtils", "Logging", "Random"]

@@ -1,7 +1,5 @@
 # Load files
 include(joinpath(@__DIR__, "src", "mmd_preamble.jl"))
-include(joinpath(@__DIR__, "src", "mmd_math.jl"))
-include(joinpath(@__DIR__, "src", "mmd_utils.jl"))
 
 ####
 #### Global MMD minimization
