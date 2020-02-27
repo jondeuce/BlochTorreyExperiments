@@ -8,7 +8,7 @@ include(joinpath(@__DIR__, "src", "mmd_preamble.jl"))
 # sampleX, sampleY, sampleθ = make_gmm_data_samplers(image);
 sampleX, sampleY, sampleθ = make_toy_samplers(;
     ntrain = settings["vae"]["batchsize"]::Int,
-    epsilon = 0.001,
+    epsilon = 1e-3,
 );
 
 # settings = TOML.parsefile(joinpath(@__DIR__, "src/default_settings.toml")); #TODO

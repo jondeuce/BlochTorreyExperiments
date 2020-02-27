@@ -6,7 +6,7 @@ import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 
 using LinearAlgebra, Statistics, Random, SpecialFunctions
-using DrWatson, Parameters, BenchmarkTools, Dates, TimerOutputs, ThreadPools
+using DrWatson, Parameters, BenchmarkTools, Dates, TimerOutputs, ThreadPools, LegibleLambdas
 using TOML, BSON, DataFrames
 using Turing, MCMCChains, Distributions
 using BlackBoxOptim, Optim, ForwardDiff, TensorCast

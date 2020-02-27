@@ -7,11 +7,11 @@ theta_labels = ["freq", "phase", "offset", "amp", "tconst"]
 # theta_labels = ["refcon", "alpha", "T2short", "dT2", "Ashort"]
 
 [mmd]
-stepsize   = 1.0e-4 #TODO
-stepdrop   = 1.0 #10.0 3.1623 #1.7783
+stepsize   = 3.1623e-4 #1.0e-5 #TODO
+stepdrop   = 3.1623 #10.0 3.1623 #1.7783
 stepthresh = 0.9e-7
 steprate   = 1000
-batchsize  = 256 #3072 #2048 #TODO
+batchsize  = 2048 #3072
 nbatches   = 10
 epochs     = 999_999
 traintime  = 1e9 #18000.0 #TODO
@@ -25,7 +25,7 @@ hdim       = 256
 nhidden    = 2
 [mmd.kernel]
 nbandwidth = 4 #TODO
-bwbounds   = [-5.0, 2.0]
+bwbounds   = [-6.0, 2.0]
 losstype   = "tstatistic" #"MMD"
 lambda     = 1.0
 stepsize   = 1e-2

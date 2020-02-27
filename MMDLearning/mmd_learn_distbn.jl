@@ -20,7 +20,7 @@ end
 =#
 
 # sampleX, sampleY, sampleθ = make_gmm_data_samplers(image);
-sampleX, sampleY, sampleθ = make_toy_samplers(ntrain = settings["mmd"]["batchsize"]::Int, epsilon = 1e-3, power = 4.0);
+sampleX, sampleY, sampleθ = make_toy_samplers(ntrain = settings["mmd"]["batchsize"]::Int, epsilon = 1e-2, power = 4.0);
 
 # vae_model_dict = BSON.load("/scratch/st-arausch-1/jcd1994/MMD-Learning/toyvaeopt-v1/sweep/45/best-model.bson")
 # encoder = Flux.Chain(deepcopy(vae_model_dict["A"]), h -> ((μ, logσ) = (h[1:end÷2, :], h[end÷2+1:end, :]); μ .+ exp.(logσ) .* randn(size(logσ)...)))
@@ -46,8 +46,6 @@ model = let
         hidden(Nh)...,
         # Flux.Dense(Dh, n),
         # Flux.Dense(Dh, n, tanh),
-        # Flux.Dense(Dh, n, Flux.σ),
-        # x -> 0.1 .* x,
         Flux.Dense(Dh, 2n, tanh),
         x -> α .* x .+ β,
     ) |> Flux.f64
@@ -57,7 +55,7 @@ end
 split_correction_and_noise(X) = X[1:end÷2, :], exp.(X[end÷2+1:end, :])
 noise_instance(X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
 get_correction_and_noise(X) = split_correction_and_noise(model(encoder(X))) # Learning correction + noise
-# get_correction_and_noise(X) = model(encoder(X)), fill(eltype(X)(1e-3), size(X)...) # Learning correction w/ fixed noise
+# get_correction_and_noise(X) = model(encoder(X)), fill(eltype(X)(1e-2), size(X)...) # Learning correction w/ fixed noise
 # get_correction_and_noise(X) = model(encoder(X)), zeros(eltype(X), size(X)...) # Learning correction only
 get_correction(X) = get_correction_and_noise(X)[1]
 get_noise_instance(X) = noise_instance(X, get_correction_and_noise(X)[2])
@@ -165,9 +163,9 @@ function train_mmd_kernel!(
         if plotprogress && mod(epoch, plotrate) == 0
             plot(
                 plot(permutedims(df.logsigma[end]); leg = :none, title = "logσ vs. data channel"),
-                kernelloss == "MMD" ?
-                    plot(df.epoch, df.MMDsq; lab = "m*MMD^2", title = "m*MMD^2 vs. epoch", m = :circle, line = ([3,1], [:solid,:dot])) :
-                    plot(df.epoch, df.tstat; lab = "t = MMD^2/MMDσ", title = "t = MMD^2/MMDσ vs. epoch", m = :circle, line = ([3,1], [:solid,:dot])),
+                kernelloss == "tstatistic" ?
+                    plot(df.epoch, df.tstat; lab = "t = MMD²/MMDσ", title = "t = MMD²/MMDσ vs. epoch", m = :circle, line = ([3,1], [:solid,:dot])) :
+                    plot(df.epoch, df.MMDsq; lab = "m*MMD²", title = "m*MMD² vs. epoch", m = :circle, line = ([3,1], [:solid,:dot]))
             ) |> display
         end
 
@@ -376,27 +374,23 @@ function train_mmd_model(;
 
                     window = 100 #TODO
                     dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, df)
-                    ploss = if !isempty(dfp)
-                        logσmean = vec(mean(df.logsigma[end]; dims = 1))
-                        logσlow = logσmean - vec(minimum(df.logsigma[end]; dims = 1))
-                        logσhigh = vec(maximum(df.logsigma[end]; dims = 1)) - logσmean
-                        plosses = [
-                            plot(dfp.epoch, dfp.loss; title = "median loss = $(s(median(df.loss)))", label = "m*MMD^2"),
-                            plot(dfp.epoch, dfp.rmse; title = "min rmse = $(s(minimum(df.rmse)))", label = "rmse"),
-                            plot(dfp.epoch, dfp.tstat; title = "median t = $(s(median(df.tstat)))", label = "t = MMD^2/MMDσ"),
-                            plot(sort(permutedims(df.logsigma[end]); dims=2); leg = :none, title = "logσ vs. data channel"),
-                            # plot(logσmean; ribbon = (logσlow, logσhigh), leg = :none, title = "logσ vs. data channel"),
-                            # plot(dfp.epoch, permutedims(reduce(hcat, vec.(dfp.logsigma))); title = "logσ vs. epoch"),
-                        ]
-                        foreach(plosses[1:3]) do p #TODO
+                    tstat_filtered = map((_tstat, _mmdvar) -> _mmdvar > eps() ? _tstat : NaN, dfp.tstat, dfp.MMDvar)
+                    tstat_median = all(isnan, tstat_filtered) ? NaN : median(filter(!isnan, tstat_filtered))
+                    ploss = nothing
+                    if !isempty(dfp)
+                        p1 = plot(dfp.epoch, dfp.MMDsq; label = "m*MMD²", title = "median loss = $(s(median(df.loss)))")
+                        (lambda != 0) && plot!(p1, dfp.epoch, dfp.reg; label = "λ*reg (λ = $lambda)")
+                        p2 = plot(dfp.epoch, dfp.rmse; title = "min rmse = $(s(minimum(df.rmse)))", label = "rmse")
+                        p3 = plot(dfp.epoch, tstat_filtered; title = "median t = $(s(tstat_median))", label = "t = MMD²/MMDσ")
+                        p4 = plot(sort(permutedims(df.logsigma[end]); dims=2); leg = :none, title = "logσ vs. data channel")
+                        # p4 = plot(dfp.epoch, permutedims(reduce(hcat, vec.(dfp.logsigma))); title = "logσ vs. epoch")
+                        foreach([p1,p2,p3]) do p
                             (epoch >= lrdroprate) && vline!(p, lrdroprate:lrdroprate:epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
                             plot!(p; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
                         end
-                        plot(plosses...)
-                    else
-                        plot()
+                        ploss = plot(p1, p2, p3, p4)
+                        # display(ploss) #TODO
                     end
-                    # display(ploss) #TODO
 
                     pwit = nothing #mmd_witness(Xϵ, Y, sigma)
                     pheat = nothing #mmd_heatmap(Xϵ, Y, sigma)
@@ -427,26 +421,41 @@ function train_mmd_model(;
                             plot(dfp.epoch, permutedims(reduce(hcat, dfp.theta_fit_err)); title = "min max error = $(s(minimum(maximum.(dfp.theta_fit_err))))", label = "θ" .* string.(permutedims(1:size(θ,1)))),
                             plot(dfp.epoch, dfp.signal_fit_rmse; title = "min rmse = $(s(minimum(dfp.signal_fit_rmse)))", label = "rmse"),
                         )
-                        display(pbbopt)
+                        # display(pbbopt) #TODO
                     end
 
                     return @ntuple(pnoise, psig, ploss, pperm, pwit, pheat, pbbopt)
                 catch e
-                    @warn "Error plotting"
-                    @warn sprint(showerror, e, catch_backtrace())
+                    if e isa InterruptException
+                        @warn "Plotting interrupted"
+                        rethrow(e)
+                    else
+                        @warn "Error plotting"
+                        @warn sprint(showerror, e, catch_backtrace())
+                    end
                 end
             end
 
             function saveplots(savefolder, prefix, suffix, plothandles)
                 !isdir(savefolder) && mkpath(savefolder)
-                @unpack pnoise, psig, ploss, pperm, pwit, pheat, pbbopt = plothandles
-                !isnothing(pnoise) && savefig(pnoise, joinpath(savefolder, "$(prefix)noise$(suffix).png"))
-                !isnothing(psig)   && savefig(psig,   joinpath(savefolder, "$(prefix)signals$(suffix).png"))
-                !isnothing(ploss)  && savefig(ploss,  joinpath(savefolder, "$(prefix)loss$(suffix).png"))
-                !isnothing(pwit)   && savefig(pwit,   joinpath(savefolder, "$(prefix)witness$(suffix).png"))
-                !isnothing(pheat)  && savefig(pheat,  joinpath(savefolder, "$(prefix)heat$(suffix).png"))
-                !isnothing(pperm)  && savefig(pperm,  joinpath(savefolder, "$(prefix)perm$(suffix).png"))
-                !isnothing(pbbopt) && savefig(pbbopt, joinpath(savefolder, "$(prefix)bbopt$(suffix).png"))
+                try
+                    @unpack pnoise, psig, ploss, pperm, pwit, pheat, pbbopt = plothandles
+                    !isnothing(pnoise) && savefig(pnoise, joinpath(savefolder, "$(prefix)noise$(suffix).png"))
+                    !isnothing(psig)   && savefig(psig,   joinpath(savefolder, "$(prefix)signals$(suffix).png"))
+                    !isnothing(ploss)  && savefig(ploss,  joinpath(savefolder, "$(prefix)loss$(suffix).png"))
+                    !isnothing(pwit)   && savefig(pwit,   joinpath(savefolder, "$(prefix)witness$(suffix).png"))
+                    !isnothing(pheat)  && savefig(pheat,  joinpath(savefolder, "$(prefix)heat$(suffix).png"))
+                    !isnothing(pperm)  && savefig(pperm,  joinpath(savefolder, "$(prefix)perm$(suffix).png"))
+                    !isnothing(pbbopt) && savefig(pbbopt, joinpath(savefolder, "$(prefix)bbopt$(suffix).png"))
+                catch e
+                    if e isa InterruptException
+                        @warn "Saving plots interrupted"
+                        rethrow(e)
+                    else
+                        @warn "Error saving plots"
+                        @warn sprint(showerror, e, catch_backtrace())
+                    end
+                end
             end
 
             function saveprogress(savefolder, prefix, suffix)
@@ -455,8 +464,13 @@ function train_mmd_model(;
                     BSON.bson(joinpath(savefolder, "$(prefix)progress$(suffix).bson"), Dict("progress" => deepcopy(df)))
                     BSON.bson(joinpath(savefolder, "$(prefix)model$(suffix).bson"), Dict("model" => deepcopy(model)))
                 catch e
-                    @warn "Error saving progress"
-                    @warn sprint(showerror, e, catch_backtrace())
+                    if e isa InterruptException
+                        @warn "Saving progress interrupted"
+                        rethrow(e)
+                    else
+                        @warn "Error saving progress"
+                        @warn sprint(showerror, e, catch_backtrace())
+                    end
                 end
             end
 
@@ -489,7 +503,6 @@ function train_mmd_model(;
                 estr = lpad(epoch, ndigits(epochs), "0")
                 @timeit timer "checkpoint model" saveprogress(joinpath(outfolder, "checkpoint"), "checkpoint-", ".epoch.$estr")
                 @timeit timer "current model" saveprogress(outfolder, "current-", "")
-
                 @timeit timer "make plots" plothandles = makeplots()
                 @timeit timer "checkpoint plots" saveplots(joinpath(outfolder, "checkpoint"), "checkpoint-", ".epoch.$estr", plothandles)
                 @timeit timer "current plots" saveplots(outfolder, "current-", "", plothandles)

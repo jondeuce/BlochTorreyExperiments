@@ -923,18 +923,20 @@ function mmd_perm_test_power_plot(perm_test_results)
     # Permutation test plot:
     #   c_alpha_perms: m*MMD^2 for mixed (X,Y) data
     #   c_alpha: the (1-alpha)'th quantile for c_alpha_perms
-    density!(p, c_alpha_perms; label = "c_α samples (α = $alpha)", line = (3,:blue)) # xlims = xl,
-    vline!(p, [c_alpha]; label = "c_α threshold (α = $alpha)", line = (2,:blue))
+    density!(p, c_alpha_perms; label = "c_α samples (α = $alpha)", line = (3,:blue))
+    vline!(p, [c_alpha]; label = "c_α threshold (α = $alpha)", line = (2,:blue,:dash))
 
     # m*MMD^2 samples plot:
     #   mmd_samples: m*MMD^2 samples for different (X,Y) batches
     #   MMDsq, MMDσ: estimates for mean, std of mmd_samples
-    plot!(p, Normal(m*MMDsq, m*MMDσ); label = "m*MMD^2 ~ N(μ=$(s(m*MMDsq)), σ=$(s(m*MMDσ)))", line = (3,:red)) # xlims = xl,
-    vline!(p, [m*MMDsq]; line = (2,:red,:dot), label = "") # label = "mean (μ = $(s(m*MMDsq)))")
-    vline!(p, m*MMDsq .+ [-m*MMDσ, m*MMDσ]; line = (2,:red,:dot), label = "") # label = "mean ± std (σ = $(s(m*MMDσ)))")
+    vline!(p, [m*MMDsq]; line = (2,:red,:dash), label = "m*MMD² mean (μ = $(s(m*MMDsq)))")
+    vline!(p, m*MMDsq .+ [-m*MMDσ, m*MMDσ]; line = (2,:red,:dot), label = "±1σ bounds (σ = $(s(m*MMDσ)))")
+    if m^2 * MMDvar > eps(typeof(MMDvar))
+        plot!(p, Normal(m*MMDsq, m*MMDσ); label = "m*MMD² distbn ~ N(μ,σ)", line = (3,:red))
+    end
 
     if length(mmd_samples) > 1
-        density!(p, m .* mmd_samples; label = "m*MMD^2 samples", line = (2,:green))
+        density!(p, m .* mmd_samples; label = "m*MMD² samples", line = (2,:green))
     end
 
     return p

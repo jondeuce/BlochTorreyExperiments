@@ -356,9 +356,6 @@ function toy_signal_model(
     ts = 0:nsamples-1
     y = @. (offset + amp * abs(sin(2*(pi*freq*ts) - phase))^power) * exp(-ts/tconst)
     if !isnothing(epsilon)
-        # zR = epsilon .* randn(size(y)...)
-        # zI = epsilon .* randn(size(y)...)
-        # @. y = sqrt((y + zR)^2 + zI^2)
         y = @. rand(Rician(y, epsilon))
     end
     return y
@@ -366,8 +363,6 @@ end
 toy_signal_model(n::Int, args...; kwargs...) = toy_signal_model(toy_theta_sampler(n), args...; kwargs...)
 
 function toy_theta_sampler(n::Int = 1)
-    # freq = rand(Uniform(1/64,  1/16), n)
-    # freq = rand(Uniform(1/64,  1/64), n)
     freq   = rand(Uniform(1/64,  1/32), n)
     phase  = rand(Uniform( 0.0,  pi/2), n)
     offset = rand(Uniform( 0.25,  0.5), n)
@@ -376,6 +371,7 @@ function toy_theta_sampler(n::Int = 1)
 
     return permutedims(hcat(freq, phase, offset, amp, tconst))
 end
+
 function toy_theta_error(theta, thetahat)
     return abs.((theta .- thetahat)) ./ [1/32 - 1/64, pi/2 - 0.0, 0.5 - 0.25, 0.25 - 0.1, 128.0 - 16.0]
 end
@@ -404,7 +400,7 @@ end
 
 Turing.@model toy_model_rician_noise(
         y,
-        correction_model,
+        correction_and_noise,
     ) = begin
     freq   ~ Uniform(1/64,  1/32)
     phase  ~ Uniform( 0.0,  pi/2)
@@ -413,37 +409,34 @@ Turing.@model toy_model_rician_noise(
     tconst ~ Uniform(16.0, 128.0)
     # logeps ~ Uniform(-4.0,  -2.0)
     # epsilon = 10^logeps
-    # epsilon = 1e-3
 
     # Compute toy signal model without noise
     x = toy_signal_model([freq, phase, offset, amp, tconst], nothing, 4)
-    yhat, ϵhat = correction_model(x)
+    yhat, ϵhat = correction_and_noise(x)
 
     # Model noise as Rician
     for i in 1:length(y)
-        # ν = x[i]
-        # σ = epsilon
-        ν = yhat[i]
-        σ = ϵhat[i]
+        # ν, σ = x[i], epsilon
+        ν, σ = yhat[i], ϵhat[i]
         y[i] ~ Rician(ν, σ)
     end
 end
 
 function toy_theta_inference(
         y::AbstractVector,
-        correction_model = x -> (x, fill(eltype(x)(1e-3), size(x)...)),
+        correction_and_noise = x -> (x, fill(eltype(x)(1e-2), size(x)...)),
         callback = (y, chain) -> true,
     )
     model = function (x)
-        xhat, ϵhat = correction_model(x)
+        xhat, ϵhat = correction_and_noise(x)
         yhat = @. rand(Rician(xhat, ϵhat))
         return yhat
     end
     res = toy_theta_bboptimize(y, model)
     theta0 = best_candidate(res)
     while true
-        chain = sample(toy_model_rician_noise(y, correction_model), NUTS(), 1000; verbose = true, init_theta = theta0)
-        # chain = psample(toy_model_rician_noise(y, correction_model), NUTS(), 1000, 3; verbose = true, init_theta = theta0)
+        chain = sample(toy_model_rician_noise(y, correction_and_noise), NUTS(), 1000; verbose = true, init_theta = theta0)
+        # chain = psample(toy_model_rician_noise(y, correction_and_noise), NUTS(), 1000, 3; verbose = true, init_theta = theta0)
         callback(y, chain) && return chain
     end
 end
@@ -467,7 +460,7 @@ end
 
 #=
 for _ in 1:1
-    correction_model = let _model = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/2020-02-20T15:43:48.506/best-model.bson")["model"]) #deepcopy(model)
+    correction_and_noise = let _model = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/2020-02-20T15:43:48.506/best-model.bson")["model"]) #deepcopy(model)
         function(x)
             out = _model(x)
             dx, logϵ = out[1:end÷2], out[end÷2+1:end]
@@ -476,7 +469,7 @@ for _ in 1:1
     end
     signal_model = function(θhat)
         x = toy_signal_model(θhat, nothing, 4)
-        xhat, ϵhat = correction_model(x)
+        xhat, ϵhat = correction_and_noise(x)
         # zR = ϵhat .* randn(size(x)...)
         # zI = ϵhat .* randn(size(x)...)
         # yhat = @. sqrt((xhat + zR)^2 + zI^2)
@@ -485,9 +478,9 @@ for _ in 1:1
     fitresults = function(y, c)
         θhat = map(k -> mean(c[k])[1,:mean], [:freq, :phase, :offset, :amp, :tconst])
         # ϵhat = 10^map(k -> mean(c[k])[1,:mean], [:logeps])[1]
-        # ϵhat = 1e-3
+        # ϵhat = 1e-2
         # yhat = toy_signal_model(θhat, ϵhat, 4)
-        # yhat, ϵhat = correction_model(toy_signal_model(θhat, nothing, 4))
+        # yhat, ϵhat = correction_and_noise(toy_signal_model(θhat, nothing, 4))
         yhat = signal_model(θhat)
         yerr = sqrt(mean(abs2, y - yhat))
         @ntuple(θhat, yhat, yerr)
@@ -503,12 +496,12 @@ for _ in 1:1
 
     # θ = [freq, phase, offset, amp, tconst]
     # Random.seed!(0);
-    ϵ = 1e-3;
+    ϵ = 1e-2;
     θ = toy_theta_sampler(16);
     Y = toy_signal_model(θ, ϵ, 2);
 
     # ThreadPools.qmap(_ -> Random.seed!(0), 1:Threads.nthreads());
-    # @time cs = toy_theta_inference(Y, correction_model);
+    # @time cs = toy_theta_inference(Y, correction_and_noise);
     # res = map(j -> fitresults(Y[:,j], cs[j]), 1:size(Y,2))
     # ps = map(j -> plotresults(Y[:,j], cs[j]), 1:size(Y,2))
     # θhat = reduce(hcat, map(k -> mean(c[k])[1,:mean], [:freq, :phase, :offset, :amp, :tconst]) for c in cs)
