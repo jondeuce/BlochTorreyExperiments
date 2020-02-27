@@ -8,14 +8,15 @@ theta_labels = ["freq", "phase", "offset", "amp", "tconst"]
 
 [mmd]
 stepsize   = 1.0e-4 #TODO
-stepdrop   = 10.0 #3.1623 #1.7783 #TODO
+stepdrop   = 1.0 #10.0 3.1623 #1.7783
 stepthresh = 0.9e-7
-steprate   = 100 #TODO
-batchsize  = 3072 #2048 #TODO
+steprate   = 1000
+batchsize  = 256 #3072 #2048 #TODO
 nbatches   = 10
 epochs     = 999_999
 traintime  = 1e9 #18000.0 #TODO
 saveperiod = 300.0 #TODO
+showrate   = 1 #TODO
 lambda     = 1.0 #TODO
 nperms     = 128
 nsamples   = 1

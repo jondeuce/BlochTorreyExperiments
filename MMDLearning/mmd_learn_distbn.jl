@@ -52,36 +52,24 @@ model = let
         x -> α .* x .+ β,
     ) |> Flux.f64
 end
-# model = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/toymmd-v2-vector-logsigma/2020-02-25T16:07:54.249/best-model.bson")["model"]) #TODO
+# model = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/toymmd-v2-vector-logsigma/2020-02-25T23:48:34.905/current-model.bson")["model"]) #TODO
 
-function corrected_signal(X) # Learning correction + noise
-    out = model(encoder(X))
-    dX  = out[1:end÷2, :]
-    ϵ   = exp.(out[end÷2+1:end, :])
-    ϵR  = ϵ .* randn(size(X))
-    ϵI  = ϵ .* randn(size(X))
-    Xϵ  = @. sqrt((X + dX + ϵR)^2 + ϵI^2)
+split_correction_and_noise(X) = X[1:end÷2, :], exp.(X[end÷2+1:end, :])
+noise_instance(X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
+get_correction_and_noise(X) = split_correction_and_noise(model(encoder(X))) # Learning correction + noise
+# get_correction_and_noise(X) = model(encoder(X)), fill(eltype(X)(1e-3), size(X)...) # Learning correction w/ fixed noise
+# get_correction_and_noise(X) = model(encoder(X)), zeros(eltype(X), size(X)...) # Learning correction only
+get_correction(X) = get_correction_and_noise(X)[1]
+get_noise_instance(X) = noise_instance(X, get_correction_and_noise(X)[2])
+get_corrected_signal(X) = get_corrected_signal(X, get_correction_and_noise(X)...)
+function get_corrected_signal(X, dX, ϵ)
+    ϵR, ϵI = noise_instance(X, ϵ), noise_instance(X, ϵ)
+    Xϵ = @. sqrt((X + dX + ϵR)^2 + ϵI^2)
     #Xϵ = Flux.softmax(Xϵ)
     return Xϵ
 end
-additive_correction(X) = model(encoder(X))[1:end÷2,:]
-noise_instance(X) = exp.(model(encoder(X))[end÷2+1:end,:]) .* randn(size(X))
 
-# function corrected_signal(X) # Learning correction w/ fixed noise
-#     dX = model(encoder(X))
-#     ϵR = 1e-3 .* randn(size(X))
-#     ϵI = 1e-3 .* randn(size(X))
-#     Xϵ = @. sqrt((X + dX + ϵR)^2 + ϵI^2)
-#     return Xϵ
-# end
-# additive_correction(X) = model(encoder(X))
-# noise_instance(X) = 1e-3 .* randn(size(X))
-
-# corrected_signal(X) = X + model(encoder(X)) # Learning correction only
-# additive_correction(X) = model(encoder(X))
-# noise_instance(X) = zero(X)
-
-sampleLatentX(m; kwargs...) = encoder(corrected_signal(sampleX(m; kwargs...)))
+sampleLatentX(m; kwargs...) = encoder(get_corrected_signal(sampleX(m; kwargs...)))
 sampleLatentY(m; kwargs...) = encoder(sampleY(m; kwargs...))
 
 #=
@@ -296,11 +284,12 @@ function train_mmd_model(;
         nbatches   :: Int     = settings["mmd"]["nbatches"],
         timeout    :: Float64 = settings["mmd"]["traintime"],
         saveperiod :: Float64 = settings["mmd"]["saveperiod"],
+        showrate   :: Int     = settings["mmd"]["showrate"],
         outfolder  :: String  = settings["data"]["out"],
         nbandwidth :: Int     = settings["mmd"]["kernel"]["nbandwidth"],
         kernelrate :: Int     = settings["mmd"]["kernel"]["rate"],
         bwbounds   :: Vector{Float64} = settings["mmd"]["kernel"]["bwbounds"],
-        logsigma   :: AbstractVecOrMat{Float64} = nbandwidth == 1 ? fill(mean(bwbounds), 1, n) : repeat(range(bwbounds...; length = nbandwidth), 1, n),
+        logsigma   :: AbstractVecOrMat{Float64} = nbandwidth == 1 ? fill(mean(bwbounds), 1, n) : repeat(range(bwbounds...; length = nbandwidth+2)[2:end-1], 1, n),
     )
     tstart = Dates.now()
     timer = TimerOutput()
@@ -308,26 +297,23 @@ function train_mmd_model(;
         epoch    = Int[],
         time     = Float64[],
         loss     = Float64[],
+        reg      = Float64[],
+        MMDsq    = Float64[],
+        MMDvar   = Float64[],
+        tstat    = Float64[],
         c_alpha  = Float64[],
         P_alpha  = Float64[],
-        t_perm   = Float64[],
-        MMD_perm = Float64[],
         rmse     = Float64[],
         logsigma = typeof(logsigma)[],
         theta_fit_err = Union{Vector{Float64}, Missing}[],
         signal_fit_rmse = Union{Float64, Missing}[],
     )
 
-    # loss = (X, Y) -> m * mmd_flux(logsigma, corrected_signal(X), Y)
-
     regularizer = make_tikh_penalty(n, Float64)
     function loss(X,Y)
-        out = model(encoder(X))
-        dX, ϵ = out[1:end÷2, :], exp.(out[end÷2+1:end, :])
-        ϵR  = ϵ .* randn(size(X))
-        ϵI  = ϵ .* randn(size(X))
-        Xϵ  = @. sqrt((X + dX + ϵR)^2 + ϵI^2)
-        ℓ = m * mmd_flux(logsigma, Xϵ, Y)
+        dX, ϵ = get_correction_and_noise(X)
+        Xϵ = get_corrected_signal(X, dX, ϵ)
+        ℓ = m * mmd_flux(logsigma, encoder(Xϵ), encoder(Y))
         if lambda != 0
             ℓ += lambda * regularizer(dX)
         end
@@ -341,33 +327,41 @@ function train_mmd_model(;
         function(epoch, X, Y)
             dt, last_time[] = time() - last_time[], time()
 
-            @timeit timer "test loss" ℓ = loss(X, Y)
-            ϵ = noise_instance(X)
-            dX = additive_correction(X)
-            Xϵ = corrected_signal(X)
+            # Compute signal correction, noise instances, etc.
+            dX, ϵ = get_correction_and_noise(X)
+            Xϵ = get_corrected_signal(X, dX, ϵ)
 
             θ = sampleθ(m)
             Yθ = toy_signal_model(θ, nothing, 2)
             Xθ = toy_signal_model(θ, nothing, 4)
-            dXθ = additive_correction(Xθ)
-            Xθϵ = corrected_signal(Xθ)
+            dXθ, ϵθ = get_correction_and_noise(Xθ)
+            Xθϵ = get_corrected_signal(Xθ, dXθ, ϵθ)
             rmse = sqrt(mean(abs2, Yθ - (Xθ + dXθ)))
 
-            @timeit timer "perm test" permtest = mmd_perm_test_power(logsigma, m -> sampleLatentX(m), m -> sampleLatentY(m; dataset = :test), batchsize = m, nperms = nperms, nsamples = nsamples)
+            # Perform permutation test
+            #@timeit timer "perm test" permtest= mmd_perm_test_power(logsigma, m -> sampleLatentX(m), m -> sampleLatentY(m; dataset = :test), batchsize = m, nperms = nperms, nsamples = nsamples)
+            @timeit timer "perm test" permtest = mmd_perm_test_power(logsigma, encoder(Xϵ), encoder(Y); batchsize = m, nperms = nperms, nsamples = 1)
             c_α = permtest.c_alpha
             P_α = permtest.P_alpha_approx
-            t_perm = permtest.MMDsq / permtest.MMDσ
-            MMD_perm = m * permtest.MMDsq
+            tstat = permtest.MMDsq / permtest.MMDσ
+            MMDsq = m * permtest.MMDsq
+            MMDvar = m^2 * permtest.MMDvar
+
+            # Use permutation test results to compute loss
+            #@timeit timer "test loss" ℓ = loss(X, Y)
+            reg = lambda * regularizer(dX)
+            ℓ = MMDsq + reg
 
             # Update dataframe
-            push!(df, [epoch, dt, ℓ, c_α, P_α, t_perm, MMD_perm, rmse, copy(logsigma), missing, missing])
-            
+            push!(df, [epoch, dt, ℓ, reg, MMDsq, MMDvar, tstat, c_α, P_α, rmse, copy(logsigma), missing, missing])
+
             function makeplots()
                 s = x -> round(x; sigdigits = 4) # for plotting
                 try
                     pnoise = plot()
-                    plot!(pnoise, mean(ϵ; dims = 2); yerr = std(ϵ; dims = 2), label = "noise vector");
-                    plot!(pnoise, mean(dX; dims = 2); yerr = std(dX; dims = 2), label = "correction vector");
+                    z = noise_instance(X, ϵ)
+                    plot!(pnoise, mean(z; dims = 2); yerr = std(z; dims = 2), label = "noise vector")
+                    plot!(pnoise, mean(dX; dims = 2); yerr = std(dX; dims = 2), label = "correction vector")
                     # display(pnoise) #TODO
 
                     nθplot = 2
@@ -377,7 +371,7 @@ function train_mmd_model(;
                         [plot(hcat(Yθ[:,j] - Xθ[:,j], dXθ[:,j]); c = [:blue :red], lab = ["Goal Yθ-Xθ" "Simulated dXθ"]) for j in 1:nθplot]...,
                         [plot(Yθ[:,j] - Xθ[:,j] - dXθ[:,j]; lab = "Yθ-(Xθ+dXθ)") for j in 1:nθplot]...;
                         layout = (3, nθplot),
-                    );
+                    )
                     # display(psig) #TODO
 
                     window = 100 #TODO
@@ -389,7 +383,7 @@ function train_mmd_model(;
                         plosses = [
                             plot(dfp.epoch, dfp.loss; title = "median loss = $(s(median(df.loss)))", label = "m*MMD^2"),
                             plot(dfp.epoch, dfp.rmse; title = "min rmse = $(s(minimum(df.rmse)))", label = "rmse"),
-                            plot(dfp.epoch, dfp.t_perm; title = "median t = $(s(median(df.t_perm)))", label = "t = MMD^2/MMDσ"),
+                            plot(dfp.epoch, dfp.tstat; title = "median t = $(s(median(df.tstat)))", label = "t = MMD^2/MMDσ"),
                             plot(sort(permutedims(df.logsigma[end]); dims=2); leg = :none, title = "logσ vs. data channel"),
                             # plot(logσmean; ribbon = (logσlow, logσhigh), leg = :none, title = "logσ vs. data channel"),
                             # plot(dfp.epoch, permutedims(reduce(hcat, vec.(dfp.logsigma))); title = "logσ vs. epoch"),
@@ -416,10 +410,10 @@ function train_mmd_model(;
 
                         nθbb = 32
                         @timeit timer "theta inference" begin
-                            bbres = toy_theta_bboptimize(Yθ[:,1:nθbb], corrected_signal)
+                            bbres = toy_theta_bboptimize(Yθ[:,1:nθbb], get_corrected_signal)
                             Yθerr = best_fitness.(bbres)
                             θbb = reduce(hcat, best_candidate.(bbres))
-                            Xθbb = reduce(hcat, corrected_signal.(toy_signal_model.(eachcol(θbb), nothing, 4)))
+                            Xθbb = reduce(hcat, get_corrected_signal.(toy_signal_model.(eachcol(θbb), nothing, 4)))
 
                             θidx = sortperm(Yθerr)[1:nθbb÷2]
                             df[end, :theta_fit_err] = mean(toy_theta_error(θ[:,θidx], θbb[:,θidx]); dims = 2) |> vec |> copy
@@ -525,9 +519,13 @@ function train_mmd_model(;
                 @timeit timer "callback" callback(epoch, X, Ytest)
             end
 
-            # Show progress
-            show(stdout, timer); println("\n")
-            show(stdout, last(df[:, Not(:logsigma)], 6)); println("\n")
+            if mod(epoch, showrate) == 0
+                show(stdout, timer); println("\n")
+                show(stdout, last(df[:, Not([:logsigma, :theta_fit_err])], 10)); println("\n")
+            end
+            if epoch == 1
+                TimerOutputs.reset_timer!(timer) # throw out initial loop (Zygote compilation, first plot, etc.)
+            end
 
             if Dates.now() - tstart >= Dates.Second(floor(Int, timeout))
                 @info "Exiting: training time exceeded $(DECAES.pretty_time(timeout)) at epoch $epoch/$epochs"
@@ -568,7 +566,7 @@ df_kernel = train_mmd_kernel!(logsigma;
     lambda = 1,
 )
 df = train_mmd_model(
-    logsigma = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/toymmd-v2-vector-logsigma/2020-02-25T16:07:54.249/best-progress.bson")["progress"][end,:logsigma])
+    logsigma = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/toymmd-v2-vector-logsigma/2020-02-25T23:48:34.905/current-progress.bson")["progress"][end,:logsigma]),
 )
 =#
 
