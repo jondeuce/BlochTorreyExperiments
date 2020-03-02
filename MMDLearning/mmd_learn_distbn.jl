@@ -19,8 +19,9 @@ let
 end
 =#
 
+const NOISE_LEVEL = 1e-2
+sampleX, sampleY, sampleθ = make_toy_samplers(ntrain = settings["mmd"]["batchsize"]::Int, epsilon = NOISE_LEVEL, power = 4.0);
 # sampleX, sampleY, sampleθ = make_gmm_data_samplers(image);
-sampleX, sampleY, sampleθ = make_toy_samplers(ntrain = settings["mmd"]["batchsize"]::Int, epsilon = 1e-2, power = 4.0);
 
 # vae_model_dict = BSON.load("/scratch/st-arausch-1/jcd1994/MMD-Learning/toyvaeopt-v1/sweep/45/best-model.bson")
 # encoder = Flux.Chain(deepcopy(vae_model_dict["A"]), h -> ((μ, logσ) = (h[1:end÷2, :], h[end÷2+1:end, :]); μ .+ exp.(logσ) .* randn(size(logσ)...)))
@@ -50,12 +51,13 @@ model = let
         x -> α .* x .+ β,
     ) |> Flux.f64
 end
-# model = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/toymmd-v2-vector-logsigma/2020-02-25T23:48:34.905/current-model.bson")["model"]) #TODO
+# model = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/toymmd-v2-vector-logsigma/2020-02-26T17:00:51.433/best-model.bson")["model"]) #TODO
+# model = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/22/best-model.bson")["model"]) #TODO
 
 split_correction_and_noise(X) = X[1:end÷2, :], exp.(X[end÷2+1:end, :])
 noise_instance(X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
 get_correction_and_noise(X) = split_correction_and_noise(model(encoder(X))) # Learning correction + noise
-# get_correction_and_noise(X) = model(encoder(X)), fill(eltype(X)(1e-2), size(X)...) # Learning correction w/ fixed noise
+# get_correction_and_noise(X) = model(encoder(X)), fill(eltype(X)(NOISE_LEVEL), size(X)...) # Learning correction w/ fixed noise
 # get_correction_and_noise(X) = model(encoder(X)), zeros(eltype(X), size(X)...) # Learning correction only
 get_correction(X) = get_correction_and_noise(X)[1]
 get_noise_instance(X) = noise_instance(X, get_correction_and_noise(X)[2])
@@ -70,9 +72,9 @@ end
 sampleLatentX(m; kwargs...) = encoder(get_corrected_signal(sampleX(m; kwargs...)))
 sampleLatentY(m; kwargs...) = encoder(sampleY(m; kwargs...))
 
+error("exiting...") #TODO
 #=
 cd(@__DIR__) #TODO
-error("exiting...") #TODO
 settings = TOML.parsefile(joinpath(@__DIR__, "src/default_settings.toml")); #TODO
 let #TODO
     outpath = "./output/$(Dates.now())"
@@ -304,6 +306,7 @@ function train_mmd_model(;
         rmse     = Float64[],
         logsigma = typeof(logsigma)[],
         theta_fit_err = Union{Vector{Float64}, Missing}[],
+        signal_fit_logL = Union{Float64, Missing}[],
         signal_fit_rmse = Union{Float64, Missing}[],
     )
 
@@ -321,7 +324,6 @@ function train_mmd_model(;
     callback = let
         last_time = Ref(time())
         last_checkpoint = Ref(time())
-        last_bbopt_checkpoint = Ref(time())
         function(epoch, X, Y)
             dt, last_time[] = time() - last_time[], time()
 
@@ -331,6 +333,7 @@ function train_mmd_model(;
 
             θ = sampleθ(m)
             Yθ = toy_signal_model(θ, nothing, 2)
+            Yθϵ = toy_signal_model(θ, NOISE_LEVEL, 2)
             Xθ = toy_signal_model(θ, nothing, 4)
             dXθ, ϵθ = get_correction_and_noise(Xθ)
             Xθϵ = get_corrected_signal(Xθ, dXθ, ϵθ)
@@ -351,26 +354,27 @@ function train_mmd_model(;
             ℓ = MMDsq + reg
 
             # Update dataframe
-            push!(df, [epoch, dt, ℓ, reg, MMDsq, MMDvar, tstat, c_α, P_α, rmse, copy(logsigma), missing, missing])
+            push!(df, [epoch, dt, ℓ, reg, MMDsq, MMDvar, tstat, c_α, P_α, rmse, copy(logsigma), missing, missing, missing])
 
             function makeplots()
                 s = x -> round(x; sigdigits = 4) # for plotting
                 try
-                    pnoise = plot()
                     z = noise_instance(X, ϵ)
-                    plot!(pnoise, mean(z; dims = 2); yerr = std(z; dims = 2), label = "noise vector")
-                    plot!(pnoise, mean(dX; dims = 2); yerr = std(dX; dims = 2), label = "correction vector")
-                    # display(pnoise) #TODO
+                    pmodel = plot(
+                        plot([mean(z; dims = 2) mean(dX; dims = 2)]; yerr = [std(z; dims = 2) std(dX; dims = 2)], label = ["noise vector" "correction vector"], title = "model outputs vs. data channel"),
+                        plot(permutedims(df.logsigma[end]); leg = :none, title = "logσ vs. data channel"),
+                    )
+                    display(pmodel) #TODO
 
-                    nθplot = 2
-                    psig = plot(
+                    nθplot = 3
+                    psignals = plot(
                         # [plot(Y[:,j]; c = :blue, lab = "Real signal Y") for j in 1:nθplot]...,
                         [plot(hcat(Yθ[:,j], Xθϵ[:,j]); c = [:blue :red], lab = ["Goal Yθ" "Simulated Xθϵ"]) for j in 1:nθplot]...,
                         [plot(hcat(Yθ[:,j] - Xθ[:,j], dXθ[:,j]); c = [:blue :red], lab = ["Goal Yθ-Xθ" "Simulated dXθ"]) for j in 1:nθplot]...,
                         [plot(Yθ[:,j] - Xθ[:,j] - dXθ[:,j]; lab = "Yθ-(Xθ+dXθ)") for j in 1:nθplot]...;
                         layout = (3, nθplot),
                     )
-                    # display(psig) #TODO
+                    display(psignals) #TODO
 
                     window = 100 #TODO
                     dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, df)
@@ -380,51 +384,60 @@ function train_mmd_model(;
                     if !isempty(dfp)
                         p1 = plot(dfp.epoch, dfp.MMDsq; label = "m*MMD²", title = "median loss = $(s(median(df.loss)))")
                         (lambda != 0) && plot!(p1, dfp.epoch, dfp.reg; label = "λ*reg (λ = $lambda)")
-                        p2 = plot(dfp.epoch, dfp.rmse; title = "min rmse = $(s(minimum(df.rmse)))", label = "rmse")
-                        p3 = plot(dfp.epoch, tstat_filtered; title = "median t = $(s(tstat_median))", label = "t = MMD²/MMDσ")
-                        p4 = plot(sort(permutedims(df.logsigma[end]); dims=2); leg = :none, title = "logσ vs. data channel")
-                        # p4 = plot(dfp.epoch, permutedims(reduce(hcat, vec.(dfp.logsigma))); title = "logσ vs. epoch")
-                        foreach([p1,p2,p3]) do p
+                        p2 = plot(dfp.epoch, dfp.MMDvar; label = "m²MMDvar", title = "median m²MMDvar = $(s(median(df.MMDvar)))")
+                        p3 = plot(dfp.epoch, tstat_filtered; title = "median t = $(s(tstat_median))", label = "t = MMD²/MMDσ", ylim = quantile(filter(!isnan, tstat_filtered), [0.05, 0.95]))
+                        p4 = plot(dfp.epoch, dfp.P_alpha; label = "P_α", title = "median P_α = $(s(median(df.P_alpha)))")
+                        foreach([p1,p2,p3,p4]) do p
                             (epoch >= lrdroprate) && vline!(p, lrdroprate:lrdroprate:epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
                             plot!(p; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
                         end
                         ploss = plot(p1, p2, p3, p4)
-                        # display(ploss) #TODO
+                        display(ploss) #TODO
                     end
 
-                    pwit = nothing #mmd_witness(Xϵ, Y, sigma)
+                    pwitness = nothing #mmd_witness(Xϵ, Y, sigma)
                     pheat = nothing #mmd_heatmap(Xϵ, Y, sigma)
 
                     pperm = mmd_perm_test_power_plot(permtest)
-                    # display(pperm) #TODO
+                    display(pperm) #TODO
 
-                    pbbopt = nothing
-                    if epoch == 0 || time() - last_bbopt_checkpoint[] >= 15 * 60
-                        last_bbopt_checkpoint[] = time()
+                    nθbb = 64 # multiple of 8
+                    @timeit timer "theta inference" begin
+                        get_ν_and_σ = x -> ((dx, ϵ) = get_correction_and_noise(x); return (abs.(x.+dx), ϵ))
+                        res = toy_theta_loglikelihood_inference(Yθϵ[:,1:nθbb], get_ν_and_σ; objective = :mle)
+                        bbres, optres = (x->x[1]).(res), (x->x[2]).(res)
+                        θbb = reduce(hcat, Optim.minimizer.(optres))
+                        Xθbb = toy_signal_model(θbb, nothing, 4)
+                        dXθbb, ϵθbb = get_correction_and_noise(Xθbb)
+                        Xθϵbb = get_corrected_signal(Xθbb, dXθbb, ϵθbb)
+                        mle_err = Optim.minimum.(optres)
+                        rmse_err = sqrt.(mean(abs2, Yθϵ[:,1:nθbb] .- Xθϵbb; dims = 1)) |> vec
 
-                        nθbb = 32
-                        @timeit timer "theta inference" begin
-                            bbres = toy_theta_bboptimize(Yθ[:,1:nθbb], get_corrected_signal)
-                            Yθerr = best_fitness.(bbres)
-                            θbb = reduce(hcat, best_candidate.(bbres))
-                            Xθbb = reduce(hcat, get_corrected_signal.(toy_signal_model.(eachcol(θbb), nothing, 4)))
-
-                            θidx = sortperm(Yθerr)[1:nθbb÷2]
-                            df[end, :theta_fit_err] = mean(toy_theta_error(θ[:,θidx], θbb[:,θidx]); dims = 2) |> vec |> copy
-                            df[end, :signal_fit_rmse] = mean(Yθerr[θidx])
-                            dfp = filter(r -> !ismissing(r.theta_fit_err) && !ismissing(r.signal_fit_rmse), df)
-                        end
-
-                        pbbopt = plot(
-                            plot(hcat(Yθ[:,θidx[1]], Xθbb[:,θidx[1]]); c = [:blue :red], lab = ["Goal Yθ" "Fit Xθϵ"]),
-                            sticks(sort(Yθerr); m = (:circle,4), lab = "fit rmse"), #|> p -> vline!(p, [find_cutoff(sort(Yθerr); pthresh = 1e-4)]; lab = "cutoff", line = (:black, :dash))),
-                            plot(dfp.epoch, permutedims(reduce(hcat, dfp.theta_fit_err)); title = "min max error = $(s(minimum(maximum.(dfp.theta_fit_err))))", label = "θ" .* string.(permutedims(1:size(θ,1)))),
-                            plot(dfp.epoch, dfp.signal_fit_rmse; title = "min rmse = $(s(minimum(dfp.signal_fit_rmse)))", label = "rmse"),
+                        θidx = sortperm(mle_err)[1:7*(nθbb÷8)]
+                        df[end, :theta_fit_err] = mean(toy_theta_error(θ[:,θidx], θbb[:,θidx]); dims = 2) |> vec |> copy
+                        df[end, :signal_fit_logL] = mean(mle_err[θidx])
+                        df[end, :signal_fit_rmse] = mean(rmse_err[θidx])
+                        dfp = filter(r -> !ismissing(r.theta_fit_err) && !ismissing(r.signal_fit_rmse), df)
+                        
+                        pinfer = plot(
+                            plot(
+                                plot(hcat(Yθ[:,θidx[end÷2]], Xθϵbb[:,θidx[end÷2]]); c = [:blue :red], lab = ["Goal Yθ" "Fit X̄θϵ"]),
+                                sticks(sort(rmse_err); m = (:circle,4), lab = "rmse: fits"),
+                                sticks(sort(mle_err); m = (:circle,4), lab = "-logL: fits"),
+                                layout = @layout([a{0.25h}; b{0.375h}; c{0.375h}]),
+                            ),
+                            plot(
+                                plot(df.epoch, df.rmse; title = "min rmse = $(s(minimum(df.rmse)))", label = "rmse: Yθ - (Xθ + dXθ)"),
+                                plot(dfp.epoch, permutedims(reduce(hcat, dfp.theta_fit_err)); title = "min max error = $(s(minimum(maximum.(dfp.theta_fit_err))))", label = "θ" .* string.(permutedims(1:size(θ,1)))),
+                                plot(dfp.epoch, dfp.signal_fit_rmse; title = "min rmse = $(s(minimum(dfp.signal_fit_rmse)))", label = "rmse: Yθϵ - X̄θϵ"),
+                                plot(dfp.epoch, dfp.signal_fit_logL; title = "min -logL = $(s(minimum(dfp.signal_fit_logL)))", label = "-logL: Yθϵ - X̄θϵ"),
+                            ),
+                            layout = @layout([a{0.25w} b{0.75w}]),
                         )
-                        # display(pbbopt) #TODO
+                        display(pinfer) #TODO
                     end
 
-                    return @ntuple(pnoise, psig, ploss, pperm, pwit, pheat, pbbopt)
+                    return @ntuple(pmodel, psignals, ploss, pperm, pwitness, pheat, pinfer)
                 catch e
                     if e isa InterruptException
                         @warn "Plotting interrupted"
@@ -439,14 +452,9 @@ function train_mmd_model(;
             function saveplots(savefolder, prefix, suffix, plothandles)
                 !isdir(savefolder) && mkpath(savefolder)
                 try
-                    @unpack pnoise, psig, ploss, pperm, pwit, pheat, pbbopt = plothandles
-                    !isnothing(pnoise) && savefig(pnoise, joinpath(savefolder, "$(prefix)noise$(suffix).png"))
-                    !isnothing(psig)   && savefig(psig,   joinpath(savefolder, "$(prefix)signals$(suffix).png"))
-                    !isnothing(ploss)  && savefig(ploss,  joinpath(savefolder, "$(prefix)loss$(suffix).png"))
-                    !isnothing(pwit)   && savefig(pwit,   joinpath(savefolder, "$(prefix)witness$(suffix).png"))
-                    !isnothing(pheat)  && savefig(pheat,  joinpath(savefolder, "$(prefix)heat$(suffix).png"))
-                    !isnothing(pperm)  && savefig(pperm,  joinpath(savefolder, "$(prefix)perm$(suffix).png"))
-                    !isnothing(pbbopt) && savefig(pbbopt, joinpath(savefolder, "$(prefix)bbopt$(suffix).png"))
+                    for (name, p) in zip(keys(plothandles), values(plothandles))
+                        !isnothing(p) && savefig(p, joinpath(savefolder, "$(prefix)$(string(name)[2:end])$(suffix).png"))
+                    end
                 catch e
                     if e isa InterruptException
                         @warn "Saving plots interrupted"

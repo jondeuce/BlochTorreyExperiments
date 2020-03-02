@@ -365,10 +365,9 @@ toy_signal_model(n::Int, args...; kwargs...) = toy_signal_model(toy_theta_sample
 function toy_theta_sampler(n::Int = 1)
     freq   = rand(Uniform(1/64,  1/32), n)
     phase  = rand(Uniform( 0.0,  pi/2), n)
-    offset = rand(Uniform( 0.25,  0.5), n)
+    offset = rand(Uniform(0.25,   0.5), n)
     amp    = rand(Uniform( 0.1,  0.25), n)
     tconst = rand(Uniform(16.0, 128.0), n)
-
     return permutedims(hcat(freq, phase, offset, amp, tconst))
 end
 
@@ -376,27 +375,93 @@ function toy_theta_error(theta, thetahat)
     return abs.((theta .- thetahat)) ./ [1/32 - 1/64, pi/2 - 0.0, 0.5 - 0.25, 0.25 - 0.1, 128.0 - 16.0]
 end
 
-function toy_theta_bboptimize(
+function toy_theta_loglikelihood_inference(
         y::AbstractVector,
-        model = identity,
+        model = x -> (x, zero(x));
+        objective = :mle,
+        bbopt_kwargs = objective == :mle ?
+            Dict(:MaxTime => 1.0) : Dict(:MaxTime => 5.0),
     )
-    loss = function(theta)
-        x = toy_signal_model(theta, nothing, 4)
-        yhat = model(x)
+    function mle_loss(θ)
+        ȳhat, ϵhat = model(toy_signal_model(θ, nothing, 4))
+        return sum(@. -logpdf(Rician(ȳhat, ϵhat; check_args = false), y))
+    end
+
+    function rmse_loss(θ)
+        ȳhat, ϵhat = model(toy_signal_model(θ, nothing, 4))
+        yhat = @. rand(Rician(ȳhat, ϵhat; check_args = false))
         return sqrt(mean(abs2, y .- yhat))
     end
-    return bboptimize(loss;
+
+    loss = objective == :mle ? mle_loss : rmse_loss
+
+    bbres = bboptimize(loss;
         SearchRange = [(1/64, 1/32), (0.0, pi/2), (0.25, 0.5), (0.1, 0.25), (16.0, 128.0)],
-        MaxFuncEvals = 5000,
         TraceMode = :silent,
-        MaxTime = 5.0,
+        bbopt_kwargs...
     )
+
+    optres = nothing
+    if objective == :mle
+        θ0 = BlackBoxOptim.best_candidate(bbres)
+        lo = [1/64,  0.0, 0.25,  0.1,  16.0]
+        hi = [1/32, pi/2,  0.5, 0.25, 128.0]
+        # dfc = Optim.TwiceDifferentiableConstraints(lo, hi)
+        # df = Optim.TwiceDifferentiable(loss, θ0; autodiff = :forward)
+        # optres = Optim.optimize(df, dfc, θ0, Optim.IPNewton())
+        df = Optim.OnceDifferentiable(loss, θ0; autodiff = :forward)
+        optres = Optim.optimize(df, lo, hi, θ0, Optim.Fminbox(Optim.LBFGS()))
+        # optres = Optim.optimize(df, lo, hi, θ0, Optim.Fminbox(Optim.BFGS()))
+    end
+
+    return @ntuple(bbres, optres)
 end
-function toy_theta_bboptimize(Y::AbstractMatrix, args...; kwargs...)
+function toy_theta_loglikelihood_inference(Y::AbstractMatrix, args...; kwargs...)
+    _args = [deepcopy(args) for _ in 1:Threads.nthreads()]
+    _kwargs = [deepcopy(kwargs) for _ in 1:Threads.nthreads()]
     ThreadPools.qmap(1:size(Y,2)) do j
-        toy_theta_bboptimize(Y[:,j], args...; kwargs...)
+        tid = Threads.threadid()
+        toy_theta_loglikelihood_inference(Y[:,j], _args[tid]...; _kwargs[tid]...)
     end
 end
+
+#=
+for _ in 1:1
+    noise_level = 1e-2
+    θ = toy_theta_sampler(1);
+    x = toy_signal_model(θ, nothing, 4);
+    y = toy_signal_model(θ, nothing, 2);
+    xϵ = toy_signal_model(θ, noise_level, 4);
+    yϵ = toy_signal_model(θ, noise_level, 2);
+
+    m = x -> ((dx, ϵ) = get_correction_and_noise(x); return (abs.(x.+dx), ϵ));
+
+    @time bbres1, _ = toy_theta_loglikelihood_inference(yϵ, m; objective = :rmse)[1];
+    θhat1 = BlackBoxOptim.best_candidate(bbres1);
+    xhat1 = toy_signal_model(θhat1, nothing, 4);
+    dxhat1, ϵhat1 = get_correction_and_noise(xhat1);
+    yhat1 = get_corrected_signal(xhat1, dxhat1, ϵhat1);
+
+    @time bbres2, optres2 = toy_theta_loglikelihood_inference(yϵ, m; objective = :mle)[1];
+    θhat2 = Optim.minimizer(optres2); #BlackBoxOptim.best_candidate(bbres2);
+    xhat2 = toy_signal_model(θhat2, nothing, 4);
+    dxhat2, ϵhat2 = get_correction_and_noise(xhat2);
+    yhat2 = get_corrected_signal(xhat2, dxhat2, ϵhat2);
+
+    p1 = plot([y[:,1] x[:,1]]; label = ["Yθ" "Xθ"], line = (2,));
+    p2 = plot([yϵ[:,1] xϵ[:,1]]; label = ["Yθϵ" "Xθϵ"], line = (2,));
+    p3 = plot([yϵ[:,1] yhat1]; label = ["Yθϵ" "Ȳθϵ₁"], line = (2,));
+    p4 = plot([yϵ[:,1] yhat2]; label = ["Yθϵ" "Ȳθϵ₂"], line = (2,));
+    plot(p1,p2,p3,p4) |> display;
+
+    @show toy_theta_error(θ[:,1], θhat1)';
+    @show toy_theta_error(θ[:,1], θhat2)';
+    @show √mean(abs2, y[:,1] .- (xhat1 .+ dxhat1));
+    @show √mean(abs2, y[:,1] .- (xhat2 .+ dxhat2));
+    @show √mean([mean(abs2, yϵ[:,1] .- get_corrected_signal(xhat1, dxhat1, ϵhat1)) for _ in 1:1000]);
+    @show √mean([mean(abs2, yϵ[:,1] .- get_corrected_signal(xhat2, dxhat2, ϵhat2)) for _ in 1:1000]);
+end;
+=#
 
 Turing.@model toy_model_rician_noise(
         y,
@@ -418,21 +483,21 @@ Turing.@model toy_model_rician_noise(
     for i in 1:length(y)
         # ν, σ = x[i], epsilon
         ν, σ = yhat[i], ϵhat[i]
-        y[i] ~ Rician(ν, σ)
+        y[i] ~ Rician(ν, σ; check_args = false)
     end
 end
 
-function toy_theta_inference(
+function toy_theta_mcmc_inference(
         y::AbstractVector,
-        correction_and_noise = x -> (x, fill(eltype(x)(1e-2), size(x)...)),
+        correction_and_noise,
         callback = (y, chain) -> true,
     )
     model = function (x)
         xhat, ϵhat = correction_and_noise(x)
-        yhat = @. rand(Rician(xhat, ϵhat))
+        yhat = @. rand(Rician(xhat, ϵhat; check_args = false))
         return yhat
     end
-    res = toy_theta_bboptimize(y, model)
+    res = toy_theta_loglikelihood_inference(y, model)
     theta0 = best_candidate(res)
     while true
         chain = sample(toy_model_rician_noise(y, correction_and_noise), NUTS(), 1000; verbose = true, init_theta = theta0)
@@ -440,9 +505,9 @@ function toy_theta_inference(
         callback(y, chain) && return chain
     end
 end
-function toy_theta_inference(Y::AbstractMatrix, args...; kwargs...)
+function toy_theta_mcmc_inference(Y::AbstractMatrix, args...; kwargs...)
     ThreadPools.qmap(1:size(Y,2)) do j
-        toy_theta_inference(Y[:,j], args...; kwargs...)
+        toy_theta_mcmc_inference(Y[:,j], args...; kwargs...)
     end
 end
 
@@ -478,8 +543,6 @@ for _ in 1:1
     fitresults = function(y, c)
         θhat = map(k -> mean(c[k])[1,:mean], [:freq, :phase, :offset, :amp, :tconst])
         # ϵhat = 10^map(k -> mean(c[k])[1,:mean], [:logeps])[1]
-        # ϵhat = 1e-2
-        # yhat = toy_signal_model(θhat, ϵhat, 4)
         # yhat, ϵhat = correction_and_noise(toy_signal_model(θhat, nothing, 4))
         yhat = signal_model(θhat)
         yerr = sqrt(mean(abs2, y - yhat))
@@ -496,18 +559,18 @@ for _ in 1:1
 
     # θ = [freq, phase, offset, amp, tconst]
     # Random.seed!(0);
-    ϵ = 1e-2;
+    noise_level = 1e-2;
     θ = toy_theta_sampler(16);
-    Y = toy_signal_model(θ, ϵ, 2);
+    Y = toy_signal_model(θ, noise_level, 2);
 
     # ThreadPools.qmap(_ -> Random.seed!(0), 1:Threads.nthreads());
-    # @time cs = toy_theta_inference(Y, correction_and_noise);
+    # @time cs = toy_theta_mcmc_inference(Y, correction_and_noise);
     # res = map(j -> fitresults(Y[:,j], cs[j]), 1:size(Y,2))
     # ps = map(j -> plotresults(Y[:,j], cs[j]), 1:size(Y,2))
     # θhat = reduce(hcat, map(k -> mean(c[k])[1,:mean], [:freq, :phase, :offset, :amp, :tconst]) for c in cs)
     # Yerr = sort(getfield.(res, :yerr))
 
-    @time bbres = toy_theta_bboptimize(Y, signal_model);
+    @time bbres = toy_theta_loglikelihood_inference(Y, signal_model);
     Yerr = sort(best_fitness.(bbres))
     θhat = best_candidate.(bbres)
     Yhat = signal_model.(θhat)
@@ -519,7 +582,7 @@ for _ in 1:1
         p = plot()
         sticks!(p, Yerr; m = (:circle,4), lab = "Yerr")
         # sticks!(p, [0; diff(Yerr)]; m = (:circle,4), lab = "dYerr")
-        hline!(p, [2ϵ]; lab = "2ϵ")
+        hline!(p, [2noise_level]; lab = "2ϵ")
         vline!(p, [find_cutoff(Yerr; pthresh = 1e-4)]; lab = "cutoff", line = (:black, :dash))
         display(p)
     end

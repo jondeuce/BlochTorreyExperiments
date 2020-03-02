@@ -37,14 +37,14 @@ Distributions.scale(d::Rician) = d.σ
 
 Base.eltype(::Type{Rician{T}}) where {T} = T
 
-#### Bessel function
-_L½_bessel_kernel(x) = exp(x/2) * ((1-x) * besseli(0, -x/2) - x * besseli(1, -x/2))
-_L½_series_kernel(x) = sqrt(-x/pi) * (256 - 64/x + 8/x^2 - 6/x^3 + 75/x^4) / 128
-laguerre½(x, t = 20) = -x < t ? _L½_bessel_kernel(x) : _L½_series_kernel(x)
+#### Laguerre/Bessel functions
+_L½_bessel_kernel(x::T) where {T} = exp(-x/2) * ((1 + x) * T(besseli(0, x/2)) + x * T(besseli(1, x/2)))
+_L½_series_kernel(x::T) where {T} = (4x * (16x * (4x * (8x * (4x + 1) + 1) + 3) + 75) + 735)/(4096 * sqrt(π*x^9))
+laguerre½(x, t = 150) = -x < t ? _L½_bessel_kernel(float(-x)) : _L½_series_kernel(float(-x)) # note negative arguments for kernels
 
-_logI0_bessel_kernel(z) = log(besseli(0, z) + eps(eltype(z)))
-_logI0_series_kernel(z) = z - log(2*(pi*z) + eps(eltype(z)))/2 + log1p(1/8z + 9/(2*(8z)^2) - 9*25/(6*(8z)^3))
-logbesseli0(z, t = 20)  = z < t ? _logI0_bessel_kernel(z) : _logI0_series_kernel(z)
+_logI0_bessel_kernel(x::T) where {T} = log(T(besseli(0, x)) + eps(T))
+_logI0_series_kernel(x::T) where {T} = log(T(3675)/32768 + x * (T(75)/1024 + x * (T(9)/128 + x * (T(1)/8 + x)))) + x - (9*log(x))/2 - log(2*T(π))/2
+logbesseli0(x, t = 75)  = x < t ? _logI0_bessel_kernel(float(x)) : _logI0_series_kernel(float(x))
 
 #### Statistics
 Distributions.mean(d::Rician) = d.σ * sqrt(pi/2) * laguerre½(-d.ν^2 / 2d.σ^2)
@@ -58,8 +58,7 @@ Distributions.std(d::Rician) = sqrt(var(d))
 # Distributions.entropy(d::Rician) = ?
 
 #### Evaluation
-Distributions.logpdf(d::Rician, x::Real) = log(x / d.σ^2 + eps(eltype(x))) + logbesseli0(x * d.ν / d.σ^2) - (x^2 + d.ν^2) / (2*d.σ^2)
-# Distributions.logpdf(d::Rician, x::AbstractVector{<:Real}) = logpdf.(d, x)
+Distributions.logpdf(d::Rician, x::Real) = log(x / d.σ^2 + eps(float(typeof(x)))) + logbesseli0(x * d.ν / d.σ^2) - (x^2 + d.ν^2) / (2*d.σ^2)
 Distributions.pdf(d::Rician, x::Real) = exp(logpdf(d, x)) # below version errors for large x (besseli throws); otherwise is consistent
 # Distributions.pdf(d::Rician, x::Real) = x * besseli(0, x * d.ν / d.σ^2) * exp(-(x^2 + d.ν^2) / (2*d.σ^2)) / d.σ^2
 
