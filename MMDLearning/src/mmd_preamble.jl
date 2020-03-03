@@ -9,7 +9,7 @@ using LinearAlgebra, Statistics, Random, SpecialFunctions
 using DrWatson, Parameters, BenchmarkTools, Dates, TimerOutputs, ThreadPools, LegibleLambdas
 using TOML, BSON, DataFrames
 using Turing, MCMCChains, Distributions
-using BlackBoxOptim, Optim, ForwardDiff, TensorCast
+using BlackBoxOptim, Optim, ForwardDiff, TensorCast, Yeppp
 using Flux
 using DECAES
 using StatsPlots
