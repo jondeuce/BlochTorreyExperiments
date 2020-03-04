@@ -375,6 +375,46 @@ function toy_theta_error(theta, thetahat)
     return abs.((theta .- thetahat)) ./ [1/32 - 1/64, pi/2 - 0.0, 0.5 - 0.25, 0.25 - 0.1, 128.0 - 16.0]
 end
 
+function make_toy_samplers(;
+        input_noise = false,
+        epsilon = nothing,
+        power = 4.0,
+        ntrain = 1_000,
+        ntest = ntrain,
+        nval = ntrain,
+    )
+
+    # Set random seed for consistent test/train/val sets
+    rng = Random.seed!(0)
+
+    # Sample parameter prior space
+    sampleθ = toy_theta_sampler
+
+    # Sample (incorrect) model
+    sampleX = input_noise ?
+        (batchsize, noise) -> toy_signal_model(batchsize, noise, power) :
+        (batchsize) -> toy_signal_model(batchsize, nothing, power)
+
+    # Sample data
+    _sampleY(batchsize) = toy_signal_model(batchsize, epsilon, 2)
+    Ytrain, Ytest, Yval = _sampleY(ntrain), _sampleY(ntest), _sampleY(nval)
+    sampleY = function(batchsize; dataset = :train)
+        dataset == :train ? (batchsize === nothing ? Ytrain : _sampleY(batchsize)) :
+        dataset == :test  ? (batchsize === nothing ? Ytest  : _sampleY(batchsize)) :
+        dataset == :val   ? (batchsize === nothing ? Yval   : _sampleY(batchsize)) :
+        error("dataset must be :train, :test, or :val")
+    end
+
+    # Reset random seed
+    Random.seed!(rng)
+
+    return sampleX, sampleY, sampleθ
+end
+
+####
+#### Toy problem log likelihood inference
+####
+
 function toy_theta_loglikelihood_inference(
         y::AbstractVector,
         model = x -> (x, zero(x));
@@ -463,6 +503,11 @@ for _ in 1:1
 end;
 =#
 
+####
+#### Toy problem MCMC inference
+####
+
+#=
 Turing.@model toy_model_rician_noise(
         y,
         correction_and_noise,
@@ -486,6 +531,7 @@ Turing.@model toy_model_rician_noise(
         y[i] ~ Rician(ν, σ; check_args = false)
     end
 end
+=#
 
 function toy_theta_mcmc_inference(
         y::AbstractVector,
@@ -605,41 +651,5 @@ for _ in 1:100
     end;
 end;
 =#
-
-function make_toy_samplers(;
-        input_noise = false,
-        epsilon = nothing,
-        power = 4.0,
-        ntrain = 1_000,
-        ntest = ntrain,
-        nval = ntrain,
-    )
-
-    # Set random seed for consistent test/train/val sets
-    rng = Random.seed!(0)
-
-    # Sample parameter prior space
-    sampleθ = toy_theta_sampler
-
-    # Sample (incorrect) model
-    sampleX = input_noise ?
-        (batchsize, noise) -> toy_signal_model(batchsize, noise, power) :
-        (batchsize) -> toy_signal_model(batchsize, nothing, power)
-
-    # Sample data
-    _sampleY(batchsize) = toy_signal_model(batchsize, epsilon, 2)
-    Ytrain, Ytest, Yval = _sampleY(ntrain), _sampleY(ntest), _sampleY(nval)
-    sampleY = function(batchsize; dataset = :train)
-        dataset == :train ? (batchsize === nothing ? Ytrain : _sampleY(batchsize)) :
-        dataset == :test  ? (batchsize === nothing ? Ytest  : _sampleY(batchsize)) :
-        dataset == :val   ? (batchsize === nothing ? Yval   : _sampleY(batchsize)) :
-        error("dataset must be :train, :test, or :val")
-    end
-
-    # Reset random seed
-    Random.seed!(rng)
-
-    return sampleX, sampleY, sampleθ
-end
 
 nothing

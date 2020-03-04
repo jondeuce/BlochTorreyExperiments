@@ -20,7 +20,6 @@ showrate   = 1 #TODO
 lambda     = 0.0 #TODO
 nperms     = 128
 nsamples   = 1
-zdim       = 8
 hdim       = 256
 nhidden    = 2
 [mmd.kernel]

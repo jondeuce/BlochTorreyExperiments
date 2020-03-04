@@ -1,38 +1,21 @@
 # Load files
 include(joinpath(@__DIR__, "src", "mmd_preamble.jl"))
 
-#=
-let
-    for _ in 1:1
-        y = sampleY(1)
-        x = sampleX(1)
-        p1 = plot()
-        plot!(p1, reduce(hcat, [decoder(encoder(y)) for _ in 1:10]); line = (:blue,), leg = :none)
-        plot!(p1, y; line = (:red, 3))
-        
-        p2 = plot()
-        plot!(p2, sampleY(1); lab="Y", line = (3, :blue))
-        plot!(p2, sampleX(1); lab="X", line = (3, :red))
-
-        plot(p1,p2) |> display
-    end
-end
-=#
-
 const NOISE_LEVEL = 1e-2
+const models = Dict{String, Any}()
+
 sampleX, sampleY, sampleθ = make_toy_samplers(ntrain = settings["mmd"]["batchsize"]::Int, epsilon = NOISE_LEVEL, power = 4.0);
 # sampleX, sampleY, sampleθ = make_gmm_data_samplers(image);
 
 # vae_model_dict = BSON.load("/scratch/st-arausch-1/jcd1994/MMD-Learning/toyvaeopt-v1/sweep/45/best-model.bson")
-# encoder = Flux.Chain(deepcopy(vae_model_dict["A"]), h -> ((μ, logσ) = (h[1:end÷2, :], h[end÷2+1:end, :]); μ .+ exp.(logσ) .* randn(size(logσ)...)))
-# encoder = Flux.Chain(deepcopy(vae_model_dict["A"]), h -> h[1:end÷2, :])
-# decoder = deepcopy(vae_model_dict["f"])
-encoder = identity
-decoder = identity
-
-model = let
+# models["vae.E"] = Flux.Chain(deepcopy(vae_model_dict["A"]), h -> ((μ, logσ) = (h[1:end÷2, :], h[end÷2+1:end, :]); μ .+ exp.(logσ) .* randn(size(logσ)...)))
+# models["vae.E"] = Flux.Chain(deepcopy(vae_model_dict["A"]), h -> h[1:end÷2, :])
+# models["vae.D"] = deepcopy(vae_model_dict["f"])
+models["vae.E"] = identity # encoder
+models["vae.D"] = identity # decoder
+models["mmd"] = let
     n    = settings["data"]["nsignal"]::Int
-    Dz   = settings["mmd"]["zdim"]::Int
+    Dz   = settings["vae"]["zdim"]::Int
     Dh   = settings["mmd"]["hdim"]::Int
     Nh   = settings["mmd"]["nhidden"]::Int
     act  = Flux.relu
@@ -43,7 +26,7 @@ model = let
     β = [fill(0.0, n); fill(-6.0, n)]
 
     Flux.Chain(
-        (encoder == identity ? Flux.Dense(n, Dh, act) : Flux.Dense(Dz, Dh, act)),
+        (models["vae.E"] == identity ? Flux.Dense(n, Dh, act) : Flux.Dense(Dz, Dh, act)),
         hidden(Nh)...,
         # Flux.Dense(Dh, n),
         # Flux.Dense(Dh, n, tanh),
@@ -51,14 +34,14 @@ model = let
         x -> α .* x .+ β,
     ) |> Flux.f64
 end
-# model = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/toymmd-v2-vector-logsigma/2020-02-26T17:00:51.433/best-model.bson")["model"]) #TODO
-# model = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/22/best-model.bson")["model"]) #TODO
+# models["mmd"] = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/toymmd-v2-vector-logsigma/2020-02-26T17:00:51.433/best-model.bson")["model"]) #TODO
+# models["mmd"] = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/22/best-model.bson")["model"]) #TODO
 
 split_correction_and_noise(X) = X[1:end÷2, :], exp.(X[end÷2+1:end, :])
 noise_instance(X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
-get_correction_and_noise(X) = split_correction_and_noise(model(encoder(X))) # Learning correction + noise
-# get_correction_and_noise(X) = model(encoder(X)), fill(eltype(X)(NOISE_LEVEL), size(X)...) # Learning correction w/ fixed noise
-# get_correction_and_noise(X) = model(encoder(X)), zeros(eltype(X), size(X)...) # Learning correction only
+get_correction_and_noise(X) = split_correction_and_noise(models["mmd"](models["vae.E"](X))) # Learning correction + noise
+# get_correction_and_noise(X) = models["mmd"](models["vae.E"](X)), fill(eltype(X)(NOISE_LEVEL), size(X)...) # Learning correction w/ fixed noise
+# get_correction_and_noise(X) = models["mmd"](models["vae.E"](X)), zeros(eltype(X), size(X)...) # Learning correction only
 get_correction(X) = get_correction_and_noise(X)[1]
 get_noise_instance(X) = noise_instance(X, get_correction_and_noise(X)[2])
 get_corrected_signal(X) = get_corrected_signal(X, get_correction_and_noise(X)...)
@@ -69,12 +52,12 @@ function get_corrected_signal(X, dX, ϵ)
     return Xϵ
 end
 
-sampleLatentX(m; kwargs...) = encoder(get_corrected_signal(sampleX(m; kwargs...)))
-sampleLatentY(m; kwargs...) = encoder(sampleY(m; kwargs...))
+sampleLatentX(m; kwargs...) = models["vae.E"](get_corrected_signal(sampleX(m; kwargs...)))
+sampleLatentY(m; kwargs...) = models["vae.E"](sampleY(m; kwargs...))
 
-error("exiting...") #TODO
 #=
 cd(@__DIR__) #TODO
+error("exiting...") #TODO
 settings = TOML.parsefile(joinpath(@__DIR__, "src/default_settings.toml")); #TODO
 let #TODO
     outpath = "./output/$(Dates.now())"
@@ -314,7 +297,7 @@ function train_mmd_model(;
     function loss(X,Y)
         dX, ϵ = get_correction_and_noise(X)
         Xϵ = get_corrected_signal(X, dX, ϵ)
-        ℓ = m * mmd_flux(logsigma, encoder(Xϵ), encoder(Y))
+        ℓ = m * mmd_flux(logsigma, models["vae.E"](Xϵ), models["vae.E"](Y))
         if lambda != 0
             ℓ += lambda * regularizer(dX)
         end
@@ -324,14 +307,13 @@ function train_mmd_model(;
     callback = let
         last_time = Ref(time())
         last_checkpoint = Ref(time())
-        function(epoch, X, Y)
+        function(epoch, X, Y, θ)
             dt, last_time[] = time() - last_time[], time()
 
             # Compute signal correction, noise instances, etc.
             dX, ϵ = get_correction_and_noise(X)
             Xϵ = get_corrected_signal(X, dX, ϵ)
 
-            θ = sampleθ(m)
             Yθ = toy_signal_model(θ, nothing, 2)
             Yθϵ = toy_signal_model(θ, NOISE_LEVEL, 2)
             Xθ = toy_signal_model(θ, nothing, 4)
@@ -340,8 +322,7 @@ function train_mmd_model(;
             rmse = sqrt(mean(abs2, Yθ - (Xθ + dXθ)))
 
             # Perform permutation test
-            #@timeit timer "perm test" permtest= mmd_perm_test_power(logsigma, m -> sampleLatentX(m), m -> sampleLatentY(m; dataset = :test), batchsize = m, nperms = nperms, nsamples = nsamples)
-            @timeit timer "perm test" permtest = mmd_perm_test_power(logsigma, encoder(Xϵ), encoder(Y); batchsize = m, nperms = nperms, nsamples = 1)
+            @timeit timer "perm test" permtest = mmd_perm_test_power(logsigma, models["vae.E"](Xϵ), models["vae.E"](Y); batchsize = m, nperms = nperms, nsamples = 1)
             c_α = permtest.c_alpha
             P_α = permtest.P_alpha_approx
             tstat = permtest.MMDsq / permtest.MMDσ
@@ -357,52 +338,62 @@ function train_mmd_model(;
             push!(df, [epoch, dt, ℓ, reg, MMDsq, MMDvar, tstat, c_α, P_α, rmse, copy(logsigma), missing, missing, missing])
 
             function makeplots()
-                s = x -> round(x; sigdigits = 4) # for plotting
+                s = x -> x == round(x) ? round(Int, x) : round(x; sigdigits = 4) # for plotting
+                window = 100 # window for plotting error metrics etc.
+                nθplot = 3 # number of sets θ to draw for plotting simulated signals
+                nθbb = min(256, size(θ,2)) # number of sets θ to draw for parameter inference
                 try
-                    z = noise_instance(X, ϵ)
-                    pmodel = plot(
-                        plot([mean(z; dims = 2) mean(dX; dims = 2)]; yerr = [std(z; dims = 2) std(dX; dims = 2)], label = ["noise vector" "correction vector"], title = "model outputs vs. data channel"),
+                    pmodel = @timeit timer "model plot" plot(
+                        plot(
+                            plot(mean(dX; dims = 2); yerr = std(dX; dims = 2), label = "signal correction", c = :red, title = "model outputs vs. data channel"),
+                            plot(mean(ϵ; dims = 2); yerr = std(ϵ; dims = 2), label = "noise amplitude", c = :blue);
+                            layout = (2,1),
+                        ),
                         plot(permutedims(df.logsigma[end]); leg = :none, title = "logσ vs. data channel"),
                     )
                     display(pmodel) #TODO
 
-                    nθplot = 3
-                    psignals = plot(
-                        # [plot(Y[:,j]; c = :blue, lab = "Real signal Y") for j in 1:nθplot]...,
-                        [plot(hcat(Yθ[:,j], Xθϵ[:,j]); c = [:blue :red], lab = ["Goal Yθ" "Simulated Xθϵ"]) for j in 1:nθplot]...,
-                        [plot(hcat(Yθ[:,j] - Xθ[:,j], dXθ[:,j]); c = [:blue :red], lab = ["Goal Yθ-Xθ" "Simulated dXθ"]) for j in 1:nθplot]...,
-                        [plot(Yθ[:,j] - Xθ[:,j] - dXθ[:,j]; lab = "Yθ-(Xθ+dXθ)") for j in 1:nθplot]...;
-                        layout = (3, nθplot),
-                    )
+                    psignals = @timeit timer "signal plot" begin
+                        θplotidx = sample(1:size(Yθ,2), nθplot; replace = false)
+                        plot(
+                            [plot(hcat(Yθ[:,j], Xθϵ[:,j]); c = [:blue :red], lab = ["Goal Yθ" "Simulated Xθϵ"]) for j in θplotidx]...,
+                            [plot(hcat(Yθ[:,j] - Xθ[:,j], dXθ[:,j]); c = [:blue :red], lab = ["Goal Yθ-Xθ" "Simulated dXθ"]) for j in θplotidx]...,
+                            [plot(Yθ[:,j] - Xθ[:,j] - dXθ[:,j]; lab = "Yθ-(Xθ+dXθ)") for j in θplotidx]...;
+                            layout = (3, nθplot),
+                        )
+                    end
                     display(psignals) #TODO
 
-                    window = 100 #TODO
-                    dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, df)
-                    tstat_filtered = map((_tstat, _mmdvar) -> _mmdvar > eps() ? _tstat : NaN, dfp.tstat, dfp.MMDvar)
-                    tstat_median = all(isnan, tstat_filtered) ? NaN : median(filter(!isnan, tstat_filtered))
                     ploss = nothing
-                    if !isempty(dfp)
-                        p1 = plot(dfp.epoch, dfp.MMDsq; label = "m*MMD²", title = "median loss = $(s(median(df.loss)))")
-                        (lambda != 0) && plot!(p1, dfp.epoch, dfp.reg; label = "λ*reg (λ = $lambda)")
-                        p2 = plot(dfp.epoch, dfp.MMDvar; label = "m²MMDvar", title = "median m²MMDvar = $(s(median(df.MMDvar)))")
-                        p3 = plot(dfp.epoch, tstat_filtered; title = "median t = $(s(tstat_median))", label = "t = MMD²/MMDσ", ylim = quantile(filter(!isnan, tstat_filtered), [0.05, 0.95]))
-                        p4 = plot(dfp.epoch, dfp.P_alpha; label = "P_α", title = "median P_α = $(s(median(df.P_alpha)))")
-                        foreach([p1,p2,p3,p4]) do p
-                            (epoch >= lrdroprate) && vline!(p, lrdroprate:lrdroprate:epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
-                            plot!(p; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
+                    @timeit timer "loss plot" begin
+                        dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, df)
+                        if !isempty(dfp)
+                            tstat_nan_outliers = map((_tstat, _mmdvar) -> _mmdvar > eps() ? _tstat : NaN, dfp.tstat, dfp.MMDvar)
+                            tstat_drop_outliers = filter(!isnan, tstat_nan_outliers)
+                            tstat_median = isempty(tstat_drop_outliers) ? NaN : median(tstat_drop_outliers)
+                            tstat_ylim = isempty(tstat_drop_outliers) ? nothing : quantile(tstat_drop_outliers, [0.01, 0.99])
+                            p1 = plot(dfp.epoch, dfp.MMDsq; label = "m*MMD²", title = "median loss = $(s(median(df.loss)))", ylim = quantile(df.loss, [0.01, 0.99]))
+                            (lambda != 0) && plot!(p1, dfp.epoch, dfp.reg; label = "λ*reg (λ = $lambda)")
+                            p2 = plot(dfp.epoch, dfp.MMDvar; label = "m²MMDvar", title = "median m²MMDvar = $(s(median(df.MMDvar)))", ylim = quantile(df.MMDvar, [0.01, 0.99]))
+                            p3 = plot(dfp.epoch, tstat_nan_outliers; title = "median t = $(s(tstat_median))", label = "t = MMD²/MMDσ", ylim = tstat_ylim)
+                            p4 = plot(dfp.epoch, dfp.P_alpha; label = "P_α", title = "median P_α = $(s(median(df.P_alpha)))", ylim = (0,1))
+                            foreach([p1,p2,p3,p4]) do p
+                                (epoch >= lrdroprate) && vline!(p, lrdroprate:lrdroprate:epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
+                                plot!(p; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
+                            end
+                            ploss = plot(p1, p2, p3, p4)
+                            display(ploss) #TODO
                         end
-                        ploss = plot(p1, p2, p3, p4)
-                        display(ploss) #TODO
                     end
 
                     pwitness = nothing #mmd_witness(Xϵ, Y, sigma)
                     pheat = nothing #mmd_heatmap(Xϵ, Y, sigma)
 
-                    pperm = mmd_perm_test_power_plot(permtest)
+                    pperm = @timeit timer "permutation plot" mmd_perm_test_power_plot(permtest)
                     display(pperm) #TODO
 
-                    nθbb = 64 # multiple of 8
-                    @timeit timer "theta inference" begin
+                    pinfer = nothing
+                    @timeit timer "theta inference plot" begin
                         get_ν_and_σ = x -> ((dx, ϵ) = get_correction_and_noise(x); return (abs.(x.+dx), ϵ))
                         res = toy_theta_loglikelihood_inference(Yθϵ[:,1:nθbb], get_ν_and_σ; objective = :mle)
                         bbres, optres = (x->x[1]).(res), (x->x[2]).(res)
@@ -417,24 +408,27 @@ function train_mmd_model(;
                         df[end, :theta_fit_err] = mean(toy_theta_error(θ[:,θidx], θbb[:,θidx]); dims = 2) |> vec |> copy
                         df[end, :signal_fit_logL] = mean(mle_err[θidx])
                         df[end, :signal_fit_rmse] = mean(rmse_err[θidx])
-                        dfp = filter(r -> !ismissing(r.theta_fit_err) && !ismissing(r.signal_fit_rmse), df)
-                        
-                        pinfer = plot(
-                            plot(
-                                plot(hcat(Yθ[:,θidx[end÷2]], Xθϵbb[:,θidx[end÷2]]); c = [:blue :red], lab = ["Goal Yθ" "Fit X̄θϵ"]),
-                                sticks(sort(rmse_err); m = (:circle,4), lab = "rmse: fits"),
-                                sticks(sort(mle_err); m = (:circle,4), lab = "-logL: fits"),
-                                layout = @layout([a{0.25h}; b{0.375h}; c{0.375h}]),
-                            ),
-                            plot(
-                                plot(df.epoch, df.rmse; title = "min rmse = $(s(minimum(df.rmse)))", label = "rmse: Yθ - (Xθ + dXθ)"),
-                                plot(dfp.epoch, permutedims(reduce(hcat, dfp.theta_fit_err)); title = "min max error = $(s(minimum(maximum.(dfp.theta_fit_err))))", label = "θ" .* string.(permutedims(1:size(θ,1)))),
-                                plot(dfp.epoch, dfp.signal_fit_rmse; title = "min rmse = $(s(minimum(dfp.signal_fit_rmse)))", label = "rmse: Yθϵ - X̄θϵ"),
-                                plot(dfp.epoch, dfp.signal_fit_logL; title = "min -logL = $(s(minimum(dfp.signal_fit_logL)))", label = "-logL: Yθϵ - X̄θϵ"),
-                            ),
-                            layout = @layout([a{0.25w} b{0.75w}]),
-                        )
-                        display(pinfer) #TODO
+
+                        dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, df)
+                        df_inf = filter(r -> !any(ismissing, getindex.(Ref(r), (:theta_fit_err, :signal_fit_rmse, :signal_fit_logL))), dfp)
+                        if !isempty(dfp) && !isempty(df_inf)
+                            pinfer = plot(
+                                plot(
+                                    plot(hcat(Yθ[:,θidx[end÷2]], Xθϵbb[:,θidx[end÷2]]); c = [:blue :red], lab = ["Goal Yθ" "Fit X̄θϵ"]),
+                                    sticks(sort(rmse_err); m = (:circle,4), lab = "rmse: fits"),
+                                    sticks(sort(mle_err); m = (:circle,4), lab = "-logL: fits"),
+                                    layout = @layout([a{0.25h}; b{0.375h}; c{0.375h}]),
+                                ),
+                                plot(
+                                    plot(dfp.epoch, dfp.rmse; title = "min rmse = $(s(minimum(dfp.rmse)))", label = "rmse: Yθ - (Xθ + dXθ)", xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10)),
+                                    plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.theta_fit_err)); title = "min max error = $(s(minimum(maximum.(df_inf.theta_fit_err))))", label = "θ" .* string.(permutedims(1:size(θ,1))), xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10)),
+                                    plot(df_inf.epoch, df_inf.signal_fit_rmse; title = "min rmse = $(s(minimum(df_inf.signal_fit_rmse)))", label = "rmse: Yθϵ - X̄θϵ", xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10)),
+                                    plot(df_inf.epoch, df_inf.signal_fit_logL; title = "min -logL = $(s(minimum(df_inf.signal_fit_logL)))", label = "-logL: Yθϵ - X̄θϵ", xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10)),
+                                ),
+                                layout = @layout([a{0.25w} b{0.75w}]),
+                            )
+                            display(pinfer) #TODO
+                        end
                     end
 
                     return @ntuple(pmodel, psignals, ploss, pperm, pwitness, pheat, pinfer)
@@ -470,7 +464,8 @@ function train_mmd_model(;
                 !isdir(savefolder) && mkpath(savefolder)
                 try
                     BSON.bson(joinpath(savefolder, "$(prefix)progress$(suffix).bson"), Dict("progress" => deepcopy(df)))
-                    BSON.bson(joinpath(savefolder, "$(prefix)model$(suffix).bson"), Dict("model" => deepcopy(model)))
+                    BSON.bson(joinpath(savefolder, "$(prefix)model$(suffix).bson"), deepcopy(models)) #TODO
+                    # BSON.bson(joinpath(savefolder, "$(prefix)model$(suffix).bson"), Dict("model" => deepcopy(model)))
                 catch e
                     if e isa InterruptException
                         @warn "Saving progress interrupted"
@@ -509,44 +504,39 @@ function train_mmd_model(;
             if epoch == 0 || time() - last_checkpoint[] >= saveperiod
                 last_checkpoint[] = time()
                 estr = lpad(epoch, ndigits(epochs), "0")
-                @timeit timer "checkpoint model" saveprogress(joinpath(outfolder, "checkpoint"), "checkpoint-", ".epoch.$estr")
+                # @timeit timer "checkpoint model" saveprogress(joinpath(outfolder, "checkpoint"), "checkpoint-", ".epoch.$estr") #TODO
                 @timeit timer "current model" saveprogress(outfolder, "current-", "")
                 @timeit timer "make plots" plothandles = makeplots()
-                @timeit timer "checkpoint plots" saveplots(joinpath(outfolder, "checkpoint"), "checkpoint-", ".epoch.$estr", plothandles)
+                # @timeit timer "checkpoint plots" saveplots(joinpath(outfolder, "checkpoint"), "checkpoint-", ".epoch.$estr", plothandles) #TODO
                 @timeit timer "current plots" saveplots(outfolder, "current-", "", plothandles)
             end
         end
     end
 
     opt = Flux.ADAM(lr)
+    Xtest = sampleX(m) #TODO
+    Ytest = sampleY(m; dataset = :test) #TODO
+    θtest = sampleθ(m) #TODO
+
     for epoch in 1:epochs
         try
             @timeit timer "epoch" begin
-                @timeit timer "sampleX" X = sampleX(m)
-
-                if epoch == 1
-                    @timeit timer "sampleY"  Ytest = sampleY(m; dataset = :test)
-                    @timeit timer "callback" callback(0, X, Ytest)
-                end
-
+                (epoch == 1) && @timeit timer "callback" callback(0, Xtest, Ytest, θtest) #TODO
                 @timeit timer "batch loop" for _ in 1:nbatches
+                    @timeit timer "sampleX" Xtrain = sampleX(m)
                     @timeit timer "sampleY" Ytrain = sampleY(m; dataset = :train)
-                    @timeit timer "forward" _, back = Flux.Zygote.pullback(() -> loss(X, Ytrain), Flux.params(model))
+                    @timeit timer "forward" _, back = Flux.Zygote.pullback(() -> loss(Xtrain, Ytrain), Flux.params(models["mmd"]))
                     @timeit timer "reverse" gs = back(1)
-                    @timeit timer "update!" Flux.Optimise.update!(opt, Flux.params(model), gs)
+                    @timeit timer "update!" Flux.Optimise.update!(opt, Flux.params(models["mmd"]), gs)
                 end
-
-                @timeit timer "sampleY"  Ytest = sampleY(m; dataset = :test)
-                @timeit timer "callback" callback(epoch, X, Ytest)
+                @timeit timer "callback" callback(epoch, Xtest, Ytest, θtest) #TODO
             end
 
             if mod(epoch, showrate) == 0
                 show(stdout, timer); println("\n")
                 show(stdout, last(df[:, Not([:logsigma, :theta_fit_err])], 10)); println("\n")
             end
-            if epoch == 1
-                TimerOutputs.reset_timer!(timer) # throw out initial loop (Zygote compilation, first plot, etc.)
-            end
+            (epoch == 1) && TimerOutputs.reset_timer!(timer) # throw out initial loop (precompilation, first plot, etc.)
 
             if Dates.now() - tstart >= Dates.Second(floor(Int, timeout))
                 @info "Exiting: training time exceeded $(DECAES.pretty_time(timeout)) at epoch $epoch/$epochs"

@@ -2,87 +2,15 @@
 #### Flux differentiable MMD kernel matrices
 ####
 
-Flux.Zygote.@adjoint function LinearAlgebra.diag(x::AbstractMatrix)
-    return LinearAlgebra.diag(x), function(Δ)
-        # Why is Δ sometimes an nx1 matrix? Related to adjoint... e.g. loss = sum(diag(x)')
-        # (LinearAlgebra.Diagonal(Δ),) # Should be this...
-        (LinearAlgebra.Diagonal(reshape(Δ,:)),) # ...but need to reshape nx1 matrix Δ to n-vector
-    end
-end
-Flux.Zygote.refresh()
-
-#=
-let
-    X = rand(2,2)
-    loss = (X) -> sum(abs2, LinearAlgebra.diag(X)')
-    @show gradient(loss, X)[1]
-    @show Diagonal(2X)
-end;
-=#
-
-function _fast_exp!(B::AbstractMatrix, A::AbstractMatrix)
-    @assert size(A) == size(B)
-    Threads.@threads for j in 1:size(A,2)
-        Yeppp.exp!(view(B,:,j), view(A,:,j))
-    end
-    return B
-end
-function _fast_exp!(A::AbstractMatrix)
-    Threads.@threads for j in 1:size(A,2)
-        Yeppp.exp!(view(A,:,j))
-    end
-    return A
-end
-
-function _fast_exp!(B::AbstractArray{<:Any,3}, A::AbstractArray{<:Any,3})
-    @assert size(A) == size(B)
-    for k in 1:size(A,3)
-        Threads.@threads for j in 1:size(A,2)
-            Yeppp.exp!(view(B,:,j,k), view(A,:,j,k))
-        end
-    end
-    return B
-end
-function _fast_exp!(A::AbstractArray{<:Any,3})
-    for k in 1:size(A,3)
-        Threads.@threads for j in 1:size(A,2)
-            Yeppp.exp!(view(A,:,j,k))
-        end
-    end
-    return A
-end
-
-function add_transpose!(A::AbstractArray{<:Any,3})
-    for k in 1:size(A, 3)
-        for j in 1:size(A, 2)
-            @inbounds @simd for i in 1:j
-                A[i,j,k] += A[j,i,k]
-                A[j,i,k]  = A[i,j,k]
-            end
-        end
-    end
-    return A
-end
-function self_transpose!(A::AbstractArray{<:Any,3})
-    for k in 1:size(A, 3)
-        for j in 1:size(A, 2)
-            @inbounds @simd for i in 1:j
-                A[i,j,k], A[j,i,k] = A[j,i,k], A[i,j,k]
-            end
-        end
-    end
-    return A
-end
-
 function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
     Kxx, Kyy, Kxy = X'X, Y'Y, X'Y
     xx, yy = diag(Kxx), diag(Kyy)
     Kxx .= 2 .* Kxx .- xx .- xx'
     Kyy .= 2 .* Kyy .- yy .- yy'
     Kxy .= 2 .* Kxy .- xx .- yy'
-    _fast_exp!(Kxx)
-    _fast_exp!(Kyy)
-    _fast_exp!(Kxy)
+    fast_exp!(Kxx)
+    fast_exp!(Kyy)
+    fast_exp!(Kxy)
 
     @ntuple(Kxx, Kyy, Kxy)
 end
@@ -91,7 +19,37 @@ Flux.Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::Ab
     # Store kernel matrices for reverse pass
     @unpack Kxx, Kyy, Kxy = _mmd_flux_kernel_matrices(X, Y)
 
-    # TODO: copy memory optimizations from 3D array case
+    return @ntuple(Kxx, Kyy, Kxy), function(Δ) # much faster + much less memory usage
+        # dK_dX
+        Δ_buf = Δ.Kxx .* Kxx
+        Δ_buf_rowsum = sum(Δ_buf; dims = 1)
+        Δ_buf_colsum = sum(Δ_buf; dims = 2)
+        add_transpose!(Δ_buf)
+        mul_buf = X * Δ_buf
+        dK_dX = 2 .* (mul_buf .- X .* (Δ_buf_colsum' .+ Δ_buf_rowsum))
+
+        # dK_dX/dK_dY cross-terms
+        Δ_buf .= Δ.Kxy .* Kxy
+        Δ_buf_rowsum = sum(Δ_buf; dims = 1)
+        mul!(mul_buf, X, Δ_buf)
+        dK_dY = 2 .* (mul_buf .- Y .* Δ_buf_rowsum)
+
+        Δ_buf_colsum = sum(Δ_buf; dims = 2)
+        self_transpose!(Δ_buf)
+        mul!(mul_buf, Y, Δ_buf)
+        dK_dX .+= 2 .* (mul_buf .- X .* Δ_buf_colsum')
+
+        # dK_dY
+        Δ_buf .= Δ.Kyy .* Kyy
+        Δ_buf_rowsum = sum(Δ_buf; dims = 1)
+        Δ_buf_colsum = sum(Δ_buf; dims = 2)
+        add_transpose!(Δ_buf)
+        mul!(mul_buf, Y, Δ_buf)
+        dK_dY .+= 2 .* (mul_buf .- Y .* (Δ_buf_colsum' .+ Δ_buf_rowsum))
+
+        return dK_dX, dK_dY
+    end
+    #=
     return @ntuple(Kxx, Kyy, Kxy), function(Δ) # moderately faster + less memory usage
         # dK_dX
         Δ_buf1 = Δ.Kxx .* Kxx
@@ -108,6 +66,7 @@ Flux.Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::Ab
 
         return dK_dX, dK_dY
     end
+    =#
     #=
     return @ntuple(Kxx, Kyy, Kxy), function(Δ) # moderately slower + more memory usage
         Δ_Kxx = Δ.Kxx .* Kxx
@@ -122,19 +81,19 @@ end
 Flux.Zygote.refresh()
 
 function _mmd_flux_kernel_matrices_inner(X::AbstractArray{<:Any,3}, Y::AbstractArray{<:Any,3})
-    Kxx = batchedmul(X, X; transA = true)
-    Kyy = batchedmul(Y, Y; transA = true)
-    Kxy = batchedmul(X, Y; transA = true)
+    Kxx = NNlib.batched_mul(NNlib.batched_adjoint(X), X)
+    Kyy = NNlib.batched_mul(NNlib.batched_adjoint(Y), Y)
+    Kxy = NNlib.batched_mul(NNlib.batched_adjoint(X), Y)
     xx  = batcheddiag(Kxx)
     yy  = batcheddiag(Kyy)
-    xxT = permutedims(xx, (2,1,3))
-    yyT = permutedims(yy, (2,1,3))
+    xxT = NNlib.batched_adjoint(xx)
+    yyT = NNlib.batched_adjoint(yy)
     Kxx .= 2 .* Kxx .- xx .- xxT
     Kyy .= 2 .* Kyy .- yy .- yyT
     Kxy .= 2 .* Kxy .- xx .- yyT
-    _fast_exp!(Kxx)
-    _fast_exp!(Kyy)
-    _fast_exp!(Kxy)
+    fast_exp!(Kxx)
+    fast_exp!(Kyy)
+    fast_exp!(Kxy)
 
     @ntuple(Kxx, Kyy, Kxy)
 end
@@ -154,8 +113,8 @@ Flux.Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3
         Kyy = dropdims(mean(Kyy; dims = 3); dims = 3),
         Kxy = dropdims(mean(Kxy; dims = 3); dims = 3),
     )
-    return out, function(Δ) # moderately faster + less memory usage
-        T = x -> permutedims(x, (2,1,3))
+    return out, function(Δ) # much faster + much less memory usage
+        T = x -> batched_adjoint(x)
         nbw = size(X,3)
 
         # dK_dX
@@ -163,18 +122,17 @@ Flux.Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3
         Δ_buf_rowsum = sum(Δ_buf; dims = 1)
         Δ_buf_colsum = sum(Δ_buf; dims = 2)
         add_transpose!(Δ_buf)
-        mul_buf = batchedmul(X, Δ_buf)
+        mul_buf = NNlib.batched_mul(X, Δ_buf)
         dK_dX = 2 .* (mul_buf .- X .* (T(Δ_buf_colsum) .+ Δ_buf_rowsum))
 
         # dK_dX/dK_dY cross-terms
         Δ_buf .= Δ.Kxy .* Kxy ./ nbw
         Δ_buf_rowsum = sum(Δ_buf; dims = 1)
-        batchedmul!(mul_buf, X, Δ_buf)
+        NNlib.batched_mul!(mul_buf, X, Δ_buf)
         dK_dY = 2 .* (mul_buf .- Y .* Δ_buf_rowsum)
 
         Δ_buf_colsum = sum(Δ_buf; dims = 2)
-        self_transpose!(Δ_buf)
-        batchedmul!(mul_buf, Y, Δ_buf)
+        NNlib.batched_mul!(mul_buf, Y, T(Δ_buf))
         dK_dX .+= 2 .* (mul_buf .- X .* T(Δ_buf_colsum))
 
         # dK_dY
@@ -182,7 +140,7 @@ Flux.Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3
         Δ_buf_rowsum = sum(Δ_buf; dims = 1)
         Δ_buf_colsum = sum(Δ_buf; dims = 2)
         add_transpose!(Δ_buf)
-        batchedmul!(mul_buf, Y, Δ_buf)
+        NNlib.batched_mul!(mul_buf, Y, Δ_buf)
         dK_dY .+= 2 .* (mul_buf .- Y .* (T(Δ_buf_colsum) .+ Δ_buf_rowsum))
 
         return dK_dX, dK_dY
@@ -200,8 +158,8 @@ Flux.Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3
         Δ_buf1_colsum = sum(Δ_buf1; dims = 2)
         Δ_buf2_colsum = sum(Δ_buf2; dims = 2)
         add_transpose!(Δ_buf1)
-        mul_buf1 = batchedmul(X, Δ_buf1)
-        mul_buf2 = batchedmul(Y, T(Δ_buf2))
+        mul_buf1 = NNlib.batched_mul(X, Δ_buf1)
+        mul_buf2 = NNlib.batched_mul(Y, T(Δ_buf2))
         dK_dX = 2 .* (mul_buf1 .+ mul_buf2 .- X .* (T(Δ_buf1_colsum) .+ Δ_buf1_rowsum .+ T(Δ_buf2_colsum)))
         # dK_dX = -2 .* muladd.(X, T(Δ_buf1_colsum) .+ Δ_buf1_rowsum .+ T(Δ_buf2_colsum), .-mul_buf1 .- mul_buf2)
 
@@ -211,8 +169,8 @@ Flux.Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3
         Δ_buf1_colsum = sum(Δ_buf1; dims = 2)
         Δ_buf2_rowsum = sum(Δ_buf2; dims = 1)
         add_transpose!(Δ_buf1)
-        batchedmul!(mul_buf1, Y, Δ_buf1)
-        batchedmul!(mul_buf2, X, Δ_buf2)
+        NNlib.batched_mul!(mul_buf1, Y, Δ_buf1)
+        NNlib.batched_mul!(mul_buf2, X, Δ_buf2)
         dK_dY = 2 .* (mul_buf1 .+ mul_buf2 .- Y .* (T(Δ_buf1_colsum) .+ Δ_buf1_rowsum .+ Δ_buf2_rowsum))
         # dK_dY = -2 .* muladd.(Y, T(Δ_buf1_colsum) .+ Δ_buf1_rowsum .+ Δ_buf2_rowsum, .-mul_buf1 .- mul_buf2)
 
@@ -227,8 +185,8 @@ Flux.Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3
         Δ_Kxx = Δ.Kxx .* Kxx ./ nbw
         Δ_Kyy = Δ.Kyy .* Kyy ./ nbw
         Δ_Kxy = Δ.Kxy .* Kxy ./ nbw
-        dK_dX = 2 .* (batchedmul(X, Δ_Kxx .+ T(Δ_Kxx)) .+ batchedmul(Y, T(Δ_Kxy)) .- X .* (T(sum(Δ_Kxx; dims = 2)) .+ sum(Δ_Kxx; dims = 1) .+ T(sum(Δ_Kxy; dims = 2))))
-        dK_dY = 2 .* (batchedmul(Y, Δ_Kyy .+ T(Δ_Kyy)) .+ batchedmul(X,   Δ_Kxy ) .- Y .* (T(sum(Δ_Kyy; dims = 2)) .+ sum(Δ_Kyy; dims = 1) .+   sum(Δ_Kxy; dims = 1)))
+        dK_dX = 2 .* (NNlib.batched_mul(X, Δ_Kxx .+ T(Δ_Kxx)) .+ NNlib.batched_mul(Y, T(Δ_Kxy)) .- X .* (T(sum(Δ_Kxx; dims = 2)) .+ sum(Δ_Kxx; dims = 1) .+ T(sum(Δ_Kxy; dims = 2))))
+        dK_dY = 2 .* (NNlib.batched_mul(Y, Δ_Kyy .+ T(Δ_Kyy)) .+ NNlib.batched_mul(X,   Δ_Kxy ) .- Y .* (T(sum(Δ_Kyy; dims = 2)) .+ sum(Δ_Kyy; dims = 1) .+   sum(Δ_Kxy; dims = 1)))
         return dK_dX, dK_dY
     end
     =#
@@ -250,9 +208,9 @@ let
         @ntuple(Kxx, Kyy, Kxy)
     end
     function _kernel_mats(X::AbstractArray{<:Any,3}, Y::AbstractArray{<:Any,3})
-        XX = batchedmul(X, X; transA = true)
-        YY = batchedmul(Y, Y; transA = true)
-        XY = batchedmul(X, Y; transA = true)
+        XX = NNlib.batched_mul(NNlib.batched_adjoint(X), X)
+        YY = NNlib.batched_mul(NNlib.batched_adjoint(Y), Y)
+        XY = NNlib.batched_mul(NNlib.batched_adjoint(X), Y)
         xx = batcheddiag(XX)
         yy = batcheddiag(YY)
 
@@ -268,7 +226,7 @@ let
         )
     end
 
-    n, m = 128, 2048 #64
+    n, m = 128, 64 #2048
     for nbw in [1,4]
         arrsize = nbw == 1 ? (n,m) : (n,m,nbw)
         Ksize = (m,m) #nbw == 1 ? (m,m) : (m,m,nbw)
@@ -285,27 +243,15 @@ let
         @assert _dyA ≈ dyA
         @assert _dyB ≈ dyB
 
+        #=
         for f in (_mmd_flux_kernel_matrices,) #_kernel_mats
             print("$f call:   "); @btime $f($A, $B)
             print("$f forward:"); _, back = @btime Flux.Zygote.pullback($f, $A, $B)
             print("$f reverse:"); @btime $back($Δ)
         end
-        #=
         =#
     end
 end
-
-_mmd_flux_kernel_matrices call:     1.507 s (47 allocations: 768.25 MiB)
-_mmd_flux_kernel_matrices forward:  1.494 s (52 allocations: 768.25 MiB)
-_mmd_flux_kernel_matrices reverse:  1.688 s (152 allocations: 928.57 MiB)
-
-_mmd_flux_kernel_matrices call:     424.268 ms (25333 allocations: 385.82 MiB)
-_mmd_flux_kernel_matrices forward:  399.527 ms (25328 allocations: 385.82 MiB)
-_mmd_flux_kernel_matrices reverse:  1.715 s (152 allocations: 928.57 MiB)
-
-_mmd_flux_kernel_matrices call:     545.144 ms (25375 allocations: 481.82 MiB)
-_mmd_flux_kernel_matrices forward:  608.424 ms (25383 allocations: 481.82 MiB)
-_mmd_flux_kernel_matrices reverse:  992.466 ms (90 allocations: 152.57 MiB)
 =#
 
 #=
@@ -547,32 +493,33 @@ mmd_flux_kernel_matrices_batched(logsigma::AbstractVector, args...) = mmd_flux_k
 
 #=
 let # Speed testing of mmd_flux_kernel_matrices
-    f = function(logsigma, X, Y)
-        @unpack Kxx, Kyy, Kxy = mmd_flux_kernel_matrices(logsigma, X, Y)
-        return sum(Kxx) + sum(Kyy) + sum(Kxy)
-    end
-    f2 = function(logsigma, X, Y)
-        @unpack Kxx, Kyy, Kxy = mmd_flux_kernel_matrices_batched(logsigma, X, Y)
-        return sum(Kxx) + sum(Kyy) + sum(Kxy)
-    end
+    n, m = 128, 2048 #64
+    X = randn(n,m)
+    Y = randn(n,m)
+    Δ = (Kxx = rand(m,m), Kyy = rand(m,m), Kxy = rand(m,m))
+    for nbw in [1,4]#2,4,8,16,32]
+        @show n, m, nbw
+        logsigma = randn(nbw, n)
 
-    X = randn(128,32)
-    Y = randn(128,32)
-    for nbandwidth in [1,2,4,8,16,32]
-        @show nbandwidth
+        @assert all(values(mmd_flux_kernel_matrices(logsigma,X,Y)) .≈ values(mmd_flux_kernel_matrices_batched(logsigma,X,Y)))
 
-        logsigma = randn(nbandwidth, 128)
-        @assert isapprox(f(logsigma,X,Y), f2(logsigma,X,Y))
+        _y, _back = Flux.Zygote.pullback((_X,_Y) -> mmd_flux_kernel_matrices(logsigma,_X,_Y), X, Y)
+        _dyA, _dyB = _back(Δ)
 
-        g = Flux.Zygote.gradient(_logsigma -> f(_logsigma,X,Y), logsigma)[1]
-        g2 = Flux.Zygote.gradient(_logsigma -> f2(_logsigma,X,Y), logsigma)[1]
-        @assert isapprox(g, g2)
+        y, back = Flux.Zygote.pullback((_X,_Y) -> mmd_flux_kernel_matrices_batched(logsigma,_X,_Y), X, Y)
+        dyA, dyB = back(Δ)
 
-        @btime $f($logsigma, $X, $Y)
-        @btime $f2($logsigma, $X, $Y)
-        
-        @btime Flux.Zygote.gradient(_g -> $f(_g,$X,$Y), $g)[1]
-        @btime Flux.Zygote.gradient(_g -> $f2(_g,$X,$Y), $g)[1]
+        @assert all(values(_y) .≈ values(y))
+        @assert _dyA ≈ dyA
+        @assert _dyB ≈ dyB
+
+        for f in (mmd_flux_kernel_matrices, mmd_flux_kernel_matrices_batched)
+            print("$f call:   "); @btime $f($logsigma, $X, $Y)
+            print("$f forward:"); _, back = @btime Flux.Zygote.pullback((_X,_Y) -> $f($logsigma,_X,_Y), $X, $Y)
+            print("$f reverse:"); @btime $back($Δ)
+        end
+        #=
+        =#
     end
 end;
 =#
@@ -1031,8 +978,7 @@ function mmd_perm_test_power(
 end
 
 # Perform permutation test with a single explicit (X,Y) pair
-mmd_perm_test_power(kernelargs, X::AbstractMatrix, Y::AbstractMatrix; kwargs...) =
-    mmd_perm_test_power(kernelargs, m->X, m->Y; kwargs..., nsamples = 1)
+mmd_perm_test_power(kernelargs, X::AbstractMatrix, Y::AbstractMatrix; kwargs...) = mmd_perm_test_power(kernelargs, m->X, m->Y; kwargs..., nsamples = 1)
 
 # Plot permutation test results
 function mmd_perm_test_power_plot(perm_test_results)

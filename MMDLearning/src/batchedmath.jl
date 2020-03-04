@@ -1,111 +1,99 @@
 ####
-#### Batched multiplication of 3D arrays "slicewise"
+#### Fast exponential function using Yeppp
 ####
 
-# Borrowed from Transformers.jl, which borrowed it from BatchedRoutines.jl
-#   https://github.com/chengchingwen/Transformers.jl
-#   https://github.com/Roger-luo/BatchedRoutines.jl
+function fast_exp!(B::AbstractMatrix, A::AbstractMatrix)
+    @assert size(A) == size(B)
+    Threads.@threads for j in 1:size(A,2)
+        Yeppp.exp!(view(B,:,j), view(A,:,j))
+    end
+    return B
+end
 
-#batched cpu gemm by BatchedRoutines.jl
-for (gemm, elty) in ((:dgemm_,:Float64), (:sgemm_,:Float32),)
-    @eval begin
-        function batched_gemm!(
-                transA::AbstractChar,
-                transB::AbstractChar,
-                alpha::($elty),
-                A::AbstractArray{$elty, 3},
-                B::AbstractArray{$elty, 3},
-                beta::($elty),
-                C::AbstractArray{$elty, 3},
-            )
-            @assert !Base.has_offset_axes(A, B, C)
-            @assert size(A, 3) == size(B, 3) == size(C, 3) "batch size mismatch"
-            m = size(A, transA == 'N' ? 1 : 2)
-            ka = size(A, transA == 'N' ? 2 : 1)
-            kb = size(B, transB == 'N' ? 1 : 2)
-            n = size(B, transB == 'N' ? 2 : 1)
-            if ka != kb || m != size(C,1) || n != size(C,2)
-                throw(DimensionMismatch("A has size ($m,$ka), B has size ($kb,$n), C has size $(size(C))"))
-            end
-            LinearAlgebra.BLAS.chkstride1(A)
-            LinearAlgebra.BLAS.chkstride1(B)
-            LinearAlgebra.BLAS.chkstride1(C)
+function fast_exp!(A::AbstractMatrix)
+    Threads.@threads for j in 1:size(A,2)
+        Yeppp.exp!(view(A,:,j))
+    end
+    return A
+end
 
-            ptrA = Base.unsafe_convert(Ptr{$elty}, A)
-            ptrB = Base.unsafe_convert(Ptr{$elty}, B)
-            ptrC = Base.unsafe_convert(Ptr{$elty}, C)
-
-            for k in 1:size(A, 3)
-                ccall((LinearAlgebra.BLAS.@blasfunc($gemm), LinearAlgebra.BLAS.libblas), Cvoid,
-                    (Ref{UInt8}, Ref{UInt8}, Ref{LinearAlgebra.BLAS.BlasInt}, Ref{LinearAlgebra.BLAS.BlasInt},
-                     Ref{LinearAlgebra.BLAS.BlasInt}, Ref{$elty}, Ptr{$elty}, Ref{LinearAlgebra.BLAS.BlasInt},
-                     Ptr{$elty}, Ref{LinearAlgebra.BLAS.BlasInt}, Ref{$elty}, Ptr{$elty},
-                     Ref{LinearAlgebra.BLAS.BlasInt}),
-                     transA, transB, m, n,
-                     ka, alpha, ptrA, max(1,stride(A,2)),
-                     ptrB, max(1,stride(B,2)), beta, ptrC,
-                     max(1,stride(C,2)))
-
-                ptrA += size(A, 1) * size(A, 2) * sizeof($elty)
-                ptrB += size(B, 1) * size(B, 2) * sizeof($elty)
-                ptrC += size(C, 1) * size(C, 2) * sizeof($elty)
-            end
-
-            C
+function fast_exp!(B::AbstractArray{<:Any,3}, A::AbstractArray{<:Any,3})
+    @assert size(A) == size(B)
+    for k in 1:size(A,3)
+        Threads.@threads for j in 1:size(A,2)
+            Yeppp.exp!(view(B,:,j,k), view(A,:,j,k))
         end
     end
+    return B
 end
 
-function batchedmul(
-        A::AbstractArray{T,3},
-        B::AbstractArray{T,3};
-        transA::Bool = false,
-        transB::Bool = false,
-    ) where {T}
-    (bs = size(A, 3)) == size(B, 3) || error("batch size mismatch")
-    C = similar(A, size(A, transA ? 2 : 1), size(B, transB ? 1 : 2), bs)
-    batchedmul!(C, A, B; transA=transA, transB=transB)
-    return C
-end
-
-function batchedmul!(
-        C::AbstractArray{T,3},
-        A::AbstractArray{T,3},
-        B::AbstractArray{T,3};
-        transA::Bool = false,
-        transB::Bool = false,
-    ) where {T}
-    At = transA ? 'T' : 'N'
-    Bt = transB ? 'T' : 'N'
-    batched_gemm!(At, Bt, one(T), A, B, zero(T), C)
-    C
-end
-
-Flux.Zygote.@adjoint function batchedmul(
-        A::AbstractArray{<:Real,3},
-        B::AbstractArray{<:Real,3};
-        transA::Bool = false,
-        transB::Bool = false,
-    )
-    batchedmul(A, B; transA=transA, transB=transB),
-    if transA
-        if transB
-            Δ -> (batchedmul(B, Δ; transA=true, transB=true), batchedmul(Δ, A; transA=true, transB=true))
-        else
-            Δ -> (batchedmul(B, Δ; transB=true), batchedmul(A, Δ))
-        end
-    else
-        if transB
-            Δ -> (batchedmul(Δ, B), batchedmul(Δ, A; transA=true))
-        else
-            Δ -> (batchedmul(Δ, B; transB=true), batchedmul(A, Δ; transA=true))
+function fast_exp!(A::AbstractArray{<:Any,3})
+    for k in 1:size(A,3)
+        Threads.@threads for j in 1:size(A,2)
+            Yeppp.exp!(view(A,:,j,k))
         end
     end
+    return A
+end
+
+####
+#### In-place transpose-related helpers
+####
+
+function add_transpose!(A::AbstractMatrix)
+    for j in 1:size(A, 2)
+        @inbounds @simd for i in 1:j
+            A[i,j] += A[j,i]
+            A[j,i]  = A[i,j]
+        end
+    end
+    return A
+end
+
+function add_transpose!(A::AbstractArray{<:Any,3})
+    for k in 1:size(A, 3)
+        for j in 1:size(A, 2)
+            @inbounds @simd for i in 1:j
+                A[i,j,k] += A[j,i,k]
+                A[j,i,k]  = A[i,j,k]
+            end
+        end
+    end
+    return A
+end
+
+function self_transpose!(A::AbstractMatrix)
+    for j in 1:size(A, 2)
+        @inbounds @simd for i in 1:j
+            A[i,j], A[j,i] = A[j,i], A[i,j]
+        end
+    end
+    return A
+end
+
+function self_transpose!(A::AbstractArray{<:Any,3})
+    for k in 1:size(A, 3)
+        for j in 1:size(A, 2)
+            @inbounds @simd for i in 1:j
+                A[i,j,k], A[j,i,k] = A[j,i,k], A[i,j,k]
+            end
+        end
+    end
+    return A
 end
 
 ####
 #### Batched diagonal extraction of 3D arrays
 ####
+
+Flux.Zygote.@adjoint function LinearAlgebra.diag(x::AbstractMatrix)
+    return LinearAlgebra.diag(x), function(Δ)
+        # Why is Δ sometimes an nx1 matrix? Related to adjoint... e.g. loss = sum(diag(x)')
+        # (LinearAlgebra.Diagonal(Δ),) # Should be this...
+        (LinearAlgebra.Diagonal(reshape(Δ,:)),) # ...but need to reshape nx1 matrix Δ to n-vector
+    end
+end
+Flux.Zygote.refresh()
 
 function batcheddiag(x::AbstractArray{T,3}) where {T}
     nbatch = size(x,3)

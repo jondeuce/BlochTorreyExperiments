@@ -5,10 +5,10 @@
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 
-using LinearAlgebra, Statistics, Random, SpecialFunctions
+using LinearAlgebra, Statistics, Random, SpecialFunctions, StatsBase
 using DrWatson, Parameters, BenchmarkTools, Dates, TimerOutputs, ThreadPools, LegibleLambdas
 using TOML, BSON, DataFrames
-using Turing, MCMCChains, Distributions
+using Distributions #Turing, MCMCChains
 using BlackBoxOptim, Optim, ForwardDiff, TensorCast, Yeppp
 using Flux
 using DECAES
@@ -16,7 +16,7 @@ using StatsPlots
 
 # pyplot(size = (500,400))
 pyplot(size = (800,600))
-Turing.turnprogress(false)
+# Turing.turnprogress(false)
 # empty!(Revise.queue_errors);
 
 ####
