@@ -417,16 +417,18 @@ end
 
 function toy_theta_loglikelihood_inference(
         y::AbstractVector,
+        initial_guess = nothing,
         model = x -> (x, zero(x));
         objective = :mle,
-        bbopt_kwargs = objective == :mle ?
-            Dict(:MaxTime => 1.0) : Dict(:MaxTime => 5.0),
+        bbopt_kwargs = objective == :mle ? Dict(:MaxTime => 1.0) : Dict(:MaxTime => 5.0),
     )
+    # Deterministic loss function, suitable for Optim
     function mle_loss(θ)
         ȳhat, ϵhat = model(toy_signal_model(θ, nothing, 4))
         return sum(@. -logpdf(Rician(ȳhat, ϵhat; check_args = false), y))
     end
 
+    # Stochastic loss function, only suitable for BlackBoxOptim
     function rmse_loss(θ)
         ȳhat, ϵhat = model(toy_signal_model(θ, nothing, 4))
         yhat = @. rand(Rician(ȳhat, ϵhat; check_args = false))
@@ -435,15 +437,18 @@ function toy_theta_loglikelihood_inference(
 
     loss = objective == :mle ? mle_loss : rmse_loss
 
-    bbres = bboptimize(loss;
-        SearchRange = [(1/64, 1/32), (0.0, pi/2), (0.25, 0.5), (0.1, 0.25), (16.0, 128.0)],
-        TraceMode = :silent,
-        bbopt_kwargs...
-    )
+    bbres = nothing
+    if objective != :mle || (objective == :mle && isnothing(initial_guess))
+        bbres = bboptimize(loss;
+            SearchRange = [(1/64, 1/32), (0.0, pi/2), (0.25, 0.5), (0.1, 0.25), (16.0, 128.0)],
+            TraceMode = :silent,
+            bbopt_kwargs...
+        )
+    end
 
     optres = nothing
     if objective == :mle
-        θ0 = BlackBoxOptim.best_candidate(bbres)
+        θ0 = isnothing(initial_guess) ? BlackBoxOptim.best_candidate(bbres) : initial_guess
         lo = [1/64,  0.0, 0.25,  0.1,  16.0]
         hi = [1/32, pi/2,  0.5, 0.25, 128.0]
         # dfc = Optim.TwiceDifferentiableConstraints(lo, hi)
@@ -456,12 +461,13 @@ function toy_theta_loglikelihood_inference(
 
     return @ntuple(bbres, optres)
 end
-function toy_theta_loglikelihood_inference(Y::AbstractMatrix, args...; kwargs...)
+function toy_theta_loglikelihood_inference(Y::AbstractMatrix, θ0::Union{<:AbstractMatrix, Nothing} = nothing, args...; kwargs...)
     _args = [deepcopy(args) for _ in 1:Threads.nthreads()]
     _kwargs = [deepcopy(kwargs) for _ in 1:Threads.nthreads()]
     ThreadPools.qmap(1:size(Y,2)) do j
         tid = Threads.threadid()
-        toy_theta_loglikelihood_inference(Y[:,j], _args[tid]...; _kwargs[tid]...)
+        initial_guess = !isnothing(θ0) ? θ0[:,j] : nothing
+        toy_theta_loglikelihood_inference(Y[:,j], initial_guess, _args[tid]...; _kwargs[tid]...)
     end
 end
 
@@ -476,13 +482,13 @@ for _ in 1:1
 
     m = x -> ((dx, ϵ) = get_correction_and_noise(x); return (abs.(x.+dx), ϵ));
 
-    @time bbres1, _ = toy_theta_loglikelihood_inference(yϵ, m; objective = :rmse)[1];
+    @time bbres1, _ = toy_theta_loglikelihood_inference(yϵ, nothing, m; objective = :rmse)[1];
     θhat1 = BlackBoxOptim.best_candidate(bbres1);
     xhat1 = toy_signal_model(θhat1, nothing, 4);
     dxhat1, ϵhat1 = get_correction_and_noise(xhat1);
     yhat1 = get_corrected_signal(xhat1, dxhat1, ϵhat1);
 
-    @time bbres2, optres2 = toy_theta_loglikelihood_inference(yϵ, m; objective = :mle)[1];
+    @time bbres2, optres2 = toy_theta_loglikelihood_inference(yϵ, nothing, m; objective = :mle)[1];
     θhat2 = Optim.minimizer(optres2); #BlackBoxOptim.best_candidate(bbres2);
     xhat2 = toy_signal_model(θhat2, nothing, 4);
     dxhat2, ϵhat2 = get_correction_and_noise(xhat2);
@@ -543,7 +549,7 @@ function toy_theta_mcmc_inference(
         yhat = @. rand(Rician(xhat, ϵhat; check_args = false))
         return yhat
     end
-    res = toy_theta_loglikelihood_inference(y, model)
+    res = toy_theta_loglikelihood_inference(y, nothing, model)
     theta0 = best_candidate(res)
     while true
         chain = sample(toy_model_rician_noise(y, correction_and_noise), NUTS(), 1000; verbose = true, init_theta = theta0)
@@ -616,7 +622,7 @@ for _ in 1:1
     # θhat = reduce(hcat, map(k -> mean(c[k])[1,:mean], [:freq, :phase, :offset, :amp, :tconst]) for c in cs)
     # Yerr = sort(getfield.(res, :yerr))
 
-    @time bbres = toy_theta_loglikelihood_inference(Y, signal_model);
+    @time bbres = toy_theta_loglikelihood_inference(Y, nothing, signal_model);
     Yerr = sort(best_fitness.(bbres))
     θhat = best_candidate.(bbres)
     Yhat = signal_model.(θhat)

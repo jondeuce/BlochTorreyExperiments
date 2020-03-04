@@ -287,7 +287,7 @@ function train_mmd_model(;
         c_alpha  = Float64[],
         P_alpha  = Float64[],
         rmse     = Float64[],
-        logsigma = typeof(logsigma)[],
+        logsigma = AbstractVecOrMat{Float64}[],
         theta_fit_err = Union{Vector{Float64}, Missing}[],
         signal_fit_logL = Union{Float64, Missing}[],
         signal_fit_rmse = Union{Float64, Missing}[],
@@ -305,10 +305,13 @@ function train_mmd_model(;
     end
 
     callback = let
-        last_time = Ref(time())
-        last_checkpoint = Ref(time())
+        cb_state = (
+            last_time = Ref(time()),
+            last_checkpoint = Ref(time()),
+            last_θbb = Union{AbstractVecOrMat{Float64}, Nothing}[nothing],
+        )
         function(epoch, X, Y, θ)
-            dt, last_time[] = time() - last_time[], time()
+            dt, cb_state.last_time[] = time() - cb_state.last_time[], time()
 
             # Compute signal correction, noise instances, etc.
             dX, ϵ = get_correction_and_noise(X)
@@ -321,13 +324,33 @@ function train_mmd_model(;
             Xθϵ = get_corrected_signal(Xθ, dXθ, ϵθ)
             rmse = sqrt(mean(abs2, Yθ - (Xθ + dXθ)))
 
+            θ_fit_err, sig_fit_logL, sig_fit_rmse = missing, missing, missing
+            if !isnothing(cb_state.last_θbb[])
+                nθbb = size(cb_state.last_θbb[], 2)
+                get_ν_and_σ = x -> ((dx, ϵ) = get_correction_and_noise(x); return (abs.(x.+dx), ϵ))
+
+                θbb = cb_state.last_θbb[]
+                Xθbb = toy_signal_model(θbb, nothing, 4)
+                dXθbb, ϵθbb = get_correction_and_noise(Xθbb)
+                Xθϵbb = get_corrected_signal(Xθbb, dXθbb, ϵθbb)
+                mle_err = [sum(.-logpdf.(Rician.(get_ν_and_σ(Xθbb[:,j])...; check_args = false), Yθϵ[:,j])) for j in 1:nθbb]
+                rmse_err = [sqrt(mean(abs2, Yθϵ[:,j] .- Xθϵbb[:,j])) for j in 1:nθbb]
+
+                θidx = sortperm(mle_err)[1:7*(nθbb÷8)]
+                θ_fit_err = mean(toy_theta_error(θ[:,θidx], θbb[:,θidx]); dims = 2) |> vec |> copy
+                sig_fit_logL = mean(mle_err[θidx])
+                sig_fit_rmse = mean(rmse_err[θidx])
+            end
+
             # Perform permutation test
-            @timeit timer "perm test" permtest = mmd_perm_test_power(logsigma, models["vae.E"](Xϵ), models["vae.E"](Y); batchsize = m, nperms = nperms, nsamples = 1)
-            c_α = permtest.c_alpha
-            P_α = permtest.P_alpha_approx
-            tstat = permtest.MMDsq / permtest.MMDσ
-            MMDsq = m * permtest.MMDsq
-            MMDvar = m^2 * permtest.MMDvar
+            @timeit timer "perm test" begin
+                permtest = mmd_perm_test_power(logsigma, models["vae.E"](Xϵ), models["vae.E"](Y); batchsize = m, nperms = nperms, nsamples = 1)
+                c_α = permtest.c_alpha
+                P_α = permtest.P_alpha_approx
+                tstat = permtest.MMDsq / permtest.MMDσ
+                MMDsq = m * permtest.MMDsq
+                MMDvar = m^2 * permtest.MMDvar
+            end
 
             # Use permutation test results to compute loss
             #@timeit timer "test loss" ℓ = loss(X, Y)
@@ -335,7 +358,7 @@ function train_mmd_model(;
             ℓ = MMDsq + reg
 
             # Update dataframe
-            push!(df, [epoch, dt, ℓ, reg, MMDsq, MMDvar, tstat, c_α, P_α, rmse, copy(logsigma), missing, missing, missing])
+            push!(df, [epoch, dt, ℓ, reg, MMDsq, MMDvar, tstat, c_α, P_α, rmse, copy(logsigma), θ_fit_err, sig_fit_logL, sig_fit_rmse])
 
             function makeplots()
                 s = x -> x == round(x) ? round(Int, x) : round(x; sigdigits = 4) # for plotting
@@ -351,7 +374,7 @@ function train_mmd_model(;
                         ),
                         plot(permutedims(df.logsigma[end]); leg = :none, title = "logσ vs. data channel"),
                     )
-                    display(pmodel) #TODO
+                    # display(pmodel) #TODO
 
                     psignals = @timeit timer "signal plot" begin
                         θplotidx = sample(1:size(Yθ,2), nθplot; replace = false)
@@ -362,7 +385,7 @@ function train_mmd_model(;
                             layout = (3, nθplot),
                         )
                     end
-                    display(psignals) #TODO
+                    # display(psignals) #TODO
 
                     ploss = nothing
                     @timeit timer "loss plot" begin
@@ -382,7 +405,7 @@ function train_mmd_model(;
                                 plot!(p; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
                             end
                             ploss = plot(p1, p2, p3, p4)
-                            display(ploss) #TODO
+                            # display(ploss) #TODO
                         end
                     end
 
@@ -390,14 +413,16 @@ function train_mmd_model(;
                     pheat = nothing #mmd_heatmap(Xϵ, Y, sigma)
 
                     pperm = @timeit timer "permutation plot" mmd_perm_test_power_plot(permtest)
-                    display(pperm) #TODO
+                    # display(pperm) #TODO
 
                     pinfer = nothing
                     @timeit timer "theta inference plot" begin
                         get_ν_and_σ = x -> ((dx, ϵ) = get_correction_and_noise(x); return (abs.(x.+dx), ϵ))
-                        res = toy_theta_loglikelihood_inference(Yθϵ[:,1:nθbb], get_ν_and_σ; objective = :mle)
+                        @timeit timer "theta inference" res = toy_theta_loglikelihood_inference(Yθϵ[:,1:nθbb], nothing, get_ν_and_σ; objective = :mle)
                         bbres, optres = (x->x[1]).(res), (x->x[2]).(res)
                         θbb = reduce(hcat, Optim.minimizer.(optres))
+                        cb_state.last_θbb[] = copy(θbb)
+
                         Xθbb = toy_signal_model(θbb, nothing, 4)
                         dXθbb, ϵθbb = get_correction_and_noise(Xθbb)
                         Xθϵbb = get_corrected_signal(Xθbb, dXθbb, ϵθbb)
@@ -427,7 +452,7 @@ function train_mmd_model(;
                                 ),
                                 layout = @layout([a{0.25w} b{0.75w}]),
                             )
-                            display(pinfer) #TODO
+                            # display(pinfer) #TODO
                         end
                     end
 
@@ -464,8 +489,7 @@ function train_mmd_model(;
                 !isdir(savefolder) && mkpath(savefolder)
                 try
                     BSON.bson(joinpath(savefolder, "$(prefix)progress$(suffix).bson"), Dict("progress" => deepcopy(df)))
-                    BSON.bson(joinpath(savefolder, "$(prefix)model$(suffix).bson"), deepcopy(models)) #TODO
-                    # BSON.bson(joinpath(savefolder, "$(prefix)model$(suffix).bson"), Dict("model" => deepcopy(model)))
+                    BSON.bson(joinpath(savefolder, "$(prefix)model$(suffix).bson"), deepcopy(models))
                 catch e
                     if e isa InterruptException
                         @warn "Saving progress interrupted"
@@ -501,8 +525,8 @@ function train_mmd_model(;
                 )
             end
 
-            if epoch == 0 || time() - last_checkpoint[] >= saveperiod
-                last_checkpoint[] = time()
+            if epoch == 0 || time() - cb_state.last_checkpoint[] >= saveperiod
+                cb_state.last_checkpoint[] = time()
                 estr = lpad(epoch, ndigits(epochs), "0")
                 # @timeit timer "checkpoint model" saveprogress(joinpath(outfolder, "checkpoint"), "checkpoint-", ".epoch.$estr") #TODO
                 @timeit timer "current model" saveprogress(outfolder, "current-", "")
@@ -514,14 +538,14 @@ function train_mmd_model(;
     end
 
     opt = Flux.ADAM(lr)
-    Xtest = sampleX(m) #TODO
-    Ytest = sampleY(m; dataset = :test) #TODO
-    θtest = sampleθ(m) #TODO
+    Xtest = sampleX(m)
+    Ytest = sampleY(m; dataset = :test)
+    θtest = sampleθ(m)
 
     for epoch in 1:epochs
         try
             @timeit timer "epoch" begin
-                (epoch == 1) && @timeit timer "callback" callback(0, Xtest, Ytest, θtest) #TODO
+                (epoch == 1) && @timeit timer "callback" callback(0, Xtest, Ytest, θtest)
                 @timeit timer "batch loop" for _ in 1:nbatches
                     @timeit timer "sampleX" Xtrain = sampleX(m)
                     @timeit timer "sampleY" Ytrain = sampleY(m; dataset = :train)
@@ -529,7 +553,7 @@ function train_mmd_model(;
                     @timeit timer "reverse" gs = back(1)
                     @timeit timer "update!" Flux.Optimise.update!(opt, Flux.params(models["mmd"]), gs)
                 end
-                @timeit timer "callback" callback(epoch, Xtest, Ytest, θtest) #TODO
+                @timeit timer "callback" callback(epoch, Xtest, Ytest, θtest)
             end
 
             if mod(epoch, showrate) == 0
