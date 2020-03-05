@@ -386,10 +386,10 @@ function createdomains(
         interiorgrids::AbstractArray{G},
         outercircles::AbstractArray{C},
         innercircles::AbstractArray{C},
-        ferritins::AbstractArray{V} = Vec{3,T}[], #Default to geometry float type
+        ferritins::AbstractArray{V} = Vec{3,Tu}[], #Default to geometry float type
         ::Type{uType} = Vec{2,Tu}; #Default btparams float type
         kwargs...
-    ) where {T, G <: TriangularGrid{T}, C <: Circle{2,T}, V <: Vec{3,T}, Tu, uType <: FieldType{Tu}}
+    ) where {Tu, uType <: FieldType{Tu}, G <: TriangularGrid, C <: Circle{2}, V <: Vec{2}}
 
     myelinprob = MyelinProblem(btparams)
     myelinsubdomains = createmyelindomains(
@@ -398,11 +398,11 @@ function createdomains(
         uType; kwargs...)
 
     @info "Assembling MyelinDomain from subdomains"
-    print("    Assemble subdomains   "); @time doassemble!.(myelinsubdomains, Ref(myelinprob))
-    print("    Factorize subdomains  "); @time factorize!.(myelinsubdomains)
+    print("    Assemble subdomains   "); @time foreach(m -> doassemble!(m, myelinprob), myelinsubdomains)
+    print("    Factorize subdomains  "); @time foreach(m -> factorize!(m), myelinsubdomains)
     print("    Assemble combined     "); @time myelindomains = [MyelinDomain(PermeableInterfaceRegion(), myelinprob, myelinsubdomains)]
-    print("    Factorize combined    "); @time factorize!.(myelindomains)
-    
+    print("    Factorize combined    "); @time foreach(m -> factorize!(m), myelindomains)
+
     return @ntuple(myelinprob, myelinsubdomains, myelindomains)
 end
 

@@ -245,7 +245,7 @@ function createmyelindomains(
 
     isgridempty(g::Grid) = (getnnodes(g) == 0 || getncells(g) == 0)
 
-    Mtype = TriangularMyelinDomain{R,Tu,uType,T,DType} where {R,DType}
+    Mtype = TriangularMyelinDomain{R,Tu,uType} where {R}
     ms = Vector{Mtype}()
 
     for (i, a) in enumerate(axongrids)
@@ -271,15 +271,15 @@ end
 function MyelinDomain(
         region::PermeableInterfaceRegion,
         prob::MyelinProblem,
-        ms::AbstractVector{<:TriangularMyelinDomain{R,Tu,uType,T} where R}
-    ) where {Tu,uType,T}
+        ms::AbstractVector{<:TriangularMyelinDomain{R,Tu,uType} where R},
+    ) where {Tu,uType}
     domain = ParabolicDomain(region, prob, ms)
-    myelindomain = TriangularMyelinDomain{typeof(region),Tu,uType,T,typeof(domain)}(
+    myelindomain = TriangularMyelinDomain{typeof(region),Tu,uType}(
         region,
         domain,
-        ms[1].outercircles, # assume these are the same for all domains
-        ms[1].innercircles, # assume these are the same for all domains
-        ms[1].ferritins # assume these are the same for all domains
+        ms[1].outercircles, # these should be the same for all domains
+        ms[1].innercircles, # these should be the same for all domains
+        ms[1].ferritins # these should be the same for all domains
     )
     return myelindomain
 end
@@ -287,27 +287,22 @@ end
 function ParabolicDomain(
         region::PermeableInterfaceRegion,
         prob::MyelinProblem,
-        ms::AbstractVector{<:TriangularMyelinDomain{R,Tu,uType,T} where {R}}
-    ) where {Tu,uType,T}
+        ms::AbstractVector{<:TriangularMyelinDomain{R,Tu,uType} where {R}},
+    ) where {Tu,uType}
 
     # Construct one large ParabolicDomain containing all grids
-    gDim, Nd, Nf = 2, 3, 3 # Triangular 2D domain
     grid = Grid(getgrid.(ms)) # combine grids into single large grid
-    
-    #TODO: This segfaults?
-    domain = ParabolicDomain(grid::Grid, uType::Type{<:FieldType};
-        refshape = getrefshape(ms[1])::JuAFEM.AbstractRefShape, # assume these are the same for all domains
-        quadorder = getquadorder(ms[1])::Int, # assume these are the same for all domains
-        funcinterporder = getfuncinterporder(ms[1])::Int, # assume these are the same for all domains
-        geominterporder = getgeominterporder(ms[1])::Int, # assume these are the same for all domains
+    gDim, Nd, Nf = 2, 3, 3 # Triangular 2D domain
+    T = floattype(grid)
+
+    domain = ParabolicDomain(
+        grid,
+        uType;
+        refshape = getrefshape(ms[1]), # these should be the same for all domains
+        quadorder = getquadorder(ms[1]), # these should be the same for all domains
+        funcinterporder = getfuncinterporder(ms[1]), # these should be the same for all domains
+        geominterporder = getgeominterporder(ms[1]), # these should be the same for all domains
     )
-    # error("got here")
-    # domain = ParabolicDomain(grid, uType;
-    #     refshape = getrefshape(ms[1]), # assume these are the same for all domains
-    #     quadorder = getquadorder(ms[1]), # assume these are the same for all domains
-    #     funcinterporder = getfuncinterporder(ms[1]), # assume these are the same for all domains
-    #     geominterporder = getgeominterporder(ms[1]), # assume these are the same for all domains
-    # )
     domain.M = blockdiag(getmass.(ms)...)
     domain.K = blockdiag(getstiffness.(ms)...)
     domain.metadata[:subdomains] = deepcopy.(ms)

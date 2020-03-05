@@ -107,34 +107,22 @@ end
 #       Tu:     Bottom float type used for underlying function, e.g. Float64
 #       uType:  Vector type of unknown function, e.g. Vec{2,Tu}, Complex{Tu}
 #       gDim:   Spatial dimension of domain
-#       T:      Float type used for geometry
-#       Nd:     Number of nodes per finite element
-#       Nf:     Number of faces per finite element
 # ---------------------------------------------------------------------------- #
-abstract type AbstractDomain{Tu,uType,gDim,T,Nd,Nf} end
-const VectorOfDomains{Tu,uType,gDim,T,Nd,Nf} = AbstractVector{<:AbstractDomain{Tu,uType,gDim,T,Nd,Nf}}
+abstract type AbstractDomain{Tu,uType,gDim} end
+const VectorOfDomains{Tu,uType,gDim} = AbstractVector{<:AbstractDomain{Tu,uType,gDim}}
 
-# ParabolicDomain: generic domain type which holds this information necessary to
-# solve a parabolic FEM problem M*du/dt = K*u
-mutable struct ParabolicDomain{
-        Tu, uType <: FieldType{Tu},
-        gDim, T, Nd, Nf,
-        S <: JuAFEM.AbstractRefShape,
-        CV <: Union{CellValues{gDim,T,S}, Tuple{Vararg{CellValues{gDim,T,S}}}},
-        FV <: Union{FaceValues{gDim,T,S}, Tuple{Vararg{FaceValues{gDim,T,S}}}},
-        MType <: MassType{Tu}, MfactType <: MassFactType{Tu}, KType <: StiffnessType{Tu}
-    } <: AbstractDomain{Tu,uType,gDim,T,Nd,Nf}
-    grid::Grid{gDim,Nd,T,Nf}
-    dh::DofHandler{gDim,Nd,T,Nf}
-    refshape::S
-    cellvalues::CV
-    facevalues::FV
+mutable struct ParabolicDomain{Tu,uType<:FieldType{Tu},gDim} <: AbstractDomain{Tu,uType,gDim}
+    grid::JuAFEM.Grid{gDim}
+    dh::JuAFEM.DofHandler{gDim}
+    refshape::JuAFEM.AbstractRefShape
+    cellvalues::Union{<:JuAFEM.CellValues{gDim}, <:Tuple{Vararg{<:JuAFEM.CellValues{gDim}}}}
+    facevalues::Union{<:JuAFEM.FaceValues{gDim}, <:Tuple{Vararg{<:JuAFEM.FaceValues{gDim}}}}
     quadorder::Int
     funcinterporder::Int
     geominterporder::Int
-    M::MType
-    Mfact::Union{Nothing,MfactType}
-    K::KType
+    M::MassType{Tu}
+    Mfact::Union{Nothing, <:MassFactType{Tu}}
+    K::StiffnessType{Tu}
     metadata::Dict{Any,Any}
 end
 
@@ -163,17 +151,17 @@ struct PermeableInterfaceRegion <: AbstractRegionUnion end
 #   represented as a ParabolicDomain, which stores the underlying grid, mass
 #   matrix M, stiffness matrix K, etc.
 # ---------------------------------------------------------------------------- #
-mutable struct MyelinDomain{R<:AbstractRegion,Tu,uType,gDim,T,Nd,Nf,DType<:ParabolicDomain{Tu,uType,gDim,T,Nd,Nf}} <: AbstractDomain{Tu,uType,gDim,T,Nd,Nf}
+mutable struct MyelinDomain{R<:AbstractRegion,Tu,uType,gDim} <: AbstractDomain{Tu,uType,gDim}
     region::R
-    domain::DType
-    outercircles::Vector{Circle{2,T}}
-    innercircles::Vector{Circle{2,T}}
-    ferritins::Vector{Vec{3,T}}
+    domain::ParabolicDomain{Tu,uType,gDim}
+    outercircles::Vector{Circle{2,Tu}}
+    innercircles::Vector{Circle{2,Tu}}
+    ferritins::Vector{Vec{3,Tu}}
 end
 
 # TriangularMyelinDomain is a MyelinDomain with grid dimension gDim = 2,
 # nodes per finite element Nd = 3, and faces per finite element Nf = 2
-const TriangularMyelinDomain{R,Tu,uType,T,DType} = MyelinDomain{R,Tu,uType,2,T,3,3,DType}
+const TriangularMyelinDomain{R,Tu,uType} = MyelinDomain{R,Tu,uType,2} #TODO FIXME
 
 # ---------------------------------------------------------------------------- #
 # ParabolicLinearMap <: LinearMap
@@ -215,13 +203,13 @@ end
 
 # Construct a ParabolicDomain from a Grid and interpolation/integration settings
 function ParabolicDomain(
-        grid::Grid{gDim,Nd,T,Nf},
-        ::Type{uType} = Vec{2,T}; #Default to same float type as grid
+        grid::Grid{gDim},
+        ::Type{uType} = Vec{2,floattype(grid)};
         refshape::JuAFEM.AbstractRefShape = RefTetrahedron(),
         quadorder::Int = 3,
         funcinterporder::Int = 1,
         geominterporder::Int = 1
-    ) where {gDim,Nd,T,Nf,Tu,uType<:FieldType{Tu}}
+    ) where {gDim,Tu,uType<:FieldType{Tu}}
 
     uDim = fielddim(uType)::Int
     @assert 1 <= uDim <= 3
@@ -290,10 +278,8 @@ function ParabolicDomain(
     Mfact = nothing
     MfactType = SuiteSparse.CHOLMOD.Factor{Tu}
 
-    ParabolicDomain{Tu,uType,gDim,T,Nd,Nf,typeof(refshape),typeof(cellvalues),typeof(facevalues),typeof(M),MfactType,typeof(K)}(
-        grid, dh,
-        refshape, cellvalues, facevalues,
-        quadorder, funcinterporder, geominterporder,
+    ParabolicDomain{Tu,uType,gDim}(
+        grid, dh, refshape, cellvalues, facevalues, quadorder, funcinterporder, geominterporder,
         M, Mfact, K, Dict{Any,Any}()
     )
 end
@@ -302,18 +288,15 @@ end
 # is constructed, and so keyword arguments are forwarded to that constructor
 function MyelinDomain(
         region::R,
-        grid::Grid{gDim,Nd,T,Nf},
-        outercircles::Vector{Circle{2,T}},
-        innercircles::Vector{Circle{2,T}},
-        ferritins::Vector{Vec{3,T}} = Vec{3,T}[],
-        ::Type{uType} = Vec{2,T}; #Default to same float type as grid
+        grid::Grid{gDim},
+        outercircles::Vector{Circle{2,floattype(grid)}},
+        innercircles::Vector{Circle{2,floattype(grid)}},
+        ferritins::Vector{Vec{3,floattype(grid)}} = Vec{3,floattype(grid)}[],
+        ::Type{uType} = Vec{2,floattype(grid)};
         kwargs...
-    ) where {R,gDim,T,Nd,Nf,Tu,uType<:FieldType{Tu}}
-
+    ) where {R,gDim,Tu,uType<:FieldType{Tu}}
     domain = ParabolicDomain(grid, uType; kwargs...)
-    return MyelinDomain{R,Tu,uType,gDim,T,Nd,Nf,typeof(domain)}(
-        region, domain, outercircles, innercircles, ferritins
-    )
+    return MyelinDomain{R,Tu,uType,gDim}(region, domain, outercircles, innercircles, ferritins)
 end
 
 # Construct a ParabolicLinearMap from a ParabolicDomain

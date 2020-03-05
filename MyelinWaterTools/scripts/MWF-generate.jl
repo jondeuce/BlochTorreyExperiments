@@ -1,7 +1,6 @@
 # Activate project and load packages for this script
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
-Pkg.instantiate()
 
 using MWFUtils
 using GlobalUtils
@@ -77,14 +76,10 @@ copy_and_load_random_geom(geomdir::String; kwargs...) = copy_and_load_random_geo
 
 # Load geometries with at most `maxnnodes` number of nodes to avoid exceedingly long simulations
 const geombasepaths = [
-    realpath("./geom"),
+    # realpath("./geom"), #TODO
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-3/geom",
-<<<<<<< HEAD
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-4/geom",
-=======
-    "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-4/geom",
-    # "/arc/project/st-arausch-1/jcd1994/ismrm2020/experiments/diff-med-1-input-data/geom",
->>>>>>> cdc15ace731a553f07f9ee7c80acefb49a25e602
+    "/arc/project/st-arausch-1/jcd1994/ismrm2020/experiments/diff-med-1-input-data/geom", #TODO
 ]
 const geomfiles = reduce(vcat, realpath.(joinpath.(gp, readdir(gp))) for gp in geombasepaths)
 const maxnnodes = 15_000
@@ -139,6 +134,7 @@ const default_mwfmodels_dict = Dict(map(m -> Symbol(typeof(m)) => Dict(m), defau
 ####
 
 const default_btparams = BlochTorreyParameters{Float64}(
+    B0 = 0.0, #TODO
     theta = π/2,
     D_Tissue = 500.0, # [μm²/s]
     D_Sheath = 500.0, # [μm²/s]
@@ -212,14 +208,14 @@ function runsolve(btparams, sweepparams, geom)
     # Unpack geometry, create myelin domains, and create omegafield
     @unpack exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
     ferritins = Vec{3,floattype(bdry)}[]
-    
+
     @unpack myelinprob, myelinsubdomains, myelindomains = createdomains(btparams,
         exteriorgrids, torigrids, interiorgrids,
         outercircles, innercircles, ferritins, typeof(solverparams_dict[:u0]))
-    
+
     # Solve Bloch-Torrey equation and plot
     sols = solveblochtorrey(myelinprob, myelindomains; solverparams_dict...)
-    
+
     return @ntuple(sols, myelinprob, myelinsubdomains, myelindomains, solverparams_dict)
 end
 
@@ -250,7 +246,7 @@ function runsimulation!(results, sweepparams, geom)
         MVF = mvf,
         MWF = mwf,
     )
-    sols, myelinprob, myelinsubdomains, myelindomains, solverparams_dict = runsolve(btparams, sweepparams, geom)
+    @unpack sols, myelinprob, myelinsubdomains, myelindomains, solverparams_dict = runsolve(btparams, sweepparams, geom)
     
     # Sample solution signals
     dt = sweepparams[:TE]/20 # TODO how many samples to save?
@@ -412,7 +408,7 @@ end
 function main(;iters::Int = typemax(Int))
     # Make subfolders
     map(mkpath, ("vtk", "mag", "phase", "long", "t2dist", "sig", "omega", "mwfplots", "measurables"))
-
+    
     # Initialize results
     results = Dict{Symbol,Any}(
         :sweepparams        => [],
@@ -428,7 +424,7 @@ function main(;iters::Int = typemax(Int))
         # :myelindomains      => [], #TODO: prefer not to save custom types / large memory footprint
         # :myelinprob         => [], #TODO: prefer not to save custom types
     )
-
+    
     all_sweepparams = (sweepparamsampler() for _ in 1:iters)
     for (i,sweepparams) in enumerate(all_sweepparams)
         geom = copy_and_load_random_geom(geombasepaths; maxnnodes = maxnnodes)
@@ -445,7 +441,7 @@ function main(;iters::Int = typemax(Int))
             runsimulation!(results, sweepparams, geometrytuple(geom))
             toc = Dates.now()
             Δt = Dates.canonicalize(Dates.CompoundPeriod(toc - tic))
-
+    
             @info "Elapsed simulation time: $Δt"
         catch e
             if e isa InterruptException
@@ -457,7 +453,7 @@ function main(;iters::Int = typemax(Int))
             end
         end
     end
-
+    
     return results
 end
 
@@ -466,7 +462,6 @@ end
 ####
 
 main()
-nothing
 
 # results = main()
 # @unpack sweepparams, btparams, solverparams_dict, tpoints, signals, mwfvalues = results;
@@ -497,3 +492,5 @@ nothing
 #     @warn "Error plotting MWF."
 #     @warn sprint(showerror, e, catch_backtrace())
 # end
+
+nothing
