@@ -111,6 +111,9 @@ end
 abstract type AbstractDomain{Tu,uType,gDim} end
 const VectorOfDomains{Tu,uType,gDim} = AbstractVector{<:AbstractDomain{Tu,uType,gDim}}
 
+# ---------------------------------------------------------------------------- #
+# ParabolicDomain
+# ---------------------------------------------------------------------------- #
 mutable struct ParabolicDomain{Tu,uType<:FieldType{Tu},gDim} <: AbstractDomain{Tu,uType,gDim}
     grid::JuAFEM.Grid{gDim}
     dh::JuAFEM.DofHandler{gDim}
@@ -172,9 +175,9 @@ struct ParabolicLinearMap{T, MType<:AbstractMatrix, MfactType <: MassFactType, K
     M::MType
     Mfact::MfactType
     K::KType
-    function ParabolicLinearMap(M::AbstractMatrix{T1}, Mfact::MassFactType{T1}, K::AbstractMatrix{T2}) where {T1,T2}
+    function ParabolicLinearMap(M::AbstractMatrix, Mfact::MassFactType, K::AbstractMatrix)
         @assert (size(M) == size(Mfact) == size(K)) && (size(M,1) == size(M,2))
-        T = promote_type(T1, T2)
+        T = promote_type(eltype(M), eltype(Mfact), eltype(K))
         new{T, typeof(M), typeof(Mfact), typeof(K)}(M, Mfact, K)
     end
 end
@@ -211,9 +214,10 @@ function ParabolicDomain(
         geominterporder::Int = 1
     ) where {gDim,Tu,uType<:FieldType{Tu}}
 
-    uDim = fielddim(uType)::Int
-    @assert 1 <= uDim <= 3
-    
+    @assert 1 <= fielddim(uType) <= 3
+    @assert floattype(grid) == floattype(uType)
+    uDim = fielddim(uType)
+
     # Quadrature and interpolation rules and corresponding cellvalues/facevalues
     func_interp = Lagrange{gDim, typeof(refshape), funcinterporder}()
     geom_interp = Lagrange{gDim, typeof(refshape), geominterporder}()
@@ -267,16 +271,10 @@ function ParabolicDomain(
     end
     renumber!(dh, perm)
 
-    # Mass and stiffness matrices, and weights vector
-    M = create_sparsity_pattern(dh)
-    # M = create_symmetric_sparsity_pattern(dh)
-    K = uType <: Complex ?
-        complex(create_sparsity_pattern(dh)) :
-        create_sparsity_pattern(dh)
-
-    # Initialize Mfact to nothing
+    # Mass and stiffness matrices
+    M = create_sparsity_pattern(dh) #create_symmetric_sparsity_pattern(dh)
+    K = uType <: Complex ? complex(create_sparsity_pattern(dh)) : create_sparsity_pattern(dh)
     Mfact = nothing
-    MfactType = SuiteSparse.CHOLMOD.Factor{Tu}
 
     ParabolicDomain{Tu,uType,gDim}(
         grid, dh, refshape, cellvalues, facevalues, quadorder, funcinterporder, geominterporder,
@@ -289,9 +287,9 @@ end
 function MyelinDomain(
         region::R,
         grid::Grid{gDim},
-        outercircles::Vector{Circle{2,floattype(grid)}},
-        innercircles::Vector{Circle{2,floattype(grid)}},
-        ferritins::Vector{Vec{3,floattype(grid)}} = Vec{3,floattype(grid)}[],
+        outercircles::Vector{<:Circle{2}},
+        innercircles::Vector{<:Circle{2}},
+        ferritins::Vector{<:Vec{3}} = Vec{3,floattype(grid)}[],
         ::Type{uType} = Vec{2,floattype(grid)};
         kwargs...
     ) where {R,gDim,Tu,uType<:FieldType{Tu}}

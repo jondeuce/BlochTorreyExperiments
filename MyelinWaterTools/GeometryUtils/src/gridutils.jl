@@ -59,7 +59,8 @@ end
 # Misc grid utils
 # ---------------------------------------------------------------------------- #
 
-@inline floattype(g::Grid{dim,N,T,M}) where {dim,N,T,M} = T
+@inline floattype(g::Grid) = floattype(typeof(g))
+@inline floattype(::Type{Grid{dim,N,T,M}}) where {dim,N,T,M} = T
 
 # `JuAFEM.Grid` constructor given a vector of points and a vector of tuples of
 # integers representing cell vertice indices.

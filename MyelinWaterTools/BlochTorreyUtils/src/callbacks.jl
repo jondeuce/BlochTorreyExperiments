@@ -139,16 +139,17 @@ function EchoTrainCallback(
 
     # Return next pulse time/next pulse type
     time_choice(integrator) = isempty(tstops) ? typemax(T) : popfirst!(tstops)
-    
+
     # Apply appropriate pulse
     function user_affect!(integrator)
-        if verbose
-            anglestr, timestr = @sprintf("%6.1f", rad2deg(flipangle)), @sprintf("%.1f ms", 1000 * integrator.t)
-            println("$anglestr degree pulse of type $pulsetype applied at t = $timestr")
-        end
         (uType <: Vec{3}) && shift_longitudinal!(integrator.u, steadystate) # Convert from u-space to M-space
         apply_pulse!(integrator.u, flipangle, pulsetype, uType) # Apply rotation in M-space
         (uType <: Vec{3}) && shift_longitudinal!(integrator.u, steadystate) # Convert back to u-space
+        if verbose
+            anglestr, timestr = @sprintf("%6.1f", rad2deg(flipangle)), @sprintf("%.1f ms", 1000 * integrator.t)
+            @info "$anglestr degree pulse of type $pulsetype applied at t = $timestr"
+            # show(stdout, TIMER); println("\n")
+        end
         return integrator
     end
 

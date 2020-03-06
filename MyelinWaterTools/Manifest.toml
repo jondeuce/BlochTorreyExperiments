@@ -81,7 +81,7 @@ uuid = "a134a8b2-14d6-55f6-9291-3336d3ab0209"
 version = "0.5.0"
 
 [[BlochTorreyUtils]]
-deps = ["BlockArrays", "DiffEqBase", "DiffEqCallbacks", "DistMesh", "Distributions", "DrWatson", "ExpmV", "Expokit", "GeometryUtils", "JuAFEM", "Lazy", "LinearMaps", "MDBM", "Optim", "OrdinaryDiffEq", "Parameters", "Printf", "Random", "Reexport", "SuiteSparse", "VoronoiDelaunay", "WriteVTK"]
+deps = ["BlockArrays", "DiffEqBase", "DiffEqCallbacks", "DistMesh", "Distributions", "DrWatson", "ExpmV", "Expokit", "GeometryUtils", "JuAFEM", "Lazy", "LinearMaps", "MDBM", "Optim", "OrdinaryDiffEq", "Parameters", "Printf", "Random", "Reexport", "SuiteSparse", "TimerOutputs", "VoronoiDelaunay", "WriteVTK"]
 path = "BlochTorreyUtils"
 uuid = "0c7a1e50-026b-442a-b0e0-468c598a8155"
 version = "0.1.0"
@@ -140,9 +140,9 @@ version = "0.1.0"
 
 [[Clustering]]
 deps = ["Distances", "LinearAlgebra", "NearestNeighbors", "Printf", "SparseArrays", "Statistics", "StatsBase"]
-git-tree-sha1 = "f387d5937d0c9d0191c711d7d204bce15bd23b45"
+git-tree-sha1 = "225b796b1aa8b2e5c9c90bfb1f6779772d08bc00"
 uuid = "aaaa29a8-35af-508c-8bc3-b662a17a0fe5"
-version = "0.13.3"
+version = "0.13.4"
 
 [[CodeTracking]]
 deps = ["InteractiveUtils", "UUIDs"]
@@ -193,10 +193,10 @@ uuid = "8f4d0f93-b110-5947-807f-2305c1781a2d"
 version = "1.4.1"
 
 [[Contour]]
-deps = ["LinearAlgebra", "StaticArrays", "Test"]
-git-tree-sha1 = "b974e164358fea753ef853ce7bad97afec15bb80"
+deps = ["StaticArrays"]
+git-tree-sha1 = "6d56f927b33d3820561b8f89d7de311718683846"
 uuid = "d38c429a-6771-53c6-b99e-75d170b6e991"
-version = "0.5.1"
+version = "0.5.2"
 
 [[Crayons]]
 git-tree-sha1 = "cb7a62895da739fe5bb43f1a26d4292baf4b3dc0"
@@ -434,9 +434,9 @@ version = "0.4.0"
 
 [[GeometryTypes]]
 deps = ["ColorTypes", "FixedPointNumbers", "LinearAlgebra", "StaticArrays"]
-git-tree-sha1 = "78f0ce9d01993b637a8f28d84537d75dc0ce8eef"
+git-tree-sha1 = "9d7520999ca80a51f1bf41be2268a9ac0e4f0619"
 uuid = "4d00f742-c7ba-57c2-abde-4428a4b178cb"
-version = "0.7.10"
+version = "0.8.1"
 
 [[GeometryUtils]]
 deps = ["DistMesh", "JuAFEM", "LineSearches", "LinearAlgebra", "Optim", "PolynomialRoots", "RecipesBase", "Reexport", "Rotations", "SparseArrays", "StaticArrays", "Statistics", "StatsBase", "Tensors", "VoronoiDelaunay"]
@@ -510,15 +510,15 @@ version = "0.2.0"
 
 [[JuliaInterpreter]]
 deps = ["CodeTracking", "InteractiveUtils", "Random", "UUIDs"]
-git-tree-sha1 = "6541c738c4f454a48645678e0bbffcd8564fb2ad"
+git-tree-sha1 = "2eadbbde5534346cbb837c3a75b377cba477a06d"
 uuid = "aa1ae85d-cabe-5617-a682-6adf51b2e16a"
-version = "0.7.12"
+version = "0.7.13"
 
 [[Juno]]
 deps = ["Base64", "Logging", "Media", "Profile"]
-git-tree-sha1 = "4f2249fb58cfb140eeb89428e31791e2f8959d8c"
+git-tree-sha1 = "e1ba2a612645b3e07c773c3a208f215745081fe6"
 uuid = "e5e0dc1b-0480-54bc-9374-aad01c23163d"
-version = "0.8.0"
+version = "0.8.1"
 
 [[KernelDensity]]
 deps = ["Distributions", "FFTW", "Interpolations", "Optim", "StatsBase", "Test"]
@@ -835,9 +835,9 @@ version = "0.6.3"
 
 [[Plots]]
 deps = ["Base64", "Contour", "Dates", "FFMPEG", "FixedPointNumbers", "GR", "GeometryTypes", "JSON", "LinearAlgebra", "Measures", "NaNMath", "Pkg", "PlotThemes", "PlotUtils", "Printf", "REPL", "Random", "RecipesBase", "Reexport", "Requires", "Showoff", "SparseArrays", "Statistics", "StatsBase", "UUIDs"]
-git-tree-sha1 = "dd22bcc76f3ae4f805c25925be37a0f9c00bed6f"
+git-tree-sha1 = "51d4d9154e71253abd2a7df2ee0e3d6b8d14f8b1"
 uuid = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
-version = "0.29.4"
+version = "0.29.5"
 
 [[PolynomialRoots]]
 deps = ["Test"]

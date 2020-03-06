@@ -381,15 +381,15 @@ loadgeometry(fname::String) = geometrytuple(BSON.load(fname))
 
 function createdomains(
         btparams::BlochTorreyParameters{Tu},
-        exteriorgrids::AbstractArray{G},
-        torigrids::AbstractArray{G},
-        interiorgrids::AbstractArray{G},
-        outercircles::AbstractArray{C},
-        innercircles::AbstractArray{C},
-        ferritins::AbstractArray{V} = Vec{3,Tu}[], #Default to geometry float type
+        exteriorgrids::AbstractArray{<:TriangularGrid},
+        torigrids::AbstractArray{<:TriangularGrid},
+        interiorgrids::AbstractArray{<:TriangularGrid},
+        outercircles::AbstractArray{<:Circle{2}},
+        innercircles::AbstractArray{<:Circle{2}},
+        ferritins::AbstractArray{<:Vec{3}} = Vec{3,Tu}[], #Default to geometry float type
         ::Type{uType} = Vec{2,Tu}; #Default btparams float type
         kwargs...
-    ) where {Tu, uType <: FieldType{Tu}, G <: TriangularGrid, C <: Circle{2}, V <: Vec{2}}
+    ) where {Tu, uType <: FieldType{Tu}}
 
     myelinprob = MyelinProblem(btparams)
     myelinsubdomains = createmyelindomains(
@@ -398,10 +398,13 @@ function createdomains(
         uType; kwargs...)
 
     @info "Assembling MyelinDomain from subdomains"
-    print("    Assemble subdomains   "); @time foreach(m -> doassemble!(m, myelinprob), myelinsubdomains)
-    print("    Factorize subdomains  "); @time foreach(m -> factorize!(m), myelinsubdomains)
-    print("    Assemble combined     "); @time myelindomains = [MyelinDomain(PermeableInterfaceRegion(), myelinprob, myelinsubdomains)]
-    print("    Factorize combined    "); @time foreach(m -> factorize!(m), myelindomains)
+    @timeit BlochTorreyUtils.TIMER "Assembling MyelinDomain" begin
+        @timeit BlochTorreyUtils.TIMER "Assemble subdomains"  foreach(m -> doassemble!(m, myelinprob), myelinsubdomains)
+        @timeit BlochTorreyUtils.TIMER "Factorize subdomains" foreach(m -> factorize!(m), myelinsubdomains)
+        @timeit BlochTorreyUtils.TIMER "Assemble combined"    myelindomains = [MyelinDomain(PermeableInterfaceRegion(), myelinprob, myelinsubdomains)]
+        @timeit BlochTorreyUtils.TIMER "Factorize combined"   foreach(m -> factorize!(m), myelindomains)
+    end
+    # show(stdout, BlochTorreyUtils.TIMER); println("\n")
 
     return @ntuple(myelinprob, myelinsubdomains, myelindomains)
 end
@@ -544,13 +547,16 @@ function solveblochtorrey(
     tstops = cpmg_savetimes(tspan, dt, TE, TR, nTE, nTR)
 
     # Setup problem and solve
-    prob = ODEProblem(myelindomain, U0, tspan)
-    sol = solve(prob, alg, args...;
-        dense = false, # don't save all intermediate time steps
-        saveat = tstops, # timepoints to save solution at
-        tstops = tstops, # ensure stopping at all tstops points
-        dt = dt, reltol = reltol, abstol = abstol, callback = callback, kwargs...)
-    
+    @timeit BlochTorreyUtils.TIMER "solveblochtorrey" begin
+        prob = ODEProblem(myelindomain, U0, tspan)
+        sol = solve(prob, alg, args...;
+            dense = false, # don't save all intermediate time steps
+            saveat = tstops, # timepoints to save solution at
+            tstops = tstops, # ensure stopping at all tstops points
+            dt = dt, reltol = reltol, abstol = abstol, callback = callback, kwargs...)
+    end
+    # show(stdout, BlochTorreyUtils.TIMER); println("\n")
+
     if DEBUG_ODEPROBLEM
         BlochTorreyUtils._display_counters()
     end

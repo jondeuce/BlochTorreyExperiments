@@ -5,6 +5,7 @@ Test/*
 GeometryGeneration/Images/*
 Results/*
 MMDLearning/output/*
+MyelinWaterTools/scripts/output/*
 
 ####################
 ## Paraview files ##

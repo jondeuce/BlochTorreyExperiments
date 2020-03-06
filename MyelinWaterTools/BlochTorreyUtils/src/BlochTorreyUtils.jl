@@ -15,6 +15,8 @@ using Reexport
 @reexport using BlockArrays
 @reexport using WriteVTK
 @reexport using Printf
+@reexport using TimerOutputs
+const TIMER = TimerOutput()
 
 using DrWatson: @dict, @ntuple
 using Parameters: @with_kw, @unpack

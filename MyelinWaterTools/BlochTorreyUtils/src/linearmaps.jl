@@ -34,9 +34,30 @@ _reset!(x) = x[] = 0
 _reset_all_counters!() = (_reset!.((FORWARD_EVAL_COUNTER, ADJOINT_EVAL_COUNTER, TRANSPOSE_EVAL_COUNTER)); nothing)
 _display_counters() = (println(""); @show(FORWARD_EVAL_COUNTER[]); @show(ADJOINT_EVAL_COUNTER[]); @show(TRANSPOSE_EVAL_COUNTER[]); println(""); nothing)
 
-Minv_K_mul_u!(Y, X, K, Mfact) = (_increment!(FORWARD_EVAL_COUNTER); mul!(Y, K, X); ldiv!(Mfact, Y); return Y)
-Kc_Minv_mul_u!(Y, X, K, Mfact) = (_increment!(ADJOINT_EVAL_COUNTER); mul!(Y, adjoint(K), Mfact\X); return Y)
-Kt_Minv_mul_u!(Y, X, K, Mfact) = (_increment!(TRANSPOSE_EVAL_COUNTER); mul!(Y, transpose(K), Mfact\X); return Y)
+function Minv_K_mul_u!(Y, X, K, Mfact)
+    _increment!(FORWARD_EVAL_COUNTER)
+    @timeit TIMER "Minv_K_mul_u!" begin
+        @timeit TIMER "K * X" mul!(Y, K, X)
+        @timeit TIMER "M^-1 (K * x)" ldiv!(Mfact, Y)
+    end
+    return Y
+end
+function Kc_Minv_mul_u!(Y, X, K, Mfact)
+    _increment!(ADJOINT_EVAL_COUNTER)
+    @timeit TIMER "Kc_Minv_mul_u!" begin
+        @timeit TIMER "M^-1 X" Minv_X = Mfact\X
+        @timeit TIMER "K' (M^-1 X)" mul!(Y, adjoint(K), Minv_X)
+    end
+    return Y
+end
+function Kt_Minv_mul_u!(Y, X, K, Mfact)
+    _increment!(TRANSPOSE_EVAL_COUNTER)
+    @timeit TIMER "Kt_Minv_mul_u!" begin
+        @timeit TIMER "M^-1 X" Minv_X = Mfact\X
+        @timeit TIMER "K' (M^-1 X)" mul!(Y, transpose(K), Minv_X)
+    end
+    return Y
+end
 
 # Multiplication with Vector or Matrix
 LinearAlgebra.mul!(Y::AbstractVector, A::ParabolicLinearMap, X::AbstractVector) = Minv_K_mul_u!(Y, X, A.K, A.Mfact)

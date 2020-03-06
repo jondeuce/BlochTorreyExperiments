@@ -79,7 +79,7 @@ const geombasepaths = [
     # realpath("./geom"), #TODO
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-3/geom",
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-4/geom",
-    "/arc/project/st-arausch-1/jcd1994/ismrm2020/experiments/diff-med-1-input-data/geom", #TODO
+    "/project/st-arausch-1/jcd1994/ismrm2020/experiments/Fall-2019/diff-med-1-input-data/geom", #TODO
 ]
 const geomfiles = reduce(vcat, realpath.(joinpath.(gp, readdir(gp))) for gp in geombasepaths)
 const maxnnodes = 15_000
@@ -171,16 +171,9 @@ const sweepparamsampler_settings = Dict{Symbol,Any}(
     :T1lp   => (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
     #:T1tiss=> (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
 )
-sweepparamsample() = Dict{Symbol,Union{Float64,Int}}(
-    k => eval(Expr(:call, v.sampler, v.args...))
-    for (k,v) in sweepparamsampler_settings)
+sweepparamsample() = Dict{Symbol,Union{Float64,Int}}(k => eval(Expr(:call, v.sampler, v.args...)) for (k,v) in sweepparamsampler_settings)
 sweepparamconstraints(d) = d[:T2lp] ≥ 1.5*d[:T2sp] # Extreme T2sp and T2lp ranges above require this additional constraint to make sure each sample is realistic
-function sweepparamsampler()
-    while true
-        d = sweepparamsample()
-        sweepparamconstraints(d) && return d
-    end
-end
+sweepparamsampler() = (while true; d = sweepparamsample(); sweepparamconstraints(d) && return d; end)
 
 ####
 #### Save metadata
@@ -246,7 +239,14 @@ function runsimulation!(results, sweepparams, geom)
         MVF = mvf,
         MWF = mwf,
     )
+
+    TimerOutputs.reset_timer!(BlochTorreyUtils.TIMER)
+    @timeit BlochTorreyUtils.TIMER "runsolve" begin
     @unpack sols, myelinprob, myelinsubdomains, myelindomains, solverparams_dict = runsolve(btparams, sweepparams, geom)
+    end
+    timer_buf = IOBuffer(); TimerOutputs.print_timer(timer_buf, BlochTorreyUtils.TIMER)
+    @info "\n" * String(take!(timer_buf))
+    solve_time = TimerOutputs.tottime(BlochTorreyUtils.TIMER)
     
     # Sample solution signals
     dt = sweepparams[:TE]/20 # TODO how many samples to save?
@@ -285,12 +285,12 @@ function runsimulation!(results, sweepparams, geom)
     )
 
     # Update results struct and return
-    push!(results[:btparams], btparams)
-    push!(results[:solverparams_dict], solverparams_dict)
-    push!(results[:sweepparams], sweepparams)
-    push!(results[:tpoints], tpoints)
-    push!(results[:signals], signals)
-    push!(results[:mwfvalues], mwfvalues)
+    # push!(results[:btparams], btparams) #TODO
+    # push!(results[:solverparams_dict], solverparams_dict) #TODO
+    # push!(results[:sweepparams], sweepparams) #TODO
+    # push!(results[:tpoints], tpoints) #TODO
+    # push!(results[:signals], signals) #TODO
+    # push!(results[:mwfvalues], mwfvalues) #TODO
     # push!(results[:subregion_names], subregion_names) #TODO
     # push!(results[:subregion_signals], subregion_signals) #TODO
     # push!(results[:sols], sols) #TODO
@@ -303,7 +303,7 @@ function runsimulation!(results, sweepparams, geom)
         btparams_dict = Dict(btparams)
         DrWatson.@tagsave(
             "measurables/" * fname * ".measurables.bson",
-            deepcopy(@dict(btparams_dict, solverparams_dict, sweepparams, tpoints, signals, mwfvalues)),
+            deepcopy(@dict(btparams_dict, solverparams_dict, sweepparams, tpoints, signals, mwfvalues, solve_time)),
             safe = true, gitpath = gitdir())
     catch e
         @warn "Error saving measurables"
@@ -329,45 +329,45 @@ function runsimulation!(results, sweepparams, geom)
     #     @warn sprint(showerror, e, catch_backtrace())
     # end
     
-    # Plot solution magnitude on mesh
-    try
-        mxplotmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-            titlestr = "Field Magnitude (" * titleparamstr * ")",
-            fname = "mag/" * fname * ".magnitude")
-        # mxgifmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-        #     titlestr = "Field Magnitude (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
-        #     fname = "mag/" * fname * ".magnitude.gif")
-    catch e
-        @warn "Error plotting magnetization magnitude"
-        @warn sprint(showerror, e, catch_backtrace())
-    end
+    # Plot solution magnitude on mesh #TODO FIXME
+    # try
+    #     mxplotmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+    #         titlestr = "Field Magnitude (" * titleparamstr * ")",
+    #         fname = "mag/" * fname * ".magnitude")
+    #     # mxgifmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+    #     #     titlestr = "Field Magnitude (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
+    #     #     fname = "mag/" * fname * ".magnitude.gif")
+    # catch e
+    #     @warn "Error plotting magnetization magnitude"
+    #     @warn sprint(showerror, e, catch_backtrace())
+    # end
 
-    # Plot solution phase on mesh
-    try
-        mxplotphase(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-            titlestr = "Field Phase (" * titleparamstr * ")",
-            fname = "phase/" * fname * ".phase")
-        # mxgifphase(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-        #     titlestr = "Field Phase (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
-        #     fname = "phase/" * fname * ".phase.gif")
-    catch e
-        @warn "Error plotting magnetization phase"
-        @warn sprint(showerror, e, catch_backtrace())
-    end
+    # Plot solution phase on mesh #TODO FIXME
+    # try
+    #     mxplotphase(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+    #         titlestr = "Field Phase (" * titleparamstr * ")",
+    #         fname = "phase/" * fname * ".phase")
+    #     # mxgifphase(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+    #     #     titlestr = "Field Phase (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
+    #     #     fname = "phase/" * fname * ".phase.gif")
+    # catch e
+    #     @warn "Error plotting magnetization phase"
+    #     @warn sprint(showerror, e, catch_backtrace())
+    # end
     
-    # Plot solution longitudinal component on mesh
-    try
-        #TODO only for 3D
-        mxplotlongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-            titlestr = "Longitudinal (" * titleparamstr * ")",
-            fname = "long/" * fname * ".longitudinal")
-        # mxgiflongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-        #     titlestr = "Longitudinal (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
-        #     fname = "long/" * fname * ".longitudinal.gif")
-    catch e
-        @warn "Error plotting longitudinal magnetization"
-        @warn sprint(showerror, e, catch_backtrace())
-    end
+    # Plot solution longitudinal component on mesh #TODO FIXME
+    # try
+    #     #TODO only for 3D
+    #     mxplotlongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+    #         titlestr = "Longitudinal (" * titleparamstr * ")",
+    #         fname = "long/" * fname * ".longitudinal")
+    #     # mxgiflongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+    #     #     titlestr = "Longitudinal (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
+    #     #     fname = "long/" * fname * ".longitudinal.gif")
+    # catch e
+    #     @warn "Error plotting longitudinal magnetization"
+    #     @warn sprint(showerror, e, catch_backtrace())
+    # end
     
     # Plot SEcorr results, if used
     try
@@ -438,7 +438,9 @@ function main(;iters::Int = typemax(Int))
             @info "    Simulation timespan: (0.0 ms, $(round(1000 .* tspan[2]; digits=3)) ms)"
             
             tic = Dates.now()
+
             runsimulation!(results, sweepparams, geometrytuple(geom))
+
             toc = Dates.now()
             Δt = Dates.canonicalize(Dates.CompoundPeriod(toc - tic))
     
