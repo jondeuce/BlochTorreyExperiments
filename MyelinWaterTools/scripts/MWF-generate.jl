@@ -155,10 +155,10 @@ acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
 const sweepparamsampler_settings = Dict{Symbol,Any}(
     :theta  => (sampler = :acossampler,   args = (lb = 0.0,     ub = 90.0)), # Uniformly random orientations => cosθ ~ Uniform(0,1)
     :alpha  => (sampler = :linearsampler, args = (lb = 120.0,   ub = 180.0)),
-    :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 10.0)),
-    :Dtiss  => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 500.0)), # Diffusion fixed relatively small for faster simulations
-    :Dmye   => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 500.0)), # Diffusion fixed relatively small for faster simulations
-    :Dax    => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 500.0)), # Diffusion fixed relatively small for faster simulations
+    :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 0.1)),
+    :Dtiss  => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 1000.0)), # Diffusion fixed relatively small for faster simulations
+    :Dmye   => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 1000.0)), # Diffusion fixed relatively small for faster simulations
+    :Dax    => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 1000.0)), # Diffusion fixed relatively small for faster simulations
     :FRD    => (sampler = :linearsampler, args = (lb = 0.5,     ub = 0.5)),
     :TE     => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 10e-3)), # NOTE: Fixed time scale; only e.g. T2/TE is learned
     :nTE    => (sampler = :rangesampler,  args = (lb = 64, ub = 64, step = 2)), # Simulate many echoes; can chop later
