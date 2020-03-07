@@ -83,7 +83,6 @@ const geombasepaths = [
 ]
 const geomfiles = reduce(vcat, realpath.(joinpath.(gp, readdir(gp))) for gp in geombasepaths)
 const maxnnodes = 15_000
-# const geomdata = copy_and_load_geomfiles!(geomfiles; maxnnodes = maxnnodes);
 
 ####
 #### Default solver parameters and MWF models
@@ -105,7 +104,7 @@ const default_solverparams_dict = Dict(
     :nTE         => default_nTE,     # Number of echoes for CPMGCallback (Default: 32)
     :nTR         => default_nTR,     # Number of repetitions for CPMGCallback (Default: 1)
     :tspan       => default_tspan,   # Solver time span (Default: (0.0, 320e-3); must start at zero)
-    :reltol      => 1e-8,
+    :reltol      => 1e-4,
     :abstol      => 0.0,
 );
 
@@ -134,12 +133,12 @@ const default_mwfmodels_dict = Dict(map(m -> Symbol(typeof(m)) => Dict(m), defau
 ####
 
 const default_btparams = BlochTorreyParameters{Float64}(
-    B0 = 0.0, #TODO
+    B0 = -3.0,
     theta = π/2,
-    D_Tissue = 500.0, # [μm²/s]
-    D_Sheath = 500.0, # [μm²/s]
-    D_Axon = 500.0, # [μm²/s]
-    K_perm = 0.5, # [μm/s]
+    D_Tissue = 1000.0, # [μm²/s]
+    D_Sheath = 1000.0, # [μm²/s]
+    D_Axon = 1000.0, # [μm²/s]
+    K_perm = 0.1, # [μm/s]
 );
 const default_btparams_dict = Dict(default_btparams)
 
@@ -156,14 +155,14 @@ const sweepparamsampler_settings = Dict{Symbol,Any}(
     :theta  => (sampler = :acossampler,   args = (lb = 0.0,     ub = 90.0)), # Uniformly random orientations => cosθ ~ Uniform(0,1)
     :alpha  => (sampler = :linearsampler, args = (lb = 120.0,   ub = 180.0)),
     :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 0.1)),
-    :Dtiss  => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 1000.0)), # Diffusion fixed relatively small for faster simulations
-    :Dmye   => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 1000.0)), # Diffusion fixed relatively small for faster simulations
-    :Dax    => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 1000.0)), # Diffusion fixed relatively small for faster simulations
-    :FRD    => (sampler = :linearsampler, args = (lb = 0.5,     ub = 0.5)),
-    :TE     => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 10e-3)), # NOTE: Fixed time scale; only e.g. T2/TE is learned
-    :nTE    => (sampler = :rangesampler,  args = (lb = 64, ub = 64, step = 2)), # Simulate many echoes; can chop later
+    :Dtiss  => (sampler = :log10sampler,  args = (lb = 1000.0,  ub = 1000.0)),
+    :Dmye   => (sampler = :log10sampler,  args = (lb = 1000.0,  ub = 1000.0)),
+    :Dax    => (sampler = :log10sampler,  args = (lb = 1000.0,  ub = 1000.0)),
+    :FRD    => (sampler = :linearsampler, args = (lb = 0.5,     ub = 0.5)), # Fractional radial diffusivity (0.5 is isotropic, 1.0 fully radial, 0.0 fully axial)
+    :TE     => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 10e-3)), # NOTE: Fixed time scale (only e.g. T2/TE is learned)
+    :nTE    => (sampler = :rangesampler,  args = (lb = 64, ub = 64, step = 2)), # Simulate many echoes (can chop later)
     :TR     => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), # Irrelevant when nTR = 1 (set below)
-    :nTR    => (sampler = :rangesampler,  args = (lb = 1,       ub = 1)), # Only simulate from t = 0 to t = nTE * TE
+    :nTR    => (sampler = :rangesampler,  args = (lb = 1,       ub = 1)), # nTR = 1 (only simulate from t = 0 to t = nTE * TE)
     :T2sp   => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 70e-3)), # Bounds based on T2sp/TE when TE = 10ms (above), T2sp ∈ [10ms, 35ms], TE ∈ [5ms, 10ms]
     :T2lp   => (sampler = :linearsampler, args = (lb = 50e-3,   ub = 180e-3)), # Bounds based on T2lp/TE when TE = 10ms (above), T2lp ∈ [50ms, 90ms], TE ∈ [5ms, 10ms]
     #:T2tiss=> (sampler = :linearsampler, args = (lb = 50e-3,   ub = 90e-3)),
@@ -213,11 +212,20 @@ function runsolve(btparams, sweepparams, geom)
 end
 
 function runsimulation!(results, sweepparams, geom)
-    # @unpack alpha, theta, K, Dtiss, Dmye, Dax, FRD, TE, TR, nTE, nTR, T2sp, T2lp, T2tiss, T1sp, T1lp, T1tiss = sweepparams
     density = intersect_area(geom.outercircles, geom.bdry) / area(geom.bdry)
     gratio = radius(geom.innercircles[1]) / radius(geom.outercircles[1])
     mvf = (1-gratio^2) * density # myelin volume fraction
     mwf = mvf/(2-mvf) # myelin water fraction, assuming relative myelin proton density of 1/2
+
+    geomparams_dict = Dict{Symbol,Any}(
+        :gratio    => gratio,
+        :density   => density,
+        :mvf       => mvf,
+        :mwf       => mwf,
+        :Ntri      => sum(JuAFEM.getncells, geom.exteriorgrids) + sum(JuAFEM.getncells, geom.torigrids) + sum(JuAFEM.getncells, geom.interiorgrids),
+        :Npts      => sum(JuAFEM.getnnodes, geom.exteriorgrids) + sum(JuAFEM.getnnodes, geom.torigrids) + sum(JuAFEM.getnnodes, geom.interiorgrids),
+        :numfibres => length(geom.outercircles),
+    )
 
     btparams = BlochTorreyParameters(default_btparams;
         theta = deg2rad(sweepparams[:theta]),
@@ -242,7 +250,7 @@ function runsimulation!(results, sweepparams, geom)
 
     TimerOutputs.reset_timer!(BlochTorreyUtils.TIMER)
     @timeit BlochTorreyUtils.TIMER "runsolve" begin
-    @unpack sols, myelinprob, myelinsubdomains, myelindomains, solverparams_dict = runsolve(btparams, sweepparams, geom)
+        @unpack sols, myelinprob, myelinsubdomains, myelindomains, solverparams_dict = runsolve(btparams, sweepparams, geom)
     end
     timer_buf = IOBuffer(); TimerOutputs.print_timer(timer_buf, BlochTorreyUtils.TIMER)
     @info "\n" * String(take!(timer_buf))
@@ -303,7 +311,7 @@ function runsimulation!(results, sweepparams, geom)
         btparams_dict = Dict(btparams)
         DrWatson.@tagsave(
             "measurables/" * fname * ".measurables.bson",
-            deepcopy(@dict(btparams_dict, solverparams_dict, sweepparams, tpoints, signals, mwfvalues, solve_time)),
+            deepcopy(@dict(btparams_dict, solverparams_dict, geomparams_dict, sweepparams, tpoints, signals, mwfvalues, solve_time)),
             safe = true, gitpath = gitdir())
     catch e
         @warn "Error saving measurables"
@@ -428,7 +436,6 @@ function main(;iters::Int = typemax(Int))
     all_sweepparams = (sweepparamsampler() for _ in 1:iters)
     for (i,sweepparams) in enumerate(all_sweepparams)
         geom = copy_and_load_random_geom(geombasepaths; maxnnodes = maxnnodes)
-        # geom = rand(geomdata)
         tspan = (0.0, sweepparams[:nTE] * sweepparams[:TE] + (sweepparams[:nTR] - 1) * sweepparams[:TR])
         try
             println("\n")
@@ -438,9 +445,7 @@ function main(;iters::Int = typemax(Int))
             @info "    Simulation timespan: (0.0 ms, $(round(1000 .* tspan[2]; digits=3)) ms)"
             
             tic = Dates.now()
-
             runsimulation!(results, sweepparams, geometrytuple(geom))
-
             toc = Dates.now()
             Δt = Dates.canonicalize(Dates.CompoundPeriod(toc - tic))
     
@@ -494,5 +499,28 @@ main()
 #     @warn "Error plotting MWF."
 #     @warn sprint(showerror, e, catch_backtrace())
 # end
+
+# geom = geometrytuple(copy_and_load_random_geom(geombasepaths; maxnnodes = maxnnodes));
+# let
+#     # p = plot();
+#     # map(g->simpplot!(p,g), geom.exteriorgrids)
+#     # map(g->simpplot!(p,g), geom.torigrids)
+#     # map(g->simpplot!(p,g), geom.interiorgrids)
+#     # savefig(p,"tmp.png");
+# 
+#     p = plot();
+#     map(geom.innercircles, geom.outercircles, geom.interiorgrids, geom.torigrids) do cin, cout, gin, gtori
+#         r1, r2 = radius(cin), radius(cout)
+#         o1, o2 = origin(cin), origin(cout)
+#         r̄ = r1/2
+#         shift(x::Vec{2,T}, a) where {T} = Vec{2,T}((x[1]-a,x[2]-a))
+#         JuAFEM.transform!(gin, x -> ((r̄ / r1)) * (x - o1) + o1)
+#         JuAFEM.transform!(gtori, x -> (shift((r2 - r̄) / (r2 - r1) * shift(x - o1, r1), -r̄)) + o1)
+#     end
+#     map(g->simpplot!(p,g), geom.exteriorgrids)
+#     map(g->simpplot!(p,g), geom.torigrids)
+#     map(g->simpplot!(p,g), geom.interiorgrids)
+#     savefig(p,"tmp-rescaled.png");
+# end;
 
 nothing
