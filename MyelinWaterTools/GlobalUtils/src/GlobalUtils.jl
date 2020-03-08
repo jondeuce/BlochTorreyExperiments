@@ -1,7 +1,7 @@
 module GlobalUtils
 
 import LibGit2
-export make_reproduce
+export make_reproduce, tryshow
 
 function make_reproduce(
         appending_lines = "";
@@ -38,6 +38,22 @@ function make_reproduce(
         @info "File $fname exists and will not be overwritten"
     end
 
+    return nothing
+end
+
+"""
+Wrap the zero argument function `f` in a try-catch block,
+showing `message` and the caught backtrace on error.
+"""
+function tryshow(f, message = nothing)
+    try
+        f()
+    catch e
+        if !isnothing(message)
+            @warn message
+        end
+        @warn sprint(showerror, e, catch_backtrace())
+    end
     return nothing
 end
 

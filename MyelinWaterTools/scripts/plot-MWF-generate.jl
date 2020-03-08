@@ -23,11 +23,25 @@ flatten_dict(din::Dict{<:AbstractString, Any}) = flatten_dict!(Dict{String, Any}
 function read_to_dataframe(file)
     d = BSON.load(file)
     p = d[:sweepparams]
-    p[:AxonPDensity] = d[:btparams_dict][:AxonPDensity]
-    p[:g_ratio] = d[:btparams_dict][:g_ratio]
-    p[:MVF] = d[:btparams_dict][:MVF]
-    p[:MWF] = d[:btparams_dict][:MWF]
-    p[:solve_time] = ifelse(d[:solve_time] > 1e9, d[:solve_time]/1e9, d[:solve_time]) # convert ns -> s
+    if haskey(d, :geomparams_dict)
+        for (k,v) in d[:geomparams_dict]
+            p[k] = v
+        end
+    else
+        p[:mwf] = d[:btparams_dict][:MWF] |> Float64
+        p[:mvf] = d[:btparams_dict][:MVF] |> Float64
+        p[:density] = d[:btparams_dict][:AxonPDensity] |> Float64
+        p[:gratio] = d[:btparams_dict][:g_ratio] |> Float64
+        p[:Npts] = missing
+        p[:numfibres] = missing
+        p[:Ntri] = missing
+    end
+    if haskey(d, :solve_time)
+        t = d[:solve_time]
+        p[:solve_time] = ifelse(t > 1e9, t/1e9, t) |> Float64 # convert ns -> s
+    else
+        p[:solve_time] = missing
+    end
     return DataFrame(p)
 end
 
@@ -36,7 +50,9 @@ function dataframe_template(results_dir)
         !occursin("measurables", root) && continue
         for file in files
             if endswith(file, ".bson")
-                return read_to_dataframe(joinpath(root, file))[1:0,:]::DataFrame
+                df = read_to_dataframe(joinpath(root, file))::DataFrame
+                any(ismissing, collect(df[1,:])) && continue
+                return DataFrame(names(df) .=> missings.(eltype.(eachcol(df)), 0))
             end
         end
     end
@@ -79,7 +95,7 @@ function make_plots(df, sweepcols, ycol)
         @df df scatter!(p, cols(sweepparam), cols(ycol); marker = (2, :circle))
         push!(ps, p)
     end
-    plot(ps...) |> display
+    savefig(plot(ps...), joinpath(@__DIR__, "output/MWF-generate-by-$ycol.png"))
     nothing
 end
 make_plots(df, names(df[!,Not(:solve_time)]), :solve_time);

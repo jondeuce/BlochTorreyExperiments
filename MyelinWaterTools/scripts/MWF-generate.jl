@@ -20,6 +20,24 @@ gitdir() = realpath(DrWatson.projectdir("..")) # DrWatson package for tagged sav
 #### Geometries to sweep over
 ####
 
+function perturb_geom!(geom, min_rel_gratio = 0.9)
+    # Perturb inner circle radii + corresponding grids
+    @unpack exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
+    @assert 0 < min_rel_gratio <= 1
+    for i in 1:length(outercircles)
+        cout, cin = outercircles[i], innercircles[i]
+        if is_inside(cout, bdry)
+            r1, r2 = radius(cin), radius(cout)
+            o1, o2 = origin(cin), origin(cout)
+            r̄ = (min_rel_gratio + rand() * (1 - min_rel_gratio)) * r1
+            linscale(r, a, b, ā, b̄) = ((b̄ - ā) * (r - a) / (b - a) + ā) / r
+            JuAFEM.transform!(interiorgrids[i], x -> (r̄ / r1) * (x - o1) + o1)
+            JuAFEM.transform!(torigrids[i], x -> linscale(norm(x-o1), r1, r2, r̄, r2) * (x - o1) + o1)
+            innercircles[i] = scale_shape(cin, r̄ / r1)
+        end
+    end
+    return geom
+end
 function copy_and_load_geomfiles!(
         geomfiles::AbstractVector{String};
         maxnnodes::Int = typemax(Int)
@@ -213,8 +231,9 @@ end
 
 function runsimulation!(results, sweepparams, geom)
     density = intersect_area(geom.outercircles, geom.bdry) / area(geom.bdry)
-    gratio = radius(geom.innercircles[1]) / radius(geom.outercircles[1])
-    mvf = (1-gratio^2) * density # myelin volume fraction
+    # gratio = radius(geom.innercircles[1]) / radius(geom.outercircles[1]) # uniform g-ratio
+    gratio = sqrt(sum(area, geom.innercircles) / sum(area, geom.outercircles)) # area weighted g-ratio
+    mvf = (1-gratio^2) * density # myelin volume fraction (for periodically tired circles)
     mwf = mvf/(2-mvf) # myelin water fraction, assuming relative myelin proton density of 1/2
 
     geomparams_dict = Dict{Symbol,Any}(
@@ -268,29 +287,25 @@ function runsimulation!(results, sweepparams, geom)
     fname = DrWatson.savename(curr_time, sweepparams)
     titleparamstr = wrap_string(DrWatson.savename("", sweepparams; connector = ", "), 50, ", ")
 
-    # Compare MWF values
-    # mwfvalues, mwfmodels = nothing, nothing
-    # try
-    #     mwfmodels = map(default_mwfmodels) do model
-    #         if model isa NNLSRegression
-    #             typeof(model)(model; TE = sweepparams[:TE], nTE = sweepparams[:nTE], RefConAngle = sweepparams[:alpha])
-    #         else
-    #             typeof(model)(model; TE = sweepparams[:TE], nTE = sweepparams[:nTE])
-    #         end
-    #     end
-    #     mwfvalues, _ = compareMWFmethods(sols, myelindomains, btparams,
-    #         geom.outercircles, geom.innercircles, geom.bdry;
-    #         models = mwfmodels)
-    # catch e
-    #     @warn "Error comparing MWF methods"
-    #     @warn sprint(showerror, e, catch_backtrace())
-    # end
-
     # Compute exact MWF only
     mwfmodels = nothing
-    mwfvalues = Dict(
-        :exact => getmwf(geom.outercircles, geom.innercircles, geom.bdry)
-    )
+    mwfvalues = Dict(:exact => getmwf(geom.outercircles, geom.innercircles, geom.bdry))
+
+    #=
+    mwfvalues, mwfmodels = nothing, nothing
+    tryshow("Error comparing MWF methods") do
+        mwfmodels = map(default_mwfmodels) do model
+            if model isa NNLSRegression
+                typeof(model)(model; TE = sweepparams[:TE], nTE = sweepparams[:nTE], RefConAngle = sweepparams[:alpha])
+            else
+                typeof(model)(model; TE = sweepparams[:TE], nTE = sweepparams[:nTE])
+            end
+        end
+        mwfvalues, _ = compareMWFmethods(sols, myelindomains, btparams,
+            geom.outercircles, geom.innercircles, geom.bdry;
+            models = mwfmodels)
+    end
+    =#
 
     # Update results struct and return
     # push!(results[:btparams], btparams) #TODO
@@ -307,78 +322,64 @@ function runsimulation!(results, sweepparams, geom)
     # push!(results[:myelindomains], myelindomains) #TODO
 
     # Save measurables
-    try
+    tryshow("Error saving measurables") do
         btparams_dict = Dict(btparams)
         DrWatson.@tagsave(
             "measurables/" * fname * ".measurables.bson",
             deepcopy(@dict(btparams_dict, solverparams_dict, geomparams_dict, sweepparams, tpoints, signals, mwfvalues, solve_time)),
             safe = true, gitpath = gitdir())
-    catch e
-        @warn "Error saving measurables"
-        @warn sprint(showerror, e, catch_backtrace())
     end
 
-    # # Save solution as vtk file (NOTE: should only be uncommented for testing)
-    # try
-    #     vtkfilepath = mkpath(joinpath("vtk/", fname))
-    #     saveblochtorrey(myelindomains, sols; timepoints = tpoints, filename = joinpath(vtkfilepath, "vtksolution"))
-    # catch e
-    #     @warn "Error saving solution to vtk file"
-    #     @warn sprint(showerror, e, catch_backtrace())
-    # end
+    #=
+    tryshow("Error saving solution to vtk file") # NOTE: should only be uncommented for testing
+        vtkfilepath = mkpath(joinpath("vtk/", fname))
+        saveblochtorrey(myelindomains, sols; timepoints = tpoints, filename = joinpath(vtkfilepath, "vtksolution"))
+    end
+    =#
 
-    # # Plot frequency/field map
-    # try
-    #     mxplotomega(myelinprob, myelindomains, myelinsubdomains, geom.bdry;
-    #         titlestr = "Frequency Map (theta = $(round(sweepparams[:theta]; digits=3)) deg)",
-    #         fname = "omega/" * fname * ".omega")
-    # catch e
-    #     @warn "Error plotting omega"
-    #     @warn sprint(showerror, e, catch_backtrace())
-    # end
+    #=
+    tryshow("Error plotting omega map")
+        mxplotomega(myelinprob, myelindomains, myelinsubdomains, geom.bdry;
+            titlestr = "Frequency Map (theta = $(round(sweepparams[:theta]; digits=3)) deg)",
+            fname = "omega/" * fname * ".omega")
+    end
+    =#
     
-    # Plot solution magnitude on mesh #TODO FIXME
-    # try
-    #     mxplotmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-    #         titlestr = "Field Magnitude (" * titleparamstr * ")",
-    #         fname = "mag/" * fname * ".magnitude")
-    #     # mxgifmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-    #     #     titlestr = "Field Magnitude (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
-    #     #     fname = "mag/" * fname * ".magnitude.gif")
-    # catch e
-    #     @warn "Error plotting magnetization magnitude"
-    #     @warn sprint(showerror, e, catch_backtrace())
-    # end
+    #=
+    tryshow("Error plotting magnetization magnitude") #TODO FIXME
+        mxplotmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+            titlestr = "Field Magnitude (" * titleparamstr * ")",
+            fname = "mag/" * fname * ".magnitude")
+        mxgifmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+            titlestr = "Field Magnitude (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
+            fname = "mag/" * fname * ".magnitude.gif")
+    end
+    =#
 
-    # Plot solution phase on mesh #TODO FIXME
-    # try
-    #     mxplotphase(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-    #         titlestr = "Field Phase (" * titleparamstr * ")",
-    #         fname = "phase/" * fname * ".phase")
-    #     # mxgifphase(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-    #     #     titlestr = "Field Phase (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
-    #     #     fname = "phase/" * fname * ".phase.gif")
-    # catch e
-    #     @warn "Error plotting magnetization phase"
-    #     @warn sprint(showerror, e, catch_backtrace())
-    # end
+    #=
+    tryshow("Error plotting magnetization phase") #TODO FIXME
+        mxplotphase(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+            titlestr = "Field Phase (" * titleparamstr * ")",
+            fname = "phase/" * fname * ".phase")
+        mxgifphase(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+            titlestr = "Field Phase (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
+            fname = "phase/" * fname * ".phase.gif")
+    end
+    =#
     
-    # Plot solution longitudinal component on mesh #TODO FIXME
-    # try
-    #     #TODO only for 3D
-    #     mxplotlongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-    #         titlestr = "Longitudinal (" * titleparamstr * ")",
-    #         fname = "long/" * fname * ".longitudinal")
-    #     # mxgiflongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-    #     #     titlestr = "Longitudinal (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
-    #     #     fname = "long/" * fname * ".longitudinal.gif")
-    # catch e
-    #     @warn "Error plotting longitudinal magnetization"
-    #     @warn sprint(showerror, e, catch_backtrace())
-    # end
+    #=
+    tryshow("Error plotting longitudinal magnetization") #TODO FIXME (only for 3D)
+        mxplotlongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+            titlestr = "Longitudinal (" * titleparamstr * ")",
+            fname = "long/" * fname * ".longitudinal")
+        mxgiflongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+            titlestr = "Longitudinal (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
+            fname = "long/" * fname * ".longitudinal.gif")
+    end
+    =#
     
-    # Plot SEcorr results, if used
-    try
+    #=
+    tryshow("Error plotting SEcorr T2 distribution")
         if mwfmodels != nothing && !isempty(mwfmodels)
             nnlsindex = findfirst(m->m isa NNLSRegression, mwfmodels)
             if !(nnlsindex == nothing)
@@ -387,13 +388,11 @@ function runsimulation!(results, sweepparams, geom)
                     opts = mwfmodels[nnlsindex], fname = "t2dist/" * fname * ".t2dist.SEcorr")
             end
         end
-    catch e
-        @warn "Error plotting SEcorr T2 distribution"
-        @warn sprint(showerror, e, catch_backtrace())
     end
+    =#
 
-    # Plot multiexponential signal compared with true signal
-    try
+    #=
+    tryshow("Error plotting multiexponential signal compared with true signal")
         if mwfmodels != nothing && !isempty(mwfmodels)
             plotmultiexp(sols, btparams, myelindomains,
                 geom.outercircles, geom.innercircles, geom.bdry;
@@ -405,15 +404,16 @@ function runsimulation!(results, sweepparams, geom)
             titlestr = "Magnetization Signal (" * titleparamstr * ")",
             apply_pi_correction = false,
             fname = "sig/" * fname * ".signal")
-    catch e
-        @warn "Error plotting signal"
-        @warn sprint(showerror, e, catch_backtrace())
     end
+    =#
 
     return results
 end
 
-function main(;iters::Int = typemax(Int))
+function main(;
+        iters::Int = typemax(Int),
+        perturb_geometry = true,
+    )
     # Make subfolders
     map(mkpath, ("vtk", "mag", "phase", "long", "t2dist", "sig", "omega", "mwfplots", "measurables"))
     
@@ -436,6 +436,8 @@ function main(;iters::Int = typemax(Int))
     all_sweepparams = (sweepparamsampler() for _ in 1:iters)
     for (i,sweepparams) in enumerate(all_sweepparams)
         geom = copy_and_load_random_geom(geombasepaths; maxnnodes = maxnnodes)
+        geomtuple = geometrytuple(geom)
+        perturb_geometry && perturb_geom!(geomtuple, 1.0)
         tspan = (0.0, sweepparams[:nTE] * sweepparams[:TE] + (sweepparams[:nTR] - 1) * sweepparams[:TR])
         try
             println("\n")
@@ -445,11 +447,10 @@ function main(;iters::Int = typemax(Int))
             @info "    Simulation timespan: (0.0 ms, $(round(1000 .* tspan[2]; digits=3)) ms)"
             
             tic = Dates.now()
-            runsimulation!(results, sweepparams, geometrytuple(geom))
+            runsimulation!(results, sweepparams, geomtuple)
             toc = Dates.now()
-            Δt = Dates.canonicalize(Dates.CompoundPeriod(toc - tic))
     
-            @info "Elapsed simulation time: $Δt"
+            @info "Elapsed simulation time: " * string(Dates.canonicalize(Dates.CompoundPeriod(toc - tic)))
         catch e
             if e isa InterruptException
                 @warn "Parameter sweep interrupted by user. Breaking out of loop and returning current results..."
@@ -468,59 +469,37 @@ end
 #### Run sweep
 ####
 
-main()
-
-# results = main()
-# @unpack sweepparams, btparams, solverparams_dict, tpoints, signals, mwfvalues = results;
-# # @unpack sols, myelinprob, myelinsubdomains, myelindomains = results; #TODO
-# btparams_dict = Dict.(btparams);
+main() #TODO
 
 ####
 #### Plot and save derived quantities from results
 ####
 
-# try
-#     BSON.bson(SIM_START_TIME * ".allparams.bson", deepcopy(@dict(sweepparams, btparams_dict)))
-# catch e
-#     @warn "Error saving all BlochTorreyParameter's"
-#     @warn sprint(showerror, e, catch_backtrace())
-# end
+#=
+tryshow("Error saving all BlochTorreyParameter's")
+    BSON.bson(SIM_START_TIME * ".allparams.bson", deepcopy(@dict(sweepparams, btparams_dict)))
+end
+tryshow("Error saving all measurables")
+    BSON.bson(SIM_START_TIME * ".allmeasurables.bson", deepcopy(@dict(tpoints, signals, mwfvalues)))
+end
+tryshow("Error plotting MWF vs method")
+    plotMWFvsMethod(results; disp = false, fname = "mwfplots/" * SIM_START_TIME * ".mwf")
+end
+=#
 
-# try
-#     BSON.bson(SIM_START_TIME * ".allmeasurables.bson", deepcopy(@dict(tpoints, signals, mwfvalues)))
-# catch e
-#     @warn "Error saving measurables"
-#     @warn sprint(showerror, e, catch_backtrace())
-# end
-
-# try
-#     plotMWFvsMethod(results; disp = false, fname = "mwfplots/" * SIM_START_TIME * ".mwf")
-# catch e
-#     @warn "Error plotting MWF."
-#     @warn sprint(showerror, e, catch_backtrace())
-# end
-
-# geom = geometrytuple(copy_and_load_random_geom(geombasepaths; maxnnodes = maxnnodes));
-# let
-#     # p = plot();
-#     # map(g->simpplot!(p,g), geom.exteriorgrids)
-#     # map(g->simpplot!(p,g), geom.torigrids)
-#     # map(g->simpplot!(p,g), geom.interiorgrids)
-#     # savefig(p,"tmp.png");
-# 
-#     p = plot();
-#     map(geom.innercircles, geom.outercircles, geom.interiorgrids, geom.torigrids) do cin, cout, gin, gtori
-#         r1, r2 = radius(cin), radius(cout)
-#         o1, o2 = origin(cin), origin(cout)
-#         r̄ = r1/2
-#         shift(x::Vec{2,T}, a) where {T} = Vec{2,T}((x[1]-a,x[2]-a))
-#         JuAFEM.transform!(gin, x -> ((r̄ / r1)) * (x - o1) + o1)
-#         JuAFEM.transform!(gtori, x -> (shift((r2 - r̄) / (r2 - r1) * shift(x - o1, r1), -r̄)) + o1)
-#     end
-#     map(g->simpplot!(p,g), geom.exteriorgrids)
-#     map(g->simpplot!(p,g), geom.torigrids)
-#     map(g->simpplot!(p,g), geom.interiorgrids)
-#     savefig(p,"tmp-rescaled.png");
-# end;
+#=
+function plot_geom(geom, fname = "tmp.png")
+    p = plot();
+    map(g -> simpplot!(p,g), geom.exteriorgrids);
+    map(g -> simpplot!(p,g), geom.torigrids);
+    map(g -> simpplot!(p,g), geom.interiorgrids);
+    map(c -> !is_outside(c, geom.bdry) ? plot!(p,c; line=(3,:black)) : nothing, geom.outercircles)
+    map(c -> !is_outside(c, geom.bdry) ? plot!(p,c; line=(3,:black)) : nothing, geom.innercircles)
+    savefig(p, joinpath(@__DIR__, fname));
+end
+geom = geometrytuple(copy_and_load_random_geom(geombasepaths; maxnnodes = maxnnodes));
+plot_geom(geom, "tmp.png");
+plot_geom(perturb_geom!(geom, 0.5), "tmp-rescaled.png");
+=#
 
 nothing
