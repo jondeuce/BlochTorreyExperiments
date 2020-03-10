@@ -215,9 +215,9 @@ gaussian_noise(z::AbstractArray, SNR) = noise_level(z, SNR) .* randn(eltype(z), 
 
 Add gaussian noise with signal-to-noise ratio `SNR` proportional to the first time point.
 """
-add_gaussian!(out::AbstractArray, z::AbstractArray, SNR) = (out .= z .+ gaussian_noise(z, SNR); return out)
-add_gaussian!(z::AbstractArray, SNR) = (z .+= gaussian_noise(z, SNR); return z)
-add_gaussian(z::AbstractArray, SNR) = add_gaussian!(copy(z), z, SNR)
+add_gaussian!(out::AbstractArray, z::AbstractArray, SNR) = out .= z .+ gaussian_noise(z, SNR)
+add_gaussian!(z::AbstractArray, SNR) = z .+= gaussian_noise(z, SNR)
+add_gaussian(z::AbstractArray, SNR) = z .+ gaussian_noise(z, SNR)
 
 """
     add_rician(z, SNR)
@@ -225,7 +225,7 @@ add_gaussian(z::AbstractArray, SNR) = add_gaussian!(copy(z), z, SNR)
 Add rician noise with signal-to-noise ratio `SNR` proportional to the first time point.
 Always returns a real array.
 """
-add_rician(m::AbstractArray{<:Real}, SNR) = add_rician(complex(m), SNR)
+add_rician(m::AbstractArray{<:Real}, SNR) = add_rician(complex.(m), SNR)
 add_rician(z::AbstractArray{<:Complex}, SNR) = abs.(add_gaussian(z, SNR))
 # add_rician(m::AbstractArray{<:Real}, SNR) = add_rician!(copy(m), SNR)
 # add_rician!(m::AbstractArray{<:Real}, SNR) = (gr = inv(√2) * gaussian_noise(m, SNR); gi = inv(√2) * gaussian_noise(m, SNR); m .= sqrt.(abs2.(m.+gr) .+ abs2.(gi)); return m)
@@ -298,7 +298,7 @@ function kaiming_uniform(T::Type, dims; gain = 1)
    return rand(Uniform(-bound, bound), dims) |> Array{T}
 end
 kaiming_uniform(T::Type, dims...; kwargs...) = kaiming_uniform(T::Type, dims; kwargs...)
-kaiming_uniform(args...; kwargs...) = kaiming_uniform(Float32, args...; kwargs...)
+kaiming_uniform(args...; kwargs...) = kaiming_uniform(Float64, args...; kwargs...)
 
 """
 Kaiming normal initialization.
@@ -309,7 +309,7 @@ function kaiming_normal(T::Type, dims; gain = 1)
    return rand(Normal(0, std), dims) |> Array{T}
 end
 kaiming_normal(T::Type, dims...; kwargs...) = kaiming_normal(T::Type, dims; kwargs...)
-kaiming_normal(args...; kwargs...) = kaiming_normal(Float32, args...; kwargs...)
+kaiming_normal(args...; kwargs...) = kaiming_normal(Float64, args...; kwargs...)
 
 """
 Xavier uniform initialization.
@@ -321,7 +321,7 @@ function xavier_uniform(T::Type, dims; gain = 1)
    return rand(Uniform(-bound, bound), dims) |> Array{T}
 end
 xavier_uniform(T::Type, dims...; kwargs...) = xavier_uniform(T::Type, dims; kwargs...)
-xavier_uniform(args...; kwargs...) = xavier_uniform(Float32, args...; kwargs...)
+xavier_uniform(args...; kwargs...) = xavier_uniform(Float64, args...; kwargs...)
 
 """
 Xavier normal initialization.
@@ -333,12 +333,12 @@ function xavier_normal(T::Type, dims; gain = 1)
    return rand(Normal(0, std), dims) |> Array{T}
 end
 xavier_normal(T::Type, dims...; kwargs...) = xavier_normal(T::Type, dims; kwargs...)
-xavier_normal(args...; kwargs...) = xavier_normal(Float32, args...; kwargs...)
+xavier_normal(args...; kwargs...) = xavier_normal(Float64, args...; kwargs...)
 
 # Override flux defaults
-# Flux.glorot_uniform(dims...) = xavier_uniform(Float32, dims...)
+# Flux.glorot_uniform(dims...) = xavier_uniform(Float64, dims...)
 # Flux.glorot_uniform(T::Type, dims...) = xavier_uniform(T, dims...)
-# Flux.glorot_normal(dims...) = xavier_normal(Float32, dims...)
+# Flux.glorot_normal(dims...) = xavier_normal(Float64, dims...)
 # Flux.glorot_normal(T::Type, dims...) = xavier_normal(T, dims...)
 
 ####
@@ -375,9 +375,9 @@ function make_test_err_cb(state, lossfun, accfun, laberrfun, test_set)
         update_time = @elapsed begin
             pushx!(d) = x -> push!(d, x)
             push!(state[:callbacks][:testing][:epoch], state[:epoch])
-            Flux.cpu(Flux.data(lossfun(test_set...)))   |> pushx!(state[:callbacks][:testing][:loss])
-            Flux.cpu(Flux.data(accfun(test_set...)))    |> pushx!(state[:callbacks][:testing][:acc])
-            Flux.cpu(Flux.data(laberrfun(test_set...))) |> pushx!(state[:callbacks][:testing][:labelerr])
+            Flux.cpu(lossfun(test_set...))   |> pushx!(state[:callbacks][:testing][:loss])
+            Flux.cpu(accfun(test_set...))    |> pushx!(state[:callbacks][:testing][:acc])
+            Flux.cpu(laberrfun(test_set...)) |> pushx!(state[:callbacks][:testing][:labelerr])
         end
         @info @sprintf("[%d] -> Updating testing error... (%d ms)", state[:epoch], 1000 * update_time)
     end
@@ -387,9 +387,9 @@ function make_train_err_cb(state, lossfun, accfun, laberrfun, train_set)
         update_time = @elapsed begin
             pushx!(d) = x -> push!(d, x)
             push!(state[:callbacks][:training][:epoch], state[:epoch])
-            mean([Flux.cpu(Flux.data(lossfun(b...)))   for b in train_set]) |> pushx!(state[:callbacks][:training][:loss])
-            mean([Flux.cpu(Flux.data(accfun(b...)))    for b in train_set]) |> pushx!(state[:callbacks][:training][:acc])
-            mean([Flux.cpu(Flux.data(laberrfun(b...))) for b in train_set]) |> pushx!(state[:callbacks][:training][:labelerr])
+            mean([Flux.cpu(lossfun(b...))   for b in train_set]) |> pushx!(state[:callbacks][:training][:loss])
+            mean([Flux.cpu(accfun(b...))    for b in train_set]) |> pushx!(state[:callbacks][:training][:acc])
+            mean([Flux.cpu(laberrfun(b...)) for b in train_set]) |> pushx!(state[:callbacks][:training][:labelerr])
         end
         @info @sprintf("[%d] -> Updating training error... (%d ms)", state[:epoch], 1000 * update_time)
     end
@@ -514,7 +514,7 @@ function make_save_best_model_cb(state, model, opt, filename = nothing)
             state[:last_improved_epoch] = curr_epoch
             try
                 save_time = @elapsed let model = Flux.cpu(deepcopy(model)), opt = Flux.cpu(deepcopy(opt))
-                    weights = Flux.data.(Flux.params(model))
+                    weights = collect(Flux.params(model))
                     !(filename === nothing) && savebson(filename * "weights-best.bson", @dict(weights))
                     !(filename === nothing) && savebson(filename * "model-best.bson", @dict(model))
                     # !(filename === nothing) && savebson(filename * "opt-best.bson", @dict(opt)) #TODO BSON optimizer saving broken
@@ -532,7 +532,7 @@ function make_checkpoint_model_cb(state, model, opt, filename = nothing)
     function()
         try
             save_time = @elapsed let model = Flux.cpu(deepcopy(model)), opt = Flux.cpu(deepcopy(opt))
-                weights = Flux.data.(Flux.params(model))
+                weights = collect(Flux.params(model))
                 !(filename === nothing) && savebson(filename * "weights-checkpoint.bson", @dict(weights))
                 !(filename === nothing) && savebson(filename * "model-checkpoint.bson", @dict(model))
                 # !(filename === nothing) && savebson(filename * "opt-checkpoint.bson", @dict(opt)) #TODO BSON optimizer saving broken

@@ -7,25 +7,20 @@ pyplot(size = (1200,800))
 # pyplot(size = (800,600))
 # pyplot(size = (500,400))
 
-function flatten_dict!(dout::Dict{<:AbstractString, Any}, din::Dict{<:AbstractString, Any})
-    for (k,v) in din
-        if v isa Dict
-            vnew = Dict{String, Any}(k .* "." .* keys(v) .=> deepcopy(values(v)))
-            flatten_dict!(dout, vnew)
-        else
-            dout[k] = deepcopy(v)
-        end
-    end
-    dout
-end
-flatten_dict(din::Dict{<:AbstractString, Any}) = flatten_dict!(Dict{String, Any}(), din)
-
 function read_to_dataframe(file)
     d = BSON.load(file)
+    
+    # Bloch-Torrey params swept over
     p = d[:sweepparams]
+
+    # Geometry params
     if haskey(d, :geomparams_dict)
         for (k,v) in d[:geomparams_dict]
-            p[k] = v
+            if k === :numfibres
+                p[k] = v ÷ 9 # TODO FIXME periodic_unique cylinder saving
+            else
+                p[k] = v
+            end
         end
     else
         p[:mwf] = d[:btparams_dict][:MWF] |> Float64
@@ -36,13 +31,21 @@ function read_to_dataframe(file)
         p[:numfibres] = missing
         p[:Ntri] = missing
     end
+
+    # Solve time
     if haskey(d, :solve_time)
         t = d[:solve_time]
         p[:solve_time] = ifelse(t > 1e9, t/1e9, t) |> Float64 # convert ns -> s
     else
         p[:solve_time] = missing
     end
-    return DataFrame(p)
+
+    # Derived parameters
+    df = DataFrame(p)
+    relative_κ(K, D, TE = 10e-3) = D < 1000 ? missing : K * sqrt(TE/D) # TODO assuming D == 1000, TE = 10ms
+    df[!, Symbol("K*√(TE/D)")] = relative_κ.(df[!, :K], df[!, :Dtiss])
+
+    return df
 end
 
 function dataframe_template(results_dir)
@@ -86,16 +89,17 @@ end
 show(stdout, first(sort(df, :solve_time), 10); allrows = true, allcols = true); println("\n") # Show top results
 @show size(df); # Show number of results
 
-function make_plots(df, sweepcols, ycol)
+function make_plots(df, sweepcols, ycol; savefolder = joinpath(@__DIR__, "output"))
     uniquesweepcols = sweepcols[map(n -> length(unique(df[!,n])), sweepcols) .> 1]
     ps = []
     for sweepparam in uniquesweepcols
         s = x -> x isa Number ? x == round(x) ? string(round(Int, x)) : string(round(x; sigdigits = 3)) : string(x)
-        p = plot(; xlabel = sweepparam, xrot = 30, ylabel = ycol, leg = :none, yscale = :identity)
+        p = plot(; xlabel = sweepparam, xrot = 30, xformatter = s, ylabel = ycol, leg = :none)
         @df df scatter!(p, cols(sweepparam), cols(ycol); marker = (2, :circle))
         push!(ps, p)
     end
-    savefig(plot(ps...), joinpath(@__DIR__, "output/MWF-generate-by-$ycol.png"))
+    !isdir(savefolder) && mkpath(savefolder)
+    savefig(plot(ps...), joinpath(savefolder, "MWF-generate-by-$ycol.png"))
     nothing
 end
 make_plots(df, names(df[!,Not(:solve_time)]), :solve_time);

@@ -1,4 +1,8 @@
-include(joinpath(@__DIR__, "../../initpaths.jl"))
+# Initialization project/code loading
+import Pkg
+Pkg.activate(joinpath(@__DIR__, "../.."))
+# Pkg.instantiate()
+
 using MWFLearning
 using StatsBase
 using StatsPlots

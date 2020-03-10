@@ -28,9 +28,9 @@ function make_model(settings::Dict, name::String)
     else
         T = settings["prec"] == 64 ? Float64 : Float32
         model_maker = eval(Symbol(name))
-        kwargs = make_model_kwargs(T, settings["model"][name])
+        kwargs = make_model_kwargs(T, deepcopy(settings["model"][name]))
         for key in INFOFIELDS
-            kwargs[Symbol(key)] = clean_model_arg(T, settings["data"]["info"][key])
+            kwargs[Symbol(key)] = clean_model_arg(T, deepcopy(settings["data"]["info"][key]))
         end
         return model_maker(T; kwargs...)
     end
@@ -69,7 +69,7 @@ clean_model_arg(::Type{T}, x::Bool) where {T} = x
 clean_model_arg(::Type{T}, x::Integer) where {T} = Int(x)
 clean_model_arg(::Type{T}, x::AbstractString) where {T} = Symbol(x)
 clean_model_arg(::Type{T}, x::AbstractFloat) where {T} = T(x)
-clean_model_arg(::Type{T}, x::AbstractArray) where {T} = convert(Vector, vec(clean_model_arg.(T, x)))
+clean_model_arg(::Type{T}, x::AbstractArray) where {T} = convert(Vector, deepcopy(vec(clean_model_arg.(T, x))))
 
 const ACTIVATIONS = Dict{Symbol,Any}(
     :relu      => NNlib.relu,
@@ -369,7 +369,7 @@ function ConvResNet(settings)
     @assert !(BN && GN)
 
     MakeActfun() = @λ x -> actfun.(x)
-    ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> labwidth, initβ = (args...) -> labmean)
+    ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> labwidth, initβ = (args...) -> labmean) #TODO FIXME this learns slope/offset now
     MakeDropout() = DP ? Flux.AlphaDropout(0.5) : identity
     Upsample() = Flux.Conv((1,1), 1 => Nfeat, actfun; init = xavier_uniform, pad = (0,0)) # 1x1 upsample convolutions
     Downsample() = Flux.Conv((1,1), Nfeat => 1, actfun; init = xavier_uniform, pad = (0,0)) # 1x1 downsample convolutions
@@ -408,7 +408,7 @@ end
     Residual Dense Network for Image Super-Resolution:
         https://arxiv.org/abs/1802.08797
 """
-function ResidualDenseNet(::Type{T} = Float32;
+function ResidualDenseNet(::Type{T} = Float64;
         nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8,
         labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
         act       :: Symbol = :relu,      # Activation function
@@ -430,7 +430,7 @@ function ResidualDenseNet(::Type{T} = Float32;
     actfun = make_activation(act)
 
     MakeActfun() = @λ(x -> actfun.(x))
-    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean)
+    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean) #TODO FIXME this learns slope/offset now
     MakeDropout() = DP ? Flux.AlphaDropout(T(0.5)) : identity
     Resample(ch) = Flux.Conv((1,1), ch, identity; init = xavier_uniform, pad = (0,0)) # 1x1 resample convolutions
     
@@ -486,7 +486,7 @@ end
 """
     RDN modification, removing all residual-like skip connections
 """
-function TestModel4(::Type{T} = Float32;
+function TestModel4(::Type{T} = Float64;
         nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8,
         labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
         act       :: Symbol = :relu,      # Activation function
@@ -513,7 +513,7 @@ function TestModel4(::Type{T} = Float32;
     MAYBESKIP(layer) = SKIP_CONNECTIONS ? IdentitySkip(layer) : layer
 
     MakeActfun() = @λ x -> actfun.(x)
-    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean)
+    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean) #TODO FIXME this learns slope/offset now
     MakeDropout() = DP ? Flux.AlphaDropout(T(0.5)) : identity
     
     function GFF()
@@ -574,7 +574,7 @@ end
 """
     DeepResNet
 """
-function DeepResNet(::Type{T} = Float32;
+function DeepResNet(::Type{T} = Float64;
         nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8,
         labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
         type::Symbol = :ResNet18, # Type of DeepResNet
@@ -583,7 +583,7 @@ function DeepResNet(::Type{T} = Float32;
 
     H, C, θ = nfeatures, nchannels, nlabels
     nfilt_last = type ∈ (:ResNet18, :ResNet34) ? nfilt * 8 : nfilt * 32
-    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean)
+    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean) #TODO FIXME this learns slope/offset now
 
     top_in = Flux.Chain(
         ChannelwiseDense(H, C => C),
@@ -613,7 +613,7 @@ function DeepResNet(::Type{T} = Float32;
     return resnet
 end
 
-function BasicHeight32Model1(::Type{T} = Float32;
+function BasicHeight32Model1(::Type{T} = Float64;
         nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8,
         labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
     ) where {T}
@@ -621,7 +621,7 @@ function BasicHeight32Model1(::Type{T} = Float32;
     @assert nfeatures == 32
     H, C, θ = nfeatures, nchannels, nlabels
 
-    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean)
+    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean) #TODO FIXME this learns slope/offset now
     
     CatConvLayers = let k = 5
         c1 = Flux.Conv((k,1), C=>8; pad = ((k÷2)*1,0), dilation = 1) # TODO: `DepthwiseConv` broken?
@@ -657,7 +657,7 @@ function BasicHeight32Model1(::Type{T} = Float32;
     return model
 end
 
-function BasicHeight32Generator1(::Type{T} = Float32;
+function BasicHeight32Generator1(::Type{T} = Float64;
         nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8,
         labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
     ) where {T}
@@ -666,8 +666,8 @@ function BasicHeight32Generator1(::Type{T} = Float32;
     @assert nchannels == 1
     H, θ = nfeatures, nlabels
 
-    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean) # Scales approx [-1,1] to param range
-    InverseParamsScale() = Flux.Diagonal(θ; initα = (args...) -> inv.(labwidth), initβ = (args...) -> -labmean./labwidth) # Scales param range to approx [-1,1]
+    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean) # Scales approx [-1,1] to param range #TODO FIXME this learns slope/offset now
+    InverseParamsScale() = Flux.Diagonal(θ; initα = (args...) -> inv.(labwidth), initβ = (args...) -> -labmean./labwidth) # Scales param range to approx [-1,1] #TODO FIXME this learns slope/offset now
 
     EvenSigns = convert(Vector{T}, cospi.(0:31))
     OddSigns  = convert(Vector{T}, cospi.(1:32))
@@ -725,7 +725,7 @@ function BasicHeight32Generator1(::Type{T} = Float32;
     return model
 end
 
-function BasicHeight32Generator2(::Type{T} = Float32;
+function BasicHeight32Generator2(::Type{T} = Float64;
         nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8,
         labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
     ) where {T}
@@ -734,8 +734,8 @@ function BasicHeight32Generator2(::Type{T} = Float32;
     @assert nchannels == 1
     H, θ = nfeatures, nlabels
 
-    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean) # Scales approx [-1,1] to param range
-    InverseParamsScale() = Flux.Diagonal(θ; initα = (args...) -> inv.(labwidth), initβ = (args...) -> -labmean./labwidth) # Scales param range to approx [-1,1]
+    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean) # Scales approx [-1,1] to param range #TODO FIXME this learns slope/offset now
+    InverseParamsScale() = Flux.Diagonal(θ; initα = (args...) -> inv.(labwidth), initβ = (args...) -> -labmean./labwidth) # Scales param range to approx [-1,1] #TODO FIXME this learns slope/offset now
 
     OddSigns  = 1:H .|> n -> isodd(n)  ? one(T) : -one(T)
     EvenSigns = 1:H .|> n -> iseven(n) ? one(T) : -one(T)
@@ -819,7 +819,7 @@ function BasicHeight32Generator2(::Type{T} = Float32;
     return model
 end
 
-function BasicDCGAN1(::Type{T} = Float32;
+function BasicDCGAN1(::Type{T} = Float64;
         nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8,
         labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
     ) where {T}
@@ -829,8 +829,8 @@ function BasicDCGAN1(::Type{T} = Float32;
     @assert mod(nfeatures, 8) == 0
     H, θ = nfeatures, nlabels
     
-    ParamsScale() = Flux.Diagonal(labwidth, labmean) # Scales approx [-0.5,0.5] to param range
-    InverseParamsScale() = Flux.Diagonal(inv.(labwidth), .-labmean./labwidth) # Scales param range to approx [-1,1]
+    ParamsScale() = Flux.Diagonal(labwidth, labmean) # Scales approx [-0.5,0.5] to param range #TODO FIXME this learns slope/offset now
+    InverseParamsScale() = Flux.Diagonal(inv.(labwidth), .-labmean./labwidth) # Scales param range to approx [-1,1] #TODO FIXME this learns slope/offset now
 
     function Generator()
         C,  k  = 32, (3,1)
@@ -898,14 +898,14 @@ end
 Flux.@treelike LIGOCVAE
 Base.show(io::IO, m::LIGOCVAE) = model_summary(io, [m.E1, m.E2, m.D])
 
-split_mean_std(μ) = (half = size(μ,1)÷2; return tuple(μ[1:half, ..], μ[half+1:end, ..]))
+split_mean_std(μ) = (μ[1:end÷2, ..], μ[end÷2+1:end, ..])
 sample_mv_normal(μ) = sample_mv_normal(split_mean_std(μ)...)
-sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}) where {T} = μ0 .+ σ .* randn(T, size(σ)) # Must pass `T` explicity; `eltype` returns `TrackedReal`
+sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}) where {T} = μ0 .+ σ .* randn(T, size(σ))
 sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}, nsamples::Int) where {T} = μ0 .+ σ .* randn(T, size(σ)..., nsamples)
 MvNormalSampler() = @λ(μ -> sample_mv_normal(μ))
 
-map_std(f, μ) = map_std(f, split_mean_std(μ)...)
 map_std(f, μ0, σ) = vcat(μ0, f.(σ))
+map_std(f, μ) = map_std(f, split_mean_std(μ)...)
 ExpStd() = @λ(μ -> map_std(exp, μ))
 SoftplusStd() = @λ(μ -> map_std(Flux.softplus, μ))
 
@@ -917,10 +917,10 @@ function (m::LIGOCVAE)(y; nsamples::Int = 100, stddev = false)
     @assert n ≥ min_n
     Flux.testmode!(m, true)
 
-    μr0, σr = m.E1(y) |> Flux.data |> split_mean_std
+    μr0, σr = m.E1(y) |> split_mean_std
     function sample_rθ_posterior()
         zr = sample_mv_normal(μr0, σr)
-        μx0, σx = m.D((zr,y)) |> Flux.data |> split_mean_std
+        μx0, σx = m.D((zr,y)) |> split_mean_std
         return sample_mv_normal(μx0, σx)
     end
 
@@ -980,7 +980,7 @@ function KL_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) wher
     return KLdiv
 end
 
-function RDNLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
+function RDNLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
         Xout :: Int = nlabels, # Number of output variables (can be used to marginalize over inputs)
         Zdim :: Int = 10, # Latent variable dimensions
         Nrdn :: Int = 2, # Number of RDN + downsampling blocks
@@ -991,9 +991,10 @@ function RDNLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 
 
     Ny, Cy, Nx = nfeatures, nchannels, nlabels
     actfun = make_activation(act)
-    
-    MuStdScale() = Flux.Diagonal(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
-    XScale() = Flux.Diagonal(inv.(labwidth), -labmean./labwidth) # x scaled and shifted (x range -> [-0.5, 0.5])
+
+    NonLearnableDiag(α, β) = (a = deepcopy(α); b = deepcopy(β); return @λ(x -> a .* x .+ b))
+    MuStdScale() = NonLearnableDiag(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
+    XScale() = NonLearnableDiag(inv.(labwidth), -labmean./labwidth) # x scaled and shifted (x range -> [-0.5, 0.5])
     Dσ(i,ND) = i == ND-1 ? identity : actfun # Activation functions for ND dense layers
 
     PreprocessSignal(k = (3,1), ch = 1=>8) = Flux.Chain(
@@ -1014,7 +1015,7 @@ function RDNLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 
             PreprocessSignal(k, Cy=>Nfeat),
             DenseResize(),
             [Flux.Dense(Dy[i], Dy[i+1], Dσ(i,NDy)) for i in 1:NDy-1]...,
-            SoftplusStd(),
+            ExpStd(),
         )
     end
 
@@ -1033,7 +1034,7 @@ function RDNLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 
             ),
             @λ(xy -> vcat(xy[1], xy[2])),
             [Flux.Dense(Dxy[i], Dxy[i+1], Dσ(i,NDxy)) for i in 1:NDxy-1]...,
-            SoftplusStd(),
+            ExpStd(),
         )
     end
 
@@ -1048,7 +1049,7 @@ function RDNLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 
             ),
             @λ(zy -> vcat(zy[1], zy[2])),
             [Flux.Dense(Dyz[i], Dyz[i+1], Dσ(i,NDyz)) for i in 1:NDyz-1]...,
-            SoftplusStd(),
+            ExpStd(),
             MuStdScale(), # scale and shift μ_x = [μ_x0; σ_x] to x-space
         )
     end
@@ -1057,7 +1058,7 @@ function RDNLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 
     return @ntuple(m)
 end
 
-function ConvLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
+function ConvLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
         Xout   :: Int = nlabels, # Number of output variables (can be used to marginalize over inputs)
         Zdim   :: Int = 10, # Latent variable dimensions
         act    :: Symbol = :leakyrelu, # Activation function
@@ -1068,9 +1069,10 @@ function ConvLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int =
     Ny, Cy, Nx = nfeatures, nchannels, nlabels
     actfun = make_activation(act)
 
-    MuStdScale() = Flux.Diagonal(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
-    XYScale() = Flux.Diagonal([inv.(labwidth); ones(T, Ny*Cy)], [-labmean./labwidth; zeros(T, Ny*Cy)]) # [x; y] vector -> x scaled and shifted (x range -> [-0.5, 0.5]), y unchanged
-    XScale() = Flux.Diagonal(inv.(labwidth), -labmean./labwidth) # x scaled and shifted (x range -> [-0.5, 0.5])
+    NonLearnableDiag(α, β) = (a = deepcopy(α); b = deepcopy(β); return @λ(x -> a .* x .+ b))
+    MuStdScale() = NonLearnableDiag(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
+    XYScale() = NonLearnableDiag([inv.(labwidth); ones(T, Ny*Cy)], [-labmean./labwidth; zeros(T, Ny*Cy)]) # [x; y] vector -> x scaled and shifted (x range -> [-0.5, 0.5]), y unchanged
+    XScale() = NonLearnableDiag(inv.(labwidth), -labmean./labwidth) # x scaled and shifted (x range -> [-0.5, 0.5])
 
     PreprocessSignal(k = (3,1), ch = 1=>8, N = 2, BN = true, GN = false) = Flux.Chain(
         Flux.Conv((1,1), ch[1] => ch[2], identity; init = xavier_uniform, pad = (0,0)), # Channel upsample
@@ -1093,7 +1095,7 @@ function ConvLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int =
             PreprocessSignal(k, ch),
             DenseResize(),
             [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
-            SoftplusStd(),
+            ExpStd(),
         )
     end
 
@@ -1108,7 +1110,7 @@ function ConvLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int =
             ),
             @λ(xy -> vcat(xy[1], xy[2])),
             [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
-            SoftplusStd(),
+            ExpStd(),
         )
     end
 
@@ -1123,7 +1125,7 @@ function ConvLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int =
             ),
             @λ(zy -> vcat(zy[1], zy[2])),
             [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
-            SoftplusStd(),
+            ExpStd(),
             MuStdScale(), # scale and shift μ_x = [μ_x0; σ_x] to x-space
         )
     end
@@ -1132,7 +1134,7 @@ function ConvLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int =
     return @ntuple(m)
 end
 
-function DenseLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
+function DenseLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
         Xout   :: Int = nlabels, # Number of output variables (can be used to marginalize over inputs)
         Zdim   :: Int = 10, # Latent variable dimensions
         Ndense :: Vector{Int} = [nfeatures], # Sizes of inner dense layers
@@ -1142,8 +1144,9 @@ function DenseLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int 
     Ny, Cy, Nx = nfeatures, nchannels, nlabels
     actfun = make_activation(act)
 
-    MuStdScale() = Flux.Diagonal(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
-    XYScale() = Flux.Diagonal([inv.(labwidth); ones(T, Ny*Cy)], [-labmean./labwidth; zeros(T, Ny*Cy)]) # [x; y] vector -> x scaled and shifted (x range -> [-0.5, 0.5]), y unchanged
+    NonLearnableDiag(α, β) = (a = deepcopy(α); b = deepcopy(β); return @λ(x -> a .* x .+ b))
+    MuStdScale() = NonLearnableDiag(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
+    XYScale() = NonLearnableDiag([inv.(labwidth); ones(T, Ny*Cy)], [-labmean./labwidth; zeros(T, Ny*Cy)]) # [x; y] vector -> x scaled and shifted (x range -> [-0.5, 0.5]), y unchanged
     DR = DenseResize()
 
     # Data/feature encoder r_θ1(z|y): y -> μ_r = (μ_r0, σ_r^2)
@@ -1153,8 +1156,8 @@ function DenseLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int 
         Flux.Chain(
             DenseResize(),
             [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
-            SoftplusStd(),
-        )
+            ExpStd(),
+        ) |> m -> Flux.paramtype(T, m)
     end
 
     # Data/feature + parameter/label encoder q_φ(z|x,y): (x,y) -> μ_q = (μ_q0, σ_q^2)
@@ -1165,8 +1168,8 @@ function DenseLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int 
             @λ(xy -> vcat(xy[1], DR(xy[2]))),
             XYScale(),
             [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
-            SoftplusStd(),
-        )
+            ExpStd(),
+        ) |> m -> Flux.paramtype(T, m)
     end
 
     # Latent space + data/feature decoder r_θ2(x|z,y): (z,y) -> μ_x = (μ_x0, σ_x^2)
@@ -1176,9 +1179,9 @@ function DenseLIGOCVAE(::Type{T} = Float32; nfeatures::Int = 32, nchannels::Int 
         Flux.Chain(
             @λ(zy -> vcat(zy[1], DR(zy[2]))),
             [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
-            SoftplusStd(),
+            ExpStd(),
             MuStdScale(),
-        )
+        ) |> m -> Flux.paramtype(T, m) #TODO FIXME for other models
     end
 
     m = LIGOCVAE(E1, E2, D)

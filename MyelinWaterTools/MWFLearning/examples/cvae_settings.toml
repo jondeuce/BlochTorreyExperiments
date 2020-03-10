@@ -1,16 +1,16 @@
 dir     = "."
-prec    = 32
+prec    = 64
 gpu     = false
 save    = true
-timeout = 47.5 # Training timeout (hours)
+timeout = 15.0 # Training timeout (hours)
 
 [data]
 val_data    = ""
-test_data   = "/project/st-arausch-1/jcd1994/ismrm2020/diff-med-test"
-train_data  = "/project/st-arausch-1/jcd1994/ismrm2020/diff-med-train"
+test_data   = "/project/st-arausch-1/jcd1994/ismrm2020/experiments/Spring-2020/permeability-training-1/test"
+train_data  = "/project/st-arausch-1/jcd1994/ismrm2020/experiments/Spring-2020/permeability-training-1/train"
 val_batch   = "auto" # Auto treats entire validation set as one batch
 test_batch  = "auto" # Auto treats entire test set as one batch
-train_batch = 250
+train_batch = 512
 [data.info]
 nfeatures   = "auto" # Height of input data
 nchannels   = "auto" # Number of input data channels
@@ -33,12 +33,12 @@ labunits    = ["cosd(°)", "%", "%", "ms/ms", "ms/ms", "log(um)"] # label units,
 # labscale    = [1.0] # scale labels before plotting
 # labunits    = ["log(um)"] # label units, after scaling
 [data.filter]
-labnames    = [ "nTE" ] # "K"
-lower       = [  32.0 ] # 0.00
-upper       = [  64.0 ] # 1.00
+labnames    = [] #["nTE", "K" ]
+lower       = [] #[ 32.0, 0.00]
+upper       = [] #[ 64.0, 1.00]
 [data.preprocess]
 shuffle     = true
-SNR         = [0.0] # Gaussian noise on complex signal (0 == no noise)
+SNR         = [40.0] # Gaussian noise on complex signal (0 == no noise)
 [data.preprocess.chunk]
 apply       = true
 size        = 32
@@ -54,8 +54,8 @@ acc       = "rmse"
 # Xout    = 1 # Number of learned labels
 # Xout    = 5 # Number of learned labels
 Xout      = 6 # Number of learned labels
-Zdim      = 20 # Latent variable dimension
-Ndense    = [32, 32] # Sizes of inner dense layers
+Zdim      = 8 # Latent variable dimension
+Ndense    = [128, 128] # Sizes of inner dense layers
 # Ndense    = [128, 128, 128, 128] # Sizes of inner dense layers
 # Ndense    = [128, 128, 128, 128, 128, 128] # Sizes of inner dense layers
 act       = "leakyrelu"

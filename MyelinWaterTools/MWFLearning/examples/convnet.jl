@@ -1,11 +1,11 @@
-# Initialize project packages
+# Initialization project/code loading
 import Pkg
-using Printf
-using Base.Iterators: repeated, partition
 Pkg.activate(joinpath(@__DIR__, "../.."))
-include(joinpath(@__DIR__, "../../initpaths.jl"))
+# Pkg.instantiate()
 
 # Code loading
+using Printf
+using Base.Iterators: repeated, partition
 using MWFLearning
 settings = TOML.parsefile(joinpath(@__DIR__, "convnet_settings.toml")) #TODO
 
@@ -109,10 +109,10 @@ for epoch_idx in 1:settings["optimizer"]["epochs"]
 
     # If this is the best accuracy we've seen so far, save the model out
     if acc >= best_acc
-        best_acc = Flux.data(acc)
+        best_acc = acc
         last_improvement = epoch_idx
 
-        weights = Flux.data.(params(model))
+        weights = collect(params(model))
         curr_epoch = epoch_idx
         curr_acc = best_acc
 

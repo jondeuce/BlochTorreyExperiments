@@ -1,8 +1,7 @@
 # Initialize project/code loading
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
-Pkg.instantiate()
-include(joinpath(@__DIR__, "../initpaths.jl"))
+# Pkg.instantiate()
 
 using Printf
 using Statistics: mean, median, std
@@ -59,7 +58,7 @@ genatr, discrm, sampler = MWFLearning.make_model(settings)[1];
 genatr = GPU ? Flux.gpu(genatr) : genatr;
 discrm = GPU ? Flux.gpu(discrm) : discrm;
 Dparams, Gparams = Flux.params(discrm), Flux.params(genatr)
-DGparams = Flux.Tracker.Params([collect(Dparams); collect(Gparams)])
+DGparams = Flux.Params([collect(Dparams); collect(Gparams)])
 
 model_summary(genatr, joinpath(savefolders["models"], FILE_PREFIX * "generator.architecture.txt"));
 model_summary(discrm, joinpath(savefolders["models"], FILE_PREFIX * "discriminator.architecture.txt"));

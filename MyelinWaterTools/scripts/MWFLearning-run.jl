@@ -1,8 +1,7 @@
 # Initialize project/code loading
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
-Pkg.instantiate()
-include(joinpath(@__DIR__, "../initpaths.jl"))
+# Pkg.instantiate()
 
 using Printf
 using Statistics: mean, median, std
@@ -215,17 +214,17 @@ train_loop! = function()
             BEST_ACC = acc
             LAST_IMPROVED_EPOCH = epoch
 
-            # try
-            #     # TODO access to undefined reference error?
-            #     save_time = @elapsed let opt = MWFLearning.opt_to_cpu(opt, Flux.params(model)), model = Flux.cpu(model)
-            #         savebson("models/" * FILE_PREFIX * "model.bson", @dict(model, opt, epoch, acc))
-            #     end
-            #     # @info " -> New best accuracy; model saved ($(round(1000*save_time; digits = 2)) ms)"
-            #     @info @sprintf("[%d] -> New best accuracy; model saved (%d ms)", epoch, 1000 * save_time)
-            # catch e
-            #     @warn "Error saving model"
-            #     @warn sprint(showerror, e, catch_backtrace())
-            # end
+            try
+                # TODO access to undefined reference error?
+                save_time = @elapsed let opt = MWFLearning.opt_to_cpu(opt, Flux.params(model)), model = Flux.cpu(model)
+                    savebson("models/" * FILE_PREFIX * "model.bson", @dict(model, opt, epoch, acc))
+                end
+                # @info " -> New best accuracy; model saved ($(round(1000*save_time; digits = 2)) ms)"
+                @info @sprintf("[%d] -> New best accuracy; model saved (%d ms)", epoch, 1000 * save_time)
+            catch e
+                @warn "Error saving model"
+                @warn sprint(showerror, e, catch_backtrace())
+            end
 
             try
                 save_time = @elapsed let weights = Flux.cpu.(Flux.data.(Flux.params(model)))

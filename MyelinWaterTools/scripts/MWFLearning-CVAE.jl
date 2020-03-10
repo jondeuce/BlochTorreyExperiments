@@ -2,7 +2,6 @@
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 # Pkg.instantiate()
-include(joinpath(@__DIR__, "../initpaths.jl"))
 
 using Printf
 using Statistics: mean, median, std
@@ -15,7 +14,8 @@ pyplot(size=(800,600))
 # pyplot(size=(1600,900))
 
 # Settings
-const settings_file = "settings.toml"
+# const settings_file = "settings.toml" #TODO FIXME
+const settings_file = "/project/st-arausch-1/jcd1994/code/BlochTorreyExperiments-active/MyelinWaterTools/MWFLearning/examples/cvae_settings.toml"
 const settings = TOML.parsefile(settings_file)
 
 const DATE_PREFIX = getnow() * "."
@@ -50,6 +50,7 @@ signals = batch -> labels(batch)
 labelbatch(batch) = (signals(batch), thetas(batch))
 
 # Lazy data loader for training on simulated data
+#=
 const MB_train_batch_size  = 500 # Number of simulated signals in one training batch
 const MB_test_batch_size   = 500 # Number of simulated signals in one testing batch
 const MB_num_train_batches = 20  # Number of training batches per epoch
@@ -140,10 +141,11 @@ y_sampler(x) = (y = MWFLearning.forward_physics_14arg(x); reshape(y, size(y,1), 
 # y_sampler(x) = (y = MWFLearning.forward_physics_15arg(x); reshape(y, size(y,1), 1, 1, :))
 # y_sampler(x) = (y = MWFLearning.forward_physics_15arg_Kperm(x); reshape(y, size(y,1), 1, 1, :))
 MB_sampler = MWFLearning.LazyMiniBatches(MB_num_train_batches, x_sampler, y_sampler)
+=#
 
 # Train using Bloch-Torrey training/testing data, or sampler data
-# train_data, test_data = BT_train_data, BT_test_data
-train_data, test_data = MB_sampler, (x -> x[.., 1:MB_test_batch_size]).(rand(MB_sampler))
+train_data, test_data = BT_train_data, BT_test_data
+# train_data, test_data = MB_sampler, (x -> x[.., 1:MB_test_batch_size]).(rand(MB_sampler))
 
 # Construct model
 @info "Constructing model..."
@@ -190,16 +192,16 @@ pretraincbs = Flux.Optimise.runall([
 ])
 
 posttraincbs = Flux.Optimise.runall([
-    epochthrottle(test_err_cb, state, 10),
-    epochthrottle(train_err_cb, state, 10),
-    epochthrottle(plot_errs_cb, state, 10),
+    epochthrottle(test_err_cb, state, 120),
+    epochthrottle(train_err_cb, state, 120),
+    epochthrottle(plot_errs_cb, state, 120),
 ])
 
 loopcbs = Flux.Optimise.runall([
     save_best_model_cb,
-    epochthrottle(plot_ligocvae_losses_cb, state, 10),
-    epochthrottle(checkpoint_state_cb, state, 10),
-    epochthrottle(checkpoint_model_cb, state, 10),
+    epochthrottle(plot_ligocvae_losses_cb, state, 120),
+    epochthrottle(checkpoint_state_cb, state, 120),
+    epochthrottle(checkpoint_model_cb, state, 120),
 ])
 
 # Training Loop
@@ -212,10 +214,11 @@ train_loop! = function()
         state[:epoch] = epoch
         pretraincbs() # pre-training callbacks
         train_time = @elapsed begin
-            Flux.train!(trainloss, Flux.params(m), MB_sampler, opt) # CuArrays.@sync
-            Flux.train!(trainloss, Flux.params(m), BT_train_data, opt) # CuArrays.@sync
+            Flux.train!(trainloss, Flux.params(m), train_data, opt) # CuArrays.@sync
+            # Flux.train!(trainloss, Flux.params(m), MB_sampler, opt) # CuArrays.@sync
+            # Flux.train!(trainloss, Flux.params(m), BT_train_data, opt) # CuArrays.@sync
         end
-        acc_time = @elapsed acc = θacc(labelbatch(test_data)...) |> Flux.data |> Flux.cpu # CuArrays.@sync
+        acc_time = @elapsed acc = θacc(labelbatch(test_data)...) |> Flux.cpu # CuArrays.@sync
         posttraincbs() # post-training callbacks
         
         @info @sprintf("[%d] (%4d ms): Label accuracy: %.4f (%d ms)", epoch, 1000 * train_time, acc, 1000 * acc_time)
@@ -223,9 +226,9 @@ train_loop! = function()
         # Update loop values
         push!(state[:loop][:epoch], epoch)
         push!(state[:loop][:acc], acc)
-        push!(state[:loop][:loss], MWFLearning.H_LIGOCVAE(m, test_data...) |> Flux.data)
-        push!(state[:loop][:ELBO], MWFLearning.L_LIGOCVAE(m, test_data...) |> Flux.data)
-        push!(state[:loop][:KL], MWFLearning.KL_LIGOCVAE(m, test_data...) |> Flux.data)
+        push!(state[:loop][:loss], MWFLearning.H_LIGOCVAE(m, test_data...))
+        push!(state[:loop][:ELBO], MWFLearning.L_LIGOCVAE(m, test_data...))
+        push!(state[:loop][:KL], MWFLearning.KL_LIGOCVAE(m, test_data...))
         loopcbs()
     end
 end
@@ -368,9 +371,11 @@ prediction_corrplot = function()
     fig = corrplot(corrdata; label = corrlabs, fillcolor = :purple, markercolor = cgrad(:rainbow, :misc), xrotation = 45.0, guidefontsize = 8, tickfontsize = 8)
     # savefig(fig, "tmp.pdf")
 end
+#=
 @info "Plotting correlation plots..."
 fig = prediction_corrplot(); display(fig)
 SAVE && savefig(fig, savepath("plots", "theta.corrplot.png"))
+=#
 
 forward_plot = function()
     forward_rmse = function(i)
@@ -388,9 +393,11 @@ forward_plot = function()
         grid = true, minorgrid = true, titlefontsize = 10, ylim = (0, 0.05)
     )
 end
-# @info "Plotting forward simulation error plots..."
-# fig = forward_plot()
-# display(fig) && savefig(fig, savepath("plots", "forwarderror.png"))
+#=
+@info "Plotting forward simulation error plots..."
+fig = forward_plot()
+display(fig) && savefig(fig, savepath("plots", "forwarderror.png"))
+=#
 
 errorvslr = function()
     x = [lrfun.(state[:callbacks][:training][:epoch]), lrfun.(state[:callbacks][:testing][:epoch])]
@@ -401,9 +408,11 @@ errorvslr = function()
         layout = (2,1)
     )
 end
-# @info "Plotting errors vs. learning rate..."
-# fig = errorvslr()
-# display(fig) && savefig(fig, savepath("plots", "lossvslearningrate.png"))
+#=
+@info "Plotting errors vs. learning rate..."
+fig = errorvslr()
+display(fig) && savefig(fig, savepath("plots", "lossvslearningrate.png"))
+=#
 
 mwferrorvsthetas = function()
     mwf_err = (model_thetas .- true_thetas)[1,:]
@@ -416,5 +425,7 @@ mwferrorvsthetas = function()
         display(p)
     end
 end
-# @info "Plotting mwf error vs. thetas..."
-# mwferrorvsthetas()
+#=
+@info "Plotting mwf error vs. thetas..."
+mwferrorvsthetas()
+=#

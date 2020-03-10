@@ -14,11 +14,15 @@ function prepare_data(settings::Dict)
     testing_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["test_data"], readdir(settings["data"]["test_data"]))))
     
     # Filtering out undesired data
-    filter_bad_data = (d) -> all(map(
-        (label, lower, upper) -> lower <= label_fun(label, d) :: Float64 <= upper,
-        settings["data"]["filter"]["labnames"] :: Vector{String},
-        settings["data"]["filter"]["lower"]  :: Vector{Float64},
-        settings["data"]["filter"]["upper"]  :: Vector{Float64}))
+    filter_bad_data = (d) -> isempty(settings["data"]["filter"]["labnames"]) ? true : all(
+        map(
+            settings["data"]["filter"]["labnames"] :: Vector{String},
+            settings["data"]["filter"]["lower"]  :: Vector{Float64},
+            settings["data"]["filter"]["upper"]  :: Vector{Float64},
+        ) do label, lower, upper
+            lower <= label_fun(label, d) :: Float64 <= upper
+        end
+    )
     filter!(filter_bad_data, training_data_dicts)
     filter!(filter_bad_data, testing_data_dicts)
 

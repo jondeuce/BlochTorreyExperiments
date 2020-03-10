@@ -51,7 +51,6 @@ struct Scale{V}
     s::V
 end
 trainable(l::Scale) = () # Layer is not learnable
-# Scale(s::Flux.TrackedArray) = Scale(Flux.data(s)) # Layer is not learnable
 Flux.@treelike Scale
 (l::Scale)(x::AbstractArray) = x .* l.s
 Base.show(io::IO, l::Scale) = print(io, "Scale(", length(l.s), ")")
@@ -390,11 +389,15 @@ end
 # Functions
 function _model_summary(io::IO, model::Function, depth::Int = 0; kwargs...)
     print(io, getindent(depth) * "@λ ")
-    print(io, model)
+    buf = IOBuffer()
+    show(buf, model)
+    print(io, String(take!(buf)))
 end
 
 # Fallback method
 function _model_summary(io::IO, model, depth::Int = 0; kwargs...)
     print(io, getindent(depth))
-    print(io, model)
+    buf = IOBuffer()
+    show(buf, model)
+    print(io, String(take!(buf)))
 end
