@@ -898,23 +898,27 @@ end
 Flux.@treelike LIGOCVAE
 Base.show(io::IO, m::LIGOCVAE) = model_summary(io, [m.E1, m.E2, m.D])
 
+# Split `μ` into mean and standard deviation
 split_mean_std(μ) = (μ[1:end÷2, ..], μ[end÷2+1:end, ..])
+
+# Sample from the diagonal multivariate normal distbn defined by `μ`
 sample_mv_normal(μ) = sample_mv_normal(split_mean_std(μ)...)
 sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}) where {T} = μ0 .+ σ .* randn(T, size(σ))
 sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}, nsamples::Int) where {T} = μ0 .+ σ .* randn(T, size(σ)..., nsamples)
-MvNormalSampler() = @λ(μ -> sample_mv_normal(μ))
+MvNormalSampler() = sample_mv_normal
 
-map_std(f, μ0, σ) = vcat(μ0, f.(σ))
-map_std(f, μ) = map_std(f, split_mean_std(μ)...)
-ExpStd() = @λ(μ -> map_std(exp, μ))
-SoftplusStd() = @λ(μ -> map_std(Flux.softplus, μ))
+# Exponentiate second argument; logsigma -> sigma
+exp_std(μ0, σ) = vcat(μ0, exp.(σ))
+exp_std(μ) = exp_std(split_mean_std(μ)...)
+ExpStd() = exp_std
 
-# Flux is MUCH faster differentiating broadcasted square.(x) than x.^2 for some reason...
+map_std(f, x) = exp_std(x)
+
+# Zygote tends to be faster differentiating broadcasted square.(x) than x.^2
 square(x) = x*x
 
 function (m::LIGOCVAE)(y; nsamples::Int = 100, stddev = false)
-    n, min_n = nsamples, ifelse(stddev, 2, 1)
-    @assert n ≥ min_n
+    @assert nsamples ≥ ifelse(stddev, 2, 1)
     Flux.testmode!(m, true)
 
     μr0, σr = m.E1(y) |> split_mean_std
@@ -924,18 +928,18 @@ function (m::LIGOCVAE)(y; nsamples::Int = 100, stddev = false)
         return sample_mv_normal(μx0, σx)
     end
 
-    μx = sample_rθ_posterior()
-    μ, σ2x = zero(μx), zero(μx)
     smooth(a, b, γ) = a + γ * (b - a)
-    for i in 2:n
+    μx = sample_rθ_posterior()
+    σ2x = zero(μx)
+    μx_last = zero(μx)
+    for i in 2:nsamples
         x = sample_rθ_posterior()
-        μ .= μx
-        γ = inv(eltype(μx)(i))
-        μx .= smooth.(μx, x, γ)
-        σ2x .= smooth.(σ2x, (x .- μx) .* (x .- μ), γ)
+        μx_last .= μx
+        μx .= smooth.(μx, x, 1//i)
+        σ2x .= smooth.(σ2x, (x .- μx) .* (x .- μx_last), 1//i)
     end
-    Flux.testmode!(m, false)
 
+    Flux.testmode!(m, false)
     return stddev ? vcat(μx, sqrt.(σ2x)) : μx
 end
 
@@ -946,16 +950,27 @@ function H_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where
     zq = sample_mv_normal(μq0, σq)
     μx0, σx = split_mean_std(m.D((zq,y)))
 
-    Zdim, Xout = size(zq,1), size(μx0,1)
-    # σr2, σq2, σx2 = square.(σr), square.(σq), square.(σx) # Intermediate variables
-    # KLdiv = mean(sum((σq2 .+ square.(μr0 .- μq0)) ./ σr2 .+ log.(σr2 ./ σq2); dims = 1))/2 - T(Zdim/2) # KL-divergence contribution to cross-entropy
-    # ELBO = mean(sum(log.(σx2) .+ square.(x[1:Xout,:] .- μx0) ./ σx2; dims = 1))/2 + T(Zdim*log(2π)/2) # Negative log-likelihood/ELBO contribution to cross-entropy
+    Zdim, Xout, Nbatch = size(zq,1), size(μx0,1), size(x,2)
+    σr2, σq2 = square.(σr), square.(σq)
+    σx2, xout = square.(σx), x[1:Xout,:]
 
-    σr2, σq2 = square.(σr), square.(σq) # Intermediate variables
-    KLdiv = mean(sum((σq2 .+ square.(μr0 .- μq0)) ./ σr2 .+ log.(σr2 ./ σq2); dims = 1))/2 - T(Zdim/2) # KL-divergence contribution to cross-entropy
-    ELBO = mean(sum(2 .* log.(σx) .+ square.((x[1:Xout,:] .- μx0) ./ σx); dims = 1))/2 + T(Zdim*log(2π)/2)
-    
+    KLdiv = sum(@. (σq2 + square(μr0 - μq0)) / σr2 + log(σr2 / σq2)) / (2*Nbatch) - T(Zdim/2) # KL-divergence contribution to cross-entropy
+    ELBO = sum(@. square(xout - μx0) / σx2 + log(σx2)) / (2*Nbatch) + T(Zdim*log(2π)/2) # Negative log-likelihood/ELBO contribution to cross-entropy
+
     return ELBO + KLdiv
+end
+
+# KL-divergence contribution to cross-entropy
+function KL_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where {T}
+    μr0, σr = split_mean_std(m.E1(y))
+    μq0, σq = split_mean_std(m.E2((x,y)))
+
+    Zdim, Nbatch = size(μq0,1), size(x,2)
+    σr2, σq2 = square.(σr), square.(σq)
+
+    KLdiv = sum(@. (σq2 + square(μr0 - μq0)) / σr2 + log(σr2 / σq2)) / (2*Nbatch) - T(Zdim/2) # KL-divergence contribution to cross-entropy
+
+    return KLdiv
 end
 
 # Negative log-likelihood/ELBO loss function
@@ -963,21 +978,13 @@ function L_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where
     μq0, σq = split_mean_std(m.E2((x,y)))
     zq = sample_mv_normal(μq0, σq)
     μx0, σx = split_mean_std(m.D((zq,y)))
-    Zdim, Xout = size(zq,1), size(μx0,1)
-    # σx2 = square.(σx)
-    # ELBO = mean(sum(log.(σx2) .+ square.(x[1:Xout,:] .- μx0) ./ σx2; dims = 1))/2 + T(Zdim*log(2π)/2)
-    ELBO = mean(sum(2 .* log.(σx) .+ square.((x[1:Xout,:] .- μx0) ./ σx); dims = 1))/2 + T(Zdim*log(2π)/2)
-    return ELBO
-end
 
-# KL-divergence contribution to cross-entropy
-function KL_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where {T}
-    μr0, σr = split_mean_std(m.E1(y))
-    μq0, σq = split_mean_std(m.E2((x,y)))
-    σr2, σq2 = square.(σr), square.(σq)
-    Zdim = size(μq0,1)
-    KLdiv = mean(sum((σq2 .+ square.(μr0 .- μq0)) ./ σr2 .+ log.(σr2 ./ σq2); dims = 1))/2 - T(Zdim/2)
-    return KLdiv
+    Zdim, Xout, Nbatch = size(zq,1), size(μx0,1), size(x,2)
+    σx2, xout = square.(σx), x[1:Xout,:]
+
+    ELBO = sum(@. square(xout - μx0) / σx2 + log(σx2)) / (2*Nbatch) + T(Zdim*log(2π)/2) # Negative log-likelihood/ELBO contribution to cross-entropy
+
+    return ELBO
 end
 
 function RDNLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
@@ -1137,7 +1144,8 @@ end
 function DenseLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
         Xout   :: Int = nlabels, # Number of output variables (can be used to marginalize over inputs)
         Zdim   :: Int = 10, # Latent variable dimensions
-        Ndense :: Vector{Int} = [nfeatures], # Sizes of inner dense layers
+        Nh     :: Int = 2, # Number of inner hidden dense layers
+        Dh     :: Int = nfeatures, # Dimension of inner hidden dense layers
         act    :: Symbol = :leakyrelu, # Activation function
     ) where {T}
 
@@ -1147,38 +1155,37 @@ function DenseLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int 
     NonLearnableDiag(α, β) = (a = deepcopy(α); b = deepcopy(β); return @λ(x -> a .* x .+ b))
     MuStdScale() = NonLearnableDiag(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
     XYScale() = NonLearnableDiag([inv.(labwidth); ones(T, Ny*Cy)], [-labmean./labwidth; zeros(T, Ny*Cy)]) # [x; y] vector -> x scaled and shifted (x range -> [-0.5, 0.5]), y unchanged
-    DR = DenseResize()
 
     # Data/feature encoder r_θ1(z|y): y -> μ_r = (μ_r0, σ_r^2)
     E1 = let Nin = Ny*Cy, Nout = 2*Zdim
-        Nd = [Nin, Ndense..., Nout]
-        AF(i) = i == length(Nd)-1 ? identity : actfun
         Flux.Chain(
             DenseResize(),
-            [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
+            Flux.Dense(Nin, Dh, actfun),
+            [Flux.Dense(Dh, Dh, actfun) for _ in 1:Nh]...,
+            Flux.Dense(Dh, Nout),
             ExpStd(),
         ) |> m -> Flux.paramtype(T, m)
     end
 
     # Data/feature + parameter/label encoder q_φ(z|x,y): (x,y) -> μ_q = (μ_q0, σ_q^2)
     E2 = let Nin = Nx + Ny*Cy, Nout = 2*Zdim
-        Nd = [Nin, Ndense..., Nout]
-        AF(i) = i == length(Nd)-1 ? identity : actfun
         Flux.Chain(
-            @λ(xy -> vcat(xy[1], DR(xy[2]))),
+            @λ(xy -> vcat(xy[1], DenseResize()(xy[2]))),
             XYScale(),
-            [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
+            Flux.Dense(Nin, Dh, actfun),
+            [Flux.Dense(Dh, Dh, actfun) for _ in 1:Nh]...,
+            Flux.Dense(Dh, Nout),
             ExpStd(),
         ) |> m -> Flux.paramtype(T, m)
     end
 
     # Latent space + data/feature decoder r_θ2(x|z,y): (z,y) -> μ_x = (μ_x0, σ_x^2)
     D = let Nin = Zdim + Ny*Cy, Nout = 2*Xout
-        Nd = [Nin, Ndense..., Nout]
-        AF(i) = i == length(Nd)-1 ? identity : actfun
         Flux.Chain(
-            @λ(zy -> vcat(zy[1], DR(zy[2]))),
-            [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
+            @λ(zy -> vcat(zy[1], DenseResize()(zy[2]))),
+            Flux.Dense(Nin, Dh, actfun),
+            [Flux.Dense(Dh, Dh, actfun) for _ in 1:Nh]...,
+            Flux.Dense(Dh, Nout),
             ExpStd(),
             MuStdScale(),
         ) |> m -> Flux.paramtype(T, m) #TODO FIXME for other models

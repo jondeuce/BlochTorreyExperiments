@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------- #
 
 abstract type AbstractDataProcessing end
-struct SignalChunkingProcessing <: AbstractDataProcessing end
+struct SignalMagnitudeProcessing <: AbstractDataProcessing end
 struct SignalZipperProcessing <: AbstractDataProcessing end
 struct PCAProcessing <: AbstractDataProcessing end
 struct iLaplaceProcessing <: AbstractDataProcessing end
@@ -12,7 +12,7 @@ struct WaveletProcessing <: AbstractDataProcessing end
 function prepare_data(settings::Dict)
     training_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["train_data"], readdir(settings["data"]["train_data"]))))
     testing_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["test_data"], readdir(settings["data"]["test_data"]))))
-    
+
     # Filtering out undesired data
     filter_bad_data = (d) -> isempty(settings["data"]["filter"]["labnames"]) ? true : all(
         map(
@@ -29,19 +29,19 @@ function prepare_data(settings::Dict)
     training_thetas = init_labels(settings, training_data_dicts)
     testing_thetas = init_labels(settings, testing_data_dicts)
     @assert size(training_thetas, 1) == size(testing_thetas, 1)
-    
+
     processing_types = AbstractDataProcessing[]
-    checkapply(settings, key) = haskey(settings["data"]["preprocess"], key) && (settings["data"]["preprocess"][key]["apply"] :: Bool)
-    checkapply(settings, "chunk")    && push!(processing_types, SignalChunkingProcessing())
-    checkapply(settings, "zipper")   && push!(processing_types, SignalZipperProcessing())
-    checkapply(settings, "ilaplace") && push!(processing_types, iLaplaceProcessing())
-    checkapply(settings, "wavelet")  && push!(processing_types, WaveletProcessing())
+    checkapply(settings, key) = haskey(settings["data"]["preprocess"], key) && settings["data"]["preprocess"][key]["apply"] :: Bool
+    checkapply(settings, "magnitude") && push!(processing_types, SignalMagnitudeProcessing())
+    checkapply(settings, "zipper")    && push!(processing_types, SignalZipperProcessing())
+    checkapply(settings, "ilaplace")  && push!(processing_types, iLaplaceProcessing())
+    checkapply(settings, "wavelet")   && push!(processing_types, WaveletProcessing())
     isempty(processing_types) && error("No processing selected")
 
     init_all_data(d) = cat(init_data.(processing_types, Ref(settings), Ref(d))...; dims = 3)
     training_data = init_all_data(training_data_dicts)
     testing_data = init_all_data(testing_data_dicts)
-    
+
     if checkapply(settings, "PCA")
         @unpack training_data, testing_data =
             init_data(PCAProcessing(), training_data, testing_data)
@@ -63,7 +63,7 @@ function prepare_data(settings::Dict)
         training_data, training_thetas, training_data_dicts = training_data[:,:,:,i_train], training_thetas[:,i_train], training_data_dicts[i_train]
         testing_data, testing_thetas, testing_data_dicts = testing_data[:,:,:,i_test], testing_thetas[:,i_test], testing_data_dicts[i_test]
     end
-    
+
     # Redundancy check
     @assert heightsize(training_data) == heightsize(testing_data)
     @assert channelsize(training_data) == channelsize(testing_data)
@@ -101,64 +101,73 @@ prepare_data(settings_file::String) = prepare_data(TOML.parsefile(settings_file)
 # Initialize data
 # ---------------------------------------------------------------------------- #
 
-function init_data(::SignalChunkingProcessing, settings::Dict, ds::AbstractVector{<:Dict})
+function preprocessed_magnitude(settings::Dict, d::Dict)
     T, TC = Float64, ComplexF64
     VT, VC, MT, MC = Vector{T}, Vector{TC}, Matrix{T}, Matrix{TC}
-    SNR   = settings["data"]["preprocess"]["SNR"] :: VT
-    chunk = settings["data"]["preprocess"]["chunk"]["size"] :: Int
+    SNR       = settings["data"]["preprocess"]["SNR"] :: VT
+    normalize = settings["data"]["preprocess"]["normalize"] :: String
+    chunk     = settings["data"]["preprocess"]["chunk"] :: Int
 
-    PLOT_COUNT, PLOT_LIMIT = 0, 3
-    PLOT_FUN = (b, TE, SNR, chunk) -> begin
+    # Load complex signal
+    nTE = d[:sweepparams][:nTE]
+    signals = d[:signals]
+    S = complex.(transverse.(signals)) :: VC
+    z = cplx_signal(S, nTE) :: VC
+
+    # Add complex gaussian noise
+    Z = repeat(z, 1, length(SNR)) :: MC
+    for j in 1:length(SNR)
+        SNR[j] ≥ 0 && add_gaussian!(@views(Z[:,j]), z, SNR[j])
+    end
+
+    # Keep signal chunk
+    if chunk < nTE
+        Z = Z[1:chunk, ..]
+    end
+
+    # Normalize signal magnitude
+    mag = abs.(Z) :: MT
+    if normalize == "unitsum"
+        unitsum!(mag; dims = 1)
+    end
+
+    return mag
+end
+
+function init_data(::SignalMagnitudeProcessing, settings::Dict, ds::AbstractVector{<:Dict})
+    T, TC = Float64, ComplexF64
+    VT, VC, MT, MC = Vector{T}, Vector{TC}, Matrix{T}, Matrix{TC}
+    SNR = settings["data"]["preprocess"]["SNR"] :: VT
+
+    PLOT_COUNT, PLOT_LIMIT = 0, 5
+    PLOT_FUN = function (b, TE, SNR)
         if PLOT_COUNT < PLOT_LIMIT
             p = plot(
-                0:chunk-1, [b[:,cols] for cols in partition(1:size(b,2), length(SNR))];
-                title = "SNR = " * string(SNR), line = (2,), m = (:c, :black, 3), leg = :none)
+                1e3 .* TE .* (1:size(b,1)),
+                reduce(hcat, [b[:,cols] for cols in partition(1:size(b,2), length(SNR))]);
+                title = "SNR = " * string(SNR), line = (2,), m = (:c, :black, 3), leg = :none
+            )
             display(p)
             PLOT_COUNT += 1
         end
     end
 
-    # N_CHUNKS = 6
-    # function makechunks(b, chunk)
-    #     @assert 2*chunk <= length(b)
-    #     n = length(b)
-    #     r = round.(Int, range(1, n-chunk+1, length=4))
-    #     return hcat(
-    #         b[r[1]:r[1]+chunk-1], b[r[2]:r[2]+chunk-1], b[r[3]:r[3]+chunk-1], b[r[4]:r[4]+chunk-1],
-    #         b[1:2:2*chunk], b[2:2:2*chunk],
-    #     )
-    # end
+    out = mapreduce(hcat, ds) do d
+        b = preprocessed_magnitude(settings, d)
+        PLOT_FUN(b, d[:sweepparams][:TE], SNR)
+        return b
+    end
 
-    N_CHUNKS = 1
-    makechunks(b, chunk) = b[1:chunk]
-
-    out = reduce(hcat, begin
-        TE      = d[:sweepparams][:TE] :: T
-        nTE     = d[:sweepparams][:nTE] :: Int
-        signals = complex.(transverse.(d[:signals])) :: VC
-        z       = cplx_signal(signals, nTE) :: VC
-        Z       = repeat(z, 1, length(SNR))
-        for j in 1:length(SNR)
-            add_gaussian!(@views(Z[:,j]), z, SNR[j])
-        end
-        # b       = abs.(Z ./ Z[1:1, ..]) :: MT
-        b       = abs.(Z) :: MT
-        b       = reduce(hcat, makechunks(b[:,j], chunk) for j in 1:size(b,2))
-        PLOT_FUN(b, TE, SNR, chunk)
-        b
-    end for d in ds)
-    
-    return reshape(out, size(out, 1), 1, N_CHUNKS, :)
+    return reshape(out, size(out, 1), 1, 1, :)
 end
 
 function init_data(::SignalZipperProcessing, settings::Dict, ds::AbstractVector{<:Dict})
     T, TC = Float64, ComplexF64
     VT, VC, MT, MC, AT = Vector{T}, Vector{TC}, Matrix{T}, Matrix{TC}, Array{T,3}
     SNR   = settings["data"]["preprocess"]["SNR"] :: VT
-    chunk = settings["data"]["preprocess"]["zipper"]["size"] :: Int
 
     PLOT_COUNT, PLOT_LIMIT = 0, 3
-    PLOT_FUN = (b, TE, SNR, chunk) -> begin
+    PLOT_FUN = (b, TE, SNR) -> begin
         if PLOT_COUNT < PLOT_LIMIT
             p1 = plot(0:chunk-1, [b[:,1,1,j] for j in partition(1:size(b,2), length(SNR))]; line = (2,), m = (:c, :black, 3), leg = :none)
             p2 = plot(0:chunk-1, [b[:,1,2,j] for j in partition(1:size(b,2), length(SNR))]; line = (2,), m = (:r, :black, 3), leg = :none)
@@ -168,35 +177,26 @@ function init_data(::SignalZipperProcessing, settings::Dict, ds::AbstractVector{
         end
     end
 
-    out = reduce((x,y) -> cat(x, y; dims = 4), begin
+    out = mapreduce((x,y) -> cat(x, y; dims = 4), ds) do d
         TE  = d[:sweepparams][:TE] :: T
-        nTE = d[:sweepparams][:nTE] :: Int
-        z   = cplx_signal(complex.(transverse.(d[:signals])) :: VC, nTE) :: VC
-        Z   = repeat(z, 1, length(SNR)) :: MC
-        for j in 1:length(SNR)
-            add_gaussian!(@views(Z[:,j]), z, SNR[j])
-        end
-
-        # mag = abs.(Z ./ Z[1:1,..]) :: MT
-        mag = abs.(Z) :: MT
-        mag = mag[1:chunk,   ..] :: MT
-        top = mag[1:2:chunk, ..] :: MT
-        bot = mag[2:2:chunk, ..] :: MT
-        b   = similar(mag, chunk, 1, 2, length(SNR))
+        mag = preprocessed_magnitude(settings, d)
+        top = mag[1:2:end, ..] :: MT
+        bot = mag[2:2:end, ..] :: MT
+        b   = similar(mag, size(mag,1), 1, 2, length(SNR))
         for j in 1:size(mag, 2)
-            itp_top = Interpolations.CubicSplineInterpolation(1:2:chunk, @views(top[:,j]), extrapolation_bc = Interpolations.Line())
-            itp_bot = Interpolations.CubicSplineInterpolation(2:2:chunk, @views(bot[:,j]), extrapolation_bc = Interpolations.Line())
-            μ = (itp_top.(1:chunk) .+ itp_bot.(1:chunk))./2
+            itp_top = Interpolations.CubicSplineInterpolation(1:2:size(mag,1), @views(top[:,j]), extrapolation_bc = Interpolations.Line())
+            itp_bot = Interpolations.CubicSplineInterpolation(2:2:size(mag,1), @views(bot[:,j]), extrapolation_bc = Interpolations.Line())
+            μ = (itp_top.(1:size(mag,1)) .+ itp_bot.(1:size(mag,1)))./2
             @views b[:,1,1,j] .= mag[:,j] .- μ # Mean-subtracted magnitude
             # @views b[:,1,1,j] .= abs.(FFTW.fft(b[:,1,1,j])) # Apply fft
             @views b[:,1,2,j] .= μ # Magnitude mean
             # @views b[:,1,2,j] .= [top[end:-1:1,j]; bot[:,j]] # Reordered magnitude
         end
 
-        PLOT_FUN(b, TE, SNR, chunk)
-        b
-    end for d in ds)
-    
+        PLOT_FUN(b, TE, SNR)
+        return b
+    end
+
     return out
 end
 
@@ -223,22 +223,21 @@ function init_data(::iLaplaceProcessing, settings::Dict, ds::AbstractVector{<:Di
         end
     end
 
-    out = reduce(hcat, begin
+    out = mapreduce(hcat, ds) do d
         signals = complex.(transverse.(d[:signals])) :: VC
-        TE      = d[:sweepparams][:TE] :: T
-        nTE     = d[:sweepparams][:nTE] :: Int
-        z       = cplx_signal(signals, nTE) :: VC
-        Z       = bufdict[nTE].Z :: MC
+        TE  = d[:sweepparams][:TE] :: T
+        nTE = d[:sweepparams][:nTE] :: Int
+        z   = cplx_signal(signals, nTE) :: VC
+        Z   = bufdict[nTE].Z :: MC
         for j in 1:length(SNR)
             add_gaussian!(@views(Z[:,j]), z, SNR[j])
         end
-        # b       = abs.(Z ./ Z[1:1, ..]) :: MT
-        b       = abs.(Z) :: MT
-        T2      = log10range(T2Range...; length = nT2) :: VT
-        x       = ilaplace!(bufdict[nTE], b, T2, TE, alpha) :: MT
+        b   = abs.(Z) :: MT
+        T2  = log10range(T2Range...; length = nT2) :: VT
+        x   = ilaplace!(bufdict[nTE], b, T2, TE, alpha) :: MT
         PLOT_FUN(b, x, TE, nTE, T2)
         copy(x)
-    end for d in ds)
+    end
     
     return reshape(out, :, 1, 1, size(out, 2))
 end
@@ -274,8 +273,7 @@ function init_data(::WaveletProcessing, settings::Dict, ds::AbstractVector{<:Dic
         end
     end
 
-    out = reduce(hcat, begin
-        signals = complex.(transverse.(d[:signals])) :: VC
+    out = mapreduce(hcat, ds) do d
         TE      = d[:sweepparams][:TE] :: T
         nTE     = d[:sweepparams][:nTE] :: Int
         Nfast = ceil(Int, -TEfast/TE * log(0.1)) :: Int
@@ -331,17 +329,12 @@ function init_data(::WaveletProcessing, settings::Dict, ds::AbstractVector{<:Dic
             x :: VT
         end
 
-        z = cplx_signal(signals, nTE) :: VC
-        Z = repeat(z, 1, length(SNR)) :: MC
-        for j in 1:length(SNR)
-            add_gaussian!(@views(Z[:,j]), z, SNR[j])
+        b = preprocessed_magnitude(settings, d)
+        mapreduce(hcat, 1:size(b,2)) do j
+            process_signal(b[:,j], SNR[j])
         end
-        # b = abs.(Z ./ Z[1:1, ..]) :: MT
-        b = abs.(Z) :: MT
+    end
 
-        reduce(hcat, process_signal(b[:,j], SNR[j]) for j in 1:size(b,2))
-    end for d in ds)
-    
     return reshape(out, :, 1, 1, size(out, 2))
 end
 

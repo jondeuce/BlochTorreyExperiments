@@ -3,7 +3,7 @@ import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 # Pkg.instantiate()
 
-using Printf
+using Printf, TimerOutputs
 using Statistics: mean, median, std
 using StatsBase: quantile, sample, iqr
 using Base.Iterators: repeated, partition
@@ -14,9 +14,18 @@ pyplot(size=(800,600))
 # pyplot(size=(1600,900))
 
 # Settings
-# const settings_file = "settings.toml" #TODO FIXME
-const settings_file = "/project/st-arausch-1/jcd1994/code/BlochTorreyExperiments-active/MyelinWaterTools/MWFLearning/examples/cvae_settings.toml"
-const settings = TOML.parsefile(settings_file)
+const default_settings_file = "/project/st-arausch-1/jcd1994/code/BlochTorreyExperiments-active/MyelinWaterTools/MWFLearning/examples/cvae_settings.toml"
+const settings = let
+    # Load default settings + merge in custom settings, if given
+    settings = TOML.parsefile(default_settings_file)
+    mergereducer!(x, y) = deepcopy(y) # fallback
+    mergereducer!(x::Dict, y::Dict) = merge!(mergereducer!, x, y)
+    if haskey(ENV, "SETTINGSFILE")
+        merge!(mergereducer!, settings, TOML.parsefile(ENV["SETTINGSFILE"]))
+    end
+    TOML.print(stdout, settings)
+    settings
+end
 
 const DATE_PREFIX = getnow() * "."
 const FILE_PREFIX = DATE_PREFIX * model_string(settings) * "."
@@ -30,11 +39,16 @@ const MT   = Matrix{T}
 const VMT  = VecOrMat{T}
 const CVT  = GPU ? CuVector{T} : Vector{T}
 maybegpu(x) = GPU ? Flux.gpu(x) : x
-savepath(folder, filename) = SAVE ? joinpath(savefolders[folder], FILE_PREFIX * filename) : nothing
 
 const savefoldernames = ["settings", "models", "log", "plots"]
 const savefolders = Dict{String,String}(savefoldernames .=> mkpath.(joinpath.(settings["dir"], savefoldernames)))
-SAVE && cp(settings_file, savepath("settings", "settings.toml"); force = true)
+savepath(folder, filename) = SAVE ? joinpath(savefolders[folder], FILE_PREFIX * filename) : nothing
+if SAVE
+    # Save + print resulting settings
+    open(savepath("settings", "settings.toml"); write = true) do io
+        TOML.print(io, settings)
+    end
+end
 
 # Load and prepare signal data
 @info "Preparing data..."
@@ -155,15 +169,16 @@ param_summary(m, labelbatch.(train_data), labelbatch(test_data));
 
 # Loss and accuracy function
 theta_weights()::CVT = inv.(settings["data"]["info"]["labwidth"][thetas_infer_idx]) .* unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT |> maybegpu |> CVT
-datanoise = (snr = T(settings["data"]["postprocess"]["SNR"]); snr ≤ 0 ? identity : @λ(y -> MWFLearning.add_rician(y, snr)))
+datanoise = let snr = T(settings["data"]["postprocess"]["SNR"]); snr ≤ 0 ? identity : @λ(y -> MWFLearning.add_rician(y, snr)); end
 trainloss = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, datanoise(y))
-θloss, θacc, θerr = make_losses(@λ(y -> m(datanoise(y); nsamples = 10)), settings["model"]["loss"], theta_weights())
+θloss, θacc, θerr = make_losses(@λ(y -> m(datanoise(y); nsamples = 1)), settings["model"]["loss"], theta_weights())
 
 # Optimizer
 opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
 lrfun(e) = MWFLearning.fixedlr(e,opt)
 
 # Global training state, accumulators, etc.
+timer = TimerOutput()
 state = Dict(
     :epoch                => 0,
     :best_acc             => 0.0,
@@ -178,58 +193,107 @@ state = Dict(
         :testing => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]))
 )
 
-update_lr_cb            = MWFLearning.make_update_lr_cb(state, opt, lrfun)
+update_lr_cb = let
+    lrcutoff = 0.9e-6
+    last_lr = nothing
+    curr_lr = lr(opt)
+    last_lr_update = 0
+    new_lr_fun = function()
+        LOSS_STD_WINDOW = 250
+        LOSS_STD_THRESH = 0.5
+        if length(state[:loop][:loss]) > 2 * LOSS_STD_WINDOW && state[:loop][:epoch][end] - last_lr_update > LOSS_STD_WINDOW
+            loss_std = std(state[:loop][:loss][end-LOSS_STD_WINDOW+1:end])
+            if loss_std > LOSS_STD_THRESH
+                last_lr_update = state[:loop][:epoch][end]
+                return curr_lr / √10
+            else
+                return curr_lr
+            end
+        else
+            return curr_lr
+        end
+    end
+    function()
+        # Update learning rate and exit if it has become to small
+        curr_lr = lr!(opt, new_lr_fun())
+        curr_epoch = isempty(state[:loop][:epoch]) ? 0 : state[:loop][:epoch][end]
+        if curr_lr < lrcutoff
+            @info("[$curr_epoch] -> Early-exiting: Learning rate has dropped below cutoff = $lrcutoff")
+            Flux.stop()
+        end
+        if last_lr === nothing
+            @info("[$curr_epoch] -> Initial learning rate: " * @sprintf("%.2e", curr_lr))
+        elseif last_lr != curr_lr
+            @info("[$curr_epoch] -> Learning rate updated: " * @sprintf("%.2e", last_lr) * " --> "  * @sprintf("%.2e", curr_lr))
+        end
+        last_lr = curr_lr
+        return nothing
+    end
+end
+
+# update_lr_cb            = MWFLearning.make_update_lr_cb(state, opt, lrfun)
 test_err_cb             = MWFLearning.make_test_err_cb(state, θloss, θacc, θerr, labelbatch(test_data))
 train_err_cb            = MWFLearning.make_train_err_cb(state, θloss, θacc, θerr, labelbatch.(train_data))
+checkpoint_state_cb     = MWFLearning.make_checkpoint_state_cb(state, savepath("log", "errors.bson"))
+checkpoint_model_cb     = MWFLearning.make_checkpoint_model_cb(state, m, opt, savepath("log", "")) # suffix set internally
 plot_errs_cb            = MWFLearning.make_plot_errs_cb(state, savepath("plots", "errs.png"); labelnames = permutedims(settings["data"]["info"]["labinfer"]))
 plot_ligocvae_losses_cb = MWFLearning.make_plot_ligocvae_losses_cb(state, savepath("plots", "ligocvae.png"))
-checkpoint_state_cb     = MWFLearning.make_checkpoint_state_cb(state, savepath("log", "errors.bson"))
 save_best_model_cb      = MWFLearning.make_save_best_model_cb(state, m, opt, savepath("log", "")) # suffix set internally
-checkpoint_model_cb     = MWFLearning.make_checkpoint_model_cb(state, m, opt, savepath("log", "")) # suffix set internally
 
 pretraincbs = Flux.Optimise.runall([
     update_lr_cb,
 ])
 
 posttraincbs = Flux.Optimise.runall([
-    epochthrottle(test_err_cb, state, 120),
-    epochthrottle(train_err_cb, state, 120),
-    epochthrottle(plot_errs_cb, state, 120),
-])
-
-loopcbs = Flux.Optimise.runall([
     save_best_model_cb,
-    epochthrottle(plot_ligocvae_losses_cb, state, 120),
-    epochthrottle(checkpoint_state_cb, state, 120),
-    epochthrottle(checkpoint_model_cb, state, 120),
+    Flux.throttle(test_err_cb, 60; leading = false), #TODO FIXME check save times
+    Flux.throttle(train_err_cb, 60; leading = false), #TODO FIXME check save times
+    Flux.throttle(checkpoint_state_cb, 300; leading = false), #TODO FIXME check save times
+    Flux.throttle(checkpoint_model_cb, 300; leading = false), #TODO FIXME check save times
+    Flux.throttle(plot_errs_cb, 300; leading = false), #TODO FIXME check save times
+    Flux.throttle(plot_ligocvae_losses_cb, 300; leading = false), #TODO FIXME check save times
 ])
 
 # Training Loop
 train_loop! = function()
-    for epoch in state[:epoch] .+ (1:settings["optimizer"]["epochs"])
+    starting_epoch = state[:epoch]
+    for epoch in starting_epoch .+ (1:settings["optimizer"]["epochs"])
         # Check for timeout
         (Dates.now() - SCRIPT_TIME_START > SCRIPT_TIMEOUT) && break
-        
-        # Train on mock and simulated data
-        state[:epoch] = epoch
-        pretraincbs() # pre-training callbacks
-        train_time = @elapsed begin
-            Flux.train!(trainloss, Flux.params(m), train_data, opt) # CuArrays.@sync
-            # Flux.train!(trainloss, Flux.params(m), MB_sampler, opt) # CuArrays.@sync
-            # Flux.train!(trainloss, Flux.params(m), BT_train_data, opt) # CuArrays.@sync
+
+        # Training epoch
+        @timeit timer "epoch" begin
+            state[:epoch] = epoch
+
+            @timeit timer "pretraincbs" pretraincbs() # pre-training callbacks
+            @timeit timer "batch loop" train_time = @elapsed for d in train_data
+                @timeit timer "forward" _, back = Flux.Zygote.pullback(() -> trainloss(d...), Flux.params(m))
+                @timeit timer "reverse" gs = back(1)
+                @timeit timer "update!" Flux.Optimise.update!(opt, Flux.params(m), gs)
+            end
+            @timeit timer "θacc" acc_time = @elapsed acc = θacc(labelbatch(test_data)...) |> Flux.cpu # CuArrays.@sync
+
+            # @info @sprintf("[%d] (%4d ms): Label accuracy: %.4f (%d ms)", epoch, 1000 * train_time, acc, 1000 * acc_time)
+
+            # Update loop values
+            @timeit timer "test H"    H_loss    = MWFLearning.H_LIGOCVAE(m, test_data...)
+            @timeit timer "test ELBO" ELBO_loss = MWFLearning.L_LIGOCVAE(m, test_data...)
+            @timeit timer "test KL"   KL_loss   = MWFLearning.KL_LIGOCVAE(m, test_data...)
+            push!(state[:loop][:epoch], epoch)
+            push!(state[:loop][:acc], acc)
+            push!(state[:loop][:loss], H_loss)
+            push!(state[:loop][:ELBO], ELBO_loss)
+            push!(state[:loop][:KL], KL_loss)
+
+            # Loop callbacks (plots etc.)
+            @timeit timer "posttraincbs" posttraincbs()
         end
-        acc_time = @elapsed acc = θacc(labelbatch(test_data)...) |> Flux.cpu # CuArrays.@sync
-        posttraincbs() # post-training callbacks
-        
-        @info @sprintf("[%d] (%4d ms): Label accuracy: %.4f (%d ms)", epoch, 1000 * train_time, acc, 1000 * acc_time)
-        
-        # Update loop values
-        push!(state[:loop][:epoch], epoch)
-        push!(state[:loop][:acc], acc)
-        push!(state[:loop][:loss], MWFLearning.H_LIGOCVAE(m, test_data...))
-        push!(state[:loop][:ELBO], MWFLearning.L_LIGOCVAE(m, test_data...))
-        push!(state[:loop][:KL], MWFLearning.KL_LIGOCVAE(m, test_data...))
-        loopcbs()
+
+        if mod(epoch, 250) == 0 #TODO
+            show(stdout, timer); println("\n")
+            # show(stdout, last(df[:, Not([:logsigma, :theta_fit_err])], 10)); println("\n")
+        end
+        (epoch == starting_epoch + 1) && TimerOutputs.reset_timer!(timer) # throw out initial loop (precompilation, first plot, etc.)
     end
 end
 
@@ -249,8 +313,8 @@ end
 
 @info "Computing resulting labels..."
 best_model   = SAVE ? BSON.load(savepath("log", "model-best.bson"))[:model] : deepcopy(m);
-eval_data = test_data
-# eval_data = (hcat(thetas.(BT_train_data)..., thetas(BT_test_data)), cat(signals.(BT_train_data)..., signals(BT_test_data); dims = 4))
+eval_data    = test_data
+# eval_data  = (hcat(thetas.(BT_train_data)..., thetas(BT_test_data)), cat(signals.(BT_train_data)..., signals(BT_test_data); dims = 4))
 true_thetas  = thetas(eval_data) |> Flux.cpu;
 true_signals = signals(eval_data) |> Flux.cpu;
 model_mu_std = best_model(true_signals; nsamples = 1000, stddev = true) |> Flux.cpu;
@@ -262,8 +326,8 @@ model_thetas, model_stds = model_mu_std[1:end÷2, ..], model_mu_std[end÷2+1:end
 # model_thetas = model_thetas[.., keep_indices]
 # model_stds   = model_stds[.., keep_indices]
 
-true_thetas = repeat(thetas(eval_data)[:,2:2], 1,500);
-true_signals = repeat(signals(eval_data)[:,:,:,2:2], 1,1,1,500);
+true_thetas = thetas(eval_data) #repeat(thetas(eval_data)[:,2:2], 1,500);
+true_signals = signals(eval_data) #repeat(signals(eval_data)[:,:,:,2:2], 1,1,1,500);
 model_thetas = best_model(true_signals; nsamples = 1, stddev = false) |> Flux.cpu;
 
 prediction_hist = function()
@@ -273,7 +337,7 @@ prediction_hist = function()
         err = scale .* (model_thetas[i,:] .- true_thetas[i,:])
         abs_μ, μ = round(mean(abs.(err)); sigdigits = 2), round(mean(err); sigdigits = 2)
         σ, IQR = round(std(err); sigdigits = 2), round(iqr(err); sigdigits = 2)
-        p = histogram(err; nbins = 100, normalized = true,
+        p = histogram(err; nbins = 50, normalized = true,
             grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
             label = settings["data"]["info"]["labinfer"][i] * " [$units]",
             title = "|μ| = $abs_μ, μ = $μ, σ = $σ", #, IQR = $IQR",
@@ -345,12 +409,11 @@ prediction_hist_single = function()
         )
     end
     
-    # t = [settings["data"]["info"]["labinfer"][i] * " = $(round(true_thetas[i,1];sigdigits=3)) [" * settings["data"]["info"]["labunits"][i] * "]" for i in 1:5]
-    t = [L"\cos\alpha = -0.95", L"g = 0.74", L"MWF = 0.23", L"T_2^{MW}/TE = 3.0", L"T_2^{IEW}/TE = 10.0"]
-    t = join(t, "\n")
+    annot = [settings["data"]["info"]["labinfer"][i] * " = $(round(true_thetas[i,1];sigdigits=3)) [" * settings["data"]["info"]["labunits"][i] * "]" for i in 1:5] |> t -> join(t, "\n")
+    # annot = [L"\cos\alpha = -0.95", L"g = 0.74", L"MWF = 0.23", L"T_2^{MW}/TE = 3.0", L"T_2^{IEW}/TE = 10.0"] |> t -> join(t, "\n")
     plot(
         [pred_hist_single(i) for i in 1:size(model_thetas, 1)]...,
-        plot(true_signals[:,1,1,1]; title = "MSE Signal vs. Echo Number", xlims = (1,32), titlefontsize = 10, label = "Example MSE Signal", annotate = (22,0.5,t))
+        plot(true_signals[:,1,1,1]; title = "MSE Signal vs. Echo Number", leg = nothing, xlims = (1,32), titlefontsize = 10, annotate = (22, 0.5, Plots.text(annot, 8))),
     )
 end
 @info "Plotting prediction histograms..."

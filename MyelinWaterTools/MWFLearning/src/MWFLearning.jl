@@ -38,7 +38,7 @@ export plot, plot!, mean, median, cov, std, var, quantile
 export getnow, savebson, epochthrottle
 export make_model, make_activation, model_summary, model_string
 export make_minibatch, training_batches, testing_batches, param_summary, make_losses, lr, lr!, features, labels
-export heightsize, batchsize, channelsize, log10range, linspace, logspace, unitsum
+export heightsize, batchsize, channelsize, log10range, linspace, logspace, unitsum, unitsum!
 export prepare_data, label_fun, init_data, init_labels
 
 # Layers

@@ -26,12 +26,12 @@ upper       = [ 1.00,  48.0 ]
 [data.preprocess]
 shuffle     = true
 SNR         = [50.0, 0.0] # Additive random noise
+chunk       = 32 # Chunk of signal to keep
+normalize   = "softmax" # Normalize input signals (softmax == sums to 1)
 [data.preprocess.zipper]
 apply       = false
-size        = 32
-[data.preprocess.chunk]
+[data.preprocess.magnitude]
 apply       = true
-size        = 32
 [data.preprocess.peel]
 biexp       = false # peel before applying wavelet
 makefrac    = true # convert component magnitudes to fractions

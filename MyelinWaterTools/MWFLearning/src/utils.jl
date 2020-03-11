@@ -158,9 +158,10 @@ log10range(a, b; length = 10) = 10 .^ range(log10(a), log10(b); length = length)
 @inline logspace(x1,x2,y1,y2) = x -> 10^linspace(x1, x2, log10(y1), log10(y2))(x)
 
 """
-    unitsum(x) = x ./ sum(x)
+    unitsum(x; dims = :) = x ./ sum(x; dims = dims)
 """
-unitsum(x) = x ./ sum(x)
+unitsum(x; dims = :) = x ./ sum(x; dims = dims)
+unitsum!(x; dims = :) = x ./= sum(x; dims = dims)
 
 """
     to_float_type_T(T, x)
@@ -175,21 +176,15 @@ to_float_type_T(T, x::AbstractVector{C}) where {C <: Complex} = convert(Vector{C
 to_float_type_T(T, x::AbstractMatrix{C}) where {C <: Complex} = convert(Matrix{Complex{T}}, x)
 
 """
-Normalize input complex signal data `z`.
+Extract `nTE` complex signal echoes from data `z`.
 Assume that `z` is sampled every `TE/n` seconds for some positive integer `n`.
 The output is the magnitude of the last `nTE` points sampled at a multiple of `TE`.
-to have the first point equal to 1.
 """
 function cplx_signal(z::AbstractVecOrMat{C}, nTE::Int = size(z,1) - 1) where {C <: Complex}
     n = size(z,1)
     dt = (n-1) ÷ nTE
     @assert n == 1 + dt * nTE
-    # Extract last nTE echoes, and normalize by the first point |S0| = |S(t=0)|.
-    # This sets |S(t=0)| = 1 for any domain, but allows all measurable points,
-    # i.e. S(t=TE), S(T=2TE), ..., to be unnormalized.
-    Z = z[n - dt * (nTE-1) : dt : n, ..]
-    Z ./= abs.(z[1:1, ..])
-    return Z
+    return z[n - dt * (nTE-1) : dt : n, ..]
 end
 
 """
@@ -379,7 +374,7 @@ function make_test_err_cb(state, lossfun, accfun, laberrfun, test_set)
             Flux.cpu(accfun(test_set...))    |> pushx!(state[:callbacks][:testing][:acc])
             Flux.cpu(laberrfun(test_set...)) |> pushx!(state[:callbacks][:testing][:labelerr])
         end
-        @info @sprintf("[%d] -> Updating testing error... (%d ms)", state[:epoch], 1000 * update_time)
+        # @info @sprintf("[%d] -> Updating testing error... (%d ms)", state[:epoch], 1000 * update_time)
     end
 end
 function make_train_err_cb(state, lossfun, accfun, laberrfun, train_set)
@@ -391,7 +386,7 @@ function make_train_err_cb(state, lossfun, accfun, laberrfun, train_set)
             mean([Flux.cpu(accfun(b...))    for b in train_set]) |> pushx!(state[:callbacks][:training][:acc])
             mean([Flux.cpu(laberrfun(b...)) for b in train_set]) |> pushx!(state[:callbacks][:training][:labelerr])
         end
-        @info @sprintf("[%d] -> Updating training error... (%d ms)", state[:epoch], 1000 * update_time)
+        # @info @sprintf("[%d] -> Updating training error... (%d ms)", state[:epoch], 1000 * update_time)
     end
 end
 function make_plot_errs_cb(state, filename = nothing; labelnames = "")
@@ -421,7 +416,7 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
                 !(filename === nothing) && savefig(fig, filename)
                 display(fig)
             end
-            @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[:epoch], 1000 * plot_time)
+            # @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[:epoch], 1000 * plot_time)
         catch e
             if e isa InterruptException
                 rethrow(e) # Training interrupted by user
@@ -437,7 +432,7 @@ function make_checkpoint_state_cb(state, filename = nothing)
         save_time = @elapsed let state = deepcopy(state)
             !(filename === nothing) && savebson(filename, @dict(state))
         end
-        @info @sprintf("[%d] -> Error checkpoint... (%d ms)", state[:epoch], 1000 * save_time)
+        # @info @sprintf("[%d] -> Error checkpoint... (%d ms)", state[:epoch], 1000 * save_time)
     end
 end
 function make_plot_gan_losses_cb(state, filename = nothing)
@@ -449,7 +444,7 @@ function make_plot_gan_losses_cb(state, filename = nothing)
                 !(filename === nothing) && savefig(fig, filename)
                 display(fig)
             end
-            @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[:epoch], 1000 * plot_time)
+            # @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[:epoch], 1000 * plot_time)
         catch e
             if e isa InterruptException
                 rethrow(e) # Training interrupted by user
@@ -474,7 +469,7 @@ function make_plot_ligocvae_losses_cb(state, filename = nothing)
                 !(filename === nothing) && savefig(fig, filename)
                 display(fig)
             end
-            @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[:epoch], 1000 * plot_time)
+            # @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[:epoch], 1000 * plot_time)
         catch e
             if e isa InterruptException
                 rethrow(e) # Training interrupted by user
@@ -519,7 +514,7 @@ function make_save_best_model_cb(state, model, opt, filename = nothing)
                     !(filename === nothing) && savebson(filename * "model-best.bson", @dict(model))
                     # !(filename === nothing) && savebson(filename * "opt-best.bson", @dict(opt)) #TODO BSON optimizer saving broken
                 end
-                @info @sprintf("[%d] -> New best accuracy; model saved (%d ms)", curr_epoch, 1000 * save_time)
+                @info @sprintf("[%d] -> New best accuracy %.4f; model saved (%4d ms)", curr_epoch, curr_acc, 1000 * save_time)
             catch e
                 @warn "Error saving best model..."
                 @warn sprint(showerror, e, catch_backtrace())
@@ -537,7 +532,7 @@ function make_checkpoint_model_cb(state, model, opt, filename = nothing)
                 !(filename === nothing) && savebson(filename * "model-checkpoint.bson", @dict(model))
                 # !(filename === nothing) && savebson(filename * "opt-checkpoint.bson", @dict(opt)) #TODO BSON optimizer saving broken
             end
-            @info @sprintf("[%d] -> Model checkpoint... (%d ms)", state[:epoch], 1000 * save_time)
+            # @info @sprintf("[%d] -> Model checkpoint... (%d ms)", state[:epoch], 1000 * save_time)
         catch e
             @warn "Error checkpointing model..."
             @warn sprint(showerror, e, catch_backtrace())

@@ -10,7 +10,7 @@ test_data   = "/project/st-arausch-1/jcd1994/ismrm2020/experiments/Spring-2020/p
 train_data  = "/project/st-arausch-1/jcd1994/ismrm2020/experiments/Spring-2020/permeability-training-1/train"
 val_batch   = "auto" # Auto treats entire validation set as one batch
 test_batch  = "auto" # Auto treats entire test set as one batch
-train_batch = 512
+train_batch = 1024 # Batch size for training
 [data.info]
 nfeatures   = "auto" # Height of input data
 nchannels   = "auto" # Number of input data channels
@@ -38,12 +38,13 @@ lower       = [] #[ 32.0, 0.00]
 upper       = [] #[ 64.0, 1.00]
 [data.preprocess]
 shuffle     = true
-SNR         = [40.0] # Gaussian noise on complex signal (0 == no noise)
-[data.preprocess.chunk]
+SNR         = [0.0] # Gaussian noise on complex signal (0 == no noise)
+chunk       = 32 # Chunk of signal to keep
+normalize   = "unitsum" # Normalize input signals (unitsum == signal sums to 1)
+[data.preprocess.magnitude]
 apply       = true
-size        = 32
 [data.postprocess]
-SNR         = 100.0 # Rician noise on magnitude signal (0 == no noise)
+SNR         = 40.0 # Rician noise on magnitude signal (0 == no noise)
 
 [model]
 loss      = "l2"
@@ -54,34 +55,32 @@ acc       = "rmse"
 # Xout    = 1 # Number of learned labels
 # Xout    = 5 # Number of learned labels
 Xout      = 6 # Number of learned labels
-Zdim      = 8 # Latent variable dimension
-Ndense    = [128, 128] # Sizes of inner dense layers
-# Ndense    = [128, 128, 128, 128] # Sizes of inner dense layers
-# Ndense    = [128, 128, 128, 128, 128, 128] # Sizes of inner dense layers
-act       = "leakyrelu"
+Nh        = 1 # Number of inner hidden dense layers
+Dh        = 128 # Dimension of inner hidden dense layers
+act       = "relu"
 # [model.ConvLIGOCVAE]
 # Xout      = 6  # Number of learned labels
 # Zdim      = 15 # Latent variable dimension
 # Nfeat     = 8  # Number of convolutional channels
 # Ndown     = 1  # Optional striding for downsampling
-# act       = "leakyrelu"
+# act       = "relu"
 # [model.RDNLIGOCVAE]
 # Xout      = 6  # Number of learned labels
 # Zdim      = 20 # Latent variable dimension
 # Nrdn      = 4  # Number of RDN + downsampling blocks
 # Ncat      = 2  # Number of concat blocks within RDN
 # Nfeat     = 16 # Number of convolutional channels + RDN growth rate
-# act       = "leakyrelu"
+# act       = "relu"
 
 [optimizer]
 epochs  = 1_000_000
 savemod = 1
 testmod = 1
 [optimizer.ADAM]
-lr      = 1e-5
+lr      = 3e-4
 beta    = [0.9, 0.999]
-decay   = 1e-5
-[optimizer.SGD]
-lr      = 1e-5
-rho     = 0.9
-decay   = 1e-5
+# decay   = 1e-5
+# [optimizer.SGD]
+# lr      = 1e-5
+# rho     = 0.9
+# decay   = 1e-5
