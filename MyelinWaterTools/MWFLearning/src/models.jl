@@ -912,9 +912,7 @@ exp_std(μ0, σ) = vcat(μ0, exp.(σ))
 exp_std(μ) = exp_std(split_mean_std(μ)...)
 ExpStd() = exp_std
 
-map_std(f, x) = exp_std(x)
-
-# Zygote tends to be faster differentiating broadcasted square.(x) than x.^2
+# Flux tends to be faster differentiating broadcasted square.(x) than x.^2
 square(x) = x*x
 
 function (m::LIGOCVAE)(y; nsamples::Int = 100, stddev = false)

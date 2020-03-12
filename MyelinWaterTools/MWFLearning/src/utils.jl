@@ -71,7 +71,7 @@ function make_losses(model, losstype, weights = nothing)
     mse = @λ((x,y) -> l2(x,y) * 1 // length(y))
     rmse = @λ((x,y) -> sqrt(mse(x,y)))
     mincrossent = @λ (y) -> -sum(y .* log.(y))
-    
+
     lossdict = Dict("l1" => l1, "l2" => l2, "crossent" => crossent, "mae" => mae, "mse" => mse, "rmse" => rmse, "mincrossent" => mincrossent)
     if losstype ∉ keys(lossdict)
         @warn "Unknown loss $(losstype); defaulting to mse"
@@ -94,14 +94,35 @@ lr!(opt, α) = (opt.eta = α; opt.eta)
 lr(opt::Flux.Optimiser) = lr(opt[1])
 lr!(opt::Flux.Optimiser, α) = lr!(opt[1], α)
 
-fixedlr(e,opt) = lr(opt) # Fixed learning rate
-geometriclr(e,opt,rate=100,factor=10^(1/4)) = mod(e, rate) == 0 ? lr(opt) / factor : lr(opt) # Drop lr every `rate` epochs
-findlr(e,opt,epochs=100,minlr=1e-6,maxlr=0.5) = e <= epochs ? logspace(1,epochs,minlr,maxlr)(e) : maxlr # Learning rate finder
-cyclelr(e,opt,lrstart=1e-5,lrmin=1e-6,lrmax=1e-2,lrwidth=50,lrtail=5) = # Learning rate cycling
+fixedlr(e, opt) = lr(opt) # Fixed learning rate
+geometriclr(e, opt; rate = 100, factor = √10) = mod(e, rate) == 0 ? lr(opt) / factor : lr(opt) # Drop lr every `rate` epochs
+clamplr(e, opt; lower = -Inf, upper = Inf) = clamp(lr(opt), lower, upper) # Clamp learning rate in [lower, upper]
+findlr(e, opt; epochs = 100, minlr = 1e-6, maxlr = 0.5) = e <= epochs ? logspace(1, epochs, minlr, maxlr)(e) : maxlr # Learning rate finder
+cyclelr(e, opt; lrstart = 1e-5, lrmin = 1e-6, lrmax = 1e-2, lrwidth = 50, lrtail = 5) = # Learning rate cycling
                      e <=   lrwidth          ? linspace(        1,            lrwidth, lrstart,   lrmax)(e) :
       lrwidth + 1 <= e <= 2*lrwidth          ? linspace(  lrwidth,          2*lrwidth,   lrmax, lrstart)(e) :
     2*lrwidth + 1 <= e <= 2*lrwidth + lrtail ? linspace(2*lrwidth, 2*lrwidth + lrtail, lrstart,   lrmin)(e) :
     lrmin
+
+function make_variancelr(state, opt; rate = 250, factor = √10, stdthresh = Inf)
+    last_lr_update = 0
+    function lrfun(e)
+        if isempty(state)
+            return lr(opt)
+        elseif e > 2 * rate && e - last_lr_update > rate
+            min_epoch = max(1, min(state[end, :epoch] - rate, rate))
+            df = dropmissing(state[(state.dataset .== :test) .& (min_epoch .<= state.epoch), [:epoch, :loss]])
+            if !isempty(df) && std(df[!, :loss]) > stdthresh
+                last_lr_update = e
+                return lr(opt) / √10
+            else
+                return lr(opt)
+            end
+        else
+            return lr(opt)
+        end
+    end
+end
 
 """
     batchsize(x::AbstractArray)
@@ -343,7 +364,8 @@ xavier_normal(args...; kwargs...) = xavier_normal(Float64, args...; kwargs...)
 function epochthrottle(f, state, epoch_rate)
     last_epoch = 0
     function epochthrottled(args...; kwargs...)
-        epoch = state[:epoch]
+        isempty(state) && return nothing
+        epoch = state[end, :epoch]
         if epoch >= last_epoch + epoch_rate
             last_epoch = epoch
             f(args...; kwargs...)
@@ -368,60 +390,84 @@ end
 function make_test_err_cb(state, lossfun, accfun, laberrfun, test_set)
     function()
         update_time = @elapsed begin
-            pushx!(d) = x -> push!(d, x)
-            push!(state[:callbacks][:testing][:epoch], state[:epoch])
-            Flux.cpu(lossfun(test_set...))   |> pushx!(state[:callbacks][:testing][:loss])
-            Flux.cpu(accfun(test_set...))    |> pushx!(state[:callbacks][:testing][:acc])
-            Flux.cpu(laberrfun(test_set...)) |> pushx!(state[:callbacks][:testing][:labelerr])
+            if !isempty(state)
+                row = findlast(==(:test), state.dataset)
+                state[row, :loss]     = Flux.cpu(lossfun(test_set...))
+                state[row, :acc]      = Flux.cpu(accfun(test_set...))
+                state[row, :labelerr] = Flux.cpu(laberrfun(test_set...))
+            end
         end
-        # @info @sprintf("[%d] -> Updating testing error... (%d ms)", state[:epoch], 1000 * update_time)
+        # @info @sprintf("[%d] -> Updating testing error... (%d ms)", state[row, :epoch], 1000 * update_time)
     end
 end
 function make_train_err_cb(state, lossfun, accfun, laberrfun, train_set)
     function()
         update_time = @elapsed begin
-            pushx!(d) = x -> push!(d, x)
-            push!(state[:callbacks][:training][:epoch], state[:epoch])
-            mean([Flux.cpu(lossfun(b...))   for b in train_set]) |> pushx!(state[:callbacks][:training][:loss])
-            mean([Flux.cpu(accfun(b...))    for b in train_set]) |> pushx!(state[:callbacks][:training][:acc])
-            mean([Flux.cpu(laberrfun(b...)) for b in train_set]) |> pushx!(state[:callbacks][:training][:labelerr])
+            if !isempty(state)
+                row = findlast(==(:train), state.dataset)
+                state[row, :loss]     = mean([Flux.cpu(lossfun(b...))   for b in train_set])
+                state[row, :acc]      = mean([Flux.cpu(accfun(b...))    for b in train_set])
+                state[row, :labelerr] = mean([Flux.cpu(laberrfun(b...)) for b in train_set])
+            end
         end
-        # @info @sprintf("[%d] -> Updating training error... (%d ms)", state[:epoch], 1000 * update_time)
+        # @info @sprintf("[%d] -> Updating training error... (%d ms)", state[row, :epoch], 1000 * update_time)
     end
 end
 function make_plot_errs_cb(state, filename = nothing; labelnames = "")
-    function err_subplots(k,v)
-        @unpack epoch, loss, acc, labelerr = v
-        idx = slidingindices(epoch)
-        epoch, loss, acc, labelerr = epoch[idx], loss[idx], acc[idx], labelerr[idx,:]
-        
-        laberr = permutedims(reduce(hcat, labelerr))
-        labcol = size(laberr,2) == 1 ? :blue : permutedims(RGB[cgrad(:darkrainbow)[z] for z in range(0.0, 1.0, length = size(laberr,2))])
-        minloss, maxacc = round(minimum(loss); sigdigits = 4), round(maximum(acc); sigdigits = 4)
-        commonkw = (xscale = :log10, xticks = log10ticks(epoch[1], epoch[end]), xrotation = 75.0, xformatter = x->string(round(Int,x)), lw = 3, legend = :best, titlefontsize = 8, tickfontsize = 6, legendfontsize = 6)
+    function err_subplots()
+        ps = Any[]
+        for dataset in unique(state.dataset)
+            window = 100
+            min_epoch = max(1, min(state[end, :epoch] - window, window))
+            df = state[(state.dataset .== dataset) .& (min_epoch .<= state.epoch), :]
 
-        p1 = plot(epoch, loss;   title = "Loss ($k: min = $minloss)", label = "loss", ylim = (minloss, quantile(loss, 0.95)), commonkw...)
-        p2 = plot(epoch, acc;    title = "Accuracy ($k: peak = $maxacc%)", label = "acc", yticks = 50:0.1:100, ylim = (clamp(maxacc, 50, 99) - 1.0, min(maxacc + 0.3, 100.0)), commonkw...)
-        p3 = plot(epoch, laberr; title = "Label Error ($k: rel. %)", label = labelnames, c = labcol, yticks = 0:100, ylim = (max(0, minimum(laberr) - 1.0), min(50, 1.2 * maximum(laberr[end,:]))), commonkw...) #min(50, quantile(vec(laberr), 0.90))
-        if k == :testing
-            idxloop = slidingindices(state[:loop][:epoch])
-            plot!(p2, state[:loop][:epoch][idxloop], state[:loop][:acc][idxloop]; label = "loop acc", lw = 1)
+            commonkw = (xscale = :log10, xticks = log10ticks(df[1, :epoch], df[end, :epoch]), xrotation = 75.0, xformatter = x->string(round(Int,x)), lw = 3, titlefontsize = 8, tickfontsize = 6, legend = :best, legendfontsize = 6)
+
+            dfp = dropmissing(df[!, [:epoch, :loss]])
+            I = unique(round.(Int, 10.0 .^ range(log10.(dfp.epoch[[1,end]])...; length = 10000)))
+            length(I) >= 5000 && (dfp = dfp[findall(in(I), dfp.epoch), :])
+            p1 = plot()
+            if !isempty(dfp)
+                minloss = round(minimum(dfp.loss); sigdigits = 4)
+                p1 = @df dfp plot(:epoch, :loss; title = "Loss ($dataset): min = $minloss)", label = "loss", ylim = (minloss, quantile(dfp.loss, 0.95)), commonkw...)
+            end
+
+            dfp = dropmissing(df[!, [:epoch, :acc]])
+            I = unique(round.(Int, 10.0 .^ range(log10.(dfp.epoch[[1,end]])...; length = 10000)))
+            length(I) >= 5000 && (dfp = dfp[findall(in(I), dfp.epoch), :])
+            p2 = plot()
+            if !isempty(dfp)
+                maxacc = round(maximum(dfp.acc); sigdigits = 4)
+                p2 = @df dfp plot(:epoch, :acc; title = "Accuracy ($dataset): peak = $maxacc%)", label = "acc", yticks = 50:0.1:100, ylim = (clamp(maxacc, 50, 99) - 1.0, min(maxacc + 0.3, 100.0)), commonkw...)
+            end
+
+            dfp = dropmissing(df[!, [:epoch, :labelerr]])
+            I = unique(round.(Int, 10.0 .^ range(log10.(dfp.epoch[[1,end]])...; length = 10000)))
+            length(I) >= 5000 && (dfp = dfp[findall(in(I), dfp.epoch), :])
+            p3 = plot()
+            if !isempty(dfp)
+                labelerr = permutedims(reduce(hcat, dfp[!, :labelerr]))
+                labcol = size(labelerr,2) == 1 ? :blue : permutedims(RGB[cgrad(:darkrainbow)[z] for z in range(0.0, 1.0, length = size(labelerr,2))])
+                p3 = @df dfp plot(:epoch, labelerr; title = "Label Error ($dataset): rel. %)", label = labelnames, c = labcol, yticks = 0:100, ylim = (max(0, minimum(labelerr) - 1.0), min(50, 1.2 * maximum(labelerr[end,:]))), commonkw...) #min(50, quantile(vec(labelerr), 0.90))
+            end
+
+            push!(ps, plot(p1, p2, p3; layout = (1,3)))
         end
-        plot(p1, p2, p3; layout = (1,3))
+        plot(ps...; layout = (length(ps), 1))
     end
     function()
         try
             plot_time = @elapsed begin
-                fig = plot([err_subplots(k,v) for (k,v) in state[:callbacks]]...; layout = (length(state[:callbacks]), 1))
+                fig = err_subplots()
                 !(filename === nothing) && savefig(fig, filename)
                 display(fig)
             end
-            # @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[:epoch], 1000 * plot_time)
+            # @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[end, :epoch], 1000 * plot_time)
         catch e
             if e isa InterruptException
                 rethrow(e) # Training interrupted by user
             else
-                @info @sprintf("[%d] -> PLOTTING FAILED...", state[:epoch])
+                @info @sprintf("[%d] -> PLOTTING FAILED...", state[end, :epoch])
                 @warn sprint(showerror, e, catch_backtrace())
             end
         end
@@ -432,24 +478,23 @@ function make_checkpoint_state_cb(state, filename = nothing)
         save_time = @elapsed let state = deepcopy(state)
             !(filename === nothing) && savebson(filename, @dict(state))
         end
-        # @info @sprintf("[%d] -> Error checkpoint... (%d ms)", state[:epoch], 1000 * save_time)
+        # @info @sprintf("[%d] -> Error checkpoint... (%d ms)", state[end, :epoch], 1000 * save_time)
     end
 end
 function make_plot_gan_losses_cb(state, filename = nothing)
     function()
         try
             plot_time = @elapsed begin
-                @unpack epoch, Gloss, Dloss, D_x, D_G_z = state[:loop]
-                fig = plot(epoch, [Gloss Dloss D_x D_G_z]; label = ["G Loss" "D loss" "D(x)" "D(G(z))"], lw = 3)
+                fig = @df state plot(:epoch, [:Gloss :Dloss :D_x :D_G_z]; label = ["G Loss" "D loss" "D(x)" "D(G(z))"], lw = 3)
                 !(filename === nothing) && savefig(fig, filename)
                 display(fig)
             end
-            # @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[:epoch], 1000 * plot_time)
+            # @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[end, :epoch], 1000 * plot_time)
         catch e
             if e isa InterruptException
                 rethrow(e) # Training interrupted by user
             else
-                @info @sprintf("[%d] -> PLOTTING FAILED...", state[:epoch])
+                @info @sprintf("[%d] -> PLOTTING FAILED...", state[end, :epoch])
                 @warn sprint(showerror, e, catch_backtrace())
             end
         end
@@ -459,22 +504,32 @@ function make_plot_ligocvae_losses_cb(state, filename = nothing)
     function()
         try
             plot_time = @elapsed begin
-                @unpack epoch, ELBO, KL, loss = state[:loop]
-                idx = slidingindices(epoch)
-                fig = plot(epoch[idx], [ELBO[idx], KL[idx], loss[idx]];
-                    title = L"Cross-entropy Loss $H$ vs. Epoch",
-                    label = [L"ELBO" L"KL" L"H = ELBO + KL"],
-                    xaxis = (:log10, log10ticks(epoch[idx[1]], epoch[idx[end]])), xrotation = 60.0,
-                    legend = :best, lw = 3, c = [:blue :orange :green], formatter = x->string(round(Int,x)))
+                ps = Any[]
+                for dataset in unique(state.dataset)
+                    window = 100
+                    min_epoch = max(1, min(state[end, :epoch] - window, window))
+                    dfp = dropmissing(state[(state.dataset .== dataset) .& (min_epoch .<= state.epoch), [:epoch, :ELBO, :KL, :loss]])
+                    I = unique(round.(Int, 10.0 .^ range(log10.(dfp.epoch[[1,end]])...; length = 10000)))
+                    length(I) >= 5000 && (dfp = dfp[findall(in(I), dfp.epoch), :])
+                    p = plot()
+                    if !isempty(dfp)
+                        commonkw = (xaxis = (:log10, log10ticks(dfp[1, :epoch], dfp[end, :epoch])), xrotation = 60.0, legend = :best, lw = 3, c = [:blue :orange :green], formatter = x->string(round(Int,x)))
+                        minloss = round(minimum(dfp.loss); sigdigits = 4)
+                        p = @df dfp plot(:epoch, [:ELBO :KL :loss];
+                            title = "H vs. epoch ($dataset): min = $minloss", commonkw...)
+                    end
+                    push!(ps, p)
+                end
+                fig = plot(ps...)
                 !(filename === nothing) && savefig(fig, filename)
                 display(fig)
             end
-            # @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[:epoch], 1000 * plot_time)
+            # @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[end, :epoch], 1000 * plot_time)
         catch e
             if e isa InterruptException
                 rethrow(e) # Training interrupted by user
             else
-                @info @sprintf("[%d] -> PLOTTING FAILED...", state[:epoch])
+                @info @sprintf("[%d] -> PLOTTING FAILED...", state[end, :epoch])
                 @warn sprint(showerror, e, catch_backtrace())
             end
         end
@@ -482,10 +537,12 @@ function make_plot_ligocvae_losses_cb(state, filename = nothing)
 end
 function make_update_lr_cb(state, opt, lrfun; lrcutoff = 1e-6)
     last_lr = nothing
-    curr_lr = 0.0
+    curr_lr = lr(opt)
     function()
         # Update learning rate and exit if it has become to small
-        curr_lr = lr!(opt, lrfun(state[:epoch]))
+        if !isempty(state)
+            curr_lr = lr!(opt, lrfun(state[end, :epoch]))
+        end
         if curr_lr < lrcutoff
             @info(" -> Early-exiting: Learning rate has dropped below cutoff = $lrcutoff")
             Flux.stop()
@@ -502,19 +559,21 @@ end
 function make_save_best_model_cb(state, model, opt, filename = nothing)
     function()
         # If this is the best accuracy we've seen so far, save the model out
-        curr_epoch = state[:epoch]
-        curr_acc = state[:loop][:acc][end]
-        if curr_acc >= state[:best_acc]
-            state[:best_acc] = curr_acc
-            state[:last_improved_epoch] = curr_epoch
+        isempty(state) && return nothing
+        df = state[state.dataset .== :test, :]
+        ismissing(df.acc[end]) && return nothing
+        isempty(skipmissing(df.acc)) && return nothing
+
+        best_acc = maximum(skipmissing(df.acc))
+        if df[end, :acc] == best_acc
             try
-                save_time = @elapsed let model = Flux.cpu(deepcopy(model)), opt = Flux.cpu(deepcopy(opt))
-                    weights = collect(Flux.params(model))
-                    !(filename === nothing) && savebson(filename * "weights-best.bson", @dict(weights))
+                save_time = @elapsed let model = Flux.cpu(deepcopy(model)) #, opt = Flux.cpu(deepcopy(opt))
+                    # weights = collect(Flux.params(model))
+                    # !(filename === nothing) && savebson(filename * "weights-best.bson", @dict(weights))
                     !(filename === nothing) && savebson(filename * "model-best.bson", @dict(model))
                     # !(filename === nothing) && savebson(filename * "opt-best.bson", @dict(opt)) #TODO BSON optimizer saving broken
                 end
-                @info @sprintf("[%d] -> New best accuracy %.4f; model saved (%4d ms)", curr_epoch, curr_acc, 1000 * save_time)
+                @info @sprintf("[%d] -> New best accuracy %.4f; model saved (%4d ms)", df[end, :epoch], df[end, :acc], 1000 * save_time)
             catch e
                 @warn "Error saving best model..."
                 @warn sprint(showerror, e, catch_backtrace())
@@ -526,13 +585,13 @@ end
 function make_checkpoint_model_cb(state, model, opt, filename = nothing)
     function()
         try
-            save_time = @elapsed let model = Flux.cpu(deepcopy(model)), opt = Flux.cpu(deepcopy(opt))
-                weights = collect(Flux.params(model))
-                !(filename === nothing) && savebson(filename * "weights-checkpoint.bson", @dict(weights))
+            save_time = @elapsed let model = Flux.cpu(deepcopy(model)) #, opt = Flux.cpu(deepcopy(opt))
+                # weights = collect(Flux.params(model))
+                # !(filename === nothing) && savebson(filename * "weights-checkpoint.bson", @dict(weights))
                 !(filename === nothing) && savebson(filename * "model-checkpoint.bson", @dict(model))
                 # !(filename === nothing) && savebson(filename * "opt-checkpoint.bson", @dict(opt)) #TODO BSON optimizer saving broken
             end
-            # @info @sprintf("[%d] -> Model checkpoint... (%d ms)", state[:epoch], 1000 * save_time)
+            # @info @sprintf("[%d] -> Model checkpoint... (%d ms)", state[end, :epoch], 1000 * save_time)
         catch e
             @warn "Error checkpointing model..."
             @warn sprint(showerror, e, catch_backtrace())

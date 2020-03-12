@@ -3,10 +3,10 @@ import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 # Pkg.instantiate()
 
-using Printf, TimerOutputs
 using Statistics: mean, median, std
 using StatsBase: quantile, sample, iqr
 using Base.Iterators: repeated, partition
+using Printf
 
 using MWFLearning
 # using CuArrays
@@ -55,7 +55,7 @@ end
 const data_set = prepare_data(settings)
 map(k -> data_set[k] = maybegpu(data_set[k]), (:training_data, :testing_data, :training_thetas, :testing_thetas))
 
-const BT_train_data = training_batches(data_set[:training_thetas], data_set[:training_data], settings["data"]["train_batch"])
+const BT_train_data = training_batches(data_set[:training_thetas], data_set[:training_data], settings["data"]["train_batch"]) # For overtraining: |> xy -> ((x, y) = xy[1]; [(x[.., 1:100], y[.., 1:100])])
 const BT_test_data = testing_batches(data_set[:testing_thetas], data_set[:testing_data])
 
 const thetas_infer_idx = 1:length(settings["data"]["info"]["labinfer"]) # thetas to learn during parameter inference
@@ -171,69 +171,31 @@ param_summary(m, labelbatch.(train_data), labelbatch(test_data));
 theta_weights()::CVT = inv.(settings["data"]["info"]["labwidth"][thetas_infer_idx]) .* unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT |> maybegpu |> CVT
 datanoise = let snr = T(settings["data"]["postprocess"]["SNR"]); snr ≤ 0 ? identity : @λ(y -> MWFLearning.add_rician(y, snr)); end
 trainloss = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, datanoise(y))
-θloss, θacc, θerr = make_losses(@λ(y -> m(datanoise(y); nsamples = 1)), settings["model"]["loss"], theta_weights())
+θloss, θacc, θerr = make_losses(@λ(y -> m(datanoise(y); nsamples = 10)), settings["model"]["loss"], theta_weights())
 
 # Optimizer
 opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
-lrfun(e) = MWFLearning.fixedlr(e,opt)
-
-# Global training state, accumulators, etc.
-timer = TimerOutput()
-state = Dict(
-    :epoch                => 0,
-    :best_acc             => 0.0,
-    :last_improved_epoch  => 0,
-    :acc_thresh           => 100.0, # Never stop
-    :drop_lr_thresh       => typemax(Int), # Drop step size after this many stagnant epochs
-    :converged_thresh     => typemax(Int), # Call model converged after this many stagnant epochs
-    :loop => Dict( # Values which are updated within the training loop explicitly
-        :epoch => Int[], :acc => T[], :loss => T[], :ELBO => T[], :KL => T[]),
-    :callbacks => Dict( # Values which are updated within callbacks (should not be touched in training loop)
-        :training => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]),
-        :testing => Dict(:epoch => Int[], :loss => T[], :acc => T[], :labelerr => VT[]))
+lrfun(e) = clamp(
+    MWFLearning.geometriclr(e, opt;
+        rate = settings["optimizer"]["lrrate"],
+        factor = settings["optimizer"]["lrdrop"],
+    ),
+    settings["optimizer"]["lrbounds"]...
 )
 
-update_lr_cb = let
-    lrcutoff = 0.9e-6
-    last_lr = nothing
-    curr_lr = lr(opt)
-    last_lr_update = 0
-    new_lr_fun = function()
-        LOSS_STD_WINDOW = 250
-        LOSS_STD_THRESH = 0.5
-        if length(state[:loop][:loss]) > 2 * LOSS_STD_WINDOW && state[:loop][:epoch][end] - last_lr_update > LOSS_STD_WINDOW
-            loss_std = std(state[:loop][:loss][end-LOSS_STD_WINDOW+1:end])
-            if loss_std > LOSS_STD_THRESH
-                last_lr_update = state[:loop][:epoch][end]
-                return curr_lr / √10
-            else
-                return curr_lr
-            end
-        else
-            return curr_lr
-        end
-    end
-    function()
-        # Update learning rate and exit if it has become to small
-        curr_lr = lr!(opt, new_lr_fun())
-        curr_epoch = isempty(state[:loop][:epoch]) ? 0 : state[:loop][:epoch][end]
-        if curr_lr < lrcutoff
-            @info("[$curr_epoch] -> Early-exiting: Learning rate has dropped below cutoff = $lrcutoff")
-            Flux.stop()
-        end
-        if last_lr === nothing
-            @info("[$curr_epoch] -> Initial learning rate: " * @sprintf("%.2e", curr_lr))
-        elseif last_lr != curr_lr
-            @info("[$curr_epoch] -> Learning rate updated: " * @sprintf("%.2e", last_lr) * " --> "  * @sprintf("%.2e", curr_lr))
-        end
-        last_lr = curr_lr
-        return nothing
-    end
-end
+# Global state
+timer = TimerOutput()
+state = DataFrame(
+    :epoch    => Int[], # mandatory field
+    :dataset  => Symbol[], # mandatory field
+    :loss     => Union{T, Missing}[],
+    :acc      => Union{T, Missing}[],
+    :ELBO     => Union{T, Missing}[],
+    :KL       => Union{T, Missing}[],
+    :labelerr => Union{VT, Missing}[],
+)
 
-# update_lr_cb            = MWFLearning.make_update_lr_cb(state, opt, lrfun)
-test_err_cb             = MWFLearning.make_test_err_cb(state, θloss, θacc, θerr, labelbatch(test_data))
-train_err_cb            = MWFLearning.make_train_err_cb(state, θloss, θacc, θerr, labelbatch.(train_data))
+update_lr_cb            = MWFLearning.make_update_lr_cb(state, opt, lrfun)
 checkpoint_state_cb     = MWFLearning.make_checkpoint_state_cb(state, savepath("log", "errors.bson"))
 checkpoint_model_cb     = MWFLearning.make_checkpoint_model_cb(state, m, opt, savepath("log", "")) # suffix set internally
 plot_errs_cb            = MWFLearning.make_plot_errs_cb(state, savepath("plots", "errs.png"); labelnames = permutedims(settings["data"]["info"]["labinfer"]))
@@ -246,52 +208,63 @@ pretraincbs = Flux.Optimise.runall([
 
 posttraincbs = Flux.Optimise.runall([
     save_best_model_cb,
-    Flux.throttle(test_err_cb, 60; leading = false), #TODO FIXME check save times
-    Flux.throttle(train_err_cb, 60; leading = false), #TODO FIXME check save times
-    Flux.throttle(checkpoint_state_cb, 300; leading = false), #TODO FIXME check save times
-    Flux.throttle(checkpoint_model_cb, 300; leading = false), #TODO FIXME check save times
-    Flux.throttle(plot_errs_cb, 300; leading = false), #TODO FIXME check save times
-    Flux.throttle(plot_ligocvae_losses_cb, 300; leading = false), #TODO FIXME check save times
+    Flux.throttle(checkpoint_state_cb, 300; leading = false), #TODO
+    Flux.throttle(checkpoint_model_cb, 300; leading = false), #TODO
+    Flux.throttle(plot_errs_cb, 300; leading = false), #TODO
+    Flux.throttle(plot_ligocvae_losses_cb, 300; leading = false), #TODO
 ])
 
 # Training Loop
 train_loop! = function()
-    starting_epoch = state[:epoch]
+    starting_epoch = isempty(state) ? 0 : state[end, :epoch]
+    set_or_add!(x, I...) = ismissing(state[I...]) ? state[I...] = x/length(train_data) : state[I...] += x/length(train_data)
     for epoch in starting_epoch .+ (1:settings["optimizer"]["epochs"])
         # Check for timeout
         (Dates.now() - SCRIPT_TIME_START > SCRIPT_TIMEOUT) && break
 
         # Training epoch
         @timeit timer "epoch" begin
-            state[:epoch] = epoch
+            # Pre-training callbacks
+            @timeit timer "pretraincbs" pretraincbs()
 
-            @timeit timer "pretraincbs" pretraincbs() # pre-training callbacks
-            @timeit timer "batch loop" train_time = @elapsed for d in train_data
-                @timeit timer "forward" _, back = Flux.Zygote.pullback(() -> trainloss(d...), Flux.params(m))
+            # Training loop
+            push!(state, [epoch; :train; missings(size(state,2)-2)])
+
+            @timeit timer "train loop" for d in train_data
+                @timeit timer "forward" ℓ, back = Flux.Zygote.pullback(() -> trainloss(d...), Flux.params(m))
                 @timeit timer "reverse" gs = back(1)
                 @timeit timer "update!" Flux.Optimise.update!(opt, Flux.params(m), gs)
+
+                # Update training losses periodically
+                set_or_add!(ℓ, lastindex(state,1), :loss)
+                if mod(epoch, 10) == 0 #TODO
+                    @timeit timer "θerr" set_or_add!(θerr(labelbatch(d)...), lastindex(state,1), :labelerr)
+                    @timeit timer "θacc" set_or_add!(θacc(labelbatch(d)...), lastindex(state,1), :acc)
+                    @timeit timer "ELBO" set_or_add!(MWFLearning.L_LIGOCVAE(m, d...), lastindex(state,1), :ELBO)
+                    @timeit timer "KL"   set_or_add!(MWFLearning.KL_LIGOCVAE(m, d...), lastindex(state,1), :KL)
+                end
             end
-            @timeit timer "θacc" acc_time = @elapsed acc = θacc(labelbatch(test_data)...) |> Flux.cpu # CuArrays.@sync
 
-            # @info @sprintf("[%d] (%4d ms): Label accuracy: %.4f (%d ms)", epoch, 1000 * train_time, acc, 1000 * acc_time)
+            # Testing evaluation
+            push!(state, [epoch; :test; missings(size(state,2)-2)])
 
-            # Update loop values
-            @timeit timer "test H"    H_loss    = MWFLearning.H_LIGOCVAE(m, test_data...)
-            @timeit timer "test ELBO" ELBO_loss = MWFLearning.L_LIGOCVAE(m, test_data...)
-            @timeit timer "test KL"   KL_loss   = MWFLearning.KL_LIGOCVAE(m, test_data...)
-            push!(state[:loop][:epoch], epoch)
-            push!(state[:loop][:acc], acc)
-            push!(state[:loop][:loss], H_loss)
-            push!(state[:loop][:ELBO], ELBO_loss)
-            push!(state[:loop][:KL], KL_loss)
+            if mod(epoch, 10) == 0 #TODO
+                @timeit timer "test eval" begin
+                    @timeit timer "θerr" state[end, :labelerr] = θerr(labelbatch(test_data)...)
+                    @timeit timer "θacc" state[end, :acc]      = θacc(labelbatch(test_data)...)
+                    @timeit timer "H"    state[end, :loss]     = MWFLearning.H_LIGOCVAE(m, test_data...)
+                    @timeit timer "ELBO" state[end, :ELBO]     = MWFLearning.L_LIGOCVAE(m, test_data...)
+                    @timeit timer "KL"   state[end, :KL]       = MWFLearning.KL_LIGOCVAE(m, test_data...)
+                end
+            end
 
-            # Loop callbacks (plots etc.)
+            # Post-training callbacks
             @timeit timer "posttraincbs" posttraincbs()
         end
 
-        if mod(epoch, 250) == 0 #TODO
+        if mod(epoch, 500) == 0 #TODO
             show(stdout, timer); println("\n")
-            # show(stdout, last(df[:, Not([:logsigma, :theta_fit_err])], 10)); println("\n")
+            show(stdout, last(state, 10)); println("\n")
         end
         (epoch == starting_epoch + 1) && TimerOutputs.reset_timer!(timer) # throw out initial loop (precompilation, first plot, etc.)
     end
@@ -382,7 +355,7 @@ prediction_ribbon = function()
 
         p = plot(_x, _y; ribbon = _σ,
             fillalpha = 0.5,
-            marker = :dot, markersize = 2, grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
+            marker = :circle, markersize = 2, grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
             label = settings["data"]["info"]["labinfer"][i] * " [$units]",
         )
         p = plot!(p, identity, ylims(p)...; line = (:dash, 2, :red), label = L"y = x")

@@ -17,21 +17,11 @@ nchannels   = "auto" # Number of input data channels
 nlabels     = "auto" # Number of output labels
 labmean     = "auto" # Label means
 labwidth    = "auto" # Label distribution widths
-# labnames  = ["cosd(alpha)", "log(TE*K)", "gratio", "mwf", "T2mw/TE", "T2iew/TE", "iwf", "ewf", "iewf", "T2iw/TE", "T2ew/TE", "T1mw/TE", "T1iw/TE", "T1ew/TE", "T1iew/TE"]
-# labinfer  = ["cosd(alpha)", "log(TE*K)", "gratio", "mwf", "T2mw/TE", "T2iew/TE"]
-# labweights  = [1.0, 1.0, 1.0,   1.0,   1.0, 1.0] # Weights for loss function
-# labscale    = [1.0, 1.0, 100.0, 100.0, 1.0, 1.0] # scale labels before plotting
-# labunits    = ["cosd(°)", "log(um)", "%", "%", "ms/ms", "ms/ms"] # label units, after scaling
 labnames    = ["cosd(alpha)", "gratio", "mwf", "T2mw/TE", "T2iew/TE", "log(TE*K)", "iwf", "ewf", "iewf", "T2iw/TE", "T2ew/TE", "T1mw/TE", "T1iw/TE", "T1ew/TE", "T1iew/TE"]
 labinfer    = ["cosd(alpha)", "gratio", "mwf", "T2mw/TE", "T2iew/TE", "log(TE*K)"]
 labweights  = [1.0, 1.0,   1.0,   1.0, 1.0, 1.0] # Weights for loss function
 labscale    = [1.0, 100.0, 100.0, 1.0, 1.0, 1.0] # scale labels before plotting
 labunits    = ["cosd(°)", "%", "%", "ms/ms", "ms/ms", "log(um)"] # label units, after scaling
-# labnames    = ["log(TE*K)", "cosd(alpha)", "gratio", "mwf", "T2mw/TE", "T2iew/TE", "iwf", "ewf", "iewf", "T2iw/TE", "T2ew/TE", "T1mw/TE", "T1iw/TE", "T1ew/TE", "T1iew/TE"]
-# labinfer    = ["log(TE*K)"]
-# labweights  = [1.0] # Weights for loss function
-# labscale    = [1.0] # scale labels before plotting
-# labunits    = ["log(um)"] # label units, after scaling
 [data.filter]
 labnames    = [] #["nTE", "K" ]
 lower       = [] #[ 32.0, 0.00]
@@ -52,11 +42,10 @@ acc       = "rmse"
 # [model.load]
 # path    = "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/ismrm2020/pretrained-dense-model-with-perm/2019-11-01-T-16-12-14-111.acc=rmse_loss=l2_DenseLIGOCVAE_Ndense1=128_Ndense2=128_Ndense3=128_Ndense4=128_Ndense5=128_Ndense6=128_Xout=6_Zdim=20_act=leakyrelu.model-checkpoint.bson"
 [model.DenseLIGOCVAE]
-# Xout    = 1 # Number of learned labels
-# Xout    = 5 # Number of learned labels
 Xout      = 6 # Number of learned labels
 Nh        = 1 # Number of inner hidden dense layers
 Dh        = 128 # Dimension of inner hidden dense layers
+Zdim      = 8 # Latent variable dimension
 act       = "relu"
 # [model.ConvLIGOCVAE]
 # Xout      = 6  # Number of learned labels
@@ -73,12 +62,13 @@ act       = "relu"
 # act       = "relu"
 
 [optimizer]
-epochs  = 1_000_000
-savemod = 1
-testmod = 1
+epochs   = 1_000_000
+lrrate   = 5000
+lrdrop   = 3.1623
+lrbounds = [1e-5, 0.1]
 [optimizer.ADAM]
-lr      = 3e-4
-beta    = [0.9, 0.999]
+lr       = 3.1623e-4
+beta     = [0.9, 0.999]
 # decay   = 1e-5
 # [optimizer.SGD]
 # lr      = 1e-5

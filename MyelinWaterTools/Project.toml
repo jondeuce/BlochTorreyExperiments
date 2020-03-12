@@ -1,6 +1,7 @@
 [deps]
 BlochTorreyUtils = "0c7a1e50-026b-442a-b0e0-468c598a8155"
 CirclePackingUtils = "c9560edf-630f-4f0d-a7cd-be4fc65435d6"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 DistMesh = "b4596390-acbb-11e9-1f4c-bf4694421f57"
 DrWatson = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
 ExpmV = "e7fedf88-7a0b-11e8-3562-f39b41888c88"

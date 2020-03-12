@@ -34,6 +34,8 @@ export plot, plot!, mean, median, cov, std, var, quantile
 @reexport using DrWatson
 @reexport using Parameters
 @reexport using LegibleLambdas
+@reexport using DataFrames
+@reexport using TimerOutputs
 
 export getnow, savebson, epochthrottle
 export make_model, make_activation, model_summary, model_string
