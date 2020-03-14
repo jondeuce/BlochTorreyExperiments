@@ -10,7 +10,7 @@ pyplot(size = (800,600))
 function flatten_dict!(dout::Dict{<:AbstractString, Any}, din::Dict{<:AbstractString, Any})
     for (k,v) in din
         if v isa Dict
-            vnew = Dict{String, Any}(k .* "." .* keys(v) .=> deepcopy(values(v)))
+            vnew = Dict{String, Any}([k * "." * kin => deepcopy(vin) for (kin,vin) in v])
             flatten_dict!(dout, vnew)
         else
             dout[k] = deepcopy(v)
@@ -21,7 +21,10 @@ end
 flatten_dict(din::Dict{<:AbstractString, Any}) = flatten_dict!(Dict{String, Any}(), din)
 
 function read_to_dataframe(sweep_dir)
-    sweep = DataFrame(flatten_dict(TOML.parsefile(joinpath(sweep_dir, "sweep_settings.toml"))))
+    sweep = DataFrame()
+    for (k,v) in flatten_dict(TOML.parsefile(joinpath(sweep_dir, "sweep_settings.toml")))
+        sweep = hcat(sweep, DataFrame(Symbol(k) => typeof(v)[v]))
+    end
     state = BSON.load(joinpath(sweep_dir, "log", first(filter!(s->endswith(s, ".errors.bson"), readdir(joinpath(sweep_dir, "log"))))))[:state]
     if state isa Dict
         function dict_to_df(dataset)
@@ -41,12 +44,18 @@ function read_to_dataframe(sweep_dir)
         state = vcat(dict_to_df(:training), dict_to_df(:testing))
     end
     state = state[state.dataset .== :test, :]
+    labelerr = skipmissing(state.labelerr)
     metrics = DataFrame(
-        :loss    => quantile(skipmissing(state.loss), 0.001),
-        :acc     => quantile(skipmissing(state.acc), 0.999),
-        :mwf     => quantile((x->x[3]).(skipmissing(state.labelerr)), 0.001),
-        :infsup  => quantile((x->maximum(x[2:5])).(skipmissing(state.labelerr)), 0.001),
-        :infmean => quantile((x->mean(x[2:5])).(skipmissing(state.labelerr)), 0.001),
+        :loss         => minimum(skipmissing(state.loss)),
+        :acc          => maximum(skipmissing(state.acc)),
+        :cosd_alpha   => minimum((x->x[1]).(labelerr)),
+        :g_ratio      => minimum((x->x[2]).(labelerr)),
+        :mwf          => minimum((x->x[3]).(labelerr)),
+        :rel_T2mw     => minimum((x->x[4]).(labelerr)),
+        :rel_T2iew    => minimum((x->x[5]).(labelerr)),
+        :log_rel_K    => minimum((x->x[6]).(labelerr)),
+        :inf_sup_iqr  => minimum((x->maximum(sort(x[2:end-1]))).(labelerr)),
+        :inf_mean_iqr => minimum((x->mean(sort(x[2:end-1]))).(labelerr)),
     )
     return sweep, metrics
 end
@@ -74,8 +83,9 @@ function read_results(results_dir)
 end
 
 # Read results to DataFrame
-results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v1"
-df, sweep_temp, metrics_temp = read_results(results_dir);
+results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v2"
+sweep_dir = joinpath(results_dir, "sweep")
+df, sweep_temp, metrics_temp = read_results(sweep_dir);
 
 # Write sorted DataFrame to text file
 foreach(names(metrics_temp)) do metric
@@ -111,7 +121,7 @@ function make_plots(df, sweepcols, metric, thresh = 1.0)
     return p
 end
 foreach(names(metrics_temp)) do metric
-    p = make_plots(df, names(sweep_temp)[1:end-5], metric)
+    p = make_plots(df, names(sweep_temp), metric)
     savefig(p, joinpath(results_dir, "results-by-$metric.png"))
 end
 

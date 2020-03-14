@@ -46,6 +46,7 @@ Xout      = 6 # Number of learned labels
 Nh        = 1 # Number of inner hidden dense layers
 Dh        = 128 # Dimension of inner hidden dense layers
 Zdim      = 8 # Latent variable dimension
+dropout   = 0.3 # Dropout layer
 act       = "relu"
 # [model.ConvLIGOCVAE]
 # Xout      = 6  # Number of learned labels

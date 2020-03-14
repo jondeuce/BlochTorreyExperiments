@@ -1140,11 +1140,12 @@ function ConvLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int =
 end
 
 function DenseLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
-        Xout   :: Int = nlabels, # Number of output variables (can be used to marginalize over inputs)
-        Zdim   :: Int = 10, # Latent variable dimensions
-        Nh     :: Int = 2, # Number of inner hidden dense layers
-        Dh     :: Int = nfeatures, # Dimension of inner hidden dense layers
-        act    :: Symbol = :leakyrelu, # Activation function
+        Xout    :: Int = nlabels, # Number of output variables (can be used to marginalize over inputs)
+        Zdim    :: Int = 10, # Latent variable dimensions
+        Nh      :: Int = 2, # Number of inner hidden dense layers
+        Dh      :: Int = nfeatures, # Dimension of inner hidden dense layers
+        dropout :: T  = 0.0, # Dropout following dense layer (0.0 is none)
+        act     :: Symbol = :leakyrelu, # Activation function
     ) where {T}
 
     Ny, Cy, Nx = nfeatures, nchannels, nlabels
@@ -1153,13 +1154,15 @@ function DenseLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int 
     NonLearnableDiag(α, β) = (a = deepcopy(α); b = deepcopy(β); return @λ(x -> a .* x .+ b))
     MuStdScale() = NonLearnableDiag(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
     XYScale() = NonLearnableDiag([inv.(labwidth); ones(T, Ny*Cy)], [-labmean./labwidth; zeros(T, Ny*Cy)]) # [x; y] vector -> x scaled and shifted (x range -> [-0.5, 0.5]), y unchanged
+    MaybeDropout() = dropout == 0 ? identity : Flux.Dropout(dropout)
 
     # Data/feature encoder r_θ1(z|y): y -> μ_r = (μ_r0, σ_r^2)
     E1 = let Nin = Ny*Cy, Nout = 2*Zdim
         Flux.Chain(
             DenseResize(),
             Flux.Dense(Nin, Dh, actfun),
-            [Flux.Dense(Dh, Dh, actfun) for _ in 1:Nh]...,
+            MaybeDropout(),
+            [Flux.Chain(Flux.Dense(Dh, Dh, actfun), MaybeDropout()) for _ in 1:Nh]...,
             Flux.Dense(Dh, Nout),
             ExpStd(),
         ) |> m -> Flux.paramtype(T, m)
@@ -1171,7 +1174,8 @@ function DenseLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int 
             @λ(xy -> vcat(xy[1], DenseResize()(xy[2]))),
             XYScale(),
             Flux.Dense(Nin, Dh, actfun),
-            [Flux.Dense(Dh, Dh, actfun) for _ in 1:Nh]...,
+            MaybeDropout(),
+            [Flux.Chain(Flux.Dense(Dh, Dh, actfun), MaybeDropout()) for _ in 1:Nh]...,
             Flux.Dense(Dh, Nout),
             ExpStd(),
         ) |> m -> Flux.paramtype(T, m)
@@ -1182,7 +1186,8 @@ function DenseLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int 
         Flux.Chain(
             @λ(zy -> vcat(zy[1], DenseResize()(zy[2]))),
             Flux.Dense(Nin, Dh, actfun),
-            [Flux.Dense(Dh, Dh, actfun) for _ in 1:Nh]...,
+            MaybeDropout(),
+            [Flux.Chain(Flux.Dense(Dh, Dh, actfun), MaybeDropout()) for _ in 1:Nh]...,
             Flux.Dense(Dh, Nout),
             ExpStd(),
             MuStdScale(),
