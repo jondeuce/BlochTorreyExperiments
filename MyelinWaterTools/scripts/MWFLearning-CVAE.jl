@@ -174,7 +174,11 @@ trainloss = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, datanoise(y))
 θloss, θacc, θerr = make_losses(@λ(y -> m(datanoise(y); nsamples = 10)), settings["model"]["loss"], theta_weights())
 
 # Optimizer
-opt = Flux.ADAM(settings["optimizer"]["ADAM"]["lr"], (settings["optimizer"]["ADAM"]["beta"]...,))
+opt = Flux.ADAMW(
+    settings["optimizer"]["ADAM"]["lr"],
+    (settings["optimizer"]["ADAM"]["beta"]...,),
+    settings["optimizer"]["ADAM"]["decay"],
+)
 lrfun(e) = clamp(
     MWFLearning.geometriclr(e, opt;
         rate = settings["optimizer"]["lrrate"],

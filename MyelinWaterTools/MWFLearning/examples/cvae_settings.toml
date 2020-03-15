@@ -70,7 +70,7 @@ lrbounds = [1e-5, 0.1]
 [optimizer.ADAM]
 lr       = 3.1623e-4
 beta     = [0.9, 0.999]
-# decay   = 1e-5
+decay    = 1e-5
 # [optimizer.SGD]
 # lr      = 1e-5
 # rho     = 0.9

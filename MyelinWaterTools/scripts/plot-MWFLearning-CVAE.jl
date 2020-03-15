@@ -46,7 +46,7 @@ function read_to_dataframe(sweep_dir)
     state = state[state.dataset .== :test, :]
     labelerr = skipmissing(state.labelerr)
     metrics = DataFrame(
-        :loss         => minimum(skipmissing(state.loss)),
+        :loss         => minimum(skipmissing(state.loss)) - sweep[1,Symbol("model.DenseLIGOCVAE.Zdim")]*(log(2π)-1)/2, # Correct for different Zdim's
         :acc          => maximum(skipmissing(state.acc)),
         :cosd_alpha   => minimum((x->x[1]).(labelerr)),
         :g_ratio      => minimum((x->x[2]).(labelerr)),
@@ -83,7 +83,7 @@ function read_results(results_dir)
 end
 
 # Read results to DataFrame
-results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v2"
+results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v3"
 sweep_dir = joinpath(results_dir, "sweep")
 df, sweep_temp, metrics_temp = read_results(sweep_dir);
 
@@ -127,9 +127,11 @@ end
 
 nothing
 
-# using Flux
-# model = BSON.load(joinpath(sweep_dir, "22", "best-model.bson"))["model"] |> deepcopy;
-# for (i,layer) in enumerate(model)
-#     layer isa Flux.Dense && savefig(heatmap([layer.W[end:-1:1,:] repeat(layer.b, 1, 10)]), "dense$i.png")
-# end
-# @show sum(length, params(model));
+#=
+using Flux
+model = BSON.load(joinpath(sweep_dir, "22", "best-model.bson"))["model"] |> deepcopy;
+for (i,layer) in enumerate(model)
+    layer isa Flux.Dense && savefig(heatmap([layer.W[end:-1:1,:] repeat(layer.b, 1, 10)]), "dense$i.png")
+end
+@show sum(length, params(model));
+=#
