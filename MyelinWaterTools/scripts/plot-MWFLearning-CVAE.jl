@@ -1,6 +1,10 @@
 using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 
+####
+#### Plot sweep results
+####
+
 using GlobalUtils
 using MAT, BSON, TOML, DataFrames
 using Statistics, StatsPlots
@@ -131,6 +135,10 @@ end
 
 nothing
 
+####
+#### Visualize learned dense layers
+####
+
 using MWFLearning
 
 heatscale(x) = sign(x) * log(1+sqrt(abs(x)));
@@ -147,5 +155,3 @@ rm.(filter!(s -> startswith(s,"dense-") && endswith(s,".png"), readdir(".")));
 saveheatmap(model.E1, "dense-E1");
 saveheatmap(model.E2, "dense-E2");
 saveheatmap(model.D, "dense-D");
-#=
-=#
