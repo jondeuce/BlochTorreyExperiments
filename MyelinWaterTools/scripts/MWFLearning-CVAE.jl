@@ -169,9 +169,9 @@ param_summary(m, labelbatch.(train_data), labelbatch(test_data));
 
 # Loss and accuracy function
 theta_weights()::CVT = inv.(settings["data"]["info"]["labwidth"][thetas_infer_idx]) .* unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT |> maybegpu |> CVT
-datanoise = let snr = T(settings["data"]["postprocess"]["SNR"]); snr ≤ 0 ? identity : @λ(y -> MWFLearning.add_rician(y, snr)); end
-trainloss = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, datanoise(y))
-θloss, θacc, θerr = make_losses(@λ(y -> m(datanoise(y); nsamples = 10)), settings["model"]["loss"], theta_weights())
+data_noise(y) = (snr = T(settings["data"]["postprocess"]["SNR"]); nrm = settings["data"]["preprocess"]["normalize"]::String; y = snr > 0 ? MWFLearning.add_rician(y, snr) : y; y = nrm == "unitsum" ? unitsum(y; dims = 1) : y; return y)
+trainloss = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, data_noise(y))
+θloss, θacc, θerr = make_losses(@λ(y -> m(data_noise(y); nsamples = 10)), settings["model"]["loss"], theta_weights())
 
 # Optimizer
 opt = Flux.ADAMW(

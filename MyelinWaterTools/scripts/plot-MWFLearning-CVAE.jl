@@ -1,11 +1,13 @@
 using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 
+using GlobalUtils
 using MAT, BSON, TOML, DataFrames
 using Statistics, StatsPlots
 # pyplot(size = (1200,800))
 pyplot(size = (800,600))
 # pyplot(size = (500,400))
+empty!(Revise.queue_errors)
 
 function flatten_dict!(dout::Dict{<:AbstractString, Any}, din::Dict{<:AbstractString, Any})
     for (k,v) in din
@@ -75,8 +77,10 @@ function read_results(results_dir)
     results = hcat(DataFrame(:folder => String[]), sweep_temp, metrics_temp)
     for item in readdir(results_dir)
         if isdir(joinpath(results_dir, item)) && isfile(joinpath(results_dir, item, "sweep_settings.toml")) && !isempty(filter!(s->endswith(s, ".errors.bson"), readdir(joinpath(results_dir, item, "log"))))
-            sweep, metrics = read_to_dataframe(joinpath(results_dir, item))
-            results = append!(results, hcat(DataFrame(:folder => item), sweep, metrics))
+            tryshow("Error reading directory: $item") do
+                sweep, metrics = read_to_dataframe(joinpath(results_dir, item))
+                results = append!(results, hcat(DataFrame(:folder => item), sweep, metrics))
+            end
         end
     end
     return results, sweep_temp, metrics_temp
@@ -127,11 +131,21 @@ end
 
 nothing
 
+using MWFLearning
+
+heatscale(x) = sign(x) * log(1+sqrt(abs(x)));
+saveheatmap(c::Flux.Chain, name = "") = foreach(((i,l),) -> saveheatmap(l, name * "-$i"), enumerate(c.layers));
+saveheatmap(l::Flux.Dense, name = "") = savefig(plot(heatmap(heatscale.(l.W[end:-1:1,:]); xticks = size(l.W,2)÷4 * (0:4), yticks = size(l.W,1)÷4 * (0:4)), heatmap(heatscale.(l.b[:,:]); xticks = 0:1); layout = @layout([a{0.9w} b{0.1w}])), @show(name));
+saveheatmap(l, name = "") = nothing;
+
+# model = BSON.load(joinpath(sweep_dir, "22", "best-model.bson"))["model"] |> deepcopy;
+model_best_dir = joinpath(sweep_dir, "46", "log");
+model_best_file = filter!(s -> endswith(s, ".model-best.bson"), readdir(model_best_dir))[1];
+model = BSON.load(joinpath(model_best_dir, model_best_file))[:model] |> deepcopy;
+
+rm.(filter!(s -> startswith(s,"dense-") && endswith(s,".png"), readdir(".")));
+saveheatmap(model.E1, "dense-E1");
+saveheatmap(model.E2, "dense-E2");
+saveheatmap(model.D, "dense-D");
 #=
-using Flux
-model = BSON.load(joinpath(sweep_dir, "22", "best-model.bson"))["model"] |> deepcopy;
-for (i,layer) in enumerate(model)
-    layer isa Flux.Dense && savefig(heatmap([layer.W[end:-1:1,:] repeat(layer.b, 1, 10)]), "dense$i.png")
-end
-@show sum(length, params(model));
 =#

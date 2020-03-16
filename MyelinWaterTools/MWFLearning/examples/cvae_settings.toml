@@ -10,7 +10,7 @@ test_data   = "/project/st-arausch-1/jcd1994/ismrm2020/experiments/Spring-2020/p
 train_data  = "/project/st-arausch-1/jcd1994/ismrm2020/experiments/Spring-2020/permeability-training-1/train"
 val_batch   = "auto" # Auto treats entire validation set as one batch
 test_batch  = "auto" # Auto treats entire test set as one batch
-train_batch = 1024 # Batch size for training
+train_batch = 512 # Batch size for training
 [data.info]
 nfeatures   = "auto" # Height of input data
 nchannels   = "auto" # Number of input data channels
@@ -34,7 +34,7 @@ normalize   = "unitsum" # Normalize input signals (unitsum == signal sums to 1)
 [data.preprocess.magnitude]
 apply       = true
 [data.postprocess]
-SNR         = 40.0 # Rician noise on magnitude signal (0 == no noise)
+SNR         = 50.0 # Rician noise on magnitude signal (0 == no noise)
 
 [model]
 loss      = "l2"
@@ -43,10 +43,10 @@ acc       = "rmse"
 # path    = "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/ismrm2020/pretrained-dense-model-with-perm/2019-11-01-T-16-12-14-111.acc=rmse_loss=l2_DenseLIGOCVAE_Ndense1=128_Ndense2=128_Ndense3=128_Ndense4=128_Ndense5=128_Ndense6=128_Xout=6_Zdim=20_act=leakyrelu.model-checkpoint.bson"
 [model.DenseLIGOCVAE]
 Xout      = 6 # Number of learned labels
-Nh        = 1 # Number of inner hidden dense layers
-Dh        = 128 # Dimension of inner hidden dense layers
-Zdim      = 8 # Latent variable dimension
-dropout   = 0.3 # Dropout layer
+Nh        = 2 # Number of inner hidden dense layers
+Dh        = 256 # Dimension of inner hidden dense layers
+Zdim      = 12 # Latent variable dimension
+dropout   = 0.1 # Dropout layer
 act       = "relu"
 # [model.ConvLIGOCVAE]
 # Xout      = 6  # Number of learned labels
@@ -64,13 +64,13 @@ act       = "relu"
 
 [optimizer]
 epochs   = 1_000_000
-lrrate   = 5000
+lrrate   = 1_000_000
 lrdrop   = 3.1623
 lrbounds = [1e-5, 0.1]
 [optimizer.ADAM]
 lr       = 3.1623e-4
 beta     = [0.9, 0.999]
-decay    = 1e-5
+decay    = 0.0
 # [optimizer.SGD]
 # lr      = 1e-5
 # rho     = 0.9
