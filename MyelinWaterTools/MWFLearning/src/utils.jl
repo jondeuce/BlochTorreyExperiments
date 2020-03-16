@@ -513,10 +513,11 @@ function make_plot_ligocvae_losses_cb(state, filename = nothing)
                     length(I) >= 5000 && (dfp = dfp[findall(in(I), dfp.epoch), :])
                     p = plot()
                     if !isempty(dfp)
-                        commonkw = (xaxis = (:log10, log10ticks(dfp[1, :epoch], dfp[end, :epoch])), xrotation = 60.0, legend = :best, lw = 3, c = [:blue :orange :green], formatter = x->string(round(Int,x)))
-                        minloss = round(minimum(dfp.loss); sigdigits = 4)
-                        p = @df dfp plot(:epoch, [:ELBO :KL :loss];
-                            title = "H vs. epoch ($dataset): min = $minloss", commonkw...)
+                        commonkw = (xaxis = (:log10, log10ticks(dfp[1, :epoch], dfp[end, :epoch])), xrotation = 60.0, legend = :best, lw = 3, xformatter = x->string(round(Int,x)))
+                        pKL   = @df dfp plot(:epoch, :KL;   title =   "KL vs. epoch ($dataset): max = $(round(maximum(dfp.KL);   sigdigits = 4))", lab = "KL",   c = :orange, commonkw...)
+                        pELBO = @df dfp plot(:epoch, :ELBO; title = "ELBO vs. epoch ($dataset): min = $(round(minimum(dfp.ELBO); sigdigits = 4))", lab = "ELBO", c = :blue,   commonkw...)
+                        pH    = @df dfp plot(:epoch, :loss; title =    "H vs. epoch ($dataset): min = $(round(minimum(dfp.loss); sigdigits = 4))", lab = "loss", c = :green,  commonkw...)
+                        p     = plot(pKL, pELBO, pH; layout = (3,1))
                     end
                     push!(ps, p)
                 end

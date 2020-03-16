@@ -942,7 +942,7 @@ function (m::LIGOCVAE)(y; nsamples::Int = 100, stddev = false)
 end
 
 # Cross-entropy loss function
-function H_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}; gamma = 1) where {T}
+function H_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}; gamma::T = one(T)) where {T}
     μr0, σr = split_mean_std(m.E1(y))
     μq0, σq = split_mean_std(m.E2((x,y)))
     zq = sample_mv_normal(μq0, σq)
@@ -955,7 +955,7 @@ function H_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}; gamma
     # KLdiv = sum(@. (σq2 + square(μr0 - μq0)) / σr2 + log(σr2 / σq2)) / (2*Nbatch) - T(Zdim/2) # KL-divergence contribution to cross-entropy
     # ELBO = sum(@. square(xout - μx0) / σx2 + log(σx2)) / (2*Nbatch) + T(Zdim*log(2π)/2) # Negative log-likelihood/ELBO contribution to cross-entropy
     KLdiv = sum(@. (σq2 + square(μr0 - μq0)) / σr2 + log(σr2 / σq2)) / (2*Nbatch) # KL-divergence contribution to cross-entropy #TODO FIXME
-    ELBO = sum(@. square(xout - μx0) / σx2 + log(σx2)) / 2 # Negative log-likelihood/ELBO contribution to cross-entropy #TODO FIXME
+    ELBO = sum(@. square(xout - μx0) / σx2 + log(σx2)) / (2*Nbatch) # Negative log-likelihood/ELBO contribution to cross-entropy #TODO FIXME
 
     return gamma * ELBO + KLdiv
 end
@@ -984,7 +984,7 @@ function L_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where
     σx2, xout = square.(σx), x[1:Xout,:]
 
     # ELBO = sum(@. square(xout - μx0) / σx2 + log(σx2)) / (2*Nbatch) + T(Zdim*log(2π)/2) # Negative log-likelihood/ELBO contribution to cross-entropy
-    ELBO = sum(@. square(xout - μx0) / σx2 + log(σx2)) / 2 # Negative log-likelihood/ELBO contribution to cross-entropy #TODO FIXME
+    ELBO = sum(@. square(xout - μx0) / σx2 + log(σx2)) / (2*Nbatch) # Negative log-likelihood/ELBO contribution to cross-entropy #TODO FIXME
 
     return ELBO
 end

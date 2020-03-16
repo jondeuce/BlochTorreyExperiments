@@ -39,6 +39,7 @@ SNR         = 50.0 # Rician noise on magnitude signal (0 == no noise)
 [model]
 loss      = "l2"
 acc       = "rmse"
+gamma     = 10.0 # Reweighting factor: loss = gamma * ELBO + KLdiv
 # [model.load]
 # path    = "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/ismrm2020/pretrained-dense-model-with-perm/2019-11-01-T-16-12-14-111.acc=rmse_loss=l2_DenseLIGOCVAE_Ndense1=128_Ndense2=128_Ndense3=128_Ndense4=128_Ndense5=128_Ndense6=128_Xout=6_Zdim=20_act=leakyrelu.model-checkpoint.bson"
 [model.DenseLIGOCVAE]

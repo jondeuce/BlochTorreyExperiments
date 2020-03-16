@@ -164,13 +164,14 @@ train_data, test_data = BT_train_data, BT_test_data
 # Construct model
 @info "Constructing model..."
 @unpack m = MWFLearning.make_model(settings)[1] |> maybegpu;
+# m = BSON.load("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v3/sweep/46/log/2020-03-14-T-13-46-22-300.acc=rmse_loss=l2_DenseLIGOCVAE_Dh=256_Nh=2_Xout=6_Zdim=12_act=relu_dropout=0.1.model-best.bson")[:model] |> deepcopy; #TODO FIXME
 model_summary(m, savepath("models", "architecture.txt"));
 param_summary(m, labelbatch.(train_data), labelbatch(test_data));
 
 # Loss and accuracy function
 theta_weights()::CVT = inv.(settings["data"]["info"]["labwidth"][thetas_infer_idx]) .* unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT |> maybegpu |> CVT
 data_noise(y) = (snr = T(settings["data"]["postprocess"]["SNR"]); nrm = settings["data"]["preprocess"]["normalize"]::String; y = snr > 0 ? MWFLearning.add_rician(y, snr) : y; y = nrm == "unitsum" ? unitsum(y; dims = 1) : y; return y)
-trainloss = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, data_noise(y))
+trainloss = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, data_noise(y); gamma = T(settings["model"]["gamma"]))
 θloss, θacc, θerr = make_losses(@λ(y -> m(data_noise(y); nsamples = 10)), settings["model"]["loss"], theta_weights())
 
 # Optimizer
@@ -256,7 +257,7 @@ train_loop! = function()
                 @timeit timer "test eval" begin
                     @timeit timer "θerr" state[end, :labelerr] = θerr(labelbatch(test_data)...)
                     @timeit timer "θacc" state[end, :acc]      = θacc(labelbatch(test_data)...)
-                    @timeit timer "H"    state[end, :loss]     = MWFLearning.H_LIGOCVAE(m, test_data...)
+                    @timeit timer "H"    state[end, :loss]     = MWFLearning.H_LIGOCVAE(m, test_data...; gamma = T(settings["model"]["gamma"]))
                     @timeit timer "ELBO" state[end, :ELBO]     = MWFLearning.L_LIGOCVAE(m, test_data...)
                     @timeit timer "KL"   state[end, :KL]       = MWFLearning.KL_LIGOCVAE(m, test_data...)
                 end
