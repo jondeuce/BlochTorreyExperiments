@@ -262,7 +262,7 @@ train_loop! = function()
             # Testing evaluation
             push!(state, [epoch; :test; missings(size(state,2)-2)])
 
-            if mod(epoch, 10) == 0 #TODO
+            if mod(epoch, 25) == 0 #TODO
                 @timeit timer "test eval" begin
                     @timeit timer "θerr" state[end, :labelerr] = θerr(labelbatch(test_data)...)
                     @timeit timer "θacc" state[end, :acc]      = θacc(labelbatch(test_data)...)
@@ -276,7 +276,7 @@ train_loop! = function()
             @timeit timer "posttraincbs" posttraincbs()
         end
 
-        if mod(epoch, 500) == 0 #TODO
+        if mod(epoch, 1000) == 0 #TODO
             show(stdout, timer); println("\n")
             show(stdout, last(state, 10)); println("\n")
         end
