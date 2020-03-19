@@ -5,6 +5,7 @@ Pkg.activate(joinpath(@__DIR__, ".."))
 #### Plot sweep results
 ####
 
+using MWFLearning
 using GlobalUtils
 using MAT, BSON, TOML, DataFrames
 using Statistics, StatsPlots
@@ -26,12 +27,14 @@ function flatten_dict!(dout::Dict{<:AbstractString, Any}, din::Dict{<:AbstractSt
 end
 flatten_dict(din::Dict{<:AbstractString, Any}) = flatten_dict!(Dict{String, Any}(), din)
 
+findendswith(dir, suffix) = filter!(s -> endswith(s, suffix), readdir(dir)) |> x -> isempty(x) ? nothing : joinpath(dir, first(x))
+
 function read_to_dataframe(sweep_dir)
     sweep = DataFrame()
     for (k,v) in flatten_dict(TOML.parsefile(joinpath(sweep_dir, "sweep_settings.toml")))
         sweep = hcat(sweep, DataFrame(Symbol(k) => typeof(v)[v]))
     end
-    state = BSON.load(joinpath(sweep_dir, "log", first(filter!(s->endswith(s, ".errors.bson"), readdir(joinpath(sweep_dir, "log"))))))[:state]
+    state = BSON.load(findendswith(joinpath(sweep_dir, "log"), ".errors.backup.bson"))[:state]
     if state isa Dict
         function dict_to_df(dataset)
             nrows = length(state[:callbacks][dataset][:epoch])
@@ -50,9 +53,11 @@ function read_to_dataframe(sweep_dir)
         state = vcat(dict_to_df(:training), dict_to_df(:testing))
     end
     state = state[state.dataset .== :test, :]
+    # dropmissing!(state) # drop rows with missings
+    filter!(r -> all(x -> !((x isa Number && isnan(x)) || (x isa AbstractArray{<:Number} && any(isnan, x))), r), state) # drop rows with NaNs
     labelerr = skipmissing(state.labelerr)
     metrics = DataFrame(
-        :loss         => minimum(skipmissing(state.loss)) - sweep[1,Symbol("model.DenseLIGOCVAE.Zdim")]*(log(2π)-1)/2, # Correct for different Zdim's
+        :loss         => minimum(skipmissing(state.loss)), # - sweep[1, Symbol("model.DenseLIGOCVAE.Zdim")]*(log(2π)-1)/2, # Correct for different Zdim's
         :acc          => maximum(skipmissing(state.acc)),
         :cosd_alpha   => minimum((x->x[1]).(labelerr)),
         :g_ratio      => minimum((x->x[2]).(labelerr)),
@@ -66,23 +71,33 @@ function read_to_dataframe(sweep_dir)
     return sweep, metrics
 end
 
-function dataframe_template(results_dir)
-    for item in readdir(results_dir)
-        if isdir(joinpath(results_dir, item)) && isfile(joinpath(results_dir, item, "sweep_settings.toml")) && !isempty(filter!(s->endswith(s, ".errors.bson"), readdir(joinpath(results_dir, item, "log"))))
-            sweep, metrics = read_to_dataframe(joinpath(results_dir, item))
-            return sweep[1:0,:]::DataFrame, metrics[1:0,:]::DataFrame
+function check_read_path(sweep_dir, item)
+    isdir(joinpath(sweep_dir, item)) &&
+    isdir(joinpath(sweep_dir, item, "log")) &&
+    isfile(joinpath(sweep_dir, item, "sweep_settings.toml")) &&
+    !isnothing(findendswith(joinpath(sweep_dir, item, "log"), ".errors.backup.bson"))
+end
+
+function dataframe_template(sweep_dir)
+    for item in readdir(sweep_dir)
+        if check_read_path(sweep_dir, item)
+            templates = tryshow("Error reading directory: $item") do
+                sweep, metrics = read_to_dataframe(joinpath(sweep_dir, item))
+                return sweep[1:0,:]::DataFrame, metrics[1:0,:]::DataFrame
+            end
+            !isnothing(templates) && return templates
         end
     end
     error("No results found")
 end
 
-function read_results(results_dir)
-    sweep_temp, metrics_temp = dataframe_template(results_dir)
+function read_results(sweep_dir)
+    sweep_temp, metrics_temp = dataframe_template(sweep_dir)
     results = hcat(DataFrame(:folder => String[]), sweep_temp, metrics_temp)
-    for item in readdir(results_dir)
-        if isdir(joinpath(results_dir, item)) && isfile(joinpath(results_dir, item, "sweep_settings.toml")) && !isempty(filter!(s->endswith(s, ".errors.bson"), readdir(joinpath(results_dir, item, "log"))))
+    for item in readdir(sweep_dir)
+        if check_read_path(sweep_dir, item)
             tryshow("Error reading directory: $item") do
-                sweep, metrics = read_to_dataframe(joinpath(results_dir, item))
+                sweep, metrics = read_to_dataframe(joinpath(sweep_dir, item))
                 results = append!(results, hcat(DataFrame(:folder => item), sweep, metrics))
             end
         end
@@ -91,8 +106,8 @@ function read_results(results_dir)
 end
 
 # Read results to DataFrame
-results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v3"
-sweep_dir = joinpath(results_dir, "sweep")
+results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4";
+sweep_dir = joinpath(results_dir, "sweep");
 df, sweep_temp, metrics_temp = read_results(sweep_dir);
 
 # Write sorted DataFrame to text file
@@ -139,19 +154,47 @@ nothing
 #### Visualize learned dense layers
 ####
 
-using MWFLearning
-
 heatscale(x) = sign(x) * log(1+sqrt(abs(x)));
 saveheatmap(c::Flux.Chain, name = "") = foreach(((i,l),) -> saveheatmap(l, name * "-$i"), enumerate(c.layers));
 saveheatmap(l::Flux.Dense, name = "") = savefig(plot(heatmap(heatscale.(l.W[end:-1:1,:]); xticks = size(l.W,2)÷4 * (0:4), yticks = size(l.W,1)÷4 * (0:4)), heatmap(heatscale.(l.b[:,:]); xticks = 0:1); layout = @layout([a{0.9w} b{0.1w}])), @show(name));
 saveheatmap(l, name = "") = nothing;
 
 # model = BSON.load(joinpath(sweep_dir, "22", "best-model.bson"))["model"] |> deepcopy;
-model_best_dir = joinpath(sweep_dir, "46", "log");
-model_best_file = filter!(s -> endswith(s, ".model-best.bson"), readdir(model_best_dir))[1];
-model = BSON.load(joinpath(model_best_dir, model_best_file))[:model] |> deepcopy;
+model = BSON.load(findendswith(joinpath(sweep_dir, "2", "log"), ".model-best.bson"))[:model] |> deepcopy;
 
 rm.(filter!(s -> startswith(s,"dense-") && endswith(s,".png"), readdir(".")));
 saveheatmap(model.E1, "dense-E1");
 saveheatmap(model.E2, "dense-E2");
 saveheatmap(model.D, "dense-D");
+
+#=
+let results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4/sweep"
+
+    function _check_read_path(results_dir, dir)
+        isdir(joinpath(results_dir, dir)) &&
+        isdir(joinpath(results_dir, dir, "log")) &&
+        isfile(joinpath(results_dir, dir, "sweep_settings.toml")) &&
+        !isnothing(findendswith(joinpath(results_dir, dir, "log"), ".errors.bson")) # &&
+        # isnothing(findendswith(joinpath(results_dir, dir, "log"), ".errors.backup.bson"))
+    end
+
+    for dir in sort!(filter!(s->isdir(joinpath(results_dir,s)), readdir(results_dir)); by = s -> parse(Int, s))
+        if _check_read_path(results_dir, dir)
+            @info dir
+            tryshow("Error reading directory: $dir") do
+                state_file             = findendswith(joinpath(results_dir, dir, "log"), "errors.bson")
+                model_best_file        = findendswith(joinpath(results_dir, dir, "log"), "model-best.bson")
+                model_checkpoint_file  = findendswith(joinpath(results_dir, dir, "log"), "model-checkpoint.bson")
+                @time state            = BSON.load(state_file)
+                @time model_best       = BSON.load(model_best_file)
+                @time model_checkpoint = BSON.load(model_checkpoint_file)
+
+                state[:state] = deepcopy(dropmissing(state[:state]))
+                @time BSON.bson(state_file[1:end-5] * ".backup.bson", state)
+            end
+        end
+    end
+end
+=#
+
+nothing

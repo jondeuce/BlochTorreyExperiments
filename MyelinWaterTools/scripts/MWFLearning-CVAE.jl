@@ -23,6 +23,10 @@ const settings = let
     if haskey(ENV, "SETTINGSFILE")
         merge!(mergereducer!, settings, TOML.parsefile(ENV["SETTINGSFILE"]))
     end
+    # if true #TODO FIXME
+    #     # merge!(mergereducer!, settings, TOML.parsefile("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4/sweep/83/settings/2020-03-17-T-14-03-45-210.acc=rmse_gamma=1_loss=l2_DenseLIGOCVAE_Dh=256_Nh=2_Xout=6_Zdim=8_act=relu_dropout=0.01.settings.toml"))
+    #     merge!(mergereducer!, settings, TOML.parsefile("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4/sweep/263/settings/2020-03-17-T-15-25-02-869.acc=rmse_gamma=100_loss=l2_DenseLIGOCVAE_Dh=256_Nh=2_Xout=6_Zdim=8_act=relu_dropout=0.01.settings.toml"))
+    # end
     TOML.print(stdout, settings)
     settings
 end
@@ -164,14 +168,17 @@ train_data, test_data = BT_train_data, BT_test_data
 # Construct model
 @info "Constructing model..."
 @unpack m = MWFLearning.make_model(settings)[1] |> maybegpu;
-# m = BSON.load("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v3/sweep/46/log/2020-03-14-T-13-46-22-300.acc=rmse_loss=l2_DenseLIGOCVAE_Dh=256_Nh=2_Xout=6_Zdim=12_act=relu_dropout=0.1.model-best.bson")[:model] |> deepcopy; #TODO FIXME
+# m = BSON.load("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4/sweep/83/log/2020-03-17-T-14-03-45-210.acc=rmse_gamma=1_loss=l2_DenseLIGOCVAE_Dh=256_Nh=2_Xout=6_Zdim=8_act=relu_dropout=0.01.model-best.bson")[:model] |> deepcopy; #TODO FIXME
+# m = BSON.load("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4/sweep/263/log/2020-03-17-T-15-25-02-869.acc=rmse_gamma=100_loss=l2_DenseLIGOCVAE_Dh=256_Nh=2_Xout=6_Zdim=8_act=relu_dropout=0.01.model-best.bson")[:model] |> deepcopy; #TODO FIXME
 model_summary(m, savepath("models", "architecture.txt"));
 param_summary(m, labelbatch.(train_data), labelbatch(test_data));
 
 # Loss and accuracy function
 theta_weights()::CVT = inv.(settings["data"]["info"]["labwidth"][thetas_infer_idx]) .* unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT |> maybegpu |> CVT
 data_noise(y) = (snr = T(settings["data"]["postprocess"]["SNR"]); nrm = settings["data"]["preprocess"]["normalize"]::String; y = snr > 0 ? MWFLearning.add_rician(y, snr) : y; y = nrm == "unitsum" ? unitsum(y; dims = 1) : y; return y)
-trainloss = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, data_noise(y); gamma = T(settings["model"]["gamma"]))
+H_loss  = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, data_noise(y); gamma = T(settings["model"]["gamma"]))
+L_loss  = @λ (x,y) -> MWFLearning.L_LIGOCVAE(m, x, data_noise(y))
+KL_loss = @λ (x,y) -> MWFLearning.KL_LIGOCVAE(m, x, data_noise(y))
 θloss, θacc, θerr = make_losses(@λ(y -> m(data_noise(y); nsamples = 10)), settings["model"]["loss"], theta_weights())
 
 # Optimizer
@@ -199,9 +206,11 @@ state = DataFrame(
     :KL       => Union{T, Missing}[],
     :labelerr => Union{VT, Missing}[],
 )
+# state = BSON.load("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4/sweep/83/log/2020-03-17-T-14-03-45-210.acc=rmse_gamma=1_loss=l2_DenseLIGOCVAE_Dh=256_Nh=2_Xout=6_Zdim=8_act=relu_dropout=0.01.errors.bson")[:state] |> deepcopy #TODO FIXME
+# state = BSON.load("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4/sweep/263/log/2020-03-17-T-15-25-02-869.acc=rmse_gamma=100_loss=l2_DenseLIGOCVAE_Dh=256_Nh=2_Xout=6_Zdim=8_act=relu_dropout=0.01.errors.bson")[:state] |> deepcopy #TODO FIXME
 
 update_lr_cb            = MWFLearning.make_update_lr_cb(state, opt, lrfun)
-checkpoint_state_cb     = MWFLearning.make_checkpoint_state_cb(state, savepath("log", "errors.bson"))
+checkpoint_state_cb     = MWFLearning.make_checkpoint_state_cb(state, savepath("log", "errors.bson"); filtermissings = true, filternans = true)
 checkpoint_model_cb     = MWFLearning.make_checkpoint_model_cb(state, m, opt, savepath("log", "")) # suffix set internally
 plot_errs_cb            = MWFLearning.make_plot_errs_cb(state, savepath("plots", "errs.png"); labelnames = permutedims(settings["data"]["info"]["labinfer"]))
 plot_ligocvae_losses_cb = MWFLearning.make_plot_ligocvae_losses_cb(state, savepath("plots", "ligocvae.png"))
@@ -236,7 +245,7 @@ train_loop! = function()
             push!(state, [epoch; :train; missings(size(state,2)-2)])
 
             @timeit timer "train loop" for d in train_data
-                @timeit timer "forward" ℓ, back = Flux.Zygote.pullback(() -> trainloss(d...), Flux.params(m))
+                @timeit timer "forward" ℓ, back = Flux.Zygote.pullback(() -> H_loss(d...), Flux.params(m))
                 @timeit timer "reverse" gs = back(1)
                 @timeit timer "update!" Flux.Optimise.update!(opt, Flux.params(m), gs)
 
@@ -245,8 +254,8 @@ train_loop! = function()
                 if mod(epoch, 10) == 0 #TODO
                     @timeit timer "θerr" set_or_add!(θerr(labelbatch(d)...), lastindex(state,1), :labelerr)
                     @timeit timer "θacc" set_or_add!(θacc(labelbatch(d)...), lastindex(state,1), :acc)
-                    @timeit timer "ELBO" set_or_add!(MWFLearning.L_LIGOCVAE(m, d...), lastindex(state,1), :ELBO)
-                    @timeit timer "KL"   set_or_add!(MWFLearning.KL_LIGOCVAE(m, d...), lastindex(state,1), :KL)
+                    @timeit timer "ELBO" set_or_add!(L_loss(d...),  lastindex(state,1), :ELBO)
+                    @timeit timer "KL"   set_or_add!(KL_loss(d...), lastindex(state,1), :KL)
                 end
             end
 
@@ -257,9 +266,9 @@ train_loop! = function()
                 @timeit timer "test eval" begin
                     @timeit timer "θerr" state[end, :labelerr] = θerr(labelbatch(test_data)...)
                     @timeit timer "θacc" state[end, :acc]      = θacc(labelbatch(test_data)...)
-                    @timeit timer "H"    state[end, :loss]     = MWFLearning.H_LIGOCVAE(m, test_data...; gamma = T(settings["model"]["gamma"]))
-                    @timeit timer "ELBO" state[end, :ELBO]     = MWFLearning.L_LIGOCVAE(m, test_data...)
-                    @timeit timer "KL"   state[end, :KL]       = MWFLearning.KL_LIGOCVAE(m, test_data...)
+                    @timeit timer "H"    state[end, :loss]     = H_loss(test_data...)
+                    @timeit timer "ELBO" state[end, :ELBO]     = L_loss(test_data...)
+                    @timeit timer "KL"   state[end, :KL]       = KL_loss(test_data...)
                 end
             end
 
@@ -290,7 +299,8 @@ catch e
 end
 
 @info "Computing resulting labels..."
-best_model   = SAVE ? BSON.load(savepath("log", "model-best.bson"))[:model] : deepcopy(m);
+best_model   = SAVE ? BSON.load(savepath("log", "model-best.bson"))[:model] : deepcopy(m); #TODO FIXME
+# best_model   = deepcopy(m); #TODO FIXME
 eval_data    = test_data
 # eval_data  = (hcat(thetas.(BT_train_data)..., thetas(BT_test_data)), cat(signals.(BT_train_data)..., signals(BT_test_data); dims = 4))
 true_thetas  = thetas(eval_data) |> Flux.cpu;
@@ -298,35 +308,89 @@ true_signals = signals(eval_data) |> Flux.cpu;
 model_mu_std = best_model(true_signals; nsamples = 1000, stddev = true) |> Flux.cpu;
 model_thetas, model_stds = model_mu_std[1:end÷2, ..], model_mu_std[end÷2+1:end, ..];
 
-# keep_indices = true_thetas[2,:] .≤ -3.5 # Keep small permeability only
-# true_thetas  = true_thetas[.., keep_indices]
-# true_signals = true_signals[.., keep_indices]
-# model_thetas = model_thetas[.., keep_indices]
-# model_stds   = model_stds[.., keep_indices]
-
-true_thetas = thetas(eval_data) #repeat(thetas(eval_data)[:,2:2], 1,500);
-true_signals = signals(eval_data) #repeat(signals(eval_data)[:,:,:,2:2], 1,1,1,500);
-model_thetas = best_model(true_signals; nsamples = 1, stddev = false) |> Flux.cpu;
-
 prediction_hist = function()
     pred_hist = function(i)
         scale = settings["data"]["info"]["labscale"][i]
         units = settings["data"]["info"]["labunits"][i]
         err = scale .* (model_thetas[i,:] .- true_thetas[i,:])
-        abs_μ, μ = round(mean(abs.(err)); sigdigits = 2), round(mean(err); sigdigits = 2)
-        σ, IQR = round(std(err); sigdigits = 2), round(iqr(err); sigdigits = 2)
-        p = histogram(err; nbins = 50, normalized = true,
-            grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
+        s = x -> round(x; sigdigits = 2)
+        mae_err, mean_err, σ, IQR = s(mean(abs, err)), s(mean(err)), s(std(err)), s(iqr(err))
+        p = plot()
+        histogram!(p, err;
+            nbins = 50, normalized = true, grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
             label = settings["data"]["info"]["labinfer"][i] * " [$units]",
-            title = "|μ| = $abs_μ, μ = $μ, σ = $σ", #, IQR = $IQR",
+            title = "|μ| = $mae_err, μ = $mean_err, σ = $σ", #, IQR = $IQR",
         )
-        p = xlims!(p, μ - 3σ, μ + 3σ)
+        xlims!(p, mean_err - 3σ, mean_err + 3σ)
     end
     plot([pred_hist(i) for i in 1:size(model_thetas, 1)]...)
 end
-@info "Plotting prediction histograms..."
+@info "Plotting inference error histograms..."
 fig = prediction_hist(); display(fig)
 SAVE && savefig(fig, savepath("plots", "theta.histogram.png"))
+
+prediction_hist_single = function()
+    I = rand(1:batchsize(signals(eval_data)))
+    true_thetas_sample  = thetas(eval_data)[:,I];
+    true_signals_sample = repeat(signals(eval_data)[:,1,1,I], 1, 1, 1, 1000);
+    model_thetas_sample = best_model(true_signals_sample; nsamples = 1, stddev = false);
+
+    pred_hist_single = function(i)
+        scale = settings["data"]["info"]["labscale"][i]
+        units = settings["data"]["info"]["labunits"][i]
+        lab = settings["data"]["info"]["labinfer"][i]
+        err = scale .* (model_thetas_sample[i,:] .- true_thetas_sample[i])
+        mae_err, mean_err = round(mean(abs.(err)); sigdigits = 2), round(mean(err); sigdigits = 2)
+        σ, IQR = round(std(err); sigdigits = 2), round(iqr(err); sigdigits = 2)
+
+        p = plot()
+        histogram!(p,
+            scale .* model_thetas_sample[i,:];
+            nbins = 20, normalized = true, grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
+            label = "$lab [$units]", title = "|μ| = $mae_err, μ = $mean_err, σ = $σ", #, IQR = $IQR",
+        )
+        vline!(p, scale .* [true_thetas_sample[i] mean(model_thetas_sample[i,:])]; line = ([:red :green], 4), label = ["$lab true" "$lab pred"])
+    end
+
+    ydata = true_signals_sample[:,1,1,1]
+    annot = mapreduce((x, y) -> join([x,y], "\n"), settings["data"]["info"]["labinfer"], settings["data"]["info"]["labunits"], true_thetas_sample) do lab, units, θ
+        "$lab = $(round(θ; sigdigits=3)) [$units]"
+    end
+    plot(
+        plot([pred_hist_single(i) for i in 1:size(model_thetas_sample, 1)]...),
+        plot(ydata; title = "MSE Signal vs. Echo Number", leg = nothing, xlims = (1,32), titlefontsize = 10, annotate = (25, 0.75*maximum(ydata), Plots.text(annot, 8))),
+        layout = @layout([a{0.8h}; b{0.2h}]), # layout = @layout([a{0.8w} b{0.2w}]),
+    )
+end
+@info "Plotting sample parameter inference histograms..."
+fig = prediction_hist_single(); display(fig)
+SAVE && savefig(fig, savepath("plots", "theta.histogram.single.png"))
+
+prediction_ribbon = function()
+    pred_ribbon = function(i)
+        scale = settings["data"]["info"]["labscale"][i]
+        units = settings["data"]["info"]["labunits"][i]
+
+        isort = sortperm(true_thetas[i,:])
+        x = scale .* true_thetas[i, isort]
+        y = scale .* model_thetas[i, isort]
+        _idx = partition(1:length(x), length(x)÷20 + 1) # partition into at most 20 subgroups
+        _x = [mean(x[idx]) for idx in _idx]
+        _y = [mean(y[idx]) for idx in _idx]
+        _σ = [std(y[idx] .- x[idx]) for idx in _idx]
+
+        p = plot(_x, _y;
+            ribbon = _σ, fillalpha = 0.5, marker = :circle, markersize = 2, grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
+            label = settings["data"]["info"]["labinfer"][i] * " [$units]",
+        )
+        p = plot!(p, identity, ylims(p)...; line = (:dash, 2, :red), label = L"y = x")
+        p = xlims!(p, _x[1], _x[end])
+    end
+    plot([pred_ribbon(i) for i in 1:size(model_thetas, 1)]...)
+end
+@info "Plotting prediction ribbon plots..."
+fig = prediction_ribbon(); display(fig)
+SAVE && savefig(fig, savepath("plots", "theta.ribbon.png"))
 
 prediction_scatter = function()
     pred_scatter = function(i)
@@ -341,62 +405,11 @@ prediction_scatter = function()
     end
     plot([pred_scatter(i) for i in 1:size(model_thetas, 1)]...)
 end
+#=
 @info "Plotting prediction scatter plots..."
 fig = prediction_scatter(); display(fig)
 SAVE && savefig(fig, savepath("plots", "theta.scatter.png"))
-
-prediction_ribbon = function()
-    pred_ribbon = function(i)
-        scale = settings["data"]["info"]["labscale"][i]
-        units = settings["data"]["info"]["labunits"][i]
-
-        isort = sortperm(true_thetas[i,:]);
-        x = scale .* true_thetas[i, isort];
-        y = scale .* model_thetas[i, isort];
-        _idx = partition(1:length(x), length(x)÷20)
-        _x = [mean(x[idx]) for idx in _idx]; #_x = [x[1]; _x; x[end]]
-        _y = [mean(y[idx]) for idx in _idx]; #_y = [y[1]; _y; y[end]]
-        _σ = [std(y[idx] .- x[idx]) for idx in _idx]; #_σ = [0; _σ; 0]
-
-        p = plot(_x, _y; ribbon = _σ,
-            fillalpha = 0.5,
-            marker = :circle, markersize = 2, grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
-            label = settings["data"]["info"]["labinfer"][i] * " [$units]",
-        )
-        p = plot!(p, identity, ylims(p)...; line = (:dash, 2, :red), label = L"y = x")
-        p = xlims!(p, _x[1], _x[end])
-    end
-    plot([pred_ribbon(i) for i in 1:size(model_thetas, 1)]...)
-end
-@info "Plotting prediction ribbon plots..."
-fig = prediction_ribbon(); display(fig)
-SAVE && savefig(fig, savepath("plots", "theta.ribbon.png"))
-
-prediction_hist_single = function()
-    pred_hist_single = function(i)
-        scale = settings["data"]["info"]["labscale"][i]
-        units = settings["data"]["info"]["labunits"][i]
-        err = scale .* (model_thetas[i,:] .- true_thetas[i,:])
-        abs_μ, μ = round(mean(abs.(err)); sigdigits = 2), round(mean(err); sigdigits = 2)
-        σ, IQR = round(std(err); sigdigits = 2), round(iqr(err); sigdigits = 2)
-        
-        p = histogram(scale .* model_thetas[i,:]; nbins = 20, normalized = true,
-            grid = true, minorgrid = true, titlefontsize = 10, legend = :best,
-            label = settings["data"]["info"]["labinfer"][i] * " [$units]",
-            title = "|μ| = $abs_μ, μ = $μ, σ = $σ", #, IQR = $IQR",
-        )
-    end
-    
-    annot = [settings["data"]["info"]["labinfer"][i] * " = $(round(true_thetas[i,1];sigdigits=3)) [" * settings["data"]["info"]["labunits"][i] * "]" for i in 1:5] |> t -> join(t, "\n")
-    # annot = [L"\cos\alpha = -0.95", L"g = 0.74", L"MWF = 0.23", L"T_2^{MW}/TE = 3.0", L"T_2^{IEW}/TE = 10.0"] |> t -> join(t, "\n")
-    plot(
-        [pred_hist_single(i) for i in 1:size(model_thetas, 1)]...,
-        plot(true_signals[:,1,1,1]; title = "MSE Signal vs. Echo Number", leg = nothing, xlims = (1,32), titlefontsize = 10, annotate = (22, 0.5, Plots.text(annot, 8))),
-    )
-end
-@info "Plotting prediction histograms..."
-fig = prediction_hist_single(); display(fig)
-SAVE && savefig(fig, savepath("plots", "theta.histogram.single.png"))
+=#
 
 prediction_corrplot = function()
     # cosalpha(x) = (out = copy(x); @views out[1,:] .= cosd.(out[1,:]); out)
@@ -470,3 +483,5 @@ end
 @info "Plotting mwf error vs. thetas..."
 mwferrorvsthetas()
 =#
+
+nothing

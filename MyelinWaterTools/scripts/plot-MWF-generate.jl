@@ -64,7 +64,7 @@ end
 
 function read_results(results_dir)
     results = dataframe_template(results_dir)::DataFrame
-    params_temp = results[:,Not(:solve_time)]
+    params_temp = results[:, Not(:solve_time)]
     for (root, dirs, files) in walkdir(results_dir)
         !occursin("measurables", root) && continue
         for file in files

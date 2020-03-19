@@ -429,7 +429,7 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
             p1 = plot()
             if !isempty(dfp)
                 minloss = round(minimum(dfp.loss); sigdigits = 4)
-                p1 = @df dfp plot(:epoch, :loss; title = "Loss ($dataset): min = $minloss)", label = "loss", ylim = (minloss, quantile(dfp.loss, 0.95)), commonkw...)
+                p1 = @df dfp plot(:epoch, :loss; title = "Loss ($dataset): min = $minloss)", label = "loss", commonkw...) # ylim = (minloss, quantile(dfp.loss, 0.95))
             end
 
             dfp = dropmissing(df[!, [:epoch, :acc]])
@@ -438,7 +438,7 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
             p2 = plot()
             if !isempty(dfp)
                 maxacc = round(maximum(dfp.acc); sigdigits = 4)
-                p2 = @df dfp plot(:epoch, :acc; title = "Accuracy ($dataset): peak = $maxacc%)", label = "acc", yticks = 50:0.1:100, ylim = (clamp(maxacc, 50, 99) - 1.0, min(maxacc + 0.3, 100.0)), commonkw...)
+                p2 = @df dfp plot(:epoch, :acc; title = "Accuracy ($dataset): peak = $maxacc%)", label = "acc", yticks = 50:0.1:100, commonkw...) # ylim = (clamp(maxacc, 50, 99) - 1.0, min(maxacc + 0.3, 100.0))
             end
 
             dfp = dropmissing(df[!, [:epoch, :labelerr]])
@@ -448,7 +448,7 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
             if !isempty(dfp)
                 labelerr = permutedims(reduce(hcat, dfp[!, :labelerr]))
                 labcol = size(labelerr,2) == 1 ? :blue : permutedims(RGB[cgrad(:darkrainbow)[z] for z in range(0.0, 1.0, length = size(labelerr,2))])
-                p3 = @df dfp plot(:epoch, labelerr; title = "Label Error ($dataset): rel. %)", label = labelnames, c = labcol, yticks = 0:100, ylim = (max(0, minimum(labelerr) - 1.0), min(50, 1.2 * maximum(labelerr[end,:]))), commonkw...) #min(50, quantile(vec(labelerr), 0.90))
+                p3 = @df dfp plot(:epoch, labelerr; title = "Label Error ($dataset): rel. %)", label = labelnames, c = labcol, yticks = 0:100, commonkw...) # ylim = (max(0, minimum(labelerr) - 1.0), min(50, 1.2 * maximum(labelerr[end,:]))) # min(50, quantile(vec(labelerr), 0.90))
             end
 
             push!(ps, plot(p1, p2, p3; layout = (1,3)))
@@ -473,10 +473,14 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
         end
     end
 end
-function make_checkpoint_state_cb(state, filename = nothing)
+function make_checkpoint_state_cb(state, filename = nothing; filtermissings = false, filternans = false)
     function()
         save_time = @elapsed let state = deepcopy(state)
-            !(filename === nothing) && savebson(filename, @dict(state))
+            if !isnothing(filename)
+                filtermissings && dropmissing!(state) # drop rows with missings
+                filternans && filter!(r -> all(x -> !((x isa Number && isnan(x)) || (x isa AbstractArray{<:Number} && any(isnan, x))), r), state) # drop rows with NaNs
+                savebson(filename, @dict(state))
+            end
         end
         # @info @sprintf("[%d] -> Error checkpoint... (%d ms)", state[end, :epoch], 1000 * save_time)
     end

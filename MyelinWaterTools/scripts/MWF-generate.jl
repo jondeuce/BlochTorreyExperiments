@@ -94,7 +94,7 @@ copy_and_load_random_geom(geomdir::String; kwargs...) = copy_and_load_random_geo
 
 # Load geometries with at most `maxnnodes` number of nodes to avoid exceedingly long simulations
 const geombasepaths = [
-    # realpath("./geom"), #TODO
+    # realpath("./geom"),
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-3/geom",
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-4/geom",
     "/project/st-arausch-1/jcd1994/ismrm2020/experiments/Fall-2019/diff-med-1-input-data/geom", #TODO
@@ -172,10 +172,10 @@ acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
 const sweepparamsampler_settings = Dict{Symbol,Any}(
     :theta  => (sampler = :acossampler,   args = (lb = 0.0,     ub = 90.0)), # Uniformly random orientations => cosθ ~ Uniform(0,1)
     :alpha  => (sampler = :linearsampler, args = (lb = 120.0,   ub = 180.0)),
-    :K      => (sampler = :log10sampler,  args = (lb = 0.1, ub = 0.1)), #(lb = 1e-3,    ub = 0.1)), #TODO FIXME
-    :Dtiss  => (sampler = :log10sampler,  args = (lb = 0.1, ub = 0.1)), #(lb = 1000.0,  ub = 1000.0)), #TODO FIXME
-    :Dmye   => (sampler = :log10sampler,  args = (lb = 0.1, ub = 0.1)), #(lb = 1000.0,  ub = 1000.0)), #TODO FIXME
-    :Dax    => (sampler = :log10sampler,  args = (lb = 0.1, ub = 0.1)), #(lb = 1000.0,  ub = 1000.0)), #TODO FIXME
+    :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 0.1)),
+    :Dtiss  => (sampler = :log10sampler,  args = (lb = 1000.0,  ub = 1000.0)),
+    :Dmye   => (sampler = :log10sampler,  args = (lb = 1000.0,  ub = 1000.0)),
+    :Dax    => (sampler = :log10sampler,  args = (lb = 1000.0,  ub = 1000.0)),
     :FRD    => (sampler = :linearsampler, args = (lb = 0.5,     ub = 0.5)), # Fractional radial diffusivity (0.5 is isotropic, 1.0 fully radial, 0.0 fully axial)
     :TE     => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 10e-3)), # NOTE: Fixed time scale (only e.g. T2/TE is learned)
     :nTE    => (sampler = :rangesampler,  args = (lb = 64, ub = 64, step = 2)), # Simulate many echoes (can chop later)
@@ -308,18 +308,18 @@ function runsimulation!(results, sweepparams, geom)
     =#
 
     # Update results struct and return
-    push!(results[:btparams], btparams) #TODO FIXME
-    push!(results[:solverparams_dict], solverparams_dict) #TODO FIXME
-    push!(results[:sweepparams], sweepparams) #TODO FIXME
-    push!(results[:tpoints], tpoints) #TODO FIXME
-    push!(results[:signals], signals) #TODO FIXME
-    push!(results[:mwfvalues], mwfvalues) #TODO FIXME
-    push!(results[:subregion_names], subregion_names) #TODO FIXME
-    push!(results[:subregion_signals], subregion_signals) #TODO FIXME
-    push!(results[:sols], sols) #TODO FIXME
-    push!(results[:myelinprob], myelinprob) #TODO FIXME
-    push!(results[:myelinsubdomains], myelinsubdomains) #TODO FIXME
-    push!(results[:myelindomains], myelindomains) #TODO FIXME
+    # push!(results[:btparams], btparams)
+    # push!(results[:solverparams_dict], solverparams_dict)
+    # push!(results[:sweepparams], sweepparams)
+    # push!(results[:tpoints], tpoints)
+    # push!(results[:signals], signals)
+    # push!(results[:mwfvalues], mwfvalues)
+    # push!(results[:subregion_names], subregion_names)
+    # push!(results[:subregion_signals], subregion_signals)
+    # push!(results[:sols], sols)
+    # push!(results[:myelinprob], myelinprob)
+    # push!(results[:myelinsubdomains], myelinsubdomains)
+    # push!(results[:myelindomains], myelindomains)
 
     # Save measurables
     tryshow("Error saving measurables") do
@@ -425,12 +425,12 @@ function main(;
         :tpoints            => [],
         :signals            => [],
         :mwfvalues          => [],
-        :subregion_names    => [], # no point saving this for PermeableInterfaceRegion simulations #TODO FIXME
-        :subregion_signals  => [], # no point saving this for PermeableInterfaceRegion simulations #TODO FIXME
-        :sols               => [], # prefer not to save custom types / large memory footprint #TODO FIXME
-        :myelinsubdomains   => [], # prefer not to save custom types / large memory footprint #TODO FIXME
-        :myelindomains      => [], # prefer not to save custom types / large memory footprint #TODO FIXME
-        :myelinprob         => [], # prefer not to save custom types #TODO FIXME
+        # :subregion_names    => [], # no point saving this for PermeableInterfaceRegion simulations
+        # :subregion_signals  => [], # no point saving this for PermeableInterfaceRegion simulations
+        # :sols               => [], # prefer not to save custom types / large memory footprint
+        # :myelinsubdomains   => [], # prefer not to save custom types / large memory footprint
+        # :myelindomains      => [], # prefer not to save custom types / large memory footprint
+        # :myelinprob         => [], # prefer not to save custom types
     )
     
     all_sweepparams = (sweepparamsampler() for _ in 1:iters)
@@ -469,125 +469,7 @@ end
 #### Run sweep
 ####
 
-# main() #TODO
-
-####
-#### Testing
-####
-
-results = Dict{Symbol,Any}(
-    :sweepparams        => [],
-    :btparams           => [],
-    :solverparams_dict  => [],
-    :tpoints            => [],
-    :signals            => [],
-    :mwfvalues          => [],
-    :subregion_names    => [], #TODO: no point saving this for PermeableInterfaceRegion simulations
-    :subregion_signals  => [], #TODO: no point saving this for PermeableInterfaceRegion simulations
-    :sols               => [], #TODO: prefer not to save custom types / large memory footprint
-    :myelinsubdomains   => [], #TODO: prefer not to save custom types / large memory footprint
-    :myelindomains      => [], #TODO: prefer not to save custom types / large memory footprint
-    :myelinprob         => [], #TODO: prefer not to save custom types
-);
-
-geom = copy_and_load_random_geom(geombasepaths; maxnnodes = 5000);
-geomtuple = geometrytuple(geom);
-perturb_geom!(geomtuple);
-
-default_solverparams_dict[:reltol] = 1e-14;
-sweepparams = sweepparamsampler();
-
-@time runsimulation!(results, sweepparams, geomtuple);
-
-Rshift = 0.1;
-shiftedparams = let
-    p = deepcopy(sweepparams);
-    foreach([:T2lp, :T2sp, :T1lp, :T1sp]) do k
-        p[k] = inv(inv(p[k]) + Rshift)
-    end
-    p
-end;
-@time runsimulation!(results, shiftedparams, geomtuple);
-
-t1 = results[:tpoints][1][1:end];
-t2 = results[:tpoints][2][1:end];
-s1 = results[:signals][1][1:end];
-s2 = results[:signals][2][1:end];
-M∞ = norm(transverse(s1[1]));
-Φ(x) = shift_longitudinal(x, M∞);
-u1 = Φ.(s1);
-u2 = Φ.(s2);
-
-I = 1:10;
-norm.(u2[I] .- exp.(-Rshift .* t1[I]) .* u1[I])
-
-α = sweepparams[:alpha];
-E0 = exp(-Rshift * sweepparams[:TE] / 2);
-Rα = pulsemat3(α, :x);
-bα = Vec3f((0.0, -M∞ * sin(α), M∞ * (1 - cos(α))));
-
-U1_0 = u1[1]
-U1_half_plus = u1[11]
-U1_half_minus = Φ(Rα' ⋅ Φ(U1_half_plus))
-maximum(abs, U1_half_minus - Rα ⋅ (U1_half_plus - bα))
-maximum(abs, Φ(Rα ⋅ Φ(U1_half_minus)) - U1_half_plus)
-
-Ũ_half_plus = Φ(Rα ⋅ Φ(E0 * U1_half_minus))
-# Ũ_half_plus = Φ(Rα ⋅ Φ(Vec{3}((E0, E0, 1.0)) ⊙ U1_half_minus))
-maximum(abs, Ũ_half_plus - (E0 * (U1_half_plus - bα) + bα))
-u2[11]
-Ũ_half_plus ./ u2[11]
-maximum(abs, Ũ_half_plus ./ u2[11] .- 1) # 0.010012360378848228
-
-E0 * U1_half_minus
-Φ(Rα' ⋅ Φ(u2[11]))
-# Φ(Rα' ⋅ Φ(u2[11])) ./ (Vec{3}((E0, E0, 1.0)) ⊙ U1_half_minus)
-Φ(Rα' ⋅ Φ(u2[11])) ./ (E0 * U1_half_minus)
-1/E0
-α
-
-U1_1 = u1[21]
-αhat = Vec3f((-sin(α), -sin(α), 1 - cos(α)));
-Ũ_1_1 = E0^2 * (U1_1 - αhat ⊙ U1_half_minus) + E0 * (αhat ⊙ U1_half_minus)
-Ũ_1_1 ./ u2[21]
-maximum(abs, Ũ_1_1 ./ u2[21] .- 1) # 0.010012360378848228
-u2[21]
-
-####
-
-α = sweepparams[:alpha];
-E0 = exp(-Rshift * sweepparams[:TE] / 2);
-bα = Vec3f((0.0, -M∞ * sin(α), M∞ * (1 - cos(α))));
-αhat = Vec3f((-sin(α), -sin(α), 1 - cos(α)));
-U0half_minus = u1[11]
-U0half_minus = Φ(Rα' ⋅ Φ(U0half_minus))
-for i in 1 .+ 20 .* (0:64-1)
-    # U0 = u1[i]
-
-    U1half_plus = u1[i+10]
-    U1half_minus = Φ(Rα' ⋅ Φ(U1half_plus))
-    U1 = u1[i+20]
-
-    Ũ1half_plus = Φ(Rα ⋅ Φ(E0 * U1half_minus))
-    Ũ1 = E0^2 * (U1 - αhat ⊙ U0half_minus) + E0 * (αhat ⊙ U0half_minus)
-
-    println("\n---- $i ----\n")
-    
-    # @show u2[i+10], Ũ1half_plus
-    # @show u2[i+10] ./ Ũ1half_plus .- 1
-    @show maximum(abs, u2[i+10] ./ Ũ1half_plus .- 1)
-    
-    # println("")
-
-    # @show u2[i+20], Ũ1
-    # @show u2[i+20] ./ Ũ1 .- 1
-    @show maximum(abs, u2[i+20] ./ Ũ1 .- 1)
-
-    # Ũ0 = Ũ1
-end
-
-#=
-=#
+main()
 
 ####
 #### Plot and save derived quantities from results

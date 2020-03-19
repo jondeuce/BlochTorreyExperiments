@@ -53,8 +53,8 @@ function tryshow(f, message = nothing)
             @warn message
         end
         @warn sprint(showerror, e, catch_backtrace())
+        nothing
     end
-    return nothing
 end
 
 end # module GlobalUtils
