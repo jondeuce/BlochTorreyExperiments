@@ -895,8 +895,10 @@ struct LIGOCVAE{E1,E2,D}
     E2 :: E2
     D  :: D
 end
-Flux.@treelike LIGOCVAE
+Flux.@functor LIGOCVAE
 Base.show(io::IO, m::LIGOCVAE) = model_summary(io, [m.E1, m.E2, m.D])
+
+Flux.testmode!(m::LIGOCVAE, mode = true) = (map(x -> Flux.testmode!(x, mode), [m.E1, m.E2, m.D]); m)
 
 # Split `μ` into mean and standard deviation
 split_mean_std(μ) = (μ[1:end÷2, ..], μ[end÷2+1:end, ..])
@@ -908,7 +910,7 @@ sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}, nsamples::Int) w
 MvNormalSampler() = sample_mv_normal
 
 # Exponentiate second argument; logsigma -> sigma
-exp_std(μ0, σ) = vcat(μ0, exp.(σ))
+exp_std(μ0, logσ) = vcat(μ0, exp.(logσ))
 exp_std(μ) = exp_std(split_mean_std(μ)...)
 ExpStd() = exp_std
 
@@ -917,7 +919,6 @@ square(x) = x*x
 
 function (m::LIGOCVAE)(y; nsamples::Int = 100, stddev = false)
     @assert nsamples ≥ ifelse(stddev, 2, 1)
-    Flux.testmode!(m, true)
 
     μr0, σr = m.E1(y) |> split_mean_std
     function sample_rθ_posterior()
@@ -937,7 +938,6 @@ function (m::LIGOCVAE)(y; nsamples::Int = 100, stddev = false)
         σ2x .= smooth.(σ2x, (x .- μx) .* (x .- μx_last), 1//i)
     end
 
-    Flux.testmode!(m, false)
     return stddev ? vcat(μx, sqrt.(σ2x)) : μx
 end
 

@@ -34,7 +34,7 @@ function read_to_dataframe(sweep_dir)
     for (k,v) in flatten_dict(TOML.parsefile(joinpath(sweep_dir, "sweep_settings.toml")))
         sweep = hcat(sweep, DataFrame(Symbol(k) => typeof(v)[v]))
     end
-    state = BSON.load(findendswith(joinpath(sweep_dir, "log"), ".errors.backup.bson"))[:state]
+    state = BSON.load(findendswith(joinpath(sweep_dir, "log"), ".errors.bson"))[:state]
     if state isa Dict
         function dict_to_df(dataset)
             nrows = length(state[:callbacks][dataset][:epoch])
@@ -75,7 +75,7 @@ function check_read_path(sweep_dir, item)
     isdir(joinpath(sweep_dir, item)) &&
     isdir(joinpath(sweep_dir, item, "log")) &&
     isfile(joinpath(sweep_dir, item, "sweep_settings.toml")) &&
-    !isnothing(findendswith(joinpath(sweep_dir, item, "log"), ".errors.backup.bson"))
+    !isnothing(findendswith(joinpath(sweep_dir, item, "log"), ".errors.bson"))
 end
 
 function dataframe_template(sweep_dir)
@@ -106,32 +106,22 @@ function read_results(sweep_dir)
 end
 
 # Read results to DataFrame
-results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4";
+results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v5";
 sweep_dir = joinpath(results_dir, "sweep");
 df, sweep_temp, metrics_temp = read_results(sweep_dir);
-
-# Write sorted DataFrame to text file
-foreach(names(metrics_temp)) do metric
-    open(joinpath(results_dir, "results-by-$metric.txt"); write = true) do io
-        show(io, sort(dropmissing(df, metric), metric; rev = metric == :acc); allrows = true, allcols = true)
-    end
-end
 
 # Show top results
 show(stdout, first(sort(df, :acc; rev = true), 10); allrows = true, allcols = true); println("\n")
 @show size(df);
 
-function make_plots(df, sweepcols, metric, thresh = 1.0)
+function make_plots(df, sweepcols, metric; metadata = Dict(), showplot = false)
     dfp = dropmissing(df, metric)
     if isempty(dfp)
         @info "metric $metric has all missing values"
         return nothing
     end
-    metricthresh = quantile(dfp[!, metric], thresh)
-    filter!(r -> r[metric] < metricthresh, dfp)
-    uniquesweepcols = sweepcols[map(n -> length(unique(df[!,n])), sweepcols) .> 1]
     ps = []
-    for sweepparam in uniquesweepcols
+    for sweepparam in filter(n -> length(unique(df[!,n])) > 1, sweepcols)
         s = x -> x isa Number ? x == round(x) ? string(round(Int, x)) : string(round(x; sigdigits = 3)) : string(x)
         p = plot(; xlabel = sweepparam, ylabel = metric, leg = :none, yscale = :identity)
         @df dfp  violin!(p, s.(cols(sweepparam)), cols(metric); marker = (0.2, :blue, stroke(0)))
@@ -139,16 +129,60 @@ function make_plots(df, sweepcols, metric, thresh = 1.0)
         @df dfp dotplot!(p, s.(cols(sweepparam)), cols(metric); marker = (:black, stroke(0)))
         push!(ps, p)
     end
-    p = plot(ps...)
-    display(p)
+    p = plot(
+        plot(title = DrWatson.savename(metadata; connector = ", "), grid = false, showaxis = false),
+        plot(ps...);
+        layout = @layout([a{0.01h}; b]),
+    )
+    showplot && display(p)
     return p
 end
+function recurse_make_plots(
+        df,
+        sweepcols = filter(n -> length(unique(df[!,n])) > 1, names(sweep_temp)),
+        depth = 0;
+        maxdepth = 2,
+        metadata = Dict(),
+    )
+    foreach(names(metrics_temp)[[2,end]]) do metric
+        outpath = joinpath(results_dir, "summary/depth=$depth", DrWatson.savename(metadata))
+        !isdir(outpath) && mkpath(outpath)
+
+        p = make_plots(df, sweepcols, metric; metadata = metadata, showplot = depth == 0)
+        savefig(p, joinpath(outpath, "by-$metric.png"))
+
+        open(joinpath(outpath, "by-$metric.txt"); write = true) do io
+            show(io, sort(dropmissing(df, metric), metric; rev = metric == :acc); allrows = true, allcols = true)
+        end
+    end
+    if depth < maxdepth && length(sweepcols) > 1
+        for (i,sweepcol) in enumerate(sweepcols)
+            by(df, sweepcol) do g
+                newsweepcols = sweepcols[[1:i-1; i+1:end]]
+                meta = deepcopy(metadata)
+                meta[sweepcol] = string(first(g[!, sweepcol]))
+                recurse_make_plots(g, newsweepcols, depth + 1; maxdepth = maxdepth, metadata = meta)
+            end
+        end
+    end
+    nothing
+end
+recurse_make_plots(df)
+
+#=
+# Write sorted DataFrame to text file
+foreach(names(metrics_temp)) do metric
+    open(joinpath(results_dir, "results-by-$metric.txt"); write = true) do io
+        show(io, sort(dropmissing(df, metric), metric; rev = metric == :acc); allrows = true, allcols = true)
+    end
+end
+
+# Make plots
 foreach(names(metrics_temp)) do metric
     p = make_plots(df, names(sweep_temp), metric)
     savefig(p, joinpath(results_dir, "results-by-$metric.png"))
 end
-
-nothing
+=#
 
 ####
 #### Visualize learned dense layers
@@ -160,7 +194,7 @@ saveheatmap(l::Flux.Dense, name = "") = savefig(plot(heatmap(heatscale.(l.W[end:
 saveheatmap(l, name = "") = nothing;
 
 # model = BSON.load(joinpath(sweep_dir, "22", "best-model.bson"))["model"] |> deepcopy;
-model = BSON.load(findendswith(joinpath(sweep_dir, "2", "log"), ".model-best.bson"))[:model] |> deepcopy;
+model = BSON.load(findendswith(joinpath(sweep_dir, "109", "log"), ".model-best.bson"))[:model] |> deepcopy;
 
 rm.(filter!(s -> startswith(s,"dense-") && endswith(s,".png"), readdir(".")));
 saveheatmap(model.E1, "dense-E1");
@@ -178,7 +212,7 @@ let results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff
         # isnothing(findendswith(joinpath(results_dir, dir, "log"), ".errors.backup.bson"))
     end
 
-    for dir in sort!(filter!(s->isdir(joinpath(results_dir,s)), readdir(results_dir)); by = s -> parse(Int, s))
+    for dir in filter!(s -> parse(Int, s) >= 270, sort!(filter!(s->isdir(joinpath(results_dir,s)), readdir(results_dir)); by = s -> parse(Int, s)))
         if _check_read_path(results_dir, dir)
             @info dir
             tryshow("Error reading directory: $dir") do

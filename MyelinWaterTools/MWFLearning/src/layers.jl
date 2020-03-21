@@ -1,4 +1,19 @@
 """
+    dropout(x, p, dims = :)
+
+Fix definition of dropout kernel to apply dropout on both forward and
+reverse passes. Test/train mode is handled by [`Dropout`](@ref).
+
+See: https://github.com/FluxML/Flux.jl/issues/1084
+"""
+function Flux.dropout(x, p; dims = :)
+    q = 1 - p
+    y = rand!(similar(x, Flux._dropout_shape(x, dims)))
+    y .= Flux._dropout_kernel.(y, p, q)
+    x .* y
+end
+
+"""
     wrapprint(io::IO, layer)
 """    
 wrapprint(io::IO, layer) = Flux.Chain(
@@ -24,7 +39,7 @@ DenseResize()
 Non-learnable layer which resizes input arguments `x` to be a matrix with batchsize(x) columns.
 """
 struct DenseResize end
-Flux.@treelike DenseResize
+Flux.@functor DenseResize
 (l::DenseResize)(x::AbstractArray) = reshape(x, :, batchsize(x))
 Base.show(io::IO, l::DenseResize) = print(io, "DenseResize()")
 
@@ -38,7 +53,7 @@ and `d` is `length(x) ÷ (c x b)`.
 struct ChannelResize
     c::Int
 end
-Flux.@treelike ChannelResize
+Flux.@functor ChannelResize
 (l::ChannelResize)(x::AbstractArray) = reshape(x, :, 1, l.c, batchsize(x))
 Base.show(io::IO, l::ChannelResize) = print(io, "ChannelResize(", l.c, ")")
 
@@ -51,7 +66,7 @@ struct Scale{V}
     s::V
 end
 trainable(l::Scale) = () # Layer is not learnable
-Flux.@treelike Scale
+Flux.@functor Scale
 (l::Scale)(x::AbstractArray) = x .* l.s
 Base.show(io::IO, l::Scale) = print(io, "Scale(", length(l.s), ")")
 
@@ -67,7 +82,7 @@ end
 Sumout(args...) = Sumout(args)
 Base.show(io::IO, so::Sumout) = (print(io, "Sumout("); join(io, so.over, ", "); print(io, ")"))
 
-Flux.@treelike Sumout
+Flux.@functor Sumout
 
 function (mo::Sumout)(input::AbstractArray)
     mapreduce(f -> f(input), (acc, out) -> acc + out, mo.over)
@@ -239,7 +254,7 @@ end
 GlobalFeatureFusion(dims::Int, args...) = GlobalFeatureFusion(dims, args)
 Base.show(io::IO, GFF::GlobalFeatureFusion) = (print(io, "GlobalFeatureFusion($(GFF.dims), "); join(io, GFF.layers, ", "); print(io, ")"))
 
-Flux.@treelike GlobalFeatureFusion
+Flux.@functor GlobalFeatureFusion
 
 function (GFF::GlobalFeatureFusion)(x::AbstractArray)
     y = GFF.layers[1](x)

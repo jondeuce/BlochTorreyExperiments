@@ -15,7 +15,7 @@ function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
     @ntuple(Kxx, Kyy, Kxy)
 end
 
-Flux.Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
+Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
     # Store kernel matrices for reverse pass
     @unpack Kxx, Kyy, Kxy = _mmd_flux_kernel_matrices(X, Y)
 
@@ -78,7 +78,7 @@ Flux.Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::Ab
     end
     =#
 end
-Flux.Zygote.refresh()
+Zygote.refresh()
 
 function _mmd_flux_kernel_matrices_inner(X::AbstractArray{<:Any,3}, Y::AbstractArray{<:Any,3})
     Kxx = NNlib.batched_mul(NNlib.batched_adjoint(X), X)
@@ -105,7 +105,7 @@ function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3}, Y::AbstractArray{<
     @ntuple(Kxx, Kyy, Kxy)
 end
 
-Flux.Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3}, Y::AbstractArray{<:Any,3})
+Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3}, Y::AbstractArray{<:Any,3})
     # Store kernel matrices for reverse pass
     @unpack Kxx, Kyy, Kxy = _mmd_flux_kernel_matrices_inner(X, Y)
     out = (
@@ -191,7 +191,7 @@ Flux.Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3
     end
     =#
 end
-Flux.Zygote.refresh()
+Zygote.refresh()
 
 #=
 # Testing adjoint for _mmd_flux_kernel_matrices
@@ -233,10 +233,10 @@ let
         A, B = rand(arrsize...), rand(arrsize...)
         Δ = (Kxx = rand(Ksize...), Kyy = rand(Ksize...), Kxy = rand(Ksize...))
 
-        _y, _back = Flux.Zygote.pullback(_kernel_mats, A, B)
+        _y, _back = Zygote.pullback(_kernel_mats, A, B)
         _dyA, _dyB = _back(Δ)
 
-        y, back = Flux.Zygote.pullback(_mmd_flux_kernel_matrices, A, B)
+        y, back = Zygote.pullback(_mmd_flux_kernel_matrices, A, B)
         dyA, dyB = back(Δ)
 
         @assert all(values(_y) .≈ values(y))
@@ -246,7 +246,7 @@ let
         #=
         for f in (_mmd_flux_kernel_matrices,) #_kernel_mats
             print("$f call:   "); @btime $f($A, $B)
-            print("$f forward:"); _, back = @btime Flux.Zygote.pullback($f, $A, $B)
+            print("$f forward:"); _, back = @btime Zygote.pullback($f, $A, $B)
             print("$f reverse:"); @btime $back($Δ)
         end
         =#
@@ -264,7 +264,7 @@ let
         logsigma = rand(nbw, n)
         for f in (mmd_flux, mmdvar_flux) #mmd_and_mmdvar_flux returns two outputs
             print("$f call:   \t"); @btime $f($logsigma, $X, $Y)
-            print("$f forward:\t"); y, back = @btime Flux.Zygote.pullback(logσ -> $f(logσ, $X, $Y), $logsigma)
+            print("$f forward:\t"); y, back = @btime Zygote.pullback(logσ -> $f(logσ, $X, $Y), $logsigma)
             print("$f value:  \t$y\n")
             print("$f reverse:\t"); @btime $back(1)
         end
@@ -279,7 +279,7 @@ let
         A = rand(3,4)
         Δ = rand(3,4)
         f = (A) -> exp.(A)
-        y, back = Flux.Zygote.pullback(f, A)
+        y, back = Zygote.pullback(f, A)
         dyA, = back(Δ)
         @assert y == f(A)
         @assert dyA == Δ .* exp.(A)
@@ -290,7 +290,7 @@ let
         B = rand(3,4)
         Δ = rand(4,4)
         f = (A,B) -> exp.(A'B)
-        y, back = Flux.Zygote.pullback(f, A, B)
+        y, back = Zygote.pullback(f, A, B)
         dyA, dyB = back(Δ)
         @assert y == f(A,B)
         @assert dyA == B * (Δ .* exp.(A'B))'
@@ -301,7 +301,7 @@ let
         A = rand(3,4)
         Δ = rand(4)
         f = (A) -> exp.(diag(A'A))
-        y, back = Flux.Zygote.pullback(f, A)
+        y, back = Zygote.pullback(f, A)
         dyA, = back(Δ)
         @assert y == f(A)
         @assert dyA == 2 .* A .* (Δ .* exp.(diag(A'A)))'
@@ -312,7 +312,7 @@ let
         B = rand(3,4)
         Δ = rand(4)
         f = (A,B) -> exp.(diag(A'B))
-        y, back = Flux.Zygote.pullback(f, A, B)
+        y, back = Zygote.pullback(f, A, B)
         dyA, dyB = back(Δ)
         @assert y == f(A,B)
         @assert dyA == B .* (Δ .* exp.(diag(A'B)))'
@@ -325,7 +325,7 @@ let
         B = rand(3,4)
         Δ = rand(4,4)
         f = (A,B) -> exp.(diag(A'B)) .* ones(1,4)
-        y, back = Flux.Zygote.pullback(f, A, B)
+        y, back = Zygote.pullback(f, A, B)
         dyA, dyB = back(Δ)
 
         _y = f(A,B)
@@ -339,7 +339,7 @@ let
         A = rand(3,4)
         Δ = rand(4,4)
         f = (A) -> exp.(diag(A'A)) .* ones(1,4)
-        y, back = Flux.Zygote.pullback(f, A)
+        y, back = Zygote.pullback(f, A)
         dyA, = back(Δ)
 
         _y = f(A)
@@ -354,7 +354,7 @@ let
         B = rand(3,4)
         Δ = rand(4,4)
         f = (A,B) -> exp.(A'B .+ diag(A'B))
-        y, back = Flux.Zygote.pullback(f, A, B)
+        y, back = Zygote.pullback(f, A, B)
         dyA, dyB = back(Δ)
 
         _y = f(A,B)
@@ -370,7 +370,7 @@ let
         B = rand(3,4)
         Δ = rand(4)
         f = (A) -> exp.(diag(A'A))
-        y, back = Flux.Zygote.pullback(f, A)
+        y, back = Zygote.pullback(f, A)
         dyA, = back(Δ)
         @assert y == f(A)
         @assert dyA == 2 .* A .* (Δ .* exp.(diag(A'A)))'
@@ -381,7 +381,7 @@ let
         A = rand(3,4)
         Δ = rand(4,4)
         f = (A) -> exp.(diag(A'A)) .* ones(1,4)
-        y, back = Flux.Zygote.pullback(f, A)
+        y, back = Zygote.pullback(f, A)
         dyA, = back(Δ)
 
         _y = f(A)
@@ -395,7 +395,7 @@ let
         A = rand(3,4)
         Δ = rand(4,4)
         f = (A) -> exp.(2 .* (A'A) .- diag(A'A) .- diag(A'A)')
-        y, back = Flux.Zygote.pullback(f, A)
+        y, back = Zygote.pullback(f, A)
         dyA, = back(Δ)
 
         _y = f(A)
@@ -411,7 +411,7 @@ let
         B = rand(3,4)
         Δ = rand(4,4)
         f = (A,B) -> exp.(2 .* (A'B) .- diag(A'A) .- diag(B'B)')
-        y, back = Flux.Zygote.pullback(f, A, B)
+        y, back = Zygote.pullback(f, A, B)
         dyA, dyB = back(Δ)
 
         _y = f(A,B)
@@ -503,10 +503,10 @@ let # Speed testing of mmd_flux_kernel_matrices
 
         @assert all(values(mmd_flux_kernel_matrices(logsigma,X,Y)) .≈ values(mmd_flux_kernel_matrices_batched(logsigma,X,Y)))
 
-        _y, _back = Flux.Zygote.pullback((_X,_Y) -> mmd_flux_kernel_matrices(logsigma,_X,_Y), X, Y)
+        _y, _back = Zygote.pullback((_X,_Y) -> mmd_flux_kernel_matrices(logsigma,_X,_Y), X, Y)
         _dyA, _dyB = _back(Δ)
 
-        y, back = Flux.Zygote.pullback((_X,_Y) -> mmd_flux_kernel_matrices_batched(logsigma,_X,_Y), X, Y)
+        y, back = Zygote.pullback((_X,_Y) -> mmd_flux_kernel_matrices_batched(logsigma,_X,_Y), X, Y)
         dyA, dyB = back(Δ)
 
         @assert all(values(_y) .≈ values(y))
@@ -515,7 +515,7 @@ let # Speed testing of mmd_flux_kernel_matrices
 
         for f in (mmd_flux_kernel_matrices, mmd_flux_kernel_matrices_batched)
             print("$f call:   "); @btime $f($logsigma, $X, $Y)
-            print("$f forward:"); _, back = @btime Flux.Zygote.pullback((_X,_Y) -> $f($logsigma,_X,_Y), $X, $Y)
+            print("$f forward:"); _, back = @btime Zygote.pullback((_X,_Y) -> $f($logsigma,_X,_Y), $X, $Y)
             print("$f reverse:"); @btime $back($Δ)
         end
         #=

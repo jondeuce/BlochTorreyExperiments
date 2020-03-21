@@ -1,7 +1,7 @@
 module ResNet
 
 import Flux
-using Flux: onehotbatch, onecold, crossentropy, throttle, @treelike
+using Flux: onehotbatch, onecold, crossentropy, throttle, @functor
 using Base.Iterators: partition
 using LegibleLambdas: @λ
 
@@ -18,7 +18,7 @@ struct ResidualBlock
     shortcut
 end
 
-@treelike ResidualBlock
+@functor ResidualBlock
 
 # ResidualBlock Function allows us to define a Residual Block having any number of Convolution and Batch Normalization Layers
 function ResidualBlock(filters, kernels::Array{NTuple{2,Int}}, pads::Array{NTuple{4,Int}}, strides::Array{NTuple{2,Int}}, shortcut = identity)

@@ -86,14 +86,14 @@ end
 #### Batched diagonal extraction of 3D arrays
 ####
 
-Flux.Zygote.@adjoint function LinearAlgebra.diag(x::AbstractMatrix)
+Zygote.@adjoint function LinearAlgebra.diag(x::AbstractMatrix)
     return LinearAlgebra.diag(x), function(Δ)
         # Why is Δ sometimes an nx1 matrix? Related to adjoint... e.g. loss = sum(diag(x)')
         # (LinearAlgebra.Diagonal(Δ),) # Should be this...
         (LinearAlgebra.Diagonal(reshape(Δ,:)),) # ...but need to reshape nx1 matrix Δ to n-vector
     end
 end
-Flux.Zygote.refresh()
+Zygote.refresh()
 
 function batcheddiag(x::AbstractArray{T,3}) where {T}
     nbatch = size(x,3)
@@ -108,7 +108,7 @@ function batcheddiag(x::AbstractArray{T,3}) where {T}
     return y
 end
 
-Flux.Zygote.@adjoint function batcheddiag(x::AbstractArray{T,3}) where {T}
+Zygote.@adjoint function batcheddiag(x::AbstractArray{T,3}) where {T}
     return batcheddiag(x), function(Δ)
         nbatch = size(x,3)
         ndiag = min(size(x,1), size(x,2))
@@ -122,7 +122,7 @@ Flux.Zygote.@adjoint function batcheddiag(x::AbstractArray{T,3}) where {T}
         return (y,)
     end
 end
-Flux.Zygote.refresh()
+Zygote.refresh()
 
 function batcheddiag_brute(x::AbstractArray{T,3}) where {T}
     nbatch = size(x,3)
@@ -145,12 +145,12 @@ let
     f = x -> sum(batcheddiag(x))
     f_brute = x -> sum(batcheddiag_brute(x))
 
-    g = Flux.Zygote.gradient(f, x)
-    g_brute = Flux.Zygote.gradient(f_brute, x)
+    g = Zygote.gradient(f, x)
+    g_brute = Zygote.gradient(f_brute, x)
     @assert all(isapprox.(g, g_brute))
 
-    @btime Flux.Zygote.gradient($f, $x)
-    @btime Flux.Zygote.gradient($f_brute, $x)
+    @btime Zygote.gradient($f, $x)
+    @btime Zygote.gradient($f_brute, $x)
 end;
 =#
 

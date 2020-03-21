@@ -120,7 +120,7 @@ function train_mmd_kernel!(
             end
         else
             function(logσ, X, Y)
-                ℓ, back = Flux.Zygote.pullback(_logσ -> loss(_logσ, X, Y), logσ)
+                ℓ, back = Zygote.pullback(_logσ -> loss(_logσ, X, Y), logσ)
                 return ℓ, back
             end
         end
@@ -549,7 +549,7 @@ function train_mmd_model(;
                 @timeit timer "batch loop" for _ in 1:nbatches
                     @timeit timer "sampleX" Xtrain = sampleX(m)
                     @timeit timer "sampleY" Ytrain = sampleY(m; dataset = :train)
-                    @timeit timer "forward" _, back = Flux.Zygote.pullback(() -> loss(Xtrain, Ytrain), Flux.params(models["mmd"]))
+                    @timeit timer "forward" _, back = Zygote.pullback(() -> loss(Xtrain, Ytrain), Flux.params(models["mmd"]))
                     @timeit timer "reverse" gs = back(1)
                     @timeit timer "update!" Flux.Optimise.update!(opt, Flux.params(models["mmd"]), gs)
                 end

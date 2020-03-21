@@ -197,11 +197,11 @@ function ∇mmd_flux_bandwidth_optfun(logσ::AbstractArray, args...; kwargs...)
     if length(logσ) <= 16
         ForwardDiff.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)
     else
-        Flux.Zygote.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)[1]
+        Zygote.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)[1]
     end
 end
 ∇mmd_flux_bandwidth_optfun_fwddiff(logσ::AbstractArray, args...; kwargs...) = ForwardDiff.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)
-∇mmd_flux_bandwidth_optfun_zygote(logσ::AbstractArray, args...; kwargs...) = Flux.Zygote.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)[1]
+∇mmd_flux_bandwidth_optfun_zygote(logσ::AbstractArray, args...; kwargs...) = Zygote.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)[1]
 
 #= (∇)mmd_(flux_)bandwidth_optfun speed + consistency testing
 for m in [32,64,128,256,512], nsigma in [16], a in [2.0]

@@ -4,8 +4,8 @@
 
 module MWFLearning
 
-import Flux, Flux.NNlib, Flux.Optimise, DrWatson, BSON, TOML, Dates
-export Flux,      NNlib,      Optimise, DrWatson, BSON, TOML, Dates
+import Flux, Flux.NNlib, Flux.Optimise, Flux.Zygote, DrWatson, BSON, TOML, Dates
+export Flux,      NNlib,      Optimise,      Zygote, DrWatson, BSON, TOML, Dates
 
 using Statistics: mean, median, cov, std, var
 using StatsBase: quantile

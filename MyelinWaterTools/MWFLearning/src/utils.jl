@@ -422,33 +422,28 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
             df = state[(state.dataset .== dataset) .& (min_epoch .<= state.epoch), :]
 
             commonkw = (xscale = :log10, xticks = log10ticks(df[1, :epoch], df[end, :epoch]), xrotation = 75.0, xformatter = x->string(round(Int,x)), lw = 3, titlefontsize = 8, tickfontsize = 6, legend = :best, legendfontsize = 6)
+            logspacing!(dfp) = isempty(dfp) ? dfp : unique(round.(Int, 10.0 .^ range(log10.(dfp.epoch[[1,end]])...; length = 10000))) |> I -> length(I) ≥ 5000 ? deleterows!(dfp, findall(!in(I), dfp.epoch)) : dfp
 
-            dfp = dropmissing(df[!, [:epoch, :loss]])
-            I = unique(round.(Int, 10.0 .^ range(log10.(dfp.epoch[[1,end]])...; length = 10000)))
-            length(I) >= 5000 && (dfp = dfp[findall(in(I), dfp.epoch), :])
+            dfp = logspacing!(dropmissing(df[!, [:epoch, :loss]]))
             p1 = plot()
             if !isempty(dfp)
                 minloss = round(minimum(dfp.loss); sigdigits = 4)
-                p1 = @df dfp plot(:epoch, :loss; title = "Loss ($dataset): min = $minloss)", label = "loss", commonkw...) # ylim = (minloss, quantile(dfp.loss, 0.95))
+                p1 = @df dfp plot(:epoch, :loss; title = "Loss ($dataset): min = $minloss)", label = "loss", ylim = (minloss, quantile(dfp.loss, 0.99)), commonkw...)
             end
 
-            dfp = dropmissing(df[!, [:epoch, :acc]])
-            I = unique(round.(Int, 10.0 .^ range(log10.(dfp.epoch[[1,end]])...; length = 10000)))
-            length(I) >= 5000 && (dfp = dfp[findall(in(I), dfp.epoch), :])
+            dfp = logspacing!(dropmissing(df[!, [:epoch, :acc]]))
             p2 = plot()
             if !isempty(dfp)
                 maxacc = round(maximum(dfp.acc); sigdigits = 4)
-                p2 = @df dfp plot(:epoch, :acc; title = "Accuracy ($dataset): peak = $maxacc%)", label = "acc", yticks = 50:0.1:100, commonkw...) # ylim = (clamp(maxacc, 50, 99) - 1.0, min(maxacc + 0.3, 100.0))
+                p2 = @df dfp plot(:epoch, :acc; title = "Accuracy ($dataset): peak = $maxacc%)", label = "acc", yticks = 50:0.1:100, ylim = (clamp(maxacc, 50, 99) - 1.5, min(maxacc + 0.5, 100.0)), commonkw...)
             end
 
-            dfp = dropmissing(df[!, [:epoch, :labelerr]])
-            I = unique(round.(Int, 10.0 .^ range(log10.(dfp.epoch[[1,end]])...; length = 10000)))
-            length(I) >= 5000 && (dfp = dfp[findall(in(I), dfp.epoch), :])
+            dfp = logspacing!(dropmissing(df[!, [:epoch, :labelerr]]))
             p3 = plot()
             if !isempty(dfp)
                 labelerr = permutedims(reduce(hcat, dfp[!, :labelerr]))
                 labcol = size(labelerr,2) == 1 ? :blue : permutedims(RGB[cgrad(:darkrainbow)[z] for z in range(0.0, 1.0, length = size(labelerr,2))])
-                p3 = @df dfp plot(:epoch, labelerr; title = "Label Error ($dataset): rel. %)", label = labelnames, c = labcol, yticks = 0:100, commonkw...) # ylim = (max(0, minimum(labelerr) - 1.0), min(50, 1.2 * maximum(labelerr[end,:]))) # min(50, quantile(vec(labelerr), 0.90))
+                p3 = @df dfp plot(:epoch, labelerr; title = "Label Error ($dataset): rel. %)", label = labelnames, c = labcol, yticks = 0:100, ylim = (0, min(50, maximum(labelerr[end,:]) + 1.0)), commonkw...)
             end
 
             push!(ps, plot(p1, p2, p3; layout = (1,3)))
@@ -512,9 +507,9 @@ function make_plot_ligocvae_losses_cb(state, filename = nothing)
                 for dataset in unique(state.dataset)
                     window = 100
                     min_epoch = max(1, min(state[end, :epoch] - window, window))
-                    dfp = dropmissing(state[(state.dataset .== dataset) .& (min_epoch .<= state.epoch), [:epoch, :ELBO, :KL, :loss]])
-                    I = unique(round.(Int, 10.0 .^ range(log10.(dfp.epoch[[1,end]])...; length = 10000)))
-                    length(I) >= 5000 && (dfp = dfp[findall(in(I), dfp.epoch), :])
+                    logspacing!(dfp) = isempty(dfp) ? dfp : unique(round.(Int, 10.0 .^ range(log10.(dfp.epoch[[1,end]])...; length = 10000))) |> I -> length(I) ≥ 5000 ? deleterows!(dfp, findall(!in(I), dfp.epoch)) : dfp
+
+                    dfp = logspacing!(dropmissing(state[(state.dataset .== dataset) .& (min_epoch .<= state.epoch), [:epoch, :ELBO, :KL, :loss]]))
                     p = plot()
                     if !isempty(dfp)
                         commonkw = (xaxis = (:log10, log10ticks(dfp[1, :epoch], dfp[end, :epoch])), xrotation = 60.0, legend = :best, lw = 3, xformatter = x->string(round(Int,x)))

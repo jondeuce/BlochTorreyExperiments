@@ -1,7 +1,6 @@
 # Initialization project/code loading
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
-# Pkg.instantiate()
 
 using Statistics: mean, median, std
 using StatsBase: quantile, sample, iqr
@@ -14,6 +13,7 @@ pyplot(size=(800,600))
 # pyplot(size=(1600,900))
 
 # Settings
+findendswith(dir, suffix) = filter!(s -> endswith(s, suffix), readdir(dir)) |> x -> isempty(x) ? nothing : joinpath(dir, first(x))
 const default_settings_file = "/project/st-arausch-1/jcd1994/code/BlochTorreyExperiments-active/MyelinWaterTools/MWFLearning/examples/cvae_settings.toml"
 const settings = let
     # Load default settings + merge in custom settings, if given
@@ -23,10 +23,9 @@ const settings = let
     if haskey(ENV, "SETTINGSFILE")
         merge!(mergereducer!, settings, TOML.parsefile(ENV["SETTINGSFILE"]))
     end
-    # if true #TODO FIXME
-    #     # merge!(mergereducer!, settings, TOML.parsefile("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4/sweep/83/settings/2020-03-17-T-14-03-45-210.acc=rmse_gamma=1_loss=l2_DenseLIGOCVAE_Dh=256_Nh=2_Xout=6_Zdim=8_act=relu_dropout=0.01.settings.toml"))
-    #     merge!(mergereducer!, settings, TOML.parsefile("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4/sweep/263/settings/2020-03-17-T-15-25-02-869.acc=rmse_gamma=100_loss=l2_DenseLIGOCVAE_Dh=256_Nh=2_Xout=6_Zdim=8_act=relu_dropout=0.01.settings.toml"))
-    # end
+    if false #TODO FIXME
+        merge!(mergereducer!, settings, TOML.parsefile(findendswith("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v5/sweep/18/settings/", ".settings.toml")))
+    end
     TOML.print(stdout, settings)
     settings
 end
@@ -168,8 +167,9 @@ train_data, test_data = BT_train_data, BT_test_data
 # Construct model
 @info "Constructing model..."
 @unpack m = MWFLearning.make_model(settings)[1] |> maybegpu;
-# m = BSON.load("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4/sweep/83/log/2020-03-17-T-14-03-45-210.acc=rmse_gamma=1_loss=l2_DenseLIGOCVAE_Dh=256_Nh=2_Xout=6_Zdim=8_act=relu_dropout=0.01.model-best.bson")[:model] |> deepcopy; #TODO FIXME
-# m = BSON.load("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4/sweep/263/log/2020-03-17-T-15-25-02-869.acc=rmse_gamma=100_loss=l2_DenseLIGOCVAE_Dh=256_Nh=2_Xout=6_Zdim=8_act=relu_dropout=0.01.model-best.bson")[:model] |> deepcopy; #TODO FIXME
+# m = BSON.load(findendswith("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v5/sweep/18/log/", ".model-checkpoint.bson"))[:model] |> deepcopy; #TODO FIXME
+# Flux.testmode!(m, true); #TODO FIXME
+
 model_summary(m, savepath("models", "architecture.txt"));
 param_summary(m, labelbatch.(train_data), labelbatch(test_data));
 
@@ -206,8 +206,7 @@ state = DataFrame(
     :KL       => Union{T, Missing}[],
     :labelerr => Union{VT, Missing}[],
 )
-# state = BSON.load("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4/sweep/83/log/2020-03-17-T-14-03-45-210.acc=rmse_gamma=1_loss=l2_DenseLIGOCVAE_Dh=256_Nh=2_Xout=6_Zdim=8_act=relu_dropout=0.01.errors.bson")[:state] |> deepcopy #TODO FIXME
-# state = BSON.load("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4/sweep/263/log/2020-03-17-T-15-25-02-869.acc=rmse_gamma=100_loss=l2_DenseLIGOCVAE_Dh=256_Nh=2_Xout=6_Zdim=8_act=relu_dropout=0.01.errors.bson")[:state] |> deepcopy #TODO FIXME
+# state = BSON.load(findendswith("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v5/sweep/18/log/", ".errors.bson"))[:state] |> deepcopy #TODO FIXME
 
 update_lr_cb            = MWFLearning.make_update_lr_cb(state, opt, lrfun)
 checkpoint_state_cb     = MWFLearning.make_checkpoint_state_cb(state, savepath("log", "errors.bson"); filtermissings = true, filternans = true)
@@ -245,13 +244,13 @@ train_loop! = function()
             push!(state, [epoch; :train; missings(size(state,2)-2)])
 
             @timeit timer "train loop" for d in train_data
-                @timeit timer "forward" ℓ, back = Flux.Zygote.pullback(() -> H_loss(d...), Flux.params(m))
+                @timeit timer "forward" ℓ, back = Zygote.pullback(() -> H_loss(d...), Flux.params(m))
                 @timeit timer "reverse" gs = back(1)
                 @timeit timer "update!" Flux.Optimise.update!(opt, Flux.params(m), gs)
 
                 # Update training losses periodically
                 set_or_add!(ℓ, lastindex(state,1), :loss)
-                if mod(epoch, 10) == 0 #TODO
+                if mod(epoch, 50) == 0 #TODO FIXME
                     @timeit timer "θerr" set_or_add!(θerr(labelbatch(d)...), lastindex(state,1), :labelerr)
                     @timeit timer "θacc" set_or_add!(θacc(labelbatch(d)...), lastindex(state,1), :acc)
                     @timeit timer "ELBO" set_or_add!(L_loss(d...),  lastindex(state,1), :ELBO)
@@ -262,7 +261,7 @@ train_loop! = function()
             # Testing evaluation
             push!(state, [epoch; :test; missings(size(state,2)-2)])
 
-            if mod(epoch, 25) == 0 #TODO
+            if mod(epoch, 50) == 0 #TODO FIXME
                 @timeit timer "test eval" begin
                     @timeit timer "θerr" state[end, :labelerr] = θerr(labelbatch(test_data)...)
                     @timeit timer "θacc" state[end, :acc]      = θacc(labelbatch(test_data)...)
@@ -276,7 +275,7 @@ train_loop! = function()
             @timeit timer "posttraincbs" posttraincbs()
         end
 
-        if mod(epoch, 1000) == 0 #TODO
+        if mod(epoch, 1000) == 0 #TODO FIXME
             show(stdout, timer); println("\n")
             show(stdout, last(state, 10)); println("\n")
         end
@@ -286,7 +285,7 @@ end
 
 @info("Beginning training loop...")
 try
-    train_loop!()
+    train_loop!() #TODO FIXME
 catch e
     if e isa InterruptException
         @info "Training interrupted by user; breaking out of loop..."
