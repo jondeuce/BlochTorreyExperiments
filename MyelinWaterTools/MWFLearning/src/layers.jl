@@ -6,12 +6,12 @@ reverse passes. Test/train mode is handled by [`Dropout`](@ref).
 
 See: https://github.com/FluxML/Flux.jl/issues/1084
 """
-function Flux.dropout(x, p; dims = :)
-    q = 1 - p
-    y = rand!(similar(x, Flux._dropout_shape(x, dims)))
-    y .= Flux._dropout_kernel.(y, p, q)
-    x .* y
-end
+# function Flux.dropout(x, p; dims = :)
+#     q = 1 - p
+#     y = rand!(similar(x, Flux._dropout_shape(x, dims)))
+#     y .= Flux._dropout_kernel.(y, p, q)
+#     x .* y
+# end
 
 """
     wrapprint(io::IO, layer)
