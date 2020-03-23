@@ -14,6 +14,27 @@ See: https://github.com/FluxML/Flux.jl/issues/1084
 # end
 
 """
+NotTrainable(layer)
+
+Wraps the callable `layer` such that any parameters internal to `layer`
+are ignored by Flux during gradient calls.
+"""
+struct NotTrainable{F}
+    layer::F
+end
+Flux.@functor NotTrainable # need functor for e.g. `fmap`
+Flux.trainable(l::NotTrainable) = () # no trainable parameters
+(l::NotTrainable)(x...) = l.layer(x...)
+Base.show(io::IO, l::NotTrainable) = (print(io, "NotTrainable("); print(io, l.layer); print(io, ")"))
+
+"""
+Scale(α = 1, β = zero(α))
+
+Non-trainable wrapper of `Diagonal` layer. Output is `α .* x .+ β`.
+"""
+Scale(α = 1, β = zero(α)) = NotTrainable(Flux.Diagonal(α, β))
+
+"""
     wrapprint(io::IO, layer)
 """    
 wrapprint(io::IO, layer) = Flux.Chain(
@@ -28,7 +49,7 @@ wrapprint(layer::Flux.Chain) = Flux.Chain(wrapprint.(layer.layers)...)
 """
 PrintSize()
 
-Non-learnable layer which simply prints the current size.
+Non-trainable layer which simply prints the current size.
 """
 printsize(x) = (@show size(x); x)
 PrintSize() = @λ (x -> printsize(x))
@@ -36,7 +57,7 @@ PrintSize() = @λ (x -> printsize(x))
 """
 DenseResize()
 
-Non-learnable layer which resizes input arguments `x` to be a matrix with batchsize(x) columns.
+Non-trainable layer which resizes input arguments `x` to be a matrix with batchsize(x) columns.
 """
 struct DenseResize end
 Flux.@functor DenseResize
@@ -46,7 +67,7 @@ Base.show(io::IO, l::DenseResize) = print(io, "DenseResize()")
 """
 ChannelResize(c::Int)
 
-Non-learnable layer which resizes input arguments `x` to be 4D-array with size
+Non-trainable layer which resizes input arguments `x` to be 4D-array with size
 `d` x 1 x `c` x `b`, where `c` is the desired channels, `b` is the batch size,
 and `d` is `length(x) ÷ (c x b)`.
 """
@@ -56,19 +77,6 @@ end
 Flux.@functor ChannelResize
 (l::ChannelResize)(x::AbstractArray) = reshape(x, :, 1, l.c, batchsize(x))
 Base.show(io::IO, l::ChannelResize) = print(io, "ChannelResize(", l.c, ")")
-
-"""
-Scale(s::AbstractArray)
-
-Non-learnable layer which scales input `x` by array `s`
-"""
-struct Scale{V}
-    s::V
-end
-trainable(l::Scale) = () # Layer is not learnable
-Flux.@functor Scale
-(l::Scale)(x::AbstractArray) = x .* l.s
-Base.show(io::IO, l::Scale) = print(io, "Scale(", length(l.s), ")")
 
 """
     Sumout(over)
@@ -151,6 +159,18 @@ CatSkip(dims, layer::Flux.Chain) = Flux.SkipConnection(layer, @λ (a,b) -> cat(a
 CatSkip(dims, layer) = CatSkip(dims, Flux.Chain(layer))
 
 """
+`Conv` wrapper which initializes using `xavier_uniform`
+"""
+XavierConv(k::NTuple{2,Int}, ch::Pair{Int,Int}, σ = identity; kwargs...) = XavierConv(Float64, k, ch, σ; kwargs...)
+XavierConv(T, k::NTuple{2,Int}, ch::Pair{Int,Int}, σ = identity; kwargs...) = Flux.Conv(xavier_uniform(T, k..., ch...), zeros(T, ch[2]), σ; kwargs...)
+
+"""
+`ConvTranspose` wrapper which initializes using `xavier_uniform`
+"""
+XavierConvTrans(k::NTuple{2,Int}, ch::Pair{Int,Int}, σ = identity; kwargs...) = XavierConvTrans(Float64, k, ch, σ; kwargs...)
+XavierConvTrans(T, k::NTuple{2,Int}, ch::Pair{Int,Int}, σ = identity; kwargs...) = Flux.ConvTranspose(xavier_uniform(T, k..., reverse(ch)...), zeros(T, ch[2]), σ; kwargs...)
+
+"""
 BatchDenseConnection
 
 Input has size H1 x ... x HN x C x B, for some data size (H1,...,HN), channels C,
@@ -191,7 +211,7 @@ function BatchConvConnection(
         batchnorm::Bool = false,
     )
     @assert numlayers >= 2 && !(groupnorm && batchnorm)
-    CV(ch, σ = identity) = Flux.Conv(k, ch, σ; init = xavier_uniform, pad = (k.-1).÷2)
+    CV(ch, σ = identity) = XavierConv(k, ch, σ; pad = (k.-1).÷2)
     BN(C,  σ = identity) = batchnorm ? Flux.BatchNorm(C, σ) : groupnorm ? Flux.GroupNorm(C, C÷2, σ) : identity
     AF() = @λ x -> σ.(x)
     if mode == :pre
@@ -222,12 +242,12 @@ feature fusion via 1x1 convolution:
 function DenseConnection(Factory, G0::Int, G::Int, C::Int; dims::Int = 3)
     Flux.Chain(
         [CatSkip(dims, Factory(G0 + (c - 1) * G => G)) for c in 1:C]...,
-        Flux.Conv((1,1), G0 + C * G => G0, identity; init = xavier_uniform, pad = (0,0)),
+        XavierConv((1,1), G0 + C * G => G0; pad = (0,0)),
     )
 end
 DenseConnection(G0::Int, G::Int, C::Int; dims::Int = 3, k::Tuple = (3,1), σ = Flux.relu) =
     DenseConnection(
-        ch -> Flux.Conv(k, ch, σ; init = xavier_uniform, pad = (k.-1).÷2), # Default factory for RDB's
+        ch -> XavierConv(k, ch, σ; pad = (k.-1).÷2), # Default factory for RDB's
         G0, G, C; dims = dims)
 
 """
@@ -287,34 +307,35 @@ where the output - the densely fused features - is then given by
 function DenseFeatureFusion(Factory, G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,1), σ = Flux.relu; dims::Int = 3)
     IdentitySkip(
         Flux.Chain(
-            # Flux.Conv(k, G0 => G0, σ; init = xavier_uniform, pad = (k.-1).÷2),
+            # XavierConv(k, G0 => G0, σ; pad = (k.-1).÷2),
             GlobalFeatureFusion(
                 dims,
                 [ResidualDenseBlock(Factory, G0, G, C; dims = dims) for d in 1:D]...,
             ),
             # Flux.BatchNorm(D * G0, σ),
             Flux.GroupNorm(D * G0, (D * G0) ÷ 2, σ),
-            Flux.Conv((1,1), D * G0 => G0, identity; init = xavier_uniform, pad = (0,0)),
-            # Flux.Conv(k, G0 => G0, σ; init = xavier_uniform, pad = (k.-1).÷2),
+            XavierConv((1,1), D * G0 => G0; pad = (0,0)),
+            # XavierConv(k, G0 => G0, σ; pad = (k.-1).÷2),
         )
     )
 end
 DenseFeatureFusion(G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,1), σ = Flux.relu; kwargs...) =
     DenseFeatureFusion(
-        ch -> Flux.Conv(k, ch, σ; init = xavier_uniform, pad = (k.-1).÷2), # Default factory for RDB's
+        ch -> XavierConv(k, ch, σ; pad = (k.-1).÷2), # Default factory for RDB's
         G0, G, C, D, k, σ; kwargs...)
 
 """
 Print model/layer
 """
-function model_summary(io::IO, models::AbstractArray; kwargs...)
-    for (i,m) in enumerate(models)
+function model_summary(io::IO, models::Dict; kwargs...)
+    for (i,(k,m)) in enumerate(models)
+        (k != "") && println(io, string(k) * ":")
         _model_summary(io, m; kwargs...)
         _model_parameters(io, m)
         (i < length(models)) && println(io, "")
     end
 end
-function model_summary(models::AbstractArray, filename = nothing; kwargs...)
+function model_summary(models::Dict, filename = nothing; kwargs...)
     @info "Model summary..."
     (filename != nothing) && open(filename, "w") do file
         model_summary(file, models; kwargs...)
@@ -322,14 +343,14 @@ function model_summary(models::AbstractArray, filename = nothing; kwargs...)
     model_summary(stdout, models; kwargs...)
 end
 model_summary(model, filename = nothing; kwargs...) =
-    model_summary([model], filename; kwargs...)
+    model_summary(Dict("" => model), filename; kwargs...)
 
 """
 Print model parameters following `_model_summary`
 """
 function _model_parameters(io::IO, model, depth::Int = 0)
     if depth == 0
-        nparams = reduce(+, length.(Flux.params(model)); init = 0)
+        nparams = mapreduce(length, +, Flux.params(model); init = 0)
         println(io, "\nParameters: $nparams")
     end
 end
@@ -343,67 +364,67 @@ Note: All models implementing `_model_summary` should not end the printing on a 
       called inside the `model_summary` parent function.
 """
 function _model_summary(io::IO, model::Flux.Chain, depth::Int = 0; skipidentity = false)
-    println(io, getindent(depth) * "Chain(")
+    println(io, _getindent(depth) * "Chain(")
     for (i,layer) in enumerate(model)
         if !(skipidentity && layer == identity)
             _model_summary(io, layer, depth+1; skipidentity = skipidentity)
             (i < length(model)) ? println(io, ",") : println(io, "")
         end
     end
-    print(io, getindent(depth) * ")")
+    print(io, _getindent(depth) * ")")
     nothing
 end
 
 """
 Indenting for layer `depth`
 """
-getindent(depth) = reduce(*, ["    " for _ in 1:depth]; init = "")
+_getindent(depth::Int) = "    " ^ depth
 
 # SkipConnection
 function _model_summary(io::IO, model::Flux.SkipConnection, depth::Int = 0; kwargs...)
-    println(io, getindent(depth) * "SkipConnection(")
+    println(io, _getindent(depth) * "SkipConnection(")
     _model_summary(io, model.layers, depth+1; kwargs...)
     println(io, ",")
     _model_summary(io, model.connection, depth+1; kwargs...)
     println(io, "")
-    print(io, getindent(depth) * ")")
+    print(io, _getindent(depth) * ")")
 end
 
 # GlobalFeatureFusion
 function _model_summary(io::IO, model::GlobalFeatureFusion, depth::Int = 0; kwargs...)
-    println(io, getindent(depth) * "GlobalFeatureFusion(")
+    println(io, _getindent(depth) * "GlobalFeatureFusion(")
     _model_summary(io, model.dims, depth+1; kwargs...)
     println(io, ",")
     for (d,layer) in enumerate(model.layers)
         _model_summary(io, layer, depth + 1; kwargs...)
         (d < length(model.layers)) ? println(io, ",") : println(io, "")
     end
-    print(io, getindent(depth) * ")")
+    print(io, _getindent(depth) * ")")
 end
 
 # Sumout
 function _model_summary(io::IO, model::Sumout, depth::Int = 0; kwargs...)
-    println(io, getindent(depth) * "Sumout(")
+    println(io, _getindent(depth) * "Sumout(")
     for (i,layer) in enumerate(model.over)
         _model_summary(io, layer, depth+1; kwargs...)
         (i < length(model.over)) ? println(io, ",") : println(io, "")
     end
-    print(io, getindent(depth) * ")")
+    print(io, _getindent(depth) * ")")
 end
 
 # MultiInput
 function _model_summary(io::IO, model::MultiInput, depth::Int = 0; kwargs...)
-    println(io, getindent(depth) * "MultiInput(")
+    println(io, _getindent(depth) * "MultiInput(")
     for (i,layer) in enumerate(model.layers)
         _model_summary(io, layer, depth+1; kwargs...)
         (i < length(model.layers)) ? println(io, ",") : println(io, "")
     end
-    print(io, getindent(depth) * ")")
+    print(io, _getindent(depth) * ")")
 end
 
 # Functions
 function _model_summary(io::IO, model::Function, depth::Int = 0; kwargs...)
-    print(io, getindent(depth) * "@λ ")
+    print(io, _getindent(depth) * "@λ ")
     buf = IOBuffer()
     show(buf, model)
     print(io, String(take!(buf)))
@@ -411,7 +432,7 @@ end
 
 # Fallback method
 function _model_summary(io::IO, model, depth::Int = 0; kwargs...)
-    print(io, getindent(depth))
+    print(io, _getindent(depth))
     buf = IOBuffer()
     show(buf, model)
     print(io, String(take!(buf)))

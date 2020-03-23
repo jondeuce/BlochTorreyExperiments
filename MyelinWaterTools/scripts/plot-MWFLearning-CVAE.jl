@@ -106,7 +106,7 @@ function read_results(sweep_dir)
 end
 
 # Read results to DataFrame
-results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v5";
+results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v6";
 sweep_dir = joinpath(results_dir, "sweep");
 df, sweep_temp, metrics_temp = read_results(sweep_dir);
 
@@ -188,18 +188,20 @@ end
 #### Visualize learned dense layers
 ####
 
+#=
 heatscale(x) = sign(x) * log(1+sqrt(abs(x)));
 saveheatmap(c::Flux.Chain, name = "") = foreach(((i,l),) -> saveheatmap(l, name * "-$i"), enumerate(c.layers));
 saveheatmap(l::Flux.Dense, name = "") = savefig(plot(heatmap(heatscale.(l.W[end:-1:1,:]); xticks = size(l.W,2)÷4 * (0:4), yticks = size(l.W,1)÷4 * (0:4)), heatmap(heatscale.(l.b[:,:]); xticks = 0:1); layout = @layout([a{0.9w} b{0.1w}])), @show(name));
 saveheatmap(l, name = "") = nothing;
 
 # model = BSON.load(joinpath(sweep_dir, "22", "best-model.bson"))["model"] |> deepcopy;
-model = BSON.load(findendswith(joinpath(sweep_dir, "109", "log"), ".model-best.bson"))[:model] |> deepcopy;
+model = BSON.load(findendswith(joinpath(sweep_dir, "51", "log"), ".model-best.bson"))[:model] |> deepcopy;
 
 rm.(filter!(s -> startswith(s,"dense-") && endswith(s,".png"), readdir(".")));
 saveheatmap(model.E1, "dense-E1");
 saveheatmap(model.E2, "dense-E2");
 saveheatmap(model.D, "dense-D");
+=#
 
 #=
 let results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4/sweep"

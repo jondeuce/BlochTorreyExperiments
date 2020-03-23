@@ -71,92 +71,8 @@ labelbatch(batch) = (signals(batch), thetas(batch))
 const MB_train_batch_size  = 500 # Number of simulated signals in one training batch
 const MB_test_batch_size   = 500 # Number of simulated signals in one testing batch
 const MB_num_train_batches = 20  # Number of training batches per epoch
-function x_sampler()
-    out = zeros(T, 15, MB_train_batch_size)
-    for j in 1:size(out,2)
-        g_bounds, η_bounds = (0.60, 0.92), (0.15, 0.82)
-        mvf    = MWFLearning.linearsampler(0.025, 0.4)
-        η      = min(mvf / (1 - g_bounds[2]^2), η_bounds[2]) # Maximum density for given bounds
-        g      = sqrt(1 - mvf/η) # g-ratio corresponding to maximum density
-        # g      = MWFLearning.linearsampler(g_bounds...) # Uniformly random g-ratio
-        # η      = mvf / (1 - g^2) # MWFLearning.linearsampler(η_bounds...)
-        evf    = 1 - η
-        ivf    = 1 - (mvf + evf)
-        mwf    =  mvf / (2evf + 2ivf + mvf)
-        ewf    = 2evf / (2evf + 2ivf + mvf)
-        iwf    = 2ivf / (2evf + 2ivf + mvf)
-        alpha  = MWFLearning.linearsampler(120.0, 180.0)
-        K      = 1e-3 # Fix mock signals at constant near-zero permeability (lower bound of MWFLearning.log10sampler(1e-3, 10.0))
-        T2sp   = MWFLearning.linearsampler(10e-3, 70e-3)
-        T2lp   = MWFLearning.linearsampler(50e-3, 180e-3)
-        while !(T2lp ≥ 1.5*T2sp) # Enforce constraint
-            T2sp = MWFLearning.linearsampler(10e-3, 70e-3)
-            T2lp = MWFLearning.linearsampler(50e-3, 180e-3)
-        end
-        T1sp   = MWFLearning.linearsampler(150e-3, 250e-3)
-        T1lp   = MWFLearning.linearsampler(949e-3, 1219e-3)
-        T2tiss = T2lp # MWFLearning.linearsampler(50e-3, 180e-3)
-        T1tiss = T1lp # MWFLearning.linearsampler(949e-3, 1219e-3)
-        TE     = 10e-3
-        # out[1,j]  = log10(TE*K) # log(TE*Kperm)
-        # out[2,j]  = cosd(alpha) # cosd(alpha)
-        # out[3,j]  = g # gratio
-        # out[4,j]  = mwf # mwf
-        # out[5,j]  = T2sp / TE # T2mw/TE
-        # out[6,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
-        # out[7,j]  = iwf # iwf
-        # out[8,j]  = ewf # ewf
-        # out[9,j]  = iwf + ewf # iewf
-        # out[10,j] = T2lp / TE # T2iw/TE
-        # out[11,j] = T2tiss / TE # T2ew/TE
-        # out[12,j] = T1sp / TE # T1mw/TE
-        # out[13,j] = T1lp / TE # T1iw/TE
-        # out[14,j] = T1tiss / TE # T1ew/TE
-        # out[15,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
-        # out[1,j]  = cosd(alpha) # cosd(alpha)
-        # out[2,j]  = g # gratio
-        # out[3,j]  = mwf # mwf
-        # out[4,j]  = T2sp / TE # T2mw/TE
-        # out[5,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
-        # out[6,j]  = log10(TE*K) # log(TE*Kperm)
-        # out[7,j]  = iwf # iwf
-        # out[8,j]  = ewf # ewf
-        # out[9,j]  = iwf + ewf # iewf
-        # out[10,j] = T2lp / TE # T2iw/TE
-        # out[11,j] = T2tiss / TE # T2ew/TE
-        # out[12,j] = T1sp / TE # T1mw/TE
-        # out[13,j] = T1lp / TE # T1iw/TE
-        # out[14,j] = T1tiss / TE # T1ew/TE
-        # out[15,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
-        out[1,j]  = cosd(alpha) # cosd(alpha)
-        out[2,j]  = g # gratio
-        out[3,j]  = mwf # mwf
-        out[4,j]  = T2sp / TE # T2mw/TE
-        out[5,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
-        out[6,j]  = iwf # iwf
-        out[7,j]  = ewf # ewf
-        out[8,j]  = iwf + ewf # iewf
-        out[9,j]  = T2lp / TE # T2iw/TE
-        out[10,j] = T2tiss / TE # T2ew/TE
-        out[11,j] = T1sp / TE # T1mw/TE
-        out[12,j] = T1lp / TE # T1iw/TE
-        out[13,j] = T1tiss / TE # T1ew/TE
-        out[14,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
-        # out[1,j] = mwf
-        # out[2,j] = 1 - mwf # iewf
-        # out[3,j] = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
-        # out[4,j] = T2sp / TE # T2mw/TE
-        # out[5,j] = alpha
-        # out[6,j] = log10(TE*K)
-        # out[7,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
-        # out[8,j] = T1sp / TE # T1mw/TE
-    end
-    return out
-end
-# y_sampler(x) = (y = MWFLearning.forward_physics_8arg(x); reshape(y, size(y,1), 1, 1, :))
-y_sampler(x) = (y = MWFLearning.forward_physics_14arg(x); reshape(y, size(y,1), 1, 1, :))
-# y_sampler(x) = (y = MWFLearning.forward_physics_15arg(x); reshape(y, size(y,1), 1, 1, :))
-# y_sampler(x) = (y = MWFLearning.forward_physics_15arg_Kperm(x); reshape(y, size(y,1), 1, 1, :))
+x_sampler() = MWFLearning.theta_sampler_8arg(MB_train_batch_size)
+y_sampler(x) = reshape(MWFLearning.forward_physics_8arg(x), :, 1, 1, batchsize(x))
 MB_sampler = MWFLearning.LazyMiniBatches(MB_num_train_batches, x_sampler, y_sampler)
 =#
 
@@ -166,7 +82,7 @@ train_data, test_data = BT_train_data, BT_test_data
 
 # Construct model
 @info "Constructing model..."
-@unpack m = MWFLearning.make_model(settings)[1] |> maybegpu;
+m = MWFLearning.make_model(settings, "DenseLIGOCVAE") |> maybegpu;
 # m = BSON.load(findendswith("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v5/sweep/18/log/", ".model-checkpoint.bson"))[:model] |> deepcopy; #TODO FIXME
 # Flux.testmode!(m, true); #TODO FIXME
 

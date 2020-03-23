@@ -1,41 +1,33 @@
-const MODELNAMES = Set{String}([
-    "load",
-    "ConvResNet",
-    "ResidualDenseNet",
-    "Keras1DSeqClass",
-    "TestModel1",
-    "TestModel2",
-    "TestModel3",
-    "TestModel4",
-    "DeepResNet",
-    "BasicHeight32Model1",
-    "BasicHeight32Generator1",
-    "BasicHeight32Generator2",
-    "BasicDCGAN1",
-    "DenseLIGOCVAE",
-    "ConvLIGOCVAE",
-    "RDNLIGOCVAE",
-])
-const INFOFIELDS = Set{String}([
-    # Data info fields passed as kwargs to all models
-    "nfeatures", "nchannels", "nlabels", "labmean", "labwidth",
-])
+@with_kw struct DataInfo{T}
+    nfeatures::Int = 32
+    nchannels::Int = 1
+    nlabels::Int = 8
+    labmean::Vector{T} = zeros(nlabels)
+    labwidth::Vector{T} = ones(nlabels)
+end
 
 function make_model(settings::Dict, name::String)
     if name == "load"
-        m = BSON.load(settings["model"][name]["path"])[:model]
-        return @ntuple(m)
+        return BSON.load(settings["model"][name]["path"])[:model]
     else
         T = settings["prec"] == 64 ? Float64 : Float32
         model_maker = eval(Symbol(name))
         kwargs = make_model_kwargs(T, deepcopy(settings["model"][name]))
-        for key in INFOFIELDS
-            kwargs[Symbol(key)] = clean_model_arg(T, deepcopy(settings["data"]["info"][key]))
-        end
-        return model_maker(T; kwargs...)
+        info = DataInfo{T}(; [f => deepcopy(settings["data"]["info"][string(f)]) for f in fieldnames(DataInfo)]...)
+        model = model_maker(info; kwargs...)
+        return Flux.paramtype(T, model) # ensure correct underlying float type
     end
 end
-make_model(settings::Dict) = [make_model(settings, name) for name in keys(settings["model"]) if name ∈ MODELNAMES]
+make_model(settings::Dict) = Dict{String,Any}([name => make_model(settings, name) for name in keys(settings["model"]) if is_model_name(name)]...)
+
+function is_model_name(name::Symbol)
+    try
+        hasmethod(MWFLearning.eval(name), (DataInfo,))
+    catch e
+        (e isa UndefVarError) ? false : rethrow(e)
+    end
+end
+is_model_name(name::String) = is_model_name(Symbol(name))
 
 function model_string(settings::Dict, name::String)
     if name == "load"
@@ -59,9 +51,7 @@ function model_string(settings::Dict, name::String)
         mstring = name * "_" * DrWatson.savename(d)
     end
 end
-model_string(settings::Dict) =
-    DrWatson.savename(settings["model"]) * "_" * join(
-        [model_string(settings, name) for (name, model) in settings["model"] if name ∈ MODELNAMES], "_")
+model_string(settings::Dict) = DrWatson.savename(settings["model"]) * "_" * join([model_string(settings, name) for (name, model) in settings["model"] if is_model_name(name)], "_")
 
 make_model_kwargs(::Type{T}, m::Dict) where {T} = Dict{Symbol,Any}(Symbol.(keys(m)) .=> clean_model_arg.(T, values(m)))
 clean_model_arg(::Type{T}, x) where {T} = error("Unsupported model parameter type $(typeof(x)): $x") # fallback
@@ -71,16 +61,8 @@ clean_model_arg(::Type{T}, x::AbstractString) where {T} = Symbol(x)
 clean_model_arg(::Type{T}, x::AbstractFloat) where {T} = T(x)
 clean_model_arg(::Type{T}, x::AbstractArray) where {T} = convert(Vector, deepcopy(vec(clean_model_arg.(T, x))))
 
-const ACTIVATIONS = Dict{Symbol,Any}(
-    :relu      => NNlib.relu,
-    :sigma     => NNlib.σ,
-    :leakyrelu => NNlib.leakyrelu,
-    :elu       => NNlib.elu,
-    :swish     => NNlib.swish,
-    :softplus  => NNlib.softplus,
-)
-make_activation(name::Symbol) = ACTIVATIONS[name]
-make_activation(str::String) = make_activation(Symbol(str))
+make_activation(name::Symbol) = Flux.eval(name)
+make_activation(name::String) = make_activation(Symbol(name))
 
 """
     Hard-coded forward physics model given matrix of parameters
@@ -186,196 +168,337 @@ function forward_physics_15arg_Kperm(x::Matrix{T}) where {T}
 end
 ForwardProp8Arg() = @λ(x -> forward_physics_8arg(x))
 
+function theta_sampler_8arg(Nbatch)
+    out = zeros(8, Nbatch)
+    for j in 1:size(out,2)
+        g_bounds, η_bounds = (0.60, 0.92), (0.15, 0.82)
+        mvf    = MWFLearning.linearsampler(0.025, 0.4)
+        η      = min(mvf / (1 - g_bounds[2]^2), η_bounds[2]) # Maximum density for given bounds
+        g      = sqrt(1 - mvf/η) # g-ratio corresponding to maximum density
+        # g    = MWFLearning.linearsampler(g_bounds...) # Uniformly random g-ratio
+        # η    = mvf / (1 - g^2) # MWFLearning.linearsampler(η_bounds...)
+        evf    = 1 - η
+        ivf    = 1 - (mvf + evf)
+        mwf    =  mvf / (2evf + 2ivf + mvf)
+        ewf    = 2evf / (2evf + 2ivf + mvf)
+        iwf    = 2ivf / (2evf + 2ivf + mvf)
+        alpha  = MWFLearning.linearsampler(120.0, 180.0)
+        K      = 1e-3 # Fix mock signals at constant near-zero permeability (lower bound of MWFLearning.log10sampler(1e-3, 10.0))
+        T2sp   = MWFLearning.linearsampler(10e-3, 70e-3)
+        T2lp   = MWFLearning.linearsampler(50e-3, 180e-3)
+        while !(T2lp ≥ 1.5*T2sp) # Enforce constraint
+            T2sp = MWFLearning.linearsampler(10e-3, 70e-3)
+            T2lp = MWFLearning.linearsampler(50e-3, 180e-3)
+        end
+        T1sp   = MWFLearning.linearsampler(150e-3, 250e-3)
+        T1lp   = MWFLearning.linearsampler(949e-3, 1219e-3)
+        T2tiss = T2lp # MWFLearning.linearsampler(50e-3, 180e-3)
+        T1tiss = T1lp # MWFLearning.linearsampler(949e-3, 1219e-3)
+        TE     = 10e-3
+        out[1,j] = mwf
+        out[2,j] = 1 - mwf # iewf
+        out[3,j] = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
+        out[4,j] = T2sp / TE # T2mw/TE
+        out[5,j] = alpha
+        out[6,j] = log10(TE*K)
+        out[7,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
+        out[8,j] = T1sp / TE # T1mw/TE
+    end
+    return out
+end
+function theta_sampler_14arg(Nbatch)
+    out = zeros(14, Nbatch)
+    for j in 1:size(out,2)
+        g_bounds, η_bounds = (0.60, 0.92), (0.15, 0.82)
+        mvf    = MWFLearning.linearsampler(0.025, 0.4)
+        η      = min(mvf / (1 - g_bounds[2]^2), η_bounds[2]) # Maximum density for given bounds
+        g      = sqrt(1 - mvf/η) # g-ratio corresponding to maximum density
+        # g    = MWFLearning.linearsampler(g_bounds...) # Uniformly random g-ratio
+        # η    = mvf / (1 - g^2) # MWFLearning.linearsampler(η_bounds...)
+        evf    = 1 - η
+        ivf    = 1 - (mvf + evf)
+        mwf    =  mvf / (2evf + 2ivf + mvf)
+        ewf    = 2evf / (2evf + 2ivf + mvf)
+        iwf    = 2ivf / (2evf + 2ivf + mvf)
+        alpha  = MWFLearning.linearsampler(120.0, 180.0)
+        K      = 1e-3 # Fix mock signals at constant near-zero permeability (lower bound of MWFLearning.log10sampler(1e-3, 10.0))
+        T2sp   = MWFLearning.linearsampler(10e-3, 70e-3)
+        T2lp   = MWFLearning.linearsampler(50e-3, 180e-3)
+        while !(T2lp ≥ 1.5*T2sp) # Enforce constraint
+            T2sp = MWFLearning.linearsampler(10e-3, 70e-3)
+            T2lp = MWFLearning.linearsampler(50e-3, 180e-3)
+        end
+        T1sp   = MWFLearning.linearsampler(150e-3, 250e-3)
+        T1lp   = MWFLearning.linearsampler(949e-3, 1219e-3)
+        T2tiss = T2lp # MWFLearning.linearsampler(50e-3, 180e-3)
+        T1tiss = T1lp # MWFLearning.linearsampler(949e-3, 1219e-3)
+        TE     = 10e-3
+        out[1,j]  = cosd(alpha) # cosd(alpha)
+        out[2,j]  = g # gratio
+        out[3,j]  = mwf # mwf
+        out[4,j]  = T2sp / TE # T2mw/TE
+        out[5,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
+        out[6,j]  = iwf # iwf
+        out[7,j]  = ewf # ewf
+        out[8,j]  = iwf + ewf # iewf
+        out[9,j]  = T2lp / TE # T2iw/TE
+        out[10,j] = T2tiss / TE # T2ew/TE
+        out[11,j] = T1sp / TE # T1mw/TE
+        out[12,j] = T1lp / TE # T1iw/TE
+        out[13,j] = T1tiss / TE # T1ew/TE
+        out[14,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
+    end
+    return out
+end
+function theta_sampler_15arg(Nbatch)
+    out = zeros(15, Nbatch)
+    for j in 1:size(out,2)
+        g_bounds, η_bounds = (0.60, 0.92), (0.15, 0.82)
+        mvf    = MWFLearning.linearsampler(0.025, 0.4)
+        η      = min(mvf / (1 - g_bounds[2]^2), η_bounds[2]) # Maximum density for given bounds
+        g      = sqrt(1 - mvf/η) # g-ratio corresponding to maximum density
+        # g    = MWFLearning.linearsampler(g_bounds...) # Uniformly random g-ratio
+        # η    = mvf / (1 - g^2) # MWFLearning.linearsampler(η_bounds...)
+        evf    = 1 - η
+        ivf    = 1 - (mvf + evf)
+        mwf    =  mvf / (2evf + 2ivf + mvf)
+        ewf    = 2evf / (2evf + 2ivf + mvf)
+        iwf    = 2ivf / (2evf + 2ivf + mvf)
+        alpha  = MWFLearning.linearsampler(120.0, 180.0)
+        K      = 1e-3 # Fix mock signals at constant near-zero permeability (lower bound of MWFLearning.log10sampler(1e-3, 10.0))
+        T2sp   = MWFLearning.linearsampler(10e-3, 70e-3)
+        T2lp   = MWFLearning.linearsampler(50e-3, 180e-3)
+        while !(T2lp ≥ 1.5*T2sp) # Enforce constraint
+            T2sp = MWFLearning.linearsampler(10e-3, 70e-3)
+            T2lp = MWFLearning.linearsampler(50e-3, 180e-3)
+        end
+        T1sp   = MWFLearning.linearsampler(150e-3, 250e-3)
+        T1lp   = MWFLearning.linearsampler(949e-3, 1219e-3)
+        T2tiss = T2lp # MWFLearning.linearsampler(50e-3, 180e-3)
+        T1tiss = T1lp # MWFLearning.linearsampler(949e-3, 1219e-3)
+        TE     = 10e-3
+        out[1,j]  = cosd(alpha) # cosd(alpha)
+        out[2,j]  = g # gratio
+        out[3,j]  = mwf # mwf
+        out[4,j]  = T2sp / TE # T2mw/TE
+        out[5,j]  = inv((ivf * inv(T2lp) + evf * inv(T2tiss)) / (ivf + evf)) / TE # T2iew/TE
+        out[6,j]  = log10(TE*K) # log(TE*Kperm)
+        out[7,j]  = iwf # iwf
+        out[8,j]  = ewf # ewf
+        out[9,j]  = iwf + ewf # iewf
+        out[10,j] = T2lp / TE # T2iw/TE
+        out[11,j] = T2tiss / TE # T2ew/TE
+        out[12,j] = T1sp / TE # T1mw/TE
+        out[13,j] = T1lp / TE # T1iw/TE
+        out[14,j] = T1tiss / TE # T1ew/TE
+        out[15,j] = inv((ivf * inv(T1lp) + evf * inv(T1tiss)) / (ivf + evf)) / TE # T1iew/TE
+    end
+    return out
+end
+
 """
     Sequence classification with 1D convolutions:
         https://keras.io/getting-started/sequential-model-guide/
 """
-function Keras1DSeqClass(settings)
-    H = settings["data"]["info"]["nfeatures"] # data height
-    C = settings["data"]["info"]["nchannels"] # number of channels
+function Keras1DSeqClass(
+        info    :: DataInfo{T} = DataInfo();
+        Nf1     :: Int = 4,
+        Nf2     :: Int = 4,
+        Npool   :: Int = 2,
+        Nkern   :: Int = 3,
+        act     :: Symbol = :leakyrelu,
+        dropout :: T = T(0.0),
+    ) where {T}
 
-    @unpack Nf1, Nf2, Npool, Nkern, Nout, act = settings["model"]
+    @unpack nfeatures, nchannels, nlabels, labmean, labwidth = info
+    H = nfeatures # data height
+    C = nchannels # number of channels
+    Nout = nlabels # output size
+
     Npad = Nkern ÷ 2 # pad size
     Ndense = Nf2 * (H ÷ Npool ÷ Npool)
     actfun = make_activation(act)
 
     model = Flux.Chain(
         # Two convolution layers followed by max pooling
-        Flux.Conv((Nkern,1), C => Nf1, pad = (Npad,0), actfun), # (H, 1, 1) -> (H, Nf1, 1)
-        Flux.Conv((Nkern,1), Nf1 => Nf1, pad = (Npad,0), actfun), # (H, Nf1, 1) -> (H, Nf1, 1)
+        XavierConv((Nkern,1), C => Nf1, pad = (Npad,0), actfun), # (H, 1, 1) -> (H, Nf1, 1)
+        XavierConv((Nkern,1), Nf1 => Nf1, pad = (Npad,0), actfun), # (H, Nf1, 1) -> (H, Nf1, 1)
         Flux.MaxPool((Npool,)), # (H, Nf1, 1) -> (H/Npool, Nf1, 1)
 
         # Two more convolution layers followed by mean pooling
-        Flux.Conv((Nkern,1), Nf1 => Nf2, pad = (Npad,0), actfun), # (H/Npool, Nf1, 1) -> (H/Npool, Nf2, 1)
-        Flux.Conv((Nkern,1), Nf2 => Nf2, pad = (Npad,0), actfun), # (H/Npool, Nf2, 1) -> (H/Npool, Nf2, 1)
+        XavierConv((Nkern,1), Nf1 => Nf2, pad = (Npad,0), actfun), # (H/Npool, Nf1, 1) -> (H/Npool, Nf2, 1)
+        XavierConv((Nkern,1), Nf2 => Nf2, pad = (Npad,0), actfun), # (H/Npool, Nf2, 1) -> (H/Npool, Nf2, 1)
         Flux.MeanPool((Npool,)), # (H/Npool, Nf2, 1) -> (H/Npool^2, Nf2, 1)
 
         # Dropout layer
-        settings["model"]["dropout"] ? Flux.Dropout(0.5) : identity,
+        (dropout > 0) ? Flux.Dropout(dropout) : identity,
 
         # Dense + softmax layer
         DenseResize(),
-        Flux.Dense(Ndense, Nout, actfun),
-        settings["model"]["softmax"] ? NNlib.softmax : identity,
+        Flux.Dense(Ndense, Nout),
     )
     
-    return model
+    return model |> m -> Flux.paramtype(T, m)
 end
 
-function TestModel1(settings)
-    H = settings["data"]["info"]["nfeatures"] # data height
-    C = settings["data"]["info"]["nchannels"] # number of channels
+function TestModel1(
+        info      :: DataInfo{T} = DataInfo();
+        Nf1       :: Int = 4,
+        Nf2       :: Int = 4,
+        Nf3       :: Int = 4,
+        Npool     :: Int = 2,
+        Nkern     :: Int = 3,
+        act       :: Symbol = :leakyrelu,
+        dropout   :: T = T(0.0),
+        batchnorm :: Bool = true,
+    ) where {T}
 
-    @unpack Nf1, Nf2, Nf3, Npool, Nkern, Nout, act = settings["model"]
+    @unpack nfeatures, nchannels, nlabels, labmean, labwidth = info
+    H = nfeatures # data height
+    C = nchannels # number of channels
+    Nout = nlabels # output size
+
     Npad = Nkern ÷ 2 # pad size
     Ndense = Nf3 * (H ÷ Npool ÷ Npool ÷ Npool)
     actfun = make_activation(act)
 
     model = Flux.Chain(
         # Two convolution layers followed by max pooling and batch normalization
-        Flux.Conv((Nkern,1), C => Nf1, pad = (Npad,0), actfun),
-        Flux.Conv((Nkern,1), Nf1 => Nf1, pad = (Npad,0), actfun),
+        XavierConv((Nkern,1), C => Nf1, pad = (Npad,0), actfun),
+        XavierConv((Nkern,1), Nf1 => Nf1, pad = (Npad,0), actfun),
         Flux.MaxPool((Npool,)),
-        settings["model"]["batchnorm"] ? Flux.BatchNorm(Nf1, actfun) : identity,
+        batchnorm ? Flux.BatchNorm(Nf1, actfun) : identity,
 
         # Two more convolution layers followed by max pooling and batch normalization
-        Flux.Conv((Nkern,1), Nf1 => Nf2, pad = (Npad,0), actfun),
-        Flux.Conv((Nkern,1), Nf2 => Nf2, pad = (Npad,0), actfun),
+        XavierConv((Nkern,1), Nf1 => Nf2, pad = (Npad,0), actfun),
+        XavierConv((Nkern,1), Nf2 => Nf2, pad = (Npad,0), actfun),
         Flux.MaxPool((Npool,)),
-        settings["model"]["batchnorm"] ? Flux.BatchNorm(Nf2, actfun) : identity,
+        batchnorm ? Flux.BatchNorm(Nf2, actfun) : identity,
 
         # Two more convolution layers followed by max pooling and batch normalization
-        Flux.Conv((Nkern,1), Nf2 => Nf3, pad = (Npad,0), actfun),
-        Flux.Conv((Nkern,1), Nf3 => Nf3, pad = (Npad,0), actfun),
+        XavierConv((Nkern,1), Nf2 => Nf3, pad = (Npad,0), actfun),
+        XavierConv((Nkern,1), Nf3 => Nf3, pad = (Npad,0), actfun),
         Flux.MaxPool((Npool,)),
-        settings["model"]["batchnorm"] ? Flux.BatchNorm(Nf3, actfun) : identity,
+        batchnorm ? Flux.BatchNorm(Nf3, actfun) : identity,
 
         # Dropout layer
-        settings["model"]["dropout"] ? Flux.Dropout(0.5) : identity,
+        (dropout > 0) ? Flux.Dropout(dropout) : identity,
 
         # Dense / batchnorm layer
         DenseResize(),
         Flux.Dense(Ndense, Ndense ÷ 2, actfun),
-        settings["model"]["batchnorm"] ? Flux.BatchNorm(Ndense ÷ 2, actfun) : identity,
+        batchnorm ? Flux.BatchNorm(Ndense ÷ 2, actfun) : identity,
 
         # Dense / batchnorm layer, but last actfun must be softplus since outputs are positive
-        settings["model"]["batchnorm"] ? Flux.Dense(Ndense ÷ 2, Nout, actfun) : Flux.Dense(Ndense ÷ 2, Nout, NNlib.softplus),
-        settings["model"]["batchnorm"] ? Flux.BatchNorm(Nout, NNlib.softplus) : identity,
+        batchnorm ? Flux.Dense(Ndense ÷ 2, Nout, actfun) : Flux.Dense(Ndense ÷ 2, Nout, NNlib.softplus),
+        batchnorm ? Flux.BatchNorm(Nout, NNlib.softplus) : identity,
 
-        # Softmax
-        settings["model"]["softmax"] ? NNlib.softmax : identity,
-
-        # Scale from (0,1) back to model parameter range
-        settings["data"]["info"]["labwidth"] == false ? identity : Scale(settings["data"]["info"]["labwidth"]),
+        # Scale from (0,1) back to model parameter range #TODO FIXME
+        Scale(labwidth, labmean),
     )
 
-    return model
+    return model |> m -> Flux.paramtype(T, m)
 end
 
-function TestModel2(settings)
-    H = settings["data"]["info"]["nfeatures"] # data height
-    C = settings["data"]["info"]["nchannels"] # number of channels
+function TestModel2(
+        info      :: DataInfo{T} = DataInfo();
+        Nh        :: Int = 2,
+        Dh        :: Int = info.nfeatures,
+        act       :: Symbol = :leakyrelu,
+        dropout   :: T = T(0.0),
+        batchnorm :: Bool = true,
+    ) where {T}
 
-    @unpack Nout, act, Nd = settings["model"]
+    @unpack nfeatures, nchannels, nlabels, labmean, labwidth = info
+    H = nfeatures # data height
+    C = nchannels # number of channels
+    Nout = nlabels # output size
     actfun = make_activation(act)
 
     model = Flux.Chain(
         DenseResize(),
-        Flux.Dense(H * C, Nd[1], actfun),
-        # settings["model"]["batchnorm"] ? Flux.BatchNorm(Nd[1], actfun) : identity,
+        Flux.Dense(H * C, Dh, actfun),
+        # batchnorm ? Flux.BatchNorm(Dh, actfun) : identity,
         
-        reduce(vcat, [
-            Flux.Dense(Nd[i], Nd[i+1], actfun),
-            # settings["model"]["batchnorm"] ? Flux.BatchNorm(Nd[i+1], actfun) : identity
-        ] for i in 1:length(Nd)-1)...,
+        mapreduce(vcat, 1:Nh; init = []) do _ 
+            [Flux.Dense(Dh, Dh, actfun)]
+            # batchnorm ? [Flux.BatchNorm(Dh, actfun)] : []
+        end...,
 
-        Flux.Dense(Nd[end], Nout, actfun),
-        settings["model"]["batchnorm"] ? Flux.BatchNorm(Nout, actfun) : identity,
+        Flux.Dense(Dh, Nout, actfun),
+        batchnorm ? Flux.BatchNorm(Nout, actfun) : identity,
 
-        # Softmax
-        settings["model"]["softmax"] ? NNlib.softmax : identity,
-        
-        # Softplus to ensure positivity, unless softmax has already been applied
-        settings["model"]["softmax"] ? identity : @λ(x -> NNlib.softplus.(x)),
+        # Softplus to ensure positivity
+        @λ(x -> NNlib.softplus.(x)),
 
-        # Scale from (0,1) back to model parameter range
-        settings["data"]["info"]["labwidth"] == false ? identity : Scale(settings["data"]["info"]["labwidth"]),
+        # Scale from (0,1) back to model parameter range #TODO FIXME
+        Scale(labwidth, labmean),
     )
 
-    return model
+    return model |> m -> Flux.paramtype(T, m)
 end
 
-function TestModel3(settings)
-    H      = settings["data"]["info"]["nfeatures"] :: Int # Data height
-    C      = settings["data"]["info"]["nchannels"] :: Int # Number of channels
-    actfun = settings["model"]["act"] |> make_activation
-    Nout   = settings["model"]["Nout"] :: Int # Number of outputs
-    BN     = settings["model"]["batchnorm"] :: Bool # Use batch normalization
-    labwidth  = settings["data"]["info"]["labwidth"] :: Vector # Parameter distribution widths
-    NP     = settings["data"]["preprocess"]["wavelet"]["apply"] == true ? length(labwidth) : 0
+function TestModel3(
+        info      :: DataInfo{T} = DataInfo();
+        act       :: Symbol = :leakyrelu,
+        dropout   :: T = T(0.0),
+        batchnorm :: Bool = true,
+    ) where {T}
+
+    @unpack nfeatures, nchannels, nlabels, labmean, labwidth = info
+    H      = nfeatures # Data height
+    C      = nchannels # Number of channels
+    Nout   = nlabels # output size
+    actfun = make_activation(act)
 
     MakeActfun() = @λ x -> actfun.(x)
-    PhysicalParams() = @λ(x -> x[1:NP, 1:C, :])
-    NonPhysicsCoeffs() = @λ(x -> x[NP+1:end, 1:C, :])
-    ParamsScale() = settings["data"]["info"]["labwidth"] == false ? identity : Scale(settings["data"]["info"]["labwidth"])
-    MakeDropout() = settings["model"]["dropout"] == true ? Flux.AlphaDropout(0.5) : identity
-    ResidualBlock() = IdentitySkip(BatchDenseConnection(4, 4, actfun; groupnorm = BN, mode = :post))
+    ParamsScale() = Scale(labwidth, labmean)
+    MakeDropout() = dropout > 0 ? Flux.Dropout(dropout) : identity
+    ResidualBlock() = IdentitySkip(BatchDenseConnection(4, 4, actfun; groupnorm = batchnorm, mode = :post))
 
-    # NonPhysicsCoeffs -> Output Parameters
-    residualnetwork = Flux.Chain(
-        NonPhysicsCoeffs(),
+    # Output (assumes 1:2 is mwf/iewf and 3:4 are other physical params)
+    model = Flux.Chain(
         DenseResize(),
-        Flux.Dense(H*C - NP, 16, actfun),
+        Flux.Dense(H*C, 16, actfun),
         ChannelResize(4),
         (ResidualBlock() for _ in 1:3)...,
         MakeDropout(),
         DenseResize(),
         Flux.Dense(16, Nout),
         ParamsScale(), # Scale to parameter space
-        NP > 0 ?
-            @λ(x -> 0.01 * x) : # Force physics perturbation to be small (helps with convergence)
-            Flux.Diagonal(NP) # Learn output labwidth
-    )
-
-    # Reshape physical parameters
-    physicsnetwork = Flux.Chain(
-        PhysicalParams(),
-        DenseResize(),
-    )
-
-    # Output (assumes 1:2 is mwf/iewf and 3:4 are other physical params)
-    model = Flux.Chain(
-        NP > 0 ? Sumout(physicsnetwork, residualnetwork) : residualnetwork,
         @λ(x -> vcat(Flux.softmax(x[1:2,:]), Flux.relu.(x[3:4,:]))),
     )
 
-    return model
+    return model |> m -> Flux.paramtype(T, m)
 end
 
-function ConvResNet(settings)
-    H       = settings["data"]["info"]["nfeatures"] :: Int # Data height
-    C       = settings["data"]["info"]["nchannels"] :: Int # Number of channels
-    Nout    = settings["model"]["Nout"] :: Int # Number of outputs
-    actfun  = settings["model"]["act"] |> make_activation # Activation function
-    labwidth   = settings["data"]["info"]["labwidth"] :: Vector # Parameter distribution widths
-    labmean  = settings["data"]["info"]["labmean"] :: Vector # Parameter means
-    DP      = settings["model"]["densenet"]["dropout"] :: Bool # Use batch normalization
-    BN      = settings["model"]["densenet"]["batchnorm"] :: Bool # Use batch normalization
-    GN      = settings["model"]["densenet"]["groupnorm"] :: Bool # Use group normalization
-    Nkern   = settings["model"]["densenet"]["Nkern"] :: Int # Kernel size
-    Nfeat   = settings["model"]["densenet"]["Nfeat"] :: Int # Kernel size
-    Nconv   = settings["model"]["densenet"]["Nconv"] :: Int # Num residual connection layers
-    Nblock  = settings["model"]["densenet"]["Nblock"] :: Int # Num residual connection layers
-    @assert !(BN && GN)
+function ConvResNet(
+        info      :: DataInfo{T} = DataInfo();
+        Nkern     :: Int = 3,
+        Nfeat     :: Int = 4,
+        Nconv     :: Int = 4,
+        Nblock    :: Int = 4,
+        act       :: Symbol = :leakyrelu,
+        dropout   :: T = T(0.0),
+        batchnorm :: Bool = true,
+        groupnorm :: Bool = false,
+    ) where {T}
+
+    @assert !(batchnorm && groupnorm)
+    @unpack nfeatures, nchannels, nlabels, labmean, labwidth = info
+    H       = nfeatures # Data height
+    C       = nchannels # Number of channels
+    Nout    = nlabels # output size
+    actfun  = make_activation(act)
 
     MakeActfun() = @λ x -> actfun.(x)
-    ParamsScale() = Flux.Diagonal(Nout; initα = (args...) -> labwidth, initβ = (args...) -> labmean) #TODO FIXME this learns slope/offset now
-    MakeDropout() = DP ? Flux.AlphaDropout(0.5) : identity
-    Upsample() = Flux.Conv((1,1), 1 => Nfeat, actfun; init = xavier_uniform, pad = (0,0)) # 1x1 upsample convolutions
-    Downsample() = Flux.Conv((1,1), Nfeat => 1, actfun; init = xavier_uniform, pad = (0,0)) # 1x1 downsample convolutions
+    ParamsScale() = Scale(labwidth, labmean)
+    MakeDropout() = (dropout > 0) ? Flux.Dropout(dropout) : identity
+    Upsample() = XavierConv((1,1), 1 => Nfeat, actfun; pad = (0,0)) # 1x1 upsample convolutions
+    Downsample() = XavierConv((1,1), Nfeat => 1, actfun; pad = (0,0)) # 1x1 downsample convolutions
     ResidualBlock() = IdentitySkip(
-        BatchConvConnection(Nkern, Nfeat => Nfeat, actfun;
-        numlayers = Nconv, batchnorm = BN, groupnorm = GN, mode = :post))
+        BatchConvConnection((Nkern,Nkern), Nfeat => Nfeat, actfun;
+        numlayers = Nconv, batchnorm = batchnorm, groupnorm = groupnorm, mode = :post))
 
     # Residual network
     residualnetwork = Flux.Chain(
@@ -393,7 +516,7 @@ function ConvResNet(settings)
     # Output params
     model = Flux.Chain(
         residualnetwork,
-        # ParamsScale(), # Scale to parameter space
+        ParamsScale(), # Scale to parameter space
         @λ(x -> vcat(
             Flux.softmax(x[1:2,:]), # Positive fractions with unit sum
             # Flux.relu.(x[3:5,:]), # Positive parameters
@@ -401,16 +524,15 @@ function ConvResNet(settings)
         )),
     )
 
-    return model
+    return model |> m -> Flux.paramtype(T, m)
 end
 
 """
     Residual Dense Network for Image Super-Resolution:
         https://arxiv.org/abs/1802.08797
 """
-function ResidualDenseNet(::Type{T} = Float64;
-        nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8,
-        labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
+function ResidualDenseNet(
+        info      :: DataInfo{T} = DataInfo();
         act       :: Symbol = :relu,      # Activation function
         dropout   :: Bool   = false,      # Use batch normalization
         batchnorm :: Bool   = true,       # Use batch normalization
@@ -424,20 +546,20 @@ function ResidualDenseNet(::Type{T} = Float64;
         Ndense    :: Int    = 2,          # Number of blocks in GlobalFeatureFusion concatenation layer
     ) where {T}
 
+    @unpack nfeatures, nchannels, nlabels, labmean, labwidth = info
     @assert !(batchnorm && groupnorm)
     H, C, θ = nfeatures, nchannels, nlabels
-    DP, BN, GN = dropout, batchnorm, groupnorm
     actfun = make_activation(act)
 
     MakeActfun() = @λ(x -> actfun.(x))
-    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean) #TODO FIXME this learns slope/offset now
-    MakeDropout() = DP ? Flux.AlphaDropout(T(0.5)) : identity
-    Resample(ch) = Flux.Conv((1,1), ch, identity; init = xavier_uniform, pad = (0,0)) # 1x1 resample convolutions
+    ParamsScale() = Scale(labwidth, labmean)
+    MakeDropout() = dropout ? Flux.AlphaDropout(T(0.5)) : identity
+    Resample(ch) = XavierConv((1,1), ch; pad = (0,0)) # 1x1 resample convolutions
     
     function DFF()
         local G0, G, C, D, k = Nfeat, Nfeat, Nblock, Ndense, (Nkern,1)
-        ConvFactory = @λ(ch -> Flux.Conv(k, ch, actfun; init = xavier_uniform, pad = (k.-1).÷2))
-        BatchConvFactory = @λ(ch -> BatchConvConnection(k, ch, actfun; numlayers = Nconv, batchnorm = BN, groupnorm = GN, mode = batchmode))
+        ConvFactory = @λ(ch -> XavierConv(k, ch, actfun; pad = (k.-1).÷2))
+        BatchConvFactory = @λ(ch -> BatchConvConnection(k, ch, actfun; numlayers = Nconv, batchnorm = batchnorm, groupnorm = groupnorm, mode = batchmode))
         # Factory = ConvFactory
         Factory = BatchConvFactory
         DenseFeatureFusion(Factory, G0, G, C, D, k, actfun; dims = 3)
@@ -453,7 +575,7 @@ function ResidualDenseNet(::Type{T} = Float64;
         Resample(C => Nfeat),
         DFF(),
         # MakeDropout(),
-        BN ? Flux.BatchNorm(Nfeat, actfun) : GN ? Flux.GroupNorm(Nfeat, Nfeat÷2, actfun) : identity,
+        batchnorm ? Flux.BatchNorm(Nfeat, actfun) : groupnorm ? Flux.GroupNorm(Nfeat, Nfeat÷2, actfun) : identity,
         Resample(Nfeat => 1),
         DenseResize(),
         # Flux.Dense(H ÷ 4, θ),
@@ -480,15 +602,14 @@ function ResidualDenseNet(::Type{T} = Float64;
         )),
     )
 
-    return model
+    return model |> m -> Flux.paramtype(T, m)
 end
 
 """
     RDN modification, removing all residual-like skip connections
 """
-function TestModel4(::Type{T} = Float64;
-        nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8,
-        labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
+function TestModel4(
+        info      :: DataInfo{T} = DataInfo();
         act       :: Symbol = :relu,      # Activation function
         dropout   :: Bool   = false,      # Use batch normalization
         batchnorm :: Bool   = true,       # Use batch normalization
@@ -504,35 +625,37 @@ function TestModel4(::Type{T} = Float64;
         Nstride   :: Int    = 1,          # Number of GlobalFeatureFusion concatenation layers
     ) where {T}
 
+    @unpack nfeatures, nchannels, nlabels, labmean, labwidth = info
     @assert !(batchnorm && groupnorm)
     H, C, θ = nfeatures, nchannels, nlabels
-    DP, BN, GN = dropout, batchnorm, groupnorm
     actfun = make_activation(act)
 
     SKIP_CONNECTIONS = true
     MAYBESKIP(layer) = SKIP_CONNECTIONS ? IdentitySkip(layer) : layer
 
     MakeActfun() = @λ x -> actfun.(x)
-    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean) #TODO FIXME this learns slope/offset now
-    MakeDropout() = DP ? Flux.AlphaDropout(T(0.5)) : identity
+    ParamsScale() = Scale(labwidth, labmean)
+    MakeDropout() = dropout ? Flux.AlphaDropout(T(0.5)) : identity
     
     function GFF()
         local G0, G, C, D, k, σ = Nfeat, Nfeat, Nblock, Ndense, (Nkern,1), actfun
-        ConvFactory = @λ ch -> Flux.Conv(k, ch, σ; init = xavier_uniform, pad = (k.-1).÷2)
-        BatchConvFactory = @λ ch -> BatchConvConnection(k, ch, σ; numlayers = Nconv, batchnorm = BN, groupnorm = GN, mode = batchmode)
+        ConvFactory = @λ ch -> XavierConv(k, ch, σ; pad = (k.-1).÷2)
+        BatchConvFactory = @λ ch -> BatchConvConnection(k, ch, σ; numlayers = Nconv, batchnorm = batchnorm, groupnorm = groupnorm, mode = batchmode)
         Factory = factory == :conv ? ConvFactory : BatchConvFactory
         gff_layers = []
         for g in 1:Nglobal
             if g > 1
-                GN ? push!(gff_layers, Flux.GroupNorm(D * (g - 1) * G0, (D * (g - 1) * G0) ÷ 2, σ)) :
-                     push!(gff_layers, Flux.BatchNorm(D * (g - 1) * G0, σ))
-                push!(gff_layers, Flux.Conv((1,1), D * (g - 1) * G0 => g * G0, identity; init = xavier_uniform, pad = (0,0), stride = (Nstride,1)))
+                groupnorm ?
+                    push!(gff_layers, Flux.GroupNorm(D * (g - 1) * G0, (D * (g - 1) * G0) ÷ 2, σ)) :
+                    push!(gff_layers, Flux.BatchNorm(D * (g - 1) * G0, σ))
+                push!(gff_layers, XavierConv((1,1), D * (g - 1) * G0 => g * G0; pad = (0,0), stride = (Nstride,1)))
             end
             push!(gff_layers, GlobalFeatureFusion(3, [MAYBESKIP(DenseConnection(Factory, g * G0, g * G, C; dims = 3)) for d in 1:D]...,))
         end
-        GN ? push!(gff_layers, Flux.GroupNorm(D * Nglobal * G0, (D * Nglobal * G0) ÷ 2, σ)) :
-             push!(gff_layers, Flux.BatchNorm(D * Nglobal * G0, σ))
-        push!(gff_layers, Flux.Conv((1,1), D * Nglobal * G0 => (Nglobal + 1) * G0, identity; init = xavier_uniform, pad = (0,0), stride = (Nstride,1)))
+        groupnorm ?
+            push!(gff_layers, Flux.GroupNorm(D * Nglobal * G0, (D * Nglobal * G0) ÷ 2, σ)) :
+            push!(gff_layers, Flux.BatchNorm(D * Nglobal * G0, σ))
+        push!(gff_layers, XavierConv((1,1), D * Nglobal * G0 => (Nglobal + 1) * G0; pad = (0,0), stride = (Nstride,1)))
         return Flux.Chain(gff_layers...)
     end
 
@@ -544,11 +667,11 @@ function TestModel4(::Type{T} = Float64;
     # Residual network
     globalfeaturenet = Flux.Chain(
         # ChannelwiseDense(H, C => C),
-        # Flux.Conv((1,1), C => C, identity; init = xavier_uniform, pad = (0,0), stride = (2,1)), # spatial downsampling
-        Flux.Conv((Nkern,1), C => Nfeat, actfun; init = xavier_uniform, pad = ((Nkern,1).-1).÷2), # channel upsampling
-        # Flux.Conv((Nkern,1), C => Nfeat, actfun; init = xavier_uniform, pad = ((Nkern,1).-1).÷2, stride = (2,1)), # spatial downsampling, channel upsampling
+        # XavierConv((1,1), C => C; pad = (0,0), stride = (2,1)), # spatial downsampling
+        XavierConv((Nkern,1), C => Nfeat, actfun; pad = ((Nkern,1).-1).÷2), # channel upsampling
+        # XavierConv((Nkern,1), C => Nfeat, actfun; pad = ((Nkern,1).-1).÷2, stride = (2,1)), # spatial downsampling, channel upsampling
         GFF(),
-        # Flux.Conv((Nkern,1), Nglobal * Nfeat => Nglobal * Nfeat, actfun; init = xavier_uniform, pad = ((Nkern,1).-1).÷2, stride = (2,1)), # spatial downsampling
+        # XavierConv((Nkern,1), Nglobal * Nfeat => Nglobal * Nfeat, actfun; pad = ((Nkern,1).-1).÷2, stride = (2,1)), # spatial downsampling
         ApplyPool ? Flux.MeanPool((Npool,1)) : identity,
         DenseResize(),
         Flux.Dense(Hlast * (Nglobal + 1) * Nfeat, θ),
@@ -568,27 +691,27 @@ function TestModel4(::Type{T} = Float64;
         )),
     )
 
-    return model
+    return model |> m -> Flux.paramtype(T, m)
 end
 
 """
     DeepResNet
 """
-function DeepResNet(::Type{T} = Float64;
-        nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8,
-        labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
+function DeepResNet(
+        info::DataInfo{T} = DataInfo();
         type::Symbol = :ResNet18, # Type of DeepResNet
         nfilt::Int = 4, # Base number of resnet filters
     ) where {T}
 
+    @unpack nfeatures, nchannels, nlabels, labmean, labwidth = info
     H, C, θ = nfeatures, nchannels, nlabels
     nfilt_last = type ∈ (:ResNet18, :ResNet34) ? nfilt * 8 : nfilt * 32
-    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean) #TODO FIXME this learns slope/offset now
+    ParamsScale() = Scale(labwidth, labmean)
 
     top_in = Flux.Chain(
         ChannelwiseDense(H, C => C),
-        Flux.ConvTranspose(ResNet._rep(7), C => nfilt; pad = ResNet._pad(3), stride = ResNet._rep(4)),
-        # Flux.Conv(ResNet._rep(7), C => nfilt; pad = ResNet._pad(3), stride = ResNet._rep(1)),
+        XavierConvTrans(ResNet._rep(7), C => nfilt; pad = ResNet._pad(3), stride = ResNet._rep(4)),
+        # XavierConv(ResNet._rep(7), C => nfilt; pad = ResNet._pad(3), stride = ResNet._rep(1)),
         Flux.MaxPool(ResNet._rep(3), pad = ResNet._pad(1), stride = ResNet._rep(2)),
     )
 
@@ -610,37 +733,34 @@ function DeepResNet(::Type{T} = Float64;
         error("Unknown DeepResNet type: " * type)
     resnet = resnet_maker(top_in, bottom_in; initial_filters = nfilt)
 
-    return resnet
+    return resnet |> m -> Flux.paramtype(T, m)
 end
 
-function BasicHeight32Model1(::Type{T} = Float64;
-        nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8,
-        labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
-    ) where {T}
-    
+function BasicHeight32Model1(info::DataInfo{T} = DataInfo()) where {T}
+    @unpack nfeatures, nchannels, nlabels, labmean, labwidth = info
     @assert nfeatures == 32
     H, C, θ = nfeatures, nchannels, nlabels
 
-    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean) #TODO FIXME this learns slope/offset now
-    
+    ParamsScale() = Scale(labwidth, labmean)
+
     CatConvLayers = let k = 5
-        c1 = Flux.Conv((k,1), C=>8; pad = ((k÷2)*1,0), dilation = 1) # TODO: `DepthwiseConv` broken?
-        c2 = Flux.Conv((k,1), C=>8; pad = ((k÷2)*2,0), dilation = 2) # TODO: `DepthwiseConv` broken?
-        c3 = Flux.Conv((k,1), C=>8; pad = ((k÷2)*3,0), dilation = 3) # TODO: `DepthwiseConv` broken?
-        c4 = Flux.Conv((k,1), C=>8; pad = ((k÷2)*4,0), dilation = 4) # TODO: `DepthwiseConv` broken?
+        c1 = XavierConv((k,1), C=>8; pad = ((k÷2)*1,0), dilation = 1) # TODO: `DepthwiseConv` broken?
+        c2 = XavierConv((k,1), C=>8; pad = ((k÷2)*2,0), dilation = 2) # TODO: `DepthwiseConv` broken?
+        c3 = XavierConv((k,1), C=>8; pad = ((k÷2)*3,0), dilation = 3) # TODO: `DepthwiseConv` broken?
+        c4 = XavierConv((k,1), C=>8; pad = ((k÷2)*4,0), dilation = 4) # TODO: `DepthwiseConv` broken?
         @λ(x -> cat(c1(x), c2(x), c3(x), c4(x); dims = 3))
     end
 
     model = Flux.Chain(
         CatConvLayers,
         Flux.BatchNorm(32, Flux.relu),
-        Flux.Conv((3,1), 32=>32; pad = (1,0), stride = 2),
+        XavierConv((3,1), 32=>32; pad = (1,0), stride = 2),
         # Flux.BatchNorm(32, Flux.relu),
-        # Flux.Conv((3,1), 32=>32; pad = (1,0), stride = 2),
+        # XavierConv((3,1), 32=>32; pad = (1,0), stride = 2),
         # Flux.BatchNorm(32, Flux.relu),
-        # Flux.Conv((3,1), 32=>32; pad = (1,0), stride = 2),
+        # XavierConv((3,1), 32=>32; pad = (1,0), stride = 2),
         # Flux.BatchNorm(32, Flux.relu),
-        # Flux.Conv((3,1), 32=>32; pad = (1,0), stride = 2),
+        # XavierConv((3,1), 32=>32; pad = (1,0), stride = 2),
         # Flux.MaxPool((3,1)),
         # Flux.MeanPool((3,1)),
         # Flux.Dropout(0.3),
@@ -654,20 +774,17 @@ function BasicHeight32Model1(::Type{T} = Float64;
         )),
     )
 
-    return model
+    return model |> m -> Flux.paramtype(T, m)
 end
 
-function BasicHeight32Generator1(::Type{T} = Float64;
-        nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8,
-        labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
-    ) where {T}
-    
+function BasicHeight32Generator1(info::DataInfo{T} = DataInfo()) where {T}
+    @unpack nfeatures, nchannels, nlabels, labmean, labwidth = info
     @assert nfeatures == 32
     @assert nchannels == 1
     H, θ = nfeatures, nlabels
 
-    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean) # Scales approx [-1,1] to param range #TODO FIXME this learns slope/offset now
-    InverseParamsScale() = Flux.Diagonal(θ; initα = (args...) -> inv.(labwidth), initβ = (args...) -> -labmean./labwidth) # Scales param range to approx [-1,1] #TODO FIXME this learns slope/offset now
+    ParamsScale() = Scale(labwidth, labmean) # Scales approx [-1,1] to param range
+    InverseParamsScale() = Scale(inv.(labwidth), -labmean./labwidth) # Scales param range to approx [-1,1]
 
     EvenSigns = convert(Vector{T}, cospi.(0:31))
     OddSigns  = convert(Vector{T}, cospi.(1:32))
@@ -676,44 +793,44 @@ function BasicHeight32Generator1(::Type{T} = Float64;
             InverseParamsScale(),
             Flux.Dense(θ, F, σ),
             ChannelResize(1),
-            Flux.Conv((1,1), 1=>C; pad = (0,0)),
+            XavierConv((1,1), 1=>C; pad = (0,0)),
             # Flux.Dense(θ, 32*C, σ),
             # ChannelResize(C),
             IdentitySkip(
                 Flux.Chain(
-                    Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    XavierConv((k,1), C=>C; pad = (k÷2,0)),
                     @λ(x -> σ.(x)),
-                    Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    XavierConv((k,1), C=>C; pad = (k÷2,0)),
                     # Flux.BatchNorm(C),
-                    # Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    # XavierConv((k,1), C=>C; pad = (k÷2,0)),
                     # Flux.BatchNorm(C, σ),
-                    # Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    # XavierConv((k,1), C=>C; pad = (k÷2,0)),
                     # Flux.BatchNorm(C),
                 ),
             ),
-            Flux.Conv((k,1), 1C=>2C; pad = (k÷2,0)),
+            XavierConv((k,1), 1C=>2C; pad = (k÷2,0)),
             Flux.MeanPool((p,1); pad = (p÷2,0), stride = 4),
             IdentitySkip(
                 Flux.Chain(
-                    Flux.Conv((k,1), 2C=>2C; pad = (k÷2,0)),
+                    XavierConv((k,1), 2C=>2C; pad = (k÷2,0)),
                     @λ(x -> σ.(x)),
-                    Flux.Conv((k,1), 2C=>2C; pad = (k÷2,0)),
+                    XavierConv((k,1), 2C=>2C; pad = (k÷2,0)),
                     # Flux.BatchNorm(2C),
-                    # Flux.Conv((k,1), 2C=>2C; pad = (k÷2,0)),
+                    # XavierConv((k,1), 2C=>2C; pad = (k÷2,0)),
                     # Flux.BatchNorm(2C, σ),
-                    # Flux.Conv((k,1), 2C=>2C; pad = (k÷2,0)),
+                    # XavierConv((k,1), 2C=>2C; pad = (k÷2,0)),
                     # Flux.BatchNorm(2C),
                 ),
             ),
-            Flux.Conv((k,1), 2C=>4C; pad = (k÷2,0)),
+            XavierConv((k,1), 2C=>4C; pad = (k÷2,0)),
             Flux.MeanPool((p,1); pad = (p÷2,0), stride = 4),
-            # Flux.Conv((1,1), C=>1; pad = (0,0)),
+            # XavierConv((1,1), C=>1; pad = (0,0)),
             DenseResize(),
             Flux.Dense((F÷16)*4C, 32),
             # @λ(x -> EvenSigns .* x), # Corrections typically alternate sign
         )
     end
-    
+
     model = Flux.Chain(
         Sumout(
             ForwardProp8Arg(),
@@ -722,20 +839,17 @@ function BasicHeight32Generator1(::Type{T} = Float64;
         @λ(x -> Flux.relu.(x)),
     )
 
-    return model
+    return model |> m -> Flux.paramtype(T, m)
 end
 
-function BasicHeight32Generator2(::Type{T} = Float64;
-        nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8,
-        labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
-    ) where {T}
-    
+function BasicHeight32Generator2(info::DataInfo{T} = DataInfo()) where {T}
+    @unpack nfeatures, nchannels, nlabels, labmean, labwidth = info
     @assert nfeatures == 32
     @assert nchannels == 1
     H, θ = nfeatures, nlabels
 
-    ParamsScale() = Flux.Diagonal(θ; initα = (args...) -> labwidth, initβ = (args...) -> labmean) # Scales approx [-1,1] to param range #TODO FIXME this learns slope/offset now
-    InverseParamsScale() = Flux.Diagonal(θ; initα = (args...) -> inv.(labwidth), initβ = (args...) -> -labmean./labwidth) # Scales param range to approx [-1,1] #TODO FIXME this learns slope/offset now
+    ParamsScale() = Scale(labwidth, labmean) # Scales approx [-1,1] to param range
+    InverseParamsScale() = Scale(inv.(labwidth), -labmean./labwidth) # Scales param range to approx [-1,1]
 
     OddSigns  = 1:H .|> n -> isodd(n)  ? one(T) : -one(T)
     EvenSigns = 1:H .|> n -> iseven(n) ? one(T) : -one(T)
@@ -744,16 +858,16 @@ function BasicHeight32Generator2(::Type{T} = Float64;
             [IdentitySkip(
                 Flux.Chain(
                     ChannelResize(1),
-                    Flux.Conv((1,1), 1=>C; pad = (0,0)), # Upsample channels
-                    # Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    XavierConv((1,1), 1=>C; pad = (0,0)), # Upsample channels
+                    # XavierConv((k,1), C=>C; pad = (k÷2,0)),
                     # @λ(x -> σ.(x)),
-                    # Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    # XavierConv((k,1), C=>C; pad = (k÷2,0)),
                     Flux.BatchNorm(C),
-                    Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    XavierConv((k,1), C=>C; pad = (k÷2,0)),
                     Flux.BatchNorm(C, σ),
-                    Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    XavierConv((k,1), C=>C; pad = (k÷2,0)),
                     Flux.BatchNorm(C),
-                    Flux.Conv((1,1), C=>1; pad = (0,0)), # Downsample channels
+                    XavierConv((1,1), C=>1; pad = (0,0)), # Downsample channels
                     DenseResize(),
                 ),
             ) for i in 1:R]...,
@@ -765,23 +879,23 @@ function BasicHeight32Generator2(::Type{T} = Float64;
             InverseParamsScale(),
             Flux.Dense(θ, F, σ),
             ChannelResize(1),
-            Flux.Conv((1,1), 1=>C; pad = (0,0)),
+            XavierConv((1,1), 1=>C; pad = (0,0)),
             [IdentitySkip(
                 Flux.Chain(
-                    # Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    # XavierConv((k,1), C=>C; pad = (k÷2,0)),
                     # @λ(x -> σ.(x)),
-                    # Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    # XavierConv((k,1), C=>C; pad = (k÷2,0)),
                     Flux.BatchNorm(C),
-                    Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    XavierConv((k,1), C=>C; pad = (k÷2,0)),
                     Flux.BatchNorm(C, σ),
-                    Flux.Conv((k,1), C=>C; pad = (k÷2,0)),
+                    XavierConv((k,1), C=>C; pad = (k÷2,0)),
                     Flux.BatchNorm(C),
                 ),
             ) for i in 1:R]...,
             Flux.MeanPool((p,1); pad = (p÷2,0), stride = 4),
             DenseResize(),
             Flux.Dense((F÷4)*C, H),
-            @λ(x -> OddSigns .* x), # Corrections typically alternate sign
+            Scale(OddSigns), # Corrections typically alternate sign
         )
     end
 
@@ -796,10 +910,10 @@ function BasicHeight32Generator2(::Type{T} = Float64;
                 DenseResize(),
             ) for i in 1:length(Fs)-1]...,
             Flux.Dense(Fs[end], H, σ),
-            @λ(x -> OddSigns .* x), # Corrections typically alternate sign
+            Scale(OddSigns), # Corrections typically alternate sign
         )
     end
-    
+
     function RecurseCorrect(layer)
         return Flux.Chain(
             Sumout(
@@ -816,21 +930,18 @@ function BasicHeight32Generator2(::Type{T} = Float64;
         @λ(x -> Flux.relu.(x)),
     )
 
-    return model
+    return model |> m -> Flux.paramtype(T, m)
 end
 
-function BasicDCGAN1(::Type{T} = Float64;
-        nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8,
-        labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
-    ) where {T}
-    
+function BasicDCGAN1(info::DataInfo{T} = DataInfo()) where {T}
+    @unpack nfeatures, nchannels, nlabels, labmean, labwidth = info
     @assert nfeatures == 32
     @assert nchannels == 1
     @assert mod(nfeatures, 8) == 0
     H, θ = nfeatures, nlabels
-    
-    ParamsScale() = Flux.Diagonal(labwidth, labmean) # Scales approx [-0.5,0.5] to param range #TODO FIXME this learns slope/offset now
-    InverseParamsScale() = Flux.Diagonal(inv.(labwidth), .-labmean./labwidth) # Scales param range to approx [-1,1] #TODO FIXME this learns slope/offset now
+
+    ParamsScale() = Scale(labwidth, labmean) # Scales approx [-0.5,0.5] to param range
+    InverseParamsScale() = Scale(inv.(labwidth), .-labmean./labwidth) # Scales param range to approx [-1,1]
 
     function Generator()
         C,  k  = 32, (3,1)
@@ -842,13 +953,13 @@ function BasicDCGAN1(::Type{T} = Float64;
                 InverseParamsScale(),
                 Flux.Dense(θ, (H÷8) * C),
                 ChannelResize(C),
-                Flux.ConvTranspose(k, C => C÷2; pad = p2, stride = s2), # Output height: H÷4
+                XavierConvTrans(k, C => C÷2; pad = p2, stride = s2), # Output height: H÷4
                 # Flux.BatchNorm(C÷2),
                 @λ(x -> Flux.relu.(x)),
-                Flux.ConvTranspose(k, C÷2 => C÷4; pad = p2, stride = s2), # Output height: H÷2
+                XavierConvTrans(k, C÷2 => C÷4; pad = p2, stride = s2), # Output height: H÷2
                 # Flux.BatchNorm(C÷4),
                 @λ(x -> Flux.relu.(x)),
-                Flux.ConvTranspose(k, C÷4 => 1; pad = p2, stride = s2), # Output height: H
+                XavierConvTrans(k, C÷4 => 1; pad = p2, stride = s2), # Output height: H
                 DenseResize(),
                 Flux.Diagonal(H; initα = (args...) -> T(0.02) .* randn(T, args...), initβ = (args...) -> zeros(T, args...)),
             ),
@@ -860,15 +971,15 @@ function BasicDCGAN1(::Type{T} = Float64;
         s1, s2 = (1,1), (2,1)
         return Flux.Chain(
             ChannelResize(1),
-            Flux.Conv(k, 1 => C; pad = p, stride = s1), # Output height: H
+            XavierConv(k, 1 => C; pad = p, stride = s1), # Output height: H
             @λ(x -> Flux.leakyrelu.(x, T(0.2))),
-            Flux.Conv(k, C => 2C; pad = p, stride = s2), # Output height: H÷2
+            XavierConv(k, C => 2C; pad = p, stride = s2), # Output height: H÷2
             # Flux.BatchNorm(2C),
             @λ(x -> Flux.leakyrelu.(x, T(0.2))),
-            Flux.Conv(k, 2C => 4C; pad = p, stride = s2), # Output height: H÷4
+            XavierConv(k, 2C => 4C; pad = p, stride = s2), # Output height: H÷4
             # Flux.BatchNorm(4C),
             @λ(x -> Flux.leakyrelu.(x, T(0.2))),
-            Flux.Conv(k, 4C => 8C; pad = p, stride = s2), # Output height: H÷8
+            XavierConv(k, 4C => 8C; pad = p, stride = s2), # Output height: H÷8
             # Flux.BatchNorm(8C),
             @λ(x -> Flux.leakyrelu.(x, T(0.2))),
             DenseResize(),
@@ -877,11 +988,11 @@ function BasicDCGAN1(::Type{T} = Float64;
     end
 
     sampler = ParamsScale()
-    Z = B -> sampler(rand(T, θ, B) .- T(0.5))
-    G = Flux.Chain(Generator(), @λ(x -> Flux.relu.(x)))
-    D = Discriminator()
+    Z = @λ(Nbatch -> sampler(rand(T, θ, Nbatch) .- T(0.5)))
+    G = Flux.Chain(Generator(), @λ(x -> Flux.relu.(x))) |> m -> Flux.paramtype(T, m)
+    D = Discriminator() |> m -> Flux.paramtype(T, m)
 
-    return @ntuple(G, D, Z)
+    return Dict("genatr" => G, "discrm" => D, "sampler" => Z)
 end
 
 """
@@ -896,7 +1007,7 @@ struct LIGOCVAE{E1,E2,D}
     D  :: D
 end
 Flux.@functor LIGOCVAE
-Base.show(io::IO, m::LIGOCVAE) = model_summary(io, [m.E1, m.E2, m.D])
+Base.show(io::IO, m::LIGOCVAE) = model_summary(io, Dict("E1" => m.E1, "E2" => m.E2, "D" => m.D))
 
 Flux.testmode!(m::LIGOCVAE, mode = true) = (map(x -> Flux.testmode!(x, mode), [m.E1, m.E2, m.D]); m)
 
@@ -914,7 +1025,7 @@ exp_std(μ0, logσ) = vcat(μ0, exp.(logσ))
 exp_std(μ) = exp_std(split_mean_std(μ)...)
 ExpStd() = exp_std
 
-# Flux tends to be faster differentiating broadcasted square.(x) than x.^2
+# TODO: Tracker was much faster differentiating square.(x) than x.^2 - check for Zygote?
 square(x) = x*x
 
 function (m::LIGOCVAE)(y; nsamples::Int = 100, stddev = false)
@@ -952,10 +1063,8 @@ function H_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}; gamma
     σr2, σq2 = square.(σr), square.(σq)
     σx2, xout = square.(σx), x[1:Xout,:]
 
-    # KLdiv = sum(@. (σq2 + square(μr0 - μq0)) / σr2 + log(σr2 / σq2)) / (2*Nbatch) - T(Zdim/2) # KL-divergence contribution to cross-entropy
-    # ELBO = sum(@. square(xout - μx0) / σx2 + log(σx2)) / (2*Nbatch) + T(Zdim*log(2π)/2) # Negative log-likelihood/ELBO contribution to cross-entropy
-    KLdiv = sum(@. (σq2 + square(μr0 - μq0)) / σr2 + log(σr2 / σq2)) / (2*Nbatch) # KL-divergence contribution to cross-entropy #TODO FIXME
-    ELBO = sum(@. square(xout - μx0) / σx2 + log(σx2)) / (2*Nbatch) # Negative log-likelihood/ELBO contribution to cross-entropy #TODO FIXME
+    KLdiv = sum(@. (σq2 + square(μr0 - μq0)) / σr2 + log(σr2 / σq2)) / (2*Nbatch) # KL-divergence contribution to cross-entropy (Note: dropped constant -Zdim/2 term)
+    ELBO = sum(@. square(xout - μx0) / σx2 + log(σx2)) / (2*Nbatch) # Negative log-likelihood/ELBO contribution to cross-entropy (Note: dropped constant +Zdim*log(2π)/2 term)
 
     return gamma * ELBO + KLdiv
 end
@@ -968,8 +1077,7 @@ function KL_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) wher
     Zdim, Nbatch = size(μq0,1), size(x,2)
     σr2, σq2 = square.(σr), square.(σq)
 
-    # KLdiv = sum(@. (σq2 + square(μr0 - μq0)) / σr2 + log(σr2 / σq2)) / (2*Nbatch) - T(Zdim/2) # KL-divergence contribution to cross-entropy
-    KLdiv = sum(@. (σq2 + square(μr0 - μq0)) / σr2 + log(σr2 / σq2)) / (2*Nbatch) # KL-divergence contribution to cross-entropy #TODO FIXME
+    KLdiv = sum(@. (σq2 + square(μr0 - μq0)) / σr2 + log(σr2 / σq2)) / (2*Nbatch) # KL-divergence contribution to cross-entropy (Note: dropped constant -Zdim/2 term)
 
     return KLdiv
 end
@@ -983,14 +1091,147 @@ function L_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where
     Zdim, Xout, Nbatch = size(zq,1), size(μx0,1), size(x,2)
     σx2, xout = square.(σx), x[1:Xout,:]
 
-    # ELBO = sum(@. square(xout - μx0) / σx2 + log(σx2)) / (2*Nbatch) + T(Zdim*log(2π)/2) # Negative log-likelihood/ELBO contribution to cross-entropy
-    ELBO = sum(@. square(xout - μx0) / σx2 + log(σx2)) / (2*Nbatch) # Negative log-likelihood/ELBO contribution to cross-entropy #TODO FIXME
+    ELBO = sum(@. square(xout - μx0) / σx2 + log(σx2)) / (2*Nbatch) # Negative log-likelihood/ELBO contribution to cross-entropy (Note: dropped constant +Zdim*log(2π)/2 term)
 
     return ELBO
 end
 
-function RDNLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
-        Xout :: Int = nlabels, # Number of output variables (can be used to marginalize over inputs)
+function DenseLIGOCVAE(
+        info    :: DataInfo{T} = DataInfo();
+        Xout    :: Int = info.nlabels, # Number of output variables (can be used to marginalize over inputs)
+        Zdim    :: Int = 10, # Latent variable dimensions
+        Nh      :: Int = 2, # Number of inner hidden dense layers
+        Dh      :: Int = info.nfeatures, # Dimension of inner hidden dense layers
+        dropout :: T = T(0.0), # Dropout following dense layer (0.0 is none)
+        act     :: Symbol = :leakyrelu, # Activation function
+    ) where {T}
+
+    @unpack nfeatures, nchannels, nlabels, labmean, labwidth = info
+    Ny, Cy, Nx = nfeatures, nchannels, nlabels
+    actfun = make_activation(act)
+
+    MuStdScale() = Scale(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
+    XYScale() = Scale([inv.(labwidth); ones(T, Ny*Cy)], [-labmean./labwidth; zeros(T, Ny*Cy)]) # [x; y] vector -> x scaled and shifted (x range -> [-0.5, 0.5]), y unchanged
+    MaybeDropout() = dropout == 0 ? identity : Flux.Dropout(dropout)
+
+    # MLP layers (with no activation on output)
+    function MLPlayers(in, out, act)
+        l = Any[]
+        push!(l, Flux.Dense(in, Dh, act))
+        (dropout > 0) && push!(l, Flux.Dropout(dropout))
+        for _ in 1:Nh
+            push!(l, Flux.Dense(Dh, Dh, act))
+            (dropout > 0) && push!(l, Flux.Dropout(dropout))
+        end
+        push!(l, Flux.Dense(Dh, out))
+        return l
+    end
+
+    # Data/feature encoder r_θ1(z|y): y -> μ_r = [μ_r0; σ_r]
+    E1 = Flux.Chain(
+        DenseResize(),
+        MLPlayers(Ny*Cy, 2*Zdim, actfun)...,
+        ExpStd()
+    )
+
+    # Data/feature + parameter/label encoder q_φ(z|x,y): (x,y) -> μ_q = [μ_q0; σ_q]
+    E2 = Flux.Chain(
+        @λ(((x,y),) -> vcat(x, DenseResize()(y))),
+        XYScale(),
+        MLPlayers(Nx + Ny*Cy, 2*Zdim, actfun)...,
+        ExpStd(),
+    )
+
+    # Latent space + data/feature decoder r_θ2(x|z,y): (z,y) -> μ_x = [μ_x0; σ_x]
+    D = Flux.Chain(
+        @λ(((z,y),) -> vcat(z, DenseResize()(y))),
+        MLPlayers(Zdim + Ny*Cy, 2*Xout, actfun)...,
+        ExpStd(),
+        MuStdScale(),
+    )
+
+    return LIGOCVAE(E1, E2, D) |> m -> Flux.paramtype(T, m) # convert internal float types to T
+end
+
+function ConvLIGOCVAE(
+        info   :: DataInfo{T} = DataInfo();
+        Xout   :: Int = info.nlabels, # Number of output variables (can be used to marginalize over inputs)
+        Zdim   :: Int = 10, # Latent variable dimensions
+        act    :: Symbol = :leakyrelu, # Activation function
+        Nfeat  :: Int = 8, # Number of convolutional channels
+        Ndown  :: Int = 1, # Optional striding for downsampling
+    ) where {T}
+
+    @unpack nfeatures, nchannels, nlabels, labmean, labwidth = info
+    Ny, Cy, Nx = nfeatures, nchannels, nlabels
+    actfun = make_activation(act)
+
+    MuStdScale() = Scale(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
+    XYScale() = Scale([inv.(labwidth); ones(T, Ny*Cy)], [-labmean./labwidth; zeros(T, Ny*Cy)]) # [x; y] vector -> x scaled and shifted (x range -> [-0.5, 0.5]), y unchanged
+    XScale() = Scale(inv.(labwidth), -labmean./labwidth) # x scaled and shifted (x range -> [-0.5, 0.5])
+
+    PreprocessSignal(k = (3,1), ch = 1=>8, N = 2, BN = true, GN = false) = Flux.Chain(
+        XavierConv((1,1), ch[1] => ch[2]; pad = (0,0)), # Channel upsample
+        IdentitySkip( # Residual connection
+            BatchConvConnection(k, ch[2] => ch[2], actfun; mode = :pre, numlayers = N, batchnorm = BN, groupnorm = GN),
+        ),
+        XavierConv(k, ch[2] => ch[2]; pad = (k.-1).÷2, stride = Ndown), # Spatial downsampling
+        IdentitySkip( # Residual connection
+            BatchConvConnection(k, ch[2] => ch[2], actfun; mode = :pre, numlayers = N, batchnorm = BN, groupnorm = GN),
+        ),
+        XavierConv(k, ch[2] => ch[2]; pad = (k.-1).÷2, stride = Ndown), # Spatial downsampling
+        DenseResize(),
+    )
+
+    # Data/feature encoder r_θ1(z|y): y -> μ_r = (μ_r0, σ_r^2)
+    E1 = let Nout = 2*Zdim, k = (3,1), ch = Cy=>Nfeat
+        Nd = [ch[2]*Ny÷Ndown^2, Ny, Nout]
+        AF(i) = i == length(Nd)-1 ? identity : actfun
+        Flux.Chain(
+            PreprocessSignal(k, ch),
+            DenseResize(),
+            [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
+            ExpStd(),
+        )
+    end
+
+    # Data/feature + parameter/label encoder q_φ(z|x,y): (x,y) -> μ_q = (μ_q0, σ_q^2)
+    E2 = let Nout = 2*Zdim, k = (3,1), ch = Cy=>Nfeat
+        Nd = [Nx + ch[2]*Ny÷Ndown^2, Ny, Nout]
+        AF(i) = i == length(Nd)-1 ? identity : actfun
+        Flux.Chain(
+            MultiInput(
+                XScale(), # x parameters scaled down to roughly [-0.5, 0.5]
+                PreprocessSignal(k, ch), # y signals preprocessed
+            ),
+            @λ(((x,y),) -> vcat(x, y)),
+            [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
+            ExpStd(),
+        )
+    end
+
+    # Latent space + data/feature decoder r_θ2(x|z,y): (z,y) -> μ_x = (μ_x0, σ_x^2)
+    D = let Nout = 2*Xout, k = (3,1), ch = Cy=>Nfeat
+        Nd = [Zdim + ch[2]*Ny÷Ndown^2, Ny, Nout]
+        AF(i) = i == length(Nd)-1 ? identity : actfun
+        Flux.Chain(
+            MultiInput(
+                identity, # z vector of latent variables unchanged
+                PreprocessSignal(k, ch), # y signals preprocessed
+            ),
+            @λ(((z,y),) -> vcat(z, y)),
+            [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
+            ExpStd(),
+            MuStdScale(), # scale and shift μ_x = [μ_x0; σ_x] to x-space
+        )
+    end
+
+    return LIGOCVAE(E1, E2, D) |> m -> Flux.paramtype(T, m) # convert internal float types to T
+end
+
+function RDNLIGOCVAE(
+        info :: DataInfo{T} = DataInfo();
+        Xout :: Int = info.nlabels, # Number of output variables (can be used to marginalize over inputs)
         Zdim :: Int = 10, # Latent variable dimensions
         Nrdn :: Int = 2, # Number of RDN + downsampling blocks
         Ncat :: Int = 2, # Number of concat blocks within RDN
@@ -998,21 +1239,23 @@ function RDNLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int = 
         act  :: Symbol = :leakyrelu, # Activation function
     ) where {T}
 
+    @unpack nfeatures, nchannels, nlabels, labmean, labwidth = info
     Ny, Cy, Nx = nfeatures, nchannels, nlabels
     actfun = make_activation(act)
 
-    NonLearnableDiag(α, β) = (a = deepcopy(α); b = deepcopy(β); return @λ(x -> a .* x .+ b))
-    MuStdScale() = NonLearnableDiag(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
-    XScale() = NonLearnableDiag(inv.(labwidth), -labmean./labwidth) # x scaled and shifted (x range -> [-0.5, 0.5])
+    MuStdScale() = Scale(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
+    XScale() = Scale(inv.(labwidth), -labmean./labwidth) # x scaled and shifted (x range -> [-0.5, 0.5])
     Dσ(i,ND) = i == ND-1 ? identity : actfun # Activation functions for ND dense layers
 
     PreprocessSignal(k = (3,1), ch = 1=>8) = Flux.Chain(
-        Flux.Conv(k, ch[1] => ch[2], identity; init = xavier_uniform, pad = (k.-1).÷2), # Expand channels
-        reduce(vcat, [
-            ResidualDenseBlock(ch[2], ch[2], Ncat; dims = 3, k = k, σ = actfun), # RDB block
-            Flux.BatchNorm(ch[2], actfun), # Batchnorm + pre-activation
-            Flux.Conv(k, ch[2] => ch[2], identity; init = xavier_uniform, pad = (k.-1).÷2, stride = 2), # Spatial downsampling
-        ] for _ in 1:Nrdn)...,
+        XavierConv(k, ch[1] => ch[2]; pad = (k.-1).÷2), # Expand channels
+        mapreduce(vcat, 1:Nrdn; init = []) do _
+            [
+                ResidualDenseBlock(ch[2], ch[2], Ncat; dims = 3, k = k, σ = actfun), # RDB block
+                Flux.BatchNorm(ch[2], actfun), # Batchnorm + pre-activation
+                XavierConv(k, ch[2] => ch[2]; pad = (k.-1).÷2, stride = 2), # Spatial downsampling
+            ]
+        end...,
         DenseResize(),
     )
 
@@ -1041,7 +1284,7 @@ function RDNLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int = 
                 ),
                 PreprocessSignal(k, Cy=>Nfeat), # y signals preprocessed
             ),
-            @λ(xy -> vcat(xy[1], xy[2])),
+            @λ(((x,y),) -> vcat(x, y)),
             [Flux.Dense(Dxy[i], Dxy[i+1], Dσ(i,NDxy)) for i in 1:NDxy-1]...,
             ExpStd(),
         )
@@ -1056,148 +1299,12 @@ function RDNLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int = 
                 identity, # z vector of latent variables unchanged
                 PreprocessSignal(k, Cy=>Nfeat), # y signals preprocessed
             ),
-            @λ(zy -> vcat(zy[1], zy[2])),
+            @λ(((z,y),) -> vcat(z, y)),
             [Flux.Dense(Dyz[i], Dyz[i+1], Dσ(i,NDyz)) for i in 1:NDyz-1]...,
             ExpStd(),
             MuStdScale(), # scale and shift μ_x = [μ_x0; σ_x] to x-space
         )
     end
 
-    m = LIGOCVAE(E1, E2, D)
-    return @ntuple(m)
-end
-
-function ConvLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
-        Xout   :: Int = nlabels, # Number of output variables (can be used to marginalize over inputs)
-        Zdim   :: Int = 10, # Latent variable dimensions
-        act    :: Symbol = :leakyrelu, # Activation function
-        Nfeat  :: Int = 8, # Number of convolutional channels
-        Ndown  :: Int = 1, # Optional striding for downsampling
-    ) where {T}
-
-    Ny, Cy, Nx = nfeatures, nchannels, nlabels
-    actfun = make_activation(act)
-
-    NonLearnableDiag(α, β) = (a = deepcopy(α); b = deepcopy(β); return @λ(x -> a .* x .+ b))
-    MuStdScale() = NonLearnableDiag(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
-    XYScale() = NonLearnableDiag([inv.(labwidth); ones(T, Ny*Cy)], [-labmean./labwidth; zeros(T, Ny*Cy)]) # [x; y] vector -> x scaled and shifted (x range -> [-0.5, 0.5]), y unchanged
-    XScale() = NonLearnableDiag(inv.(labwidth), -labmean./labwidth) # x scaled and shifted (x range -> [-0.5, 0.5])
-
-    PreprocessSignal(k = (3,1), ch = 1=>8, N = 2, BN = true, GN = false) = Flux.Chain(
-        Flux.Conv((1,1), ch[1] => ch[2], identity; init = xavier_uniform, pad = (0,0)), # Channel upsample
-        IdentitySkip( # Residual connection
-            BatchConvConnection(k, ch[2] => ch[2], actfun; mode = :pre, numlayers = N, batchnorm = BN, groupnorm = GN),
-        ),
-        Flux.Conv(k, ch[2] => ch[2], identity; init = xavier_uniform, pad = (k.-1).÷2, stride = Ndown), # Spatial downsampling
-        IdentitySkip( # Residual connection
-            BatchConvConnection(k, ch[2] => ch[2], actfun; mode = :pre, numlayers = N, batchnorm = BN, groupnorm = GN),
-        ),
-        Flux.Conv(k, ch[2] => ch[2], identity; init = xavier_uniform, pad = (k.-1).÷2, stride = Ndown), # Spatial downsampling
-        DenseResize(),
-    )
-
-    # Data/feature encoder r_θ1(z|y): y -> μ_r = (μ_r0, σ_r^2)
-    E1 = let Nout = 2*Zdim, k = (3,1), ch = Cy=>Nfeat
-        Nd = [ch[2]*Ny÷Ndown^2, Ny, Nout]
-        AF(i) = i == length(Nd)-1 ? identity : actfun
-        Flux.Chain(
-            PreprocessSignal(k, ch),
-            DenseResize(),
-            [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
-            ExpStd(),
-        )
-    end
-
-    # Data/feature + parameter/label encoder q_φ(z|x,y): (x,y) -> μ_q = (μ_q0, σ_q^2)
-    E2 = let Nout = 2*Zdim, k = (3,1), ch = Cy=>Nfeat
-        Nd = [Nx + ch[2]*Ny÷Ndown^2, Ny, Nout]
-        AF(i) = i == length(Nd)-1 ? identity : actfun
-        Flux.Chain(
-            MultiInput(
-                XScale(), # x parameters scaled down to roughly [-0.5, 0.5]
-                PreprocessSignal(k, ch), # y signals preprocessed
-            ),
-            @λ(xy -> vcat(xy[1], xy[2])),
-            [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
-            ExpStd(),
-        )
-    end
-
-    # Latent space + data/feature decoder r_θ2(x|z,y): (z,y) -> μ_x = (μ_x0, σ_x^2)
-    D = let Nout = 2*Xout, k = (3,1), ch = Cy=>Nfeat
-        Nd = [Zdim + ch[2]*Ny÷Ndown^2, Ny, Nout]
-        AF(i) = i == length(Nd)-1 ? identity : actfun
-        Flux.Chain(
-            MultiInput(
-                identity, # z vector of latent variables unchanged
-                PreprocessSignal(k, ch), # y signals preprocessed
-            ),
-            @λ(zy -> vcat(zy[1], zy[2])),
-            [Flux.Dense(Nd[i], Nd[i+1], AF(i)) for i in 1:length(Nd)-1]...,
-            ExpStd(),
-            MuStdScale(), # scale and shift μ_x = [μ_x0; σ_x] to x-space
-        )
-    end
-
-    m = LIGOCVAE(E1, E2, D)
-    return @ntuple(m)
-end
-
-function DenseLIGOCVAE(::Type{T} = Float64; nfeatures::Int = 32, nchannels::Int = 1, nlabels::Int = 8, labmean::Vector{T} = zeros(T, nlabels), labwidth::Vector{T} = ones(T, nlabels),
-        Xout    :: Int = nlabels, # Number of output variables (can be used to marginalize over inputs)
-        Zdim    :: Int = 10, # Latent variable dimensions
-        Nh      :: Int = 2, # Number of inner hidden dense layers
-        Dh      :: Int = nfeatures, # Dimension of inner hidden dense layers
-        dropout :: T  = 0.0, # Dropout following dense layer (0.0 is none)
-        act     :: Symbol = :leakyrelu, # Activation function
-    ) where {T}
-
-    Ny, Cy, Nx = nfeatures, nchannels, nlabels
-    actfun = make_activation(act)
-
-    NonLearnableDiag(α, β) = (a = deepcopy(α); b = deepcopy(β); return @λ(x -> a .* x .+ b))
-    MuStdScale() = NonLearnableDiag(T[labwidth[1:Xout]; labwidth[1:Xout]], T[labmean[1:Xout]; zeros(T, Xout)]) # output μ_x = [μ_x0; σ_x] vector -> μ_x0: scaled and shifted ([-0.5, 0.5] -> x range), σ_x: scaled only
-    XYScale() = NonLearnableDiag([inv.(labwidth); ones(T, Ny*Cy)], [-labmean./labwidth; zeros(T, Ny*Cy)]) # [x; y] vector -> x scaled and shifted (x range -> [-0.5, 0.5]), y unchanged
-    MaybeDropout() = dropout == 0 ? identity : Flux.Dropout(dropout)
-
-    # Data/feature encoder r_θ1(z|y): y -> μ_r = (μ_r0, σ_r^2)
-    E1 = let Nin = Ny*Cy, Nout = 2*Zdim
-        Flux.Chain(
-            DenseResize(),
-            Flux.Dense(Nin, Dh, actfun),
-            MaybeDropout(),
-            [Flux.Chain(Flux.Dense(Dh, Dh, actfun), MaybeDropout()) for _ in 1:Nh]...,
-            Flux.Dense(Dh, Nout),
-            ExpStd(),
-        ) |> m -> Flux.paramtype(T, m)
-    end
-
-    # Data/feature + parameter/label encoder q_φ(z|x,y): (x,y) -> μ_q = (μ_q0, σ_q^2)
-    E2 = let Nin = Nx + Ny*Cy, Nout = 2*Zdim
-        Flux.Chain(
-            @λ(xy -> vcat(xy[1], DenseResize()(xy[2]))),
-            XYScale(),
-            Flux.Dense(Nin, Dh, actfun),
-            MaybeDropout(),
-            [Flux.Chain(Flux.Dense(Dh, Dh, actfun), MaybeDropout()) for _ in 1:Nh]...,
-            Flux.Dense(Dh, Nout),
-            ExpStd(),
-        ) |> m -> Flux.paramtype(T, m)
-    end
-
-    # Latent space + data/feature decoder r_θ2(x|z,y): (z,y) -> μ_x = (μ_x0, σ_x^2)
-    D = let Nin = Zdim + Ny*Cy, Nout = 2*Xout
-        Flux.Chain(
-            @λ(zy -> vcat(zy[1], DenseResize()(zy[2]))),
-            Flux.Dense(Nin, Dh, actfun),
-            MaybeDropout(),
-            [Flux.Chain(Flux.Dense(Dh, Dh, actfun), MaybeDropout()) for _ in 1:Nh]...,
-            Flux.Dense(Dh, Nout),
-            ExpStd(),
-            MuStdScale(),
-        ) |> m -> Flux.paramtype(T, m) #TODO FIXME for other models
-    end
-
-    m = LIGOCVAE(E1, E2, D)
-    return @ntuple(m)
+    return LIGOCVAE(E1, E2, D) |> m -> Flux.paramtype(T, m) # convert internal float types to T
 end

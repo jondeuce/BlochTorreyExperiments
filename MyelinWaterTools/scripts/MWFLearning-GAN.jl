@@ -54,7 +54,7 @@ pair_test_set()  = tuple(labels(test_fwd), sampler(batchsize(features(test_fwd))
 m = MWFLearning.make_model(settings)
 error("here")
 
-genatr, discrm, sampler = MWFLearning.make_model(settings)[1];
+@unpack genatr, discrm, sampler = MWFLearning.make_model(settings);
 genatr = GPU ? Flux.gpu(genatr) : genatr;
 discrm = GPU ? Flux.gpu(discrm) : discrm;
 Dparams, Gparams = Flux.params(discrm), Flux.params(genatr)

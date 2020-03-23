@@ -443,7 +443,7 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
             if !isempty(dfp)
                 labelerr = permutedims(reduce(hcat, dfp[!, :labelerr]))
                 labcol = size(labelerr,2) == 1 ? :blue : permutedims(RGB[cgrad(:darkrainbow)[z] for z in range(0.0, 1.0, length = size(labelerr,2))])
-                p3 = @df dfp plot(:epoch, labelerr; title = "Label Error ($dataset): rel. %)", label = labelnames, c = labcol, yticks = 0:100, ylim = (0, min(50, maximum(labelerr[end,:]) + 1.0)), commonkw...)
+                p3 = @df dfp plot(:epoch, labelerr; title = "Label Error ($dataset): rel. %)", label = labelnames, c = labcol, yticks = 0:100, ylim = (0, min(50, maximum(labelerr[end,:]) + 3.0)), commonkw...)
             end
 
             push!(ps, plot(p1, p2, p3; layout = (1,3)))
@@ -597,4 +597,73 @@ function make_checkpoint_model_cb(state, model, opt, filename = nothing)
             @warn sprint(showerror, e, catch_backtrace())
         end
     end
+end
+
+####
+#### Gradient testing
+####
+
+function ngradient(f, xs::AbstractArray...)
+    grads = zeros.(eltype.(xs), size.(xs))
+    for (x, Δ) in zip(xs, grads), i in 1:length(x)
+        δ = cbrt(eps(eltype(x))) # cbrt seems to be slightly better than sqrt
+        tmp = x[i]
+        x[i] = tmp - δ/2
+        y1 = f(xs...)
+        x[i] = tmp + δ/2
+        y2 = f(xs...)
+        x[i] = tmp
+        Δ[i] = (y2-y1)/δ
+        display.(Δ[i]) #TODO FIXME
+    end
+    return grads
+end
+
+function gradcheck(f, m, xs::AbstractArray...; onlyfirst = true, seed = 0)
+    ps = Flux.params(m)
+    !isnothing(seed) && Random.seed!(seed)
+    g0 = Flux.gradient(() -> f(m, xs...), ps) |> g -> [g[p] for p in ps]
+    onlyfirst && (g0 = first.(g0))
+    display.(g0) #TODO FIXME
+
+    m  = Flux.paramtype(BigFloat, m)
+    ys = Flux.paramtype(BigFloat, xs)
+    ps = Flux.params(m)
+    onlyfirst && (ps = [@views(p[1:1]) for p in ps])
+    g1 = MWFLearning.ngradient(ps...) do (args...)
+        !isnothing(seed) && Random.seed!(seed)
+        f(m, ys...)
+    end
+    onlyfirst && (g1 = first.(g1))
+    display.(g1) #TODO FIXME
+
+    display.(g0 .- g1) #TODO FIXME
+    map(g0, g1) do g0, g1
+        display(abs.(g0 .- g1) .< cbrt.(eps.(g0))^2) #TODO FIXME
+    end
+end;
+
+#=
+let
+    m = Flux.Dense(2,2,Flux.relu) |> Flux.f32
+    x = 100*rand(2) |> Flux.f32
+    MWFLearning.gradcheck((m,x) -> sum(abs2, m(x)), m, x)
+end;
+let m = Flux.f32(m), xy = Flux.f32(test_data)
+    # MWFLearning.H_LIGOCVAE(m, xy...) |> display
+    MWFLearning.gradcheck((m,xy...) -> MWFLearning.H_LIGOCVAE(m, xy...), m, xy...)
+end;
+let m = Flux.f64(m), xy = Flux.f64(test_data)
+    # MWFLearning.H_LIGOCVAE(m, xy...) |> display
+    MWFLearning.gradcheck((m,xy...) -> MWFLearning.H_LIGOCVAE(m, xy...), m, xy...)
+end;
+=#
+
+function gradcheck(f, xs::AbstractArray...)
+    dx0 = Flux.gradient(f, xs...)
+    dx1 = ngradient(f, xs...)
+    @show maximum.(abs, dx0)
+    @show maximum.(abs, dx1)
+    @show maximum.(abs, (dx0 .- dx1) ./ dx0)
+    all(isapprox.(dx0, dx1, rtol = 1e-4, atol = 0))
 end

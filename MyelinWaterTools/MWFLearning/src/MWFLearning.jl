@@ -46,7 +46,7 @@ export prepare_data, label_fun, init_data, init_labels
 # Layers
 export MomentumW, AdaBound
 export printsize, wrapprint
-export PrintSize, DenseResize, ChannelResize, Scale, Sumout
+export PrintSize, DenseResize, ChannelResize, NotTrainable, Scale, Sumout
 export IdentitySkip, CatSkip, ChannelwiseDense, HeightwiseDense
 export BatchDenseConnection, BatchConvConnection
 export DenseConnection, ResidualDenseBlock
