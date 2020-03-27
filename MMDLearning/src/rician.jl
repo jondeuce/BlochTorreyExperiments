@@ -9,71 +9,71 @@ struct Rician{T<:Real} <: Distributions.ContinuousUnivariateDistribution
     Rician{T}(ν::T, σ::T) where {T<:Real} = new{T}(ν, σ)
 end
 
-function Rician(ν::T, σ::T; check_args = true) where {T <: Real}
+@inline function Rician(ν::T, σ::T; check_args = true) where {T <: Real}
     check_args && Distributions.@check_args(Rician, σ >= zero(σ) && ν >= zero(ν))
     return Rician{T}(ν, σ)
 end
 
 #### Outer constructors
-Rician(ν::Real, σ::Real) = Rician(promote(ν, σ)...)
-Rician(ν::Integer, σ::Integer) = Rician(float(ν), float(σ))
-Rician(ν::T) where {T <: Real} = Rician(ν, one(T))
-Rician() = Rician(0.0, 1.0, check_args = false)
+@inline Rician(ν::Real, σ::Real) = Rician(promote(ν, σ)...)
+@inline Rician(ν::Integer, σ::Integer) = Rician(float(ν), float(σ))
+@inline Rician(ν::T) where {T <: Real} = Rician(ν, one(T))
+@inline Rician() = Rician(0.0, 1.0, check_args = false)
 
 #### Conversions
-Base.convert(::Type{Rician{T}}, ν::S, σ::S) where {T <: Real, S <: Real} = Rician(T(ν), T(σ))
-Base.convert(::Type{Rician{T}}, d::Rician{S}) where {T <: Real, S <: Real} = Rician(T(d.ν), T(d.σ), check_args = false)
+@inline Base.convert(::Type{Rician{T}}, ν::S, σ::S) where {T <: Real, S <: Real} = Rician(T(ν), T(σ))
+@inline Base.convert(::Type{Rician{T}}, d::Rician{S}) where {T <: Real, S <: Real} = Rician(T(d.ν), T(d.σ), check_args = false)
 
 # Distributions.@distr_support Rician 0 Inf
-Base.minimum(d::Union{Rician, Type{Rician}}) = 0
-Base.maximum(d::Union{Rician, Type{Rician}}) = Inf
+@inline Base.minimum(d::Union{Rician, Type{Rician}}) = 0
+@inline Base.maximum(d::Union{Rician, Type{Rician}}) = Inf
 
 #### Parameters
-Distributions.params(d::Rician) = (d.ν, d.σ)
+@inline Distributions.params(d::Rician) = (d.ν, d.σ)
 @inline Distributions.partype(d::Rician{T}) where {T<:Real} = T
 
-Distributions.location(d::Rician) = d.ν
-Distributions.scale(d::Rician) = d.σ
+@inline Distributions.location(d::Rician) = d.ν
+@inline Distributions.scale(d::Rician) = d.σ
 
-Base.eltype(::Type{Rician{T}}) where {T} = T
+@inline Base.eltype(::Type{Rician{T}}) where {T} = T
 
 #### Laguerre/Bessel functions
-_L½_bessel_kernel(x::T) where {T} = exp(-x/2) * ((1 + x) * T(besseli(0, x/2)) + x * T(besseli(1, x/2)))
-_L½_series_kernel(x::T) where {T} = (y = inv(x); @evalpoly(y, T(2), T(1)/2, T(1)/16, T(3)/64, T(75)/1024, T(735)/4096) * sqrt(x/pi))
-laguerre½(x, t = 150) = -x < t ? _L½_bessel_kernel(float(-x)) : _L½_series_kernel(float(-x)) # note negative arguments for kernels
+@inline _L½_bessel_kernel(x::T) where {T} = exp(-x/2) * ((1 + x) * T(besseli(0, x/2)) + x * T(besseli(1, x/2)))
+@inline _L½_series_kernel(x::T) where {T} = (y = inv(x); @evalpoly(y, T(2), T(1)/2, T(1)/16, T(3)/64, T(75)/1024, T(735)/4096) * sqrt(x/pi))
+@inline laguerre½(x, t = 150) = -x < t ? _L½_bessel_kernel(float(-x)) : _L½_series_kernel(float(-x)) # note negative arguments for kernels
 
-_logI0_bessel_kernel(x::T) where {T} = log(T(besseli(0, x)) + eps(T))
-_logI0_series_kernel(x::T) where {T} = (y = inv(x); log(@evalpoly(y, T(1), T(1)/8, T(9)/128, T(75)/1024, T(3675)/32768, T(59535)/262144, T(2401245)/4194304, T(57972915)/33554432)) + x - log(x)/2 - log(2*T(π))/2)
-logbesseli0(x, t = 75)  = x < t ? _logI0_bessel_kernel(float(x)) : _logI0_series_kernel(float(x))
+@inline _logI0_bessel_kernel(x::T) where {T} = log(T(besseli(0, x)) + eps(T))
+@inline _logI0_series_kernel(x::T) where {T} = (y = inv(x); log(@evalpoly(y, T(1), T(1)/8, T(9)/128, T(75)/1024, T(3675)/32768, T(59535)/262144, T(2401245)/4194304, T(57972915)/33554432)) + x - log(x)/2 - log(2*T(π))/2)
+@inline logbesseli0(x, t = 75)  = x < t ? _logI0_bessel_kernel(float(x)) : _logI0_series_kernel(float(x))
 
-_logI1_bessel_kernel(x::T) where {T} = log(T(besseli(1, x)) + eps(T))
-_logI1_series_kernel(x::T) where {T} = (y = inv(x); log(@evalpoly(y, T(1), -T(3)/8, -T(15)/128, -T(105)/1024, -T(4725)/32768, -T(72765)/262144, -T(2837835)/4194304, -T(66891825)/33554432, )) + x - log(x)/2 - log(2*T(π))/2)
-logbesseli1(x, t = 75)  = x < t ? _logI1_bessel_kernel(float(x)) : _logI1_series_kernel(float(x))
+@inline _logI1_bessel_kernel(x::T) where {T} = log(T(besseli(1, x)) + eps(T))
+@inline _logI1_series_kernel(x::T) where {T} = (y = inv(x); log(@evalpoly(y, T(1), -T(3)/8, -T(15)/128, -T(105)/1024, -T(4725)/32768, -T(72765)/262144, -T(2837835)/4194304, -T(66891825)/33554432, )) + x - log(x)/2 - log(2*T(π))/2)
+@inline logbesseli1(x, t = 75)  = x < t ? _logI1_bessel_kernel(float(x)) : _logI1_series_kernel(float(x))
 
-_I1I0m1_bessel_kernel(x::T) where {T} = T(besseli(1, x)) / T(besseli(0, x)) - 1
-_I1I0m1_series_kernel(x::T) where {T} = (y = inv(x); (-T(40)/19) * y *
+@inline _I1I0m1_bessel_kernel(x::T) where {T} = T(besseli(1, x)) / T(besseli(0, x)) - 1
+@inline _I1I0m1_series_kernel(x::T) where {T} = (y = inv(x); (-T(40)/19) * y *
     @evalpoly(y, T(17179869184)/7958231906625, T(2147483648)/2652743968875, T(134217728)/176849597925, T(16777216)/15158536965, T(3670016)/1684281885, T(1376256)/255194225, T(28672)/1784575, T(1536)/27455, T(72)/323, T(1)) /
     @evalpoly(y, T(274877906944)/30241281245175, T(34359738368)/30241281245175, T(2147483648)/3360142360575, T(268435456)/403217083269, T(58720256)/57602440467, T(22020096)/10667118605, T(458752)/88158005, T(8192)/521645, T(5760)/104329, T(80)/361, T(1)))
-besseli1i0m1(x, t = 50)  = x < t ? _I1I0m1_bessel_kernel(float(x)) : _I1I0m1_series_kernel(float(x))
+@inline besseli1i0m1(x, t = 50)  = x < t ? _I1I0m1_bessel_kernel(float(x)) : _I1I0m1_series_kernel(float(x))
 
 #### Statistics
-Distributions.mean(d::Rician) = d.σ * sqrt(pi/2) * laguerre½(-d.ν^2 / 2d.σ^2)
-# Distributions.mode(d::Rician) = ?
-# Distributions.median(d::Rician) = ?
+@inline Distributions.mean(d::Rician) = d.σ * sqrt(pi/2) * laguerre½(-d.ν^2 / 2d.σ^2)
+# @inline Distributions.mode(d::Rician) = ?
+# @inline Distributions.median(d::Rician) = ?
 
-Distributions.var(d::Rician) = 2 * d.σ^2 + d.ν^2 - pi * d.σ^2 * laguerre½(-d.ν^2 / 2d.σ^2)^2 / 2
-Distributions.std(d::Rician) = sqrt(var(d))
-# Distributions.skewness(d::Rician{T}) where {T<:Real} = ?
-# Distributions.kurtosis(d::Rician{T}) where {T<:Real} = ?
-# Distributions.entropy(d::Rician) = ?
+@inline Distributions.var(d::Rician) = 2 * d.σ^2 + d.ν^2 - pi * d.σ^2 * laguerre½(-d.ν^2 / 2d.σ^2)^2 / 2
+@inline Distributions.std(d::Rician) = sqrt(var(d))
+# @inline Distributions.skewness(d::Rician{T}) where {T<:Real} = ?
+# @inline Distributions.kurtosis(d::Rician{T}) where {T<:Real} = ?
+# @inline Distributions.entropy(d::Rician) = ?
 
 #### Evaluation
-Distributions.logpdf(d::Rician, x::Real) = log(x / d.σ^2 + eps(float(typeof(x)))) + logbesseli0(x * d.ν / d.σ^2) - (x^2 + d.ν^2) / (2*d.σ^2)
-Distributions.pdf(d::Rician, x::Real) = exp(logpdf(d, x)) # below version errors for large x (besseli throws); otherwise is consistent
-# Distributions.pdf(d::Rician, x::Real) = x * besseli(0, x * d.ν / d.σ^2) * exp(-(x^2 + d.ν^2) / (2*d.σ^2)) / d.σ^2
+@inline Distributions.logpdf(d::Rician, x::Real) = log(x / d.σ^2 + eps(float(typeof(x)))) + logbesseli0(x * d.ν / d.σ^2) - (x^2 + d.ν^2) / (2*d.σ^2)
+@inline Distributions.pdf(d::Rician, x::Real) = exp(logpdf(d, x)) # below version errors for large x (besseli throws); otherwise is consistent
+# @inline Distributions.pdf(d::Rician, x::Real) = x * besseli(0, x * d.ν / d.σ^2) * exp(-(x^2 + d.ν^2) / (2*d.σ^2)) / d.σ^2
 
 #### Gradient
-function ∇logpdf(d::Rician, x::Real)
+@inline function ∇logpdf(d::Rician, x::Real)
     σ, ν = d.σ, d.ν
     σ2, σ3 = σ^2, σ^3
     dνx = ν-x
@@ -84,7 +84,7 @@ function ∇logpdf(d::Rician, x::Real)
 end
 
 #### Sampling
-Distributions.rand(rng::Distributions.AbstractRNG, d::Rician{T}) where {T} = sqrt((d.ν + d.σ * randn(rng, T))^2 + (d.σ * randn(rng, T))^2)
+@inline Distributions.rand(rng::Distributions.AbstractRNG, d::Rician{T}) where {T} = sqrt((d.ν + d.σ * randn(rng, T))^2 + (d.σ * randn(rng, T))^2)
 
 #### Testing
 #= laguerre½
