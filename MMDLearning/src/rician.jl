@@ -51,10 +51,12 @@ end
 @inline logbesseli1(x, t = 75)  = x < t ? _logI1_bessel_kernel(float(x)) : _logI1_series_kernel(float(x))
 
 @inline _I1I0m1_bessel_kernel(x::T) where {T} = T(besseli(1, x)) / T(besseli(0, x)) - 1
-@inline _I1I0m1_series_kernel(x::T) where {T} = (y = inv(x); (-T(40)/19) * y *
-    @evalpoly(y, T(17179869184)/7958231906625, T(2147483648)/2652743968875, T(134217728)/176849597925, T(16777216)/15158536965, T(3670016)/1684281885, T(1376256)/255194225, T(28672)/1784575, T(1536)/27455, T(72)/323, T(1)) /
-    @evalpoly(y, T(274877906944)/30241281245175, T(34359738368)/30241281245175, T(2147483648)/3360142360575, T(268435456)/403217083269, T(58720256)/57602440467, T(22020096)/10667118605, T(458752)/88158005, T(8192)/521645, T(5760)/104329, T(80)/361, T(1)))
-@inline besseli1i0m1(x, t = 50)  = x < t ? _I1I0m1_bessel_kernel(float(x)) : _I1I0m1_series_kernel(float(x))
+@inline _I1I0m1_series_kernel(x::T) where {T} = (y = inv(x); y * @evalpoly(y, -T(1)/2, -T(1)/8, -T(1)/8, -T(25)/128, -T(13)/32, -T(1073)/1024, -T(103)/32, -T(375733)/32768, -T(23797)/512, -T(55384775)/262144))
+@inline besseli1i0m1(x, t = 50) = x < t ? _I1I0m1_bessel_kernel(float(x)) : _I1I0m1_series_kernel(float(x))
+
+@inline _I2I0_bessel_kernel(x::T) where {T} = T(besseli(2, x)) / T(besseli(0, x))
+@inline _I2I0_series_kernel(x::T) where {T} = (y = inv(x); @evalpoly(y, T(1), -T(2), T(1), T(1)/4, T(1)/4, T(25)/64, T(13)/16, T(1073)/512, T(103)/16, T(375733)/16384, T(23797)/256))
+@inline besseli2i0(x, t = 50)   = x < t ? _I2I0_bessel_kernel(float(x)) : _I2I0_series_kernel(float(x))
 
 #### Statistics
 @inline Distributions.mean(d::Rician) = d.σ * sqrt(pi/2) * laguerre½(-d.ν^2 / 2d.σ^2)
@@ -73,14 +75,37 @@ end
 # @inline Distributions.pdf(d::Rician, x::Real) = x * besseli(0, x * d.ν / d.σ^2) * exp(-(x^2 + d.ν^2) / (2*d.σ^2)) / d.σ^2
 
 #### Gradient
-@inline function ∇logpdf(d::Rician, x::Real)
+@inline function _∇logpdf(d::Rician, x::Real)
     σ, ν = d.σ, d.ν
-    σ2, σ3 = σ^2, σ^3
-    dνx = ν-x
-    r = besseli1i0m1(x*ν/σ2)
-    ∇ν = (r*x - dνx) / σ2
-    ∇σ = (dνx^2 - 2*(σ2 + ν*r*x)) / σ3
-    return (ν = ∇ν, σ = ∇σ)
+    σ2 = σ^2
+    B = besseli1i0m1(x*ν/σ2)
+    return (σ, ν, σ2, B)
+end
+@inline function ∇logpdf(d::Rician, x::Real)
+    σ, ν, σ2, B = _∇logpdf(d, x)
+    dνx, σ3 = ν-x, σ*σ2
+    ∇ν = (B*x - dνx) / σ2
+    ∇σ = (dνx^2 - 2*(σ2 + ν*B*x)) / σ3
+    return (∇ν, ∇σ)
+end
+@inline function ∂logpdf_∂ν(d::Rician, x::Real)
+    σ, ν, σ2, B = _∇logpdf(d, x)
+    return (B*x - (ν-x)) / σ2
+end
+@inline function ∂logpdf_∂σ(d::Rician, x::Real)
+    σ, ν, σ2, B = _∇logpdf(d, x)
+    dνx, σ3 = ν-x, σ*σ2
+    return ((ν-x)^2 - 2*(σ2 + ν*B*x)) / σ3
+end
+
+#### Hessian
+@inline function ∂²logpdf_∂ν²(d::Rician, x::Real)
+    σ, ν = d.σ, d.ν
+    σ2 = σ^2
+    z = x*ν/σ2
+    B = besseli1i0m1(z)
+    B′ = (1 + besseli2i0(z))/2 - (B + 1)^2
+    return (x^2 * B′ - σ2) / σ2^2
 end
 
 #### Sampling
@@ -200,6 +225,35 @@ let
 end;
 =#
 
+#= besseli2i0
+let
+    vals = Dict{Int,BigFloat}(
+        1       => big"0.107220068206930985904636409614714660447493705199224354277",
+        50      => big"0.960402041304860089896293762821412695332191837479148079447",
+        75      => big"0.973511711774276236557339295144643475000284002171793545877",
+        250     => big"0.992016016064403362763999009359876828162126503288620496133",
+        1000    => big"0.998001000250250391439602163651304088042811059806262635075",
+        1000000 => big"0.999998000001000000250000250000390625812502095709562522933"
+    )
+    for (x,v) in sort(vals; by = first)
+        for T in [Float64, Float32]
+            println("\nx = $x ($T):")
+            F = x == 1 ? 5 : 2
+            if x <= 50
+                display(abs(_I2I0_bessel_kernel(T(x)) - v) < F * eps(T(v)))
+                # display(abs(_I2I0_bessel_kernel(T(x)) - v))
+                # display(eps(T(v)))
+            end
+            if x >= 50
+                display(abs(_I2I0_series_kernel(T(x)) - v) < F * eps(T(v)))
+                # display(abs(_I2I0_series_kernel(T(x)) - v))
+                # display(eps(T(v)))
+            end
+        end
+    end
+end;
+=#
+
 #= (log)pdf
 let
     p = plot()
@@ -227,6 +281,19 @@ let
     ∇σ = (logpdf(Rician(ν, σ + δ), x) - logpdf(Rician(ν, σ - δ), x)) / 2δ
     ∇δ = (ν = ∇ν, σ = ∇σ)
     display(map((x,y) -> (x-y)/y, values(∇δ), values(∇)))
+end;
+=#
+
+#= ∇²logpdf
+let
+    ν, σ, x = 100*rand(), 100*rand(), 100*rand()
+    d = Rician(ν, σ)
+    δ = eps(ν)^(1/4)
+    ∇ν² = ∂²logpdf_∂ν²(d, x)
+    ∇νδ² = (logpdf(Rician(ν + δ, σ), x) - 2 * logpdf(Rician(ν, σ), x) + logpdf(Rician(ν - δ, σ), x)) / δ^2
+    display(∇ν²)
+    display(∇νδ²)
+    display(∇ν² - ∇νδ²)
 end;
 =#
 

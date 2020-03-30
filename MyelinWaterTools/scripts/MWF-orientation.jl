@@ -4,7 +4,7 @@ Pkg.activate(joinpath(@__DIR__, ".."))
 
 using GlobalUtils
 using MWFUtils, MWFLearning, DECAES
-using SpecialFunctions, Optim, BlackBoxOptim, NLopt
+using SpecialFunctions, Optim, BlackBoxOptim, NLopt, Roots
 
 include(joinpath(@__DIR__, "../../MMDLearning/src/rician.jl"))
 
@@ -17,7 +17,7 @@ include(joinpath(@__DIR__, "../../MMDLearning/src/rician.jl"))
 const default_t2mapopts = T2mapOptions{Float64}(
     MatrixSize = (1, 1, 1),
     nTE = 48,
-    nT2 = 40,
+    nT2 = 120,
     TE = 8e-3,
     T2Range = (8e-3, 2.0),
     Threshold = 0.0,
@@ -42,7 +42,7 @@ const default_t2partopts = T2partOptions{Float64}(
 const default_btp = BlochTorreyParameters{Float64}(
     g_ratio = sqrt(3/4),
     AxonPDensity = 8/11,
-    R2_sp = 1/20e-3,
+    R2_sp = 1/15e-3,
     R2_lp = 1/75e-3,
 );
 # @show(fractions(default_btp));
@@ -50,7 +50,7 @@ const default_btp = BlochTorreyParameters{Float64}(
 ####
 #### MWF orientation plots
 ####
-
+#=
 function fractions(p::BlochTorreyParameters)
     @unpack PD_sp, PD_lp, g_ratio, MWF, MVF, AxonPDensity = p
 
@@ -101,12 +101,12 @@ function mwf_vs_orientation(
 end
 
 # for default_SNR in 30.0:10.0:100.0
-default_SNR = 50.0
+default_SNR = 40.0
 default_flip_angle = 165.0
 
 # dT2 = 10.0e-3;
 # R2_lp_DipDip = (inv(inv(default_btp.R2_lp) - dT2) - default_btp.R2_lp) / 4;
-dT2 = 10.0e-3; #TODO for R2_sp
+dT2 = 0.0e-3; #TODO for R2_sp
 R2_lp_DipDip = (inv(inv(default_btp.R2_sp) - dT2) - default_btp.R2_sp) / 4; #TODO for R2_sp
 btp = BlochTorreyParameters(default_btp; R2_lp_DipDip = R2_lp_DipDip);
 θs = range(0.0, 90.0; length = 37);
@@ -191,7 +191,8 @@ for (dist, parts) in [(:dist,:parts), (:mle_dist,:mle_parts)]
     savefig.(Ref(phist), "output/mwf_hist_SNR=$default_SNR" .* [".png", ".pdf"]);
 end # for (dist, parts) in ...
 
-error("mwf done")
+# error("mwf done")
+=#
 
 ####
 #### MWF MLE opt
@@ -225,6 +226,7 @@ function make_rician_mle_loss(
         A::AbstractMatrix{T},
         b::AbstractVector{T},
         λ::Union{T,Nothing} = nothing,
+        sigma::Union{T,Nothing} = nothing,
     ) where {T}
 
     nTE, nT2 = size(A)
@@ -234,23 +236,31 @@ function make_rician_mle_loss(
     function fg!(F, G, θ::AbstractVector{T_}) where {T_}
         @assert T_ === T # Note: same T as input A, b
 
-        @timeit_debug mle_timer "common" begin
+        @timeit mle_timer "common" begin
             @inbounds @simd for i in 1:nT2
                 x[i] = θ[i] # assign amplitudes
                 # x[i] = exp(θ[i]) # assign amplitudes #TODO x -> logx
             end
-            # @inbounds σ = θ[end] #TODO sigma -> logsigma
-            @inbounds σ = exp(θ[end]) #TODO sigma -> logsigma
+            σ = if isnothing(sigma)
+                # @inbounds σ = θ[end] #TODO sigma -> logsigma
+                @inbounds σ = exp(θ[end]) #TODO sigma -> logsigma
+            else
+                sigma
+            end
             @inbounds mul!(ν, A, x) # assign signal basis, given amplitudes
         end
 
         if !isnothing(G)
-            @timeit_debug mle_timer "gradient" begin
+            @timeit mle_timer "gradient" begin
                 ∇σ = zero(T_)
                 @inbounds @simd for i in 1:nTE
-                    ∇ν_, ∇σ_ = ∇logpdf(Rician{T_}(ν[i], σ), b[i])
-                    ∇ν[i] = -∇ν_ # (negative) logL gradient w.r.t. ν[i]
-                    ∇σ -= ∇σ_ # accumulate (negative) logL gradient w.r.t. σ
+                    if isnothing(sigma)
+                        ∇ν_, ∇σ_ = ∇logpdf(Rician{T_}(ν[i], σ), b[i])
+                        ∇ν[i] = -∇ν_ # (negative) logL gradient w.r.t. ν[i]
+                        ∇σ -= ∇σ_ # accumulate (negative) logL gradient w.r.t. σ
+                    else
+                        ∇ν[i] = -∂logpdf_∂ν(Rician{T_}(ν[i], σ), b[i]) # (negative) logL gradient w.r.t. ν[i]
+                    end
                 end
                 @inbounds mul!(∇x, A', ∇ν) # transform ∂(-logL)/∂ν -> ∂(-logL)/∂x
 
@@ -269,13 +279,15 @@ function make_rician_mle_loss(
                     #     G[i] = ∇logx # assign ∂(-logL)/∂(logx) #TODO x -> logx
                     # end
                 end
-                ∇logσ = σ * ∇σ # transform ∂(-logL)/∂σ -> ∂(-logL)/∂(logσ)
-                @inbounds G[end] = ∇logσ # assign ∂(-logL)/∂(logσ)
+                if isnothing(sigma)
+                    ∇logσ = σ * ∇σ # transform ∂(-logL)/∂σ -> ∂(-logL)/∂(logσ)
+                    @inbounds G[end] = ∇logσ # assign ∂(-logL)/∂(logσ)
+                end
             end
         end
 
         if !isnothing(F)
-            @timeit_debug mle_timer "function" begin
+            @timeit mle_timer "function" begin
                 ℓ = zero(T_)
                 @inbounds @simd for i in 1:nTE
                     ℓ -= logpdf(Rician{T_}(ν[i], σ), b[i])
@@ -293,11 +305,11 @@ function make_rician_mle_loss(
     end
 end
 
-function bbopt_solver(fg!, θ0; verbose = false)
-    nT2 = length(θ0)-1
-    SearchRange = [fill((0.0, 1.0), nT2); [(-10.0, -1.0)]]
+function bbopt_solver(fg!, θ0; verbose = false, fixedsigma = false, precond = nothing)
     res = bboptimize(θ -> fg!(true, nothing, θ);
-        SearchRange = SearchRange,
+        SearchRange = fixedsigma ?
+            fill((0.0, 1.0), length(θ0)) :
+            push!(fill((0.0, 1.0), length(θ0)-1), (-10.0, -1.0)),
         TraceMode = verbose ? :Verbose : :Silent,
         MaxTime = 5.0,
     )
@@ -306,16 +318,17 @@ function bbopt_solver(fg!, θ0; verbose = false)
     return @ntuple(θ, f)
 end
 
-function optim_solver(fg!, θ0; verbose = false)
-    nT2 = length(θ0)-1
-    lo = [zeros(nT2); -Inf]
-    hi = fill(Inf, nT2+1)
+function optim_solver(fg!, θ0; verbose = false, fixedsigma = false, precond = nothing)
+    lo = fixedsigma ? zeros(length(θ0)) : push!(zeros(length(θ0)-1), -Inf)
+    hi = fill(Inf, length(θ0))
 
     inner_alg_type = Optim.LBFGS
-    inner_alg = inner_alg_type(m = 10) #Optim.ConjugateGradient(), Optim.GradientDescent()
+    inner_alg = isnothing(precond) ? inner_alg_type(m = 10) : inner_alg_type(m = 10, P = precond)
+    # inner_alg_type = Optim.ConjugateGradient #Optim.GradientDescent()
+    # inner_alg = isnothing(precond) ? inner_alg_type() : inner_alg_type(P = precond)
     alg = Optim.Fminbox(inner_alg)
 
-    @timeit_debug mle_timer "Optim" begin
+    @timeit mle_timer "Optim" begin
         res = Optim.optimize(Optim.only_fg!(fg!), lo, hi, θ0, alg)
         verbose && println("Optim $(inner_alg_type):\n\tgot $(Optim.minimum(optres)) after $(Optim.iterations(optres)) iterations")
     end
@@ -326,23 +339,16 @@ function optim_solver(fg!, θ0; verbose = false)
     return @ntuple(θ, f)
 end
 
-function nlopt_solver(fg!, θ0; verbose = false)
-    nT2 = length(θ0)-1
+function nlopt_solver(fg!, θ0; verbose = false, fixedsigma = false, precond = nothing)
     alg = nloptalg[]
-    opt = NLopt.Opt(alg, nT2+1)
-    opt.lower_bounds = [zeros(nT2); -Inf]
+    opt = NLopt.Opt(alg, length(θ0))
+    opt.lower_bounds = fixedsigma ? zeros(length(θ0)) : push!(zeros(length(θ0)-1), -Inf)
     opt.xtol_rel = 1e-4
     # opt.ftol_rel = 1e-4
-    opt.min_objective = function f(x::Vector, grad::Vector)
-        if length(grad) > 0
-            fg!(true, grad, x)
-        else
-            fg!(true, nothing, x)
-        end
-    end
+    opt.min_objective = (x::Vector, grad::Vector) -> length(grad) > 0 ? fg!(true, grad, x) : fg!(true, nothing, x)
 
     minx = copy(θ0)
-    @timeit_debug mle_timer "NLopt ($alg)" begin
+    @timeit mle_timer "NLopt ($alg)" begin
         minf, minx, ret = NLopt.optimize!(opt, minx)
         verbose && println("NLopt $(opt.algorithm):\n\tgot $minf after $(opt.numevals) iterations (returned $ret)")
     end
@@ -355,23 +361,25 @@ function loglikelihood_inference(
         b::AbstractVector{Float64},
         initial_guess::Union{AbstractVector{Float64},Nothing} = nothing,
         λ::Union{Float64,Nothing} = nothing,
+        sigma::Union{Float64,Nothing} = nothing,
         solver = nlopt_solver;
         verbose = false,
+        precond = nothing,
     )
-    mle_loss! = make_rician_mle_loss(A, b, λ)
-    @unpack θ, f = solver(mle_loss!, initial_guess; verbose = verbose)
+    mle_loss! = make_rician_mle_loss(A, b, λ, sigma)
+    @unpack θ, f = solver(mle_loss!, initial_guess; verbose = verbose, fixedsigma = !isnothing(sigma), precond = precond)
 
     # x = exp.(θ[1:end-1]) #TODO x -> logx
-    x = θ[1:end-1]
+    x = isnothing(sigma) ? θ[1:end-1] : copy(θ)
     ν = A * x
-    σ = exp(θ[end])
+    σ = isnothing(sigma) ? exp(θ[end]) : sigma
 
     return @ntuple(θ, x, ν, σ, f)
 end
 
 foreach(k -> opt_failures[k] = 0, keys(opt_failures));
 TimerOutputs.reset_timer!(mle_timer);
-for I in CartesianIndices((10, 1:size(res[:image],2), 1)) #[CartesianIndex(5,1,1)]
+for I in [CartesianIndex(1,1,1)] #CartesianIndices((10, 1:size(res[:image],2), 1))
     @unpack nT2, nTE, T2Range = default_t2mapopts
     T2_times = DECAES.logrange(T2Range..., nT2)
     nnls_t2dist = res[:dist][I,:]
@@ -381,21 +389,26 @@ for I in CartesianIndices((10, 1:size(res[:image],2), 1)) #[CartesianIndex(5,1,1
     decay_basis = zeros(nTE, nT2)
     DECAES.epg_decay_basis!(DECAES.EPGdecaycurve_work(Float64, nTE), decay_basis, default_flip_angle, T2_times, default_t2mapopts)
 
-    σ0 = std(noisy_signal - decay_basis * nnls_t2dist)
-    lambda = 2*μ^2/σ0^2 #nothing
-    θ0 = [max.(nnls_t2dist, 1e-3*maximum(nnls_t2dist)); log(σ0)] # init with NNLS solution
-    # θ0 = [fill(noisy_signal[1]/nT2, nT2); -5.0]
-    # θ0 = [zeros(nT2); log(1e-3)] #TODO x -> logx
+    σ0 = std(decay_basis * nnls_t2dist - noisy_signal)
+    # lambda = μ^2/σ0^2 #nothing
+    T2spacing, T2maxspacing = (T2Range[2]/T2Range[1])^(1/(nT2-1)), 1.5
+    nwidth = log(T2maxspacing)/log(T2spacing)
+    lambda = inv(maximum(noisy_signal)/nwidth)^2
+    sigma = σ0
+    precond = nothing #cholesky(inv(σ0^2) * (decay_basis' * decay_basis) + lambda * LinearAlgebra.I)
+    θ0 = max.(nnls_t2dist, 1e-3*maximum(nnls_t2dist)) # init with NNLS solution + fixed sigma
+    # sigma = nothing
+    # θ0 = [max.(nnls_t2dist, 1e-3*maximum(nnls_t2dist)); log(σ0)] # init with NNLS solution
 
     # foreach(k -> opt_failures[k] = 0, keys(opt_failures))
-    out = loglikelihood_inference(decay_basis, noisy_signal, θ0, lambda; verbose = true);
+    out = loglikelihood_inference(decay_basis, noisy_signal, θ0, lambda, sigma; verbose = true, precond = precond);
 
     # TimerOutputs.reset_timer!(mle_timer)
     for i in 1:5
-        optres[:Optim] = loglikelihood_inference(decay_basis, noisy_signal, θ0, lambda, optim_solver);
+        optres[:Optim] = loglikelihood_inference(decay_basis, noisy_signal, θ0, lambda, sigma, optim_solver, precond = precond);
         for alg in nloptalgs
             nloptalg[] = alg
-            optres[alg] = loglikelihood_inference(decay_basis, noisy_signal, θ0, lambda, nlopt_solver)
+            optres[alg] = loglikelihood_inference(decay_basis, noisy_signal, θ0, lambda, sigma, nlopt_solver, precond = precond)
         end
     end
     TimerOutputs.print_timer(mle_timer)
@@ -413,6 +426,7 @@ for I in CartesianIndices((10, 1:size(res[:image],2), 1)) #[CartesianIndex(5,1,1
     SNR = -20 * log10(sigma / signal[1])
     plot(T2_times, [t2dist nnls_t2dist]; lab = ["mle" "nnls"], xscale = :log10, xformatter = x->string(round(x;sigdigits=3))) |> display
     @show lambda, σ0, sigma, SNR
+    @show sqrt(1/lambda), maximum(noisy_signal)
     println("nnls_t2dist:"); display(T2partSEcorr(reshape(nnls_t2dist,1,1,1,:), default_t2partopts))
     println("t2dist:"); display(T2partSEcorr(reshape(t2dist,1,1,1,:), default_t2partopts))
 end;
