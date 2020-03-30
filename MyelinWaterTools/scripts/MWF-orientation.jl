@@ -17,7 +17,7 @@ include(joinpath(@__DIR__, "../../MMDLearning/src/rician.jl"))
 const default_t2mapopts = T2mapOptions{Float64}(
     MatrixSize = (1, 1, 1),
     nTE = 48,
-    nT2 = 120,
+    nT2 = 40,
     TE = 8e-3,
     T2Range = (8e-3, 2.0),
     Threshold = 0.0,
@@ -50,6 +50,7 @@ const default_btp = BlochTorreyParameters{Float64}(
 ####
 #### MWF orientation plots
 ####
+
 #=
 function fractions(p::BlochTorreyParameters)
     @unpack PD_sp, PD_lp, g_ratio, MWF, MVF, AxonPDensity = p
@@ -193,6 +194,41 @@ end # for (dist, parts) in ...
 
 # error("mwf done")
 =#
+
+####
+#### MWF orientation of BT simulations
+####
+
+using BSON
+const sim_dir = "/project/st-arausch-1/jcd1994/ismrm2020/experiments/Spring-2020/permeability-training-1/train-2020-03-30T13:49:31.668";
+# const bt_sims = map(readdir(sim_dir)) do file
+#     BSON.load(joinpath(sim_dir, file))
+# end;
+bt_filtered = filter(bt_sims) do bt
+    165.0 <= rad2deg(bt[:solverparams_dict][:flipangle]) &&
+    0.10  <= bt[:geomparams_dict][:mwf] <= 0.10148
+end;
+
+mwf = (bt -> bt[:geomparams_dict][:mwf]).(bt_filtered);
+alpha = (bt -> rad2deg(bt[:solverparams_dict][:flipangle])).(bt_filtered);
+theta = (bt -> rad2deg(bt[:btparams_dict][:theta])).(bt_filtered);
+
+signals = mapreduce(hcat, bt_filtered) do bt
+    norm.(transverse.(bt[:signals][1 .+ 20 .* (1:default_t2mapopts.nTE)]))
+end;
+maps, dist, parts = let
+    image = permutedims(reshape(signals, size(signals)..., 1, 1), (2,4,3,1))
+    t2mapopts = T2mapOptions(default_t2mapopts; MatrixSize = size(image)[1:3])
+    t2partopts = T2partOptions(default_t2partopts; MatrixSize = size(image)[1:3])
+    maps, dist = T2mapSEcorr(image, t2mapopts)
+    parts = T2partSEcorr(dist, t2partopts)
+    maps, dist, parts
+end;
+
+# scatter(theta, mwf)
+# plot(sort((bt->bt[:geomparams_dict][:mwf]).(bt_filtered)))
+
+error("loaded files")
 
 ####
 #### MWF MLE opt
