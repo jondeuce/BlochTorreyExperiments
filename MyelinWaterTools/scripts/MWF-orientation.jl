@@ -5,6 +5,7 @@ Pkg.activate(joinpath(@__DIR__, ".."))
 using GlobalUtils
 using MWFUtils, MWFLearning, DECAES
 using SpecialFunctions, Optim, BlackBoxOptim, NLopt, Roots
+pyplot(size=(800,600))
 
 include(joinpath(@__DIR__, "../../MMDLearning/src/rician.jl"))
 
@@ -21,8 +22,8 @@ const default_t2mapopts = T2mapOptions{Float64}(
     TE = 8e-3,
     T2Range = (8e-3, 2.0),
     Threshold = 0.0,
-    Silent = false,
-    SaveNNLSBasis = true,
+    Silent = true,
+    SaveNNLSBasis = false,
     SaveRegParam = true,
 )
 
@@ -200,13 +201,12 @@ end # for (dist, parts) in ...
 ####
 
 using BSON
-const sim_dir = "/project/st-arausch-1/jcd1994/ismrm2020/experiments/Spring-2020/permeability-training-1/train-2020-03-30T13:49:31.668";
-# const bt_sims = map(readdir(sim_dir)) do file
-#     BSON.load(joinpath(sim_dir, file))
-# end;
+const sim_dir = "/project/st-arausch-1/jcd1994/MWI-Orientation/mwi-orient-1/measurables";
+const bt_sims = map(readdir(sim_dir)) do file
+    BSON.load(joinpath(sim_dir, file))
+end;
 bt_filtered = filter(bt_sims) do bt
-    165.0 <= rad2deg(bt[:solverparams_dict][:flipangle]) &&
-    0.10  <= bt[:geomparams_dict][:mwf] <= 0.10148
+    true #175.0 <= rad2deg(bt[:solverparams_dict][:flipangle])
 end;
 
 mwf = (bt -> bt[:geomparams_dict][:mwf]).(bt_filtered);
@@ -214,10 +214,12 @@ alpha = (bt -> rad2deg(bt[:solverparams_dict][:flipangle])).(bt_filtered);
 theta = (bt -> rad2deg(bt[:btparams_dict][:theta])).(bt_filtered);
 
 signals = mapreduce(hcat, bt_filtered) do bt
-    norm.(transverse.(bt[:signals][1 .+ 20 .* (1:default_t2mapopts.nTE)]))
+    S = norm.(transverse.(bt[:signals][1 .+ 20 .* (1:default_t2mapopts.nTE)]))
+    return S ./ sum(S)
 end;
 maps, dist, parts = let
     image = permutedims(reshape(signals, size(signals)..., 1, 1), (2,4,3,1))
+    @show size(image)
     t2mapopts = T2mapOptions(default_t2mapopts; MatrixSize = size(image)[1:3])
     t2partopts = T2partOptions(default_t2partopts; MatrixSize = size(image)[1:3])
     maps, dist = T2mapSEcorr(image, t2mapopts)
@@ -225,8 +227,54 @@ maps, dist, parts = let
     maps, dist, parts
 end;
 
-# scatter(theta, mwf)
-# plot(sort((bt->bt[:geomparams_dict][:mwf]).(bt_filtered)))
+function makebinned(x,y,edges)
+    nbins = length(edges)-1
+    xmeans, ymeans, ystds, ymeanstds = [zeros(nbins) for _ in 1:4]
+    for i in 1:nbins
+        f = i < nbins ?
+            z -> edges[i] ≤ z < edges[i+1] :
+            z -> edges[i] ≤ z ≤ edges[i+1]
+        idx = findall(f, x)
+        xmeans[i] = mean(edges[i:i+1]) #mean(x[idx])
+        ymeans[i] = mean(y[idx])
+        ystds[i] = std(y[idx]) # standard error
+        ymeanstds[i] = std(y[idx]) / sqrt(length(idx)) # standard error of the mean
+    end
+    return @ntuple(xmeans, ymeans, ystds, ymeanstds)
+end
+
+porient = plot(
+    let # mwf vs. theta
+        x, y, σ, σμ = makebinned(theta, vec(parts["sfr"]), 0:5:90)
+        plot(x, [y y]; ribbon = [σ σμ], xlab = "Theta [deg]", ylab = "MWF [a.u.]",
+            xlim = (0,90), ylim = (0,0.15), xticks = 0:15:90,
+            marker = (3,:circle,:black), line = (:black,1), leg = :none)
+    end,
+    let # T2 mw vs. theta
+        x, y, σ, σμ = makebinned(theta, 1000 .* vec(parts["sgm"]), 0:5:90)
+        plot(x, [y y]; ribbon = [σ σμ], xlab = "Theta [deg]", ylab = "T2 mw [ms]",
+            xlim = (0,90), ylim = (0,15), xticks = 0:15:90,
+            marker = (3,:circle,:black), line = (:black,1), leg = :none)
+    end,
+    let # T2 iew vs. theta
+        x, y, σ, σμ = makebinned(theta, 1000 .* vec(parts["mgm"]), 0:5:90)
+        plot(x, [y y]; ribbon = [σ σμ], xlab = "Theta [deg]", ylab = "T2 iew [ms]",
+            xlim = (0,90), ylim = (50,80), xticks = 0:15:90,
+            marker = (3,:circle,:black), line = (:black,1), leg = :none)
+    end,
+    let
+        xfrmt = x -> round(x; digits=1) |> string
+        x = 1000 .* maps["t2times"]
+        yall = permutedims(dist[:,1,1,:])
+        ybar = mean(yall, dims=2)
+        # plot(x, ybar; ribbon = ([quantile(y, 0.0) for y in eachrow(yall)], [quantile(y, 0.9) for y in eachrow(yall)]),
+        plot(x, yall; line = (1,:blue,0.05),
+            xlab = "T2 [ms]", ylab = "Amplitude [a.u.]",
+            xscale = :log10, xticks = x[1:3:end], xrot = 45, xformatter = xfrmt, leg = :none)
+    end,
+);
+display(porient);
+savefig.(Ref(porient), "output/mwi_vs_orientation" .* [".png", ".pdf"]);
 
 error("loaded files")
 
