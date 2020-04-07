@@ -69,6 +69,11 @@ const default_btparams = BlochTorreyParameters{Float64}(
     D_Sheath = 1000.0, # [μm²/s]
     D_Axon = 1000.0, # [μm²/s]
     K_perm = 0.0, # [μm/s]
+    PD_lp = 1.0, # [a.u.] large pool relative proton density
+    PD_sp = 0.5, # [a.u.] small pool relative proton density
+    ChiI = 1000 * -60e-9, # [a.u.] isotropic suceptibility of myelin
+    ChiA = 1000 * -120e-9, # [a.u.] anisotropic suceptibility of myelin
+    E = 0.0, # [a.u.] susceptibility exchange component
 );
 const default_btparams_dict = Dict(default_btparams)
 
@@ -172,8 +177,6 @@ function runsimulation(sweepparams, geom)
         R1_Tissue = inv(sweepparams[:T1lp]), #Force equal (else, set to inv(sweepparams[:T1tiss]))
         AxonPDensity = density,
         g_ratio = gratio,
-        PD_lp = 1.0,
-        PD_sp = 0.5,
         MVF = mvf,
         MWF = mwf,
     )
