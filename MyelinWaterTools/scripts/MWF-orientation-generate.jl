@@ -71,8 +71,8 @@ const default_btparams = BlochTorreyParameters{Float64}(
     K_perm = 0.0, # [μm/s]
     PD_lp = 1.0, # [a.u.] large pool relative proton density
     PD_sp = 0.5, # [a.u.] small pool relative proton density
-    ChiI = 100 * -60e-9, # [a.u.] isotropic suceptibility of myelin
-    ChiA = 100 * -120e-9, # [a.u.] anisotropic suceptibility of myelin
+    ChiI = 50 * -60e-9, # [a.u.] isotropic suceptibility of myelin
+    ChiA = 50 * -120e-9, # [a.u.] anisotropic suceptibility of myelin
     E = 0.0, # [a.u.] susceptibility exchange component
 );
 const default_btparams_dict = Dict(default_btparams)
