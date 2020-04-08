@@ -17,10 +17,40 @@ mxcall(:cd, 0, pwd()) # Set MATLAB path (Note: pwd(), not @__DIR__)
 gitdir() = realpath(DrWatson.projectdir("..")) # DrWatson package for tagged saving
 
 ####
+#### Environment variables
+####
+
+const CHI_FACT  = parse(Float64, get(ENV, "CHI_FACT", "1.0"))
+const R_MU      = parse(Float64, get(ENV, "R_MU", "0.46"))
+const R_MU_FACT = R_MU / 0.46
+
+####
 #### Geometry
 ####
 
+#=
+function BSON.constructtype(T::Type{G}, Ts) where G <: JuAFEM.AbstractGrid
+    if length(Ts) == 4
+        @assert Ts[1] == 2 && Ts[2] == Ts[4] == 3 # 2D triangular grid
+        Ts = Any[Ts[1], JuAFEM.Triangle, Ts[3]]
+    elseif length(Ts) != 3
+        error("BSON.constructtype is only overloaded for JuAFEM.Grid{2,3,T,3} -> JuAFEM.Grid{2,JuAFEM.Triangle,T}")
+    end
+    (length(Ts) == 0) ? T : T{map(BSON.normalize_typeparams, Ts)...}
+end
+=#
 const geomfile = BSON.load("/project/st-arausch-1/jcd1994/ismrm2020/experiments/Fall-2019/diff-med-1-input-data/geom/2019-10-04-T-16-01-11-467_Npts=6684_Ntri=8881_density=0.481_gratio=0.79_mvf=0.181_mwf=0.1_numfibres=17.geom.bson");
+
+# scale geometry by R_MU_FACT
+foreach([:interiorgrids, :torigrids, :exteriorgrids]) do f
+    foreach(geomfile[f]) do g
+        o = origin(geomfile[:bdry])
+        JuAFEM.transform!(g, x -> R_MU_FACT * (x - o) + o)
+    end
+end;
+geomfile[:bdry] = scale_shape(geomfile[:bdry], origin(geomfile[:bdry]), R_MU_FACT);
+geomfile[:innercircles] = map(c -> scale_shape(c, origin(geomfile[:bdry]), R_MU_FACT), geomfile[:innercircles]);
+geomfile[:outercircles] = map(c -> scale_shape(c, origin(geomfile[:bdry]), R_MU_FACT), geomfile[:outercircles]);
 
 ####
 #### Default solver parameters and MWF models
@@ -71,9 +101,10 @@ const default_btparams = BlochTorreyParameters{Float64}(
     K_perm = 0.0, # [μm/s]
     PD_lp = 1.0, # [a.u.] large pool relative proton density
     PD_sp = 0.5, # [a.u.] small pool relative proton density
-    ChiI = 50 * -60e-9, # [a.u.] isotropic suceptibility of myelin
-    ChiA = 50 * -120e-9, # [a.u.] anisotropic suceptibility of myelin
+    ChiI = CHI_FACT * -60e-9, # [a.u.] isotropic suceptibility of myelin
+    ChiA = CHI_FACT * -120e-9, # [a.u.] anisotropic suceptibility of myelin
     E = 0.0, # [a.u.] susceptibility exchange component
+    R_mu = R_MU, # [um] mean radius
 );
 const default_btparams_dict = Dict(default_btparams)
 
