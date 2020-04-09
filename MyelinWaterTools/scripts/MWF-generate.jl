@@ -97,7 +97,7 @@ const geombasepaths = [
     # realpath("./geom"),
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-3/geom",
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-4/geom",
-    "/project/st-arausch-1/jcd1994/ismrm2020/experiments/Fall-2019/diff-med-1-input-data/geom", #TODO
+    "/project/st-arausch-1/jcd1994/ismrm2020/experiments/Fall-2019/diff-med-1-input-data/geom-newgridtype", #TODO
 ]
 const geomfiles = reduce(vcat, realpath.(joinpath.(gp, readdir(gp))) for gp in geombasepaths)
 const maxnnodes = 15_000
@@ -249,6 +249,8 @@ function runsimulation!(results, sweepparams, geom)
     btparams = BlochTorreyParameters(default_btparams;
         theta = deg2rad(sweepparams[:theta]),
         K_perm = sweepparams[:K],
+        K_Axon_Sheath = sweepparams[:K],
+        K_Tissue_Sheath = sweepparams[:K],
         D_Tissue = sweepparams[:Dtiss],
         D_Sheath = sweepparams[:Dmye],
         D_Axon = sweepparams[:Dax],

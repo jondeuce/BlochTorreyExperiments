@@ -95,7 +95,7 @@ function createsubgrids(
         push!(text[1], t) # otherwise, exterior
     end
 
-    G = Grid{2,3,T,3}
+    G = Grid{2,JuAFEM.Triangle,T}
     exteriorgrids = G[Grid(reorder(p,t)...) for t in text]
     interiorgrids = G[Grid(reorder(p,t)...) for t in tint]
     torigrids     = G[Grid(reorder(p,t)...) for t in ttori]
@@ -361,7 +361,7 @@ function geometrytuple(geom::Dict)
     end
     
     # Ensure proper typing of grids, and return NamedTuple of data
-    G = Grid{2,3,Float64,3} # 2D triangular grid
+    G = Grid{2,JuAFEM.Triangle,Float64} # 2D triangular grid
     C = Circle{2,Float64}
     R = Rectangle{2,Float64}
     exteriorgrids = convert(Vector{G}, geom[:exteriorgrids][:])

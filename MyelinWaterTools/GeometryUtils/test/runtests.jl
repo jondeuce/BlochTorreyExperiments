@@ -1,5 +1,3 @@
-module GeometryUtilsTest
-
 using GeometryUtils
 
 using Test
@@ -9,6 +7,44 @@ using Tensors: Vec
 # ---------------------------------------------------------------------------- #
 # Geometry Testing
 # ---------------------------------------------------------------------------- #
+
+function test_intersect_area(c::Circle{2,T}) where {T}
+    # allow for points to be inside or slightly outside of circle
+    rect = scale_shape(bounding_box(c), T(1.5))
+
+    x0 = origin(rect)[1] - (xmax(rect)-xmin(rect))/2 * rand(T)
+    x1 = origin(rect)[1] + (xmax(rect)-xmin(rect))/2 * rand(T)
+    y0 = origin(rect)[2] - (ymax(rect)-ymin(rect))/2 * rand(T)
+    y1 = origin(rect)[2] + (ymax(rect)-ymin(rect))/2 * rand(T)
+    @assert (x0 <= x1 && y0 <= y1)
+
+    R = radius(c)
+    h = max(R - (min(y1, ymax(c)) - origin(c)[2]), zero(T))
+
+    A_top_test = (
+        intersect_area(c, -T(Inf),   y1,     x0, T(Inf)) + # 1: top left
+        intersect_area(c,      x0,   y1,     x1, T(Inf)) + # 2: top middle
+        intersect_area(c,      x1,   y1, T(Inf), T(Inf))   # 3: top right
+    )
+
+    A_top = R^2 * acos(1-h/R) - (R-h)*√(2R*h-h^2)
+    @test isapprox(A_top, A_top_test; atol = 100*eps(T))
+
+    A_test = (intersect_area(c, -T(Inf),      y1,     x0, T(Inf)) + # 1: top left
+              intersect_area(c,      x0,      y1,     x1, T(Inf)) + # 2: top middle
+              intersect_area(c,      x1,      y1, T(Inf), T(Inf)) + # 3: top right
+              intersect_area(c, -T(Inf),      y0,     x0,     y1) + # 4: middle left
+              intersect_area(c,      x0,      y0,     x1,     y1) + # 5: middle middle
+              intersect_area(c,      x1,      y0, T(Inf),     y1) + # 6: middle right
+              intersect_area(c, -T(Inf), -T(Inf),     x0,     y0) + # 7: bottom left
+              intersect_area(c,      x0, -T(Inf),     x1,     y0) + # 8: bottom middle
+              intersect_area(c,      x1, -T(Inf), T(Inf),     y0))  # 9: bottom right
+
+    A_exact = pi*radius(c)^2
+    @test A_test ≈ A_exact
+
+    return nothing
+end
 
 function runtests()
     @testset "Geometry Utils" begin
@@ -129,44 +165,6 @@ function runtests()
     nothing
 end
 
-function test_intersect_area(c::Circle{2,T}) where {T}
-    # allow for points to be inside or slightly outside of circle
-    rect = scale_shape(bounding_box(c), T(1.5))
-
-    x0 = origin(rect)[1] - (xmax(rect)-xmin(rect))/2 * rand(T)
-    x1 = origin(rect)[1] + (xmax(rect)-xmin(rect))/2 * rand(T)
-    y0 = origin(rect)[2] - (ymax(rect)-ymin(rect))/2 * rand(T)
-    y1 = origin(rect)[2] + (ymax(rect)-ymin(rect))/2 * rand(T)
-    @assert (x0 <= x1 && y0 <= y1)
-
-    R = radius(c)
-    h = max(R - (min(y1, ymax(c)) - origin(c)[2]), zero(T))
-
-    A_top_test = (
-        intersect_area(c, -T(Inf),   y1,     x0, T(Inf)) + # 1: top left
-        intersect_area(c,      x0,   y1,     x1, T(Inf)) + # 2: top middle
-        intersect_area(c,      x1,   y1, T(Inf), T(Inf))   # 3: top right
-    )
-
-    A_top = R^2 * acos(1-h/R) - (R-h)*√(2R*h-h^2)
-    @test isapprox(A_top, A_top_test; atol = 100*eps(T))
-
-    A_test = (intersect_area(c, -T(Inf),      y1,     x0, T(Inf)) + # 1: top left
-              intersect_area(c,      x0,      y1,     x1, T(Inf)) + # 2: top middle
-              intersect_area(c,      x1,      y1, T(Inf), T(Inf)) + # 3: top right
-              intersect_area(c, -T(Inf),      y0,     x0,     y1) + # 4: middle left
-              intersect_area(c,      x0,      y0,     x1,     y1) + # 5: middle middle
-              intersect_area(c,      x1,      y0, T(Inf),     y1) + # 6: middle right
-              intersect_area(c, -T(Inf), -T(Inf),     x0,     y0) + # 7: bottom left
-              intersect_area(c,      x0, -T(Inf),     x1,     y0) + # 8: bottom middle
-              intersect_area(c,      x1, -T(Inf), T(Inf),     y0))  # 9: bottom right
-
-    A_exact = pi*radius(c)^2
-    @test A_test ≈ A_exact
-
-    return nothing
-end
-
-end # module GeometryUtilsTest
+runtests()
 
 nothing

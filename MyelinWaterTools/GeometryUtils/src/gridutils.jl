@@ -48,19 +48,15 @@ end
 
 # Plot Grid or vector of Grids. Vector of Grids are combined into one large Grid
 # before plotting for speed, so that simpplot need only be called once
-function DistMesh.SimpPlotGrid(gs::Vector{G}) where {G <: Grid{2,3}}
-    return DistMesh.SimpPlotGrid(nodecellmatrices(gs)...)
-end
-function DistMesh.SimpPlotGrid(g::G) where {G <: Grid{2,3}}
-    return DistMesh.SimpPlotGrid(nodevector(g), cellvector(g))
-end
+DistMesh.SimpPlotGrid(gs::Vector{G}) where {G <: Grid{2,JuAFEM.Triangle}} = DistMesh.SimpPlotGrid(nodecellmatrices(gs)...)
+DistMesh.SimpPlotGrid(g::G) where {G <: Grid{2,JuAFEM.Triangle}} = DistMesh.SimpPlotGrid(nodevector(g), cellvector(g))
 
 # ---------------------------------------------------------------------------- #
 # Misc grid utils
 # ---------------------------------------------------------------------------- #
 
 @inline floattype(g::Grid) = floattype(typeof(g))
-@inline floattype(::Type{Grid{dim,N,T,M}}) where {dim,N,T,M} = T
+@inline floattype(::Type{Grid{dim,C,T}}) where {dim,C,T} = T
 
 # `JuAFEM.Grid` constructor given a vector of points and a vector of tuples of
 # integers representing cell vertice indices.
@@ -118,9 +114,9 @@ function JuAFEM.Grid(grids::AbstractVector{G}) where {G<:Grid}
     return grid
 end
 
-function boundaryfaceset(g::Grid{dim,N,T,M}) where {dim,N,T,M}
+function boundaryfaceset(g::Grid{dim,C,T}) where {dim,C,T}
     nodes, cells = getnodes(g), getcells(g)
-    edgeindices = boundedges(g) # Vector{NTuple{M,Int}}
+    edgeindices = boundedges(g) # Vector{NTuple{JuAFEM.nfaces(C),Int}}
 
     # Brute force search for edges
     # faceset_brute = Set{Tuple{Int,Int}}() # tuples of (cell_idx, face_idx)
@@ -139,8 +135,9 @@ function boundaryfaceset(g::Grid{dim,N,T,M}) where {dim,N,T,M}
     # Create an array of (cell_index, face_index) pairs, as well as an array of
     # nodetuples which stores the node indices for each face
     Np = length(faces(cells[1])[1]) # number of points per cell face
-    cellfaces = NTuple{2,Int}[]; sizehint!(cellfaces, M*length(cells)) #[(c,f) for f in faces(c) for c in 1:length(cells)]
-    nodetuples = NTuple{Np,Int}[]; sizehint!(cellfaces, M*length(cells))
+    M = JuAFEM.nfaces(C) # number of faces per cell
+    cellfaces = sizehint!(NTuple{2,Int}[], M*length(cells))
+    nodetuples = sizehint!(NTuple{Np,Int}[], M*length(cells))
     for (ci,c) in enumerate(cells)
         for (fi,f) in enumerate(faces(c))
             push!(cellfaces, (ci,fi)) # `fi` is the face index for the cell `ci`
@@ -177,20 +174,20 @@ function boundaryfaceset(g::Grid{dim,N,T,M}) where {dim,N,T,M}
     return faceset
 end
 
-function DistMesh.boundedges(g::Grid{dim,N,T,M}) where {dim,N,T,M}
+function DistMesh.boundedges(g::Grid{dim,C,T}) where {dim,C,T}
     return boundedges(
         copy(reinterpret(Vec{dim,T}, getnodes(g))),
-        copy(reinterpret(NTuple{N,Int}, getcells(g))))
+        copy(reinterpret(NTuple{JuAFEM.nnodes(C), Int}, getcells(g))))
 end
 
 # Area of triangle on 2D grid
-function GeometryUtils.area(g::Grid{2,3,T,3}, cell::Int) where {T}
+function GeometryUtils.area(g::Grid{2,JuAFEM.Triangle,T}, cell::Int) where {T}
     A, B, C = getcoordinates(g, cell)
     D = ((B - A) × (C - A))[3] # 3rd element of cross product, aka signed norm
     return abs(D)/2 # half of unsigned parallelpiped volume (area)
 end
 # Area of 2D grid
-function GeometryUtils.area(g::Grid{2,3,T,3}) where {T}
+function GeometryUtils.area(g::Grid{2,JuAFEM.Triangle,T}) where {T}
     nc = getncells(g)
     return nc == 0 ? zero(T) : sum(c -> area(g,c), 1:nc)
 end
@@ -242,7 +239,7 @@ function addcellcenterset!(grid::Grid, name::String, f::Function)
 end
 
 # Project points nearly on circles to being exactly on them
-function project_circle!(grid::Grid, circle::Circle{dim,T}, thresh::T) where {dim,T}
+function project_circle!(grid::Grid{dim}, circle::Circle{dim}, thresh::Number) where {dim}
     for i in eachindex(grid.nodes)
         x = getcoordinates(getnodes(grid)[i])
         dx = x - origin(circle)
@@ -265,7 +262,7 @@ end
 project_circles(grid::Grid, circles::Vector{C}, thresh) where {C <: Circle} = project_circles!(deepcopy(grid), circles, thresh)
 
 # Form node positions matrix
-function nodematrix(g::Grid{dim,N,T,M}) where {dim,N,T,M}
+function nodematrix(g::Grid{dim,C,T}) where {dim,C,T}
     p = zeros(T, getnnodes(g), dim) # dim is spatial dimension of grid
     @inbounds for i in 1:getnnodes(g)
         x = getcoordinates(getnodes(g)[i])
@@ -278,8 +275,9 @@ end
 nodevector(g::Grid) = getcoordinates.(getnodes(g))
 
 # Form triangle indices matrix
-function cellmatrix(g::Grid{dim,N,T,M}) where {dim,N,T,M}
-    c = zeros(Int, getncells(g), N) # N is number of nodes per cell
+function cellmatrix(g::Grid{dim,C,T}) where {dim,C,T}
+    N = JuAFEM.nnodes(C) # number of nodes per cell
+    c = zeros(Int, getncells(g), N)
     @inbounds for i in 1:getncells(g)
         x = vertices(getcells(g)[i])
         for j in 1:N
@@ -292,7 +290,7 @@ cellvector(g::Grid) = vertices.(getcells(g))
 
 # Return combined nodematrix and cellmatrix of a vector of grids,
 # renumbering nodes accordingly
-function nodecellmatrices(gs::Vector{G}) where {G <: Grid{2,3}}
+function nodecellmatrices(gs::Vector{G}) where {G <: Grid{2,JuAFEM.Triangle}}
     ps = nodematrix.(gs) # Vector of matrices of node positions
     ts = cellmatrix.(gs) # Vector of matrices of triangle indices
     idxshifts = cumsum(size.(ps,1))
@@ -306,11 +304,11 @@ end
 
 # Generic forming of a subgrid from a cellset + nodeset + boundaryset of a parent grid
 function form_subgrid(
-        parent_grid::Grid{dim,N,T,M},
+        parent_grid::Grid{dim,C,T},
         cellset::Set{Int},
         nodeset::Set{Int},
         boundaryset::Set{Tuple{Int,Int}}
-    ) where {dim,N,T,M}
+    ) where {dim,C,T}
 
     cells = Triangle[]
     nodes = Node{dim,T}[]
@@ -348,11 +346,11 @@ end
 # Form interior, tori, and exterior subgrids from a parent grid given the
 # rectangular exterior boundary and inner/outer circle boundaries
 function form_tori_subgrids(
-        fullgrid::Grid{dim,N,T,M},
+        fullgrid::Grid{2,C,T},
         rect_bdry::Rectangle{2,T},
         inner_circles::Vector{Circle{2,T}},
         outer_circles::Vector{Circle{2,T}}
-    ) where {dim,N,T,M}
+    ) where {C,T}
 
     # Helper functions
     is_in_outer_circles = x -> is_in_any_circle(x, outer_circles)
@@ -360,7 +358,7 @@ function form_tori_subgrids(
     is_on_outer_circles = x -> is_on_any_circle(x, outer_circles)
     is_on_inner_circles = x -> is_on_any_circle(x, inner_circles)
     is_on_rectangle     = x -> x[1] ≈ xmin(rect_bdry) || x[1] ≈ xmax(rect_bdry) ||
-                            x[2] ≈ ymax(rect_bdry) || x[2] ≈ ymin(rect_bdry)
+                               x[2] ≈ ymax(rect_bdry) || x[2] ≈ ymin(rect_bdry)
 
     is_in_exterior  = x -> !is_in_outer_circles(x) || is_on_outer_circles(x)
     is_in_tori      = x ->  is_in_outer_circles(x) && (!is_in_inner_circles(x) || is_on_inner_circles(x))
@@ -388,7 +386,7 @@ function form_tori_subgrids(
     cellfilter = (cellnum, circle) -> is_inside(cellcenter(fullgrid, cellnum), circle)
 
     # Create individual tori grids by filtering on the entire "tori" set
-    torigrids = Grid{dim,N,T,M}[]
+    torigrids = Grid{2,C,T}[]
     for circle in outer_circles
         cellset = filter(cellnum -> cellfilter(cellnum, circle), getcellset(fullgrid, "tori"))
         nodeset = cellset_to_nodeset(fullgrid, cellset)
@@ -396,7 +394,7 @@ function form_tori_subgrids(
     end
 
     # Create individual interior grids by filtering on the entire "interior" set
-    interiorgrids = Grid{dim,N,T,M}[]
+    interiorgrids = Grid{2,C,T}[]
     for circle in inner_circles
         cellset = filter(cellnum -> cellfilter(cellnum, circle), getcellset(fullgrid, "interior"))
         nodeset = cellset_to_nodeset(fullgrid, cellset)
@@ -409,11 +407,11 @@ end
 # Form interior, tori, and exterior subgrids from a parent grid given the
 # circular exterior boundary and inner/outer circle boundaries
 function form_tori_subgrids(
-        fullgrid::Grid{dim,N,T,M},
+        fullgrid::Grid{2,C,T},
         circle_bdry::Circle{2,T},
         inner_circles::Vector{Circle{2,T}},
         outer_circles::Vector{Circle{2,T}}
-    ) where {dim,N,T,M}
+    ) where {C,T}
 
     # Helper functions
     is_in_outer_circles = x -> is_in_any_circle(x, outer_circles)
@@ -448,7 +446,7 @@ function form_tori_subgrids(
     cellfilter = (cellnum, circle) -> is_inside(cellcenter(fullgrid, cellnum), circle)
 
     # Create individual tori grids by filtering on the entire "tori" set
-    torigrids = Grid{dim,N,T,M}[]
+    torigrids = Grid{2,C,T}[]
     for circle in outer_circles
         cellset = filter(cellnum -> cellfilter(cellnum, circle), getcellset(fullgrid, "tori"))
         nodeset = cellset_to_nodeset(fullgrid, cellset)
@@ -456,7 +454,7 @@ function form_tori_subgrids(
     end
 
     # Create individual interior grids by filtering on the entire "interior" set
-    interiorgrids = Grid{dim,N,T,M}[]
+    interiorgrids = Grid{2,C,T}[]
     for circle in inner_circles
         cellset = filter(cellnum -> cellfilter(cellnum, circle), getcellset(fullgrid, "interior"))
         nodeset = cellset_to_nodeset(fullgrid, cellset)

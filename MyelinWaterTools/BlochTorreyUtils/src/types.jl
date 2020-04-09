@@ -6,7 +6,7 @@ const MassType{T} = Union{<:SparseMatrixCSC{T}, <:Symmetric{T,<:SparseMatrixCSC{
 const MassFactType{T} = Factorization{T}
 const StiffnessType{T} = SparseMatrixCSC{Tc} where {Tc<:Union{T,Complex{T}}}
 const VectorOfVectors{T} = AbstractVector{<:AbstractVector{T}}
-const TriangularGrid{T} = Grid{2,3,T,3}
+const TriangularGrid{T} = Grid{2,JuAFEM.Triangle,T}
 const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{gDim,T}}
 
 # ---------------------------------------------------------------------------- #
@@ -22,7 +22,7 @@ const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{
     R1_Tissue       = T(inv(1084e-3)) # ......................... [1/s]      1/T1 relaxation rate of white matter tissue (extra-cellular water) [REF: 1084 ± 45; https://www.ncbi.nlm.nih.gov/pubmed/16086319]
     R2_sp           = T(inv(15e-3)) # ........................... [1/s]      1/T2 relaxation rate of small pool (myelin) water (Xu et al. 2017)
     R2_lp           = T(inv(63e-3)) # ........................... [1/s]      1/T2 relaxation rate of large pool (intra-cellular/axonal) water [REF: TODO]
-    R2_lp_DipDip    = T(0.005) # ................................ [1/s]      1/T2 dipole-dipole interaction coefficient for large pool (intra-cellular/axonal) water: R2_lp(θ) = R2_lp + R2_lp_DipDip * (3*cos^2(θ)−1)^2 [REF: https://doi.org/10.1016/j.neuroimage.2013.01.051]
+    R2_lp_DipDip    = T(0.0) # .................................. [1/s]      1/T2 dipole-dipole interaction coefficient for large pool (intra-cellular/axonal) water: R2_lp(θ) = R2_lp + R2_lp_DipDip * (3*cos^2(θ)−1)^2 [REF: https://doi.org/10.1016/j.neuroimage.2013.01.051]
     R2_Tissue       = T(inv(63e-3)) # ........................... [1/s]      1/T2 relaxation rate of white matter tissue (extra-cellular water) (was 14.5Hz; changed to match R2_lp) [REF: TODO]
     R2_Water        = T(inv(2.2)) # ............................. [1/s]      Relaxation rate of pure water
     D_Water         = T(3037.0) # ............................... [um^2/s]   Diffusion coefficient in water
@@ -34,9 +34,12 @@ const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{
     K_perm          = T(1.0e-3) # ............................... [um/s]     TODO (reference?) Interface permeability constant
     K_Axon_Sheath   = T(K_perm) # ............................... [um/s]     Axon-Myelin interface permeability
     K_Tissue_Sheath = T(K_perm) # ............................... [um/s]     Tissue-Myelin interface permeability
+    @assert K_perm ≈ K_Axon_Sheath   # different permeabilities not implemented
+    @assert K_perm ≈ K_Tissue_Sheath # different permeabilities not implemented
     R_mu            = T(0.46) # ................................. [um]       Axon mean radius (taken to be outer radius)
     R_shape         = T(5.7) # .................................. [unitless] Axon shape parameter for Gamma distribution (Xu et al. 2017)
     R_scale         = T(R_mu/R_shape) # ......................... [um]       Axon scale parameter for Gamma distribution (Xu et al. 2017)
+    @assert R_scale ≈ R_mu/R_shape
     PD_sp           = T(0.5) # .................................. [unitless] Relative proton density (Myelin)
     PD_lp           = T(1.0) # .................................. [unitless] Relative proton density (Intra Extra)
     PD_Fe           = T(1.0) # .................................. [unitless] Relative proton density (Ferritin)
@@ -44,6 +47,8 @@ const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{
     AxonPDensity    = T(0.83) # ................................. [unitless] Axon packing density based region in white matter (Xu et al. 2017) (originally 0.83)
     MVF             = T(AxonPDensity*(1-g_ratio^2)) # ........... [unitless] Myelin volume fraction, assuming periodic circle packing and constant g_ratio
     MWF             = T(PD_sp*MVF/(PD_lp-(PD_lp-PD_sp)*MVF)) # .. [unitless] Myelin water fraction, assuming periodic circle packing and constant g_ratio
+    @assert MVF ≈ AxonPDensity*(1-g_ratio^2)
+    @assert MWF ≈ PD_sp*MVF/(PD_lp-(PD_lp-PD_sp)*MVF)
     ChiI            = T(-60e-9) # ............................... [unitless] Isotropic susceptibility of myelin (TODO check how to get it) (Xu et al. 2017)
     ChiA            = T(-120e-9) # .............................. [unitless] Anisotropic Susceptibility of myelin (Xu et al. 2017)
     E               = T(10e-9) # ................................ [unitless] Exchange component to resonance freqeuency (Wharton and Bowtell 2012)

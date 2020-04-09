@@ -16,6 +16,7 @@ include(joinpath(@__DIR__, "../../MMDLearning/src/rician.jl"))
 # [..] cut-off between the two water pools was set to 25 ms, which was based on the measured T2 distributions
 
 const default_t2mapopts = T2mapOptions{Float64}(
+    legacy = true,
     MatrixSize = (1, 1, 1),
     nTE = 48,
     nT2 = 40,
@@ -28,11 +29,12 @@ const default_t2mapopts = T2mapOptions{Float64}(
 )
 
 const default_t2partopts = T2partOptions{Float64}(
+    legacy = true,
     MatrixSize = default_t2mapopts.MatrixSize,
     nT2 = default_t2mapopts.nT2,
     T2Range = default_t2mapopts.T2Range,
     SPWin = (prevfloat(default_t2mapopts.T2Range[1]), 25e-3), # ensure T2Range[1] is captured
-    MPWin = (nextfloat(25e-3), nextfloat(default_t2mapopts.T2Range[2])), # ensure disjoint with SPWin + T2Range[2] is captured
+    MPWin = (nextfloat(25e-3), nextfloat(default_t2mapopts.T2Range[2])), # ensure disjoint with SPWin and T2Range[2] is captured
     Silent = true,
 )
 
@@ -201,82 +203,130 @@ end # for (dist, parts) in ...
 ####
 
 using BSON
-const sim_dir = "/project/st-arausch-1/jcd1994/MWI-Orientation/mwi-orient-1/measurables";
-const bt_sims = map(readdir(sim_dir)) do file
-    BSON.load(joinpath(sim_dir, file))
-end;
-bt_filtered = filter(bt_sims) do bt
-    true #175.0 <= rad2deg(bt[:solverparams_dict][:flipangle])
-end;
+pyplot(size=(1600,900))
 
-mwf = (bt -> bt[:geomparams_dict][:mwf]).(bt_filtered);
-alpha = (bt -> rad2deg(bt[:solverparams_dict][:flipangle])).(bt_filtered);
-theta = (bt -> rad2deg(bt[:btparams_dict][:theta])).(bt_filtered);
+#=
+const sim_dirs = [
+    "/project/st-arausch-1/jcd1994/MWI-Orientation/mwi-orient-1",
+    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-10X-chi-1",
+    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-50X-chi-1",
+    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-100X-chi-1",
+    # "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-1000X-chi-1",
+]
+=#
+const sim_dirs = [
+    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-chi=1.0X-Rmu=0.5-v1",
+    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-chi=1.0X-Rmu=1.0-v1",
+    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-chi=1.0X-Rmu=1.5-v1",
+    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-chi=10.0X-Rmu=0.5-v1",
+    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-chi=10.0X-Rmu=1.0-v1",
+    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-chi=10.0X-Rmu=1.5-v1",
+]
 
-signals = mapreduce(hcat, bt_filtered) do bt
-    S = norm.(transverse.(bt[:signals][1 .+ 20 .* (1:default_t2mapopts.nTE)]))
-    return S ./ sum(S)
-end;
-maps, dist, parts = let
-    image = permutedims(reshape(signals, size(signals)..., 1, 1), (2,4,3,1))
-    @show size(image)
-    t2mapopts = T2mapOptions(default_t2mapopts; MatrixSize = size(image)[1:3])
-    t2partopts = T2partOptions(default_t2partopts; MatrixSize = size(image)[1:3])
-    maps, dist = T2mapSEcorr(image, t2mapopts)
-    parts = T2partSEcorr(dist, t2partopts)
-    maps, dist, parts
-end;
+ps = map(sim_dirs) do sim_dir
+    meas_dir = joinpath(sim_dir, "measurables")
+    bt_sims = map(readdir(meas_dir)[1:min(end,1000)]) do file #TODO [1:min(end,500)]
+        BSON.load(joinpath(meas_dir, file))
+    end;
+    bt_filtered = filter(bt_sims) do bt
+        true #175.0 <= rad2deg(bt[:solverparams_dict][:flipangle])
+    end;
+    bt_filtered = bt_filtered
 
-function makebinned(x,y,edges)
-    nbins = length(edges)-1
-    xmeans, ymeans, ystds, ymeanstds = [zeros(nbins) for _ in 1:4]
-    for i in 1:nbins
-        f = i < nbins ?
-            z -> edges[i] ≤ z < edges[i+1] :
-            z -> edges[i] ≤ z ≤ edges[i+1]
-        idx = findall(f, x)
-        xmeans[i] = mean(edges[i:i+1]) #mean(x[idx])
-        ymeans[i] = mean(y[idx])
-        ystds[i] = std(y[idx]) # standard error
-        ymeanstds[i] = std(y[idx]) / sqrt(length(idx)) # standard error of the mean
+    mwf = (bt -> bt[:geomparams_dict][:mwf]).(bt_filtered);
+    alpha = (bt -> rad2deg(bt[:solverparams_dict][:flipangle])).(bt_filtered);
+    theta = (bt -> rad2deg(bt[:btparams_dict][:theta])).(bt_filtered);
+
+    signals = mapreduce(hcat, bt_filtered) do bt
+        S = norm.(transverse.(bt[:signals][1 .+ 20 .* (1:default_t2mapopts.nTE)]))
+        return S ./ sum(S)
+    end;
+    maps, dist, parts = let
+        image = permutedims(reshape(signals, size(signals)..., 1, 1), (2,4,3,1))
+        image = MWFLearning.add_rician(image, 50.0)
+        @show size(image)
+        t2mapopts = T2mapOptions(default_t2mapopts; MatrixSize = size(image)[1:3])
+        t2partopts = T2partOptions(default_t2partopts; MatrixSize = size(image)[1:3])
+        maps, dist = T2mapSEcorr(image, t2mapopts)
+        parts = T2partSEcorr(dist, t2partopts)
+        maps, dist, parts
+    end;
+
+    function makebinned(x,y,edges)
+        nbins = length(edges)-1
+        xmeans, ymeans, ystds, ymeanstds = [zeros(nbins) for _ in 1:4]
+        for i in 1:nbins
+            f = i < nbins ?
+                z -> edges[i] ≤ z < edges[i+1] :
+                z -> edges[i] ≤ z ≤ edges[i+1]
+            idx = findall(f, x)
+            xmeans[i] = mean(edges[i:i+1]) #mean(x[idx])
+            ymeans[i] = mean(y[idx])
+            ystds[i] = std(y[idx]) # standard error
+            ymeanstds[i] = std(y[idx]) / sqrt(length(idx)) # standard error of the mean
+        end
+        return @ntuple(xmeans, ymeans, ystds, ymeanstds)
     end
-    return @ntuple(xmeans, ymeans, ystds, ymeanstds)
+
+    plot(
+        let # mwf vs. theta
+            x, y, σ, σμ = makebinned(theta, vec(parts["sfr"]), 0:5:90)
+            plot(x, [y y]; ribbon = [σ σμ], xlab = "Theta [deg]", ylab = "MWF [a.u.]",
+                xlim = (0,90), xticks = 0:15:90, #ylim = (0,0.15),
+                marker = (0,), line = (:black,1), leg = :none) #marker = (3,:circle,:black)
+        end,
+        let # T2 mw vs. theta
+            x, y, σ, σμ = makebinned(theta, 1000 .* vec(parts["sgm"]), 0:5:90)
+            plot(x, [y y]; ribbon = [σ σμ], xlab = "Theta [deg]", ylab = "T2 mw [ms]",
+                xlim = (0,90), xticks = 0:15:90, #ylim = (0,15),
+                marker = (0,), line = (:black,1), leg = :none) #marker = (3,:circle,:black)
+        end,
+        let # T2 iew vs. theta
+            x, y, σ, σμ = makebinned(theta, 1000 .* vec(parts["mgm"]), 0:5:90)
+            plot(x, [y y]; ribbon = [σ σμ], xlab = "Theta [deg]", ylab = "T2 iew [ms]",
+                xlim = (0,90), xticks = 0:15:90, #ylim = (50,80),
+                marker = (0,), line = (:black,1), leg = :none) #marker = (3,:circle,:black)
+        end,
+        let
+            xfrmt = x -> round(x; digits=1) |> string
+            x = 1000 .* maps["t2times"]
+            yall = permutedims(dist[:,1,1,:])
+            ymid = mean(yall, dims=2)
+            # ymid = median(yall; dims = 2)
+            yscale = maximum(ymid)
+            yallscale = sqrt.(yall ./ yscale)
+            ymu, ysig = mean(yallscale; dims = 2), 3 .* std(yallscale; dims = 2)
+            ylo, yhi = min.(ysig, ymu), ysig
+            # plot(x, yall; line = (1,:blue,0.05), xlab = "T2 [ms]", ylab = "Amplitude [a.u.]", xscale = :log10, xticks = x[1:3:end], xrot = 45, xformatter = xfrmt, leg = :none)
+            plot(x, ymu; line = (1,:blue), ribbon = (ylo, yhi), xlab = "T2 [ms]", ylab = "√(Mean Amplitude) [a.u.]", xscale = :log10, xticks = x[1:3:end], xrot = 45, xformatter = xfrmt, leg = :none)
+        end;
+        xguidefontsize = 8, yguidefontsize = 8, xtickfontsize = 8, ytickfontsize = 8,
+    );
 end
 
+for (p, sim_dir) in zip(ps, sim_dirs)
+    # display(p)
+    # map(suf -> savefig(p, "$(Dates.now())-$(basename(sim_dir)).$suf"), ["png", "pdf"]);
+    # map(suf -> savefig(p, "$(basename(sim_dir)).$suf"), ["png", "pdf"]);
+end
+#=
+=#
+
 porient = plot(
-    let # mwf vs. theta
-        x, y, σ, σμ = makebinned(theta, vec(parts["sfr"]), 0:5:90)
-        plot(x, [y y]; ribbon = [σ σμ], xlab = "Theta [deg]", ylab = "MWF [a.u.]",
-            xlim = (0,90), ylim = (0,0.15), xticks = 0:15:90,
-            marker = (3,:circle,:black), line = (:black,1), leg = :none)
-    end,
-    let # T2 mw vs. theta
-        x, y, σ, σμ = makebinned(theta, 1000 .* vec(parts["sgm"]), 0:5:90)
-        plot(x, [y y]; ribbon = [σ σμ], xlab = "Theta [deg]", ylab = "T2 mw [ms]",
-            xlim = (0,90), ylim = (0,15), xticks = 0:15:90,
-            marker = (3,:circle,:black), line = (:black,1), leg = :none)
-    end,
-    let # T2 iew vs. theta
-        x, y, σ, σμ = makebinned(theta, 1000 .* vec(parts["mgm"]), 0:5:90)
-        plot(x, [y y]; ribbon = [σ σμ], xlab = "Theta [deg]", ylab = "T2 iew [ms]",
-            xlim = (0,90), ylim = (50,80), xticks = 0:15:90,
-            marker = (3,:circle,:black), line = (:black,1), leg = :none)
-    end,
-    let
-        xfrmt = x -> round(x; digits=1) |> string
-        x = 1000 .* maps["t2times"]
-        yall = permutedims(dist[:,1,1,:])
-        ybar = mean(yall, dims=2)
-        # plot(x, ybar; ribbon = ([quantile(y, 0.0) for y in eachrow(yall)], [quantile(y, 0.9) for y in eachrow(yall)]),
-        plot(x, yall; line = (1,:blue,0.05),
-            xlab = "T2 [ms]", ylab = "Amplitude [a.u.]",
-            xscale = :log10, xticks = x[1:3:end], xrot = 45, xformatter = xfrmt, leg = :none)
-    end,
+    mapreduce(vcat, enumerate(ps)) do (i,p)
+        chifact = parse(Float64, first(match(r"chi=(\d+.\d+)X-", sim_dirs[i]).captures))
+        Rmu = parse(Float64, first(match(r"Rmu=(\d+.\d+)-", sim_dirs[i]).captures))
+        plot(
+            plot(title = "χ myelin factor = $(chifact)X, mean radius = $(Rmu) μm", grid = false, showaxis = false, titlefontsize = 10),
+            p;
+            layout = @layout([a{0.01h}; b]),
+        )
+    end...,
 );
 display(porient);
-savefig.(Ref(porient), "output/mwi_vs_orientation" .* [".png", ".pdf"]);
+# map(suf -> savefig(porient, "mwi-orient-norm.$suf"), ["png", "pdf"]);
 
-error("loaded files")
+error("plotted")
 
 ####
 #### MWF MLE opt

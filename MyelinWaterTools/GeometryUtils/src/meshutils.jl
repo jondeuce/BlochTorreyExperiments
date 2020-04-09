@@ -18,7 +18,7 @@ function disjoint_rect_mesh_with_tori(
     ) where {T}
 
     # Useful defines
-    V, G = Vec{2,T}, Grid{2,3,T,3}
+    V, G = Vec{2,T}, Grid{2,JuAFEM.Triangle,T}
     D_BDRY = h_min*sqrt(eps(T)) # points within D_BDRY from boundary edges are deemed on the boundary
     D_CIRC = h_min # circles with at least D_CIRC within the bounding box are included
 
@@ -44,7 +44,7 @@ function disjoint_rect_mesh_with_tori(
         p_bdry = filter(x -> is_on_circle(x, c, thresh), p[e_unique]) # keep points which are on `c`
         return p_bdry
     end
-    function circle_bdry_points(g::Grid{dim,N,T,M}, c, thresh = D_BDRY) where {dim,N,T,M}
+    function circle_bdry_points(g::Grid{dim,C,T}, c, thresh = D_BDRY) where {dim,C,T}
         e_unique = unique!(sort!(copy(reinterpret(Int, boundedges(g)))))
         p_bdry_all = Vec{dim,T}[getcoordinates(getnodes(g)[i]) for i in e_unique]
         p_bdry = filter(x -> is_on_circle(x, c, thresh), p_bdry_all)

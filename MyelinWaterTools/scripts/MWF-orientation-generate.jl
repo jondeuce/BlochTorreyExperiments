@@ -20,6 +20,7 @@ gitdir() = realpath(DrWatson.projectdir("..")) # DrWatson package for tagged sav
 #### Environment variables
 ####
 
+const MAX_ITERS = parse(Int, get(ENV, "MAX_ITERS", "$(typemax(Int))"))
 const CHI_FACT  = parse(Float64, get(ENV, "CHI_FACT", "1.0"))
 const R_MU      = parse(Float64, get(ENV, "R_MU", "0.46"))
 const R_MU_FACT = R_MU / 0.46
@@ -28,20 +29,9 @@ const R_MU_FACT = R_MU / 0.46
 #### Geometry
 ####
 
-#=
-function BSON.constructtype(T::Type{G}, Ts) where G <: JuAFEM.AbstractGrid
-    if length(Ts) == 4
-        @assert Ts[1] == 2 && Ts[2] == Ts[4] == 3 # 2D triangular grid
-        Ts = Any[Ts[1], JuAFEM.Triangle, Ts[3]]
-    elseif length(Ts) != 3
-        error("BSON.constructtype is only overloaded for JuAFEM.Grid{2,3,T,3} -> JuAFEM.Grid{2,JuAFEM.Triangle,T}")
-    end
-    (length(Ts) == 0) ? T : T{map(BSON.normalize_typeparams, Ts)...}
-end
-=#
-const geomfile = BSON.load("/project/st-arausch-1/jcd1994/ismrm2020/experiments/Fall-2019/diff-med-1-input-data/geom/2019-10-04-T-16-01-11-467_Npts=6684_Ntri=8881_density=0.481_gratio=0.79_mvf=0.181_mwf=0.1_numfibres=17.geom.bson");
+const geomfile = BSON.load("/project/st-arausch-1/jcd1994/ismrm2020/experiments/Fall-2019/diff-med-1-input-data/geom-newgridtype/2019-10-04-T-16-01-11-467_Npts=6684_Ntri=8881_density=0.481_gratio=0.79_mvf=0.181_mwf=0.1_numfibres=17.geom.bson");
 
-# scale geometry by R_MU_FACT
+# Scale geometry by R_MU_FACT
 foreach([:interiorgrids, :torigrids, :exteriorgrids]) do f
     foreach(geomfile[f]) do g
         o = origin(geomfile[:bdry])
@@ -245,7 +235,7 @@ function runsimulation(sweepparams, geom)
             safe = true, gitpath = gitdir())
     end
 
-    return results
+    return nothing
 end
 
 function main(;
@@ -273,7 +263,7 @@ function main(;
             @info "Elapsed simulation time: " * string(Dates.canonicalize(Dates.CompoundPeriod(toc - tic)))
         catch e
             if e isa InterruptException
-                @warn "Parameter sweep interrupted by user. Breaking out of loop and returning current results..."
+                @warn "Parameter sweep interrupted by user. Breaking out of loop..."
                 break
             else
                 @warn "Error running simulation $i/$(length(all_sweepparams))"
@@ -282,13 +272,13 @@ function main(;
         end
     end
     
-    return results
+    return nothing
 end
 
 ####
 #### Run sweep
 ####
 
-main()
+main(iters = MAX_ITERS)
 
 nothing
