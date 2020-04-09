@@ -166,7 +166,7 @@ train_loop! = function()
 
                 # Update training losses periodically
                 set_or_add!(ℓ, lastindex(state,1), :loss)
-                if mod(epoch, 50) == 0 #TODO FIXME
+                if mod(epoch, 50) == 0 #TODO FIXME (50)
                     @timeit timer "θerr" set_or_add!(θerr(labelbatch(d)...), lastindex(state,1), :labelerr)
                     @timeit timer "θacc" set_or_add!(θacc(labelbatch(d)...), lastindex(state,1), :acc)
                     @timeit timer "ELBO" set_or_add!(L_loss(d...),  lastindex(state,1), :ELBO)
@@ -177,7 +177,7 @@ train_loop! = function()
             # Testing evaluation
             push!(state, [epoch; :test; missings(size(state,2)-2)])
 
-            if mod(epoch, 50) == 0 #TODO FIXME
+            if mod(epoch, 50) == 0 #TODO FIXME (50)
                 @timeit timer "test eval" begin
                     @timeit timer "θerr" state[end, :labelerr] = θerr(labelbatch(test_data)...)
                     @timeit timer "θacc" state[end, :acc]      = θacc(labelbatch(test_data)...)
@@ -191,7 +191,7 @@ train_loop! = function()
             @timeit timer "posttraincbs" posttraincbs()
         end
 
-        if mod(epoch, 1000) == 0 #TODO FIXME
+        if mod(epoch, 1000) == 0 #TODO FIXME (1000)
             show(stdout, timer); println("\n")
             show(stdout, last(state, 10)); println("\n")
         end

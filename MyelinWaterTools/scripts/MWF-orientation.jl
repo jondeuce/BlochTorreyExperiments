@@ -203,35 +203,49 @@ end # for (dist, parts) in ...
 ####
 
 using BSON
-pyplot(size=(1600,900))
 
 #=
 const sim_dirs = [
     "/project/st-arausch-1/jcd1994/MWI-Orientation/mwi-orient-1",
-    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-10X-chi-1",
-    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-50X-chi-1",
-    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-100X-chi-1",
-    # "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-1000X-chi-1",
+    "/project/st-arausch-1/jcd1994/MWI-Orientation/mwi-orient-10X-chi-1",
+    "/project/st-arausch-1/jcd1994/MWI-Orientation/mwi-orient-50X-chi-1",
+    "/project/st-arausch-1/jcd1994/MWI-Orientation/mwi-orient-100X-chi-1",
+    # "/project/st-arausch-1/jcd1994/MWI-Orientation/mwi-orient-1000X-chi-1",
 ]
 =#
 const sim_dirs = [
-    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-chi=1.0X-Rmu=0.5-v1",
-    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-chi=1.0X-Rmu=1.0-v1",
-    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-chi=1.0X-Rmu=1.5-v1",
-    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-chi=10.0X-Rmu=0.5-v1",
-    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-chi=10.0X-Rmu=1.0-v1",
-    "/project/st-arausch-1/jcd1994/simulations/ismrm2020/mwi-orient-chi=10.0X-Rmu=1.5-v1",
+    "/project/st-arausch-1/jcd1994/MWI-Orientation/mwi-orient-chi=1.0X-Rmu=0.5-v1",
+    "/project/st-arausch-1/jcd1994/MWI-Orientation/mwi-orient-chi=1.0X-Rmu=1.0-v1",
+    "/project/st-arausch-1/jcd1994/MWI-Orientation/mwi-orient-chi=1.0X-Rmu=1.5-v1",
+    "/project/st-arausch-1/jcd1994/MWI-Orientation/mwi-orient-chi=10.0X-Rmu=0.5-v1",
+    "/project/st-arausch-1/jcd1994/MWI-Orientation/mwi-orient-chi=10.0X-Rmu=1.0-v1",
+    "/project/st-arausch-1/jcd1994/MWI-Orientation/mwi-orient-chi=10.0X-Rmu=1.5-v1",
 ]
 
-ps = map(sim_dirs) do sim_dir
+function makebinned(x,y,edges)
+    nbins = length(edges)-1
+    xmeans, ymeans, ystds, ymeanstds = [zeros(nbins) for _ in 1:4]
+    for i in 1:nbins
+        f = i < nbins ?
+            z -> edges[i] ≤ z < edges[i+1] :
+            z -> edges[i] ≤ z ≤ edges[i+1]
+        idx = findall(f, x)
+        xmeans[i] = mean(edges[i:i+1]) #mean(x[idx])
+        ymeans[i] = mean(y[idx])
+        ystds[i] = std(y[idx]) # standard error
+        ymeanstds[i] = std(y[idx]) / sqrt(length(idx)) # standard error of the mean
+    end
+    return @ntuple(xmeans, ymeans, ystds, ymeanstds)
+end
+
+out = map(sim_dirs) do sim_dir
     meas_dir = joinpath(sim_dir, "measurables")
-    bt_sims = map(readdir(meas_dir)[1:min(end,1000)]) do file #TODO [1:min(end,500)]
+    bt_sims = map(readdir(meas_dir)) do file #TODO [1:min(end,1000)]
         BSON.load(joinpath(meas_dir, file))
     end;
     bt_filtered = filter(bt_sims) do bt
         true #175.0 <= rad2deg(bt[:solverparams_dict][:flipangle])
     end;
-    bt_filtered = bt_filtered
 
     mwf = (bt -> bt[:geomparams_dict][:mwf]).(bt_filtered);
     alpha = (bt -> rad2deg(bt[:solverparams_dict][:flipangle])).(bt_filtered);
@@ -252,23 +266,7 @@ ps = map(sim_dirs) do sim_dir
         maps, dist, parts
     end;
 
-    function makebinned(x,y,edges)
-        nbins = length(edges)-1
-        xmeans, ymeans, ystds, ymeanstds = [zeros(nbins) for _ in 1:4]
-        for i in 1:nbins
-            f = i < nbins ?
-                z -> edges[i] ≤ z < edges[i+1] :
-                z -> edges[i] ≤ z ≤ edges[i+1]
-            idx = findall(f, x)
-            xmeans[i] = mean(edges[i:i+1]) #mean(x[idx])
-            ymeans[i] = mean(y[idx])
-            ystds[i] = std(y[idx]) # standard error
-            ymeanstds[i] = std(y[idx]) / sqrt(length(idx)) # standard error of the mean
-        end
-        return @ntuple(xmeans, ymeans, ystds, ymeanstds)
-    end
-
-    plot(
+    p = plot(
         let # mwf vs. theta
             x, y, σ, σμ = makebinned(theta, vec(parts["sfr"]), 0:5:90)
             plot(x, [y y]; ribbon = [σ σμ], xlab = "Theta [deg]", ylab = "MWF [a.u.]",
@@ -302,16 +300,41 @@ ps = map(sim_dirs) do sim_dir
         end;
         xguidefontsize = 8, yguidefontsize = 8, xtickfontsize = 8, ytickfontsize = 8,
     );
-end
 
+    return @dict(p, mwf, alpha, theta, signals, maps, dist, parts)
+end
+ps = map(o->o[:p], out)
+
+#=
+pyplot(size=(800,600))
 for (p, sim_dir) in zip(ps, sim_dirs)
     # display(p)
     # map(suf -> savefig(p, "$(Dates.now())-$(basename(sim_dir)).$suf"), ["png", "pdf"]);
     # map(suf -> savefig(p, "$(basename(sim_dir)).$suf"), ["png", "pdf"]);
 end
-#=
 =#
 
+pyplot(size=(800,600))
+pratio = let idx = 5
+    @unpack alpha, mwf, signals, dist, theta, maps, parts = out[idx]
+    T2mw, T2iew = parts["sgm"], parts["mgm"]
+    rT2 = permutedims((T2mw./T2iew)[:,1,1,:])
+    mu, sig = mean(rT2; dims=2), std(rT2; dims=2)
+
+    chifact = parse(Float64, first(match(r"chi=(\d+.\d+)X-", sim_dirs[idx]).captures))
+    Rmu = parse(Float64, first(match(r"Rmu=(\d+.\d+)-", sim_dirs[idx]).captures))
+    titlestr = "χ myelin factor = $(chifact)X, mean radius = $(Rmu) μm"
+    x, y, σ, σμ = makebinned(theta, rT2, 0:5:90)
+    plot(x, [y y]; ribbon = [σ σμ],
+        title = titlestr, xlab = "Theta [deg]", ylab = "T2 mw / T2 iew [ms/ms]",
+        xlim = (0,90), xticks = 0:15:90, #ylim = (50,80),
+        marker = (0,), line = (:black,1), leg = :none
+    )
+end
+display(pratio)
+
+#=
+pyplot(size=(1600,900))
 porient = plot(
     mapreduce(vcat, enumerate(ps)) do (i,p)
         chifact = parse(Float64, first(match(r"chi=(\d+.\d+)X-", sim_dirs[i]).captures))
@@ -325,6 +348,7 @@ porient = plot(
 );
 display(porient);
 # map(suf -> savefig(porient, "mwi-orient-norm.$suf"), ["png", "pdf"]);
+=#
 
 error("plotted")
 

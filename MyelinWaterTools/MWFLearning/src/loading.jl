@@ -10,19 +10,38 @@ struct iLaplaceProcessing <: AbstractDataProcessing end
 struct WaveletProcessing <: AbstractDataProcessing end
 
 function prepare_data(settings::Dict)
-    training_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["train_data"], readdir(settings["data"]["train_data"]))))
-    testing_data_dicts = BSON.load.(realpath.(joinpath.(settings["data"]["test_data"], readdir(settings["data"]["test_data"]))))
+    function load_data(path)
+        if isfile(path)
+            # Measurements are stored in a single .bson file
+            data = BSON.load(realpath(path))
+            first(values(data)) :: Vector{Dict{Symbol,Any}} # ignore key name
+        else
+            mapreduce(vcat, readdir(path)) do file
+                data = BSON.load(realpath(joinpath(path, file)))
+                if length(data) == 1 && first(values(data)) isa Vector{Dict{Symbol,Any}}
+                    # Measurements are chunked into separate larger .bson files
+                    first(values(data)) :: Vector{Dict{Symbol,Any}} # ignore key name
+                else
+                    # Measurements are stored in separate .bson files
+                    data :: Dict{Symbol,Any}
+                end
+            end
+        end
+    end
+    training_data_dicts = load_data(settings["data"]["train_data"])
+    testing_data_dicts = load_data(settings["data"]["test_data"])
 
     # Filtering out undesired data
-    filter_bad_data = (d) -> isempty(settings["data"]["filter"]["labnames"]) ? true : all(
-        map(
-            settings["data"]["filter"]["labnames"] :: Vector{String},
-            settings["data"]["filter"]["lower"]  :: Vector{Float64},
-            settings["data"]["filter"]["upper"]  :: Vector{Float64},
-        ) do label, lower, upper
-            lower <= label_fun(label, d) :: Float64 <= upper
+    function filter_bad_data(d)
+        if isempty(settings["data"]["filter"]["labnames"])
+            true
+        else
+            @unpack labnames, lower, upper = settings["data"]["filter"]
+            all(map(labnames::Vector{String}, lower::Vector{Float64}, upper::Vector{Float64}) do label, lo, up
+                lo <= label_fun(label, d)::Float64 <= up
+            end)
         end
-    )
+    end
     filter!(filter_bad_data, training_data_dicts)
     filter!(filter_bad_data, testing_data_dicts)
 
@@ -139,7 +158,7 @@ function init_data(::SignalMagnitudeProcessing, settings::Dict, ds::AbstractVect
     VT, VC, MT, MC = Vector{T}, Vector{TC}, Matrix{T}, Matrix{TC}
     SNR = settings["data"]["preprocess"]["SNR"] :: VT
 
-    PLOT_COUNT, PLOT_LIMIT = 0, 5
+    PLOT_COUNT, PLOT_LIMIT = 0, 0
     PLOT_FUN = function (b, TE, SNR)
         if PLOT_COUNT < PLOT_LIMIT
             p = plot(
@@ -166,7 +185,7 @@ function init_data(::SignalZipperProcessing, settings::Dict, ds::AbstractVector{
     VT, VC, MT, MC, AT = Vector{T}, Vector{TC}, Matrix{T}, Matrix{TC}, Array{T,3}
     SNR   = settings["data"]["preprocess"]["SNR"] :: VT
 
-    PLOT_COUNT, PLOT_LIMIT = 0, 3
+    PLOT_COUNT, PLOT_LIMIT = 0, 0
     PLOT_FUN = (b, TE, SNR) -> begin
         if PLOT_COUNT < PLOT_LIMIT
             p1 = plot(0:chunk-1, [b[:,1,1,j] for j in partition(1:size(b,2), length(SNR))]; line = (2,), m = (:c, :black, 3), leg = :none)
@@ -211,7 +230,7 @@ function init_data(::iLaplaceProcessing, settings::Dict, ds::AbstractVector{<:Di
     bufs    = [(A = zeros(T, nTE, nT2), B = zeros(T, nT2, nT2), x = zeros(T, nT2, length(SNR)), Z = zeros(TC, nTE, length(SNR))) for nTE in nTEs]
     bufdict = Dict(nTEs .=> bufs)
 
-    PLOT_COUNT, PLOT_LIMIT = 0, 3
+    PLOT_COUNT, PLOT_LIMIT = 0, 0
     PLOT_FUN = (b, x, TE, nTE, T2) -> begin
         if PLOT_COUNT < PLOT_LIMIT
             plot(
@@ -258,7 +277,7 @@ function init_data(::WaveletProcessing, settings::Dict, ds::AbstractVector{<:Dic
     peelper  = settings["data"]["preprocess"]["peel"]["periodic"] :: Bool
     th       = BiggestTH() # Wavelet thresholding type
     
-    PLOT_COUNT, PLOT_LIMIT= 0, 1 * length(SNR)
+    PLOT_COUNT, PLOT_LIMIT= 0, 0 # length(SNR)
     PLOT_FUN = (x, b, nTE; kwargs...) -> begin
         if PLOT_COUNT < PLOT_LIMIT
             plotdwt(;x = b, nchopterms = nterms, disp = true, thresh = round(0.01 * norm(b); sigdigits = 3), kwargs...)

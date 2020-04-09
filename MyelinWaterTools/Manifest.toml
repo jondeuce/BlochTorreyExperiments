@@ -44,9 +44,9 @@ version = "3.5.0+3"
 
 [[ArrayInterface]]
 deps = ["LinearAlgebra", "Requires", "SparseArrays"]
-git-tree-sha1 = "477d1c71a6eb22b31e6e7678ff859be2847675ca"
+git-tree-sha1 = "b34d74dc877e6083c4c5c553a685e89e10ea4662"
 uuid = "4fba245c-0d91-5ea0-9b3e-6abc04ee57a9"
-version = "2.8.2"
+version = "2.8.3"
 
 [[ArrayLayouts]]
 deps = ["FillArrays", "LinearAlgebra"]
@@ -182,9 +182,9 @@ version = "6.2.2"
 
 [[CUDAnative]]
 deps = ["Adapt", "BinaryProvider", "CEnum", "CUDAapi", "CUDAdrv", "Cthulhu", "DataStructures", "ExprTools", "InteractiveUtils", "LLVM", "Libdl", "Pkg", "Printf", "TimerOutputs"]
-git-tree-sha1 = "4ddb26fc2385948b9e6ea755f7f088542a0ace85"
+git-tree-sha1 = "0da071ed49a6f5f62d5164de071daa07cedaa1e6"
 uuid = "be33ccc6-a3ff-5ff2-a52e-74243cff1e17"
-version = "3.0.3"
+version = "3.0.4"
 
 [[CategoricalArrays]]
 deps = ["Compat", "DataAPI", "Future", "JSON", "Missings", "Printf", "Reexport", "Statistics", "Unicode"]
@@ -277,9 +277,9 @@ version = "4.0.1"
 
 [[Cthulhu]]
 deps = ["CodeTracking", "InteractiveUtils", "REPL", "Unicode"]
-git-tree-sha1 = "484790098c85c26f8e59051f8ff1a0745c034a7d"
+git-tree-sha1 = "a4849ec61df9659423cc63b298ed895904ee9743"
 uuid = "f68482b8-f384-11e8-15f7-abe071a5a75f"
-version = "1.0.1"
+version = "1.0.2"
 
 [[CuArrays]]
 deps = ["AbstractFFTs", "Adapt", "CEnum", "CUDAapi", "CUDAdrv", "CUDAnative", "DataStructures", "GPUArrays", "Libdl", "LinearAlgebra", "MacroTools", "NNlib", "Pkg", "Printf", "Random", "Reexport", "Requires", "SparseArrays", "Statistics", "TimerOutputs"]
@@ -289,7 +289,9 @@ version = "2.0.1"
 
 [[DECAES]]
 deps = ["ArgParse", "Dierckx", "LinearAlgebra", "Logging", "LoggingExtras", "MAT", "NIfTI", "Optim", "Parameters", "PolynomialRoots", "Polynomials", "Random", "SIMD", "SpecialFunctions", "StaticArrays", "Statistics", "TimerOutputs"]
-path = "/home/jcd1994/.julia/dev/DECAES"
+git-tree-sha1 = "917e71639348a7c20420906c3d08a6b23669120f"
+repo-rev = "master"
+repo-url = "https://github.com/jondeuce/DECAES.jl.git"
 uuid = "d84fb938-a666-558e-89d9-d531edc6724f"
 version = "0.1.0"
 
