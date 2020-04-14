@@ -68,6 +68,9 @@ function read_to_dataframe(sweep_dir)
         :inf_sup_iqr  => minimum((x->maximum(sort(x[2:end-1]))).(labelerr)),
         :inf_mean_iqr => minimum((x->mean(sort(x[2:end-1]))).(labelerr)),
     )
+    metrics.loss_epoch = Int[state.epoch[findfirst(state.loss .== metrics.loss[1])]]
+    metrics.acc_epoch  = Int[state.epoch[findfirst(state.acc .== metrics.acc[1])]]
+
     return sweep, metrics
 end
 
@@ -106,7 +109,9 @@ function read_results(sweep_dir)
 end
 
 # Read results to DataFrame
-results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v6";
+# results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v6";
+# results_dir = "/project/st-arausch-1/jcd1994/ismrm2020/experiments/Spring-2020/permeability-training-1/cvae-diff-med-2/cvae-diff-med-2-100k-samples-v1"
+results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-100k-samples-v2"
 sweep_dir = joinpath(results_dir, "sweep");
 df, sweep_temp, metrics_temp = read_results(sweep_dir);
 
@@ -144,7 +149,7 @@ function recurse_make_plots(
         maxdepth = 2,
         metadata = Dict(),
     )
-    foreach(names(metrics_temp)[[2,end]]) do metric
+    foreach([:acc, :inf_mean_iqr]) do metric #names(metrics_temp)
         outpath = joinpath(results_dir, "summary/depth=$depth", DrWatson.savename(metadata))
         !isdir(outpath) && mkpath(outpath)
 
