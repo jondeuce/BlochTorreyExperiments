@@ -1,10 +1,14 @@
 [data]
 out       = "./output/tmp"
-ntheta    = 5
-nsignal   = 128
-theta_labels = ["freq", "phase", "offset", "amp", "tconst"]
+# ntheta    = 5
+# nsignal   = 128
+# theta_labels = ["freq", "phase", "offset", "amp", "tconst"]
+# ntheta    = 5
 # nsignal   = 48
 # theta_labels = ["refcon", "alpha", "T2short", "dT2", "Ashort"]
+ntheta    = 4
+nsignal   = 48
+theta_labels = ["alpha", "T2short", "dT2", "Ashort"]
 
 [mmd]
 stepsize   = 3.1623e-4 #1.0e-5 #TODO
@@ -48,9 +52,18 @@ nhidden    = 0
 gamma      = 0.5
 
 [prior]
-method    = "simultaneous_perturbation_stochastic_approximation"
-maxtime   = 1.0
 nterms    = 2
 batchsize = 100
 nbatches  = 10
 logsigma  = -6.0
+[prior.data]
+image     = "/project/st-arausch-1/jcd1994/MMD-Learning/data/masked-image-240x240x48x48.mat"
+t2dist    = "/project/st-arausch-1/jcd1994/MMD-Learning/data/masked-image-240x240x48x48.t2dist.mat"
+t2maps    = "/project/st-arausch-1/jcd1994/MMD-Learning/data/masked-image-240x240x48x48.t2maps.mat"
+t2parts   = "/project/st-arausch-1/jcd1994/MMD-Learning/data/masked-image-240x240x48x48.t2parts.mat"
+settings  = "/project/st-arausch-1/jcd1994/MMD-Learning/data/masked-image-240x240x48x48.settings-240x240x48x48.txt"
+[prior.fitting]
+losstype   = "mle"
+batchsize  = 5 #1000 gives 822 jobs
+batchindex = 1
+maxtime    = 10.0

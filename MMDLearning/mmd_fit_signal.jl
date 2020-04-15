@@ -1,50 +1,122 @@
-# Load files
+####
+#### Code loading
+####
 include(joinpath(@__DIR__, "src", "mmd_preamble.jl"))
+
+####
+#### Load image data
+####
+
+const image   = DECAES.load_image(settings["prior"]["data"]["image"])
+# const t2maps  = DECAES.MAT.matread(settings["prior"]["data"]["t2maps"])
+# const t2dist  = DECAES.load_image(settings["prior"]["data"]["t2dist"])
+# const t2parts = DECAES.MAT.matread(settings["prior"]["data"]["t2parts"])
+const opts    = T2mapOptions(
+    MatrixSize = size(image)[1:3],
+    nTE        = size(image)[4],
+    TE         = 8e-3,
+    T2Range    = (15e-3, 2.0),
+    nT2        = 40,
+);
+cp(
+    settings["prior"]["data"]["settings"],
+    joinpath(
+        settings["data"]["out"],
+        basename(settings["prior"]["data"]["settings"])
+    )
+)
 
 ####
 #### Signal fitting
 ####
 
 function test_signal_fit(signal::AbstractVector{T};
-        TE = T(opts.TE),
-        T2Range = T.(opts.T2Range),
-        nT2 = opts.nT2::Int,
-        nTE = opts.nTE::Int,
-        ntheta = settings["data"]["ntheta"]::Int,
-        theta_labels = settings["data"]["theta_labels"]::Vector{String},
+        TE::T                = T(opts.TE),
+        T2Range::NTuple{2,T} = T.(opts.T2Range),
+        nT2::Int             = opts.nT2,
+        nTE::Int             = opts.nTE,
+        ntheta::Int          = settings["data"]["ntheta"]::Int,
+        theta_labels         = settings["data"]["theta_labels"]::Vector{String},
+        losstype::Symbol     = Symbol(settings["prior"]["fitting"]["losstype"]::String),
+        maxtime::T           = T(settings["prior"]["fitting"]["maxtime"]),
+        plotfit::Bool        = false,
         kwargs...
     ) where {T}
+
     t2bins = T.(1000 .* DECAES.logrange(T2Range..., nT2)) # milliseconds
     t2times = T.(1000 .* TE .* (1:nTE)) # milliseconds
     xdata, ydata = t2times, signal./sum(signal)
 
     count = Ref(0)
-    work = signal_model_work(T)
-    model = θ -> (count[] += 1; return signal_model!(work, θ, zeros(T,1)))
-    loss = θ -> (work.buf .= ydata .- model(θ); return sum(abs2, work.buf))
+    work = signal_model_work(T; nTE = nTE)
+    ϵ = zeros(T,1)
+
+    mlemodel = θ -> (count[] += 1; return signal_model!(work, uview(θ, 1:4), ϵ; TE = TE))
+    mleloss = θ -> (@inbounds(work.buf .= .-logpdf.(Rician.(model(uview(θ, 1:4)), exp(θ[end])), ydata)); return sum(work.buf))
+
+    l2model = θ -> (count[] += 1; return signal_model!(work, θ, ϵ; TE = TE))
+    l2loss = θ -> (@inbounds(work.buf .= ydata .- model(θ)); return sum(abs2, work.buf))
+
+    θbounds = theta_bounds(T)
+    (losstype === :mle) && push!(θbounds, (-10.0, 0.0))
+    model = losstype === :mle ? mlemodel : l2model
+    loss = losstype === :mle ? mleloss : l2loss
+
     res = bboptimize(loss;
-        SearchRange = theta_bounds(T),
+        SearchRange = θbounds,
         TraceMode = :silent,
-        MaxTime = T(1.0),
+        MaxTime = maxtime,
         MaxFuncEvals = typemax(Int),
         kwargs...
     )
+    
+    if plotfit
+        θ = best_candidate(res)
+        ℓ = best_fitness(res)
+        @show count[]
+        (losstype === :mle) && @show exp(θ[end])
 
-    ϵ = zeros(T,1)
-    θ = best_candidate(res)
-    ℓ = best_fitness(res)
-    ymodel = model(θ)
+        ymodel = model(θ)
+        p = plot(xdata, [ydata ymodel];
+            title = "fitness = $(round(ℓ; sigdigits = 3))",
+            label = ["data" "model"],
+            annotate = (t2times[3*(end÷4)], 0.5*maximum(ymodel), join(theta_labels .* " = " .* string.(round.(θ; sigdigits=4)), "\n")),
+            xticks = t2times, xrotation = 70)
+        display(p)
+    end
 
-    p = plot(xdata, [ydata ymodel];
-        title = "fitness = $(round(ℓ; sigdigits = 3))",
-        label = ["data" "model"],
-        annotate = (t2times[3*(end÷4)], 0.5*maximum(ymodel), join(theta_labels .* " = " .* string.(round.(θ; sigdigits=4)), "\n")),
-        xticks = t2times, xrotation = 90)
-    display(p)
-
-    return θ, ϵ, ymodel
+    return make_save_df(res; losstype = losstype)
 end
-test_signal_fit(image::Array{T,4}, I::CartesianIndex; kwargs...) where {T} = test_signal_fit(image[I,:]; kwargs...)
+
+function make_save_df(res; losstype)
+    # Results are BlackBoxOptim.OptimizationResults
+    θ, ℓ = best_candidate(res), best_fitness(res)
+    T = Float64
+    return DataFrame(
+        refcon   = T[180.0], # [deg]
+        alpha    = T[θ[1]], # [deg]
+        T2short  = T[θ[2]], # [ms]
+        T2long   = T[θ[2] + θ[3]], # [ms]
+        dT2      = T[θ[3]], # [ms]
+        Ashort   = T[θ[4]], # [a.u.]
+        Along    = T[1 - θ[4]], # [a.u.]
+        T1short  = T[1000.0], # [ms]
+        T1long   = T[1000.0], # [ms]
+        logsigma = losstype === :mle ? T[θ[end]] : T[NaN],
+        loss     = T[ℓ],
+        # best_fitness   = T[best_fitness(res)],
+        # elapsed_time   = T[res.elapsed_time],
+        # f_calls        = Int[res.f_calls],
+        # fit_scheme     = String[string(res.fit_scheme)],
+        # iterations     = Int[res.iterations],
+        # method         = String[string(res.method)],
+        # start_time     = T[res.start_time],
+        # stop_reason    = res.stop_reason,
+        # archive_output = res.archive_output,
+        # method_output  = res.method_output,
+        # parameters     = res.parameters,
+    )
+end
 
 function make_save_dict(res)
     # Results are BlackBoxOptim.OptimizationResults
@@ -62,8 +134,8 @@ function make_save_dict(res)
         # "method_output"  => res.method_output,
         # "parameters"     => res.parameters,
     )
-    save_dict["settings"] = deepcopy(settings) #Dict(string.(keys(settings)) .=> deepcopy(values(settings)))
-    # save_dict["opts"] = fieldnames(typeof(opts)) |> f -> Dict(string.(f) .=> getfield.(Ref(opts), f))
+    save_dict["settings"] = deepcopy(settings)
+    save_dict["opts"] = Dict([string(f) => getfield(opts,f) for f in fieldnames(typeof(opts))])
     return save_dict
 end
 
@@ -71,63 +143,33 @@ end
 #### Signal fitting
 ####
 
-#=
-for _ in 1:10
-    σ = exp(settings["prior"]["logsigma"]::Float64)
-    n = settings["prior"]["batchsize"]
-    mmd_heatmap(signal_data(image, n), signal_data(image, n), σ) |> display
+const image_indices         = filter(I -> image[I,1] > 0, CartesianIndices(size(image)[1:3]))
+const image_indices_batches = collect(Iterators.partition(image_indices, settings["prior"]["fitting"]["batchsize"]))
+const image_indices_batch   = image_indices_batches[settings["prior"]["fitting"]["batchindex"]]
+
+const batchindex = lpad(settings["prior"]["fitting"]["batchindex"], ndigits(length(image_indices_batches)), '0')
+const batchpath  = joinpath(settings["data"]["out"], "tmp-$batchindex")
+mkpath(batchpath)
+
+df = mapreduce(vcat, image_indices_batch) do I
+    df = test_signal_fit(image[I,:])
+    df[!, :index] = NTuple{3,Int}[Tuple(I)]
+    BSON.bson(joinpath(batchpath, "tmp-$(join(lpad.(Tuple(I), 3, '0'), "_")).bson"), Dict{String,Any}("results" => deepcopy(df)))
+    return df
 end
-=#
 
-#=
-let
-    t2bins = 1000 .* DECAES.logrange(opts.T2Range..., opts.nT2) # milliseconds
-    t2times = 8 .* (1:settings["data"]["nsignal"]::Int) # milliseconds
-    # heatmap(t2parts["sfr"][:,:,24]; xticks = 5:5:240, yticks = 5:5:240, xrotation = 90)
-    plot(t2bins, t2dist[idx,:]; title = "t2dist: index = $(Tuple(idx))", xticks = t2bins, xrotation = 90, xscale = :log10, xformatter = x -> string(round(x; sigdigits=3))) |> display
-    plot(t2times, image[idx,:]; title = "signal: index = $(Tuple(idx))", xticks = t2times, xrotation = 90) |> display
-end
-=#
+DrWatson.@tagsave(
+    joinpath(settings["data"]["out"], "results-$batchindex.bson"),
+    Dict{String,Any}("results" => deepcopy(df));
+    safe = true,
+    gitpath = realpath(DrWatson.projectdir("..")),
+)
 
-#=
-let
-    # idx = CartesianIndex(141,144,24)
-    # idx = CartesianIndex(150,111,24)
-    # idx = CartesianIndex(154,80,24)
-    # idx = CartesianIndex(111,127,24)
-    idx = CartesianIndex(133,127,24)
-    test_signal_fit(image, idx)[1]'
-end
-=#
-
-# Y = signal_data(image, settings["prior"]["nbatches"]::Int)
-# out = [test_signal_fit(Y[:,j]; MaxTime = settings["prior"]["maxtime"]::Float64) for j in 1:size(Y,2)] #@show(j)
-# thetas = reduce(hcat, (x->x[1]).(out))
-# noise  = reduce(hcat, (x->x[2]).(out))
-# ymodel = reduce(hcat, (x->x[3]).(out))
-
-# save_dict = Dict{String, Any}(
-#     "thetas"   => copy(thetas),
-#     "noise"    => copy(noise),
-#     "ymodel"   => copy(ymodel),
-#     "ydata"    => copy(Y),
-#     "settings" => deepcopy(settings), #Dict(string.(keys(settings)) .=> deepcopy(values(settings))),
-# )
-# DECAES.MAT.matwrite(joinpath(settings["data"]["out"], "bbsignalfit_results.mat"), save_dict)
-
-# phist = plot(map((lab,row,xl) -> histogram(row; nbins = 50, yticks = :none, lab = lab, xlims = xl), settings["data"]["theta_labels"], eachrow(thetas), theta_bounds())...; xrot = 45); display(phist)
-# map(ext -> savefig(phist, joinpath(settings["data"]["out"], "thetas_hist.$ext")), ["pdf", "png"])
-
-# pheat = mmd_heatmap(ymodel[:,1:min(50,end)], Y[:,1:min(50,end)], exp(settings["prior"]["logsigma"])); display(pheat)
-# map(ext -> savefig(pheat, joinpath(settings["data"]["out"], "mmd_heatmap.$ext")), ["pdf", "png"])
-
-#=
-let
-    p = plot(;leg = :none)
-    plot!(sampleY(); c = :blue)
-    plot!(sampleX(); c = :red)
-    display(p)
-    display(mmd_heatmap(sampleX(), sampleY(), 0.01))
+#= Sample + fit random signals based on fit-to-noise ratio (FNR)
+let I = rand(findall(I -> !isnan(t2maps["fnr"][I]) && 50 <= t2maps["fnr"][I] <= 100, CartesianIndices(size(image)[1:3])))
+# let I = CartesianIndex(122, 112, 46)
+    @show I
+    test_signal_fit(image[I,:])
 end
 =#
 

@@ -21,9 +21,20 @@ end
 function theta_bounds(T = Float64;
         ntheta = settings["data"]["ntheta"]::Int,
     )
-    theta_lb = T[120.0, 120.0,    8.0,    8.0, 0.0]
-    theta_ub = T[180.0, 180.0, 1000.0, 1000.0, 1.0]
-    theta_bd = collect(zip(theta_lb, theta_ub))
+    if ntheta == 4
+        theta_labels = ["alpha", "T2short", "dT2", "Ashort"]
+        # ["refcon", "alpha", "T2short", "dT2", "Ashort"]
+        theta_lb = T[ 50.0,    8.0,    8.0, 0.0]
+        theta_ub = T[180.0, 1000.0, 1000.0, 1.0]
+        theta_bd = collect(zip(theta_lb, theta_ub))
+    elseif ntheta == 5
+        # ["refcon", "alpha", "T2short", "dT2", "Ashort"]
+        theta_lb = T[120.0, 120.0,    8.0,    8.0, 0.0]
+        theta_ub = T[180.0, 180.0, 1000.0, 1000.0, 1.0]
+        theta_bd = collect(zip(theta_lb, theta_ub))
+    else
+        error("Number of labels must be 4 or 5")
+    end
     @assert ntheta == length(theta_bd)
     return theta_bd
 end
@@ -34,7 +45,7 @@ noise_model(signal::AbstractVector, ϵ::AbstractVector) = ϵ .* signal[1] .* ran
 
 function signal_model_work(
         T = Float64;
-        nTE# = opts.nTE::Int
+        nTE::Int
     )
     epg_work = DECAES.EPGdecaycurve_work(T, nTE)
     signal = zeros(T, nTE)
@@ -47,25 +58,20 @@ function signal_model!(
         work,
         θ::AbstractVector{T},
         ϵ::AbstractVector;
-        TE::T# = T(opts.TE)
+        TE::T
     ) where {T}
     @unpack epg_work, signal, real_noise, imag_noise = work
-    refcon  = θ[1]
-    alpha   = θ[2]
-    T2short = θ[3]/1000
-    dT2     = θ[4]/1000
-    Ashort  = θ[5]
+    # refcon, alpha, T2short, dT2, Ashort = θ[1], θ[2], θ[3]/1000, θ[4]/1000, θ[5]
+    alpha, T2short, dT2, Ashort = θ[1], θ[2]/1000, θ[3]/1000, θ[4]
+    refcon  = T(180.0)
     T2long  = T2short + dT2
     Along   = 1-Ashort
     T1short = T(1000.0)/1000
     T1long  = T(1000.0)/1000
 
-    signal  .= zero(T)
-    short    = DECAES.EPGdecaycurve!(epg_work, length(signal), alpha, TE, T2short, T1short, refcon)
-    signal .+= (Ashort / sum(short)) .* short
-    long     = DECAES.EPGdecaycurve!(epg_work, length(signal), alpha, TE, T2long,  T1long,  refcon)
-    signal .+= (Along / sum(long)) .* long
-    signal ./= sum(signal)
+    signal  .= DECAES.EPGdecaycurve!(epg_work, alpha, TE, T2short, T1short, refcon) # short component
+    signal .+= DECAES.EPGdecaycurve!(epg_work, alpha, TE, T2long,  T1long,  refcon) # long component
+    signal ./= sum(signal) # normalize
 
     # Add noise to "real" and "imag" channels in quadrature
     if eltype(ϵ) == eltype(θ)
@@ -77,7 +83,7 @@ function signal_model!(
         end
         return signal
     else
-        # Add (forward-differentiable) noise to "real" and "imag" channels in quadrature
+        # Add forward-differentiable noise to "real" and "imag" channels in quadrature
         signal = sqrt.((signal .+ noise_model(signal, ϵ)).^2 .+ noise_model(signal, ϵ).^2)
         signal ./= sum(signal)
         return signal

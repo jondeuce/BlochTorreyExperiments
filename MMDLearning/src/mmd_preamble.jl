@@ -9,8 +9,9 @@ using LinearAlgebra, Statistics, Random, SpecialFunctions, StatsBase
 using DrWatson, Parameters, BenchmarkTools, Dates, TimerOutputs, ThreadPools, LegibleLambdas
 using TOML, BSON, DataFrames
 using Distributions #Turing, MCMCChains
-using BlackBoxOptim, Optim, ForwardDiff, TensorCast, Yeppp
-using Flux
+using BlackBoxOptim, Optim, ForwardDiff
+using UnsafeArrays, TensorCast, Yeppp
+using Flux, Zygote
 using DECAES
 using StatsPlots
 
@@ -49,22 +50,5 @@ settings = let
     TOML.print(stdout, settings)
     settings
 end
-
-####
-#### Load image data
-####
-
-#=
-const image   = DECAES.load_image("/project/st-arausch-1/jcd1994/MMD-Learning/data/masked-image-240x240x48x48.mat")
-const t2dist  = DECAES.load_image("/project/st-arausch-1/jcd1994/MMD-Learning/data/masked-image-240x240x48x48.t2dist.mat")
-const t2parts = DECAES.MAT.matread("/project/st-arausch-1/jcd1994/MMD-Learning/data/masked-image-240x240x48x48.t2parts.mat")
-const opts    = T2mapOptions(
-    MatrixSize = size(image)[1:3],
-    nTE        = size(image)[4],
-    TE         = 8e-3,
-    T2Range    = (15e-3, 2.0),
-    nT2        = 40,
-);
-=#
 
 nothing
