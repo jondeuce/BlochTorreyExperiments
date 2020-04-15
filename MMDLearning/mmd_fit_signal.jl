@@ -143,20 +143,19 @@ end
 #### Signal fitting
 ####
 
-# const image_indices         = filter(I -> image[I,1] > 0, CartesianIndices(size(image)[1:3]))
-# const image_indices_batches = collect(Iterators.partition(image_indices, settings["prior"]["fitting"]["batchsize"]))
-const image_indices_batches = BSON.load("/project/st-arausch-1/jcd1994/code/BlochTorreyExperiments-active/MMDLearning/output/todo_indices_batches.bson")["batches"] |> deepcopy #TODO
+const image_indices         = filter(I -> image[I,1] > 0, CartesianIndices(size(image)[1:3]))
+const image_indices_batches = collect(Iterators.partition(image_indices, settings["prior"]["fitting"]["batchsize"]))
 const image_indices_batch   = image_indices_batches[settings["prior"]["fitting"]["batchindex"]]
 
 const batchindex = lpad(settings["prior"]["fitting"]["batchindex"], ndigits(length(image_indices_batches)), '0')
-const batchpath  = joinpath(settings["data"]["out"], "tmp-$batchindex")
-mkpath(batchpath)
+# const batchpath  = joinpath(settings["data"]["out"], "tmp-$batchindex") #TODO
+# mkpath(batchpath) #TODO
 
 df = mapreduce(vcat, image_indices_batch) do I
-    @show I #TODO
+    # @show I #TODO
     df = test_signal_fit(image[I,:])
     df[!, :index] = NTuple{3,Int}[Tuple(I)]
-    BSON.bson(joinpath(batchpath, "tmp-$(join(lpad.(Tuple(I), 3, '0'), "_")).bson"), Dict{String,Any}("results" => deepcopy(df)))
+    # BSON.bson(joinpath(batchpath, "tmp-$(join(lpad.(Tuple(I), 3, '0'), "_")).bson"), Dict{String,Any}("results" => deepcopy(df))) #TODO
     return df
 end
 
@@ -175,7 +174,7 @@ let I = rand(findall(I -> !isnan(t2maps["fnr"][I]) && 50 <= t2maps["fnr"][I] <= 
 end
 =#
 
-#= Load results
+#= Load indices of completed results
 const resfiles = mapreduce(
         vcat,
         ["/project/st-arausch-1/jcd1994/simulations/nips2020/mlefit-v1"]
@@ -188,6 +187,27 @@ end
 const completed_indices = basename.(resfiles) .|> s -> CartesianIndex(map(x -> parse(Int, x), (s[5:7], s[9:11], s[13:15])))
 const todo_indices = setdiff(image_indices, completed_indices)
 const todo_indices_batches = collect(Iterators.partition(todo_indices, 1000))
+=#
+
+#= Load completed results
+df = mapreduce(
+        vcat,
+        "/scratch/st-arausch-1/jcd1994/simulations/nips2020/mlefit-" .* ["v1"] #, "v2"]
+    ) do simdir
+    mapreduce(vcat, enumerate(readdir(simdir; join = true))) do (i, dir)
+        resdir = joinpath(dir, "pbs-out", "tmp-" * lpad(basename(dir), 3, '0'))
+        @info "$i / $(length(readdir(simdir))): $resdir"
+        @time mapreduce(vcat, filter!(s -> endswith(s, ".bson"), readdir(resdir; join = true))) do file
+            deepcopy(BSON.load(file)["results"])
+        end
+    end
+end
+DrWatson.@tagsave(
+    "results-mlefit-v1.bson",
+    Dict{String,Any}("results" => deepcopy(df));
+    safe = true,
+    gitpath = realpath(DrWatson.projectdir("..")),
+)
 =#
 
 nothing
