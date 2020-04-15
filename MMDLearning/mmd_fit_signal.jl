@@ -143,8 +143,9 @@ end
 #### Signal fitting
 ####
 
-const image_indices         = filter(I -> image[I,1] > 0, CartesianIndices(size(image)[1:3]))
-const image_indices_batches = collect(Iterators.partition(image_indices, settings["prior"]["fitting"]["batchsize"]))
+# const image_indices         = filter(I -> image[I,1] > 0, CartesianIndices(size(image)[1:3]))
+# const image_indices_batches = collect(Iterators.partition(image_indices, settings["prior"]["fitting"]["batchsize"]))
+const image_indices_batches = BSON.load("/project/st-arausch-1/jcd1994/code/BlochTorreyExperiments-active/MMDLearning/output/todo_indices_batches.bson")["batches"] |> deepcopy #TODO
 const image_indices_batch   = image_indices_batches[settings["prior"]["fitting"]["batchindex"]]
 
 const batchindex = lpad(settings["prior"]["fitting"]["batchindex"], ndigits(length(image_indices_batches)), '0')
@@ -152,6 +153,7 @@ const batchpath  = joinpath(settings["data"]["out"], "tmp-$batchindex")
 mkpath(batchpath)
 
 df = mapreduce(vcat, image_indices_batch) do I
+    @show I #TODO
     df = test_signal_fit(image[I,:])
     df[!, :index] = NTuple{3,Int}[Tuple(I)]
     BSON.bson(joinpath(batchpath, "tmp-$(join(lpad.(Tuple(I), 3, '0'), "_")).bson"), Dict{String,Any}("results" => deepcopy(df)))
@@ -171,6 +173,21 @@ let I = rand(findall(I -> !isnan(t2maps["fnr"][I]) && 50 <= t2maps["fnr"][I] <= 
     @show I
     test_signal_fit(image[I,:])
 end
+=#
+
+#= Load results
+const resfiles = mapreduce(
+        vcat,
+        ["/project/st-arausch-1/jcd1994/simulations/nips2020/mlefit-v1"]
+    ) do simdir
+    mapreduce(vcat, readdir(simdir; join = true)) do dir
+        resdir = joinpath(dir, "pbs-out", "tmp-" * lpad(basename(dir), 3, '0'))
+        filter!(s -> endswith(s, ".bson"), readdir(resdir; join = true))
+    end
+end
+const completed_indices = basename.(resfiles) .|> s -> CartesianIndex(map(x -> parse(Int, x), (s[5:7], s[9:11], s[13:15])))
+const todo_indices = setdiff(image_indices, completed_indices)
+const todo_indices_batches = collect(Iterators.partition(todo_indices, 1000))
 =#
 
 nothing
