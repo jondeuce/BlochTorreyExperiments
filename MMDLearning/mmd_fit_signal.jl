@@ -210,4 +210,23 @@ DrWatson.@tagsave(
 )
 =#
 
+#= Shuffle + save mle fit results
+df = mapreduce(
+        vcat,
+        "/scratch/st-arausch-1/jcd1994/simulations/nips2020/mlefit-" .* ["v1"]
+    ) do simdir
+    mapreduce(vcat, enumerate(readdir(simdir; join = true))) do (i, dir)
+        resfile = joinpath(dir, "pbs-out", "results-" * lpad(basename(dir), 3, '0') * ".bson")
+        @info "$i / $(length(readdir(simdir))): $(basename(resfile))"
+        @time deepcopy(BSON.load(resfile)["results"])
+    end
+end
+DrWatson.@tagsave(
+    "/project/st-arausch-1/jcd1994/MMD-Learning/data/signal_fits/mlefits-shuffled.bson",
+    Dict{String,Any}("results" => deepcopy(df[shuffle(MersenneTwister(0), 1:nrow(df)), :]));
+    safe = true,
+    gitpath = realpath(DrWatson.projectdir("..")),
+)
+=#
+
 nothing
