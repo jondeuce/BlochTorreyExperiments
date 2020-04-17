@@ -40,13 +40,15 @@ function theta_bounds(T = Float64;
 end
 theta_sampler(args...; kwargs...) = broadcast(bound -> bound[1] + (bound[2]-bound[1]) * rand(typeof(bound[1])), theta_bounds(args...; kwargs...))
 
+function signal_theta_error(theta, thetahat)
+    dtheta = (x -> x[2] - x[1]).(theta_bounds(eltype(theta)))
+    return abs.((theta .- thetahat)) ./ dtheta
+end
+
 noise_model!(buffer::AbstractVector{T}, signal::AbstractVector{T}, ϵ::AbstractVector{T}) where {T} = (randn!(buffer); buffer .*= ϵ .* signal[1]; buffer)
 noise_model(signal::AbstractVector, ϵ::AbstractVector) = ϵ .* signal[1] .* randn(eltype(signal), length(signal))
 
-function signal_model_work(
-        T = Float64;
-        nTE::Int
-    )
+function signal_model_work(T = Float64; nTE::Int)
     epg_work = DECAES.EPGdecaycurve_work(T, nTE)
     signal = zeros(T, nTE)
     buf = zeros(T, nTE)
@@ -54,11 +56,12 @@ function signal_model_work(
     imag_noise = zeros(T, nTE)
     return @ntuple(epg_work, signal, buf, real_noise, imag_noise)
 end
+
 function signal_model!(
         work,
         θ::AbstractVector{T},
         ϵ::AbstractVector;
-        TE::T
+        TE
     ) where {T}
     @unpack epg_work, signal, real_noise, imag_noise = work
     # refcon, alpha, T2short, dT2, Ashort = θ[1], θ[2], θ[3]/1000, θ[4]/1000, θ[5]
@@ -69,8 +72,8 @@ function signal_model!(
     T1short = T(1000.0)/1000
     T1long  = T(1000.0)/1000
 
-    signal  .= DECAES.EPGdecaycurve!(epg_work, alpha, TE, T2short, T1short, refcon) # short component
-    signal .+= DECAES.EPGdecaycurve!(epg_work, alpha, TE, T2long,  T1long,  refcon) # long component
+    signal  .= DECAES.EPGdecaycurve!(epg_work, alpha, T(TE), T2short, T1short, refcon) # short component
+    signal .+= DECAES.EPGdecaycurve!(epg_work, alpha, T(TE), T2long,  T1long,  refcon) # long component
     signal ./= sum(signal) # normalize
 
     # Add noise to "real" and "imag" channels in quadrature
@@ -81,15 +84,31 @@ function signal_model!(
             signal .= sqrt.((signal .+ real_noise).^2 .+ imag_noise.^2)
             signal ./= sum(signal)
         end
-        return signal
     else
         # Add forward-differentiable noise to "real" and "imag" channels in quadrature
         signal = sqrt.((signal .+ noise_model(signal, ϵ)).^2 .+ noise_model(signal, ϵ).^2)
         signal ./= sum(signal)
-        return signal
     end
+
+    return signal
 end
-signal_model(θ::AbstractVector{T}, ϵ::AbstractVector) where {T} = signal_model!(signal_model_work(T), θ, ϵ)
+
+function signal_model!(
+        work,
+        θ::AbstractMatrix{T},
+        ϵ::AbstractVector;
+        kwargs...
+    ) where {T}
+    @unpack signal = work
+    X = zeros(length(signal), size(θ,2))
+    @uviews θ X for j in 1:size(θ,2)
+        signal_model!(work, θ[:,j], ϵ; kwargs...)
+        X[:,j] .= signal
+    end
+    return X
+end
+
+signal_model(θ::AbstractVecOrMat{T}, ϵ::AbstractVector; nTE::Int, TE) where {T} = signal_model!(signal_model_work(T; nTE = nTE), θ, ϵ; TE = T(TE))
 
 function mutate_signal(Y::AbstractVecOrMat; meanmutations::Int = 0)
     if meanmutations <= 0
@@ -240,6 +259,93 @@ end
 =#
 
 ####
+#### Direct data samplers from prior derived from MLE fitted signals
+####
+
+function make_mle_data_samplers(
+        imagepath,
+        thetaspath;
+        ntheta = settings["data"]["ntheta"]::Int,
+        plothist = false,
+    )
+
+    # Set random seed for consistent test/train sets
+    rng = Random.seed!(0)
+
+    # Load + preprocess results
+    results = deepcopy(BSON.load(thetaspath)["results"])
+    filter!(r -> r.T2short <= 100 && r.dT2 <= 500 && r.loss <= -200, results) # throw out poor fits
+    thetas = permutedims(convert(Matrix{Float64}, results[:, [:alpha, :T2short, :dT2, :Ashort]])) # convert to ntheta x nSamples Matrix
+
+    # Plot prior distribution histograms
+    plothist && display(plot(mapreduce(vcat, [:alpha, :T2short, :dT2, :Ashort, :logsigma, :loss]; init = Any[]) do c
+        histogram(results[!,c]; lab = c, nbins = 75)
+    end...))
+
+    # Load image, keeping signals which correspond to thetas
+    image = DECAES.load_image(imagepath) # load 4D MatrixSize x nTE image
+    Y = convert(Matrix{Float64}, permutedims(image[CartesianIndex.(results[!, :index]), :])) # convert to nTE x nSamples Matrix
+    Y ./= sum(Y; dims = 1) # Normalize signals to unit sum
+
+    # Forward simulation params
+    signal_work = signal_model_work(Float64; nTE = 48)
+    signal_fun(θ::AbstractVecOrMat{Float64}, noise::AbstractVector{Float64} = [0.0]) = signal_model!(signal_work, θ, noise; TE = 8e-3)
+
+    # Generate data samplers
+    itrain =                   1 : 2*(size(Y,2)÷4)
+    itest  = 2*(size(Y,2)÷4) + 1 : 3*(size(Y,2)÷4)
+    ival   = 3*(size(Y,2)÷4) + 1 : size(Y,2)
+
+    # True data (Y) samplers
+    Ytrain, Ytest, Yval = Y[:,itrain], Y[:,itest], Y[:,ival]
+    sampleY = function(batchsize; dataset = :train)
+        dataset == :train ? (batchsize === nothing ? Ytrain : sample_columns(Ytrain, batchsize)) :
+        dataset == :test  ? (batchsize === nothing ? Ytest  : sample_columns(Ytest,  batchsize)) :
+        dataset == :val   ? (batchsize === nothing ? Yval   : sample_columns(Yval,   batchsize)) :
+        error("dataset must be :train, :test, or :val")
+    end
+
+    # Fit parameters (θ) samplers
+    θtrain, θtest, θval = thetas[:,itrain], thetas[:,itest], thetas[:,ival]
+    sampleθ = function(batchsize; dataset = :train)
+        dataset == :train ? (batchsize === nothing ? θtrain : sample_columns(θtrain, batchsize)) :
+        dataset == :test  ? (batchsize === nothing ? θtest  : sample_columns(θtest,  batchsize)) :
+        dataset == :val   ? (batchsize === nothing ? θval   : sample_columns(θval,   batchsize)) :
+        error("dataset must be :train, :test, or :val")
+    end
+
+    # Model data (X) samplers, possibly adding noise via `args...`
+    _sampleX_model = function(batchsize, args...; kwargs...)
+        signal_fun(sampleθ(batchsize; kwargs...), args...)
+    end
+
+    # Direct model data (X) samplers with no noise (precomputed)
+    Xtrain = _sampleX_model(nothing; dataset = :train)
+    Xtest  = _sampleX_model(nothing; dataset = :test)
+    Xval   = _sampleX_model(nothing; dataset = :val)
+    _sampleX_direct = function(batchsize; dataset = :train)
+        dataset == :train ? (batchsize === nothing ? Xtrain : sample_columns(Xtrain, batchsize)) :
+        dataset == :test  ? (batchsize === nothing ? Xtest  : sample_columns(Xtest,  batchsize)) :
+        dataset == :val   ? (batchsize === nothing ? Xval   : sample_columns(Xval,   batchsize)) :
+        error("dataset must be :train, :test, or :val")
+    end
+
+    # Model data (X) samplers, possibly adding noise via `args...`
+    sampleX = function(batchsize, args...; kwargs...)
+        if batchsize === nothing && length(args) == 0
+            _sampleX_direct(batchsize; kwargs...)
+        else
+            _sampleX_model(batchsize, args...; kwargs...)
+        end
+    end
+
+    # Reset random seed
+    Random.seed!(rng)
+
+    return sampleX, sampleY, sampleθ
+end
+
+####
 #### GMM data samplers from learned prior
 ####
 
@@ -368,6 +474,8 @@ function toy_signal_model(
 end
 toy_signal_model(n::Int, args...; kwargs...) = toy_signal_model(toy_theta_sampler(n), args...; kwargs...)
 
+toy_theta_bounds(T = Float64) = map(x -> T.(x), [(1/64, 1/32), (0.0, pi/2), (0.25, 0.5), (0.1, 0.25), (16.0, 128.0)])
+
 function toy_theta_sampler(n::Int = 1)
     freq   = rand(Uniform(1/64,  1/32), n)
     phase  = rand(Uniform( 0.0,  pi/2), n)
@@ -418,25 +526,27 @@ function make_toy_samplers(;
 end
 
 ####
-#### Toy problem log likelihood inference
+#### Maximum likelihood estimation inference
 ####
 
 function toy_theta_loglikelihood_inference(
         y::AbstractVector,
         initial_guess = nothing,
-        model = x -> (x, zero(x));
+        model = x -> (x, zero(x)),
+        signal_fun = θ -> toy_signal_model(θ, nothing, 4);
+        bounds = toy_theta_bounds(),
         objective = :mle,
         bbopt_kwargs = objective == :mle ? Dict(:MaxTime => 1.0) : Dict(:MaxTime => 5.0),
     )
     # Deterministic loss function, suitable for Optim
     function mle_loss(θ)
-        ȳhat, ϵhat = model(toy_signal_model(θ, nothing, 4))
+        ȳhat, ϵhat = model(signal_fun(θ))
         return sum(@. -logpdf(Rician(ȳhat, ϵhat; check_args = false), y))
     end
 
     # Stochastic loss function, only suitable for BlackBoxOptim
     function rmse_loss(θ)
-        ȳhat, ϵhat = model(toy_signal_model(θ, nothing, 4))
+        ȳhat, ϵhat = model(signal_fun(θ))
         yhat = @. rand(Rician(ȳhat, ϵhat; check_args = false))
         return sqrt(mean(abs2, y .- yhat))
     end
@@ -446,7 +556,7 @@ function toy_theta_loglikelihood_inference(
     bbres = nothing
     if objective != :mle || (objective == :mle && isnothing(initial_guess))
         bbres = bboptimize(loss;
-            SearchRange = [(1/64, 1/32), (0.0, pi/2), (0.25, 0.5), (0.1, 0.25), (16.0, 128.0)],
+            SearchRange = bounds,
             TraceMode = :silent,
             bbopt_kwargs...
         )
@@ -455,8 +565,8 @@ function toy_theta_loglikelihood_inference(
     optres = nothing
     if objective == :mle
         θ0 = isnothing(initial_guess) ? BlackBoxOptim.best_candidate(bbres) : initial_guess
-        lo = [1/64,  0.0, 0.25,  0.1,  16.0]
-        hi = [1/32, pi/2,  0.5, 0.25, 128.0]
+        lo = (x->x[1]).(bounds)
+        hi = (x->x[2]).(bounds)
         # dfc = Optim.TwiceDifferentiableConstraints(lo, hi)
         # df = Optim.TwiceDifferentiable(loss, θ0; autodiff = :forward)
         # optres = Optim.optimize(df, dfc, θ0, Optim.IPNewton())
@@ -471,6 +581,7 @@ function toy_theta_loglikelihood_inference(Y::AbstractMatrix, θ0::Union{<:Abstr
     _args = [deepcopy(args) for _ in 1:Threads.nthreads()]
     _kwargs = [deepcopy(kwargs) for _ in 1:Threads.nthreads()]
     ThreadPools.qmap(1:size(Y,2)) do j
+    # map(1:size(Y,2)) do j
         tid = Threads.threadid()
         initial_guess = !isnothing(θ0) ? θ0[:,j] : nothing
         toy_theta_loglikelihood_inference(Y[:,j], initial_guess, _args[tid]...; _kwargs[tid]...)

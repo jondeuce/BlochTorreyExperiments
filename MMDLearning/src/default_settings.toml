@@ -8,6 +8,7 @@ out       = "./output/tmp"
 # theta_labels = ["refcon", "alpha", "T2short", "dT2", "Ashort"]
 ntheta    = 4
 nsignal   = 48
+echotime  = 8e-3
 theta_labels = ["alpha", "T2short", "dT2", "Ashort"]
 
 [mmd]
@@ -57,6 +58,7 @@ batchsize = 100
 nbatches  = 10
 logsigma  = -6.0
 [prior.data]
+thetas    = "/project/st-arausch-1/jcd1994/MMD-Learning/data/signal_fits/mlefits-shuffled.bson"
 image     = "/project/st-arausch-1/jcd1994/MMD-Learning/data/masked-image-240x240x48x48.mat"
 t2dist    = "/project/st-arausch-1/jcd1994/MMD-Learning/data/masked-image-240x240x48x48.t2dist.mat"
 t2maps    = "/project/st-arausch-1/jcd1994/MMD-Learning/data/masked-image-240x240x48x48.t2maps.mat"
