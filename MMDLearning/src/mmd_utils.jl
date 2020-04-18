@@ -1,4 +1,28 @@
 ####
+#### Settings file loading
+####
+
+function load_settings(
+        default_settings_file = joinpath(@__DIR__, "default_settings.toml"),
+    )
+    # Load default settings + merge in custom settings, if given
+    settings = TOML.parsefile(default_settings_file)
+    mergereducer!(x, y) = deepcopy(y) # fallback
+    mergereducer!(x::Dict, y::Dict) = merge!(mergereducer!, x, y)
+    haskey(ENV, "SETTINGSFILE") && merge!(mergereducer!, settings, TOML.parsefile(ENV["SETTINGSFILE"]))
+
+    # Save + print resulting settings
+    outpath = settings["data"]["out"]
+    !isdir(outpath) && mkpath(outpath)
+    open(joinpath(outpath, "settings.toml"); write = true) do io
+        TOML.print(io, settings)
+    end
+    TOML.print(stdout, settings)
+
+    return settings
+end
+
+####
 #### Signal model
 ####
 
@@ -18,9 +42,7 @@ function signal_data(
     return batchsize === nothing ? Y : sample_columns(Y, batchsize)
 end
 
-function theta_bounds(T = Float64;
-        ntheta = settings["data"]["ntheta"]::Int,
-    )
+function theta_bounds(T = Float64; ntheta::Int)
     if ntheta == 4
         theta_labels = ["alpha", "T2short", "dT2", "Ashort"]
         # ["refcon", "alpha", "T2short", "dT2", "Ashort"]
@@ -41,7 +63,7 @@ end
 theta_sampler(args...; kwargs...) = broadcast(bound -> bound[1] + (bound[2]-bound[1]) * rand(typeof(bound[1])), theta_bounds(args...; kwargs...))
 
 function signal_theta_error(theta, thetahat)
-    dtheta = (x -> x[2] - x[1]).(theta_bounds(eltype(theta)))
+    dtheta = (x -> x[2] - x[1]).(theta_bounds(eltype(theta); ntheta = size(theta,1)))
     return abs.((theta .- thetahat)) ./ dtheta
 end
 
@@ -265,7 +287,7 @@ end
 function make_mle_data_samplers(
         imagepath,
         thetaspath;
-        ntheta = settings["data"]["ntheta"]::Int,
+        ntheta::Int,
         plothist = false,
     )
 
@@ -289,7 +311,8 @@ function make_mle_data_samplers(
 
     # Forward simulation params
     signal_work = signal_model_work(Float64; nTE = 48)
-    signal_fun(θ::AbstractVecOrMat{Float64}, noise::AbstractVector{Float64} = [0.0]) = signal_model!(signal_work, θ, noise; TE = 8e-3)
+    signal_fun(θ::AbstractMatrix{Float64}, noise::Nothing) = signal_fun(θ)
+    signal_fun(θ::AbstractMatrix{Float64}, noise::AbstractVector{Float64} = [0.0]) = signal_model!(signal_work, θ, noise; TE = 8e-3)
 
     # Generate data samplers
     itrain =                   1 : 2*(size(Y,2)÷4)
@@ -351,8 +374,7 @@ end
 
 function make_gmm_data_samplers(
         image;
-        input_noise = false,
-        ntheta = settings["data"]["ntheta"]::Int,
+        ntheta::Int
     )
 
     # Set random seed for consistent test/train sets
@@ -404,6 +426,7 @@ function make_gmm_data_samplers(
     itrain = 1:2*(size(Y,2)÷4)
     itest  = itrain[end]+1:3*(size(Y,2)÷4)
     ival   = itest[end]+1:size(Y,2)
+
     Ytrain, Ytest, Yval = Y[:,itrain], Y[:,itest], Y[:,ival]
     sampleY = function(batchsize; dataset = :train)
         dataset == :train ? (batchsize === nothing ? Ytrain : sample_columns(Ytrain, batchsize)) :
@@ -427,20 +450,13 @@ function make_gmm_data_samplers(
         return θ
     end
 
-    sampleX = if input_noise
-        signal_work = signal_model_work(Float64)
-        function(batchsize, noise)
-            θ = sampleθ(batchsize)
-            X = reduce(hcat, [copy(signal_model!(signal_work, θ[:,j], noise)) for j in 1:batchsize])
-            return X
-        end
-    else
-        signal_work = signal_model_work(Float64)
-        function(batchsize)
-            θ = sampleθ(batchsize)
-            X = reduce(hcat, [copy(signal_model!(signal_work, θ[:,j], [0.0])) for j in 1:batchsize])
-            return X
-        end
+    signal_work = signal_model_work(Float64; nTE = 48)
+    signal_fun(θ::AbstractMatrix{Float64}, noise::Nothing) = signal_fun(θ)
+    signal_fun(θ::AbstractMatrix{Float64}, noise::AbstractVector{Float64} = [0.0]) = signal_model!(signal_work, θ, noise; TE = 8e-3)
+
+    # Args is variadic such that noise may be passed to X sampler
+    sampleX = function(batchsize, args...; kwargs...)
+        signal_fun(sampleθ(batchsize; kwargs...), args...)
     end
 
     # Reset random seed
@@ -536,8 +552,9 @@ function toy_theta_loglikelihood_inference(
         signal_fun = θ -> toy_signal_model(θ, nothing, 4);
         bounds = toy_theta_bounds(),
         objective = :mle,
-        bbopt_kwargs = objective == :mle ? Dict(:MaxTime => 1.0) : Dict(:MaxTime => 5.0),
+        bbopt_kwargs = Dict(:MaxTime => 1.0),
     )
+
     # Deterministic loss function, suitable for Optim
     function mle_loss(θ)
         ȳhat, ϵhat = model(signal_fun(θ))
@@ -551,10 +568,10 @@ function toy_theta_loglikelihood_inference(
         return sqrt(mean(abs2, y .- yhat))
     end
 
-    loss = objective == :mle ? mle_loss : rmse_loss
+    loss = objective === :mle ? mle_loss : rmse_loss
 
     bbres = nothing
-    if objective != :mle || (objective == :mle && isnothing(initial_guess))
+    if objective !== :mle || (objective === :mle && isnothing(initial_guess))
         bbres = bboptimize(loss;
             SearchRange = bounds,
             TraceMode = :silent,
@@ -563,7 +580,7 @@ function toy_theta_loglikelihood_inference(
     end
 
     optres = nothing
-    if objective == :mle
+    if objective === :mle
         θ0 = isnothing(initial_guess) ? BlackBoxOptim.best_candidate(bbres) : initial_guess
         lo = (x->x[1]).(bounds)
         hi = (x->x[2]).(bounds)
@@ -580,8 +597,7 @@ end
 function toy_theta_loglikelihood_inference(Y::AbstractMatrix, θ0::Union{<:AbstractMatrix, Nothing} = nothing, args...; kwargs...)
     _args = [deepcopy(args) for _ in 1:Threads.nthreads()]
     _kwargs = [deepcopy(kwargs) for _ in 1:Threads.nthreads()]
-    ThreadPools.qmap(1:size(Y,2)) do j
-    # map(1:size(Y,2)) do j
+    ThreadPools.qmap(1:size(Y,2)) do j # map(1:size(Y,2)) do j
         tid = Threads.threadid()
         initial_guess = !isnothing(θ0) ? θ0[:,j] : nothing
         toy_theta_loglikelihood_inference(Y[:,j], initial_guess, _args[tid]...; _kwargs[tid]...)

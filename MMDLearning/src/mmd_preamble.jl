@@ -24,31 +24,11 @@ pyplot(size = (800,600))
 #### Includes
 ####
 
-include(joinpath(@__DIR__, "rician.jl")) #Revise.includet
-include(joinpath(@__DIR__, "batchedmath.jl")) #Revise.includet
-include(joinpath(@__DIR__, "mmd_math.jl")) #Revise.includet
-include(joinpath(@__DIR__, "mmd_flux.jl")) #Revise.includet
-include(joinpath(@__DIR__, "mmd_utils.jl")) #Revise.includet
-
-####
-#### Load settings file
-####
-
-settings = let
-    # Load default settings + merge in custom settings, if given
-    settings = TOML.parsefile(joinpath(@__DIR__, "default_settings.toml"))
-    mergereducer!(x, y) = deepcopy(y) # fallback
-    mergereducer!(x::Dict, y::Dict) = merge!(mergereducer!, x, y)
-    haskey(ENV, "SETTINGSFILE") && merge!(mergereducer!, settings, TOML.parsefile(ENV["SETTINGSFILE"]))
-
-    # Save + print resulting settings
-    outpath = settings["data"]["out"]
-    !isdir(outpath) && mkpath(outpath)
-    open(joinpath(outpath, "settings.toml"); write = true) do io
-        TOML.print(io, settings)
-    end
-    TOML.print(stdout, settings)
-    settings
-end
+using Revise
+Revise.includet(joinpath(@__DIR__, "rician.jl"))
+Revise.includet(joinpath(@__DIR__, "batchedmath.jl"))
+Revise.includet(joinpath(@__DIR__, "mmd_math.jl"))
+Revise.includet(joinpath(@__DIR__, "mmd_flux.jl"))
+Revise.includet(joinpath(@__DIR__, "mmd_utils.jl"))
 
 nothing

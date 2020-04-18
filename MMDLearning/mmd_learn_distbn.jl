@@ -2,11 +2,12 @@
 include(joinpath(@__DIR__, "src", "mmd_preamble.jl"))
 
 const IS_TOY_MODEL = false
-const NOISE_LEVEL = 1e-2
+const TOY_NOISE_LEVEL = 1e-2
 const models = Dict{String, Any}()
+const settings = load_settings()
 
 sampleX, sampleY, sampleθ = if IS_TOY_MODEL
-    make_toy_samplers(ntrain = settings["mmd"]["batchsize"]::Int, epsilon = NOISE_LEVEL, power = 4.0);
+    make_toy_samplers(ntrain = settings["mmd"]["batchsize"]::Int, epsilon = TOY_NOISE_LEVEL, power = 4.0);
 else
     make_mle_data_samplers(settings["prior"]["data"]["image"]::String, settings["prior"]["data"]["thetas"]::String; ntheta = settings["data"]["ntheta"]::Int, plothist = false); #TODO
     # make_gmm_data_samplers(image; ntheta = settings["data"]["ntheta"]::Int);
@@ -23,13 +24,15 @@ models["mmd"] = let
     Dz   = settings["vae"]["zdim"]::Int
     Dh   = settings["mmd"]["hdim"]::Int
     Nh   = settings["mmd"]["nhidden"]::Int
+    dx   = settings["mmd"]["maxcorr"]::Float64
+    bw   = settings["mmd"]["noisebounds"]::Vector{Float64}
     act  = Flux.relu
     hidden(nlayers) = [Flux.Dense(Dh, Dh, act) for _ in 1:nlayers]
 
-    # Slope/intercept for scaling dX to [-0.1,0.1], logσ to [-10,-2]
-    dX = IS_TOY_MODEL ? 0.1 : 0.1/n
-    α = [fill( dX, n); fill( 4.0, n)]
-    β = [fill(0.0, n); fill(-6.0, n)]
+    # Slope/intercept for scaling dX to (-dx, dx), logσ to (bw[1], bw[2])
+    αbw, βbw = (bw[2]-bw[1])/2, (bw[1]+bw[2])/2
+    α = [fill( dx, n); fill(αbw, n)]
+    β = [fill(0.0, n); fill(βbw, n)]
 
     Flux.Chain(
         (models["vae.E"] == identity ? Flux.Dense(n, Dh, act) : Flux.Dense(Dz, Dh, act)),
@@ -43,10 +46,10 @@ end
 # models["mmd"] = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/toymmd-v2-vector-logsigma/2020-02-26T17:00:51.433/best-model.bson")["model"]) #TODO
 # models["mmd"] = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/22/best-model.bson")["model"]) #TODO
 
-split_correction_and_noise(X) = X[1:end÷2, :], exp.(X[end÷2+1:end, :])
+split_correction_and_noise(μlogσ) = μlogσ[1:end÷2, :], exp.(μlogσ[end÷2+1:end, :])
 noise_instance(X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
 get_correction_and_noise(X) = split_correction_and_noise(models["mmd"](models["vae.E"](X))) # Learning correction + noise
-# get_correction_and_noise(X) = models["mmd"](models["vae.E"](X)), fill(eltype(X)(NOISE_LEVEL), size(X)...) # Learning correction w/ fixed noise
+# get_correction_and_noise(X) = models["mmd"](models["vae.E"](X)), fill(eltype(X)(TOY_NOISE_LEVEL), size(X)...) # Learning correction w/ fixed noise
 # get_correction_and_noise(X) = models["mmd"](models["vae.E"](X)), zeros(eltype(X), size(X)...) # Learning correction only
 get_correction(X) = get_correction_and_noise(X)[1]
 get_noise_instance(X) = noise_instance(X, get_correction_and_noise(X)[2])
@@ -63,20 +66,6 @@ end
 
 sampleLatentX(m; kwargs...) = models["vae.E"](get_corrected_signal(sampleX(m; kwargs...)))
 sampleLatentY(m; kwargs...) = models["vae.E"](sampleY(m; kwargs...))
-
-#=
-cd(@__DIR__) #TODO
-error("exiting...") #TODO
-settings = TOML.parsefile(joinpath(@__DIR__, "src/default_settings.toml")); #TODO
-let #TODO
-    outpath = "./output/$(Dates.now())"
-    settings["data"]["out"] = outpath
-    !isdir(outpath) && mkpath(outpath)
-    open(joinpath(outpath, "settings.toml"); write = true) do io
-        TOML.print(io, settings)
-    end
-end
-=#
 
 function train_mmd_kernel!(
         logsigma        :: AbstractVecOrMat{Float64},
@@ -264,6 +253,7 @@ end
 
 function train_mmd_model(;
         n          :: Int     = settings["data"]["nsignal"],
+        ntheta     :: Int     = settings["data"]["ntheta"],
         m          :: Int     = settings["mmd"]["batchsize"],
         lr         :: Float64 = settings["mmd"]["stepsize"],
         lrthresh   :: Float64 = settings["mmd"]["stepthresh"],
@@ -332,12 +322,12 @@ function train_mmd_model(;
                 (θ, noise) -> Y # don't have true underlying model for real data
             mock_forward_model = IS_TOY_MODEL ?
                 (θ, noise) -> toy_signal_model(θ, noise, 4) :
-                (θ, noise) -> signal_model(θ, ifelse(isnothing(noise), zeros(1), noise); nTE = n, TE = settings["data"]["echotime"]::Float64)
+                (θ, noise) -> signal_model(θ, isnothing(noise) ? [0.0] : noise; nTE = n, TE = settings["data"]["echotime"]::Float64)
             theta_error_fun = IS_TOY_MODEL ? toy_theta_error : signal_theta_error
-            theta_bounds_fun = IS_TOY_MODEL ? toy_theta_bounds : theta_bounds
+            theta_bounds_fun = IS_TOY_MODEL ? toy_theta_bounds : () -> theta_bounds(Float64; ntheta = ntheta)
 
             Yθ = true_forward_model(θ, nothing)
-            Yθϵ = true_forward_model(θ, NOISE_LEVEL)
+            Yθϵ = true_forward_model(θ, TOY_NOISE_LEVEL)
             Xθ = mock_forward_model(θ, nothing)
             dXθ, ϵθ = get_correction_and_noise(Xθ)
             Xθϵ = get_corrected_signal(Xθ, dXθ, ϵθ)
@@ -547,12 +537,12 @@ function train_mmd_model(;
             end
 
             # Check for best loss + save
-            is_best_model = IS_TOY_MODEL ?
-                df.rmse[end] <= minimum(df.rmse) : #df.loss[end] <= minimum(df.loss)
-                any(!ismissing, df.signal_fit_logL) && findlast(!ismissing, df.signal_fit_logL) <= minimum(skipmissing(df.signal_fit_logL))
-            if is_best_model
-                @timeit timer "best model" saveprogress(outfolder, "best-", "")
+            is_best_model = if IS_TOY_MODEL
+                df.rmse[end] <= minimum(df.rmse) #df.loss[end] <= minimum(df.loss)
+            else
+                any(!ismissing, df.signal_fit_logL) && df.signal_fit_logL[findlast(!ismissing, df.signal_fit_logL)] <= minimum(skipmissing(df.signal_fit_logL))
             end
+            is_best_model && @timeit timer "best model" saveprogress(outfolder, "best-", "")
 
             if epoch > 0 && mod(epoch, lrdroprate) == 0
                 opt.eta /= lrdrop
@@ -626,32 +616,6 @@ function train_mmd_model(;
 
     return df
 end
-
-#=
-logsigma = let
-    n = settings["data"]["nsignal"]::Int
-    nbandwidth = settings["mmd"]["kernel"]["nbandwidth"]::Int
-    # -4 .+ 0.5 .* randn(nbandwidth, n)
-    repeat(range(-4, -1; length = nbandwidth), 1, n)
-end
-Random.seed!(0);
-df_kernel = train_mmd_kernel!(logsigma;
-    m = 1024,
-    kernelloss = "tstatistic",
-    lr = 1e-2,
-    epochs = 100,
-    nbatches = 10,
-    bwbounds = [-5.0, 2.0],
-    plotprogress = true,
-    showprogress = false,
-    showrate = 1,
-    plotrate = 1,
-    lambda = 1,
-)
-df = train_mmd_model(
-    logsigma = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/toymmd-v2-vector-logsigma/2020-02-25T23:48:34.905/current-progress.bson")["progress"][end,:logsigma]),
-)
-=#
 
 df = train_mmd_model()
 

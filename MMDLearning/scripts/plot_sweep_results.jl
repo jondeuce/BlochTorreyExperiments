@@ -29,7 +29,7 @@ end
 function dataframe_template(results_dir, file, field)
     for (root, dirs, files) in walkdir(results_dir)
         occursin("checkpoint", root) && continue
-        if file ∈ files && "sweep_settings.toml" ∈ files && "settings.toml" ∈ files && "best-progress.bson" ∈ files && "current-progress.bson" ∈ files
+        if file ∈ files && "sweep_settings.toml" ∈ files && "settings.toml" ∈ files && "current-progress.bson" ∈ files #TODO: && "best-progress.bson" ∈ files
             return read_to_dataframe(joinpath(root, file), field)[1:0,:]::DataFrame
         end
     end
@@ -44,7 +44,7 @@ function read_results(results_dir)
     curr_results = hcat(DataFrame(:folder => String[]), copy(sweep_temp), copy(prog_temp))
     for (root, dirs, files) in walkdir(results_dir)
         occursin("checkpoint", root) && continue
-        if "sweep_settings.toml" ∈ files && "settings.toml" ∈ files && "best-progress.bson" ∈ files && "current-progress.bson" ∈ files
+        if "sweep_settings.toml" ∈ files && "settings.toml" ∈ files && "current-progress.bson" ∈ files #TODO: && "best-progress.bson" ∈ files
             # df_sweep = read_to_dataframe(joinpath(root, "sweep_settings.toml"), "vae")
             df_sweep = read_to_dataframe(joinpath(root, "sweep_settings.toml"), "mmd")
             df_curr = read_to_dataframe(joinpath(root, "current-progress.bson"), "progress")
@@ -74,16 +74,18 @@ end
 # results_dir = "/scratch/st-arausch-1/jcd1994/simulations/MMD-Learning/toyvaeopt-v1"
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-3/toymmdopt-v4"
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v5"
-results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toymmdopt-v7"
+# results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toymmdopt-v7"
+results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mmdopt-v1"
 sweep_dir = joinpath(results_dir, "sweep");
 df_best, df_curr, sweep_temp, prog_temp = read_results(sweep_dir);
-# df = df_best
-df = df_curr
+df = df_best
+# df = df_curr
 
 # Write sorted DataFrame to text file
 foreach([:rmse, :signal_fit_logL]) do metric #[:loss, :rmse, :mae, :linf]
     open(joinpath(results_dir, "results-by-$metric.txt"); write = true) do io
-        show(io, sort(dropmissing(df, metric), metric); allrows = true, allcols = true)
+        dfsave = dropmissing(df, metric)[:, Not(:logsigma)] #TODO
+        show(io, sort(dfsave, metric); allrows = true, allcols = true)
     end
 end
 

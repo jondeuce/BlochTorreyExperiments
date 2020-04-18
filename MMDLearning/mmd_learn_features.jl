@@ -5,7 +5,7 @@ include(joinpath(@__DIR__, "src", "mmd_preamble.jl"))
 #### VAE training
 ####
 
-# sampleX, sampleY, sampleθ = make_gmm_data_samplers(image);
+# sampleX, sampleY, sampleθ = make_gmm_data_samplers(image; ntheta = settings["data"]["ntheta"]::Int);
 sampleX, sampleY, sampleθ = make_toy_samplers(;
     ntrain = settings["vae"]["batchsize"]::Int,
     epsilon = 1e-3,

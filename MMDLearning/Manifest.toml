@@ -353,6 +353,9 @@ git-tree-sha1 = "3d7cb2c4c850439f19c4d6d3fbe1dce6481cddb1"
 uuid = "5789e2e9-d7fb-5bc7-8068-2c6fae9b9549"
 version = "1.2.4"
 
+[[FileWatching]]
+uuid = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
+
 [[FillArrays]]
 deps = ["LinearAlgebra", "Random", "SparseArrays"]
 git-tree-sha1 = "51cc2f9bc4eb9c6c0e81ec2f779d1085583cc956"
@@ -473,6 +476,12 @@ git-tree-sha1 = "b34d7cef7b337321e97d22242c3c2b91f476748e"
 uuid = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 version = "0.21.0"
 
+[[JuliaInterpreter]]
+deps = ["CodeTracking", "InteractiveUtils", "Random", "UUIDs"]
+git-tree-sha1 = "2eadbbde5534346cbb837c3a75b377cba477a06d"
+uuid = "aa1ae85d-cabe-5617-a682-6adf51b2e16a"
+version = "0.7.13"
+
 [[Juno]]
 deps = ["Base64", "Logging", "Media", "Profile"]
 git-tree-sha1 = "e1ba2a612645b3e07c773c3a208f215745081fe6"
@@ -562,6 +571,12 @@ uuid = "56ddb016-857b-54e1-b83d-db4d58db5568"
 git-tree-sha1 = "c867b50bfc564f0beded1c566f4fc66cfd8b5418"
 uuid = "e6f89c97-d47a-5376-807f-9c37f3926c36"
 version = "0.4.0"
+
+[[LoweredCodeUtils]]
+deps = ["JuliaInterpreter"]
+git-tree-sha1 = "1c41621653250b2824b6e664ac5bd805558aeff9"
+uuid = "6f1432cf-f94c-5a45-995e-cdbf5db27b0b"
+version = "0.4.3"
 
 [[MAT]]
 deps = ["BufferedStreams", "CodecZlib", "HDF5", "SparseArrays"]
@@ -828,6 +843,12 @@ deps = ["UUIDs"]
 git-tree-sha1 = "d37400976e98018ee840e0ca4f9d20baa231dc6b"
 uuid = "ae029012-a4dd-5104-9daa-d747884805df"
 version = "1.0.1"
+
+[[Revise]]
+deps = ["CodeTracking", "Distributed", "FileWatching", "JuliaInterpreter", "LibGit2", "LoweredCodeUtils", "OrderedCollections", "Pkg", "REPL", "UUIDs", "Unicode"]
+git-tree-sha1 = "6cefbc0e3b62146e564a3cf209e7370a839883da"
+uuid = "295af30f-e4ad-537b-8983-00126c2a3abe"
+version = "2.6.0"
 
 [[Rmath]]
 deps = ["Random", "Rmath_jll"]

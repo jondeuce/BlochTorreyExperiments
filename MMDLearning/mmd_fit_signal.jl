@@ -57,7 +57,7 @@ function test_signal_fit(signal::AbstractVector{T};
     l2model = θ -> (count[] += 1; return signal_model!(work, θ, ϵ; TE = TE))
     l2loss = θ -> (@inbounds(work.buf .= ydata .- model(θ)); return sum(abs2, work.buf))
 
-    θbounds = theta_bounds(T)
+    θbounds = theta_bounds(T; ntheta = ntheta)
     (losstype === :mle) && push!(θbounds, (-10.0, 0.0))
     model = losstype === :mle ? mlemodel : l2model
     loss = losstype === :mle ? mleloss : l2loss
@@ -222,7 +222,7 @@ df = mapreduce(
     end
 end
 DrWatson.@tagsave(
-    "/project/st-arausch-1/jcd1994/MMD-Learning/data/signal_fits/mlefits-shuffled.bson",
+    "/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v1/mlefits-shuffled.bson",
     Dict{String,Any}("results" => deepcopy(df[shuffle(MersenneTwister(0), 1:nrow(df)), :]));
     safe = true,
     gitpath = realpath(DrWatson.projectdir("..")),
