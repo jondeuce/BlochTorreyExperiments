@@ -20,8 +20,11 @@ function flatten_dict!(dout::Dict{<:AbstractString, Any}, din::Dict{<:AbstractSt
 end
 flatten_dict(din::Dict{<:AbstractString, Any}) = flatten_dict!(Dict{String, Any}(), din)
 
+# DataFrame has a constructor from Dict types already, but it broadcasts over vector values
+dict_to_df(d::Dict) = push!(DataFrame(typeof.(values(d)), Symbol.(keys(d))), collect(values(d)))
+
 function read_to_dataframe(file, field)
-    return endswith(file, ".toml") ? DataFrame(flatten_dict(TOML.parsefile(file)[field])) :
+    return endswith(file, ".toml") ? dict_to_df(flatten_dict(TOML.parsefile(file)[field])) :
            endswith(file, ".bson") ? DataFrame(BSON.load(file)[field]) :
            error("Unsupported file type")
 end
@@ -58,7 +61,18 @@ function read_results(results_dir)
             df_best_row.time[1] = sum(df_curr.time[1:ibest])
             df_curr_row.time[1] = sum(df_curr.time)
 
+            # minimum over last WINDOW entries
+            WINDOW = 100
+            df_curr_row.signal_fit_logL[1] = minimum(df_curr.signal_fit_logL[clamp(end-WINDOW+1,1,end) : end])
+            df_curr_row.signal_fit_rmse[1] = minimum(df_curr.signal_fit_rmse[clamp(end-WINDOW+1,1,end) : end])
+
             currfolder = basename(root)
+            if !(nrow(df_sweep) == nrow(df_best_row) == nrow(df_curr_row))
+                display(df_sweep)
+                @show size(df_sweep)
+                @show size(df_best_row)
+                @show size(df_curr_row)
+            end
             best_results = append!(best_results, hcat(DataFrame(:folder => currfolder), df_sweep, df_best_row))
             curr_results = append!(curr_results, hcat(DataFrame(:folder => currfolder), df_sweep, df_curr_row))
         end
@@ -71,18 +85,19 @@ end
 #   rm **/sweep/**/checkpoint/checkpoint-model.epoch.*.bson
 
 # Read results to DataFrame
-# results_dir = "/scratch/st-arausch-1/jcd1994/simulations/MMD-Learning/toyvaeopt-v1"
+# results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-3/toymmdopt-v1"
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-3/toymmdopt-v4"
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v5"
-# results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toymmdopt-v7"
-results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mmdopt-v1"
+# results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v7"
+# results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v1"
+results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mmdopt-v2"
 sweep_dir = joinpath(results_dir, "sweep");
 df_best, df_curr, sweep_temp, prog_temp = read_results(sweep_dir);
-df = df_best
-# df = df_curr
+# df = df_best
+df = df_curr
 
 # Write sorted DataFrame to text file
-foreach([:rmse, :signal_fit_logL]) do metric #[:loss, :rmse, :mae, :linf]
+foreach([:signal_fit_rmse, :signal_fit_logL]) do metric #[:loss, :rmse, :mae, :linf]
     open(joinpath(results_dir, "results-by-$metric.txt"); write = true) do io
         dfsave = dropmissing(df, metric)[:, Not(:logsigma)] #TODO
         show(io, sort(dfsave, metric); allrows = true, allcols = true)
@@ -90,7 +105,7 @@ foreach([:rmse, :signal_fit_logL]) do metric #[:loss, :rmse, :mae, :linf]
 end
 
 # Show top results
-show(stdout, first(sort(df[:,Not([:logsigma])], :rmse), 10); allrows = true, allcols = true); println("\n")
+show(stdout, first(sort(df[:,Not([:logsigma])], :signal_fit_logL), 10); allrows = true, allcols = true); println("\n")
 @show size(df);
 
 function make_plots(df, sweepcols, metric, thresh = 0.5)
@@ -115,7 +130,7 @@ function make_plots(df, sweepcols, metric, thresh = 0.5)
     nothing
 end
 # make_plots.(Ref(df), Ref(names(sweep_temp)), [:loss, :rmse, :linf, :time], [0.5, 0.5, 0.5, 1.0]);
-make_plots.(Ref(df), Ref(names(sweep_temp)), [:rmse, :signal_fit_logL], 1.0);
+make_plots.(Ref(df), Ref(names(sweep_temp)), [:signal_fit_rmse, :signal_fit_logL], 1.0);
 
 nothing
 

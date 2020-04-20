@@ -307,6 +307,7 @@ function train_mmd_model(;
         cb_state = (
             last_time = Ref(time()),
             last_checkpoint = Ref(time()),
+            last_best_checkpoint = Ref(time()),
             last_θbb = Union{AbstractVecOrMat{Float64}, Nothing}[nothing],
         )
         function(epoch, X, Y, θ)
@@ -316,7 +317,7 @@ function train_mmd_model(;
             dX, ϵ = get_correction_and_noise(X)
             Xϵ = get_corrected_signal(X, dX, ϵ)
 
-            nθbb = min(128, size(Y,2)) #TODO 256 # number of MLE parameter inferences
+            nθbb = min(128, size(Y,2)) # number of MLE parameter inferences #TODO
             true_forward_model = IS_TOY_MODEL ?
                 (θ, noise) -> toy_signal_model(θ, noise, 2) :
                 (θ, noise) -> Y # don't have true underlying model for real data
@@ -536,13 +537,28 @@ function train_mmd_model(;
                 end
             end
 
-            # Check for best loss + save
+            # Check for best loss + save model/plots
             is_best_model = if IS_TOY_MODEL
                 df.rmse[end] <= minimum(df.rmse) #df.loss[end] <= minimum(df.loss)
             else
                 any(!ismissing, df.signal_fit_logL) && df.signal_fit_logL[findlast(!ismissing, df.signal_fit_logL)] <= minimum(skipmissing(df.signal_fit_logL))
             end
-            is_best_model && @timeit timer "best model" saveprogress(outfolder, "best-", "")
+
+            if is_best_model
+                @timeit timer "best model" saveprogress(outfolder, "best-", "")
+                if time() - cb_state.last_best_checkpoint[] >= saveperiod
+                    cb_state.last_best_checkpoint[] = time()
+                    @timeit timer "make best plots" plothandles = makeplots()
+                    @timeit timer "save best plots" saveplots(outfolder, "best-", "", plothandles)
+                end
+            end
+
+            if epoch == 0 || time() - cb_state.last_checkpoint[] >= saveperiod
+                cb_state.last_checkpoint[] = time()
+                @timeit timer "current model" saveprogress(outfolder, "current-", "")
+                @timeit timer "make current plots" plothandles = makeplots()
+                @timeit timer "save current plots" saveplots(outfolder, "current-", "", plothandles)
+            end
 
             if epoch > 0 && mod(epoch, lrdroprate) == 0
                 opt.eta /= lrdrop
@@ -561,16 +577,6 @@ function train_mmd_model(;
                     showprogress = false,
                     plotprogress = false,
                 )
-            end
-
-            if epoch == 0 || time() - cb_state.last_checkpoint[] >= saveperiod
-                cb_state.last_checkpoint[] = time()
-                estr = lpad(epoch, ndigits(epochs), "0")
-                # @timeit timer "checkpoint model" saveprogress(joinpath(outfolder, "checkpoint"), "checkpoint-", ".epoch.$estr") #TODO
-                @timeit timer "current model" saveprogress(outfolder, "current-", "")
-                @timeit timer "make plots" plothandles = makeplots()
-                # @timeit timer "checkpoint plots" saveplots(joinpath(outfolder, "checkpoint"), "checkpoint-", ".epoch.$estr", plothandles) #TODO
-                @timeit timer "current plots" saveplots(outfolder, "current-", "", plothandles)
             end
         end
     end
