@@ -35,38 +35,21 @@ function read_to_dataframe(sweep_dir)
         sweep = hcat(sweep, DataFrame(Symbol(k) => typeof(v)[v]))
     end
     state = BSON.load(findendswith(joinpath(sweep_dir, "log"), ".errors.bson"))[:state]
-    if state isa Dict
-        function dict_to_df(dataset)
-            nrows = length(state[:callbacks][dataset][:epoch])
-            loopidx = dataset == :testing ? findall(in(state[:callbacks][dataset][:epoch]), intersect(state[:loop][:epoch])) : nothing
-            # loopidx = findall(in(state[:callbacks][dataset][:epoch]), intersect(state[:loop][:epoch]))
-            DataFrame(
-                :epoch    => state[:callbacks][dataset][:epoch],
-                :dataset  => fill(ifelse(dataset == :testing, :test, :train), nrows),
-                :loss     => convert(Vector{Union{Float64, Missing}}, isnothing(loopidx) ? missings(nrows) : state[:loop][:loss][loopidx]),
-                :acc      => convert(Vector{Union{Float64, Missing}}, state[:callbacks][dataset][:acc]),
-                :ELBO     => convert(Vector{Union{Float64, Missing}}, isnothing(loopidx) ? missings(nrows) : state[:loop][:ELBO][loopidx]),
-                :KL       => convert(Vector{Union{Float64, Missing}}, isnothing(loopidx) ? missings(nrows) : state[:loop][:KL][loopidx]),
-                :labelerr => convert(Vector{Union{Vector{Float64}, Missing}}, state[:callbacks][dataset][:labelerr]),
-            )
-        end
-        state = vcat(dict_to_df(:training), dict_to_df(:testing))
-    end
     state = state[state.dataset .== :test, :]
     # dropmissing!(state) # drop rows with missings
     filter!(r -> all(x -> !((x isa Number && isnan(x)) || (x isa AbstractArray{<:Number} && any(isnan, x))), r), state) # drop rows with NaNs
     labelerr = skipmissing(state.labelerr)
     metrics = DataFrame(
-        :loss         => minimum(skipmissing(state.loss)), # - sweep[1, Symbol("model.DenseLIGOCVAE.Zdim")]*(log(2π)-1)/2, # Correct for different Zdim's
-        :acc          => maximum(skipmissing(state.acc)),
-        :cosd_alpha   => minimum((x->x[1]).(labelerr)),
-        :g_ratio      => minimum((x->x[2]).(labelerr)),
-        :mwf          => minimum((x->x[3]).(labelerr)),
-        :rel_T2mw     => minimum((x->x[4]).(labelerr)),
-        :rel_T2iew    => minimum((x->x[5]).(labelerr)),
-        :log_rel_K    => minimum((x->x[6]).(labelerr)),
-        :inf_sup_iqr  => minimum((x->maximum(sort(x[2:end-1]))).(labelerr)),
-        :inf_mean_iqr => minimum((x->mean(sort(x[2:end-1]))).(labelerr)),
+        :loss     => minimum(skipmissing(state.loss)), # - sweep[1, Symbol("model.DenseLIGOCVAE.Zdim")]*(log(2π)-1)/2, # Correct for different Zdim's
+        :acc      => maximum(skipmissing(state.acc)),
+        :freq     => minimum((x->x[1]).(labelerr)),
+        :phase    => minimum((x->x[2]).(labelerr)),
+        :offset   => minimum((x->x[3]).(labelerr)),
+        :amp      => minimum((x->x[4]).(labelerr)),
+        :tconst   => minimum((x->x[5]).(labelerr)),
+        :inf_med  => minimum(median.(labelerr)),
+        :inf_mean => minimum(mean.(labelerr)),
+        :inf_sup  => minimum(maximum.(labelerr)),
     )
     metrics.loss_epoch = Int[state.epoch[findfirst(state.loss .== metrics.loss[1])]]
     metrics.acc_epoch  = Int[state.epoch[findfirst(state.acc .== metrics.acc[1])]]
@@ -109,9 +92,6 @@ function read_results(sweep_dir)
 end
 
 # Read results to DataFrame
-# results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v6";
-# results_dir = "/project/st-arausch-1/jcd1994/ismrm2020/experiments/Spring-2020/permeability-training-1/cvae-diff-med-2/cvae-diff-med-2-100k-samples-v1"
-# results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-100k-samples-v2"
 results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toycvae-v1"
 sweep_dir = joinpath(results_dir, "sweep");
 df, sweep_temp, metrics_temp = read_results(sweep_dir);
@@ -150,7 +130,7 @@ function recurse_make_plots(
         maxdepth = 2,
         metadata = Dict(),
     )
-    foreach([:acc, :inf_mean_iqr]) do metric #names(metrics_temp)
+    foreach([:acc, :inf_mean]) do metric
         outpath = joinpath(results_dir, "summary/depth=$depth", DrWatson.savename(metadata))
         !isdir(outpath) && mkpath(outpath)
 
@@ -174,69 +154,5 @@ function recurse_make_plots(
     nothing
 end
 recurse_make_plots(df)
-
-#=
-# Write sorted DataFrame to text file
-foreach(names(metrics_temp)) do metric
-    open(joinpath(results_dir, "results-by-$metric.txt"); write = true) do io
-        show(io, sort(dropmissing(df, metric), metric; rev = metric == :acc); allrows = true, allcols = true)
-    end
-end
-
-# Make plots
-foreach(names(metrics_temp)) do metric
-    p = make_plots(df, names(sweep_temp), metric)
-    savefig(p, joinpath(results_dir, "results-by-$metric.png"))
-end
-=#
-
-####
-#### Visualize learned dense layers
-####
-
-#=
-heatscale(x) = sign(x) * log(1+sqrt(abs(x)));
-saveheatmap(c::Flux.Chain, name = "") = foreach(((i,l),) -> saveheatmap(l, name * "-$i"), enumerate(c.layers));
-saveheatmap(l::Flux.Dense, name = "") = savefig(plot(heatmap(heatscale.(l.W[end:-1:1,:]); xticks = size(l.W,2)÷4 * (0:4), yticks = size(l.W,1)÷4 * (0:4)), heatmap(heatscale.(l.b[:,:]); xticks = 0:1); layout = @layout([a{0.9w} b{0.1w}])), @show(name));
-saveheatmap(l, name = "") = nothing;
-
-# model = BSON.load(joinpath(sweep_dir, "22", "best-model.bson"))["model"] |> deepcopy;
-model = BSON.load(findendswith(joinpath(sweep_dir, "51", "log"), ".model-best.bson"))[:model] |> deepcopy;
-
-rm.(filter!(s -> startswith(s,"dense-") && endswith(s,".png"), readdir(".")));
-saveheatmap(model.E1, "dense-E1");
-saveheatmap(model.E2, "dense-E2");
-saveheatmap(model.D, "dense-D");
-=#
-
-#=
-let results_dir = "/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v4/sweep"
-
-    function _check_read_path(results_dir, dir)
-        isdir(joinpath(results_dir, dir)) &&
-        isdir(joinpath(results_dir, dir, "log")) &&
-        isfile(joinpath(results_dir, dir, "sweep_settings.toml")) &&
-        !isnothing(findendswith(joinpath(results_dir, dir, "log"), ".errors.bson")) # &&
-        # isnothing(findendswith(joinpath(results_dir, dir, "log"), ".errors.backup.bson"))
-    end
-
-    for dir in filter!(s -> parse(Int, s) >= 270, sort!(filter!(s->isdir(joinpath(results_dir,s)), readdir(results_dir)); by = s -> parse(Int, s)))
-        if _check_read_path(results_dir, dir)
-            @info dir
-            tryshow("Error reading directory: $dir") do
-                state_file             = findendswith(joinpath(results_dir, dir, "log"), "errors.bson")
-                model_best_file        = findendswith(joinpath(results_dir, dir, "log"), "model-best.bson")
-                model_checkpoint_file  = findendswith(joinpath(results_dir, dir, "log"), "model-checkpoint.bson")
-                @time state            = BSON.load(state_file)
-                @time model_best       = BSON.load(model_best_file)
-                @time model_checkpoint = BSON.load(model_checkpoint_file)
-
-                state[:state] = deepcopy(dropmissing(state[:state]))
-                @time BSON.bson(state_file[1:end-5] * ".backup.bson", state)
-            end
-        end
-    end
-end
-=#
 
 nothing

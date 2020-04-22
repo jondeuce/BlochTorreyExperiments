@@ -10,7 +10,7 @@ using DrWatson, Parameters, BenchmarkTools, Dates, TimerOutputs, ThreadPools, Le
 using TOML, BSON, DataFrames
 using Distributions #Turing, MCMCChains
 using BlackBoxOptim, Optim, ForwardDiff
-using UnsafeArrays, TensorCast, Yeppp
+using UnsafeArrays, Yeppp
 using Flux, Zygote
 using DECAES
 using StatsPlots

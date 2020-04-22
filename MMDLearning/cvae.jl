@@ -1,14 +1,10 @@
 # Load files
 include(joinpath(@__DIR__, "src", "mmd_preamble.jl"))
 using MWFLearning
-# using CuArrays
 pyplot(size=(800,600))
-# pyplot(size=(1600,900))
-
 Random.seed!(0);
-const TOY_NOISE_LEVEL = 1e-2;
 
-# Settings
+# CVAE Settings
 findendswith(dir, suffix) = filter!(s -> endswith(s, suffix), readdir(dir)) |> x -> isempty(x) ? nothing : joinpath(dir, first(x))
 const default_settings_file = "/project/st-arausch-1/jcd1994/code/BlochTorreyExperiments-active/MMDLearning/src/cvae_settings.toml"
 const settings = let
@@ -36,8 +32,6 @@ const T    = settings["prec"] == 64 ? Float64 : Float32
 const VT   = Vector{T}
 const MT   = Matrix{T}
 const VMT  = VecOrMat{T}
-const CVT  = GPU ? CuVector{T} : Vector{T}
-maybegpu(x) = GPU ? Flux.gpu(x) : x
 
 const savefoldernames = ["settings", "models", "log", "plots"]
 const savefolders = Dict{String,String}(savefoldernames .=> mkpath.(joinpath.(settings["dir"], savefoldernames)))
@@ -49,30 +43,83 @@ if SAVE
     end
 end
 
+# MMD settings
+const IS_TOY_MODEL = true
+const IS_CORRECTED_MODEL = true
+const mmd_settings = load_settings()
+const models = IS_CORRECTED_MODEL ?
+    IS_TOY_MODEL ?
+        deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v7/sweep/2/best-model.bson")) |> m -> Dict{String,Any}([k => NotTrainable(v) for (k,v) in m]) :
+        error("only toy MMD model trained") :
+    Dict{String, Any}(
+        "vae.E" => identity, # encoder
+        "vae.D" => identity, # decoder
+        "mmd"   => x -> [zero(x); fill(eltype(x)(log(settings["data"]["postprocess"]["noise"])), size(x)...)], # [dX; logeps]
+    )
+
+split_correction_and_noise(μlogσ) = μlogσ[1:end÷2, :], exp.(μlogσ[end÷2+1:end, :])
+noise_instance(X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
+get_correction_and_noise(X) = split_correction_and_noise(models["mmd"](models["vae.E"](X))) # Learning correction + noise
+get_correction(X) = get_correction_and_noise(X)[1]
+get_noise(X) = get_correction_and_noise(X)[2]
+get_noise_instance(X) = noise_instance(X, get_correction_and_noise(X)[2])
+get_corrected_signal(X) = get_corrected_signal(X, get_correction_and_noise(X)...)
+get_corrected_signal(X, dX, ϵ) = get_corrected_signal(abs.(X .+ dX), ϵ)
+function get_corrected_signal(X, ϵ)
+    ϵR, ϵI = noise_instance(X, ϵ), noise_instance(X, ϵ)
+    Xϵ = @. sqrt((X + ϵR)^2 + ϵI^2)
+    !IS_TOY_MODEL && (Xϵ = Xϵ ./ sum(Xϵ; dims = 1))
+    return Xϵ
+end
+
 # Load and prepare signal data
 @info "Preparing data..."
-make_samples(n; power) = (θ = toy_theta_sampler(n); Y = toy_signal_model(θ, nothing, power); return (θ, reshape(Y, size(Y,1), 1, 1, size(Y,2)))) # TOY_NOISE_LEVEL is added in `data_noise` below
-const train_data = training_batches(make_samples(settings["data"]["ntrain"]; power = 4.0)..., settings["data"]["train_batch"]) # train data has different exponent from test
-const test_data = testing_batches(make_samples(settings["data"]["ntest"]; power = 2.0)...) # test data has "true" exponent
+function make_samples(n; power, correction)
+    θ, Y = IS_TOY_MODEL ?
+        toy_theta_sampler(n) |> θ -> (θ, toy_signal_model(θ, nothing, power)) :
+        error("fixme") #TODO FIXME
+    correction && (Y .= abs.(Y .+ get_correction(Y)))
+    Y = reshape(Y, (size(Y,1), 1, 1, size(Y,2)))
+    return θ, Y
+end
+const train_data = training_batches(make_samples(settings["data"]["ntrain"]; power = 4.0, correction = IS_CORRECTED_MODEL)..., settings["data"]["train_batch"]) # train data has different exponent from test
+const test_data = testing_batches(make_samples(settings["data"]["ntest"]; power = 2.0, correction = false)...) # test data has "true" exponent
 
-const thetas_infer_idx = 1:length(settings["data"]["info"]["labinfer"]) # thetas to learn during parameter inference
-thetas = batch -> features(batch)[thetas_infer_idx, :]
+thetas = batch -> features(batch)
 signals = batch -> labels(batch)
 labelbatch(batch) = (signals(batch), thetas(batch))
 
 # Construct model
 @info "Constructing model..."
-m = MWFLearning.make_model(settings, "DenseLIGOCVAE") |> maybegpu;
+m = MWFLearning.make_model(settings, "DenseLIGOCVAE");
 model_summary(m, savepath("models", "architecture.txt"));
 param_summary(m, labelbatch.(train_data), labelbatch(test_data));
 
 # Loss and accuracy function
-theta_weights()::CVT = inv.(settings["data"]["info"]["labwidth"][thetas_infer_idx]) .* unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT |> maybegpu |> CVT
-data_noise(y) = (noise = T(TOY_NOISE_LEVEL); nrm = settings["data"]["preprocess"]["normalize"]::String; y = noise > 0 ? rand.(Rician.(y, noise)) : y; y = nrm == "unitsum" ? unitsum(y; dims = 1) : y; return y)
-H_loss  = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, data_noise(y); gamma = T(settings["model"]["gamma"]))
-L_loss  = @λ (x,y) -> MWFLearning.L_LIGOCVAE(m, x, data_noise(y))
-KL_loss = @λ (x,y) -> MWFLearning.KL_LIGOCVAE(m, x, data_noise(y))
-θloss, θacc, θerr = make_losses(@λ(y -> m(data_noise(y); nsamples = 10)), settings["model"]["loss"], theta_weights())
+theta_weights()::VT = inv.(settings["data"]["info"]["labwidth"]) .* unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT
+function test_data_noise(y)
+    noise = T(settings["data"]["postprocess"]["noise"]::Float64)
+    nrm = settings["data"]["preprocess"]["normalize"]::String
+    y = noise > 0 ? rand.(Rician.(y, noise)) : y
+    y = nrm == "unitsum" ? unitsum(y; dims = 1) : y
+    return y
+end
+function train_data_noise(y)
+    if IS_CORRECTED_MODEL
+        _y = DenseResize()(y)
+        return reshape(get_corrected_signal(_y, get_noise(_y)), size(y))
+    else
+        # no learned noise model; use same noise model as test data
+        test_data_noise(y)
+    end
+end
+test_data_noise(d::Tuple) = (d[1], test_data_noise(d[2]))
+train_data_noise(d::Tuple) = (d[1], train_data_noise(d[2]))
+
+H_loss  = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, y; gamma = T(settings["model"]["gamma"]))
+L_loss  = @λ (x,y) -> MWFLearning.L_LIGOCVAE(m, x, y)
+KL_loss = @λ (x,y) -> MWFLearning.KL_LIGOCVAE(m, x, y)
+θloss, θacc, θerr = make_losses(@λ(y -> m(y; nsamples = 10)), settings["model"]["loss"], theta_weights())
 
 # Optimizer
 opt = Flux.ADAMW(
@@ -138,6 +185,7 @@ train_loop! = function()
             newtrainrow = deepcopy(blanktrainrow)
             newtrainrow[end, :epoch] = epoch
             @timeit timer "train loop" for d in train_data
+                d = train_data_noise(d) # add unique noise instance
                 @timeit timer "forward" ℓ, back = Zygote.pullback(() -> H_loss(d...), Flux.params(m))
                 @timeit timer "reverse" gs = back(1)
                 @timeit timer "update!" Flux.Optimise.update!(opt, Flux.params(m), gs)
@@ -158,11 +206,12 @@ train_loop! = function()
             newtestrow[end, :epoch] = epoch
             if mod(epoch, 10) == 0 #TODO FIXME (10)
                 @timeit timer "test eval" begin
-                    @timeit timer "θerr" newtestrow[end, :labelerr] = θerr(labelbatch(test_data)...)
-                    @timeit timer "θacc" newtestrow[end, :acc]      = θacc(labelbatch(test_data)...)
-                    @timeit timer "H"    newtestrow[end, :loss]     = H_loss(test_data...)
-                    @timeit timer "ELBO" newtestrow[end, :ELBO]     = L_loss(test_data...)
-                    @timeit timer "KL"   newtestrow[end, :KL]       = KL_loss(test_data...)
+                    d = test_data_noise(test_data)
+                    @timeit timer "θerr" newtestrow[end, :labelerr] = θerr(labelbatch(d)...)
+                    @timeit timer "θacc" newtestrow[end, :acc]      = θacc(labelbatch(d)...)
+                    @timeit timer "H"    newtestrow[end, :loss]     = H_loss(d...)
+                    @timeit timer "ELBO" newtestrow[end, :ELBO]     = L_loss(d...)
+                    @timeit timer "KL"   newtestrow[end, :KL]       = KL_loss(d...)
                 end
             end
             append!(state, newtestrow)
@@ -194,12 +243,13 @@ catch e
 end
 
 @info "Computing resulting labels..."
-best_model   = SAVE ? BSON.load(savepath("log", "model-best.bson"))[:model] : deepcopy(m); #TODO FIXME
-# best_model   = deepcopy(m); #TODO FIXME
+# best_model   = BSON.load("/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toycvae-v1/sweep/25/log/2020-04-22-T-03-03-35-577.acc=rmse_gamma=1_loss=l2_DenseLIGOCVAE_Dh=128_Nh=6_Xout=5_Zdim=6_act=relu_dropout=0.model-best.bson")[:model] |> deepcopy; #TODO
+best_model   = SAVE ? BSON.load(savepath("log", "model-best.bson"))[:model] : deepcopy(m); #TODO
+# best_model   = deepcopy(m); #TODO
 eval_data    = test_data
-true_thetas  = thetas(eval_data) |> Flux.cpu;
-true_signals = signals(eval_data) |> Flux.cpu;
-model_mu_std = best_model(true_signals; nsamples = 1000, stddev = true) |> Flux.cpu;
+true_thetas  = thetas(eval_data);
+true_signals = signals(eval_data);
+model_mu_std = best_model(test_data_noise(true_signals); nsamples = 1000, stddev = true); #TODO
 model_thetas, model_stds = model_mu_std[1:end÷2, ..], model_mu_std[end÷2+1:end, ..];
 
 prediction_hist = function()
@@ -323,28 +373,6 @@ end
 @info "Plotting correlation plots..."
 fig = prediction_corrplot(); display(fig)
 SAVE && savefig(fig, savepath("plots", "theta.corrplot.png"))
-=#
-
-forward_plot = function()
-    forward_rmse = function(i)
-        y = sum(signals(eval_data)[:,1,:,i]; dims = 2) # Assumes signal is split linearly into channels
-        z_class = MWFLearning.forward_physics_14arg(true_thetas[:,i:i]) # Forward simulation of true parameters
-        z_model = MWFLearning.forward_physics_14arg(model_thetas[:,i:i]) # Forward simulation of model predicted parameters
-        return (e_class = rmsd(y, z_class), e_model = rmsd(y, z_model))
-    end
-    errors = [forward_rmse(i) for i in 1:batchsize(thetas(eval_data))]
-    e_class = (e -> e.e_class).(errors)
-    e_model = (e -> e.e_model).(errors)
-    p = scatter([e_class e_model];
-        labels = ["RMSE: Classical" "RMSE: Model"],
-        marker = [:circle :square],
-        grid = true, minorgrid = true, titlefontsize = 10, ylim = (0, 0.05)
-    )
-end
-#=
-@info "Plotting forward simulation error plots..."
-fig = forward_plot()
-display(fig) && savefig(fig, savepath("plots", "forwarderror.png"))
 =#
 
 nothing

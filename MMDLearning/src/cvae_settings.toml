@@ -10,10 +10,10 @@ test_data   = ""
 train_data  = ""
 val_batch   = "auto"  # Auto treats entire validation set as one batch
 test_batch  = "auto"  # Auto treats entire test set as one batch
-train_batch = 1024    # Batch size for training
-nval        = 10_240  # Number of validation samples
-ntest       = 10_240  # Number of test samples
-ntrain      = 102_400 # Number of train samples
+train_batch = 256     # Batch size for training
+nval        = 1024    # Number of validation samples
+ntest       = 1024    # Number of test samples
+ntrain      = 4096    # Number of train samples
 [data.info]
 nfeatures   = 128 # Height of input data
 nchannels   = 1 # Number of input data channels
@@ -27,6 +27,8 @@ labscale    = [1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
 labunits    = ["Hz", "rad", "a.u.", "a.u.", "s"] # label units, after scaling
 [data.preprocess]
 normalize   = "" # Normalize input signals (unitsum == signal sums to 1)
+[data.postprocess]
+noise       = 1e-2 # Rician noise level
 
 [model]
 loss      = "l2"

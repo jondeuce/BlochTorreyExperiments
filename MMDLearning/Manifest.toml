@@ -439,6 +439,12 @@ git-tree-sha1 = "96fd99cf83b1952a7d8cb54f4c585a648275805a"
 uuid = "4d00f742-c7ba-57c2-abde-4428a4b178cb"
 version = "0.8.2"
 
+[[GlobalUtils]]
+deps = ["LibGit2"]
+path = "../MyelinWaterTools/GlobalUtils"
+uuid = "5eefa528-4655-44ad-8fd1-8a72c7fb3bd6"
+version = "0.1.0"
+
 [[HDF5]]
 deps = ["BinaryProvider", "Blosc", "CMakeWrapper", "Libdl", "Mmap"]
 git-tree-sha1 = "d3ea5532668bf9bdd5e8d5f16571e0b520cbbb9f"
@@ -535,18 +541,6 @@ version = "1.3.4"
 git-tree-sha1 = "de44b395389b84fd681394d4e8d39ef14e3a2ea8"
 uuid = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 version = "1.1.0"
-
-[[LazyArrays]]
-deps = ["ArrayLayouts", "FillArrays", "LinearAlgebra", "MacroTools", "StaticArrays"]
-git-tree-sha1 = "d10de258d0c999350d433e4eed35201c9d790bcd"
-uuid = "5078a376-72f3-5289-bfd5-ec5146d43c02"
-version = "0.14.11"
-
-[[LazyStack]]
-deps = ["LinearAlgebra", "NamedDims", "OffsetArrays", "Test", "ZygoteRules"]
-git-tree-sha1 = "2e900f3ffe34c8b2c1543b62cc8a4a576c8549aa"
-uuid = "1fad7336-0346-5a1a-a56f-a06ba010965b"
-version = "0.0.5"
 
 [[LegibleLambdas]]
 deps = ["MLStyle", "MacroTools", "Test"]
@@ -685,25 +679,11 @@ git-tree-sha1 = "928b8ca9b2791081dc71a51c55347c27c618760f"
 uuid = "77ba4419-2d1f-58cd-9bb1-8ffee604a2e3"
 version = "0.3.3"
 
-[[NamedDims]]
-deps = ["LinearAlgebra", "Pkg", "Requires", "Statistics"]
-git-tree-sha1 = "1ae209e00d59548db3dead42a4db1c506a8fddfd"
-uuid = "356022a1-0364-5f58-8944-0da4b18d706f"
-version = "0.2.21"
-
 [[NearestNeighbors]]
 deps = ["Distances", "StaticArrays"]
 git-tree-sha1 = "8bc6180f328f3c0ea2663935db880d34c57d6eae"
 uuid = "b8a86587-4115-5ab1-83bc-aa920d37bbce"
 version = "0.4.4"
-
-[[NonNegLeastSquares]]
-deps = ["Distributed", "LinearAlgebra", "SparseArrays"]
-git-tree-sha1 = "df9cc3a19c7ff53df2ae34d2fb781af61ac33312"
-repo-rev = "master"
-repo-url = "https://github.com/jondeuce/NonNegLeastSquares.jl"
-uuid = "e5310699-cd1b-462c-9952-07bc8c12afe1"
-version = "0.2.0"
 
 [[Observables]]
 git-tree-sha1 = "11832878355305984235a2e90d0e3737383c634c"
@@ -999,12 +979,6 @@ deps = ["DataAPI", "DataValueInterfaces", "IteratorInterfaceExtensions", "Linear
 git-tree-sha1 = "c45dcc27331febabc20d86cb3974ef095257dcf3"
 uuid = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
 version = "1.0.4"
-
-[[TensorCast]]
-deps = ["Compat", "LazyArrays", "LazyStack", "LinearAlgebra", "MacroTools", "OffsetArrays", "Random", "StaticArrays", "ZygoteRules"]
-git-tree-sha1 = "036614ce47bfa2eee4d774e5e25409bfc50af7d9"
-uuid = "02d47bb6-7ce6-556a-be16-bb1710789e2b"
-version = "0.2.1"
 
 [[Tensors]]
 deps = ["ForwardDiff", "LinearAlgebra", "SIMD", "Statistics"]
