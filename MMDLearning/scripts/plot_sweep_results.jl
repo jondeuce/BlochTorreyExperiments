@@ -90,7 +90,8 @@ end
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v5"
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v7"
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v1"
-results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mmdopt-v2"
+# results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v2"
+results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mmdopt-v3"
 sweep_dir = joinpath(results_dir, "sweep");
 df_best, df_curr, sweep_temp, prog_temp = read_results(sweep_dir);
 # df = df_best
@@ -120,17 +121,19 @@ function make_plots(df, sweepcols, metric, thresh = 0.5)
     ps = []
     for sweepparam in uniquesweepcols
         s = x -> x isa Number ? x == round(x) ? string(round(Int, x)) : string(round(x; sigdigits = 3)) : string(x)
-        p = plot(; xlabel = sweepparam, ylabel = metric, leg = :none, yscale = :identity)
+        p = plot(; xlabel = sweepparam, ylabel = metric, leg = :none, xrot = 30, yscale = :identity)
         @df dfp  violin!(p, s.(cols(sweepparam)), cols(metric); marker = (0.2, :blue, stroke(0)))
         @df dfp boxplot!(p, s.(cols(sweepparam)), cols(metric); marker = (0.3, :orange, stroke(2)), alpha = 0.75)
         @df dfp dotplot!(p, s.(cols(sweepparam)), cols(metric); marker = (:black, stroke(0)))
         push!(ps, p)
     end
-    plot(ps...) |> display
+    p = plot(ps...)
+    savefig.(joinpath.(results_dir, "results-by-$metric" .* [".png", ".pdf"]))
+    display(p)
     nothing
 end
 # make_plots.(Ref(df), Ref(names(sweep_temp)), [:loss, :rmse, :linf, :time], [0.5, 0.5, 0.5, 1.0]);
-make_plots.(Ref(df), Ref(names(sweep_temp)), [:signal_fit_rmse, :signal_fit_logL], 1.0);
+make_plots.(Ref(df), Ref(names(sweep_temp)), [:signal_fit_rmse, :signal_fit_logL], 0.95); #1.0);
 
 nothing
 

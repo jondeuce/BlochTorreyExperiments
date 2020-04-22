@@ -225,10 +225,14 @@ version = "2.0.1"
 [[DECAES]]
 deps = ["ArgParse", "Dierckx", "LinearAlgebra", "Logging", "LoggingExtras", "MAT", "NIfTI", "Optim", "Parameters", "PolynomialRoots", "Polynomials", "Random", "SIMD", "SpecialFunctions", "StaticArrays", "Statistics", "TimerOutputs"]
 git-tree-sha1 = "63eae399f8bad44591a009c3f2d55b773df053ef"
-repo-rev = "master"
-repo-url = "https://github.com/jondeuce/DECAES.jl.git"
 uuid = "d84fb938-a666-558e-89d9-d531edc6724f"
 version = "0.1.0"
+
+[[DSP]]
+deps = ["FFTW", "IterTools", "LinearAlgebra", "Polynomials", "Random", "Reexport", "SpecialFunctions", "Statistics"]
+git-tree-sha1 = "302ad2e27750367ccd17515810d322fa3d42d9f8"
+uuid = "717857b8-e6f2-59f4-9121-6e50c889abd2"
+version = "0.6.5"
 
 [[DataAPI]]
 git-tree-sha1 = "674b67f344687a88310213ddfa8a2b3c76cc4252"
@@ -311,6 +315,11 @@ deps = ["FileIO", "LibGit2", "Pkg", "Random", "Requires"]
 git-tree-sha1 = "088ce4bce400017097f0f94039e0d5026ffef1d4"
 uuid = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
 version = "1.10.2"
+
+[[EllipsisNotation]]
+git-tree-sha1 = "65dad386e877850e6fce4fc77f60fe75a468ce9d"
+uuid = "da5c29d0-fa7d-589e-88eb-ea29b0a81949"
+version = "0.4.0"
 
 [[ExprTools]]
 git-tree-sha1 = "6f0517056812fd6aa3af23d4b70d5325a2ae4e95"
@@ -419,6 +428,11 @@ git-tree-sha1 = "039be665faf0b8ae36e089cd694233f5dee3f7d6"
 uuid = "92fee26a-97fe-5a0c-ad85-20a5f3185b63"
 version = "0.5.1"
 
+[[GeometricalPredicates]]
+git-tree-sha1 = "04776c0dc233eafa617b1a52ca58db2338b08836"
+uuid = "fd0ad045-b25c-564e-8f9c-8ef5c5f21267"
+version = "0.4.0"
+
 [[GeometryTypes]]
 deps = ["ColorTypes", "FixedPointNumbers", "LinearAlgebra", "StaticArrays"]
 git-tree-sha1 = "96fd99cf83b1952a7d8cb54f4c585a648275805a"
@@ -464,6 +478,11 @@ deps = ["Test"]
 git-tree-sha1 = "15732c475062348b0165684ffe28e85ea8396afc"
 uuid = "41ab1584-1d38-5bbf-9106-f11c6c58b48f"
 version = "1.0.0"
+
+[[IterTools]]
+git-tree-sha1 = "05110a2ab1fc5f932622ffea2a003221f4782c18"
+uuid = "c8e1da08-722c-5040-9ed9-7db0dc04731e"
+version = "1.3.0"
 
 [[IteratorInterfaceExtensions]]
 git-tree-sha1 = "a3f24677c21f5bbe9d2a714f95dcd58337fb2856"
@@ -595,6 +614,12 @@ git-tree-sha1 = "67f9a88611bc79f992aa705d9bbc833a2547dec7"
 uuid = "d8e11817-5142-5d16-987a-aa16d5891078"
 version = "0.3.1"
 
+[[MWFLearning]]
+deps = ["BSON", "DECAES", "DataFrames", "Dates", "Distributions", "DrWatson", "EllipsisNotation", "FFTW", "Flux", "Interpolations", "LaTeXStrings", "LegibleLambdas", "MultivariateStats", "Parameters", "Printf", "Random", "RecipesBase", "Reexport", "StaticArrays", "Statistics", "StatsBase", "StatsPlots", "TOML", "Tensors", "TimerOutputs", "VoronoiDelaunay", "Wavelets"]
+path = "../MyelinWaterTools/MWFLearning"
+uuid = "fb932f02-d84e-4be9-be1b-a664ab1238d8"
+version = "0.1.0"
+
 [[MacroTools]]
 deps = ["Markdown", "Random"]
 git-tree-sha1 = "f7d2e3f654af75f01ec49be82c231c382214223a"
@@ -671,6 +696,14 @@ deps = ["Distances", "StaticArrays"]
 git-tree-sha1 = "8bc6180f328f3c0ea2663935db880d34c57d6eae"
 uuid = "b8a86587-4115-5ab1-83bc-aa920d37bbce"
 version = "0.4.4"
+
+[[NonNegLeastSquares]]
+deps = ["Distributed", "LinearAlgebra", "SparseArrays"]
+git-tree-sha1 = "df9cc3a19c7ff53df2ae34d2fb781af61ac33312"
+repo-rev = "master"
+repo-url = "https://github.com/jondeuce/NonNegLeastSquares.jl"
+uuid = "e5310699-cd1b-462c-9952-07bc8c12afe1"
+version = "0.2.0"
 
 [[Observables]]
 git-tree-sha1 = "11832878355305984235a2e90d0e3737383c634c"
@@ -973,6 +1006,12 @@ git-tree-sha1 = "036614ce47bfa2eee4d774e5e25409bfc50af7d9"
 uuid = "02d47bb6-7ce6-556a-be16-bb1710789e2b"
 version = "0.2.1"
 
+[[Tensors]]
+deps = ["ForwardDiff", "LinearAlgebra", "SIMD", "Statistics"]
+git-tree-sha1 = "8ebd2e10f97a7bfe12bb3098ad1df107281cf6a5"
+uuid = "48a634ad-e948-5137-8d70-aa71f2a747f4"
+version = "1.4.2"
+
 [[Test]]
 deps = ["Distributed", "InteractiveUtils", "Logging", "Random"]
 uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
@@ -1028,6 +1067,18 @@ version = "1.0.0"
 git-tree-sha1 = "80229be1f670524750d905f8fc8148e5a8c4537f"
 uuid = "81def892-9a0e-5fdd-b105-ffc91e053289"
 version = "1.2.0"
+
+[[VoronoiDelaunay]]
+deps = ["Colors", "GeometricalPredicates", "Random"]
+git-tree-sha1 = "da5560a4c7c767476e85e2dbf4d8c8ca112e542b"
+uuid = "72f80fcb-8c52-57d9-aff0-40c1a3526986"
+version = "0.4.0"
+
+[[Wavelets]]
+deps = ["DSP", "FFTW", "LinearAlgebra", "Reexport", "SpecialFunctions", "Statistics"]
+git-tree-sha1 = "cb038eef518203e50c01e619302deed88bdc45cb"
+uuid = "29a6e085-ba6d-5f35-a997-948ac2efa89a"
+version = "0.9.0"
 
 [[Widgets]]
 deps = ["Colors", "Dates", "Observables", "OrderedCollections"]

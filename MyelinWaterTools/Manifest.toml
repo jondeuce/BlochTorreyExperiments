@@ -289,9 +289,7 @@ version = "2.0.1"
 
 [[DECAES]]
 deps = ["ArgParse", "Dierckx", "LinearAlgebra", "Logging", "LoggingExtras", "MAT", "NIfTI", "Optim", "Parameters", "PolynomialRoots", "Polynomials", "Random", "SIMD", "SpecialFunctions", "StaticArrays", "Statistics", "TimerOutputs"]
-git-tree-sha1 = "917e71639348a7c20420906c3d08a6b23669120f"
-repo-rev = "master"
-repo-url = "https://github.com/jondeuce/DECAES.jl.git"
+git-tree-sha1 = "63eae399f8bad44591a009c3f2d55b773df053ef"
 uuid = "d84fb938-a666-558e-89d9-d531edc6724f"
 version = "0.1.0"
 
@@ -811,7 +809,7 @@ uuid = "d8e11817-5142-5d16-987a-aa16d5891078"
 version = "0.3.1"
 
 [[MWFLearning]]
-deps = ["BSON", "DataFrames", "Dates", "DistMesh", "Distributions", "DrWatson", "EllipsisNotation", "FFTW", "Flux", "GeometryUtils", "Interpolations", "JuAFEM", "LaTeXStrings", "LegibleLambdas", "MultivariateStats", "NonNegLeastSquares", "Parameters", "Printf", "Random", "RecipesBase", "Reexport", "StaticArrays", "Statistics", "StatsBase", "StatsPlots", "TOML", "Tensors", "TimerOutputs", "VoronoiDelaunay", "Wavelets"]
+deps = ["BSON", "DECAES", "DataFrames", "Dates", "Distributions", "DrWatson", "EllipsisNotation", "FFTW", "Flux", "Interpolations", "LaTeXStrings", "LegibleLambdas", "MultivariateStats", "NonNegLeastSquares", "Parameters", "Printf", "Random", "RecipesBase", "Reexport", "StaticArrays", "Statistics", "StatsBase", "StatsPlots", "TOML", "Tensors", "TimerOutputs", "VoronoiDelaunay", "Wavelets"]
 path = "MWFLearning"
 uuid = "fb932f02-d84e-4be9-be1b-a664ab1238d8"
 version = "0.1.0"
@@ -1424,9 +1422,9 @@ version = "1.4.1"
 
 [[XML2_jll]]
 deps = ["Libdl", "Libiconv_jll", "Pkg", "Zlib_jll"]
-git-tree-sha1 = "39a309feb51413d39bdf544cf2fd09357bae37d2"
+git-tree-sha1 = "987c02a43fa10a491a5f0f7c46a6d3559ed6a8e2"
 uuid = "02c8fc9c-b97f-50b9-bbe4-9be30ff0a78a"
-version = "2.9.9+2"
+version = "2.9.9+4"
 
 [[ZipFile]]
 deps = ["Libdl", "Printf", "Zlib_jll"]

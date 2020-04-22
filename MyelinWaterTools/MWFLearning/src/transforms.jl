@@ -50,12 +50,9 @@ function ilaplace!(bufs, b::AbstractVecOrMat, τ::AbstractVector, η::Number, α
     end
 
     if NNLSsolution
-        work = NNLSWorkspace(B, x[:,1])
+        work = DECAES.lsqnonneg_work(B, x[:,1])
         for j in 1:size(b,2)
-            @views xj = x[:,j]
-            load!(work, B, xj)
-            solve!(work)
-            xj .= work.x
+            x[:,j] .= DECAES.lsqnonneg!(work, B, x[:,j])
         end
     else
         ldiv!(cholesky!(B), x) # Invert A'A + α^2*I onto A'b
