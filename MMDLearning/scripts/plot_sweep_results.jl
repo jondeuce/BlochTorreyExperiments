@@ -62,17 +62,11 @@ function read_results(results_dir)
             df_curr_row.time[1] = sum(df_curr.time)
 
             # minimum over last WINDOW entries
-            WINDOW = 100
+            WINDOW = 10
             df_curr_row.signal_fit_logL[1] = minimum(df_curr.signal_fit_logL[clamp(end-WINDOW+1,1,end) : end])
             df_curr_row.signal_fit_rmse[1] = minimum(df_curr.signal_fit_rmse[clamp(end-WINDOW+1,1,end) : end])
 
             currfolder = basename(root)
-            if !(nrow(df_sweep) == nrow(df_best_row) == nrow(df_curr_row))
-                display(df_sweep)
-                @show size(df_sweep)
-                @show size(df_best_row)
-                @show size(df_curr_row)
-            end
             best_results = append!(best_results, hcat(DataFrame(:folder => currfolder), df_sweep, df_best_row))
             curr_results = append!(curr_results, hcat(DataFrame(:folder => currfolder), df_sweep, df_curr_row))
         end

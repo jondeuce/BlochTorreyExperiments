@@ -6,18 +6,13 @@ Random.seed!(0);
 
 # CVAE Settings
 findendswith(dir, suffix) = filter!(s -> endswith(s, suffix), readdir(dir)) |> x -> isempty(x) ? nothing : joinpath(dir, first(x))
-const default_settings_file = "/project/st-arausch-1/jcd1994/code/BlochTorreyExperiments-active/MMDLearning/src/cvae_settings.toml"
+const default_settings_file = joinpath(@__DIR__, "src", "cvae_settings.toml")
 const settings = let
     # Load default settings + merge in custom settings, if given
     settings = TOML.parsefile(default_settings_file)
     mergereducer!(x, y) = deepcopy(y) # fallback
     mergereducer!(x::Dict, y::Dict) = merge!(mergereducer!, x, y)
-    if haskey(ENV, "SETTINGSFILE")
-        merge!(mergereducer!, settings, TOML.parsefile(ENV["SETTINGSFILE"]))
-    end
-    if false #TODO FIXME
-        merge!(mergereducer!, settings, TOML.parsefile(findendswith("/project/st-arausch-1/jcd1994/simulations/ismrm2020/cvae-diff-med-2-v5/sweep/18/settings/", ".settings.toml")))
-    end
+    haskey(ENV, "SETTINGSFILE") && merge!(mergereducer!, settings, TOML.parsefile(ENV["SETTINGSFILE"]))
     TOML.print(stdout, settings)
     settings
 end
@@ -45,7 +40,7 @@ end
 
 # MMD settings
 const IS_TOY_MODEL = true
-const IS_CORRECTED_MODEL = true
+const IS_CORRECTED_MODEL = false
 const mmd_settings = load_settings()
 const models = IS_CORRECTED_MODEL ?
     IS_TOY_MODEL ?
@@ -62,7 +57,7 @@ noise_instance(X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
 get_correction_and_noise(X) = split_correction_and_noise(models["mmd"](models["vae.E"](X))) # Learning correction + noise
 get_correction(X) = get_correction_and_noise(X)[1]
 get_noise(X) = get_correction_and_noise(X)[2]
-get_noise_instance(X) = noise_instance(X, get_correction_and_noise(X)[2])
+get_noise_instance(X) = noise_instance(X, get_noise(X))
 get_corrected_signal(X) = get_corrected_signal(X, get_correction_and_noise(X)...)
 get_corrected_signal(X, dX, ϵ) = get_corrected_signal(abs.(X .+ dX), ϵ)
 function get_corrected_signal(X, ϵ)
@@ -206,7 +201,7 @@ train_loop! = function()
             newtestrow[end, :epoch] = epoch
             if mod(epoch, 10) == 0 #TODO FIXME (10)
                 @timeit timer "test eval" begin
-                    d = test_data_noise(test_data)
+                    d = test_data_noise(test_data) # add unique noise instance
                     @timeit timer "θerr" newtestrow[end, :labelerr] = θerr(labelbatch(d)...)
                     @timeit timer "θacc" newtestrow[end, :acc]      = θacc(labelbatch(d)...)
                     @timeit timer "H"    newtestrow[end, :loss]     = H_loss(d...)
