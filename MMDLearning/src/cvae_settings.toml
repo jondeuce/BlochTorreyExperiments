@@ -43,8 +43,8 @@ labunits    = ["deg", "ms", "ms", "a.u."] # label units, after scaling
 [data.preprocess]
 normalize   = "unitsum" # Normalize input signals (unitsum == signal sums to 1)
 [data.postprocess]
-noise       = 0.0005268893450128011 # Median Rician noise level resulting from MLE fits after: filter!(r -> r.T2short <= 100 && r.dT2 <= 500 && r.loss <= -200, results)
-# noise     = 0.0006778246381186076 # Mean Rician noise level resulting from MLE fits after: filter!(r -> r.T2short <= 100 && r.dT2 <= 500 && r.loss <= -200, results)
+noise       = 0.0003665680006339801 # Median Rician noise level resulting from MLE fits after: filter!(r -> r.T2short <= 100 && r.dT2 <= 500 && r.loss <= -200, results)
+# noise     = 0.0006037022217142547 # Mean Rician noise level resulting from MLE fits after: filter!(r -> r.T2short <= 100 && r.dT2 <= 500 && r.loss <= -200, results)
 
 [model]
 loss      = "l2"
@@ -61,7 +61,7 @@ gamma     = 1.0 # Reweighting factor: loss = gamma * ELBO + KLdiv
 # act       = "relu"
 Xout      = 4 # Number of learned labels
 Nh        = 4 # Number of inner hidden dense layers
-Dh        = 128 # Dimension of inner hidden dense layers
+Dh        = 64 # Dimension of inner hidden dense layers
 Zdim      = 8 # Latent variable dimension
 dropout   = 0.0 # Dropout layer
 act       = "relu"

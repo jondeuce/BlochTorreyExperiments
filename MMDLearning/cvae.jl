@@ -112,25 +112,26 @@ function rician_data_noise(y)
     return y
 end
 function learned_data_noise(y)
-    nrm = settings["data"]["preprocess"]["normalize"]::String
-    _y = DenseResize()(y)
-    y = reshape(get_corrected_signal(_y, get_noise(_y)), size(y))
-    y = nrm == "unitsum" ? unitsum(y; dims = 1) : y
-    return y
+    # nrm = settings["data"]["preprocess"]["normalize"]::String
+    # _y = DenseResize()(y)
+    # y = reshape(get_corrected_signal(_y, get_noise(_y)), size(y))
+    # y = nrm == "unitsum" ? unitsum(y; dims = 1) : y
+    # return y
+    return rician_data_noise(y) #TODO
 end
 test_data_noise(y) = IS_TOY_MODEL ? rician_data_noise(y) : learned_data_noise(y)
 train_data_noise(y) = !IS_CORRECTED_MODEL ? rician_data_noise(y) : learned_data_noise(y)
 test_data_noise(d::Tuple) = (d[1], test_data_noise(d[2]))
 train_data_noise(d::Tuple) = (d[1], train_data_noise(d[2]))
 
-# #TODO
+#TODO
 # pyplot(size = (1200,800))
-# plot(
-#     plot(((test_data[2])[:,1,1,1:3]); title = "test"),
-#     plot(test_data_noise((test_data[2])[:,1,1,1:3]); title = "noisy test"),
-#     plot(((train_data[1][2])[:,1,1,4:6]); title = "train"),
-#     plot(train_data_noise((train_data[1][2])[:,1,1,4:6]); title = "noisy train"),
-# ) |> display
+plot(
+    plot(((test_data[2])[:,1,1,1:3]); title = "test"),
+    plot(test_data_noise((test_data[2])[:,1,1,1:3]); title = "noisy test"),
+    plot(((train_data[1][2])[:,1,1,4:6]); title = "train"),
+    plot(train_data_noise((train_data[1][2])[:,1,1,4:6]); title = "noisy train"),
+) |> display
 
 H_loss  = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, y; gamma = T(settings["model"]["gamma"]))
 L_loss  = @λ (x,y) -> MWFLearning.L_LIGOCVAE(m, x, y)
@@ -208,7 +209,7 @@ train_loop! = function()
 
                 # Update training losses periodically
                 set_or_add!(newtrainrow, ℓ, :loss)
-                if mod(epoch, 1) == 0 #TODO FIXME (10)
+                if mod(epoch, 5) == 0 #TODO FIXME (10)
                     @timeit timer "θerr" set_or_add!(newtrainrow, θerr(labelbatch(d)...), :labelerr)
                     @timeit timer "θacc" set_or_add!(newtrainrow, θacc(labelbatch(d)...), :acc)
                     @timeit timer "ELBO" set_or_add!(newtrainrow, L_loss(d...),  :ELBO)
@@ -220,7 +221,7 @@ train_loop! = function()
             # Testing evaluation
             newtestrow = deepcopy(blanktestrow)
             newtestrow[end, :epoch] = epoch
-            if mod(epoch, 1) == 0 #TODO FIXME (10)
+            if mod(epoch, 5) == 0 #TODO FIXME (10)
                 @timeit timer "test eval" begin
                     d = test_data_noise(test_data) # add unique noise instance
                     @timeit timer "θerr" newtestrow[end, :labelerr] = θerr(labelbatch(d)...)
@@ -236,7 +237,7 @@ train_loop! = function()
             @timeit timer "posttraincbs" posttraincbs()
         end
 
-        if mod(epoch, 1) == 0 #TODO FIXME (100)
+        if mod(epoch, 5) == 0 #TODO FIXME (100)
             show(stdout, timer); println("\n")
             show(stdout, last(state, 10)); println("\n")
         end
@@ -263,8 +264,10 @@ end
 best_model   = SAVE ? BSON.load(savepath("log", "model-best.bson"))[:model] : deepcopy(m); #TODO
 # best_model   = deepcopy(m); #TODO
 eval_data    = test_data
-true_thetas  = thetas(eval_data);
-true_signals = signals(eval_data);
+# true_thetas  = thetas(eval_data);
+# true_signals = signals(eval_data);
+true_thetas  = thetas(eval_data)[..,1:10000]; #TODO FIXME
+true_signals = signals(eval_data)[..,1:10000]; #TODO FIXME
 model_mu_std = best_model(test_data_noise(true_signals); nsamples = 1000, stddev = true); #TODO
 model_thetas, model_stds = model_mu_std[1:end÷2, ..], model_mu_std[end÷2+1:end, ..];
 
