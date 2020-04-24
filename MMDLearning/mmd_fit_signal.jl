@@ -146,7 +146,7 @@ end
 #### Batch signal fitting
 ####
 
-#= Perform fitting of one "batch" =#
+#= Perform fitting of one "batch"
 const image_indices         = shuffle(MersenneTwister(0), filter(I -> image[I,1] > 0, CartesianIndices(size(image)[1:3]))) #TODO
 const image_indices_batches = collect(Iterators.partition(image_indices, settings["prior"]["fitting"]["batchsize"]))
 const image_indices_batch   = image_indices_batches[settings["prior"]["fitting"]["batchindex"]]
@@ -164,6 +164,7 @@ DrWatson.@tagsave(
     safe = true,
     gitpath = realpath(DrWatson.projectdir("..")),
 )
+=#
 
 #= Sample + fit random signals based on fit-to-noise ratio (FNR)
 let I = rand(findall(I -> !isnan(t2maps["fnr"][I]) && 50 <= t2maps["fnr"][I] <= 100, CartesianIndices(size(image)[1:3])))
@@ -236,7 +237,7 @@ DrWatson.@tagsave(
 #### Investigating correcting fit results
 ####
 
-#=
+#= =#
 function make_mle_funs(
         signal::AbstractVector{T};
         TE::T                = T(opts.TE),
@@ -281,35 +282,50 @@ function correct_results(df)
     nothing
 end
 
+# correct_results(df)
+empty!(Revise.queue_errors);
 df = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v2/mlefits-shuffled.bson")["results"])
-correct_results(df)
-=#
+let
+    res = deepcopy(df)
+    filter!(r -> !(999.99 <= r.dT2 && 999.99 <= r.T2short), res) # drop boundary failures
+    # filter!(r -> r.dT2 <= 999.99, res) # drop boundary failures
+    filter!(r -> r.dT2 <= 500, res) # drop long dT2 which can't be recovered
+    filter!(r -> 0.01 <= r.Ashort <= 0.99, res) # drop degenerate (monoexponential) fits
+    # filter!(r -> r.alpha <= 179.99, res)
+    # filter!(r -> 0.1 <= r.Ashort <= 0.9, res) # window filter
+    filter!(r -> r.T2short <= 100, res) # drop long T2short (very few points)
+    filter!(r -> 8.01 <= r.T2short, res) # drop boundary failures
+    filter!(r -> 8.01 <= r.dT2, res) # drop boundary failures
+    filter!(r -> r.loss <= -250, res) # drop poor fits long T2short (very few points)
 
-#=
-let res = deepcopy(df)
-    filter!(r -> r.T2short <= 100, res)
-    filter!(r -> r.loss <= -230, res)
     @show nrow(res)/nrow(df)
 
-    plot(map([:alpha, :T2short, :T2long, :Ashort, :loss, :fcalls]) do col
+    plot(map([:alpha, :T2short, :dT2, :Ashort, :loss]) do col
         @show col, quantile(res[!,col], 0.99)
-        histogram(res[!,col]; lab = col)
+        # lo, up = extrema(res[!,col])
+        # trans = x -> -cos(pi * (x - lo)/(up - lo)) # scale [lo,up] -> [0,pi] -> [0,1]
+        # trans = identity
+        th = res[:,col]
+        (col === :alpha) && (th .= cosd.(th))
+        # (col === :Ashort) && (th .= sind.(90 .* th))
+        histogram(th; lab = col)
     end...) |> display
 
     # filter!(r -> r.loss <= -350, res)
-    filter!(r -> -250 <= r.loss <= -230, res)
+    filter!(r -> -275 <= r.loss <= -250, res)
+    # filter!(r -> -250 <= r.loss <= -230, res)
+    # filter!(r -> -225 <= r.loss <= -200, res)
     idx   = CartesianIndex.(res[:, :index])
     theta = permutedims(convert(Matrix, res[:, [:alpha, :T2short, :dT2, :Ashort, :logsigma]]))
-    map(sample(1:nrow(res), 10; replace = false)) do i
-        y0 = image[idx[i],:]
-        mlemodel, mleloss = make_mle_funs(y0)
-        y = mlemodel(theta[:,i])
-        plot([y0./sum(y0) y]; lab = ["true" "fit"], title = "loss = $(res.loss[i])") |> display
-    end
+    # map(sample(1:nrow(res), 10; replace = false)) do i
+    #     y0 = image[idx[i],:]
+    #     mlemodel, mleloss = make_mle_funs(y0)
+    #     y = mlemodel(theta[:,i])
+    #     plot([y0./sum(y0) y]; lab = ["true" "fit"], title = "loss = $(res.loss[i])") |> display
+    # end
 
     nothing
 end
-=#
 
 #=
 #TODO: for watching failed qsubs

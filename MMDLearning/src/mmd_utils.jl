@@ -294,20 +294,34 @@ function make_mle_data_samplers(
     # Set random seed for consistent test/train sets
     rng = Random.seed!(0)
 
-    # Load + preprocess results
-    results = deepcopy(BSON.load(thetaspath)["results"])
-    #filter!(r -> r.T2short <= 100 && r.loss <= -200 && r.dT2 <= 500, results) # throw out ~2% of poor fits on mlefit-v1
-    filter!(r -> r.T2short <= 100 && r.loss <= -230, results) # throw out ~4% of poor fits on mlefit-v2
-    thetas = permutedims(convert(Matrix{Float64}, results[:, [:alpha, :T2short, :dT2, :Ashort]])) # convert to ntheta x nSamples Matrix
+    # Load + preprocess results (~20% of voxels dropped)
+    res = deepcopy(BSON.load(thetaspath)["results"])
+    println("before filter: $(nrow(res))")
+
+    filter!(r -> !(999.99 <= r.dT2 && 999.99 <= r.T2short), res) # drop boundary failures
+    # filter!(r -> r.dT2 <= 999.99, res) # drop boundary failures
+    filter!(r -> r.dT2 <= 500, res) # drop long dT2 which can't be recovered
+    filter!(r -> 0.01 <= r.Ashort <= 0.99, res) # drop degenerate (monoexponential) fits
+    # filter!(r -> r.alpha <= 179.99, res)
+    # filter!(r -> 0.1 <= r.Ashort <= 0.9, res) # window filter
+    filter!(r -> r.T2short <= 100, res) # drop long T2short (very few points)
+    filter!(r -> 8.01 <= r.T2short, res) # drop boundary failures
+    filter!(r -> 8.01 <= r.dT2, res) # drop boundary failures
+    filter!(r -> r.loss <= -250, res) # drop poor fits long T2short (very few points)
+
+    res = res[shuffle(MersenneTwister(0), 1:nrow(res)), :]
+    println("after filter:  $(nrow(res))")
+
+    thetas = permutedims(convert(Matrix{Float64}, res[:, [:alpha, :T2short, :dT2, :Ashort]])) # convert to ntheta x nSamples Matrix
 
     # Plot prior distribution histograms
     plothist && display(plot(mapreduce(vcat, [:alpha, :T2short, :dT2, :Ashort, :logsigma, :loss]; init = Any[]) do c
-        histogram(results[!,c]; lab = c, nbins = 75)
+        histogram(res[!,c]; lab = c, nbins = 75)
     end...))
 
     # Load image, keeping signals which correspond to thetas
     image = DECAES.load_image(imagepath) # load 4D MatrixSize x nTE image
-    Y = convert(Matrix{Float64}, permutedims(image[CartesianIndex.(results[!, :index]), :])) # convert to nTE x nSamples Matrix
+    Y = convert(Matrix{Float64}, permutedims(image[CartesianIndex.(res[!, :index]), :])) # convert to nTE x nSamples Matrix
     Y ./= sum(Y; dims = 1) # Normalize signals to unit sum
 
     # Forward simulation params

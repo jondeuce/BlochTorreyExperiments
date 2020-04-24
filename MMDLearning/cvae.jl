@@ -81,8 +81,17 @@ function make_samples(n; dataset)
     else
         # train data has different distribution (EPG model), test data has "true" distribution (MMD-corrected EPG model)
         sampleY, _, sampleθ = make_mle_data_samplers(mmd_settings["prior"]["data"]["image"]::String, mmd_settings["prior"]["data"]["thetas"]::String; ntheta = mmd_settings["data"]["ntheta"]::Int, plothist = false)
-        θ = sampleθ(nothing; dataset = dataset) #[:, 1:n] #TODO
-        Y = sampleY(nothing; dataset = dataset) #[:, 1:n] #TODO
+        θ = copy(sampleθ(nothing; dataset = dataset)) #[:, 1:10000] #[:, 1:n] #TODO FIXME
+        Y = copy(sampleY(nothing; dataset = dataset)) #[:, 1:10000] #[:, 1:n] #TODO FIXME
+        θ[1,:] .= cosd.(θ[1,:]) # transform flipangle -> cos(flipangle)
+        θ[3,:] .= θ[2,:] .+ θ[3,:] # transform dT2 -> T2long = T2short + dT2
+        # θ[2,:] .*= θ[4,:] # transform T2short -> Ashort * T2short
+        # θ[3,:] .*= (1 .- θ[4,:]) # transform T2long -> Along * T2long = (1 - Ashort) * T2long
+        for i in 1:size(θ,1)
+            lo, hi = extrema(θ[i,:])
+            settings["data"]["info"]["labmean"][i] = (hi + lo)/2
+            settings["data"]["info"]["labwidth"][i] = hi - lo
+        end
         # "true" dataset is the corrected model, so apply to all except when training on non-corrected data
         (IS_CORRECTED_MODEL || dataset !== :train) && (Y .= abs.(Y .+ get_correction(Y)); Y ./= sum(Y; dims = 1))
         Y = reshape(Y, (size(Y,1), 1, 1, size(Y,2)))
@@ -124,14 +133,14 @@ train_data_noise(y) = !IS_CORRECTED_MODEL ? rician_data_noise(y) : learned_data_
 test_data_noise(d::Tuple) = (d[1], test_data_noise(d[2]))
 train_data_noise(d::Tuple) = (d[1], train_data_noise(d[2]))
 
-#TODO
-# pyplot(size = (1200,800))
+#= #TODO
 plot(
     plot(((test_data[2])[:,1,1,1:3]); title = "test"),
     plot(test_data_noise((test_data[2])[:,1,1,1:3]); title = "noisy test"),
     plot(((train_data[1][2])[:,1,1,4:6]); title = "train"),
     plot(train_data_noise((train_data[1][2])[:,1,1,4:6]); title = "noisy train"),
 ) |> display
+=#
 
 H_loss  = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, y; gamma = T(settings["model"]["gamma"]))
 L_loss  = @λ (x,y) -> MWFLearning.L_LIGOCVAE(m, x, y)
@@ -179,10 +188,10 @@ pretraincbs = Flux.Optimise.runall([
 
 posttraincbs = Flux.Optimise.runall([
     save_best_model_cb,
-    Flux.throttle(checkpoint_state_cb, 30; leading = false), #TODO FIXME (300)
-    Flux.throttle(checkpoint_model_cb, 30; leading = false), #TODO FIXME (300)
-    Flux.throttle(plot_errs_cb, 30; leading = false), #TODO FIXME (300)
-    Flux.throttle(plot_ligocvae_losses_cb, 30; leading = false), #TODO FIXME (300)
+    Flux.throttle(checkpoint_state_cb, 300; leading = false), #TODO FIXME (300)
+    Flux.throttle(checkpoint_model_cb, 300; leading = false), #TODO FIXME (300)
+    Flux.throttle(plot_errs_cb, 300; leading = false), #TODO FIXME (300)
+    Flux.throttle(plot_ligocvae_losses_cb, 300; leading = false), #TODO FIXME (300)
 ])
 
 # Training Loop
@@ -209,7 +218,7 @@ train_loop! = function()
 
                 # Update training losses periodically
                 set_or_add!(newtrainrow, ℓ, :loss)
-                if mod(epoch, 5) == 0 #TODO FIXME (10)
+                if mod(epoch, 10) == 0 #TODO FIXME (10)
                     @timeit timer "θerr" set_or_add!(newtrainrow, θerr(labelbatch(d)...), :labelerr)
                     @timeit timer "θacc" set_or_add!(newtrainrow, θacc(labelbatch(d)...), :acc)
                     @timeit timer "ELBO" set_or_add!(newtrainrow, L_loss(d...),  :ELBO)
@@ -221,7 +230,7 @@ train_loop! = function()
             # Testing evaluation
             newtestrow = deepcopy(blanktestrow)
             newtestrow[end, :epoch] = epoch
-            if mod(epoch, 5) == 0 #TODO FIXME (10)
+            if mod(epoch, 10) == 0 #TODO FIXME (10)
                 @timeit timer "test eval" begin
                     d = test_data_noise(test_data) # add unique noise instance
                     @timeit timer "θerr" newtestrow[end, :labelerr] = θerr(labelbatch(d)...)
@@ -237,7 +246,7 @@ train_loop! = function()
             @timeit timer "posttraincbs" posttraincbs()
         end
 
-        if mod(epoch, 5) == 0 #TODO FIXME (100)
+        if mod(epoch, 10) == 0 #TODO FIXME (100)
             show(stdout, timer); println("\n")
             show(stdout, last(state, 10)); println("\n")
         end
@@ -262,12 +271,16 @@ end
 @info "Computing resulting labels..."
 # best_model   = BSON.load("/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toycvae-v1/sweep/25/log/2020-04-22-T-03-03-35-577.acc=rmse_gamma=1_loss=l2_DenseLIGOCVAE_Dh=128_Nh=6_Xout=5_Zdim=6_act=relu_dropout=0.model-best.bson")[:model] |> deepcopy; #TODO
 best_model   = SAVE ? BSON.load(savepath("log", "model-best.bson"))[:model] : deepcopy(m); #TODO
-# best_model   = deepcopy(m); #TODO
+# best_model   = deepcopy(m); #TODO FIXME
 eval_data    = test_data
-# true_thetas  = thetas(eval_data);
-# true_signals = signals(eval_data);
-true_thetas  = thetas(eval_data)[..,1:10000]; #TODO FIXME
-true_signals = signals(eval_data)[..,1:10000]; #TODO FIXME
+true_thetas  = thetas(eval_data);
+true_signals = signals(eval_data);
+# eval_data    = test_data; #TODO FIXME
+# true_thetas  = thetas(eval_data)[:,1:min(10000,end)]; #TODO FIXME
+# true_signals = signals(eval_data)[:,:,:,1:min(10000,end)]; #TODO FIXME
+# eval_data    = (reduce(hcat, (x->x[1]).(train_data)), reduce((x,y) -> cat(x,y;dims=4), (x->x[2]).(train_data))); #TODO FIXME
+# true_thetas  = thetas(eval_data)[:,1:min(10000,end)]; #TODO FIXME
+# true_signals = signals(eval_data)[:,:,:,1:min(10000,end)]; #TODO FIXME
 model_mu_std = best_model(test_data_noise(true_signals); nsamples = 1000, stddev = true); #TODO
 model_thetas, model_stds = model_mu_std[1:end÷2, ..], model_mu_std[end÷2+1:end, ..];
 
