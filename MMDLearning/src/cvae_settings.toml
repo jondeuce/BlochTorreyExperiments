@@ -14,21 +14,37 @@ train_batch = 256     # Batch size for training
 nval        = 1024    # Number of validation samples
 ntest       = 1024    # Number of test samples
 ntrain      = 4096    # Number of train samples
+# [data.info]
+# nfeatures   = 128 # Height of input data
+# nchannels   = 1 # Number of input data channels
+# nlabels     = 5 # Number of output labels
+# labmean     = [0.0234375, 0.7853981633974483, 0.375, 0.175, 72.0] # Label distribution means
+# labwidth    = [0.015625,  1.5707963267948966, 0.25,  0.15, 112.0] # Label distribution widths
+# labnames    = ["freq", "phase", "offset", "amp", "tconst"]
+# labinfer    = ["freq", "phase", "offset", "amp", "tconst"]
+# labweights  = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
+# labscale    = [1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
+# labunits    = ["Hz", "rad", "a.u.", "a.u.", "s"] # label units, after scaling
+# [data.preprocess]
+# normalize   = "" # Normalize input signals (unitsum == signal sums to 1)
+# [data.postprocess]
+# noise       = 1e-2 # Rician noise level
 [data.info]
-nfeatures   = 128 # Height of input data
+nfeatures   = 48 # Height of input data
 nchannels   = 1 # Number of input data channels
-nlabels     = 5 # Number of output labels
-labmean     = [0.0234375, 0.7853981633974483, 0.375, 0.175, 72.0] # Label distribution means
-labwidth    = [0.015625,  1.5707963267948966, 0.25,  0.15, 112.0] # Label distribution widths
-labnames    = ["freq", "phase", "offset", "amp", "tconst"]
-labinfer    = ["freq", "phase", "offset", "amp", "tconst"]
-labweights  = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
-labscale    = [1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
-labunits    = ["Hz", "rad", "a.u.", "a.u.", "s"] # label units, after scaling
+nlabels     = 4 # Number of output labels
+labmean     = [115.0, 504.0, 504.0, 0.5] # Label distribution means
+labwidth    = [130.0, 992.0, 992.0, 1.0] # Label distribution widths
+labnames    = ["alpha", "T2short", "dT2", "Ashort"]
+labinfer    = ["alpha", "T2short", "dT2", "Ashort"]
+labweights  = [1.0, 1.0, 1.0, 1.0] # Weights for loss function
+labscale    = [1.0, 1.0, 1.0, 1.0] # scale labels before plotting
+labunits    = ["deg", "ms", "ms", "a.u."] # label units, after scaling
 [data.preprocess]
-normalize   = "" # Normalize input signals (unitsum == signal sums to 1)
+normalize   = "unitsum" # Normalize input signals (unitsum == signal sums to 1)
 [data.postprocess]
-noise       = 1e-2 # Rician noise level
+noise       = 0.0005268893450128011 # Median Rician noise level resulting from MLE fits after: filter!(r -> r.T2short <= 100 && r.dT2 <= 500 && r.loss <= -200, results)
+# noise     = 0.0006778246381186076 # Mean Rician noise level resulting from MLE fits after: filter!(r -> r.T2short <= 100 && r.dT2 <= 500 && r.loss <= -200, results)
 
 [model]
 loss      = "l2"
@@ -37,9 +53,15 @@ gamma     = 1.0 # Reweighting factor: loss = gamma * ELBO + KLdiv
 # [model.load]
 # path    = "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/ismrm2020/pretrained-dense-model-with-perm/2019-11-01-T-16-12-14-111.acc=rmse_loss=l2_DenseLIGOCVAE_Ndense1=128_Ndense2=128_Ndense3=128_Ndense4=128_Ndense5=128_Ndense6=128_Xout=6_Zdim=20_act=leakyrelu.model-checkpoint.bson"
 [model.DenseLIGOCVAE]
-Xout      = 5 # Number of learned labels
-Nh        = 1 # Number of inner hidden dense layers
-Dh        = 32 # Dimension of inner hidden dense layers
+# Xout      = 5 # Number of learned labels (toy model)
+# Nh        = 1 # Number of inner hidden dense layers
+# Dh        = 32 # Dimension of inner hidden dense layers
+# Zdim      = 8 # Latent variable dimension
+# dropout   = 0.0 # Dropout layer
+# act       = "relu"
+Xout      = 4 # Number of learned labels
+Nh        = 4 # Number of inner hidden dense layers
+Dh        = 128 # Dimension of inner hidden dense layers
 Zdim      = 8 # Latent variable dimension
 dropout   = 0.0 # Dropout layer
 act       = "relu"

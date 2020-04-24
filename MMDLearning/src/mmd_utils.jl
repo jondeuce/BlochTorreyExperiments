@@ -82,7 +82,7 @@ end
 function signal_model!(
         work,
         θ::AbstractVector{T},
-        ϵ::AbstractVector;
+        ϵ::Union{AbstractVector, Nothing} = nothing;
         TE
     ) where {T}
     @unpack epg_work, signal, real_noise, imag_noise = work
@@ -94,22 +94,22 @@ function signal_model!(
     T1short = T(1000.0)/1000
     T1long  = T(1000.0)/1000
 
-    signal  .= DECAES.EPGdecaycurve!(epg_work, alpha, T(TE), T2short, T1short, refcon) # short component
-    signal .+= DECAES.EPGdecaycurve!(epg_work, alpha, T(TE), T2long,  T1long,  refcon) # long component
+    signal  .= Ashort .* DECAES.EPGdecaycurve!(epg_work, alpha, T(TE), T2short, T1short, refcon) # short component
+    signal .+= Along  .* DECAES.EPGdecaycurve!(epg_work, alpha, T(TE), T2long,  T1long,  refcon) # long component
     signal ./= sum(signal) # normalize
 
     # Add noise to "real" and "imag" channels in quadrature
-    if eltype(ϵ) == eltype(θ)
-        if !all(==(0), ϵ)
+    if !isnothing(ϵ)
+        if eltype(ϵ) === eltype(θ)
             noise_model!(real_noise, signal, ϵ) # populate real_noise
             noise_model!(imag_noise, signal, ϵ) # populate imag_noise
             signal .= sqrt.((signal .+ real_noise).^2 .+ imag_noise.^2)
             signal ./= sum(signal)
+        else
+            # Add forward-differentiable noise to "real" and "imag" channels in quadrature
+            signal = sqrt.((signal .+ noise_model(signal, ϵ)).^2 .+ noise_model(signal, ϵ).^2)
+            signal ./= sum(signal)
         end
-    else
-        # Add forward-differentiable noise to "real" and "imag" channels in quadrature
-        signal = sqrt.((signal .+ noise_model(signal, ϵ)).^2 .+ noise_model(signal, ϵ).^2)
-        signal ./= sum(signal)
     end
 
     return signal
@@ -118,7 +118,7 @@ end
 function signal_model!(
         work,
         θ::AbstractMatrix{T},
-        ϵ::AbstractVector;
+        ϵ::Union{AbstractVector, Nothing} = nothing;
         kwargs...
     ) where {T}
     @unpack signal = work
@@ -130,7 +130,7 @@ function signal_model!(
     return X
 end
 
-signal_model(θ::AbstractVecOrMat{T}, ϵ::AbstractVector; nTE::Int, TE) where {T} = signal_model!(signal_model_work(T; nTE = nTE), θ, ϵ; TE = T(TE))
+signal_model(θ::AbstractVecOrMat{T}, ϵ::Union{AbstractVector, Nothing} = nothing; nTE::Int, TE) where {T} = signal_model!(signal_model_work(T; nTE = nTE), θ, ϵ; TE = T(TE))
 
 function mutate_signal(Y::AbstractVecOrMat; meanmutations::Int = 0)
     if meanmutations <= 0
@@ -311,8 +311,7 @@ function make_mle_data_samplers(
 
     # Forward simulation params
     signal_work = signal_model_work(Float64; nTE = 48)
-    signal_fun(θ::AbstractMatrix{Float64}, noise::Nothing) = signal_fun(θ)
-    signal_fun(θ::AbstractMatrix{Float64}, noise::AbstractVector{Float64} = [0.0]) = signal_model!(signal_work, θ, noise; TE = 8e-3)
+    signal_fun(θ::AbstractMatrix{Float64}, noise::Union{AbstractVector{Float64}, Nothing} = nothing) = signal_model!(signal_work, θ, noise; TE = 8e-3)
 
     # Generate data samplers
     itrain =                   1 : 2*(size(Y,2)÷4)
@@ -451,8 +450,7 @@ function make_gmm_data_samplers(
     end
 
     signal_work = signal_model_work(Float64; nTE = 48)
-    signal_fun(θ::AbstractMatrix{Float64}, noise::Nothing) = signal_fun(θ)
-    signal_fun(θ::AbstractMatrix{Float64}, noise::AbstractVector{Float64} = [0.0]) = signal_model!(signal_work, θ, noise; TE = 8e-3)
+    signal_fun(θ::AbstractMatrix{Float64}, noise::Union{AbstractVector{Float64}, Nothing} = nothing) = signal_model!(signal_work, θ, noise; TE = 8e-3)
 
     # Args is variadic such that noise may be passed to X sampler
     sampleX = function(batchsize, args...; kwargs...)

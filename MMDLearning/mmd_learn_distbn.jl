@@ -323,7 +323,7 @@ function train_mmd_model(;
                 (θ, noise) -> Y # don't have true underlying model for real data
             mock_forward_model = IS_TOY_MODEL ?
                 (θ, noise) -> toy_signal_model(θ, noise, 4) :
-                (θ, noise) -> signal_model(θ, isnothing(noise) ? [0.0] : noise; nTE = n, TE = settings["data"]["echotime"]::Float64)
+                (θ, noise) -> signal_model(θ, noise; nTE = n, TE = settings["data"]["echotime"]::Float64)
             theta_error_fun = IS_TOY_MODEL ? toy_theta_error : signal_theta_error
             theta_bounds_fun = IS_TOY_MODEL ? toy_theta_bounds : () -> theta_bounds(Float64; ntheta = ntheta)
 
