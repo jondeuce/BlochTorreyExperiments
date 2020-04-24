@@ -296,7 +296,8 @@ function make_mle_data_samplers(
 
     # Load + preprocess results
     results = deepcopy(BSON.load(thetaspath)["results"])
-    filter!(r -> r.T2short <= 100 && r.dT2 <= 500 && r.loss <= -200, results) # throw out poor fits
+    #filter!(r -> r.T2short <= 100 && r.loss <= -200 && r.dT2 <= 500, results) # throw out ~2% of poor fits on mlefit-v1
+    filter!(r -> r.T2short <= 100 && r.loss <= -230, results) # throw out ~4% of poor fits on mlefit-v2
     thetas = permutedims(convert(Matrix{Float64}, results[:, [:alpha, :T2short, :dT2, :Ashort]])) # convert to ntheta x nSamples Matrix
 
     # Plot prior distribution histograms

@@ -176,7 +176,7 @@ end
 #= Load indices of completed results
 const resfiles = mapreduce(
         vcat,
-        ["/project/st-arausch-1/jcd1994/simulations/nips2020/mlefit-v1"]
+        ["/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v2"]
     ) do simdir
     mapreduce(vcat, readdir(simdir; join = true)) do dir
         resdir = joinpath(dir, "pbs-out", "tmp-" * lpad(basename(dir), 3, '0'))
@@ -191,7 +191,7 @@ const todo_indices_batches = collect(Iterators.partition(todo_indices, 1000))
 #= Load completed results
 df = mapreduce(
         vcat,
-        "/scratch/st-arausch-1/jcd1994/simulations/nips2020/mlefit-" .* ["v1"] #, "v2"]
+        "/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-" .* ["v2"] #, "v2"]
     ) do simdir
     mapreduce(vcat, enumerate(readdir(simdir; join = true))) do (i, dir)
         resdir = joinpath(dir, "pbs-out", "tmp-" * lpad(basename(dir), 3, '0'))
@@ -202,7 +202,7 @@ df = mapreduce(
     end
 end
 DrWatson.@tagsave(
-    "results-mlefit-v1.bson",
+    "results-mlefit-v2.bson",
     Dict{String,Any}("results" => deepcopy(df));
     safe = true,
     gitpath = realpath(DrWatson.projectdir("..")),
@@ -212,16 +212,20 @@ DrWatson.@tagsave(
 #= Shuffle + save mle fit results
 df = mapreduce(
         vcat,
-        "/scratch/st-arausch-1/jcd1994/simulations/nips2020/mlefit-" .* ["v1"]
+        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mlefit-" .* ["v2"]
     ) do simdir
     mapreduce(vcat, enumerate(readdir(simdir; join = true))) do (i, dir)
         resfile = joinpath(dir, "pbs-out", "results-" * lpad(basename(dir), 3, '0') * ".bson")
-        @info "$i / $(length(readdir(simdir))): $(basename(resfile))"
-        @time deepcopy(BSON.load(resfile)["results"])
+        if isfile(resfile)
+            @info "$i / $(length(readdir(simdir))): $(basename(resfile))"
+            @time deepcopy(BSON.load(resfile)["results"])
+        else
+            DataFrame()
+        end
     end
 end
 DrWatson.@tagsave(
-    "/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v1/mlefits-shuffled.bson",
+    "/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v2/mlefits-shuffled.bson",
     Dict{String,Any}("results" => deepcopy(df[shuffle(MersenneTwister(0), 1:nrow(df)), :]));
     safe = true,
     gitpath = realpath(DrWatson.projectdir("..")),
@@ -229,7 +233,7 @@ DrWatson.@tagsave(
 =#
 
 ####
-#### Correcting fit results
+#### Investigating correcting fit results
 ####
 
 #=
@@ -258,7 +262,7 @@ function correct_results(df)
     idx    = CartesianIndex.(df[:, :index])
     theta0 = permutedims(convert(Matrix, df[:, [:alpha, :T2short, :dT2, :Ashort, :logsigma]]))
     
-    N = 10000
+    N = 1000
     loss = map(1:N) do i
         mlemodel, mleloss = make_mle_funs(image[idx[i],:])
         theta = theta0[:,i]
@@ -277,8 +281,48 @@ function correct_results(df)
     nothing
 end
 
-df = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v1/mlefits-shuffled.bson")["results"])
+df = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v2/mlefits-shuffled.bson")["results"])
 correct_results(df)
+=#
+
+#=
+let res = deepcopy(df)
+    filter!(r -> r.T2short <= 100, res)
+    filter!(r -> r.loss <= -230, res)
+    @show nrow(res)/nrow(df)
+
+    plot(map([:alpha, :T2short, :T2long, :Ashort, :loss, :fcalls]) do col
+        @show col, quantile(res[!,col], 0.99)
+        histogram(res[!,col]; lab = col)
+    end...) |> display
+
+    # filter!(r -> r.loss <= -350, res)
+    filter!(r -> -250 <= r.loss <= -230, res)
+    idx   = CartesianIndex.(res[:, :index])
+    theta = permutedims(convert(Matrix, res[:, [:alpha, :T2short, :dT2, :Ashort, :logsigma]]))
+    map(sample(1:nrow(res), 10; replace = false)) do i
+        y0 = image[idx[i],:]
+        mlemodel, mleloss = make_mle_funs(y0)
+        y = mlemodel(theta[:,i])
+        plot([y0./sum(y0) y]; lab = ["true" "fit"], title = "loss = $(res.loss[i])") |> display
+    end
+
+    nothing
+end
+=#
+
+#=
+#TODO: for watching failed qsubs
+while true
+    for dir in readdir("/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mlefit-v2"; join = true)
+        outpath = joinpath(dir, "pbs-out")
+        if !isempty(filter(s -> startswith(s, "output"), readdir(outpath))) && isempty(filter(s -> startswith(s, "results"), readdir(outpath)))
+            print("$(basename(dir)) ")
+        end
+    end
+    println("\n")
+    sleep(5.0)
+end
 =#
 
 nothing

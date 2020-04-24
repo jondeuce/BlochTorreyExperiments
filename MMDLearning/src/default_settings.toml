@@ -60,7 +60,7 @@ batchsize = 100
 nbatches  = 10
 logsigma  = -6.0
 [prior.data]
-thetas    = "/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v1/mlefits-shuffled.bson"
+thetas    = "/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v2/mlefits-shuffled.bson"
 image     = "/project/st-arausch-1/jcd1994/MMD-Learning/data/images/masked-image-240x240x48x48.mat"
 t2dist    = "/project/st-arausch-1/jcd1994/MMD-Learning/data/images/masked-image-240x240x48x48.t2dist.mat"
 t2maps    = "/project/st-arausch-1/jcd1994/MMD-Learning/data/images/masked-image-240x240x48x48.t2maps.mat"
