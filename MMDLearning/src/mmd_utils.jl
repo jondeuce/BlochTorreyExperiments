@@ -48,15 +48,18 @@ function theta_bounds(T = Float64; ntheta::Int)
         # ["refcon", "alpha", "T2short", "dT2", "Ashort"]
         theta_lb = T[ 50.0,    8.0,    8.0, 0.0]
         theta_ub = T[180.0, 1000.0, 1000.0, 1.0]
-        theta_bd = collect(zip(theta_lb, theta_ub))
     elseif ntheta == 5
-        # ["refcon", "alpha", "T2short", "dT2", "Ashort"]
-        theta_lb = T[120.0, 120.0,    8.0,    8.0, 0.0]
-        theta_ub = T[180.0, 180.0, 1000.0, 1000.0, 1.0]
-        theta_bd = collect(zip(theta_lb, theta_ub))
+        # # ["refcon", "alpha", "T2short", "dT2", "Ashort"]
+        # theta_lb = T[120.0, 120.0,    8.0,    8.0, 0.0]
+        # theta_ub = T[180.0, 180.0, 1000.0, 1000.0, 1.0]
+
+        # ["alpha", "T2short", "dT2", "Ashort", "Along"]
+        theta_lb = T[ 50.0,    8.0,    8.0, 0.0, 0.0]
+        theta_ub = T[180.0, 1000.0, 1000.0, 1.0, 1.0]
     else
         error("Number of labels must be 4 or 5")
     end
+    theta_bd = collect(zip(theta_lb, theta_ub))
     @assert ntheta == length(theta_bd)
     return theta_bd
 end
@@ -87,10 +90,11 @@ function signal_model!(
     ) where {T}
     @unpack epg_work, signal, real_noise, imag_noise = work
     # refcon, alpha, T2short, dT2, Ashort = θ[1], θ[2], θ[3]/1000, θ[4]/1000, θ[5]
-    alpha, T2short, dT2, Ashort = θ[1], θ[2]/1000, θ[3]/1000, θ[4]
+    # alpha, T2short, dT2, Ashort = θ[1], θ[2]/1000, θ[3]/1000, θ[4]
+    alpha, T2short, dT2, Ashort, Along = θ[1], θ[2]/1000, θ[3]/1000, θ[4], θ[5]
     refcon  = T(180.0)
     T2long  = T2short + dT2
-    Along   = 1-Ashort
+    #Along  = 1-Ashort
     T1short = T(1000.0)/1000
     T1long  = T(1000.0)/1000
 

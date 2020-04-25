@@ -8,19 +8,19 @@ Random.seed!(0)
 #### Load image data
 ####
 
-const settings = load_settings()
-const image    = DECAES.load_image(settings["prior"]["data"]["image"])
-#const t2maps  = DECAES.MAT.matread(settings["prior"]["data"]["t2maps"])
-#const t2dist  = DECAES.load_image(settings["prior"]["data"]["t2dist"])
-#const t2parts = DECAES.MAT.matread(settings["prior"]["data"]["t2parts"])
-const opts     = T2mapOptions(
+const mmd_settings = load_settings();
+const image   = DECAES.load_image(mmd_settings["prior"]["data"]["image"]);
+#const t2maps = DECAES.MAT.matread(mmd_settings["prior"]["data"]["t2maps"]);
+#const t2dist = DECAES.load_image(mmd_settings["prior"]["data"]["t2dist"]);
+#const t2parts= DECAES.MAT.matread(mmd_settings["prior"]["data"]["t2parts"]);
+const opts    = T2mapOptions(
     MatrixSize = size(image)[1:3],
     nTE        = size(image)[4],
     TE         = 8e-3,
     T2Range    = (15e-3, 2.0),
     nT2        = 40,
 );
-cp(settings["prior"]["data"]["settings"], joinpath(settings["data"]["out"], basename(settings["prior"]["data"]["settings"])))
+cp(mmd_settings["prior"]["data"]["settings"], joinpath(mmd_settings["data"]["out"], basename(mmd_settings["prior"]["data"]["settings"]))); #TODO
 
 ####
 #### Signal fitting
@@ -32,10 +32,10 @@ function signal_fit(
         T2Range::NTuple{2,T} = T.(opts.T2Range),
         nT2::Int             = opts.nT2,
         nTE::Int             = opts.nTE,
-        ntheta::Int          = settings["data"]["ntheta"]::Int,
-        theta_labels         = settings["data"]["theta_labels"]::Vector{String},
-        losstype::Symbol     = Symbol(settings["prior"]["fitting"]["losstype"]::String),
-        maxtime::T           = T(settings["prior"]["fitting"]["maxtime"]),
+        ntheta::Int          = mmd_settings["data"]["ntheta"]::Int,
+        theta_labels         = mmd_settings["data"]["theta_labels"]::Vector{String},
+        losstype::Symbol     = Symbol(mmd_settings["prior"]["fitting"]["losstype"]::String),
+        maxtime::T           = T(mmd_settings["prior"]["fitting"]["maxtime"]),
         plotfit::Bool        = false,
         kwargs...
     ) where {T}
@@ -48,8 +48,8 @@ function signal_fit(
     work = signal_model_work(T; nTE = nTE)
     ϵ = nothing
 
-    mlemodel(θ) = (count[] += 1; return signal_model!(work, uview(θ, 1:4), ϵ; TE = TE))
-    mleloss(θ) = (@inbounds(work.buf .= .-logpdf.(Rician.(mlemodel(uview(θ, 1:4)), exp(θ[end])), ydata)); return sum(work.buf))
+    mlemodel(θ) = (count[] += 1; return signal_model!(work, uview(θ, 1:ntheta), ϵ; TE = TE))
+    mleloss(θ) = (@inbounds(work.buf .= .-logpdf.(Rician.(mlemodel(uview(θ, 1:ntheta)), exp(θ[end])), ydata)); return sum(work.buf))
 
     l2model(θ) = (count[] += 1; return signal_model!(work, θ, ϵ; TE = TE))
     l2loss(θ) = (@inbounds(work.buf .= ydata .- l2model(θ)); return sum(abs2, work.buf))
@@ -100,7 +100,8 @@ function make_save_df(res; losstype)
         T2long   = T[θ[2] + θ[3]], # [ms]
         dT2      = T[θ[3]], # [ms]
         Ashort   = T[θ[4]], # [a.u.]
-        Along    = T[1 - θ[4]], # [a.u.]
+        #Along   = T[1 - θ[4]], # [a.u.] #TODO
+        Along    = T[θ[5]], # [a.u.] #TODO
         T1short  = T[1000.0], # [ms]
         T1long   = T[1000.0], # [ms]
         logsigma = losstype === :mle ? T[θ[end]] : T[NaN],
@@ -137,7 +138,7 @@ function make_save_dict(res)
         # "method_output"  => res.method_output,
         # "parameters"     => res.parameters,
     )
-    save_dict["settings"] = deepcopy(settings)
+    save_dict["settings"] = deepcopy(mmd_settings)
     save_dict["opts"] = Dict([string(f) => getfield(opts,f) for f in fieldnames(typeof(opts))])
     return save_dict
 end
@@ -146,11 +147,11 @@ end
 #### Batch signal fitting
 ####
 
-#= Perform fitting of one "batch"
+#= Perform fitting of one "batch" =#
 const image_indices         = shuffle(MersenneTwister(0), filter(I -> image[I,1] > 0, CartesianIndices(size(image)[1:3]))) #TODO
-const image_indices_batches = collect(Iterators.partition(image_indices, settings["prior"]["fitting"]["batchsize"]))
-const image_indices_batch   = image_indices_batches[settings["prior"]["fitting"]["batchindex"]]
-const batchindex            = lpad(settings["prior"]["fitting"]["batchindex"], ndigits(length(image_indices_batches)), '0')
+const image_indices_batches = collect(Iterators.partition(image_indices, mmd_settings["prior"]["fitting"]["batchsize"]))
+const image_indices_batch   = image_indices_batches[mmd_settings["prior"]["fitting"]["batchindex"]]
+const batchindex            = lpad(mmd_settings["prior"]["fitting"]["batchindex"], ndigits(length(image_indices_batches)), '0')
 
 df = mapreduce(vcat, image_indices_batch) do I
     df = signal_fit(image[I,:])
@@ -159,12 +160,11 @@ df = mapreduce(vcat, image_indices_batch) do I
 end
 
 DrWatson.@tagsave(
-    joinpath(settings["data"]["out"], "results-$batchindex.bson"),
+    joinpath(mmd_settings["data"]["out"], "results-$batchindex.bson"),
     Dict{String,Any}("results" => deepcopy(df));
     safe = true,
     gitpath = realpath(DrWatson.projectdir("..")),
 )
-=#
 
 #= Sample + fit random signals based on fit-to-noise ratio (FNR)
 let I = rand(findall(I -> !isnan(t2maps["fnr"][I]) && 50 <= t2maps["fnr"][I] <= 100, CartesianIndices(size(image)[1:3])))
@@ -237,14 +237,14 @@ DrWatson.@tagsave(
 #### Investigating correcting fit results
 ####
 
-#= =#
+#=
 function make_mle_funs(
         signal::AbstractVector{T};
         TE::T                = T(opts.TE),
         T2Range::NTuple{2,T} = T.(opts.T2Range),
         nT2::Int             = opts.nT2,
         nTE::Int             = opts.nTE,
-        ntheta::Int          = settings["data"]["ntheta"]::Int,
+        ntheta::Int          = mmd_settings["data"]["ntheta"]::Int,
     ) where {T}
 
     t2bins = T.(1000 .* DECAES.logrange(T2Range..., nT2)) # milliseconds
@@ -252,8 +252,8 @@ function make_mle_funs(
     xdata, ydata = t2times, signal./sum(signal)
 
     work = signal_model_work(T; nTE = nTE)
-    mlemodel(θ) = signal_model!(work, uview(θ, 1:4), nothing; TE = TE)
-    mleloss(θ) = (@inbounds(work.buf .= .-logpdf.(Rician.(mlemodel(uview(θ, 1:4)), exp(θ[end])), ydata)); return sum(work.buf))
+    mlemodel(θ) = signal_model!(work, uview(θ, 1:ntheta), nothing; TE = TE)
+    mleloss(θ) = (@inbounds(work.buf .= .-logpdf.(Rician.(mlemodel(uview(θ, 1:ntheta)), exp(θ[end])), ydata)); return sum(work.buf))
 
     return mlemodel, mleloss
 end
@@ -287,20 +287,20 @@ empty!(Revise.queue_errors);
 df = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v2/mlefits-shuffled.bson")["results"])
 let
     res = deepcopy(df)
-    filter!(r -> !(999.99 <= r.dT2 && 999.99 <= r.T2short), res) # drop boundary failures
-    # filter!(r -> r.dT2 <= 999.99, res) # drop boundary failures
-    filter!(r -> r.dT2 <= 500, res) # drop long dT2 which can't be recovered
-    filter!(r -> 0.01 <= r.Ashort <= 0.99, res) # drop degenerate (monoexponential) fits
-    # filter!(r -> r.alpha <= 179.99, res)
-    # filter!(r -> 0.1 <= r.Ashort <= 0.9, res) # window filter
-    filter!(r -> r.T2short <= 100, res) # drop long T2short (very few points)
-    filter!(r -> 8.01 <= r.T2short, res) # drop boundary failures
-    filter!(r -> 8.01 <= r.dT2, res) # drop boundary failures
-    filter!(r -> r.loss <= -250, res) # drop poor fits long T2short (very few points)
+    # filter!(r -> !(999.99 <= r.dT2 && 999.99 <= r.T2short), res) # drop boundary failures
+    # # filter!(r -> r.dT2 <= 999.99, res) # drop boundary failures
+    # filter!(r -> r.dT2 <= 500, res) # drop long dT2 which can't be recovered
+    # filter!(r -> 0.01 <= r.Ashort <= 0.99, res) # drop degenerate (monoexponential) fits
+    # # filter!(r -> r.alpha <= 179.99, res)
+    # # filter!(r -> 0.1 <= r.Ashort <= 0.9, res) # window filter
+    # filter!(r -> r.T2short <= 100, res) # drop long T2short (very few points)
+    # filter!(r -> 8.01 <= r.T2short, res) # drop boundary failures
+    # filter!(r -> 8.01 <= r.dT2, res) # drop boundary failures
+    # filter!(r -> r.loss <= -250, res) # drop poor fits long T2short (very few points)
 
     @show nrow(res)/nrow(df)
 
-    plot(map([:alpha, :T2short, :dT2, :Ashort, :loss]) do col
+    plot(map([:alpha, :T2short, :dT2, :Ashort, :Along, :loss]) do col
         @show col, quantile(res[!,col], 0.99)
         # lo, up = extrema(res[!,col])
         # trans = x -> -cos(pi * (x - lo)/(up - lo)) # scale [lo,up] -> [0,pi] -> [0,1]
@@ -326,6 +326,7 @@ let
 
     nothing
 end
+=#
 
 #=
 #TODO: for watching failed qsubs
@@ -339,6 +340,36 @@ while true
     println("\n")
     sleep(5.0)
 end
+=#
+
+####
+#### Make learned maps
+####
+
+#=
+m = BSON.load("/project/st-arausch-1/jcd1994/simulations/MMD-Learning/cvae-test-v1/sweep/117/log/2020-04-24-T-17-31-25-591.acc=rmse_gamma=1_loss=l2_DenseLIGOCVAE_Dh=32_Nh=3_Xout=4_Zdim=10_act=relu_dropout=0.model-best.bson")[:model];
+Is = filter(I -> image[I,1] > 0, CartesianIndices(size(image)[1:3]));
+model_mu_std = m(unitsum(permutedims(image[Is,:]); dims = 1); nsamples = 100, stddev = true); #TODO
+model_thetas, model_stds = model_mu_std[1:end÷2, ..], model_mu_std[end÷2+1:end, ..];
+
+out = zeros(size(image)[1:3]..., size(model_thetas,1));
+out[Is, :] .= permutedims(model_thetas);
+CUTOFF = 50.0
+BANDWIDTH = 2.0
+mwf = zeros(size(image)[1:3]);
+# mwf[Is] .= ((T2short, Ashort) -> ifelse(T2short < CUTOFF, Ashort, 0.0)).(out[Is, 2], out[Is, 4]);
+mwf[Is] .= ((T2short, Ashort) -> Ashort * sigmoid(-(T2short - CUTOFF) / BANDWIDTH)).(out[Is, 2], out[Is, 4]);
+
+Islice = (50:190, 210:-1:40, 24);
+heatmap(permutedims(out[Islice...,1]) |> img -> (x -> acosd(clamp(x, -1.0, 1.0))).(img); aspect_ratio = :equal, clim = (120,180), title = "flip angle [deg]") |> p -> savefig(p, "flipangle.png");
+heatmap(permutedims(out[Islice...,2]) |> img -> (x -> clamp(x < CUTOFF ? x : 0.0, 8.0, 100.0)).(img); aspect_ratio = :equal, clim = (0,CUTOFF), title = "T2short [ms]") |> p -> savefig(p, "T2short.png");
+heatmap(permutedims(out[Islice...,3]) |> img -> (x -> clamp(x, 8.0, 500.0)).(img); aspect_ratio = :equal, clim = (0,500), title = "T2long [ms]") |> p -> savefig(p, "T2long.png");
+heatmap(permutedims(out[Islice...,4]) |> img -> (x -> clamp(x, 0.0, 1.0)).(img); aspect_ratio = :equal, clim = (0,1), title = "Ashort [a.u.]") |> p -> savefig(p, "Ashort.png");
+
+heatmap(permutedims(mwf[Islice...]) |> img -> (x -> clamp(x, 0.0, 1.0)).(img); aspect_ratio = :equal, clim = (0,1.0), title = "MWF [a.u.]") |> p -> savefig(p, "MWF.png");
+heatmap(permutedims(t2parts["sfr"][Islice...]) |> img -> (x -> ifelse(isnan(x), 0.0, x)).(img); aspect_ratio = :equal, clim = (0,0.3), title = "sfr [a.u.]") |> p -> savefig(p, "sfr.png");
+heatmap(permutedims(t2parts["sgm"][Islice...]) |> img -> (x -> ifelse(isnan(x), 0.0, 1000x)).(img); aspect_ratio = :equal, clim = (0,CUTOFF), title = "sgm [ms]") |> p -> savefig(p, "sgm.png");
+heatmap(permutedims(t2maps["ggm"][Islice...]) |> img -> (x -> ifelse(isnan(x), 0.0, 1000x)).(img); aspect_ratio = :equal, clim = (0,500), title = "ggm [ms]") |> p -> savefig(p, "ggm.png");
 =#
 
 nothing

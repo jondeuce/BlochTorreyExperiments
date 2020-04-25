@@ -1020,10 +1020,15 @@ sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}) where {T} = μ0 
 sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}, nsamples::Int) where {T} = μ0 .+ σ .* randn(T, size(σ)..., nsamples)
 MvNormalSampler() = sample_mv_normal
 
-# Exponentiate second argument; logsigma -> sigma
+# Exponentiate logsigma -> sigma
 exp_std(μ0, logσ) = vcat(μ0, exp.(logσ))
 exp_std(μ) = exp_std(split_mean_std(μ)...)
 ExpStd() = exp_std
+
+# Bound mean in (-0.5, 0.5), exponentiate logsigma -> sigma
+bound_mu_exp_std(μ0, logσ) = vcat(tanh.(μ0)./2, exp.(logσ))
+bound_mu_exp_std(μ) = bound_mu_exp_std(split_mean_std(μ)...)
+BoundMuExpStd() = bound_mu_exp_std
 
 # TODO: Tracker was much faster differentiating square.(x) than x.^2 - check for Zygote?
 square(x) = x*x
@@ -1097,13 +1102,14 @@ function L_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where
 end
 
 function DenseLIGOCVAE(
-        info    :: DataInfo{T} = DataInfo();
-        Xout    :: Int = info.nlabels, # Number of output variables (can be used to marginalize over inputs)
-        Zdim    :: Int = 10, # Latent variable dimensions
-        Nh      :: Int = 2, # Number of inner hidden dense layers
-        Dh      :: Int = info.nfeatures, # Dimension of inner hidden dense layers
-        dropout :: T = T(0.0), # Dropout following dense layer (0.0 is none)
-        act     :: Symbol = :leakyrelu, # Activation function
+        info      :: DataInfo{T} = DataInfo();
+        Xout      :: Int = info.nlabels, # Number of output variables (can be used to marginalize over inputs)
+        Zdim      :: Int = 10, # Latent variable dimensions
+        Nh        :: Int = 2, # Number of inner hidden dense layers
+        Dh        :: Int = info.nfeatures, # Dimension of inner hidden dense layers
+        dropout   :: T = T(0.0), # Dropout following dense layer (0.0 is none)
+        boundmean :: Bool = false, # Bound mean to be within labmean +/- labwidth/2
+        act       :: Symbol = :leakyrelu, # Activation function
     ) where {T}
 
     @unpack nfeatures, nchannels, nlabels, labmean, labwidth = info
@@ -1131,7 +1137,8 @@ function DenseLIGOCVAE(
     E1 = Flux.Chain(
         DenseResize(),
         MLPlayers(Ny*Cy, 2*Zdim, actfun)...,
-        ExpStd()
+        boundmean ? BoundMuExpStd() : ExpStd(),
+        # ExpStd()
     )
 
     # Data/feature + parameter/label encoder q_φ(z|x,y): (x,y) -> μ_q = [μ_q0; σ_q]
@@ -1139,14 +1146,15 @@ function DenseLIGOCVAE(
         @λ(((x,y),) -> vcat(x, DenseResize()(y))),
         XYScale(),
         MLPlayers(Nx + Ny*Cy, 2*Zdim, actfun)...,
-        ExpStd(),
+        boundmean ? BoundMuExpStd() : ExpStd(),
+        # ExpStd(),
     )
 
     # Latent space + data/feature decoder r_θ2(x|z,y): (z,y) -> μ_x = [μ_x0; σ_x]
     D = Flux.Chain(
         @λ(((z,y),) -> vcat(z, DenseResize()(y))),
         MLPlayers(Zdim + Ny*Cy, 2*Xout, actfun)...,
-        ExpStd(),
+        boundmean ? BoundMuExpStd() : ExpStd(),
         MuStdScale(),
     )
 

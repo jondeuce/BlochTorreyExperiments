@@ -6,10 +6,14 @@ out       = "./output/tmp"
 # ntheta    = 5
 # nsignal   = 48
 # theta_labels = ["refcon", "alpha", "T2short", "dT2", "Ashort"]
-ntheta    = 4
+# ntheta    = 4
+# nsignal   = 48
+# echotime  = 8e-3
+# theta_labels = ["alpha", "T2short", "dT2", "Ashort"]
+ntheta    = 5
 nsignal   = 48
 echotime  = 8e-3
-theta_labels = ["alpha", "T2short", "dT2", "Ashort"]
+theta_labels = ["alpha", "T2short", "dT2", "Ashort", "Along"]
 
 [mmd]
 stepsize   = 3.1623e-4 #1.0e-5 #TODO

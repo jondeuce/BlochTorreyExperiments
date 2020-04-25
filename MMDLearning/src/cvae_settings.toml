@@ -86,6 +86,7 @@ Dh        = 64 # Dimension of inner hidden dense layers
 Zdim      = 6 # Latent variable dimension
 dropout   = 0.0 # Dropout layer
 act       = "relu"
+boundmean = true # Bound mean to be within labmean +/- labwidth/2
 
 [optimizer]
 epochs   = 1_000_000
