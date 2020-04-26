@@ -165,7 +165,7 @@ function recurse_make_plots(
 end
 
 recurse_make_plots(
-    df[@.( (abs(df.loss) < 50) & (df.acc > 90) ), :];
+    df[@.( (abs(df.loss) < 100) & (df.acc > 90) ), :];
     maxdepth = 1,
 )
 

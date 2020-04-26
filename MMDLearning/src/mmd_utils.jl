@@ -339,7 +339,7 @@ function make_mle_data_samplers(
     local θtrain_pad
     if padtrain
         θ_pad_lo, θ_pad_hi = minimum(thetas; dims = 2), maximum(thetas; dims = 2)
-        θtrain_pad = θ_pad_lo .+ (θ_pad_hi .- θ_pad_lo) .* rand(ntheta, nrow(df))
+        θtrain_pad = θ_pad_lo .+ (θ_pad_hi .- θ_pad_lo) .* rand(ntheta, nrow(res))
         Xtrain_pad = signal_fun(θtrain_pad, nothing; normalize = false)
         θtrain_pad[4:5, :] ./= sum(Xtrain_pad; dims = 1) # normalize Ashort, Along
         train_pad_filter   = map(Ashort -> 0.005 <= Ashort <= 0.15, θtrain_pad[4,:]) # drop outlier samples (very few points)
