@@ -80,13 +80,19 @@ function make_samples(n; dataset)
         θ, Y
     else
         # train data has different distribution (EPG model), test data has "true" distribution (MMD-corrected EPG model)
-        sampleY, _, sampleθ = make_mle_data_samplers(mmd_settings["prior"]["data"]["image"]::String, mmd_settings["prior"]["data"]["thetas"]::String; ntheta = mmd_settings["data"]["ntheta"]::Int, plothist = false)
+        sampleY, _, sampleθ = make_mle_data_samplers(
+            mmd_settings["prior"]["data"]["image"]::String,
+            mmd_settings["prior"]["data"]["thetas"]::String;
+            ntheta = mmd_settings["data"]["ntheta"]::Int,
+            plothist = false,
+            padtrain = true,
+        )
         θ = copy(sampleθ(nothing; dataset = dataset)) #[:, 1:10000] #[:, 1:n] #TODO FIXME
         Y = copy(sampleY(nothing; dataset = dataset)) #[:, 1:10000] #[:, 1:n] #TODO FIXME
         θ[1,:] .= cosd.(θ[1,:]) # transform flipangle -> cos(flipangle)
         θ[3,:] .= θ[2,:] .+ θ[3,:] # transform dT2 -> T2long = T2short + dT2
         # θ[2,:] .*= θ[4,:] # transform T2short -> Ashort * T2short
-        # θ[3,:] .*= (1 .- θ[4,:]) # transform T2long -> Along * T2long = (1 - Ashort) * T2long
+        # θ[3,:] .*= θ[5,:] # transform T2long  -> Along  * T2long
         for i in 1:size(θ,1)
             lo, hi = extrema(θ[i,:])
             settings["data"]["info"]["labmean"][i] = (hi + lo)/2
@@ -306,9 +312,9 @@ fig = prediction_hist(); display(fig)
 SAVE && savefig(fig, savepath("plots", "theta.histogram.png"))
 
 prediction_hist_single = function()
-    I = rand(1:batchsize(signals(eval_data)))
-    true_thetas_sample  = thetas(eval_data)[:,I];
-    true_signals_sample = repeat(signals(eval_data)[:,1,1,I], 1, 1, 1, 1000);
+    I = rand(1:batchsize(true_signals))
+    true_thetas_sample  = true_thetas[:,I];
+    true_signals_sample = repeat(true_signals[:,1,1,I], 1, 1, 1, 1000);
     model_thetas_sample = best_model(true_signals_sample; nsamples = 1, stddev = false);
 
     pred_hist_single = function(i)

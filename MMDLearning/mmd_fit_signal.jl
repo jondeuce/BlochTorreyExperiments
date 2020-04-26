@@ -282,23 +282,22 @@ function correct_results(df)
     nothing
 end
 
-#=
-# correct_results(df)
+#= plot distributions
+=#
 empty!(Revise.queue_errors);
 df = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v3/mlefits-shuffled-normalized.bson")["results"])
 let
     res = deepcopy(df)
-    filter!(r -> r.opttime <= 4.99, res) # drop non-converged fits
+        filter!(r -> r.opttime <= 4.99, res) # drop non-converged fits
     filter!(r -> !(999.99 <= r.dT2 && 999.99 <= r.T2short), res) # drop boundary failures
     filter!(r -> r.dT2 <= 999.99, res) # drop boundary failures
-    filter!(r -> 120.0 <= r.alpha, res) # drop outlier fits (very few points)
+    filter!(r -> r.dT2 <= 250, res) # drop long dT2 which can't be recovered
     filter!(r -> r.T2short <= 100, res) # drop long T2short (very few points)
     filter!(r -> 8.01 <= r.T2short, res) # drop boundary failures
     filter!(r -> 8.01 <= r.dT2, res) # drop boundary failures
-    filter!(r -> r.Ashort <= 0.15, res) # drop outlier fits (very few points)
-    filter!(r -> r.Along <= 0.15, res) # drop outlier fits (very few points)
+    filter!(r -> 0.005 <= r.Ashort <= 0.15, res) # drop outlier fits (very few points)
+    filter!(r -> 0.005 <= r.Along <= 0.15, res) # drop outlier fits (very few points)
     filter!(r -> r.loss <= -250, res) # drop poor fits (very few points)
-    # filter!(r -> r.dT2 <= 500, res) # drop long dT2 which can't be recovered
     # filter!(r -> 0.01 <= r.Ashort <= 0.99, res) # drop degenerate (monoexponential) fits
     # filter!(r -> r.alpha <= 179.99, res)
     # filter!(r -> 0.1 <= r.Ashort <= 0.9, res) # window filter
@@ -321,17 +320,15 @@ let
     # filter!(r -> -225 <= r.loss <= -200, res)
     idx   = CartesianIndex.(res[:, :index])
     theta = permutedims(convert(Matrix, res[:, [:alpha, :T2short, :dT2, :Ashort, :Along, :logsigma]]))
-    map(sample(1:nrow(res), 10; replace = false)) do i
-    # map(findall(res.rmse .> 0.009)[1:min(end,10)]) do i
-        y0 = image[idx[i],:]
-        mlemodel, mleloss = make_mle_funs(y0)
-        y = mlemodel(theta[:,i])
-        plot([y0./sum(y0) y]; lab = ["true" "fit"], title = "loss = $(res.loss[i]), rmse = $(res.rmse[i])") |> display
-    end
+    # map(sample(1:nrow(res), 10; replace = false)) do i
+    #     y0 = image[idx[i],:]
+    #     mlemodel, mleloss = make_mle_funs(y0)
+    #     y = mlemodel(theta[:,i])
+    #     plot([y0./sum(y0) y]; lab = ["true" "fit"], title = "loss = $(res.loss[i]), rmse = $(res.rmse[i])") |> display
+    # end
 
     nothing
 end
-=#
 
 #= add rmse column
 let
@@ -353,41 +350,55 @@ end
 
 #= normalize Ashort, Along
 empty!(Revise.queue_errors);
-df = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v3/mlefits-shuffled.bson")["results"])
+df = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v3/mlefits-shuffled-normalized.bson")["results"])
 let
     nTE = 48
     TE = 8e-3
-    epg_work = DECAES.EPGdecaycurve_work(Float64, nTE)
-    signal = zeros(Float64, nTE)
-    for i in 1:nrow(df)
+    sig_work = signal_model_work(Float64; nTE = nTE)
+    for i in 1:10 #nrow(df)
         mod(i, 10000) == 0 && println("i = $i/$(nrow(df))")
-        
+
         I = CartesianIndex(df[i, :index])
-        theta = convert(Vector, df[i, [:alpha, :T2short, :dT2, :Ashort, :Along, :logsigma]])
+        theta = copy(convert(Vector, df[i, [:alpha, :T2short, :dT2, :Ashort, :Along, :logsigma]]))
         y0 = image[I,:]
         y0 ./= sum(y0)
         mlemodel, mleloss = make_mle_funs(y0)
         y = mlemodel(theta)
-        
-        alpha, T2short, T2long, Ashort, Along = df.alpha[i], df.T2short[i]/1000, df.T2long[i]/1000, df.Ashort[i], df.Along[i]
-        
-        signal  .= Ashort .* DECAES.EPGdecaycurve!(epg_work, alpha, TE, T2short, 1.0, 180.0) # short component
-        signal .+= Along  .* DECAES.EPGdecaycurve!(epg_work, alpha, TE, T2long,  1.0, 180.0) # long component
-        # @show sum(signal)
-        
-        Ashort /= sum(signal)
-        Along /= sum(signal)
-        
-        signal  .= Ashort .* DECAES.EPGdecaycurve!(epg_work, alpha, TE, T2short, 1.0, 180.0) # short component
-        signal .+= Along  .* DECAES.EPGdecaycurve!(epg_work, alpha, TE, T2long,  1.0, 180.0) # long component
-        
+
+        # alpha, T2short, T2long, Ashort, Along
+        theta[4:5] .*= 1+rand()
+        signal = signal_model!(sig_work, theta[1:end-1], nothing; TE = TE, normalize = false)
+        @show sum(signal)
+
+        theta[4:5] ./= sum(signal)
+        signal = signal_model!(sig_work, theta[1:end-1], nothing; TE = TE, normalize = false)
+        @show sum(signal)
+
         @assert isapprox(signal, y)
-        
-        df.Ashort[i] = Ashort
-        df.Along[i] = Along
+
+        # df.Ashort[i] = theta[4]
+        # df.Along[i] = theta[5]
     end
 end
 =#
+
+#= padded mle samplers
+=#
+let
+    sampleY, _, sampleθ = make_mle_data_samplers(mmd_settings["prior"]["data"]["image"]::String, mmd_settings["prior"]["data"]["thetas"]::String; ntheta = mmd_settings["data"]["ntheta"]::Int, plothist = false);
+    Y = copy(sampleY(nothing; dataset = :train));
+    θ = copy(sampleθ(nothing; dataset = :train));
+    # @show all(isapprox.(sum(Y;dims=1), 1))
+    # @show Y ≈ signal_model(θ, nothing; nTE = 48, TE = 8e-3, normalize = true)
+    plot(
+        histogram(cosd.(θ[1,:]); lab = "cosd(alpha)"),
+        histogram(θ[2,:]; lab = "T2short"),
+        histogram(θ[3,:]; lab = "dT2"),
+        histogram(θ[4,:]; lab = "Ashort"),
+        histogram(θ[5,:]; lab = "Along"),
+        histogram(θ[5,θ[5,:].<0.01]; lab = "Along"),
+    ) |> display
+end
 
 #=
 #TODO: for watching failed qsubs

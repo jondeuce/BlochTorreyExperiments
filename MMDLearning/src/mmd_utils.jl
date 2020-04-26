@@ -86,7 +86,8 @@ function signal_model!(
         work,
         θ::AbstractVector{T},
         ϵ::Union{AbstractVector, Nothing} = nothing;
-        TE
+        TE,
+        normalize::Bool = true,
     ) where {T}
     @unpack epg_work, signal, real_noise, imag_noise = work
     # refcon, alpha, T2short, dT2, Ashort = θ[1], θ[2], θ[3]/1000, θ[4]/1000, θ[5]
@@ -100,7 +101,7 @@ function signal_model!(
 
     signal  .= Ashort .* DECAES.EPGdecaycurve!(epg_work, alpha, T(TE), T2short, T1short, refcon) # short component
     signal .+= Along  .* DECAES.EPGdecaycurve!(epg_work, alpha, T(TE), T2long,  T1long,  refcon) # long component
-    signal ./= sum(signal) # normalize
+    normalize && (signal ./= sum(signal))
 
     # Add noise to "real" and "imag" channels in quadrature
     if !isnothing(ϵ)
@@ -108,11 +109,11 @@ function signal_model!(
             noise_model!(real_noise, signal, ϵ) # populate real_noise
             noise_model!(imag_noise, signal, ϵ) # populate imag_noise
             signal .= sqrt.((signal .+ real_noise).^2 .+ imag_noise.^2)
-            signal ./= sum(signal)
+            normalize && (signal ./= sum(signal))
         else
             # Add forward-differentiable noise to "real" and "imag" channels in quadrature
             signal = sqrt.((signal .+ noise_model(signal, ϵ)).^2 .+ noise_model(signal, ϵ).^2)
-            signal ./= sum(signal)
+            normalize && (signal ./= sum(signal))
         end
     end
 
@@ -134,7 +135,7 @@ function signal_model!(
     return X
 end
 
-signal_model(θ::AbstractVecOrMat{T}, ϵ::Union{AbstractVector, Nothing} = nothing; nTE::Int, TE) where {T} = signal_model!(signal_model_work(T; nTE = nTE), θ, ϵ; TE = T(TE))
+signal_model(θ::AbstractVecOrMat{T}, ϵ::Union{AbstractVector, Nothing} = nothing; nTE::Int, TE, kwargs...) where {T} = signal_model!(signal_model_work(T; nTE = nTE), θ, ϵ; TE = T(TE), kwargs...)
 
 function mutate_signal(Y::AbstractVecOrMat; meanmutations::Int = 0)
     if meanmutations <= 0
@@ -293,6 +294,7 @@ function make_mle_data_samplers(
         thetaspath;
         ntheta::Int,
         plothist = false,
+        padtrain = false,
     )
 
     # Set random seed for consistent test/train sets
@@ -313,15 +315,14 @@ function make_mle_data_samplers(
     # filter!(r -> 8.01 <= r.dT2, res) # drop boundary failures
     # filter!(r -> r.loss <= -250, res) # drop poor fits long T2short (very few points)
 
-    filter!(r -> r.opttime <= 4.99, res) # drop non-converged fits
     filter!(r -> !(999.99 <= r.dT2 && 999.99 <= r.T2short), res) # drop boundary failures
     filter!(r -> r.dT2 <= 999.99, res) # drop boundary failures
-    filter!(r -> 120.0 <= r.alpha, res) # drop outlier fits (very few points)
+    filter!(r -> r.dT2 <= 250, res) # drop long dT2 which can't be recovered
     filter!(r -> r.T2short <= 100, res) # drop long T2short (very few points)
     filter!(r -> 8.01 <= r.T2short, res) # drop boundary failures
     filter!(r -> 8.01 <= r.dT2, res) # drop boundary failures
-    filter!(r -> r.Ashort <= 0.15, res) # drop outlier fits (very few points)
-    filter!(r -> r.Along <= 0.15, res) # drop outlier fits (very few points)
+    filter!(r -> 0.005 <= r.Ashort <= 0.15, res) # drop outlier fits (very few points)
+    filter!(r -> 0.005 <= r.Along <= 0.15, res) # drop outlier fits (very few points)
     filter!(r -> r.loss <= -250, res) # drop poor fits (very few points)
 
     res = res[shuffle(MersenneTwister(0), 1:nrow(res)), :]
@@ -329,6 +330,23 @@ function make_mle_data_samplers(
 
     # thetas = permutedims(convert(Matrix{Float64}, res[:, [:alpha, :T2short, :dT2, :Ashort]])) # convert to ntheta x nSamples Matrix
     thetas = permutedims(convert(Matrix{Float64}, res[:, [:alpha, :T2short, :dT2, :Ashort, :Along]])) # convert to ntheta x nSamples Matrix
+
+    # Forward simulation params
+    signal_work = signal_model_work(Float64; nTE = 48)
+    signal_fun(θ::AbstractMatrix{Float64}, noise::Union{AbstractVector{Float64}, Nothing} = nothing; kwargs...) = signal_model!(signal_work, θ, noise; TE = 8e-3, kwargs...)
+
+    # Pad training data with randomly sampled thetas
+    local θtrain_pad
+    if padtrain
+        θ_pad_lo, θ_pad_hi = minimum(thetas; dims = 2), maximum(thetas; dims = 2)
+        θtrain_pad = θ_pad_lo .+ (θ_pad_hi .- θ_pad_lo) .* rand(ntheta, nrow(df))
+        Xtrain_pad = signal_fun(θtrain_pad, nothing; normalize = false)
+        θtrain_pad[4:5, :] ./= sum(Xtrain_pad; dims = 1) # normalize Ashort, Along
+        train_pad_filter   = map(Ashort -> 0.005 <= Ashort <= 0.15, θtrain_pad[4,:]) # drop outlier samples (very few points)
+        train_pad_filter .&= map(Along  -> 0.005 <= Along  <= 0.15, θtrain_pad[5,:]) # drop outlier samples (very few points)
+        θtrain_pad = θtrain_pad[:, train_pad_filter]
+        println("num padded:    $(size(θtrain_pad,2))")
+    end
 
     # Plot prior distribution histograms
     # plothist && display(plot(mapreduce(vcat, [:alpha, :T2short, :dT2, :Ashort, :logsigma, :loss]; init = Any[]) do c
@@ -341,10 +359,6 @@ function make_mle_data_samplers(
     image = DECAES.load_image(imagepath) # load 4D MatrixSize x nTE image
     Y = convert(Matrix{Float64}, permutedims(image[CartesianIndex.(res[!, :index]), :])) # convert to nTE x nSamples Matrix
     Y ./= sum(Y; dims = 1) # Normalize signals to unit sum
-
-    # Forward simulation params
-    signal_work = signal_model_work(Float64; nTE = 48)
-    signal_fun(θ::AbstractMatrix{Float64}, noise::Union{AbstractVector{Float64}, Nothing} = nothing) = signal_model!(signal_work, θ, noise; TE = 8e-3)
 
     # Generate data samplers
     itrain =                   1 : 2*(size(Y,2)÷4)
@@ -362,6 +376,10 @@ function make_mle_data_samplers(
 
     # Fit parameters (θ) samplers
     θtrain, θtest, θval = thetas[:,itrain], thetas[:,itest], thetas[:,ival]
+    if padtrain
+        θtrain = hcat(θtrain, θtrain_pad)
+        θtrain = θtrain[:,shuffle(MersenneTwister(0), 1:size(θtrain,2))] # mix training + padded thetas
+    end
     sampleθ = function(batchsize; dataset = :train)
         dataset == :train ? (batchsize === nothing ? θtrain : sample_columns(θtrain, batchsize)) :
         dataset == :test  ? (batchsize === nothing ? θtest  : sample_columns(θtest,  batchsize)) :

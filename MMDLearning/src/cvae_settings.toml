@@ -80,7 +80,7 @@ labscale    = [1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
 [data.preprocess]
 normalize   = "unitsum" # Normalize input signals (unitsum == signal sums to 1)
 [data.postprocess]
-noise       = 0.001 # Rician noise level
+noise       = 0.0005 # Rician noise level
 # noise     = 0.0003665680006339801 # Median Rician noise level resulting from MLE fits after filter
 # noise     = 0.0006037022217142547 # Mean Rician noise level resulting from MLE fits after filter
 

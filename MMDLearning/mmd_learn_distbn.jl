@@ -9,7 +9,7 @@ const settings = load_settings()
 sampleX, sampleY, sampleθ = if IS_TOY_MODEL
     make_toy_samplers(ntrain = settings["mmd"]["batchsize"]::Int, epsilon = TOY_NOISE_LEVEL, power = 4.0);
 else
-    make_mle_data_samplers(settings["prior"]["data"]["image"]::String, settings["prior"]["data"]["thetas"]::String; ntheta = settings["data"]["ntheta"]::Int, plothist = false); #TODO
+    make_mle_data_samplers(settings["prior"]["data"]["image"]::String, settings["prior"]["data"]["thetas"]::String; ntheta = settings["data"]["ntheta"]::Int, plothist = false, padtrain = false); #TODO
     # make_gmm_data_samplers(image; ntheta = settings["data"]["ntheta"]::Int);
 end;
 
