@@ -20,7 +20,7 @@ const opts    = T2mapOptions(
     T2Range    = (15e-3, 2.0),
     nT2        = 40,
 );
-cp(mmd_settings["prior"]["data"]["settings"], joinpath(mmd_settings["data"]["out"], basename(mmd_settings["prior"]["data"]["settings"]))); #TODO
+# cp(mmd_settings["prior"]["data"]["settings"], joinpath(mmd_settings["data"]["out"], basename(mmd_settings["prior"]["data"]["settings"]))); #TODO
 
 ####
 #### Signal fitting
@@ -147,7 +147,7 @@ end
 #### Batch signal fitting
 ####
 
-#= Perform fitting of one "batch" =#
+#= Perform fitting of one "batch"
 const image_indices         = shuffle(MersenneTwister(0), filter(I -> image[I,1] > 0, CartesianIndices(size(image)[1:3]))) #TODO
 const image_indices_batches = collect(Iterators.partition(image_indices, mmd_settings["prior"]["fitting"]["batchsize"]))
 const image_indices_batch   = image_indices_batches[mmd_settings["prior"]["fitting"]["batchindex"]]
@@ -165,6 +165,7 @@ DrWatson.@tagsave(
     safe = true,
     gitpath = realpath(DrWatson.projectdir("..")),
 )
+=#
 
 #= Sample + fit random signals based on fit-to-noise ratio (FNR)
 let I = rand(findall(I -> !isnan(t2maps["fnr"][I]) && 50 <= t2maps["fnr"][I] <= 100, CartesianIndices(size(image)[1:3])))
@@ -177,7 +178,7 @@ end
 #= Load indices of completed results
 const resfiles = mapreduce(
         vcat,
-        ["/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v2"]
+        ["/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v3"]
     ) do simdir
     mapreduce(vcat, readdir(simdir; join = true)) do dir
         resdir = joinpath(dir, "pbs-out", "tmp-" * lpad(basename(dir), 3, '0'))
@@ -192,7 +193,7 @@ const todo_indices_batches = collect(Iterators.partition(todo_indices, 1000))
 #= Load completed results
 df = mapreduce(
         vcat,
-        "/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-" .* ["v2"] #, "v2"]
+        "/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-" .* ["v3"] #, "v3"]
     ) do simdir
     mapreduce(vcat, enumerate(readdir(simdir; join = true))) do (i, dir)
         resdir = joinpath(dir, "pbs-out", "tmp-" * lpad(basename(dir), 3, '0'))
@@ -203,7 +204,7 @@ df = mapreduce(
     end
 end
 DrWatson.@tagsave(
-    "results-mlefit-v2.bson",
+    "results-mlefit-v3.bson",
     Dict{String,Any}("results" => deepcopy(df));
     safe = true,
     gitpath = realpath(DrWatson.projectdir("..")),
@@ -213,7 +214,7 @@ DrWatson.@tagsave(
 #= Shuffle + save mle fit results
 df = mapreduce(
         vcat,
-        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mlefit-" .* ["v2"]
+        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mlefit-" .* ["v3"]
     ) do simdir
     mapreduce(vcat, enumerate(readdir(simdir; join = true))) do (i, dir)
         resfile = joinpath(dir, "pbs-out", "results-" * lpad(basename(dir), 3, '0') * ".bson")
@@ -226,7 +227,7 @@ df = mapreduce(
     end
 end
 DrWatson.@tagsave(
-    "/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v2/mlefits-shuffled.bson",
+    "/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v3/mlefits-shuffled.bson",
     Dict{String,Any}("results" => deepcopy(df[shuffle(MersenneTwister(0), 1:nrow(df)), :]));
     safe = true,
     gitpath = realpath(DrWatson.projectdir("..")),
@@ -237,7 +238,6 @@ DrWatson.@tagsave(
 #### Investigating correcting fit results
 ####
 
-#=
 function make_mle_funs(
         signal::AbstractVector{T};
         TE::T                = T(opts.TE),
@@ -282,56 +282,117 @@ function correct_results(df)
     nothing
 end
 
+#=
 # correct_results(df)
 empty!(Revise.queue_errors);
-df = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v2/mlefits-shuffled.bson")["results"])
+df = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v3/mlefits-shuffled-normalized.bson")["results"])
 let
     res = deepcopy(df)
-    # filter!(r -> !(999.99 <= r.dT2 && 999.99 <= r.T2short), res) # drop boundary failures
-    # # filter!(r -> r.dT2 <= 999.99, res) # drop boundary failures
+    filter!(r -> r.opttime <= 4.99, res) # drop non-converged fits
+    filter!(r -> !(999.99 <= r.dT2 && 999.99 <= r.T2short), res) # drop boundary failures
+    filter!(r -> r.dT2 <= 999.99, res) # drop boundary failures
+    filter!(r -> 120.0 <= r.alpha, res) # drop outlier fits (very few points)
+    filter!(r -> r.T2short <= 100, res) # drop long T2short (very few points)
+    filter!(r -> 8.01 <= r.T2short, res) # drop boundary failures
+    filter!(r -> 8.01 <= r.dT2, res) # drop boundary failures
+    filter!(r -> r.Ashort <= 0.15, res) # drop outlier fits (very few points)
+    filter!(r -> r.Along <= 0.15, res) # drop outlier fits (very few points)
+    filter!(r -> r.loss <= -250, res) # drop poor fits (very few points)
     # filter!(r -> r.dT2 <= 500, res) # drop long dT2 which can't be recovered
     # filter!(r -> 0.01 <= r.Ashort <= 0.99, res) # drop degenerate (monoexponential) fits
-    # # filter!(r -> r.alpha <= 179.99, res)
-    # # filter!(r -> 0.1 <= r.Ashort <= 0.9, res) # window filter
-    # filter!(r -> r.T2short <= 100, res) # drop long T2short (very few points)
-    # filter!(r -> 8.01 <= r.T2short, res) # drop boundary failures
-    # filter!(r -> 8.01 <= r.dT2, res) # drop boundary failures
-    # filter!(r -> r.loss <= -250, res) # drop poor fits long T2short (very few points)
+    # filter!(r -> r.alpha <= 179.99, res)
+    # filter!(r -> 0.1 <= r.Ashort <= 0.9, res) # window filter
+    # filter!(r -> r.rmse <= 0.01, res) # drop poor fits (very few points)
 
     @show nrow(res)/nrow(df)
 
     plot(map([:alpha, :T2short, :dT2, :Ashort, :Along, :loss]) do col
         @show col, quantile(res[!,col], 0.99)
-        # lo, up = extrema(res[!,col])
-        # trans = x -> -cos(pi * (x - lo)/(up - lo)) # scale [lo,up] -> [0,pi] -> [0,1]
-        # trans = identity
         th = res[:,col]
-        (col === :alpha) && (th .= cosd.(th))
-        # (col === :Ashort) && (th .= sind.(90 .* th))
-        histogram(th; lab = col)
+        lab = string(col)
+        (col === :alpha) && (th .= cosd.(th); lab = "cosd(alpha)")
+        # (col === :alpha) && (th .= sind.(th); lab = "sind(alpha)")
+        histogram(th; lab = lab)
     end...) |> display
 
     # filter!(r -> r.loss <= -350, res)
     filter!(r -> -275 <= r.loss <= -250, res)
-    # filter!(r -> -250 <= r.loss <= -230, res)
+    # filter!(r -> -250 <= r.loss <= -225, res)
     # filter!(r -> -225 <= r.loss <= -200, res)
     idx   = CartesianIndex.(res[:, :index])
-    theta = permutedims(convert(Matrix, res[:, [:alpha, :T2short, :dT2, :Ashort, :logsigma]]))
-    # map(sample(1:nrow(res), 10; replace = false)) do i
-    #     y0 = image[idx[i],:]
-    #     mlemodel, mleloss = make_mle_funs(y0)
-    #     y = mlemodel(theta[:,i])
-    #     plot([y0./sum(y0) y]; lab = ["true" "fit"], title = "loss = $(res.loss[i])") |> display
-    # end
+    theta = permutedims(convert(Matrix, res[:, [:alpha, :T2short, :dT2, :Ashort, :Along, :logsigma]]))
+    map(sample(1:nrow(res), 10; replace = false)) do i
+    # map(findall(res.rmse .> 0.009)[1:min(end,10)]) do i
+        y0 = image[idx[i],:]
+        mlemodel, mleloss = make_mle_funs(y0)
+        y = mlemodel(theta[:,i])
+        plot([y0./sum(y0) y]; lab = ["true" "fit"], title = "loss = $(res.loss[i]), rmse = $(res.rmse[i])") |> display
+    end
 
     nothing
+end
+=#
+
+#= add rmse column
+let
+    df.rmse = map(1:nrow(df)) do i
+    # for i in 1:nrow(df)
+        I = CartesianIndex(df[i, :index])
+        theta = convert(Vector, df[i, [:alpha, :T2short, :dT2, :Ashort, :Along, :logsigma]])
+        y0 = unitsum(image[I,:]; dims = 1)
+        mlemodel, mleloss = make_mle_funs(y0)
+        y = mlemodel(theta)
+        return sqrt(sum(abs2, y .- y0))
+        # df.rmse[i] = sqrt(sum(abs2, y .- y0))
+        # if df.rmse[i] > 0.01
+        #     plot([y y0]; title = "loss = $(df.loss[i]), rmse = $(df.rmse[i])") |> display
+        # end
+    end
+end
+=#
+
+#= normalize Ashort, Along
+empty!(Revise.queue_errors);
+df = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v3/mlefits-shuffled.bson")["results"])
+let
+    nTE = 48
+    TE = 8e-3
+    epg_work = DECAES.EPGdecaycurve_work(Float64, nTE)
+    signal = zeros(Float64, nTE)
+    for i in 1:nrow(df)
+        mod(i, 10000) == 0 && println("i = $i/$(nrow(df))")
+        
+        I = CartesianIndex(df[i, :index])
+        theta = convert(Vector, df[i, [:alpha, :T2short, :dT2, :Ashort, :Along, :logsigma]])
+        y0 = image[I,:]
+        y0 ./= sum(y0)
+        mlemodel, mleloss = make_mle_funs(y0)
+        y = mlemodel(theta)
+        
+        alpha, T2short, T2long, Ashort, Along = df.alpha[i], df.T2short[i]/1000, df.T2long[i]/1000, df.Ashort[i], df.Along[i]
+        
+        signal  .= Ashort .* DECAES.EPGdecaycurve!(epg_work, alpha, TE, T2short, 1.0, 180.0) # short component
+        signal .+= Along  .* DECAES.EPGdecaycurve!(epg_work, alpha, TE, T2long,  1.0, 180.0) # long component
+        # @show sum(signal)
+        
+        Ashort /= sum(signal)
+        Along /= sum(signal)
+        
+        signal  .= Ashort .* DECAES.EPGdecaycurve!(epg_work, alpha, TE, T2short, 1.0, 180.0) # short component
+        signal .+= Along  .* DECAES.EPGdecaycurve!(epg_work, alpha, TE, T2long,  1.0, 180.0) # long component
+        
+        @assert isapprox(signal, y)
+        
+        df.Ashort[i] = Ashort
+        df.Along[i] = Along
+    end
 end
 =#
 
 #=
 #TODO: for watching failed qsubs
 while true
-    for dir in readdir("/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mlefit-v2"; join = true)
+    for dir in readdir("/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mlefit-v3"; join = true)
         outpath = joinpath(dir, "pbs-out")
         if !isempty(filter(s -> startswith(s, "output"), readdir(outpath))) && isempty(filter(s -> startswith(s, "results"), readdir(outpath)))
             print("$(basename(dir)) ")
@@ -340,6 +401,11 @@ while true
     println("\n")
     sleep(5.0)
 end
+map(readdir("/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mlefit-v3"; join = true)) do dir
+    isfile(joinpath(dir, "pbs-out", "settings.toml")) &&
+    isfile(joinpath(dir, "pbs-out", "sweep_settings.toml")) &&
+    isfile(joinpath(dir, "pbs-out", "masked-image-240x240x48x48.settings-240x240x48x48.txt"))
+end |> sum
 =#
 
 ####

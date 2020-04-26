@@ -302,24 +302,38 @@ function make_mle_data_samplers(
     res = deepcopy(BSON.load(thetaspath)["results"])
     println("before filter: $(nrow(res))")
 
+    # filter!(r -> !(999.99 <= r.dT2 && 999.99 <= r.T2short), res) # drop boundary failures
+    # # filter!(r -> r.dT2 <= 999.99, res) # drop boundary failures
+    # filter!(r -> r.dT2 <= 500, res) # drop long dT2 which can't be recovered
+    # filter!(r -> 0.01 <= r.Ashort <= 0.99, res) # drop degenerate (monoexponential) fits
+    # # filter!(r -> r.alpha <= 179.99, res)
+    # # filter!(r -> 0.1 <= r.Ashort <= 0.9, res) # window filter
+    # filter!(r -> r.T2short <= 100, res) # drop long T2short (very few points)
+    # filter!(r -> 8.01 <= r.T2short, res) # drop boundary failures
+    # filter!(r -> 8.01 <= r.dT2, res) # drop boundary failures
+    # filter!(r -> r.loss <= -250, res) # drop poor fits long T2short (very few points)
+
+    filter!(r -> r.opttime <= 4.99, res) # drop non-converged fits
     filter!(r -> !(999.99 <= r.dT2 && 999.99 <= r.T2short), res) # drop boundary failures
-    # filter!(r -> r.dT2 <= 999.99, res) # drop boundary failures
-    filter!(r -> r.dT2 <= 500, res) # drop long dT2 which can't be recovered
-    filter!(r -> 0.01 <= r.Ashort <= 0.99, res) # drop degenerate (monoexponential) fits
-    # filter!(r -> r.alpha <= 179.99, res)
-    # filter!(r -> 0.1 <= r.Ashort <= 0.9, res) # window filter
+    filter!(r -> r.dT2 <= 999.99, res) # drop boundary failures
+    filter!(r -> 120.0 <= r.alpha, res) # drop outlier fits (very few points)
     filter!(r -> r.T2short <= 100, res) # drop long T2short (very few points)
     filter!(r -> 8.01 <= r.T2short, res) # drop boundary failures
     filter!(r -> 8.01 <= r.dT2, res) # drop boundary failures
-    filter!(r -> r.loss <= -250, res) # drop poor fits long T2short (very few points)
+    filter!(r -> r.Ashort <= 0.15, res) # drop outlier fits (very few points)
+    filter!(r -> r.Along <= 0.15, res) # drop outlier fits (very few points)
+    filter!(r -> r.loss <= -250, res) # drop poor fits (very few points)
 
     res = res[shuffle(MersenneTwister(0), 1:nrow(res)), :]
     println("after filter:  $(nrow(res))")
 
-    thetas = permutedims(convert(Matrix{Float64}, res[:, [:alpha, :T2short, :dT2, :Ashort]])) # convert to ntheta x nSamples Matrix
+    # thetas = permutedims(convert(Matrix{Float64}, res[:, [:alpha, :T2short, :dT2, :Ashort]])) # convert to ntheta x nSamples Matrix
+    thetas = permutedims(convert(Matrix{Float64}, res[:, [:alpha, :T2short, :dT2, :Ashort, :Along]])) # convert to ntheta x nSamples Matrix
 
     # Plot prior distribution histograms
-    plothist && display(plot(mapreduce(vcat, [:alpha, :T2short, :dT2, :Ashort, :logsigma, :loss]; init = Any[]) do c
+    # plothist && display(plot(mapreduce(vcat, [:alpha, :T2short, :dT2, :Ashort, :logsigma, :loss]; init = Any[]) do c
+    plothist && display(plot(mapreduce(vcat, [:alpha, :T2short, :dT2, :Ashort, :Along, :logsigma, :loss]; init = Any[]) do c
+        histogram(res[!,c]; lab = c, nbins = 75)
         histogram(res[!,c]; lab = c, nbins = 75)
     end...))
 

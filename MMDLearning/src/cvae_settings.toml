@@ -29,37 +29,54 @@ ntrain      = 4096    # Number of train samples
 # normalize   = "" # Normalize input signals (unitsum == signal sums to 1)
 # [data.postprocess]
 # noise       = 1e-2 # Rician noise level
-[data.info]
-nfeatures   = 48 # Height of input data
-nchannels   = 1 # Number of input data channels
-nlabels     = 4 # Number of output labels
-# labmean   = [115.0, 504.0, 504.0, 0.5] # Label distribution means
-# labwidth  = [130.0, 992.0, 992.0, 1.0] # Label distribution widths
-# labnames  = ["alpha", "T2short", "dT2", "Ashort"]
-# labinfer  = ["alpha", "T2short", "dT2", "Ashort"]
-# labunits  = ["deg", "ms", "ms", "a.u."] # label units, after scaling
-labmean     = [-0.17860619515673032, 54.0, 262.0, 0.5] # Label distribution means
-labwidth    = [ 1.64278760968653930, 92.0, 492.0, 1.0] # Label distribution widths
-# labnames    = ["cosd(alpha)", "T2short", "dT2", "Ashort"]
-# labinfer    = ["cosd(alpha)", "T2short", "dT2", "Ashort"]
-labnames    = ["cosd(alpha)", "T2short", "T2long", "Ashort"]
-labinfer    = ["cosd(alpha)", "T2short", "T2long", "Ashort"]
-# labnames    = ["cosd(alpha)", "Ashort*T2short", "Along*T2long", "Ashort"]
-# labinfer    = ["cosd(alpha)", "Ashort*T2short", "Along*T2long", "Ashort"]
-labunits    = ["cos(deg)", "ms", "ms", "a.u."] # label units, after scaling
-labweights  = [1.0, 1.0, 1.0, 1.0] # Weights for loss function
-labscale    = [1.0, 1.0, 1.0, 1.0] # scale labels before plotting
 # [data.info]
 # nfeatures   = 48 # Height of input data
 # nchannels   = 1 # Number of input data channels
-# nlabels     = 3 # Number of output labels
-# labmean     = [-0.17860619515673032, 54.0, 0.5] # Label distribution means
-# labwidth    = [ 1.64278760968653930, 92.0, 1.0] # Label distribution widths
-# labnames    = ["cosd(alpha)", "T2short", "Ashort"]
-# labinfer    = ["cosd(alpha)", "T2short", "Ashort"]
-# labunits    = ["cos(deg)", "ms", "a.u."] # label units, after scaling
-# labweights  = [1.0, 1.0, 1.0] # Weights for loss function
-# labscale    = [1.0, 1.0, 1.0] # scale labels before plotting
+# nlabels     = 4 # Number of output labels
+# # labmean   = [115.0, 504.0, 504.0, 0.5] # Label distribution means
+# # labwidth  = [130.0, 992.0, 992.0, 1.0] # Label distribution widths
+# # labnames  = ["alpha", "T2short", "dT2", "Ashort"]
+# # labinfer  = ["alpha", "T2short", "dT2", "Ashort"]
+# # labunits  = ["deg", "ms", "ms", "a.u."] # label units, after scaling
+# labmean     = [-0.17860619515673032, 54.0, 262.0, 0.5] # Label distribution means
+# labwidth    = [ 1.64278760968653930, 92.0, 492.0, 1.0] # Label distribution widths
+# # labnames    = ["cosd(alpha)", "T2short", "dT2", "Ashort"]
+# # labinfer    = ["cosd(alpha)", "T2short", "dT2", "Ashort"]
+# labnames    = ["cosd(alpha)", "T2short", "T2long", "Ashort"]
+# labinfer    = ["cosd(alpha)", "T2short", "T2long", "Ashort"]
+# # labnames    = ["cosd(alpha)", "Ashort*T2short", "Along*T2long", "Ashort"]
+# # labinfer    = ["cosd(alpha)", "Ashort*T2short", "Along*T2long", "Ashort"]
+# labunits    = ["cos(deg)", "ms", "ms", "a.u."] # label units, after scaling
+# labweights  = [1.0, 1.0, 1.0, 1.0] # Weights for loss function
+# labscale    = [1.0, 1.0, 1.0, 1.0] # scale labels before plotting
+# # [data.info]
+# # nfeatures   = 48 # Height of input data
+# # nchannels   = 1 # Number of input data channels
+# # nlabels     = 3 # Number of output labels
+# # labmean     = [-0.17860619515673032, 54.0, 0.5] # Label distribution means
+# # labwidth    = [ 1.64278760968653930, 92.0, 1.0] # Label distribution widths
+# # labnames    = ["cosd(alpha)", "T2short", "Ashort"]
+# # labinfer    = ["cosd(alpha)", "T2short", "Ashort"]
+# # labunits    = ["cos(deg)", "ms", "a.u."] # label units, after scaling
+# # labweights  = [1.0, 1.0, 1.0] # Weights for loss function
+# # labscale    = [1.0, 1.0, 1.0] # scale labels before plotting
+# [data.preprocess]
+# normalize   = "unitsum" # Normalize input signals (unitsum == signal sums to 1)
+# [data.postprocess]
+# noise       = 0.001 # Rician noise level
+# # noise     = 0.0003665680006339801 # Median Rician noise level resulting from MLE fits after filter
+# # noise     = 0.0006037022217142547 # Mean Rician noise level resulting from MLE fits after filter
+[data.info]
+nfeatures   = 48 # Height of input data
+nchannels   = 1 # Number of input data channels
+nlabels     = 5 # Number of output labels
+labmean     = [0.0, 0.0, 0.0, 0.0, 0.0] # Label distribution means
+labwidth    = [0.0, 0.0, 0.0, 0.0, 0.0] # Label distribution widths
+labnames    = ["cosd(alpha)", "T2short", "T2long", "Ashort", "Along"]
+labinfer    = ["cosd(alpha)", "T2short", "T2long", "Ashort", "Along"]
+labunits    = ["cos(deg)", "ms", "ms", "a.u.", "a.u."] # label units, after scaling
+labweights  = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
+labscale    = [1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
 [data.preprocess]
 normalize   = "unitsum" # Normalize input signals (unitsum == signal sums to 1)
 [data.postprocess]
@@ -80,7 +97,7 @@ gamma     = 1.0 # Reweighting factor: loss = gamma * ELBO + KLdiv
 # Zdim      = 8 # Latent variable dimension
 # dropout   = 0.0 # Dropout layer
 # act       = "relu"
-Xout      = 4 # Number of learned labels
+Xout      = 5 # Number of learned labels
 Nh        = 4 # Number of inner hidden dense layers
 Dh        = 64 # Dimension of inner hidden dense layers
 Zdim      = 6 # Latent variable dimension
