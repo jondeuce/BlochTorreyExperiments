@@ -2,18 +2,19 @@ dir     = "."
 prec    = 64
 gpu     = false
 save    = true
-timeout = 23.5 # Training timeout (hours)
+timeout = 23.0 # Training timeout (hours)
 
 [data]
 val_data    = ""
 test_data   = ""
 train_data  = ""
-val_batch   = "auto"  # Auto treats entire validation set as one batch
-test_batch  = "auto"  # Auto treats entire test set as one batch
-train_batch = 256     # Batch size for training
-nval        = 1024    # Number of validation samples
-ntest       = 1024    # Number of test samples
-ntrain      = 4096    # Number of train samples
+val_batch   = "auto" # Auto treats entire validation set as one batch
+test_batch  = "auto" # Auto treats entire test set as one batch
+train_batch = 256    # Batch size for training
+nval        = 1024   # Number of validation samples
+ntest       = 1024   # Number of test samples
+ntrain      = 4096   # Number of train samples
+padtrain    = true   # Pad training data with uniformly random prior samples
 # [data.info]
 # nfeatures   = 128 # Height of input data
 # nchannels   = 1 # Number of input data channels
@@ -29,43 +30,6 @@ ntrain      = 4096    # Number of train samples
 # normalize   = "" # Normalize input signals (unitsum == signal sums to 1)
 # [data.postprocess]
 # noise       = 1e-2 # Rician noise level
-# [data.info]
-# nfeatures   = 48 # Height of input data
-# nchannels   = 1 # Number of input data channels
-# nlabels     = 4 # Number of output labels
-# # labmean   = [115.0, 504.0, 504.0, 0.5] # Label distribution means
-# # labwidth  = [130.0, 992.0, 992.0, 1.0] # Label distribution widths
-# # labnames  = ["alpha", "T2short", "dT2", "Ashort"]
-# # labinfer  = ["alpha", "T2short", "dT2", "Ashort"]
-# # labunits  = ["deg", "ms", "ms", "a.u."] # label units, after scaling
-# labmean     = [-0.17860619515673032, 54.0, 262.0, 0.5] # Label distribution means
-# labwidth    = [ 1.64278760968653930, 92.0, 492.0, 1.0] # Label distribution widths
-# # labnames    = ["cosd(alpha)", "T2short", "dT2", "Ashort"]
-# # labinfer    = ["cosd(alpha)", "T2short", "dT2", "Ashort"]
-# labnames    = ["cosd(alpha)", "T2short", "T2long", "Ashort"]
-# labinfer    = ["cosd(alpha)", "T2short", "T2long", "Ashort"]
-# # labnames    = ["cosd(alpha)", "Ashort*T2short", "Along*T2long", "Ashort"]
-# # labinfer    = ["cosd(alpha)", "Ashort*T2short", "Along*T2long", "Ashort"]
-# labunits    = ["cos(deg)", "ms", "ms", "a.u."] # label units, after scaling
-# labweights  = [1.0, 1.0, 1.0, 1.0] # Weights for loss function
-# labscale    = [1.0, 1.0, 1.0, 1.0] # scale labels before plotting
-# # [data.info]
-# # nfeatures   = 48 # Height of input data
-# # nchannels   = 1 # Number of input data channels
-# # nlabels     = 3 # Number of output labels
-# # labmean     = [-0.17860619515673032, 54.0, 0.5] # Label distribution means
-# # labwidth    = [ 1.64278760968653930, 92.0, 1.0] # Label distribution widths
-# # labnames    = ["cosd(alpha)", "T2short", "Ashort"]
-# # labinfer    = ["cosd(alpha)", "T2short", "Ashort"]
-# # labunits    = ["cos(deg)", "ms", "a.u."] # label units, after scaling
-# # labweights  = [1.0, 1.0, 1.0] # Weights for loss function
-# # labscale    = [1.0, 1.0, 1.0] # scale labels before plotting
-# [data.preprocess]
-# normalize   = "unitsum" # Normalize input signals (unitsum == signal sums to 1)
-# [data.postprocess]
-# noise       = 0.001 # Rician noise level
-# # noise     = 0.0003665680006339801 # Median Rician noise level resulting from MLE fits after filter
-# # noise     = 0.0006037022217142547 # Mean Rician noise level resulting from MLE fits after filter
 [data.info]
 nfeatures   = 48 # Height of input data
 nchannels   = 1 # Number of input data channels
@@ -81,8 +45,6 @@ labscale    = [1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
 normalize   = "unitsum" # Normalize input signals (unitsum == signal sums to 1)
 [data.postprocess]
 noise       = 0.0005 # Rician noise level
-# noise     = 0.0003665680006339801 # Median Rician noise level resulting from MLE fits after filter
-# noise     = 0.0006037022217142547 # Mean Rician noise level resulting from MLE fits after filter
 
 [model]
 loss      = "l2"
@@ -91,17 +53,10 @@ gamma     = 1.0 # Reweighting factor: loss = gamma * ELBO + KLdiv
 # [model.load]
 # path    = "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/ismrm2020/pretrained-dense-model-with-perm/2019-11-01-T-16-12-14-111.acc=rmse_loss=l2_DenseLIGOCVAE_Ndense1=128_Ndense2=128_Ndense3=128_Ndense4=128_Ndense5=128_Ndense6=128_Xout=6_Zdim=20_act=leakyrelu.model-checkpoint.bson"
 [model.DenseLIGOCVAE]
-# Xout      = 5 # Number of learned labels (toy model)
-# Nh        = 1 # Number of inner hidden dense layers
-# Dh        = 32 # Dimension of inner hidden dense layers
-# Zdim      = 8 # Latent variable dimension
-# dropout   = 0.0 # Dropout layer
-# act       = "relu"
 Xout      = 5 # Number of learned labels
-Nh        = 4 # Number of inner hidden dense layers
+Nh        = 2 # Number of inner hidden dense layers
 Dh        = 64 # Dimension of inner hidden dense layers
 Zdim      = 6 # Latent variable dimension
-dropout   = 0.0 # Dropout layer
 act       = "relu"
 boundmean = true # Bound mean to be within labmean +/- labwidth/2
 

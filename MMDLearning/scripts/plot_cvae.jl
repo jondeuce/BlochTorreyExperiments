@@ -54,9 +54,10 @@ function read_to_dataframe(sweep_dir)
         :loss     => last(collect(skipmissing(state.loss))),
         :acc      => last(collect(skipmissing(state.acc))),
         Symbol("cosd(alpha)") => last((x->x[1]).(labelerr)),
-        Symbol("T2short")     => last((x->x[2]).(labelerr)),
-        Symbol("T2long")      => last((x->x[3]).(labelerr)),
-        Symbol("Ashort")      => last((x->x[4]).(labelerr)),
+        :T2short              => last((x->x[2]).(labelerr)),
+        :T2long               => last((x->x[3]).(labelerr)),
+        :Ashort               => last((x->x[4]).(labelerr)),
+        :Along                => last((x->x[5]).(labelerr)),
         :inf_med  => last(median.(labelerr)),
         :inf_mean => last(mean.(labelerr)),
         :inf_sup  => last(maximum.(labelerr)),
@@ -102,7 +103,7 @@ function read_results(sweep_dir)
 end
 
 # Read results to DataFrame
-results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/cvae-test-v2"
+results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/cvae-test-v4"
 sweep_dir = joinpath(results_dir, "sweep");
 df, sweep_temp, metrics_temp = read_results(sweep_dir);
 

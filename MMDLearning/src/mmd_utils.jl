@@ -300,24 +300,12 @@ function make_mle_data_samplers(
     # Set random seed for consistent test/train sets
     rng = Random.seed!(0)
 
-    # Load + preprocess results (~20% of voxels dropped)
+    # Load + preprocess results (~25% of voxels dropped)
     res = deepcopy(BSON.load(thetaspath)["results"])
     println("before filter: $(nrow(res))")
 
-    # filter!(r -> !(999.99 <= r.dT2 && 999.99 <= r.T2short), res) # drop boundary failures
-    # # filter!(r -> r.dT2 <= 999.99, res) # drop boundary failures
-    # filter!(r -> r.dT2 <= 500, res) # drop long dT2 which can't be recovered
-    # filter!(r -> 0.01 <= r.Ashort <= 0.99, res) # drop degenerate (monoexponential) fits
-    # # filter!(r -> r.alpha <= 179.99, res)
-    # # filter!(r -> 0.1 <= r.Ashort <= 0.9, res) # window filter
-    # filter!(r -> r.T2short <= 100, res) # drop long T2short (very few points)
-    # filter!(r -> 8.01 <= r.T2short, res) # drop boundary failures
-    # filter!(r -> 8.01 <= r.dT2, res) # drop boundary failures
-    # filter!(r -> r.loss <= -250, res) # drop poor fits long T2short (very few points)
-
     filter!(r -> !(999.99 <= r.dT2 && 999.99 <= r.T2short), res) # drop boundary failures
     filter!(r -> r.dT2 <= 999.99, res) # drop boundary failures
-    filter!(r -> r.dT2 <= 250, res) # drop long dT2 which can't be recovered
     filter!(r -> r.T2short <= 100, res) # drop long T2short (very few points)
     filter!(r -> 8.01 <= r.T2short, res) # drop boundary failures
     filter!(r -> 8.01 <= r.dT2, res) # drop boundary failures
@@ -339,7 +327,7 @@ function make_mle_data_samplers(
     local θtrain_pad
     if padtrain
         θ_pad_lo, θ_pad_hi = minimum(thetas; dims = 2), maximum(thetas; dims = 2)
-        θtrain_pad = θ_pad_lo .+ (θ_pad_hi .- θ_pad_lo) .* rand(ntheta, nrow(res))
+        θtrain_pad = θ_pad_lo .+ (θ_pad_hi .- θ_pad_lo) .* rand(MersenneTwister(0), ntheta, nrow(res))
         Xtrain_pad = signal_fun(θtrain_pad, nothing; normalize = false)
         θtrain_pad[4:5, :] ./= sum(Xtrain_pad; dims = 1) # normalize Ashort, Along
         train_pad_filter   = map(Ashort -> 0.005 <= Ashort <= 0.15, θtrain_pad[4,:]) # drop outlier samples (very few points)

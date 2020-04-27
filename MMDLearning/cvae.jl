@@ -39,8 +39,9 @@ if SAVE
 end
 
 # MMD settings
-const IS_TOY_MODEL = false
-const IS_CORRECTED_MODEL = false
+const IS_TOY_MODEL = false #TODO
+const CORRECT_TEST_DATA = false #TODO
+const CORRECT_TRAIN_DATA = false #TODO
 const mmd_settings = load_settings()
 const mmd_models = let
     wrap_nottrainable(m::Dict) = Dict{String,Any}([k => NotTrainable(v) for (k,v) in m])
@@ -68,15 +69,12 @@ end
 
 # Load and prepare signal data
 @info "Preparing data..."
-function make_samples(n; dataset)
-    if IS_TOY_MODEL
+function make_samples(n; dataset, correction)
+    θ, Y = if IS_TOY_MODEL
         # train data has different distribution (exponent 4.0), test data has "true" distribution (exponent 2.0)
         power = dataset === :train ? T(4.0) : T(2.0)
         θ = toy_theta_sampler(n)
         Y = toy_signal_model(θ, nothing, power)
-        # "true" dataset is power = 2 model, only apply when training on corrected power = 4 data
-        (IS_CORRECTED_MODEL && dataset === :train) && (Y .= abs.(Y .+ get_correction(Y)))
-        Y = reshape(Y, (size(Y,1), 1, 1, size(Y,2)))
         θ, Y
     else
         # train data has different distribution (EPG model), test data has "true" distribution (MMD-corrected EPG model)
@@ -85,27 +83,30 @@ function make_samples(n; dataset)
             mmd_settings["prior"]["data"]["thetas"]::String;
             ntheta = mmd_settings["data"]["ntheta"]::Int,
             plothist = false,
-            padtrain = true,
+            padtrain = settings["data"]["padtrain"]::Bool,
         )
-        θ = copy(sampleθ(nothing; dataset = dataset)) #[:, 1:10000] #[:, 1:n] #TODO FIXME
-        Y = copy(sampleY(nothing; dataset = dataset)) #[:, 1:10000] #[:, 1:n] #TODO FIXME
-        θ[1,:] .= cosd.(θ[1,:]) # transform flipangle -> cos(flipangle)
+        θ = copy(sampleθ(nothing; dataset = dataset)) #TODO
+        Y = copy(sampleY(nothing; dataset = dataset)) #TODO
+        θ[1,:] .= cosd.(θ[1,:]) # transform flipangle -> cosd(flipangle)
         θ[3,:] .= θ[2,:] .+ θ[3,:] # transform dT2 -> T2long = T2short + dT2
-        # θ[2,:] .*= θ[4,:] # transform T2short -> Ashort * T2short
-        # θ[3,:] .*= θ[5,:] # transform T2long  -> Along  * T2long
         for i in 1:size(θ,1)
             lo, hi = extrema(θ[i,:])
             settings["data"]["info"]["labmean"][i] = (hi + lo)/2
             settings["data"]["info"]["labwidth"][i] = hi - lo
         end
-        # "true" dataset is the corrected model, so apply to all except when training on non-corrected data
-        (IS_CORRECTED_MODEL || dataset !== :train) && (Y .= abs.(Y .+ get_correction(Y)); Y ./= sum(Y; dims = 1))
-        Y = reshape(Y, (size(Y,1), 1, 1, size(Y,2)))
         θ, Y
     end
+
+    # apply learned correction
+    if correction #TODO
+        Y .= abs.(Y .+ get_correction(Y))
 end
-const train_data = training_batches(make_samples(settings["data"]["ntrain"]; dataset = :train)..., settings["data"]["train_batch"])
-const test_data = testing_batches(make_samples(settings["data"]["ntest"]; dataset = :test)...)
+
+    Y = reshape(Y, (size(Y,1), 1, 1, size(Y,2)))
+    return θ, Y
+end
+const train_data = training_batches(make_samples(settings["data"]["ntrain"]; dataset = :train, correction = CORRECT_TRAIN_DATA)..., settings["data"]["train_batch"])
+const test_data = testing_batches(make_samples(settings["data"]["ntest"]; dataset = :test, correction = CORRECT_TEST_DATA)...)
 
 thetas = batch -> features(batch)
 signals = batch -> labels(batch)
@@ -121,21 +122,20 @@ param_summary(m, labelbatch.(train_data), labelbatch(test_data));
 theta_weights()::VT = inv.(settings["data"]["info"]["labwidth"]) .* unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT
 function rician_data_noise(y)
     noise = T(settings["data"]["postprocess"]["noise"]::Float64)
-    nrm = settings["data"]["preprocess"]["normalize"]::String
     y = noise > 0 ? rand.(Rician.(y, noise)) : y
+    nrm = settings["data"]["preprocess"]["normalize"]::String
     y = nrm == "unitsum" ? unitsum(y; dims = 1) : y
     return y
 end
 function learned_data_noise(y)
-    # nrm = settings["data"]["preprocess"]["normalize"]::String
-    # _y = DenseResize()(y)
-    # y = reshape(get_corrected_signal(_y, get_noise(_y)), size(y))
-    # y = nrm == "unitsum" ? unitsum(y; dims = 1) : y
-    # return y
-    return rician_data_noise(y) #TODO
+    _y = DenseResize()(y)
+    y = reshape(get_corrected_signal(_y, get_noise(_y)), size(y))
+    nrm = settings["data"]["preprocess"]["normalize"]::String
+    y = nrm == "unitsum" ? unitsum(y; dims = 1) : y
+    return y
 end
-test_data_noise(y) = IS_TOY_MODEL ? rician_data_noise(y) : learned_data_noise(y)
-train_data_noise(y) = !IS_CORRECTED_MODEL ? rician_data_noise(y) : learned_data_noise(y)
+test_data_noise(y) = CORRECT_TEST_DATA ? learned_data_noise(y) : rician_data_noise(y)
+train_data_noise(y) = CORRECT_TRAIN_DATA ? learned_data_noise(y) : rician_data_noise(y)
 test_data_noise(d::Tuple) = (d[1], test_data_noise(d[2]))
 train_data_noise(d::Tuple) = (d[1], train_data_noise(d[2]))
 
@@ -252,7 +252,7 @@ train_loop! = function()
             @timeit timer "posttraincbs" posttraincbs()
         end
 
-        if mod(epoch, 10) == 0 #TODO FIXME (100)
+        if mod(epoch, 100) == 0 #TODO FIXME (100)
             show(stdout, timer); println("\n")
             show(stdout, last(state, 10)); println("\n")
         end
@@ -275,18 +275,17 @@ catch e
 end
 
 @info "Computing resulting labels..."
-# best_model   = BSON.load("/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toycvae-v1/sweep/25/log/2020-04-22-T-03-03-35-577.acc=rmse_gamma=1_loss=l2_DenseLIGOCVAE_Dh=128_Nh=6_Xout=5_Zdim=6_act=relu_dropout=0.model-best.bson")[:model] |> deepcopy; #TODO
 best_model   = SAVE ? BSON.load(savepath("log", "model-best.bson"))[:model] : deepcopy(m); #TODO
 # best_model   = deepcopy(m); #TODO FIXME
-eval_data    = test_data
+eval_data    = test_data; #TODO FIXME
 true_thetas  = thetas(eval_data);
 true_signals = signals(eval_data);
 # eval_data    = test_data; #TODO FIXME
-# true_thetas  = thetas(eval_data)[:,1:min(10000,end)]; #TODO FIXME
-# true_signals = signals(eval_data)[:,:,:,1:min(10000,end)]; #TODO FIXME
+# true_thetas  = thetas(eval_data)[:,1:min(10000,end)];
+# true_signals = signals(eval_data)[:,:,:,1:min(10000,end)];
 # eval_data    = (reduce(hcat, (x->x[1]).(train_data)), reduce((x,y) -> cat(x,y;dims=4), (x->x[2]).(train_data))); #TODO FIXME
-# true_thetas  = thetas(eval_data)[:,1:min(10000,end)]; #TODO FIXME
-# true_signals = signals(eval_data)[:,:,:,1:min(10000,end)]; #TODO FIXME
+# true_thetas  = thetas(eval_data)[:,1:min(10000,end)];
+# true_signals = signals(eval_data)[:,:,:,1:min(10000,end)];
 model_mu_std = best_model(test_data_noise(true_signals); nsamples = 1000, stddev = true); #TODO
 model_thetas, model_stds = model_mu_std[1:end÷2, ..], model_mu_std[end÷2+1:end, ..];
 
