@@ -103,7 +103,7 @@ function read_results(sweep_dir)
 end
 
 # Read results to DataFrame
-results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/cvae-test-v4"
+results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/cvae-test-v3"
 sweep_dir = joinpath(results_dir, "sweep");
 df, sweep_temp, metrics_temp = read_results(sweep_dir);
 
@@ -166,7 +166,7 @@ function recurse_make_plots(
 end
 
 recurse_make_plots(
-    df[@.( (abs(df.loss) < 100) & (df.acc > 90) ), :];
+    df[@.( (abs(df.loss) < 1000) & (df.acc > 97) ), :];
     maxdepth = 1,
 )
 

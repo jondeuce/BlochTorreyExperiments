@@ -30,6 +30,21 @@ padtrain    = true   # Pad training data with uniformly random prior samples
 # normalize   = "" # Normalize input signals (unitsum == signal sums to 1)
 # [data.postprocess]
 # noise       = 1e-2 # Rician noise level
+# [data.info]
+# nfeatures   = 48 # Height of input data
+# nchannels   = 1 # Number of input data channels
+# nlabels     = 4 # Number of output labels
+# labmean     = [0.0, 0.0, 0.0, 0.0] # Label distribution means (set internally)
+# labwidth    = [0.0, 0.0, 0.0, 0.0] # Label distribution widths (set internally)
+# labnames    = ["cosd(alpha)", "T2short", "dT2", "Ashort"]
+# labinfer    = ["cosd(alpha)", "T2short", "dT2", "Ashort"]
+# labunits    = ["cos(deg)", "ms", "ms", "a.u."] # label units, after scaling
+# labweights  = [1.0, 1.0, 1.0, 1.0] # Weights for loss function
+# labscale    = [1.0, 1.0, 1.0, 1.0] # scale labels before plotting
+# [data.preprocess]
+# normalize   = "unitsum" # Normalize input signals (unitsum == signal sums to 1)
+# [data.postprocess]
+# noise       = 0.0005 # Rician noise level
 [data.info]
 nfeatures   = 48 # Height of input data
 nchannels   = 1 # Number of input data channels

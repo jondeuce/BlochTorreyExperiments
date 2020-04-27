@@ -15,7 +15,6 @@ using Flux, Zygote
 using DECAES
 using StatsPlots
 
-# pyplot(size = (500,400))
 pyplot(size = (800,600))
 # Turing.turnprogress(false)
 # empty!(Revise.queue_errors);

@@ -1,5 +1,8 @@
 # Load files
 include(joinpath(@__DIR__, "src", "mmd_preamble.jl"))
+using MWFLearning
+pyplot(size=(800,600))
+Random.seed!(0);
 
 const IS_TOY_MODEL = false
 const TOY_NOISE_LEVEL = 1e-2
@@ -9,7 +12,7 @@ const settings = load_settings()
 sampleX, sampleY, sampleθ = if IS_TOY_MODEL
     make_toy_samplers(ntrain = settings["mmd"]["batchsize"]::Int, epsilon = TOY_NOISE_LEVEL, power = 4.0);
 else
-    make_mle_data_samplers(settings["prior"]["data"]["image"]::String, settings["prior"]["data"]["thetas"]::String; ntheta = settings["data"]["ntheta"]::Int, plothist = false, padtrain = false); #TODO
+    make_mle_data_samplers(settings["prior"]["data"]["image"]::String, settings["prior"]["data"]["thetas"]::String; ntheta = settings["data"]["ntheta"]::Int, plothist = true, padtrain = false, filteroutliers = false); #TODO
     # make_gmm_data_samplers(image; ntheta = settings["data"]["ntheta"]::Int);
 end;
 
@@ -37,10 +40,8 @@ models["mmd"] = let
     Flux.Chain(
         (models["vae.E"] == identity ? Flux.Dense(n, Dh, act) : Flux.Dense(Dz, Dh, act)),
         hidden(Nh)...,
-        # Flux.Dense(Dh, n),
-        # Flux.Dense(Dh, n, tanh),
         Flux.Dense(Dh, 2n, tanh),
-        x -> α .* x .+ β,
+        MWFLearning.Scale(α, β),
     ) |> Flux.f64
 end
 # models["mmd"] = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/toymmd-v2-vector-logsigma/2020-02-26T17:00:51.433/best-model.bson")["model"]) #TODO
@@ -57,10 +58,8 @@ get_corrected_signal(X) = get_corrected_signal(X, get_correction_and_noise(X)...
 function get_corrected_signal(X, dX, ϵ)
     ϵR, ϵI = noise_instance(X, ϵ), noise_instance(X, ϵ)
     Xϵ = @. sqrt((X + dX + ϵR)^2 + ϵI^2)
-    if !IS_TOY_MODEL
-        Xϵ = Xϵ ./ sum(Xϵ; dims = 1)
-        #Xϵ = Flux.softmax(Xϵ) # Technically this works, but then we can't really interpret dX, ϵ as offset + Rician noise
-    end
+    # Don't use Flux.softmax(Xϵ), as then we can't interpret dX and ϵ as offset + Rician noise
+    # !IS_TOY_MODEL && (Xϵ = Xϵ ./ sum(Xϵ; dims = 1)) #TODO don't need to normalize learned corrections
     return Xϵ
 end
 
@@ -126,7 +125,10 @@ function train_mmd_kernel!(
 
     function checkloss(ℓ, _logσ)
         if kernelloss == "tstatistic"
-            t = ℓ - lambda * regularizer(permutedims(_logσ))
+            t = ℓ
+            if lambda != 0
+                t -= lambda * regularizer(permutedims(_logσ))
+            end
             if abs(t) > 100
                 # Denominator has likely shrunk to sqrt(eps), or else we are overtraining
                 @info "Loss is too large (ℓ = $ℓ)"
@@ -260,6 +262,7 @@ function train_mmd_model(;
         lrdrop     :: Float64 = settings["mmd"]["stepdrop"],
         lrdroprate :: Int     = settings["mmd"]["steprate"],
         lambda     :: Float64 = settings["mmd"]["lambda"],
+        ninfer     :: Int     = settings["mmd"]["ninfer"],
         nperms     :: Int     = settings["mmd"]["nperms"],
         nsamples   :: Int     = settings["mmd"]["nsamples"],
         epochs     :: Int     = settings["mmd"]["epochs"],
@@ -317,15 +320,14 @@ function train_mmd_model(;
             dX, ϵ = get_correction_and_noise(X)
             Xϵ = get_corrected_signal(X, dX, ϵ)
 
-            nθbb = min(128, size(Y,2)) # number of MLE parameter inferences #TODO
             true_forward_model = IS_TOY_MODEL ?
                 (θ, noise) -> toy_signal_model(θ, noise, 2) :
                 (θ, noise) -> Y # don't have true underlying model for real data
             mock_forward_model = IS_TOY_MODEL ?
                 (θ, noise) -> toy_signal_model(θ, noise, 4) :
-                (θ, noise) -> signal_model(θ, noise; nTE = n, TE = settings["data"]["echotime"]::Float64)
+                (θ, noise) -> signal_model(θ, noise; nTE = n, TE = settings["data"]["echotime"]::Float64, normalize = false) #TODO don't need to normalize learned corrections
             theta_error_fun = IS_TOY_MODEL ? toy_theta_error : signal_theta_error
-            theta_bounds_fun = IS_TOY_MODEL ? toy_theta_bounds : () -> theta_bounds(Float64; ntheta = ntheta)
+            theta_bounds_fun = IS_TOY_MODEL ? toy_theta_bounds : () -> vec(extrema(θ; dims = 2)) #TODO () -> theta_bounds(Float64; ntheta = ntheta)
 
             Yθ = true_forward_model(θ, nothing)
             Yθϵ = true_forward_model(θ, TOY_NOISE_LEVEL)
@@ -347,10 +349,10 @@ function train_mmd_model(;
                 dXθbb, ϵθbb = get_correction_and_noise(Xθbb)
                 Xθϵbb = get_corrected_signal(Xθbb, dXθbb, ϵθbb)
 
-                mle_err = [sum(.-logpdf.(Rician.(get_ν_and_σ(Xθbb[:,j])...; check_args = false), Yθϵ[:,j])) for j in 1:nθbb]
-                rmse_err = [sqrt(mean(abs2, Yθϵ[:,j] .- Xθϵbb[:,j])) for j in 1:nθbb]
+                mle_err = [sum(.-logpdf.(Rician.(get_ν_and_σ(Xθbb[:,j])...; check_args = false), Yθϵ[:,j])) for j in 1:ninfer]
+                rmse_err = [sqrt(mean(abs2, Yθϵ[:,j] .- Xθϵbb[:,j])) for j in 1:ninfer]
 
-                θidx = sortperm(mle_err)[1:7*(nθbb÷8)]
+                θidx = sortperm(mle_err)[1:7*(ninfer÷8)]
                 sig_fit_logL = mean(mle_err[θidx])
                 sig_fit_rmse = mean(rmse_err[θidx])
 
@@ -444,7 +446,12 @@ function train_mmd_model(;
                     pinfer = nothing
                     @timeit timer "theta inference plot" begin
                         get_ν_and_σ = x -> ((dx, ϵ) = get_correction_and_noise(x); return (abs.(x.+dx), ϵ))
-                        @timeit timer "theta inference" res = toy_theta_loglikelihood_inference(Yθϵ[:,1:nθbb], nothing, get_ν_and_σ, θ -> mock_forward_model(θ, nothing); objective = :mle, bounds = theta_bounds_fun())
+                        @timeit timer "theta inference" begin
+                            res = signal_loglikelihood_inference(
+                                Yθϵ[:,1:ninfer], nothing, get_ν_and_σ, θ -> mock_forward_model(θ, nothing);
+                                objective = :mle, bounds = theta_bounds_fun(),
+                            )
+                        end
                         bbres, optres = (x->x[1]).(res), (x->x[2]).(res)
                         θbb = reduce(hcat, Optim.minimizer.(optres))
                         cb_state.last_θbb[] = copy(θbb)
@@ -453,9 +460,9 @@ function train_mmd_model(;
                         dXθbb, ϵθbb = get_correction_and_noise(Xθbb)
                         Xθϵbb = get_corrected_signal(Xθbb, dXθbb, ϵθbb)
                         mle_err = Optim.minimum.(optres)
-                        rmse_err = sqrt.(mean(abs2, Yθϵ[:,1:nθbb] .- Xθϵbb; dims = 1)) |> vec
+                        rmse_err = sqrt.(mean(abs2, Yθϵ[:,1:ninfer] .- Xθϵbb; dims = 1)) |> vec
 
-                        θidx = sortperm(mle_err)[1:7*(nθbb÷8)]
+                        θidx = sortperm(mle_err)[1:7*(ninfer÷8)]
                         if IS_TOY_MODEL
                             df[end, :theta_fit_err] = mean(theta_error_fun(θ[:,θidx], θbb[:,θidx]); dims = 2) |> vec |> copy
                         end
@@ -471,21 +478,19 @@ function train_mmd_model(;
                                 plot(
                                     IS_TOY_MODEL ?
                                         plot(hcat( Yθ[:,θidx[end÷2]], Xθϵbb[:,θidx[end÷2]]); c = [:blue :red], lab = ["Goal Yθ" "Fit X̄θϵ"]) :
-                                        plot(hcat(Yθϵ[:,θidx[end÷2]], Xθϵbb[:,θidx[end÷2]]); c = [:blue :red], lab = ["Goal Yθϵ" "Fit X̄θϵ"]),
+                                        plot(hcat(Yθϵ[:,θidx[end÷2]], Xθϵbb[:,θidx[end÷2]]); c = [:blue :red], lab = ["Data Yθϵ" "Fit X̄θϵ"]),
                                     sticks(sort(rmse_err); m = (:circle,4), lab = "rmse: fits"),
                                     sticks(sort(mle_err); m = (:circle,4), lab = "-logL: fits"),
                                     layout = @layout([a{0.25h}; b{0.375h}; c{0.375h}]),
                                 ),
-                                plot(
-                                    IS_TOY_MODEL ?
-                                        plot(dfp.epoch, dfp.rmse; title = "min rmse = $(s(minimum(dfp.rmse)))", label = "rmse: Yθ - (Xθ + dXθ)", xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10)) :
-                                        plot(),
-                                    IS_TOY_MODEL ?
-                                        plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.theta_fit_err)); title = "min max error = $(s(minimum(maximum.(df_inf.theta_fit_err))))", label = "θ" .* string.(permutedims(1:size(θ,1))), xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10)) :
-                                        plot(),
+                                plot(vcat(
+                                    !IS_TOY_MODEL ? [] :
+                                        plot(dfp.epoch, dfp.rmse; title = "min rmse = $(s(minimum(dfp.rmse)))", label = "rmse: Yθ - (Xθ + dXθ)", xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10)),
+                                    !IS_TOY_MODEL ? [] :
+                                        plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.theta_fit_err)); title = "min max error = $(s(minimum(maximum.(df_inf.theta_fit_err))))", label = "θ" .* string.(permutedims(1:size(θ,1))), xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10)),
                                     plot(df_inf.epoch, df_inf.signal_fit_rmse; title = "min rmse = $(s(minimum(df_inf.signal_fit_rmse)))", label = "rmse: Yθϵ - X̄θϵ", xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10)),
                                     plot(df_inf.epoch, df_inf.signal_fit_logL; title = "min -logL = $(s(minimum(df_inf.signal_fit_logL)))", label = "-logL: Yθϵ - X̄θϵ", xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10)),
-                                ),
+                                )...),
                                 layout = @layout([a{0.25w} b{0.75w}]),
                             )
                             # display(pinfer) #TODO

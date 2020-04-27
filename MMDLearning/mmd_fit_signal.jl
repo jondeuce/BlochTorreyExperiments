@@ -385,7 +385,7 @@ end
 #= padded mle samplers
 =#
 let
-    sampleY, _, sampleθ = make_mle_data_samplers(mmd_settings["prior"]["data"]["image"]::String, mmd_settings["prior"]["data"]["thetas"]::String; ntheta = mmd_settings["data"]["ntheta"]::Int, plothist = false, padtrain = true);
+    sampleY, _, sampleθ = make_mle_data_samplers(mmd_settings["prior"]["data"]["image"]::String, mmd_settings["prior"]["data"]["thetas"]::String; ntheta = mmd_settings["data"]["ntheta"]::Int, plothist = false, padtrain = true, filteroutliers = true);
     Y = copy(sampleY(nothing; dataset = :train));
     θ = copy(sampleθ(nothing; dataset = :train));
     # @show all(isapprox.(sum(Y;dims=1), 1))

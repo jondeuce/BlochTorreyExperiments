@@ -44,16 +44,11 @@ end
 
 function theta_bounds(T = Float64; ntheta::Int)
     if ntheta == 4
-        theta_labels = ["alpha", "T2short", "dT2", "Ashort"]
-        # ["refcon", "alpha", "T2short", "dT2", "Ashort"]
+        # theta_labels = ["alpha", "T2short", "dT2", "Ashort"]
         theta_lb = T[ 50.0,    8.0,    8.0, 0.0]
         theta_ub = T[180.0, 1000.0, 1000.0, 1.0]
     elseif ntheta == 5
-        # # ["refcon", "alpha", "T2short", "dT2", "Ashort"]
-        # theta_lb = T[120.0, 120.0,    8.0,    8.0, 0.0]
-        # theta_ub = T[180.0, 180.0, 1000.0, 1000.0, 1.0]
-
-        # ["alpha", "T2short", "dT2", "Ashort", "Along"]
+        # theta_labels = ["alpha", "T2short", "dT2", "Ashort", "Along"]
         theta_lb = T[ 50.0,    8.0,    8.0, 0.0, 0.0]
         theta_ub = T[180.0, 1000.0, 1000.0, 1.0, 1.0]
     else
@@ -90,7 +85,6 @@ function signal_model!(
         normalize::Bool = true,
     ) where {T}
     @unpack epg_work, signal, real_noise, imag_noise = work
-    # refcon, alpha, T2short, dT2, Ashort = θ[1], θ[2], θ[3]/1000, θ[4]/1000, θ[5]
     # alpha, T2short, dT2, Ashort = θ[1], θ[2]/1000, θ[3]/1000, θ[4]
     alpha, T2short, dT2, Ashort, Along = θ[1], θ[2]/1000, θ[3]/1000, θ[4], θ[5]
     refcon  = T(180.0)
@@ -295,6 +289,7 @@ function make_mle_data_samplers(
         ntheta::Int,
         plothist = false,
         padtrain = false,
+        filteroutliers = false,
     )
 
     # Set random seed for consistent test/train sets
@@ -302,46 +297,52 @@ function make_mle_data_samplers(
 
     # Load + preprocess results (~25% of voxels dropped)
     res = deepcopy(BSON.load(thetaspath)["results"])
-    println("before filter: $(nrow(res))")
 
-    filter!(r -> !(999.99 <= r.dT2 && 999.99 <= r.T2short), res) # drop boundary failures
-    filter!(r -> r.dT2 <= 999.99, res) # drop boundary failures
-    filter!(r -> r.T2short <= 100, res) # drop long T2short (very few points)
-    filter!(r -> 8.01 <= r.T2short, res) # drop boundary failures
-    filter!(r -> 8.01 <= r.dT2, res) # drop boundary failures
-    filter!(r -> 0.005 <= r.Ashort <= 0.15, res) # drop outlier fits (very few points)
-    filter!(r -> 0.005 <= r.Along <= 0.15, res) # drop outlier fits (very few points)
-    filter!(r -> r.loss <= -250, res) # drop poor fits (very few points)
+    if filteroutliers
+        println("before filter: $(nrow(res))")
+        filter!(r -> !(999.99 <= r.dT2 && 999.99 <= r.T2short), res) # drop boundary failures
+        filter!(r -> r.dT2 <= 999.99, res) # drop boundary failures
+        filter!(r -> r.T2short <= 100, res) # drop long T2short (very few points)
+        filter!(r -> 8.01 <= r.T2short, res) # drop boundary failures
+        filter!(r -> 8.01 <= r.dT2, res) # drop boundary failures
+        if ntheta == 5
+            filter!(r -> 0.005 <= r.Ashort <= 0.15, res) # drop outlier fits (very few points)
+            filter!(r -> 0.005 <= r.Along <= 0.15, res) # drop outlier fits (very few points)
+        end
+        filter!(r -> r.loss <= -250, res) # drop poor fits (very few points)
+        println("after filter:  $(nrow(res))")
+    end
 
+    # Shuffle data + collect thetas
     res = res[shuffle(MersenneTwister(0), 1:nrow(res)), :]
-    println("after filter:  $(nrow(res))")
-
-    # thetas = permutedims(convert(Matrix{Float64}, res[:, [:alpha, :T2short, :dT2, :Ashort]])) # convert to ntheta x nSamples Matrix
-    thetas = permutedims(convert(Matrix{Float64}, res[:, [:alpha, :T2short, :dT2, :Ashort, :Along]])) # convert to ntheta x nSamples Matrix
+    thetas = ntheta == 4 ? # Create ntheta x nSamples matrix
+        permutedims(convert(Matrix{Float64}, res[:, [:alpha, :T2short, :dT2, :Ashort]])) :
+        permutedims(convert(Matrix{Float64}, res[:, [:alpha, :T2short, :dT2, :Ashort, :Along]]))
 
     # Forward simulation params
     signal_work = signal_model_work(Float64; nTE = 48)
     signal_fun(θ::AbstractMatrix{Float64}, noise::Union{AbstractVector{Float64}, Nothing} = nothing; kwargs...) = signal_model!(signal_work, θ, noise; TE = 8e-3, kwargs...)
 
-    # Pad training data with randomly sampled thetas
+    # Pad training data with thetas sampled uniformly randomly over the prior space
     local θtrain_pad
     if padtrain
         θ_pad_lo, θ_pad_hi = minimum(thetas; dims = 2), maximum(thetas; dims = 2)
         θtrain_pad = θ_pad_lo .+ (θ_pad_hi .- θ_pad_lo) .* rand(MersenneTwister(0), ntheta, nrow(res))
-        Xtrain_pad = signal_fun(θtrain_pad, nothing; normalize = false)
-        θtrain_pad[4:5, :] ./= sum(Xtrain_pad; dims = 1) # normalize Ashort, Along
-        train_pad_filter   = map(Ashort -> 0.005 <= Ashort <= 0.15, θtrain_pad[4,:]) # drop outlier samples (very few points)
-        train_pad_filter .&= map(Along  -> 0.005 <= Along  <= 0.15, θtrain_pad[5,:]) # drop outlier samples (very few points)
-        θtrain_pad = θtrain_pad[:, train_pad_filter]
+        Xtrain_pad = signal_fun(θtrain_pad; normalize = false)
+        if ntheta == 5
+            θtrain_pad[4:5, :] ./= sum(Xtrain_pad; dims = 1) # normalize Ashort, Along
+            train_pad_filter   = map(Ashort -> 0.005 <= Ashort <= 0.15, θtrain_pad[4,:]) # drop outlier samples (very few points)
+            train_pad_filter .&= map(Along  -> 0.005 <= Along  <= 0.15, θtrain_pad[5,:]) # drop outlier samples (very few points)
+            θtrain_pad = θtrain_pad[:, train_pad_filter]
+        end
         println("num padded:    $(size(θtrain_pad,2))")
     end
 
     # Plot prior distribution histograms
-    # plothist && display(plot(mapreduce(vcat, [:alpha, :T2short, :dT2, :Ashort, :logsigma, :loss]; init = Any[]) do c
-    plothist && display(plot(mapreduce(vcat, [:alpha, :T2short, :dT2, :Ashort, :Along, :logsigma, :loss]; init = Any[]) do c
-        histogram(res[!,c]; lab = c, nbins = 75)
-        histogram(res[!,c]; lab = c, nbins = 75)
-    end...))
+    if plothist
+        theta_cols = ntheta == 4 ? [:alpha, :T2short, :dT2, :Ashort] : [:alpha, :T2short, :dT2, :Ashort, :Along]
+        display(plot([histogram(res[!,c]; lab = c, nbins = 75) for c in [theta_cols; :logsigma; :loss]]...))
+    end
 
     # Load image, keeping signals which correspond to thetas
     image = DECAES.load_image(imagepath) # load 4D MatrixSize x nTE image
@@ -355,7 +356,7 @@ function make_mle_data_samplers(
 
     # True data (Y) samplers
     Ytrain, Ytest, Yval = Y[:,itrain], Y[:,itest], Y[:,ival]
-    sampleY = function(batchsize; dataset = :train)
+    function sampleY(batchsize; dataset = :train)
         dataset == :train ? (batchsize === nothing ? Ytrain : sample_columns(Ytrain, batchsize)) :
         dataset == :test  ? (batchsize === nothing ? Ytest  : sample_columns(Ytest,  batchsize)) :
         dataset == :val   ? (batchsize === nothing ? Yval   : sample_columns(Yval,   batchsize)) :
@@ -368,132 +369,36 @@ function make_mle_data_samplers(
         θtrain = hcat(θtrain, θtrain_pad)
         θtrain = θtrain[:,shuffle(MersenneTwister(0), 1:size(θtrain,2))] # mix training + padded thetas
     end
-    sampleθ = function(batchsize; dataset = :train)
+    function sampleθ(batchsize; dataset = :train)
         dataset == :train ? (batchsize === nothing ? θtrain : sample_columns(θtrain, batchsize)) :
         dataset == :test  ? (batchsize === nothing ? θtest  : sample_columns(θtest,  batchsize)) :
         dataset == :val   ? (batchsize === nothing ? θval   : sample_columns(θval,   batchsize)) :
         error("dataset must be :train, :test, or :val")
     end
 
-    # Model data (X) samplers, possibly adding noise via `args...`
-    _sampleX_model = function(batchsize, args...; kwargs...)
-        signal_fun(sampleθ(batchsize; kwargs...), args...)
+    # Model data (X) samplers
+    function _sampleX_model(batchsize; dataset = :train, kwargs...)
+        signal_fun(sampleθ(batchsize; dataset = dataset); normalize = true, kwargs...)
     end
 
-    # Direct model data (X) samplers with no noise (precomputed)
+    # Direct model data (X) samplers
     Xtrain = _sampleX_model(nothing; dataset = :train)
     Xtest  = _sampleX_model(nothing; dataset = :test)
     Xval   = _sampleX_model(nothing; dataset = :val)
-    _sampleX_direct = function(batchsize; dataset = :train)
+    function _sampleX_direct(batchsize; dataset = :train)
         dataset == :train ? (batchsize === nothing ? Xtrain : sample_columns(Xtrain, batchsize)) :
         dataset == :test  ? (batchsize === nothing ? Xtest  : sample_columns(Xtest,  batchsize)) :
         dataset == :val   ? (batchsize === nothing ? Xval   : sample_columns(Xval,   batchsize)) :
         error("dataset must be :train, :test, or :val")
     end
 
-    # Model data (X) samplers, possibly adding noise via `args...`
-    sampleX = function(batchsize, args...; kwargs...)
-        if batchsize === nothing && length(args) == 0
+    # Model data (X) samplers
+    function sampleX(batchsize; kwargs...)
+        if batchsize === nothing
             _sampleX_direct(batchsize; kwargs...)
         else
-            _sampleX_model(batchsize, args...; kwargs...)
+            _sampleX_model(batchsize; kwargs...)
         end
-    end
-
-    # Reset random seed
-    Random.seed!(rng)
-
-    return sampleX, sampleY, sampleθ
-end
-
-####
-#### GMM data samplers from learned prior
-####
-
-function make_gmm_data_samplers(
-        image;
-        ntheta::Int
-    )
-
-    # Set random seed for consistent test/train sets
-    rng = Random.seed!(0)
-
-    function read_results(results_dir)
-        results = DataFrame(refcon = Float64[], alpha = Float64[], T2short = Float64[], dT2 = Float64[], Ashort = Float64[])
-        for (root, dirs, files) in walkdir(results_dir)
-            for file in files
-                if file == "bbsignalfit_results.mat"
-                    θ = DECAES.MAT.matread(joinpath(root, file))["thetas"]'
-                    df = similar(results, size(θ,1))
-                    df[!,:] .= θ
-                    append!(results, df)
-                end
-            end
-        end
-        results.T2long = results.T2short .+ results.dT2
-        results.Along  = 1 .- results.Ashort
-        return results
-    end
-
-    # Read in simulation results from file
-    results_dir = "/scratch/st-arausch-1/jcd1994/MMD-Learning/sigfit-v5"
-    results = read_results(results_dir)
-
-    # Transform data by shifting data to γ * [-0.5, 0.5] and applying tanh.
-    # This makes data more smoothly centred around zero, with
-    #   γ = 2*tanh(3) ≈ 1.99
-    # sending boundary points to approx. +/- 3
-    f(x,a,b) = atanh((x - ((a+b)/2)) * (1.99 / (b-a)))
-    g(y,a,b) = ((a+b)/2) + tanh(y) * ((b-a) / 1.99)
-    f(x,t::NTuple{2}) = f(x,t...)
-    g(x,t::NTuple{2}) = g(x,t...)
-    trans!(fun, df, bounds) = (foreach(j -> df[!,j] .= fun.(df[!,j], Ref(bounds[j])), 1:ncol(df)); return df)
-
-    thetas = results[:, [:refcon, :alpha, :T2short, :T2long, :Ashort]]
-    filter!(row -> !(row.Ashort ≈ 1) && 10 <= row.T2short <= 100 && row.T2long <= 500, thetas)
-    bounds = map(extrema, eachcol(thetas))
-    thetas_trans = trans!(f, copy(thetas), bounds)
-    bounds_trans = map(extrema, eachcol(thetas_trans))
-
-    # Fit GMM to data
-    gmm = GMM(32, Matrix(thetas_trans); method = :kmeans, kind = :full, nInit = 1000, nIter = 100, nFinal = 100)
-
-    # Generate data samplers
-    Y = signal_data(image)
-    Y = Y[:, randperm(size(Y,2))] # shuffle data
-    itrain = 1:2*(size(Y,2)÷4)
-    itest  = itrain[end]+1:3*(size(Y,2)÷4)
-    ival   = itest[end]+1:size(Y,2)
-
-    Ytrain, Ytest, Yval = Y[:,itrain], Y[:,itest], Y[:,ival]
-    sampleY = function(batchsize; dataset = :train)
-        dataset == :train ? (batchsize === nothing ? Ytrain : sample_columns(Ytrain, batchsize)) :
-        dataset == :test  ? (batchsize === nothing ? Ytest  : sample_columns(Ytest,  batchsize)) :
-        dataset == :val   ? (batchsize === nothing ? Yval   : sample_columns(Yval,   batchsize)) :
-        error("dataset must be :train, :test, or :val")
-    end
-
-    sampleθ = function(batchsize)
-        θ = zeros(ntheta, 0)
-        while size(θ, 2) < batchsize
-            draws_trans = rand(gmm, batchsize)
-            idx = [all(j -> bounds_trans[j][1] <= draws_trans[i,j] <= bounds_trans[j][2], 1:size(draws_trans,2)) for i in 1:size(draws_trans,1)]
-            draws_trans = draws_trans[idx, :]
-            θnew = [g.(row, bounds) for row in eachrow(draws_trans)]
-            if !isempty(θnew)
-                θ = hcat(θ, reduce(hcat, θnew))
-            end
-        end
-        θ = θ[:, 1:batchsize]
-        return θ
-    end
-
-    signal_work = signal_model_work(Float64; nTE = 48)
-    signal_fun(θ::AbstractMatrix{Float64}, noise::Union{AbstractVector{Float64}, Nothing} = nothing) = signal_model!(signal_work, θ, noise; TE = 8e-3)
-
-    # Args is variadic such that noise may be passed to X sampler
-    sampleX = function(batchsize, args...; kwargs...)
-        signal_fun(sampleθ(batchsize; kwargs...), args...)
     end
 
     # Reset random seed
@@ -582,7 +487,7 @@ end
 #### Maximum likelihood estimation inference
 ####
 
-function toy_theta_loglikelihood_inference(
+function signal_loglikelihood_inference(
         y::AbstractVector,
         initial_guess = nothing,
         model = x -> (x, zero(x)),
@@ -631,13 +536,13 @@ function toy_theta_loglikelihood_inference(
 
     return @ntuple(bbres, optres)
 end
-function toy_theta_loglikelihood_inference(Y::AbstractMatrix, θ0::Union{<:AbstractMatrix, Nothing} = nothing, args...; kwargs...)
+function signal_loglikelihood_inference(Y::AbstractMatrix, θ0::Union{<:AbstractMatrix, Nothing} = nothing, args...; kwargs...)
     _args = [deepcopy(args) for _ in 1:Threads.nthreads()]
     _kwargs = [deepcopy(kwargs) for _ in 1:Threads.nthreads()]
     ThreadPools.qmap(1:size(Y,2)) do j # map(1:size(Y,2)) do j
         tid = Threads.threadid()
         initial_guess = !isnothing(θ0) ? θ0[:,j] : nothing
-        toy_theta_loglikelihood_inference(Y[:,j], initial_guess, _args[tid]...; _kwargs[tid]...)
+        signal_loglikelihood_inference(Y[:,j], initial_guess, _args[tid]...; _kwargs[tid]...)
     end
 end
 
@@ -652,13 +557,13 @@ for _ in 1:1
 
     m = x -> ((dx, ϵ) = get_correction_and_noise(x); return (abs.(x.+dx), ϵ));
 
-    @time bbres1, _ = toy_theta_loglikelihood_inference(yϵ, nothing, m; objective = :rmse)[1];
+    @time bbres1, _ = signal_loglikelihood_inference(yϵ, nothing, m; objective = :rmse)[1];
     θhat1 = BlackBoxOptim.best_candidate(bbres1);
     xhat1 = toy_signal_model(θhat1, nothing, 4);
     dxhat1, ϵhat1 = get_correction_and_noise(xhat1);
     yhat1 = get_corrected_signal(xhat1, dxhat1, ϵhat1);
 
-    @time bbres2, optres2 = toy_theta_loglikelihood_inference(yϵ, nothing, m; objective = :mle)[1];
+    @time bbres2, optres2 = signal_loglikelihood_inference(yϵ, nothing, m; objective = :mle)[1];
     θhat2 = Optim.minimizer(optres2); #BlackBoxOptim.best_candidate(bbres2);
     xhat2 = toy_signal_model(θhat2, nothing, 4);
     dxhat2, ϵhat2 = get_correction_and_noise(xhat2);
@@ -719,7 +624,7 @@ function toy_theta_mcmc_inference(
         yhat = @. rand(Rician(xhat, ϵhat; check_args = false))
         return yhat
     end
-    res = toy_theta_loglikelihood_inference(y, nothing, model)
+    res = signal_loglikelihood_inference(y, nothing, model)
     theta0 = best_candidate(res)
     while true
         chain = sample(toy_model_rician_noise(y, correction_and_noise), NUTS(), 1000; verbose = true, init_theta = theta0)
@@ -792,7 +697,7 @@ for _ in 1:1
     # θhat = reduce(hcat, map(k -> mean(c[k])[1,:mean], [:freq, :phase, :offset, :amp, :tconst]) for c in cs)
     # Yerr = sort(getfield.(res, :yerr))
 
-    @time bbres = toy_theta_loglikelihood_inference(Y, nothing, signal_model);
+    @time bbres = signal_loglikelihood_inference(Y, nothing, signal_model);
     Yerr = sort(best_fitness.(bbres))
     θhat = best_candidate.(bbres)
     Yhat = signal_model.(θhat)

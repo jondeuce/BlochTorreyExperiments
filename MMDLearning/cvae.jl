@@ -63,7 +63,7 @@ get_corrected_signal(X, dX, ϵ) = get_corrected_signal(abs.(X .+ dX), ϵ)
 function get_corrected_signal(X, ϵ)
     ϵR, ϵI = noise_instance(X, ϵ), noise_instance(X, ϵ)
     Xϵ = @. sqrt((X + ϵR)^2 + ϵI^2)
-    !IS_TOY_MODEL && (Xϵ = Xϵ ./ sum(Xϵ; dims = 1))
+    # !IS_TOY_MODEL && (Xϵ = Xϵ ./ sum(Xϵ; dims = 1)) #TODO don't need to normalize learned corrections
     return Xϵ
 end
 
@@ -82,18 +82,27 @@ function make_samples(n; dataset, correction)
             mmd_settings["prior"]["data"]["image"]::String,
             mmd_settings["prior"]["data"]["thetas"]::String;
             ntheta = mmd_settings["data"]["ntheta"]::Int,
-            plothist = false,
             padtrain = settings["data"]["padtrain"]::Bool,
+            filteroutliers = true,
+            plothist = false, #TODO
         )
         θ = copy(sampleθ(nothing; dataset = dataset)) #TODO
         Y = copy(sampleY(nothing; dataset = dataset)) #TODO
+
+        if settings["data"]["info"]["labnames"][1] == "cosd(alpha)"
         θ[1,:] .= cosd.(θ[1,:]) # transform flipangle -> cosd(flipangle)
+        end
+
+        if settings["data"]["info"]["labnames"][3] == "T2long"
         θ[3,:] .= θ[2,:] .+ θ[3,:] # transform dT2 -> T2long = T2short + dT2
+        end
+
         for i in 1:size(θ,1)
             lo, hi = extrema(θ[i,:])
             settings["data"]["info"]["labmean"][i] = (hi + lo)/2
             settings["data"]["info"]["labwidth"][i] = hi - lo
         end
+
         θ, Y
     end
 
@@ -130,8 +139,8 @@ end
 function learned_data_noise(y)
     _y = DenseResize()(y)
     y = reshape(get_corrected_signal(_y, get_noise(_y)), size(y))
-    nrm = settings["data"]["preprocess"]["normalize"]::String
-    y = nrm == "unitsum" ? unitsum(y; dims = 1) : y
+    # nrm = settings["data"]["preprocess"]["normalize"]::String
+    # y = nrm == "unitsum" ? unitsum(y; dims = 1) : y #TODO don't need to normalize learned corrections
     return y
 end
 test_data_noise(y) = CORRECT_TEST_DATA ? learned_data_noise(y) : rician_data_noise(y)
