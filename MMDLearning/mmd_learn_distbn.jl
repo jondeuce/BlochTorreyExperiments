@@ -9,11 +9,12 @@ const TOY_NOISE_LEVEL = 1e-2
 const models = Dict{String, Any}()
 const settings = load_settings()
 
-sampleX, sampleY, sampleθ = if IS_TOY_MODEL
-    make_toy_samplers(ntrain = settings["mmd"]["batchsize"]::Int, epsilon = TOY_NOISE_LEVEL, power = 4.0);
+global sampleX, sampleY, sampleθ, fits_train, fits_test, fits_val
+if IS_TOY_MODEL
+    global sampleX, sampleY, sampleθ = make_toy_samplers(ntrain = settings["mmd"]["batchsize"]::Int, epsilon = TOY_NOISE_LEVEL, power = 4.0);
+    global fits_train, fits_test, fits_val = nothing, nothing, nothing
 else
-    make_mle_data_samplers(settings["prior"]["data"]["image"]::String, settings["prior"]["data"]["thetas"]::String; ntheta = settings["data"]["ntheta"]::Int, plothist = true, padtrain = false, filteroutliers = false); #TODO
-    # make_gmm_data_samplers(image; ntheta = settings["data"]["ntheta"]::Int);
+    global sampleX, sampleY, sampleθ, fits_train, fits_test, fits_val = make_mle_data_samplers(settings["prior"]["data"]["image"]::String, settings["prior"]["data"]["thetas"]::String; ntheta = settings["data"]["ntheta"]::Int, plothist = false, padtrain = false, filteroutliers = false);
 end;
 
 # vae_model_dict = BSON.load("/scratch/st-arausch-1/jcd1994/MMD-Learning/toyvaeopt-v1/sweep/45/best-model.bson")
@@ -312,8 +313,9 @@ function train_mmd_model(;
             last_checkpoint = Ref(time()),
             last_best_checkpoint = Ref(time()),
             last_θbb = Union{AbstractVecOrMat{Float64}, Nothing}[nothing],
+            last_global_i_fits = Union{Vector{Int}, Nothing}[nothing],
         )
-        function(epoch, X, Y, θ)
+        function(epoch, X, Y, θ, fits)
             dt, cb_state.last_time[] = time() - cb_state.last_time[], time()
 
             # Compute signal correction, noise instances, etc.
@@ -349,16 +351,18 @@ function train_mmd_model(;
                 dXθbb, ϵθbb = get_correction_and_noise(Xθbb)
                 Xθϵbb = get_corrected_signal(Xθbb, dXθbb, ϵθbb)
 
-                mle_err = [sum(.-logpdf.(Rician.(get_ν_and_σ(Xθbb[:,j])...; check_args = false), Yθϵ[:,j])) for j in 1:ninfer]
-                rmse_err = [sqrt(mean(abs2, Yθϵ[:,j] .- Xθϵbb[:,j])) for j in 1:ninfer]
+                global_i_fits = cb_state.last_global_i_fits[] # use same data as previous mle fits
+                mle_err = [sum(.-logpdf.(Rician.(get_ν_and_σ(Xθbb[:,j])...; check_args = false), Yθϵ[:,jY])) for (j,jY) in enumerate(global_i_fits)]
+                rmse_err = [sqrt(mean(abs2, Xθϵbb[:,j] .- Yθϵ[:,jY])) for (j,jY) in enumerate(global_i_fits)]
 
-                θidx = sortperm(mle_err)[1:7*(ninfer÷8)]
-                sig_fit_logL = mean(mle_err[θidx])
-                sig_fit_rmse = mean(rmse_err[θidx])
+                i_sorted = sortperm(mle_err) #sortperm(mle_err)[1:7*(ninfer÷8)] #TODO
+                sig_fit_logL = mean(mle_err[i_sorted])
+                sig_fit_rmse = mean(rmse_err[i_sorted])
 
                 if IS_TOY_MODEL
                     # θbb only matches θ for mock data; we don't have true θ for real data Y
-                    θ_fit_err = mean(theta_error_fun(θ[:,θidx], θbb[:,θidx]); dims = 2) |> vec |> copy
+                    global_i_sorted = global_i_fits[i_sorted]
+                    θ_fit_err = mean(theta_error_fun(θ[:,global_i_sorted], θbb[:,i_sorted]); dims = 2) |> vec |> copy
                 end
             end
 
@@ -447,27 +451,37 @@ function train_mmd_model(;
                     @timeit timer "theta inference plot" begin
                         get_ν_and_σ = x -> ((dx, ϵ) = get_correction_and_noise(x); return (abs.(x.+dx), ϵ))
                         @timeit timer "theta inference" begin
+                            global_i_fits = sample(1:size(Yθϵ,2), ninfer; replace = false) # 1:ninfer
                             res = signal_loglikelihood_inference(
-                                Yθϵ[:,1:ninfer], nothing, get_ν_and_σ, θ -> mock_forward_model(θ, nothing);
+                                Yθϵ[:,global_i_fits], nothing, get_ν_and_σ, θ -> mock_forward_model(θ, nothing);
                                 objective = :mle, bounds = theta_bounds_fun(),
                             )
                         end
                         bbres, optres = (x->x[1]).(res), (x->x[2]).(res)
                         θbb = reduce(hcat, Optim.minimizer.(optres))
                         cb_state.last_θbb[] = copy(θbb)
+                        cb_state.last_global_i_fits[] = copy(global_i_fits)
+
+                        # #TODO
+                        # let θbb_mat = [permutedims(θbb) [fits.alpha[global_i_fits] fits.T2short[global_i_fits] fits.dT2[global_i_fits] fits.Ashort[global_i_fits] fits.Along[global_i_fits]]]
+                        #     display(θbb_mat[:,[1,6,2,7,3,8,4,9,5,10]])
+                        # end
 
                         Xθbb = mock_forward_model(θbb, nothing)
                         dXθbb, ϵθbb = get_correction_and_noise(Xθbb)
                         Xθϵbb = get_corrected_signal(Xθbb, dXθbb, ϵθbb)
                         mle_err = Optim.minimum.(optres)
-                        rmse_err = sqrt.(mean(abs2, Yθϵ[:,1:ninfer] .- Xθϵbb; dims = 1)) |> vec
+                        rmse_err = sqrt.(mean(abs2, Yθϵ[:,global_i_fits] .- Xθϵbb; dims = 1)) |> vec
 
-                        θidx = sortperm(mle_err)[1:7*(ninfer÷8)]
+                        # i_sorted = sortperm(mle_err)[1:7*(ninfer÷8)] # best 7/8 of mle fits (sorted)
+                        i_sorted = sortperm(mle_err) # all mle fits (sorted)
+                        global_i_sorted = global_i_fits[i_sorted]
+
                         if IS_TOY_MODEL
-                            df[end, :theta_fit_err] = mean(theta_error_fun(θ[:,θidx], θbb[:,θidx]); dims = 2) |> vec |> copy
+                            df[end, :theta_fit_err] = mean(theta_error_fun(θ[:,global_i_sorted], θbb[:,i_sorted]); dims = 2) |> vec |> copy
                         end
-                        df[end, :signal_fit_logL] = mean(mle_err[θidx])
-                        df[end, :signal_fit_rmse] = mean(rmse_err[θidx])
+                        df[end, :signal_fit_logL] = mean(mle_err[i_sorted])
+                        df[end, :signal_fit_rmse] = mean(rmse_err[i_sorted])
 
                         dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, df)
                         df_inf = filter(dfp) do r
@@ -477,10 +491,10 @@ function train_mmd_model(;
                             pinfer = plot(
                                 plot(
                                     IS_TOY_MODEL ?
-                                        plot(hcat( Yθ[:,θidx[end÷2]], Xθϵbb[:,θidx[end÷2]]); c = [:blue :red], lab = ["Goal Yθ" "Fit X̄θϵ"]) :
-                                        plot(hcat(Yθϵ[:,θidx[end÷2]], Xθϵbb[:,θidx[end÷2]]); c = [:blue :red], lab = ["Data Yθϵ" "Fit X̄θϵ"]),
-                                    sticks(sort(rmse_err); m = (:circle,4), lab = "rmse: fits"),
-                                    sticks(sort(mle_err); m = (:circle,4), lab = "-logL: fits"),
+                                        plot(hcat( Yθ[:,global_i_sorted[end÷2]], Xθϵbb[:,i_sorted[end÷2]]); c = [:blue :red], lab = ["Goal Yθ" "Fit X̄θϵ"]) :
+                                        plot(hcat(Yθϵ[:,global_i_sorted[end÷2]], Xθϵbb[:,i_sorted[end÷2]]); c = [:blue :red], lab = ["Data Yθϵ" "Fit X̄θϵ"]),
+                                    sticks(rmse_err[i_sorted]; m = (:circle,4), lab = "rmse: fits"),
+                                    sticks(mle_err[i_sorted]; m = (:circle,4), lab = "-logL: fits"),
                                     layout = @layout([a{0.25h}; b{0.375h}; c{0.375h}]),
                                 ),
                                 plot(vcat(
@@ -488,8 +502,14 @@ function train_mmd_model(;
                                         plot(dfp.epoch, dfp.rmse; title = "min rmse = $(s(minimum(dfp.rmse)))", label = "rmse: Yθ - (Xθ + dXθ)", xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10)),
                                     !IS_TOY_MODEL ? [] :
                                         plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.theta_fit_err)); title = "min max error = $(s(minimum(maximum.(df_inf.theta_fit_err))))", label = "θ" .* string.(permutedims(1:size(θ,1))), xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10)),
-                                    plot(df_inf.epoch, df_inf.signal_fit_rmse; title = "min rmse = $(s(minimum(df_inf.signal_fit_rmse)))", label = "rmse: Yθϵ - X̄θϵ", xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10)),
-                                    plot(df_inf.epoch, df_inf.signal_fit_logL; title = "min -logL = $(s(minimum(df_inf.signal_fit_logL)))", label = "-logL: Yθϵ - X̄θϵ", xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10)),
+                                    let
+                                        lab = "rmse: Yθϵ - X̄θϵ" * (IS_TOY_MODEL ? "" : "\nrmse prior: $(round(mean(fits.rmse); sigdigits = 4))")
+                                        plot(df_inf.epoch, df_inf.signal_fit_rmse; title = "min rmse = $(s(minimum(df_inf.signal_fit_rmse)))", lab = lab, xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
+                                    end,
+                                    let
+                                        lab = "-logL: Yθϵ - X̄θϵ" * (IS_TOY_MODEL ? "" : "\n-logL prior: $(round(mean(fits.loss); sigdigits = 4))")
+                                        plot(df_inf.epoch, df_inf.signal_fit_logL; title = "min -logL = $(s(minimum(df_inf.signal_fit_logL)))", lab = lab, xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
+                                    end,
                                 )...),
                                 layout = @layout([a{0.25w} b{0.75w}]),
                             )
@@ -586,15 +606,25 @@ function train_mmd_model(;
         end
     end
 
-    opt = Flux.ADAM(lr)
-    Xtest = sampleX(m)
-    Ytest = sampleY(m; dataset = :test)
-    θtest = sampleθ(m)
+    local Xtest, Ytest, θtest, fits
+    if IS_TOY_MODEL
+        # X and θ are generated on demand
+        Xtest, Ytest, θtest, fits = sampleX(m), sampleY(m; dataset = :test), sampleθ(m), nothing
+    else
+        # Sample X and θ randomly, but choose Ys + corresponding fits consistently in order to compare models
+        Xtest = sampleX(m; dataset = :test)
+        θtest = sampleθ(m; dataset = :test)
+        iY = filter(i -> fits_test.loss[i] <= -200 && fits_test.rmse[i] <= 0.002, 1:nrow(fits_test))
+        iY = sample(MersenneTwister(0), iY, m; replace = false)
+        Ytest = sampleY(nothing; dataset = :test)[..,iY]
+        fits = fits_test[iY,:]
+    end
 
+    opt = Flux.ADAM(lr)
     for epoch in 1:epochs
         try
             @timeit timer "epoch" begin
-                (epoch == 1) && @timeit timer "callback" callback(0, Xtest, Ytest, θtest)
+                (epoch == 1) && @timeit timer "callback" callback(0, Xtest, Ytest, θtest, fits)
                 @timeit timer "batch loop" for _ in 1:nbatches
                     @timeit timer "sampleX" Xtrain = sampleX(m)
                     @timeit timer "sampleY" Ytrain = sampleY(m; dataset = :train)
@@ -602,7 +632,7 @@ function train_mmd_model(;
                     @timeit timer "reverse" gs = back(1)
                     @timeit timer "update!" Flux.Optimise.update!(opt, Flux.params(models["mmd"]), gs)
                 end
-                @timeit timer "callback" callback(epoch, Xtest, Ytest, θtest)
+                @timeit timer "callback" callback(epoch, Xtest, Ytest, θtest, fits)
             end
 
             if mod(epoch, showrate) == 0

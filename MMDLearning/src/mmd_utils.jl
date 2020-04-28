@@ -295,29 +295,29 @@ function make_mle_data_samplers(
     # Set random seed for consistent test/train sets
     rng = Random.seed!(0)
 
-    # Load + preprocess results (~25% of voxels dropped)
-    res = deepcopy(BSON.load(thetaspath)["results"])
+    # Load + preprocess fit results (~25% of voxels dropped)
+    fits = deepcopy(BSON.load(thetaspath)["results"])
 
     if filteroutliers
-        println("before filter: $(nrow(res))")
-        filter!(r -> !(999.99 <= r.dT2 && 999.99 <= r.T2short), res) # drop boundary failures
-        filter!(r -> r.dT2 <= 999.99, res) # drop boundary failures
-        filter!(r -> r.T2short <= 100, res) # drop long T2short (very few points)
-        filter!(r -> 8.01 <= r.T2short, res) # drop boundary failures
-        filter!(r -> 8.01 <= r.dT2, res) # drop boundary failures
+        println("before filter: $(nrow(fits))")
+        filter!(r -> !(999.99 <= r.dT2 && 999.99 <= r.T2short), fits) # drop boundary failures
+        filter!(r -> r.dT2 <= 999.99, fits) # drop boundary failures
+        filter!(r -> r.T2short <= 100, fits) # drop long T2short (very few points)
+        filter!(r -> 8.01 <= r.T2short, fits) # drop boundary failures
+        filter!(r -> 8.01 <= r.dT2, fits) # drop boundary failures
         if ntheta == 5
-            filter!(r -> 0.005 <= r.Ashort <= 0.15, res) # drop outlier fits (very few points)
-            filter!(r -> 0.005 <= r.Along <= 0.15, res) # drop outlier fits (very few points)
+            filter!(r -> 0.005 <= r.Ashort <= 0.15, fits) # drop outlier fits (very few points)
+            filter!(r -> 0.005 <= r.Along <= 0.15, fits) # drop outlier fits (very few points)
         end
-        filter!(r -> r.loss <= -250, res) # drop poor fits (very few points)
-        println("after filter:  $(nrow(res))")
+        filter!(r -> r.loss <= -250, fits) # drop poor fits (very few points)
+        println("after filter:  $(nrow(fits))")
     end
 
     # Shuffle data + collect thetas
-    res = res[shuffle(MersenneTwister(0), 1:nrow(res)), :]
+    fits = fits[shuffle(MersenneTwister(0), 1:nrow(fits)), :]
     thetas = ntheta == 4 ? # Create ntheta x nSamples matrix
-        permutedims(convert(Matrix{Float64}, res[:, [:alpha, :T2short, :dT2, :Ashort]])) :
-        permutedims(convert(Matrix{Float64}, res[:, [:alpha, :T2short, :dT2, :Ashort, :Along]]))
+        permutedims(convert(Matrix{Float64}, fits[:, [:alpha, :T2short, :dT2, :Ashort]])) :
+        permutedims(convert(Matrix{Float64}, fits[:, [:alpha, :T2short, :dT2, :Ashort, :Along]]))
 
     # Forward simulation params
     signal_work = signal_model_work(Float64; nTE = 48)
@@ -327,7 +327,7 @@ function make_mle_data_samplers(
     local θtrain_pad
     if padtrain
         θ_pad_lo, θ_pad_hi = minimum(thetas; dims = 2), maximum(thetas; dims = 2)
-        θtrain_pad = θ_pad_lo .+ (θ_pad_hi .- θ_pad_lo) .* rand(MersenneTwister(0), ntheta, nrow(res))
+        θtrain_pad = θ_pad_lo .+ (θ_pad_hi .- θ_pad_lo) .* rand(MersenneTwister(0), ntheta, nrow(fits))
         Xtrain_pad = signal_fun(θtrain_pad; normalize = false)
         if ntheta == 5
             θtrain_pad[4:5, :] ./= sum(Xtrain_pad; dims = 1) # normalize Ashort, Along
@@ -341,12 +341,12 @@ function make_mle_data_samplers(
     # Plot prior distribution histograms
     if plothist
         theta_cols = ntheta == 4 ? [:alpha, :T2short, :dT2, :Ashort] : [:alpha, :T2short, :dT2, :Ashort, :Along]
-        display(plot([histogram(res[!,c]; lab = c, nbins = 75) for c in [theta_cols; :logsigma; :loss]]...))
+        display(plot([histogram(fits[!,c]; lab = c, nbins = 75) for c in [theta_cols; :logsigma; :loss]]...))
     end
 
     # Load image, keeping signals which correspond to thetas
     image = DECAES.load_image(imagepath) # load 4D MatrixSize x nTE image
-    Y = convert(Matrix{Float64}, permutedims(image[CartesianIndex.(res[!, :index]), :])) # convert to nTE x nSamples Matrix
+    Y = convert(Matrix{Float64}, permutedims(image[CartesianIndex.(fits[!, :index]), :])) # convert to nTE x nSamples Matrix
     Y ./= sum(Y; dims = 1) # Normalize signals to unit sum
 
     # Generate data samplers
@@ -401,10 +401,13 @@ function make_mle_data_samplers(
         end
     end
 
+    # Output train/test/val dataframe partitions
+    fits_train, fits_test, fits_val = fits[itrain,:], fits[itest,:], fits[ival,:]
+
     # Reset random seed
     Random.seed!(rng)
 
-    return sampleX, sampleY, sampleθ
+    return @ntuple(sampleX, sampleY, sampleθ, fits_train, fits_test, fits_val)
 end
 
 ####
