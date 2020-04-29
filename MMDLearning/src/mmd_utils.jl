@@ -289,8 +289,10 @@ function make_mle_data_samplers(
         ntheta::Int,
         plothist = false,
         padtrain = false,
+        normalizesignals = true,
         filteroutliers = false,
     )
+    @assert !(padtrain && !normalizesignals) "unnormalized padded training data is not implemented"
 
     # Set random seed for consistent test/train sets
     rng = Random.seed!(0)
@@ -319,13 +321,39 @@ function make_mle_data_samplers(
         permutedims(convert(Matrix{Float64}, fits[:, [:alpha, :T2short, :dT2, :Ashort]])) :
         permutedims(convert(Matrix{Float64}, fits[:, [:alpha, :T2short, :dT2, :Ashort, :Along]]))
 
+    # Load image, keeping signals which correspond to thetas
+    image = DECAES.load_image(imagepath) # load 4D MatrixSize x nTE image
+    Y = convert(Matrix{Float64}, permutedims(image[CartesianIndex.(fits[!, :index]), :])) # convert to nTE x nSamples Matrix
+
+    if normalizesignals
+        # Normalize signals individually such that each signal has unit sum
+        Y ./= sum(Y; dims = 1)
+    else
+        # Don't normalize scales individually, but nevertheless scale the signals uniformly down to avoid numerical difficulties
+        Y ./= 1e6
+        Ysum = sum(Y; dims = 1)
+
+        # Scale thetas and fit results for using unnormalized Y
+        thetas[4:4, :] .*= Ysum # scale Ashort
+        fits.Ashort .*= vec(Ysum)
+        if ntheta == 5
+            thetas[5:5, :] .*= Ysum # scale Along
+            fits.Along .*= vec(Ysum)
+        end
+        fits.logsigma .= log.(exp.(fits.logsigma) .* vec(Ysum)) # scale sigma from fit results
+        fits.rmse .*= vec(Ysum) # scale rmse from fit results
+        fits.loss .+= size(Y,1) .* log.(vec(Ysum)) # scale mle loss from fit results
+    end
+
     # Forward simulation params
     signal_work = signal_model_work(Float64; nTE = 48)
-    signal_fun(θ::AbstractMatrix{Float64}, noise::Union{AbstractVector{Float64}, Nothing} = nothing; kwargs...) = signal_model!(signal_work, θ, noise; TE = 8e-3, kwargs...)
+    signal_fun(θ::AbstractMatrix{Float64}, noise::Union{AbstractVector{Float64}, Nothing} = nothing; kwargs...) =
+        signal_model!(signal_work, θ, noise; TE = 8e-3, normalize = normalizesignals, kwargs...)
 
     # Pad training data with thetas sampled uniformly randomly over the prior space
     local θtrain_pad
     if padtrain
+        @assert normalizesignals "unnormalized padded training data is not implemented"
         θ_pad_lo, θ_pad_hi = minimum(thetas; dims = 2), maximum(thetas; dims = 2)
         θtrain_pad = θ_pad_lo .+ (θ_pad_hi .- θ_pad_lo) .* rand(MersenneTwister(0), ntheta, nrow(fits))
         Xtrain_pad = signal_fun(θtrain_pad; normalize = false)
@@ -343,11 +371,6 @@ function make_mle_data_samplers(
         theta_cols = ntheta == 4 ? [:alpha, :T2short, :dT2, :Ashort] : [:alpha, :T2short, :dT2, :Ashort, :Along]
         display(plot([histogram(fits[!,c]; lab = c, nbins = 75) for c in [theta_cols; :logsigma; :loss]]...))
     end
-
-    # Load image, keeping signals which correspond to thetas
-    image = DECAES.load_image(imagepath) # load 4D MatrixSize x nTE image
-    Y = convert(Matrix{Float64}, permutedims(image[CartesianIndex.(fits[!, :index]), :])) # convert to nTE x nSamples Matrix
-    Y ./= sum(Y; dims = 1) # Normalize signals to unit sum
 
     # Generate data samplers
     itrain =                   1 : 2*(size(Y,2)÷4)
@@ -378,7 +401,7 @@ function make_mle_data_samplers(
 
     # Model data (X) samplers
     function _sampleX_model(batchsize; dataset = :train, kwargs...)
-        signal_fun(sampleθ(batchsize; dataset = dataset); normalize = true, kwargs...)
+        signal_fun(sampleθ(batchsize; dataset = dataset); kwargs...)
     end
 
     # Direct model data (X) samplers

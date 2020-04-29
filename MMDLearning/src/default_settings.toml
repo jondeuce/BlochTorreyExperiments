@@ -13,6 +13,7 @@ out       = "./output/tmp"
 ntheta    = 5
 nsignal   = 48
 echotime  = 8e-3
+normalize = false
 theta_labels = ["alpha", "T2short", "dT2", "Ashort", "Along"]
 
 [mmd]
@@ -24,7 +25,7 @@ batchsize  = 2048 #3072
 nbatches   = 10
 epochs     = 999_999
 traintime  = 1e9 #18000.0 #TODO
-saveperiod = 120.0 #300.0 #900.0 #TODO
+saveperiod = 300.0 #120.0 #900.0 #TODO
 showrate   = 1 #TODO
 lambda     = 0.0 #TODO
 ninfer     = 32 #128 #TODO Number of MLE parameter inferences
@@ -32,17 +33,23 @@ nperms     = 128 # Number of permutations for c_alpha calculation + perm plot
 nsamples   = 1 # Number of MMD samples for perm plot
 hdim       = 128
 nhidden    = 2
-maxcorr    = 0.005
-noisebounds= [-10.0, -4.0]
+# maxcorr     = 0.005 # normalized signals
+# noisebounds = [-10.0, -4.0] # normalized signals
+maxcorr     = 0.025 # unnormalized signals (but scaled down by 1e6)
+noisebounds = [-6.0, -3.0] # unnormalized signals (but scaled down by 1e6)
 [mmd.kernel]
-nbandwidth = 2 #TODO
-bwbounds   = [-10.0, 4.0] # bounds for kernel bandwidths (logsigma)
-losstype   = "tstatistic" #"MMD"
+# nbandwidth = 2 #TODO
+# bwbounds   = [-10.0, 4.0] # bounds for kernel bandwidths (logsigma)
+# losstype   = "tstatistic" #"MMD"
+nbandwidth = 8 #TODO
+bwbounds   = [-8.0, 4.0] # bounds for kernel bandwidths (logsigma)
+losstype   = "tstatistic"
+# losstype   = "MMD"
 lambda     = 0.0
 stepsize   = 1e-2
 epochs     = 1
 nbatches   = 10
-rate       = 25 #TODO
+rate       = 5 #TODO
 
 [vae]
 epochs     = 999_999

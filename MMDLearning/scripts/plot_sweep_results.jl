@@ -6,6 +6,7 @@ using Statistics, StatsPlots
 # pyplot(size = (1200,800))
 pyplot(size = (800,600))
 # pyplot(size = (500,400))
+empty!(Revise.queue_errors);
 
 function flatten_dict!(dout::Dict{<:AbstractString, Any}, din::Dict{<:AbstractString, Any})
     for (k,v) in din
@@ -85,7 +86,7 @@ end
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v7"
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v1"
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v2"
-results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mmdopt-v4"
+results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mmdopt-v7"
 sweep_dir = joinpath(results_dir, "sweep");
 df_best, df_curr, sweep_temp, prog_temp = read_results(sweep_dir);
 # df = df_best
