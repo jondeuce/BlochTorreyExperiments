@@ -14,8 +14,30 @@ if IS_TOY_MODEL
     global sampleX, sampleY, sampleθ = make_toy_samplers(ntrain = settings["mmd"]["batchsize"]::Int, epsilon = TOY_NOISE_LEVEL, power = 4.0);
     global fits_train, fits_test, fits_val = nothing, nothing, nothing
 else
-    global sampleX, sampleY, sampleθ, fits_train, fits_test, fits_val = make_mle_data_samplers(settings["prior"]["data"]["image"]::String, settings["prior"]["data"]["thetas"]::String; ntheta = settings["data"]["ntheta"]::Int, plothist = false, padtrain = false, filteroutliers = false);
+    global sampleX, sampleY, sampleθ, fits_train, fits_test, fits_val = make_mle_data_samplers(
+        settings["prior"]["data"]["image"]::String,
+        settings["prior"]["data"]["thetas"]::String;
+        ntheta = settings["data"]["ntheta"]::Int,
+        normalizesignals = settings["data"]["normalize"]::Bool, #TODO
+        plothist = false,
+        padtrain = false,
+        filteroutliers = false,
+    );
 end;
+
+#= #TODO
+let X = sampleX(nothing; dataset = :train), Y = sampleY(nothing; dataset = :train), fits = fits_train
+    plot([plot(hcat(Y[:,j], X[:,j]); lab = ["data" "fit"]) for j in sample(1:size(X,2), 9; replace = false)]...) |> display
+    histogram(fits.logsigma; title = "fits logsigma") |> display
+    xl = quantile(fits.rmse, [0.001, 0.999])
+    histogram(fits.rmse; title = "fits rmse", xlim = xl) |> display
+    histogram(vec(sqrt.(sum(abs2, X.-Y; dims=1))); title = "real rmse", xlim = xl) |> display
+    neglogL(j) = -sum(logpdf.(Rician.(X[:,j], exp(fits.logsigma[j])), Y[:,j]))
+    xl = quantile(fits.loss, [0.001, 0.999])
+    histogram(fits.loss; title = "fits -logL", xlim = xl) |> display
+    histogram(neglogL.(1:size(X,2)); title = "real -logL", xlim = xl) |> display
+end
+=#
 
 # vae_model_dict = BSON.load("/scratch/st-arausch-1/jcd1994/MMD-Learning/toyvaeopt-v1/sweep/45/best-model.bson")
 # models["vae.E"] = Flux.Chain(deepcopy(vae_model_dict["A"]), h -> ((μ, logσ) = (h[1:end÷2, :], h[end÷2+1:end, :]); μ .+ exp.(logσ) .* randn(size(logσ)...)))
@@ -47,6 +69,7 @@ models["mmd"] = let
 end
 # models["mmd"] = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/toymmd-v2-vector-logsigma/2020-02-26T17:00:51.433/best-model.bson")["model"]) #TODO
 # models["mmd"] = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/22/best-model.bson")["model"]) #TODO
+@assert models["vae.E"] === identity && models["vae.D"] === identity "encoder/decoder is currently assumed to be identity"
 
 split_correction_and_noise(μlogσ) = μlogσ[1:end÷2, :], exp.(μlogσ[end÷2+1:end, :])
 noise_instance(X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
@@ -342,17 +365,21 @@ function train_mmd_model(;
                 rmse = sqrt(mean(abs2, Yθ - (Xθ + dXθ)))
             end
 
+            # Get corrected rician model params; input ν is a model signal
+            function get_corrected_ν_and_σ(ν)
+                dν, σ = get_correction_and_noise(ν)
+                return abs.(ν .+ dν), σ
+            end
+
             if !isnothing(cb_state.last_θbb[])
                 # θbb results from inference on Yθϵ from a previous iteration; use this θbb as a proxy for the current "best guess" θ
-                get_ν_and_σ = x -> ((dx, ϵ) = get_correction_and_noise(x); return (abs.(x.+dx), ϵ))
-
                 θbb = cb_state.last_θbb[]
                 Xθbb = mock_forward_model(θbb, nothing)
                 dXθbb, ϵθbb = get_correction_and_noise(Xθbb)
                 Xθϵbb = get_corrected_signal(Xθbb, dXθbb, ϵθbb)
 
                 global_i_fits = cb_state.last_global_i_fits[] # use same data as previous mle fits
-                mle_err = [sum(.-logpdf.(Rician.(get_ν_and_σ(Xθbb[:,j])...; check_args = false), Yθϵ[:,jY])) for (j,jY) in enumerate(global_i_fits)]
+                mle_err = [sum(.-logpdf.(Rician.(get_corrected_ν_and_σ(Xθbb[:,j])...; check_args = false), Yθϵ[:,jY])) for (j,jY) in enumerate(global_i_fits)]
                 rmse_err = [sqrt(mean(abs2, Xθϵbb[:,j] .- Yθϵ[:,jY])) for (j,jY) in enumerate(global_i_fits)]
 
                 i_sorted = sortperm(mle_err) #sortperm(mle_err)[1:7*(ninfer÷8)] #TODO
@@ -387,7 +414,7 @@ function train_mmd_model(;
             function makeplots()
                 s = x -> x == round(x) ? round(Int, x) : round(x; sigdigits = 4) # for plotting
                 window = 100 # window for plotting error metrics etc.
-                nθplot = 3 # number of sets θ to draw for plotting simulated signals
+                nθplot = 4 # number of sets θ to draw for plotting simulated signals
                 try
                     pmodel = @timeit timer "model plot" plot(
                         plot(
@@ -427,9 +454,9 @@ function train_mmd_model(;
                             tstat_drop_outliers = filter(!isnan, tstat_nan_outliers)
                             tstat_median = isempty(tstat_drop_outliers) ? NaN : median(tstat_drop_outliers)
                             tstat_ylim = isempty(tstat_drop_outliers) ? nothing : quantile(tstat_drop_outliers, [0.01, 0.99])
-                            p1 = plot(dfp.epoch, dfp.MMDsq; label = "m*MMD²", title = "median loss = $(s(median(df.loss)))", ylim = quantile(df.loss, [0.01, 0.99]))
+                            p1 = plot(dfp.epoch, dfp.MMDsq; label = "m*MMD²", title = "median loss = $(s(median(df.loss)))") # ylim = quantile(df.loss, [0.01, 0.99])
                             (lambda != 0) && plot!(p1, dfp.epoch, dfp.reg; label = "λ*reg (λ = $lambda)")
-                            p2 = plot(dfp.epoch, dfp.MMDvar; label = "m²MMDvar", title = "median m²MMDvar = $(s(median(df.MMDvar)))", ylim = quantile(df.MMDvar, [0.01, 0.99]))
+                            p2 = plot(dfp.epoch, dfp.MMDvar; label = "m²MMDvar", title = "median m²MMDvar = $(s(median(df.MMDvar)))") # ylim = quantile(df.MMDvar, [0.01, 0.99])
                             p3 = plot(dfp.epoch, tstat_nan_outliers; title = "median t = $(s(tstat_median))", label = "t = MMD²/MMDσ", ylim = tstat_ylim)
                             p4 = plot(dfp.epoch, dfp.P_alpha; label = "P_α", title = "median P_α = $(s(median(df.P_alpha)))", ylim = (0,1))
                             foreach([p1,p2,p3,p4]) do p
@@ -449,11 +476,10 @@ function train_mmd_model(;
 
                     pinfer = nothing
                     @timeit timer "theta inference plot" begin
-                        get_ν_and_σ = x -> ((dx, ϵ) = get_correction_and_noise(x); return (abs.(x.+dx), ϵ))
                         @timeit timer "theta inference" begin
                             global_i_fits = sample(1:size(Yθϵ,2), ninfer; replace = false) # 1:ninfer
                             res = signal_loglikelihood_inference(
-                                Yθϵ[:,global_i_fits], nothing, get_ν_and_σ, θ -> mock_forward_model(θ, nothing);
+                                Yθϵ[:,global_i_fits], nothing, get_corrected_ν_and_σ, θ -> mock_forward_model(θ, nothing);
                                 objective = :mle, bounds = theta_bounds_fun(),
                             )
                         end
@@ -462,9 +488,8 @@ function train_mmd_model(;
                         cb_state.last_θbb[] = copy(θbb)
                         cb_state.last_global_i_fits[] = copy(global_i_fits)
 
-                        # #TODO
                         # let θbb_mat = [permutedims(θbb) [fits.alpha[global_i_fits] fits.T2short[global_i_fits] fits.dT2[global_i_fits] fits.Ashort[global_i_fits] fits.Along[global_i_fits]]]
-                        #     display(θbb_mat[:,[1,6,2,7,3,8,4,9,5,10]])
+                        #     display(θbb_mat[:,[1,6,2,7,3,8,4,9,5,10]]) #TODO
                         # end
 
                         Xθbb = mock_forward_model(θbb, nothing)
@@ -597,11 +622,14 @@ function train_mmd_model(;
 
             # Optimise kernel bandwidths
             if epoch > 0 && mod(epoch, kernelrate) == 0
-                @timeit timer "train kernel" train_mmd_kernel!(logsigma;
-                    recordprogress = false,
-                    showprogress = false,
-                    plotprogress = false,
-                )
+                @timeit timer "train kernel" begin
+                    train_mmd_kernel!(
+                        logsigma;
+                        recordprogress = false,
+                        showprogress = false,
+                        plotprogress = false,
+                    )
+                end
             end
         end
     end
@@ -614,7 +642,11 @@ function train_mmd_model(;
         # Sample X and θ randomly, but choose Ys + corresponding fits consistently in order to compare models
         Xtest = sampleX(m; dataset = :test)
         θtest = sampleθ(m; dataset = :test)
-        iY = filter(i -> fits_test.loss[i] <= -200 && fits_test.rmse[i] <= 0.002, 1:nrow(fits_test))
+        iY = if settings["data"]["normalize"]::Bool
+            iY = filter(i -> fits_test.loss[i] <= -200.0 && fits_test.rmse[i] <= 0.002, 1:nrow(fits_test)) #TODO
+        else
+            iY = filter(i -> fits_test.loss[i] <= -125.0 && fits_test.rmse[i] <= 0.15, 1:nrow(fits_test)) #TODO
+        end
         iY = sample(MersenneTwister(0), iY, m; replace = false)
         Ytest = sampleY(nothing; dataset = :test)[..,iY]
         fits = fits_test[iY,:]
