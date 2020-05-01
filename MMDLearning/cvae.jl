@@ -294,7 +294,7 @@ true_signals = signals(eval_data);
 # eval_data    = train_data_noise(reduce(hcat, (x->x[1]).(train_data)), reduce((x,y) -> cat(x,y;dims=4), (x->x[2]).(train_data))); #TODO FIXME
 # true_thetas  = thetas(eval_data)[:,1:min(10000,end)];
 # true_signals = signals(eval_data)[:,:,:,1:min(10000,end)];
-model_mu_std = best_model(test_data_noise(true_signals); nsamples = 1000, stddev = true); #TODO
+model_mu_std = best_model(true_signals; nsamples = 1000, stddev = true); #TODO
 model_thetas, model_stds = model_mu_std[1:end÷2, ..], model_mu_std[end÷2+1:end, ..];
 
 prediction_hist = function()

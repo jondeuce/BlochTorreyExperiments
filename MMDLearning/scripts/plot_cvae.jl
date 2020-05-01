@@ -104,6 +104,7 @@ end
 
 # Read results to DataFrame
 results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/cvae-both-corr-v2"
+# results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/cvae-train-noise-test-corr-v1"
 sweep_dir = joinpath(results_dir, "sweep");
 df, sweep_temp, metrics_temp = read_results(sweep_dir);
 
