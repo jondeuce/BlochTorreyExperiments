@@ -103,7 +103,7 @@ function read_results(sweep_dir)
 end
 
 # Read results to DataFrame
-results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/cvae-test-v3"
+results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/cvae-both-corr-v2"
 sweep_dir = joinpath(results_dir, "sweep");
 df, sweep_temp, metrics_temp = read_results(sweep_dir);
 
