@@ -14,7 +14,7 @@ train_batch = 256    # Batch size for training
 nval        = 1024   # Number of validation samples
 ntest       = 1024   # Number of test samples
 ntrain      = 4096   # Number of train samples
-padtrain    = true   # Pad training data with uniformly random prior samples
+padtrain    = false  # Pad training data with uniformly random prior samples
 # [data.info]
 # nfeatures   = 128 # Height of input data
 # nchannels   = 1 # Number of input data channels
@@ -81,6 +81,6 @@ lrrate   = 1_000_000
 lrdrop   = 3.1623
 lrbounds = [1e-5, 0.1]
 [optimizer.ADAM]
-lr       = 3.1623e-4
+lr       = 1.0e-4
 beta     = [0.9, 0.999]
 decay    = 0.0

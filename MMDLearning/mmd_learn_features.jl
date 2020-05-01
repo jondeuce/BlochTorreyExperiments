@@ -11,7 +11,7 @@ sampleX, sampleY, sampleθ = make_toy_samplers(;
     epsilon = 1e-3,
 );
 
-# settings = TOML.parsefile(joinpath(@__DIR__, "src/default_settings.toml")); #TODO
+# settings = TOML.parsefile(joinpath(@__DIR__, "src/mmd_settings.toml")); #TODO
 
 @unpack A, f = let 
     # Extract settings

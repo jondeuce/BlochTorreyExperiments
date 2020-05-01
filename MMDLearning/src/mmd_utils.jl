@@ -3,7 +3,7 @@
 ####
 
 function load_settings(
-        default_settings_file = joinpath(@__DIR__, "default_settings.toml"),
+        default_settings_file = joinpath(@__DIR__, "mmd_settings.toml"),
     )
     # Load default settings + merge in custom settings, if given
     settings = TOML.parsefile(default_settings_file)

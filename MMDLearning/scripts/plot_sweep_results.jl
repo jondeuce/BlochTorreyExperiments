@@ -62,10 +62,10 @@ function read_results(results_dir)
             df_best_row.time[1] = sum(df_curr.time[1:ibest])
             df_curr_row.time[1] = sum(df_curr.time)
 
-            # minimum over last WINDOW entries
-            WINDOW = 10
-            df_curr_row.signal_fit_logL[1] = minimum(df_curr.signal_fit_logL[clamp(end-WINDOW+1,1,end) : end])
-            df_curr_row.signal_fit_rmse[1] = minimum(df_curr.signal_fit_rmse[clamp(end-WINDOW+1,1,end) : end])
+            # mean over last WINDOW entries
+            WINDOW = 250
+            df_curr_row.signal_fit_logL[1] = mean(df_curr.signal_fit_logL[clamp(end-WINDOW+1,1,end) : end])
+            df_curr_row.signal_fit_rmse[1] = mean(df_curr.signal_fit_rmse[clamp(end-WINDOW+1,1,end) : end])
 
             currfolder = basename(root)
             best_results = append!(best_results, hcat(DataFrame(:folder => currfolder), df_sweep, df_best_row))
@@ -128,7 +128,7 @@ function make_plots(df, sweepcols, metric, thresh = 0.5)
     nothing
 end
 # make_plots.(Ref(df), Ref(names(sweep_temp)), [:loss, :rmse, :linf, :time], [0.5, 0.5, 0.5, 1.0]);
-make_plots.(Ref(df), Ref(names(sweep_temp)), [:signal_fit_rmse, :signal_fit_logL], 0.95); #1.0);
+make_plots.(Ref(df), Ref(names(sweep_temp)), [:signal_fit_rmse, :signal_fit_logL], 0.9); #1.0);
 
 nothing
 

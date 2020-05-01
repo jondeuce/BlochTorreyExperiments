@@ -40,15 +40,18 @@ end
 
 # MMD settings
 const IS_TOY_MODEL = false #TODO
-const CORRECT_TEST_DATA = false #TODO
-const CORRECT_TRAIN_DATA = false #TODO
+const CORRECT_TEST_DATA = true #TODO
+const CORRECT_TRAIN_DATA = true #TODO
 const mmd_settings = load_settings()
 const mmd_models = let
-    wrap_nottrainable(m::Dict) = Dict{String,Any}([k => NotTrainable(v) for (k,v) in m])
-    load_nottrainable(s::String) = wrap_nottrainable(deepcopy(BSON.load(s)))
+    wrap_not_trainable(m::Dict) = Dict{String,Any}([k => NotTrainable(v) for (k,v) in m])
+    load_not_trainable(s::String) = wrap_not_trainable(deepcopy(BSON.load(s)))
     IS_TOY_MODEL ?
-        load_nottrainable("/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v7/sweep/2/best-model.bson") :
-        load_nottrainable("/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mmdopt-v3/sweep/92/best-model.bson")
+        load_not_trainable("/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v7/sweep/2/best-model.bson") :
+        load_not_trainable("/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7/sweep/63/current-model.bson")
+end
+if SAVE && (CORRECT_TEST_DATA || CORRECT_TRAIN_DATA)
+    BSON.bson(savepath("log", "mmd-models.bson"), deepcopy(mmd_models))
 end
 
 # Convenience functions
@@ -70,20 +73,22 @@ end
 # Load and prepare signal data
 @info "Preparing data..."
 function make_samples(n; dataset, correction)
-    θ, Y = if IS_TOY_MODEL
+    local θ, Y
+
+    if IS_TOY_MODEL
         # train data has different distribution (exponent 4.0), test data has "true" distribution (exponent 2.0)
         power = dataset === :train ? T(4.0) : T(2.0)
         θ = toy_theta_sampler(n)
         Y = toy_signal_model(θ, nothing, power)
-        θ, Y
     else
-        # train data has different distribution (EPG model), test data has "true" distribution (MMD-corrected EPG model)
+        # train data and test data may have different distributions (EPG model or "true" MMD-corrected EPG model)
         sampleY, _, sampleθ = make_mle_data_samplers(
             mmd_settings["prior"]["data"]["image"]::String,
             mmd_settings["prior"]["data"]["thetas"]::String;
             ntheta = mmd_settings["data"]["ntheta"]::Int,
-            padtrain = settings["data"]["padtrain"]::Bool,
-            filteroutliers = true,
+            padtrain = settings["data"]["padtrain"]::Bool, #TODO
+            normalizesignals = false, #TODO
+            filteroutliers = true, #TODO
             plothist = false, #TODO
         )
         θ = copy(sampleθ(nothing; dataset = dataset)) #TODO
@@ -102,8 +107,6 @@ function make_samples(n; dataset, correction)
             settings["data"]["info"]["labmean"][i] = (hi + lo)/2
             settings["data"]["info"]["labwidth"][i] = hi - lo
         end
-
-        θ, Y
     end
 
     # apply learned correction
@@ -155,6 +158,7 @@ plot(
     plot(((train_data[1][2])[:,1,1,4:6]); title = "train"),
     plot(train_data_noise((train_data[1][2])[:,1,1,4:6]); title = "noisy train"),
 ) |> display
+error("here")
 =#
 
 H_loss  = @λ (x,y) -> MWFLearning.H_LIGOCVAE(m, x, y; gamma = T(settings["model"]["gamma"]))

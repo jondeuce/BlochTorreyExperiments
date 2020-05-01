@@ -227,7 +227,7 @@ df = mapreduce(
     end
 end
 DrWatson.@tagsave(
-    "/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v3/mlefits-shuffled.bson",
+    "/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v3-allfits/mlefits-shuffled.bson",
     Dict{String,Any}("results" => deepcopy(df[shuffle(MersenneTwister(0), 1:nrow(df)), :]));
     safe = true,
     gitpath = realpath(DrWatson.projectdir("..")),
@@ -285,7 +285,7 @@ end
 #= plot distributions
 =#
 empty!(Revise.queue_errors);
-df = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v3/mlefits-shuffled-normalized.bson")["results"])
+df = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v3-allfits/mlefits-shuffled-normalized.bson")["results"])
 let
     res = deepcopy(df)
         filter!(r -> r.opttime <= 4.99, res) # drop non-converged fits
@@ -350,7 +350,7 @@ end
 
 #= normalize Ashort, Along
 empty!(Revise.queue_errors);
-df = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v3/mlefits-shuffled-normalized.bson")["results"])
+df = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v3-allfits/mlefits-shuffled-normalized.bson")["results"])
 let
     nTE = 48
     TE = 8e-3
