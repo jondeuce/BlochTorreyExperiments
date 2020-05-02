@@ -42,7 +42,7 @@ end
 const IS_TOY_MODEL = true #TODO
 const TEST_DATA_LEARNED_CORR = false #TODO learned correction and noise
 const TEST_DATA_LEARNED_NOISE = false #TODO learned noise only
-const TRAIN_DATA_LEARNED_CORR = true #TODO learned correction and noise
+const TRAIN_DATA_LEARNED_CORR = false #TODO learned correction and noise
 const TRAIN_DATA_LEARNED_NOISE = false #TODO learned noise only
 const mmd_settings = load_settings()
 const mmd_models = let
