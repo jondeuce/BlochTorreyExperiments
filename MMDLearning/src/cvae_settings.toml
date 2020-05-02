@@ -15,51 +15,36 @@ nval        = 1024   # Number of validation samples
 ntest       = 1024   # Number of test samples
 ntrain      = 4096   # Number of train samples
 padtrain    = false  # Pad training data with uniformly random prior samples
-# [data.info]
-# nfeatures   = 128 # Height of input data
-# nchannels   = 1 # Number of input data channels
-# nlabels     = 5 # Number of output labels
-# labmean     = [0.0234375, 0.7853981633974483, 0.375, 0.175, 72.0] # Label distribution means
-# labwidth    = [0.015625,  1.5707963267948966, 0.25,  0.15, 112.0] # Label distribution widths
-# labnames    = ["freq", "phase", "offset", "amp", "tconst"]
-# labinfer    = ["freq", "phase", "offset", "amp", "tconst"]
-# labweights  = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
-# labscale    = [1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
-# labunits    = ["Hz", "rad", "a.u.", "a.u.", "s"] # label units, after scaling
-# [data.preprocess]
-# normalize   = "" # Normalize input signals (unitsum == signal sums to 1)
-# [data.postprocess]
-# noise       = 1e-2 # Rician noise level
+[data.info]
+nfeatures   = 128 # Height of input data
+nchannels   = 1 # Number of input data channels
+nlabels     = 5 # Number of output labels
+labmean     = [0.0234375, 0.7853981633974483, 0.375, 0.175, 72.0] # Label distribution means
+labwidth    = [0.015625,  1.5707963267948966, 0.25,  0.15, 112.0] # Label distribution widths
+labnames    = ["freq", "phase", "offset", "amp", "tconst"]
+labinfer    = ["freq", "phase", "offset", "amp", "tconst"]
+labweights  = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
+labscale    = [1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
+labunits    = ["Hz", "rad", "a.u.", "a.u.", "s"] # label units, after scaling
+[data.preprocess]
+normalize   = "" # normalize input signals ("unitsum" -> signal sums to 1)
+[data.postprocess]
+noise       = 1e-2 # Rician noise level
 # [data.info]
 # nfeatures   = 48 # Height of input data
 # nchannels   = 1 # Number of input data channels
-# nlabels     = 4 # Number of output labels
-# labmean     = [0.0, 0.0, 0.0, 0.0] # Label distribution means (set internally)
-# labwidth    = [0.0, 0.0, 0.0, 0.0] # Label distribution widths (set internally)
-# labnames    = ["cosd(alpha)", "T2short", "dT2", "Ashort"]
-# labinfer    = ["cosd(alpha)", "T2short", "dT2", "Ashort"]
-# labunits    = ["cos(deg)", "ms", "ms", "a.u."] # label units, after scaling
-# labweights  = [1.0, 1.0, 1.0, 1.0] # Weights for loss function
-# labscale    = [1.0, 1.0, 1.0, 1.0] # scale labels before plotting
+# nlabels     = 5 # Number of output labels
+# labmean     = [0.0, 0.0, 0.0, 0.0, 0.0] # Label distribution means (set internally)
+# labwidth    = [0.0, 0.0, 0.0, 0.0, 0.0] # Label distribution widths (set internally)
+# labnames    = ["cosd(alpha)", "T2short", "T2long", "Ashort", "Along"]
+# labinfer    = ["cosd(alpha)", "T2short", "T2long", "Ashort", "Along"]
+# labunits    = ["cos(deg)", "ms", "ms", "a.u.", "a.u."] # label units, after scaling
+# labweights  = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
+# labscale    = [1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
 # [data.preprocess]
-# normalize   = "unitsum" # Normalize input signals (unitsum == signal sums to 1)
+# normalize   = "" # normalize input signals ("unitsum" -> signal sums to 1)
 # [data.postprocess]
 # noise       = 0.0005 # Rician noise level
-[data.info]
-nfeatures   = 48 # Height of input data
-nchannels   = 1 # Number of input data channels
-nlabels     = 5 # Number of output labels
-labmean     = [0.0, 0.0, 0.0, 0.0, 0.0] # Label distribution means
-labwidth    = [0.0, 0.0, 0.0, 0.0, 0.0] # Label distribution widths
-labnames    = ["cosd(alpha)", "T2short", "T2long", "Ashort", "Along"]
-labinfer    = ["cosd(alpha)", "T2short", "T2long", "Ashort", "Along"]
-labunits    = ["cos(deg)", "ms", "ms", "a.u.", "a.u."] # label units, after scaling
-labweights  = [1.0, 1.0, 1.0, 1.0, 1.0] # Weights for loss function
-labscale    = [1.0, 1.0, 1.0, 1.0, 1.0] # scale labels before plotting
-[data.preprocess]
-normalize   = "unitsum" # Normalize input signals (unitsum == signal sums to 1)
-[data.postprocess]
-noise       = 0.0005 # Rician noise level
 
 [model]
 loss      = "l2"
