@@ -283,7 +283,6 @@ function correct_results(df)
 end
 
 #= plot distributions
-=#
 empty!(Revise.queue_errors);
 df = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v3-allfits/mlefits-shuffled-normalized.bson")["results"])
 let
@@ -329,6 +328,7 @@ let
 
     nothing
 end
+=#
 
 #= add rmse column
 let
@@ -383,7 +383,6 @@ end
 =#
 
 #= padded mle samplers
-=#
 let
     sampleY, _, sampleθ = make_mle_data_samplers(mmd_settings["prior"]["data"]["image"]::String, mmd_settings["prior"]["data"]["thetas"]::String; ntheta = mmd_settings["data"]["ntheta"]::Int, plothist = false, padtrain = true, filteroutliers = true);
     Y = copy(sampleY(nothing; dataset = :train));
@@ -399,6 +398,7 @@ let
         histogram(θ[5,θ[5,:].<0.01]; lab = "Along"),
     ) |> display
 end
+=#
 
 #=
 #TODO: for watching failed qsubs
@@ -417,36 +417,6 @@ map(readdir("/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mlefit-v3"; 
     isfile(joinpath(dir, "pbs-out", "sweep_settings.toml")) &&
     isfile(joinpath(dir, "pbs-out", "masked-image-240x240x48x48.settings-240x240x48x48.txt"))
 end |> sum
-=#
-
-####
-#### Make learned maps
-####
-
-#=
-m = BSON.load("/project/st-arausch-1/jcd1994/simulations/MMD-Learning/cvae-test-v1/sweep/117/log/2020-04-24-T-17-31-25-591.acc=rmse_gamma=1_loss=l2_DenseLIGOCVAE_Dh=32_Nh=3_Xout=4_Zdim=10_act=relu_dropout=0.model-best.bson")[:model];
-Is = filter(I -> image[I,1] > 0, CartesianIndices(size(image)[1:3]));
-model_mu_std = m(unitsum(permutedims(image[Is,:]); dims = 1); nsamples = 100, stddev = true); #TODO
-model_thetas, model_stds = model_mu_std[1:end÷2, ..], model_mu_std[end÷2+1:end, ..];
-
-out = zeros(size(image)[1:3]..., size(model_thetas,1));
-out[Is, :] .= permutedims(model_thetas);
-CUTOFF = 50.0
-BANDWIDTH = 2.0
-mwf = zeros(size(image)[1:3]);
-# mwf[Is] .= ((T2short, Ashort) -> ifelse(T2short < CUTOFF, Ashort, 0.0)).(out[Is, 2], out[Is, 4]);
-mwf[Is] .= ((T2short, Ashort) -> Ashort * sigmoid(-(T2short - CUTOFF) / BANDWIDTH)).(out[Is, 2], out[Is, 4]);
-
-Islice = (50:190, 210:-1:40, 24);
-heatmap(permutedims(out[Islice...,1]) |> img -> (x -> acosd(clamp(x, -1.0, 1.0))).(img); aspect_ratio = :equal, clim = (120,180), title = "flip angle [deg]") |> p -> savefig(p, "flipangle.png");
-heatmap(permutedims(out[Islice...,2]) |> img -> (x -> clamp(x < CUTOFF ? x : 0.0, 8.0, 100.0)).(img); aspect_ratio = :equal, clim = (0,CUTOFF), title = "T2short [ms]") |> p -> savefig(p, "T2short.png");
-heatmap(permutedims(out[Islice...,3]) |> img -> (x -> clamp(x, 8.0, 500.0)).(img); aspect_ratio = :equal, clim = (0,500), title = "T2long [ms]") |> p -> savefig(p, "T2long.png");
-heatmap(permutedims(out[Islice...,4]) |> img -> (x -> clamp(x, 0.0, 1.0)).(img); aspect_ratio = :equal, clim = (0,1), title = "Ashort [a.u.]") |> p -> savefig(p, "Ashort.png");
-
-heatmap(permutedims(mwf[Islice...]) |> img -> (x -> clamp(x, 0.0, 1.0)).(img); aspect_ratio = :equal, clim = (0,1.0), title = "MWF [a.u.]") |> p -> savefig(p, "MWF.png");
-heatmap(permutedims(t2parts["sfr"][Islice...]) |> img -> (x -> ifelse(isnan(x), 0.0, x)).(img); aspect_ratio = :equal, clim = (0,0.3), title = "sfr [a.u.]") |> p -> savefig(p, "sfr.png");
-heatmap(permutedims(t2parts["sgm"][Islice...]) |> img -> (x -> ifelse(isnan(x), 0.0, 1000x)).(img); aspect_ratio = :equal, clim = (0,CUTOFF), title = "sgm [ms]") |> p -> savefig(p, "sgm.png");
-heatmap(permutedims(t2maps["ggm"][Islice...]) |> img -> (x -> ifelse(isnan(x), 0.0, 1000x)).(img); aspect_ratio = :equal, clim = (0,500), title = "ggm [ms]") |> p -> savefig(p, "ggm.png");
 =#
 
 nothing

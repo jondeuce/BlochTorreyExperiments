@@ -2,13 +2,16 @@
 out       = "./output/tmp"
 # ntheta    = 5
 # nsignal   = 128
+# normalize = false
 # theta_labels = ["freq", "phase", "offset", "amp", "tconst"]
 # ntheta    = 5
 # nsignal   = 48
+# normalize = false
 # theta_labels = ["refcon", "alpha", "T2short", "dT2", "Ashort"]
 # ntheta    = 4
 # nsignal   = 48
 # echotime  = 8e-3
+# normalize = false
 # theta_labels = ["alpha", "T2short", "dT2", "Ashort"]
 ntheta    = 5
 nsignal   = 48
