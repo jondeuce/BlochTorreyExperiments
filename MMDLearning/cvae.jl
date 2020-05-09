@@ -97,11 +97,11 @@ function make_samples(n; dataset)
         Y = copy(sampleY(nothing; dataset = dataset)) #TODO
 
         if settings["data"]["info"]["labnames"][1] == "cosd(alpha)"
-        θ[1,:] .= cosd.(θ[1,:]) # transform flipangle -> cosd(flipangle)
+            θ[1,:] .= cosd.(θ[1,:]) # transform flipangle -> cosd(flipangle)
         end
 
         if settings["data"]["info"]["labnames"][3] == "T2long"
-        θ[3,:] .= θ[2,:] .+ θ[3,:] # transform dT2 -> T2long = T2short + dT2
+            θ[3,:] .= θ[2,:] .+ θ[3,:] # transform dT2 -> T2long = T2short + dT2
         end
 
         for i in 1:size(θ,1)

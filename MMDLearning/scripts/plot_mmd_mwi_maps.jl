@@ -27,7 +27,7 @@ if !(@isdefined(t2maps) && @isdefined(t2dist))
     global t2maps, t2dist = DECAES.T2mapSEcorr(image, t2mapopts);
 end
 
-if !(@isdefined(t2parts) && @isdefined(t2dist))
+if !(@isdefined(t2parts))
     global t2partopts = T2partOptions(
         MatrixSize = size(image)[1:3],
         nT2        = t2mapopts.nT2,

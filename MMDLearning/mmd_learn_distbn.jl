@@ -71,17 +71,20 @@ end
 # models["mmd"] = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/22/best-model.bson")["model"]) #TODO
 @assert models["vae.E"] === identity && models["vae.D"] === identity "encoder/decoder is currently assumed to be identity"
 
+# Convenience functions
 split_correction_and_noise(μlogσ) = μlogσ[1:end÷2, :], exp.(μlogσ[end÷2+1:end, :])
 noise_instance(X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
 get_correction_and_noise(X) = split_correction_and_noise(models["mmd"](models["vae.E"](X))) # Learning correction + noise
 # get_correction_and_noise(X) = models["mmd"](models["vae.E"](X)), fill(eltype(X)(TOY_NOISE_LEVEL), size(X)...) # Learning correction w/ fixed noise
 # get_correction_and_noise(X) = models["mmd"](models["vae.E"](X)), zeros(eltype(X), size(X)...) # Learning correction only
 get_correction(X) = get_correction_and_noise(X)[1]
-get_noise_instance(X) = noise_instance(X, get_correction_and_noise(X)[2])
+get_noise(X) = get_correction_and_noise(X)[2]
+get_noise_instance(X) = noise_instance(X, get_noise(X))
 get_corrected_signal(X) = get_corrected_signal(X, get_correction_and_noise(X)...)
-function get_corrected_signal(X, dX, ϵ)
+get_corrected_signal(X, dX, ϵ) = get_corrected_signal(abs.(X .+ dX), ϵ)
+function get_corrected_signal(X, ϵ)
     ϵR, ϵI = noise_instance(X, ϵ), noise_instance(X, ϵ)
-    Xϵ = @. sqrt((X + dX + ϵR)^2 + ϵI^2)
+    Xϵ = @. sqrt((X + ϵR)^2 + ϵI^2)
     # Don't use Flux.softmax(Xϵ), as then we can't interpret dX and ϵ as offset + Rician noise
     # !IS_TOY_MODEL && (Xϵ = Xϵ ./ sum(Xϵ; dims = 1)) #TODO don't need to normalize learned corrections
     return Xϵ
