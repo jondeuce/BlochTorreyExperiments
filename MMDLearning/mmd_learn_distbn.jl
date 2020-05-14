@@ -7,7 +7,7 @@ Random.seed!(0);
 const IS_TOY_MODEL = false
 const TOY_NOISE_LEVEL = 1e-2
 const models = Dict{String, Any}()
-const settings = load_settings()
+const settings = load_settings(joinpath(@__DIR__, "src", "mmd_settings.toml"))
 
 global sampleX, sampleY, sampleθ, fits_train, fits_test, fits_val
 if IS_TOY_MODEL
