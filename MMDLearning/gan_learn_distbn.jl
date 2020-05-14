@@ -4,7 +4,7 @@ using MWFLearning
 pyplot(size=(800,600))
 Random.seed!(0);
 
-const IS_TOY_MODEL = false
+const IS_TOY_MODEL = true
 const TOY_NOISE_LEVEL = 1e-2
 const models = Dict{String, Any}()
 const settings = load_settings(joinpath(@__DIR__, "src", "gan_settings.toml"))
@@ -12,7 +12,10 @@ const settings = load_settings(joinpath(@__DIR__, "src", "gan_settings.toml"))
 # Load data samplers
 global sampleX, sampleY, sampleθ, fits_train, fits_test, fits_val
 if IS_TOY_MODEL
-    global sampleX, sampleY, sampleθ = make_toy_samplers(ntrain = settings["gan"]["batchsize"]::Int, epsilon = TOY_NOISE_LEVEL, power = 4.0);
+    _sampleX, _sampleY, _sampleθ = make_toy_samplers(ntrain = settings["gan"]["batchsize"]::Int, epsilon = TOY_NOISE_LEVEL, power = 4.0)
+    global sampleX = (m; dataset = :train) -> _sampleX(m) # samples are generated on demand; train/test not relevant
+    global sampleθ = (m; dataset = :train) -> _sampleθ(m) # samples are generated on demand; train/test not relevant
+    global sampleY = _sampleY
     global fits_train, fits_test, fits_val = nothing, nothing, nothing
 else
     global sampleX, sampleY, sampleθ, fits_train, fits_test, fits_val = make_mle_data_samplers(
@@ -101,8 +104,8 @@ callback = let
 
     if IS_TOY_MODEL
         # X and θ are generated on demand
-        Xtest, Ytest, θtest, testfits =
-            sampleX(settings["gan"]["batchsize"]; dataset = :train), sampleY(settings["gan"]["batchsize"]; dataset = :test), sampleθ(settings["gan"]["batchsize"]), nothing
+        Xtest, Ytest, θtest = sampleX(settings["gan"]["batchsize"]), sampleY(settings["gan"]["batchsize"]; dataset = :test), sampleθ(settings["gan"]["batchsize"])
+        testfits = nothing
     else
         # Sample X and θ randomly, but choose Ys + corresponding fits consistently in order to compare models, and choose Ys with reasonable agreeance with data in order to not be overconfident in improving terrible fits
         Xtest = sampleX(settings["gan"]["batchsize"]; dataset = :test)

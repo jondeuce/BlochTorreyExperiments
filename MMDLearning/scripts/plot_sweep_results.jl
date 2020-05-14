@@ -8,6 +8,8 @@ pyplot(size = (800,600))
 # pyplot(size = (500,400))
 empty!(Revise.queue_errors);
 
+const SWEEP_FIELD = "gan" #TODO one of: "mmd", "gan", "vae"
+
 function flatten_dict!(dout::Dict{<:AbstractString, Any}, din::Dict{<:AbstractString, Any})
     for (k,v) in din
         if v isa Dict
@@ -41,16 +43,14 @@ function dataframe_template(results_dir, file, field)
 end
 
 function read_results(results_dir)
-    # sweep_temp = dataframe_template(results_dir, "sweep_settings.toml", "vae")::DataFrame
-    sweep_temp = dataframe_template(results_dir, "sweep_settings.toml", "mmd")::DataFrame
+    sweep_temp = dataframe_template(results_dir, "sweep_settings.toml", SWEEP_FIELD)::DataFrame
     prog_temp  = dataframe_template(results_dir, "current-progress.bson", "progress")::DataFrame
     best_results = hcat(DataFrame(:folder => String[]), copy(sweep_temp), copy(prog_temp))
     curr_results = hcat(DataFrame(:folder => String[]), copy(sweep_temp), copy(prog_temp))
     for (root, dirs, files) in walkdir(results_dir)
         occursin("checkpoint", root) && continue
         if "sweep_settings.toml" ∈ files && "settings.toml" ∈ files && "current-progress.bson" ∈ files #TODO: && "best-progress.bson" ∈ files
-            # df_sweep = read_to_dataframe(joinpath(root, "sweep_settings.toml"), "vae")
-            df_sweep = read_to_dataframe(joinpath(root, "sweep_settings.toml"), "mmd")
+            df_sweep = read_to_dataframe(joinpath(root, "sweep_settings.toml"), SWEEP_FIELD)
             df_curr = read_to_dataframe(joinpath(root, "current-progress.bson"), "progress")
 
             # ibest = findmin(df_curr.loss)[2]
@@ -84,9 +84,8 @@ end
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-3/toymmdopt-v4"
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v5"
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v7"
-# results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v1"
-# results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v2"
-results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/mmdopt-v7"
+# results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7"
+results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/ganopt-v1"
 sweep_dir = joinpath(results_dir, "sweep");
 df_best, df_curr, sweep_temp, prog_temp = read_results(sweep_dir);
 # df = df_best
@@ -95,14 +94,18 @@ df = df_curr
 # Write sorted DataFrame to text file
 foreach([:signal_fit_rmse, :signal_fit_logL]) do metric #[:loss, :rmse, :mae, :linf]
     open(joinpath(results_dir, "results-by-$metric.txt"); write = true) do io
-        dfsave = dropmissing(df, metric)[:, Not(:logsigma)] #TODO
+        savecols = Colon() #Not(:logsigma) #TODO
+        dfsave = dropmissing(df, metric)[:, savecols]
         show(io, sort(dfsave, metric); allrows = true, allcols = true)
     end
 end
 
 # Show top results
-show(stdout, first(sort(df[:,Not([:logsigma])], :signal_fit_logL), 10); allrows = true, allcols = true); println("\n")
-@show size(df);
+let
+    savecols = Colon() #Not([:logsigma]) #TODO
+    show(stdout, first(sort(df[:,savecols], :signal_fit_logL), 10); allrows = true, allcols = true); println("\n")
+    @show size(df);
+end
 
 function make_plots(df, sweepcols, metric, thresh = 0.5)
     dfp = dropmissing(df, metric)
