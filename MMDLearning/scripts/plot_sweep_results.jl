@@ -104,8 +104,8 @@ end
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v5"
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v7"
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7"
-# results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/ganopt-v1"
-results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toyganopt-v1"
+# results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/ganopt-v2"
+results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toyganopt-v2"
 sweep_dir = joinpath(results_dir, "sweep");
 df_best, df_curr, sweep_temp, prog_temp = read_results(sweep_dir);
 # df = df_best
