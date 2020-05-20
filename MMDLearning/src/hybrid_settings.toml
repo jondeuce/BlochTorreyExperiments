@@ -35,14 +35,24 @@ showrate   = 1 #TODO
 ninfer     = 32 #TODO Number of MLE parameter inferences
 nperms     = 128 # Number of permutations for c_alpha calculation + perm plot
 nsamples   = 1 # Number of MMD samples for perm plot
-hdim       = 64
+hdim       = 128
 nhidden    = 2
 # maxcorr    = 0.005 # normalized signals
 # noisebounds= [-10.0, -4.0] # normalized signals
 # maxcorr    = 0.025 # unnormalized signals (but scaled down by 1e6)
 # noisebounds= [-6.0, -3.0] # unnormalized signals (but scaled down by 1e6)
-maxcorr    = 0.1 # toy signals
-noisebounds= [-8.0, -2.0] # toy signals
+maxcorr    = 0.1 # normalized signals
+noisebounds= [-8.0, -2.0] # normalized signals
+[gan.kernel]
+nbandwidth = 8 #TODO
+bwbounds   = [-8.0, 4.0] # bounds for kernel bandwidths (logsigma)
+losstype   = "tstatistic"
+# losstype   = "MMD"
+lambda     = 0.0
+stepsize   = 1e-2
+epochs     = 1
+nbatches   = 10
+rate       = 5 #TODO
 
 [prior]
 nterms    = 2
