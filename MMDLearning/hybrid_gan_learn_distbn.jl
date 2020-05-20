@@ -46,7 +46,7 @@ let
 
     # Slope/intercept for scaling dX to (-δ, δ) and logϵ to (logϵ_bw[1], logϵ_bw[2])
     logϵ_α, logϵ_β = (logϵ_bw[2] - logϵ_bw[1])/2, (logϵ_bw[1] + logϵ_bw[2])/2
-    α = [fill( δ, n); fill(logϵ_α, n)]
+    α = [fill(  δ, n); fill(logϵ_α, n)]
     β = [fill(0.0, n); fill(logϵ_β, n)]
 
     models["G"] = Flux.Chain(
@@ -485,10 +485,12 @@ function train_mmd_kernel!(
         logsigma = typeof(logsigma)[],
     )
 
-    loss = if kernelloss == "tstatistic"
-        loss(_logσ, _X, _Y) = -mmd_flux_bandwidth_optfun(_logσ, _X, _Y) # Minimize -t = -MMDsq/MMDσ
-    else
-        loss(_logσ, _X, _Y) = -m * mmd_flux(_logσ, _X, _Y) # Minimize -m*MMDsq
+    function loss(_logσ, _X, _Y)
+        if kernelloss == "tstatistic"
+            -mmd_flux_bandwidth_optfun(_logσ, _X, _Y) # Minimize -t = -MMDsq/MMDσ
+        else
+            -m * mmd_flux(_logσ, _X, _Y) # Minimize -m*MMDsq
+        end
     end
 
     function gradloss(_logσ, _X, _Y)
