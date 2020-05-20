@@ -7,7 +7,7 @@ Random.seed!(0);
 const IS_TOY_MODEL = true
 const TOY_NOISE_LEVEL = 1e-2
 const models = Dict{String, Any}()
-const settings = load_settings(joinpath(@__DIR__, "src", "gan_settings.toml"))
+const settings = load_settings(joinpath(@__DIR__, "src", "hybrid_settings.toml"))
 
 # Load data samplers
 global sampleX, sampleY, sampleθ, fits_train, fits_test, fits_val
@@ -29,21 +29,25 @@ else
     );
 end;
 
-# Initialize generator + discriminator
+# Initialize generator + discriminator + kernel
 let
-    n    = settings["data"]["nsignal"]::Int
-    Dh   = settings["gan"]["hdim"]::Int
-    Nh   = settings["gan"]["nhidden"]::Int
-    dx   = settings["gan"]["maxcorr"]::Float64
-    bw   = settings["gan"]["noisebounds"]::Vector{Float64}
+    n  = settings["data"]["nsignal"]::Int
+    Dh = settings["gan"]["hdim"]::Int
+    Nh = settings["gan"]["nhidden"]::Int
+    δ  = settings["gan"]["maxcorr"]::Float64
+    logϵ_bw  = settings["gan"]["noisebounds"]::Vector{Float64}
+    logσ_bw  = settings["gan"]["kernel"]["bwbounds"]::Vector{Float64}
+    logσ_nbw = settings["gan"]["kernel"]["nbandwidth"]::Int
     Gact = Flux.relu
     Dact = Flux.relu
+
+    # Helper for creating `nlayers` dense hidden layers
     hidden(nlayers, act) = [Flux.Dense(Dh, Dh, act) for _ in 1:nlayers]
 
-    # Slope/intercept for scaling dX to (-dx, dx), logσ to (bw[1], bw[2])
-    αbw, βbw = (bw[2]-bw[1])/2, (bw[1]+bw[2])/2
-    α = [fill( dx, n); fill(αbw, n)]
-    β = [fill(0.0, n); fill(βbw, n)]
+    # Slope/intercept for scaling dX to (-δ, δ) and logϵ to (logϵ_bw[1], logϵ_bw[2])
+    logϵ_α, logϵ_β = (logϵ_bw[2] - logϵ_bw[1])/2, (logϵ_bw[1] + logϵ_bw[2])/2
+    α = [fill( δ, n); fill(logϵ_α, n)]
+    β = [fill(0.0, n); fill(logϵ_β, n)]
 
     models["G"] = Flux.Chain(
         Flux.Dense(n, Dh, Gact),
@@ -57,10 +61,15 @@ let
         hidden(Nh, Dact)...,
         Flux.Dense(Dh, 1, Flux.sigmoid),
     ) |> Flux.f64
+
+    # Initialize `logσ_nbw` linearly spaced kernel bandwidths `logσ` for each `n` channels strictly within the range (logσ_bw[1], logσ_bw[2])
+    models["logsigma"] = convert(Matrix{Float64},
+        repeat(range(logσ_bw...; length = logσ_nbw+2)[2:end-1], 1, n),
+    )
 end
 
 # Convenience functions
-split_correction_and_noise(μlogσ) = μlogσ[1:end÷2, :], exp.(μlogσ[end÷2+1:end, :])
+split_correction_and_noise(μlogϵ) = μlogϵ[1:end÷2, :], exp.(μlogϵ[end÷2+1:end, :])
 noise_instance(X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
 get_correction_and_noise(X) = split_correction_and_noise(models["G"](X)) # Learning correction + noise
 # get_correction_and_noise(X) = models["G"](X), fill(eltype(X)(TOY_NOISE_LEVEL), size(X)...) # Learning correction w/ fixed noise
@@ -81,6 +90,7 @@ get_D_Y(Y) = models["D"](Y) # discrim on real data
 get_D_G_X(X) = models["D"](get_corrected_signal(X)) # discrim on genatr data (`get_corrected_signal` wraps the generator `models["G"]`)
 Dloss(X,Y) = -mean(log.(get_D_Y(Y)) .+ log.(1 .- get_D_G_X(X)))
 Gloss(X) = mean(log.(1 .- get_D_G_X(X)))
+MMDloss(X,Y) = size(Y,2) * mmd_flux(models["logsigma"], get_corrected_signal(X), Y) # m*MMD^2 on genatr data (`get_corrected_signal` wraps the generator `models["G"]`)
 
 # Global state
 timer = TimerOutput()
@@ -92,14 +102,21 @@ state = DataFrame(
     :Dloss    => Union{Float64, Missing}[],
     :D_Y      => Union{Float64, Missing}[],
     :D_G_X    => Union{Float64, Missing}[],
+    :MMDsq    => Union{Float64, Missing}[],
+    :MMDvar   => Union{Float64, Missing}[],
+    :tstat    => Union{Float64, Missing}[],
+    :c_alpha  => Union{Float64, Missing}[],
+    :P_alpha  => Union{Float64, Missing}[],
+    # :logsigma => Union{AbstractVecOrMat{Float64}, Missing}[], #TODO
     :rmse     => Union{Float64, Missing}[],
     :theta_fit_err => Union{Vector{Float64}, Missing}[],
     :signal_fit_logL => Union{Float64, Missing}[],
     :signal_fit_rmse => Union{Float64, Missing}[],
 )
 optimizers = Dict(
-    "G" => Flux.ADAM(settings["gan"]["stepsize"]),
-    "D" => Flux.ADAM(settings["gan"]["stepsize"]),
+    "G"   => Flux.ADAM(settings["gan"]["stepsize"]),
+    "D"   => Flux.ADAM(settings["gan"]["stepsize"]),
+    "mmd" => Flux.ADAM(settings["gan"]["stepsize"]),
 )
 
 callback = let
@@ -176,9 +193,9 @@ callback = let
         end
 
         # Get corrected rician model params; input ν is a model signal
-        function get_corrected_ν_and_σ(ν)
-            dν, σ = get_correction_and_noise(ν)
-            return abs.(ν .+ dν), σ
+        function get_corrected_ν_and_ϵ(ν)
+            local _dν, _ϵ = get_correction_and_noise(ν)
+            return abs.(ν .+ _dν), _ϵ
         end
 
         if !isnothing(cb_state.last_θbb[])
@@ -189,7 +206,7 @@ callback = let
             Xθϵbb = get_corrected_signal(Xθbb, dXθbb, ϵθbb)
 
             global_i_fits = cb_state.last_global_i_fits[] # use same data as previous mle fits
-            mle_err = [sum(.-logpdf.(Rician.(get_corrected_ν_and_σ(Xθbb[:,j])...; check_args = false), Yθϵ[:,jY])) for (j,jY) in enumerate(global_i_fits)]
+            mle_err = [sum(.-logpdf.(Rician.(get_corrected_ν_and_ϵ(Xθbb[:,j])...; check_args = false), Yθϵ[:,jY])) for (j,jY) in enumerate(global_i_fits)]
             rmse_err = [sqrt(mean(abs2, Xθϵbb[:,j] .- Yθϵ[:,jY])) for (j,jY) in enumerate(global_i_fits)]
 
             i_sorted = sortperm(mle_err) #sortperm(mle_err)[1:7*(ninfer÷8)] #TODO
@@ -203,34 +220,24 @@ callback = let
             end
         end
 
-        #=
-            # Perform permutation test
-            @timeit timer "perm test" begin
-                permtest = mmd_perm_test_power(logsigma, Xϵ, Y; batchsize = m, nperms = nperms, nsamples = 1)
-                c_α = permtest.c_alpha
-                P_α = permtest.P_alpha_approx
-                tstat = permtest.MMDsq / permtest.MMDσ
-                MMDsq = m * permtest.MMDsq
-                MMDvar = m^2 * permtest.MMDvar
-            end
+        # Perform permutation test
+        @timeit timer "perm test" begin
+            permtest = mmd_perm_test_power(models["logsigma"], Xϵ, Y; batchsize = m, nperms = nperms, nsamples = 1)
+            c_α = permtest.c_alpha
+            P_α = permtest.P_alpha_approx
+            tstat = permtest.MMDsq / permtest.MMDσ
+            MMDsq = m * permtest.MMDsq
+            MMDvar = m^2 * permtest.MMDvar
+        end
 
-            # Use permutation test results to compute loss
-            #@timeit timer "test loss" ℓ = loss(X, Y)
-            reg = lambda * regularizer(dX)
-            ℓ = MMDsq + reg
-
-            # Update dataframe
-            push!(df, [epoch, dt, ℓ, reg, MMDsq, MMDvar, tstat, c_α, P_α, rmse, copy(logsigma), θ_fit_err, sig_fit_logL, sig_fit_rmse])
-        =#
-
-        # Compute losses
+        # Compute GAN losses
         d_y = get_D_Y(Y)
         d_g_x = get_D_G_X(X)
         dloss = -mean(log.(d_y) .+ log.(1 .- d_g_x))
         gloss = mean(log.(1 .- d_g_x))
 
         # Update dataframe
-        push!(state, [epoch, :test, dt, gloss, dloss, mean(d_y), mean(d_g_x), rmse, θ_fit_err, sig_fit_logL, sig_fit_rmse])
+        push!(state, [epoch, :test, dt, gloss, dloss, mean(d_y), mean(d_g_x), MMDsq, MMDvar, tstat, c_α, P_α, rmse, θ_fit_err, sig_fit_logL, sig_fit_rmse]) #copy(models["logsigma"]) #TODO
 
         function makeplots()
             s = x -> x == round(x) ? round(Int, x) : round(x; sigdigits = 4) # for plotting
@@ -238,7 +245,7 @@ callback = let
             nθplot = 4 # number of sets θ to draw for plotting simulated signals
             try
                 pgan = nothing
-                @timeit timer "plot gan loss" begin
+                @timeit timer "gan loss plot" begin
                     dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, state)
                     dfp = dropmissing(dfp[:, [:epoch, :Gloss, :Dloss, :D_Y, :D_G_X]])
                     if !isempty(dfp)
@@ -250,9 +257,12 @@ callback = let
                 end
 
                 pmodel = @timeit timer "model plot" plot(
-                    plot(mean(dX; dims = 2); yerr = std(dX; dims = 2), label = "signal correction", c = :red, title = "model outputs vs. data channel"),
-                    plot(mean(ϵ; dims = 2); yerr = std(ϵ; dims = 2), label = "noise amplitude", c = :blue);
-                    layout = (2,1),
+                    plot(
+                        plot(mean(dX; dims = 2); yerr = std(dX; dims = 2), label = "signal correction", c = :red, title = "model outputs vs. data channel"),
+                        plot(mean(ϵ; dims = 2); yerr = std(ϵ; dims = 2), label = "noise amplitude", c = :blue);
+                        layout = (2,1),
+                    ),
+                    plot(permutedims(models["logsigma"]); leg = :none, title = "logσ vs. data channel"),
                 )
                 display(pmodel) #TODO
 
@@ -276,42 +286,39 @@ callback = let
                 end
                 display(psignals) #TODO
 
-                #=
-                    ploss = nothing
-                    @timeit timer "loss plot" begin
-                        dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, df)
-                        if !isempty(dfp)
-                            tstat_nan_outliers = map((_tstat, _mmdvar) -> _mmdvar > eps() ? _tstat : NaN, dfp.tstat, dfp.MMDvar)
-                            tstat_drop_outliers = filter(!isnan, tstat_nan_outliers)
-                            tstat_median = isempty(tstat_drop_outliers) ? NaN : median(tstat_drop_outliers)
-                            tstat_ylim = isempty(tstat_drop_outliers) ? nothing : quantile(tstat_drop_outliers, [0.01, 0.99])
-                            p1 = plot(dfp.epoch, dfp.MMDsq; label = "m*MMD²", title = "median loss = $(s(median(df.loss)))") # ylim = quantile(df.loss, [0.01, 0.99])
-                            (lambda != 0) && plot!(p1, dfp.epoch, dfp.reg; label = "λ*reg (λ = $lambda)")
-                            p2 = plot(dfp.epoch, dfp.MMDvar; label = "m²MMDvar", title = "median m²MMDvar = $(s(median(df.MMDvar)))") # ylim = quantile(df.MMDvar, [0.01, 0.99])
-                            p3 = plot(dfp.epoch, tstat_nan_outliers; title = "median t = $(s(tstat_median))", label = "t = MMD²/MMDσ", ylim = tstat_ylim)
-                            p4 = plot(dfp.epoch, dfp.P_alpha; label = "P_α", title = "median P_α = $(s(median(df.P_alpha)))", ylim = (0,1))
-                            foreach([p1,p2,p3,p4]) do p
-                                (epoch >= lrdroprate) && vline!(p, lrdroprate:lrdroprate:epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
-                                plot!(p; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
-                            end
-                            ploss = plot(p1, p2, p3, p4)
-                            # display(ploss) #TODO
+                pmmd = nothing
+                @timeit timer "mmd loss plot" begin
+                    dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, state)
+                    if !isempty(dfp)
+                        tstat_nan_outliers = map((_tstat, _mmdvar) -> _mmdvar > eps() ? _tstat : NaN, dfp.tstat, dfp.MMDvar)
+                        tstat_drop_outliers = filter(!isnan, tstat_nan_outliers)
+                        tstat_median = isempty(tstat_drop_outliers) ? NaN : median(tstat_drop_outliers)
+                        tstat_ylim = isempty(tstat_drop_outliers) ? nothing : quantile(tstat_drop_outliers, [0.01, 0.99])
+                        p1 = plot(dfp.epoch, dfp.MMDsq; label = "m*MMD²", title = "median loss = $(s(median(state.MMDsq)))") # ylim = quantile(state.MMDsq, [0.01, 0.99])
+                        p2 = plot(dfp.epoch, dfp.MMDvar; label = "m²MMDvar", title = "median m²MMDvar = $(s(median(state.MMDvar)))") # ylim = quantile(state.MMDvar, [0.01, 0.99])
+                        p3 = plot(dfp.epoch, tstat_nan_outliers; title = "median t = $(s(tstat_median))", label = "t = MMD²/MMDσ", ylim = tstat_ylim)
+                        p4 = plot(dfp.epoch, dfp.P_alpha; label = "P_α", title = "median P_α = $(s(median(state.P_alpha)))", ylim = (0,1))
+                        foreach([p1,p2,p3,p4]) do p
+                            (epoch >= lrdroprate) && vline!(p, lrdroprate:lrdroprate:epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
+                            plot!(p; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
                         end
+                        pmmd = plot(p1, p2, p3, p4)
+                        display(pmmd) #TODO
                     end
+                end
 
-                    pwitness = nothing #mmd_witness(Xϵ, Y, sigma)
-                    pheat = nothing #mmd_heatmap(Xϵ, Y, sigma)
+                pwitness = nothing #mmd_witness(Xϵ, Y, sigma)
+                pheat = nothing #mmd_heatmap(Xϵ, Y, sigma)
 
-                    pperm = @timeit timer "permutation plot" mmd_perm_test_power_plot(permtest)
-                    # display(pperm) #TODO
-                =#
+                pperm = @timeit timer "permutation plot" mmd_perm_test_power_plot(permtest)
+                display(pperm) #TODO
 
                 pinfer = nothing
                 @timeit timer "theta inference plot" begin
                     @timeit timer "theta inference" begin
                         global_i_fits = sample(1:size(Yθϵ,2), ninfer; replace = false) # 1:ninfer
                         res = signal_loglikelihood_inference(
-                            Yθϵ[:,global_i_fits], nothing, get_corrected_ν_and_σ, θ -> mock_forward_model(θ, nothing);
+                            Yθϵ[:,global_i_fits], nothing, get_corrected_ν_and_ϵ, θ -> mock_forward_model(θ, nothing);
                             objective = :mle, bounds = theta_bounds_fun(),
                         )
                     end
@@ -370,8 +377,7 @@ callback = let
                     end
                 end
 
-                return @ntuple(pgan, pmodel, psignals, pinfer) #TODO
-                # return @ntuple(pmodel, psignals, ploss, pperm, pwitness, pheat, pinfer) #TODO
+                return @ntuple(pgan, pmodel, psignals, pinfer, pmmd, pwitness, pheat, pperm)
             catch e
                 if e isa InterruptException
                     @warn "Plotting interrupted"
@@ -455,10 +461,121 @@ callback = let
     end
 end
 
-function train_gan_model(;
+function train_mmd_kernel!(
+        logsigma        :: AbstractVecOrMat{Float64};
+        m               :: Int             = settings["gan"]["batchsize"],
+        lr              :: Float64         = settings["gan"]["kernel"]["stepsize"],
+        nbatches        :: Int             = settings["gan"]["kernel"]["nbatches"],
+        epochs          :: Int             = settings["gan"]["kernel"]["epochs"],
+        kernelloss      :: String          = settings["gan"]["kernel"]["losstype"],
+        bwbounds        :: Vector{Float64} = settings["gan"]["kernel"]["bwbounds"],
+        recordprogress  :: Bool            = false,
+        showprogress    :: Bool            = false,
+        plotprogress    :: Bool            = false,
+        showrate        :: Int             = 10,
+        plotrate        :: Int             = 10,
+    )
+
+    df = DataFrame(
+        epoch = Int[],
+        loss = Float64[],
+        tstat = Float64[],
+        MMDsq = Float64[],
+        MMDsigma = Float64[],
+        logsigma = typeof(logsigma)[],
+    )
+
+    loss = if kernelloss == "tstatistic"
+        loss(_logσ, _X, _Y) = -mmd_flux_bandwidth_optfun(_logσ, _X, _Y) # Minimize -t = -MMDsq/MMDσ
+    else
+        loss(_logσ, _X, _Y) = -m * mmd_flux(_logσ, _X, _Y) # Minimize -m*MMDsq
+    end
+
+    function gradloss(_logσ, _X, _Y)
+        ℓ, back = Zygote.pullback(__logσ -> loss(__logσ, _X, _Y), _logσ)
+        return ℓ, back
+    end
+
+    function checkloss(ℓ)
+        if kernelloss == "tstatistic" && abs(ℓ) > 100
+            # Denominator has likely shrunk to sqrt(eps), or else we are overtraining
+            @info "Loss is too large (ℓ = $ℓ)"
+            return false
+        else
+            return true
+        end
+    end
+
+    callback = function(epoch, _X, _Y)
+        ℓ = loss(logsigma, _X, _Y)
+        MMDsq, MMDvar = mmd_and_mmdvar_flux(logsigma, _X, _Y)
+        MMDsq, MMDvar = m*MMDsq, m^2*MMDvar
+        MMDσ = √max(MMDvar, eps(typeof(MMDvar)))
+        push!(df, [epoch, ℓ, MMDsq/MMDσ, MMDsq, MMDσ, copy(logsigma)])
+
+        if plotprogress && mod(epoch, plotrate) == 0
+            plot(
+                plot(permutedims(df.logsigma[end]); leg = :none, title = "logσ vs. data channel"),
+                kernelloss == "tstatistic" ?
+                    plot(df.epoch, df.tstat; lab = "t = MMD²/MMDσ", title = "t = MMD²/MMDσ vs. epoch", m = :circle, line = ([3,1], [:solid,:dot])) :
+                    plot(df.epoch, df.MMDsq; lab = "m*MMD²", title = "m*MMD² vs. epoch", m = :circle, line = ([3,1], [:solid,:dot]))
+            ) |> display
+        end
+
+        if showprogress && mod(epoch, showrate) == 0
+            show(stdout, last(df[:, Not(:logsigma)], 6))
+            println("\n")
+        end
+    end
+
+    function _sampleX̂Y()
+        function _tstat_check(_X, _Y)
+            (kernelloss != "tstatistic") && return true
+            MMDsq, MMDvar = mmd_and_mmdvar_flux(logsigma, _X, _Y)
+            MMDsq, MMDvar = m*MMDsq, m^2*MMDvar
+            (MMDsq < 0) && return false
+            (MMDvar < 100*eps(typeof(MMDvar))) && return false
+            return true
+        end
+
+        while true
+            Y = sampleY(m; dataset = :train)
+            X = sampleX(m; dataset = :train)
+            X̂ = get_corrected_signal(X)
+            _tstat_check(X̂, Y) && return X̂, Y
+        end
+    end
+
+    for epoch in 1:epochs
+        try
+            X̂, Y = _sampleX̂Y()
+            opt = Flux.ADAM(lr) # new optimizer for each X̂, Y; loss jumps too wildly
+            recordprogress && callback(epoch, X̂, Y)
+            for _ in 1:nbatches
+                ℓ, back = gradloss(logsigma, X̂, Y)
+                !checkloss(ℓ) && break
+                ∇ℓ = back(1)[1]
+                Flux.Optimise.update!(opt, logsigma, ∇ℓ)
+                clamp!(logsigma, bwbounds...)
+            end
+            recordprogress && callback(epoch, X̂, Y)
+        catch e
+            if e isa InterruptException
+                break
+            else
+                rethrow(e)
+            end
+        end
+    end
+
+    return df
+end
+
+function train_hybrid_gan_model(;
         n          :: Int     = settings["data"]["nsignal"],
         m          :: Int     = settings["gan"]["batchsize"],
         Dsteps     :: Int     = settings["gan"]["Dsteps"],
+        kernelrate :: Int     = settings["gan"]["kernel"]["rate"],
         epochs     :: Int     = settings["gan"]["epochs"],
         nbatches   :: Int     = settings["gan"]["nbatches"],
         timeout    :: Float64 = settings["gan"]["traintime"],
@@ -476,18 +593,30 @@ function train_gan_model(;
 
             @timeit timer "epoch" begin
                 @timeit timer "batch loop" for _ in 1:nbatches
-                    @timeit timer "discriminator" for _ in 1:Dsteps
+                    @timeit timer "GAN discriminator" for _ in 1:Dsteps
                         @timeit timer "sampleX" Xtrain = sampleX(m; dataset = :train)
                         @timeit timer "sampleY" Ytrain = sampleY(m; dataset = :train)
                         @timeit timer "forward" _, back = Zygote.pullback(() -> Dloss(Xtrain, Ytrain), Flux.params(models["D"]))
                         @timeit timer "reverse" gs = back(1)
                         @timeit timer "update!" Flux.Optimise.update!(optimizers["D"], Flux.params(models["D"]), gs)
                     end
-                    @timeit timer "generator" begin
+                    @timeit timer "GAN generator" begin
                         @timeit timer "sampleX" Xtrain = sampleX(m; dataset = :train)
                         @timeit timer "forward" _, back = Zygote.pullback(() -> Gloss(Xtrain), Flux.params(models["G"]))
                         @timeit timer "reverse" gs = back(1)
                         @timeit timer "update!" Flux.Optimise.update!(optimizers["G"], Flux.params(models["G"]), gs)
+                    end
+                    if mod(epoch, kernelrate) == 0
+                        @timeit timer "MMD kernel" begin
+                            train_mmd_kernel!(models["logsigma"])
+                        end
+                    end
+                    @timeit timer "MMD generator" begin
+                        @timeit timer "sampleX" Xtrain = sampleX(m; dataset = :train)
+                        @timeit timer "sampleY" Ytrain = sampleY(m; dataset = :train)
+                        @timeit timer "forward" _, back = Zygote.pullback(() -> MMDloss(Xtrain, Ytrain), Flux.params(models["G"]))
+                        @timeit timer "reverse" gs = back(1)
+                        @timeit timer "update!" Flux.Optimise.update!(optimizers["mmd"], Flux.params(models["G"]), gs)
                     end
                 end
                 @timeit timer "callback" callback(epoch)
@@ -495,7 +624,7 @@ function train_gan_model(;
 
             if mod(epoch, showrate) == 0
                 show(stdout, timer); println("\n")
-                show(stdout, last(state, 10)); println("\n")
+                show(stdout, last(state[:, Not(:theta_fit_err)], 10)); println("\n") #TODO Not(:logsigma)
             end
             (epoch == epoch0 + 1) && TimerOutputs.reset_timer!(timer) # throw out initial loop (precompilation, first plot, etc.)
 
@@ -516,6 +645,6 @@ function train_gan_model(;
     return nothing
 end
 
-train_gan_model()
+train_hybrid_gan_model()
 
 nothing
