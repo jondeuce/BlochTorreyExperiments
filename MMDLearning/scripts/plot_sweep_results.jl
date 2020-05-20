@@ -105,7 +105,8 @@ end
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v7"
 # results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7"
 # results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/ganopt-v2"
-results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toyganopt-v2"
+results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toyganopt-v3"
+# results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybridganopt-v1"
 sweep_dir = joinpath(results_dir, "sweep");
 df_best, df_curr, sweep_temp, prog_temp = read_results(sweep_dir);
 # df = df_best
@@ -152,7 +153,8 @@ function make_plots(df, sweepcols, metric, thresh = 0.5)
     nothing
 end
 # make_plots.(Ref(df), Ref(names(sweep_temp)), [:loss, :rmse, :linf, :time], [0.5, 0.5, 0.5, 1.0]);
-make_plots.(Ref(df), Ref(names(sweep_temp)), [:signal_fit_rmse, :signal_fit_logL], 0.9); #1.0);
+# make_plots.(Ref(df), Ref(names(sweep_temp)), [:signal_fit_rmse, :signal_fit_logL], 0.9);
+make_plots.(Ref(filter(r -> r.signal_fit_logL < 0, dropmissing(df))), Ref(names(sweep_temp)), [:signal_fit_rmse, :signal_fit_logL], 1.0);
 
 nothing
 

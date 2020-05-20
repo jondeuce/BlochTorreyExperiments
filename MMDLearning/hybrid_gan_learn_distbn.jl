@@ -4,7 +4,7 @@ using MWFLearning
 pyplot(size=(800,600))
 Random.seed!(0);
 
-const IS_TOY_MODEL = true
+const IS_TOY_MODEL = false
 const TOY_NOISE_LEVEL = 1e-2
 const models = Dict{String, Any}()
 const settings = load_settings(joinpath(@__DIR__, "src", "hybrid_settings.toml"))
@@ -253,7 +253,7 @@ callback = let
                         (epoch >= lrdroprate) && vline!(pgan, lrdroprate:lrdroprate:epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
                         plot!(pgan; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
                     end
-                    display(pgan) #TODO
+                    # display(pgan) #TODO
                 end
 
                 pmodel = @timeit timer "model plot" plot(
@@ -264,7 +264,7 @@ callback = let
                     ),
                     plot(permutedims(models["logsigma"]); leg = :none, title = "logσ vs. data channel"),
                 )
-                display(pmodel) #TODO
+                # display(pmodel) #TODO
 
                 psignals = @timeit timer "signal plot" begin
                     θplotidx = sample(1:size(Xθ,2), nθplot; replace = false)
@@ -284,7 +284,7 @@ callback = let
                         )
                     end
                 end
-                display(psignals) #TODO
+                # display(psignals) #TODO
 
                 pmmd = nothing
                 @timeit timer "mmd loss plot" begin
@@ -303,7 +303,7 @@ callback = let
                             plot!(p; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
                         end
                         pmmd = plot(p1, p2, p3, p4)
-                        display(pmmd) #TODO
+                        # display(pmmd) #TODO
                     end
                 end
 
@@ -311,7 +311,7 @@ callback = let
                 pheat = nothing #mmd_heatmap(Xϵ, Y, sigma)
 
                 pperm = @timeit timer "permutation plot" mmd_perm_test_power_plot(permtest)
-                display(pperm) #TODO
+                # display(pperm) #TODO
 
                 pinfer = nothing
                 @timeit timer "theta inference plot" begin
@@ -373,7 +373,7 @@ callback = let
                             )...),
                             layout = @layout([a{0.25w} b{0.75w}]),
                         )
-                        display(pinfer) #TODO
+                        # display(pinfer) #TODO
                     end
                 end
 
