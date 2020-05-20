@@ -4,7 +4,7 @@ using MWFLearning
 pyplot(size=(800,600))
 Random.seed!(0);
 
-const IS_TOY_MODEL = true
+const IS_TOY_MODEL = false
 const TOY_NOISE_LEVEL = 1e-2
 const models = Dict{String, Any}()
 const settings = load_settings(joinpath(@__DIR__, "src", "gan_settings.toml"))
@@ -246,7 +246,7 @@ callback = let
                         (epoch >= lrdroprate) && vline!(pgan, lrdroprate:lrdroprate:epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
                         plot!(pgan; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
                     end
-                    display(pgan) #TODO
+                    # display(pgan) #TODO
                 end
 
                 pmodel = @timeit timer "model plot" plot(
@@ -254,7 +254,7 @@ callback = let
                     plot(mean(ϵ; dims = 2); yerr = std(ϵ; dims = 2), label = "noise amplitude", c = :blue);
                     layout = (2,1),
                 )
-                display(pmodel) #TODO
+                # display(pmodel) #TODO
 
                 psignals = @timeit timer "signal plot" begin
                     θplotidx = sample(1:size(Xθ,2), nθplot; replace = false)
@@ -274,7 +274,7 @@ callback = let
                         )
                     end
                 end
-                display(psignals) #TODO
+                # display(psignals) #TODO
 
                 #=
                     ploss = nothing
@@ -366,7 +366,7 @@ callback = let
                             )...),
                             layout = @layout([a{0.25w} b{0.75w}]),
                         )
-                        display(pinfer) #TODO
+                        # display(pinfer) #TODO
                     end
                 end
 
