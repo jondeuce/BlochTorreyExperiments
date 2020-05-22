@@ -37,8 +37,10 @@ const Y_EDGES = unique!(sort!(copy(vec(Y)))); # unique values
 ####
 
 cvae_model = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/cvae-both-corr-v2/sweep/35/log/2020-05-01-T-12-05-36-268.acc=rmse_gamma=1_loss=l2_DenseLIGOCVAE_Dh=128_Nh=6_Xout=5_Zdim=6_act=relu_boundmean=true.model-best.bson")[:model]);
-mmd_models = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7/sweep/63/current-model.bson"));
-gan_models = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/simulations/MMD-Learning/ganopt-v2/sweep/210/current-model.bson"));
+mmd_models = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7/sweep/34/current-model.bson"));
+# gan_models = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/simulations/MMD-Learning/ganopt-v2/sweep/210/current-model.bson"));
+gan_models = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/simulations/MMD-Learning/ganopt-v3/sweep/95/current-model.bson"));
+hyb_models = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v1/sweep/187/current-model.bson"))
 
 # Convenience functions
 module Generator
@@ -59,11 +61,13 @@ module Generator
 end
 
 # Make corrected data
-const Xs = Dict{String,Any}("data" => Dict{String,Any}(), "mle" => Dict{String,Any}(), "mmd" => Dict{String,Any}(), "gan" => Dict{String,Any}())
+const GENERATOR_NAMES  = ["mmd", "gan", "hyb"]
+const GENERATOR_MODELS = [mmd_models["mmd"], gan_models["G"], hyb_models["G"]]
+const Xs = Dict{String,Any}("data" => Dict{String,Any}(), "mle" => Dict{String,Any}(), [G => Dict{String,Any}() for G in GENERATOR_NAMES]...)
 Xs["data"]["Y"] = Y;
 Xs["mle"]["X"] = X;
 Xs["mle"]["Xeps0"] = rand.(Rician.(X, exp.(fits.logsigma'))); # add "isotropic" noise from MLE fit
-for (k,G) in [("mmd", mmd_models["mmd"]), ("gan", gan_models["G"])]
+for (k,G) in zip(GENERATOR_NAMES, GENERATOR_MODELS)
     Generator.eval_generator(X) = G(X)
     g_delta, g_eps   = Generator.get_correction_and_noise(X);
     Xs[k]["Xhat"]    = Generator.get_corrected_signal(X, g_delta, g_eps); # add learned correction + learned noise
@@ -112,7 +116,7 @@ end;
 #### Noise level (epsilon) histograms
 ####
 
-for G in ["mmd", "gan"]
+for G in GENERATOR_NAMES
     p = plot();
     common_args = Dict{Symbol,Any}(:normalized => true, :xlims => (-2.6, -1.2), :line => (2,), :tickfontsize => 10, :legendfontsize => 10)
     stephist!(p, log10.(exp.(fits.logsigma)); lab = L"Signalwise $\log_{10}(\epsilon_0)$ from MLE", common_args...);
@@ -135,18 +139,21 @@ end
 ####
 
 signal_hists = map(1:48) do j
-    binwidth = ceil(Int, mean(Y[j,:]) / (50 * Y_RES))
+    println("processing histogram: $j/48")
+    binwidth = ceil(Int, mean(Xs["data"]["Y"][j,:]) / (50 * Y_RES))
     edges = Y_EDGES[1:binwidth:end]
     h = Dict()
-    h["Y"] = _make_hist(Y[j,:], edges)
-    h["X"] = _make_hist(X[j,:], edges)
-    for G in ["mmd", "gan"]
-        h[G] = _make_hist(Xs[G]["Xhat"][j,:], edges)
+    h["Y"] = _make_hist(Xs["data"]["Y"][j,:], edges)
+    for Xmle in ["X", "Xeps0"]
+        h[Xmle] = _make_hist(Xs["mle"][Xmle][j,:], edges)
+    end
+    for G in GENERATOR_NAMES, Xgen in ["Xhat"]
+        h[G] = _make_hist(Xs[G][Xgen][j,:], edges)
     end
     h
 end;
 
-for G in ["mmd", "gan"]
+for G in GENERATOR_NAMES
     common_args = Dict{Symbol,Any}(:seriestype => :steppost, :line => (1,), :tickfontsize => 10, :legendfontsize => 10)
     p = plot(
         map([1,16,24,32,40,48]) do j
@@ -163,7 +170,7 @@ for G in ["mmd", "gan"]
     _save_and_display(p, "$(G)_signal_hist")
 end
 
-for G in ["mmd", "gan"]
+for G in GENERATOR_NAMES
     common_args = Dict{Symbol,Any}(:seriestype => :steppost, :line => (1,), :tickfontsize => 10, :legendfontsize => 10)
     p = plot(
         map([1,16,24,32,40,48]) do j
@@ -184,30 +191,30 @@ end
 
 p = let
     common_args = Dict{Symbol,Any}(:seriestype => :line, :line => (1,), :tickfontsize => 10, :legendfontsize => 12, :legend => :topleft)
-    ydata = map(product(signal_hists, ["X", "mmd", "gan"])) do (h,key)
+    ydata = map(product(signal_hists, ["X"; "Xeps0"; GENERATOR_NAMES])) do (h,key)
         abs.(h[key].weights .- h["Y"].weights) ./ mean(h["Y"].weights)
     end
     plot(
         8 .* (1:48),
         mean.(ydata);
         ribbon = std.(ydata) ./ sqrt.(length.(ydata)),
-        label = [L"$X - Y$" L"$\hat{X}_{MMD} - Y$" L"$\hat{X}_{GAN} - Y$"],
+        label = [L"$X - Y$" L"$X_{\epsilon_0} - Y$" L"$\hat{X}_{MMD} - Y$" L"$\hat{X}_{GAN} - Y$" L"$\hat{X}_{HYB} - Y$"],
         ylabel = "Signal distribution difference [a.u.]",
         xlabel = "Echo time [ms]",
-        color = [:green :red :orange],
+        color = [:green :blue :red :orange :magenta],
         common_args...,
     )
 end;
 _save_and_display(p, "compare_genatr_signal_hist");
 
 #=
-for G in ["mmd", "gan"]
+for G in GENERATOR_NAMES
     common_args = Dict{Symbol,Any}(:line => (1,), :ylim => (0.0, 0.02), :tickfontsize => 8, :legendfontsize => 8, :legend => :topright, :xticks => :none)
     p = plot(
         map([1,8,16,32]) do j
             p = plot();
-            Yj_sorted = sort!(Y[j,:])
-            plot!(p, abs.(sort!(X[j,:]) .- Yj_sorted); lab = L"$X - Y$" * " (echo $j)", seriestype = :steppre, common_args...);
+            Yj_sorted = sort!(Xs["data"]["Y"][j,:])
+            plot!(p, abs.(sort!(Xs["mle"]["X"][j,:]) .- Yj_sorted); lab = L"$X - Y$" * " (echo $j)", seriestype = :steppre, common_args...);
             plot!(p, abs.(sort!(Xs["mmd"]["Xhat"][j,:]) - Yj_sorted); lab = L"$\hat{X} - Y$" * " (echo $j)", seriestype = :steppre, common_args...);
             p
         end...;
@@ -217,10 +224,10 @@ end
 =#
 
 #=
-for G in ["mmd", "gan"]
+for G in GENERATOR_NAMES
     p = plot();
-    plot!(p, sort(Y[1,:]); lab = L"$Y$", seriestype = :steppre);
-    plot!(p, sort(X[1,:]); lab = L"$X$", seriestype = :steppre);
+    plot!(p, sort(Xs["data"]["Y"][1,:]); lab = L"$Y$", seriestype = :steppre);
+    plot!(p, sort(Xs["mle"]["X"][1,:]); lab = L"$X$", seriestype = :steppre);
     plot!(p, sort(Xs[G]["Xhat"][1,:]); lab = L"$\hat{X}$", seriestype = :steppre);
     display(p)
 end
@@ -241,32 +248,34 @@ let
         Xs["data"]["Y_t2maps"]["t2times"],
         hcat(
             vec(mean(Xs["data"]["Y_t2dist"]; dims = 1)),
-            vec(mean(Xs["mle"]["X_t2dist"]; dims = 1)),
-            [vec(mean(Xs[G]["Xhat_t2dist"]; dims = 1)) for G in ["mmd", "gan"]]...,
+            # vec(mean(Xs["mle"]["X_t2dist"]; dims = 1)),
+            vec(mean(Xs["mle"]["Xeps0_t2dist"]; dims = 1)),
+            [vec(mean(Xs[G]["Xhat_t2dist"]; dims = 1)) for G in GENERATOR_NAMES]...,
         );
-        label = [L"A_{\ell,Y}" L"A_{\ell,X}" L"$A_{\ell,\hat{X}_{MMD}}$" L"$A_{\ell,\hat{X}_{GAN}}$"],
+        label = [L"A_{\ell,Y}" L"A_{\ell,X_{\epsilon_0}}" L"$A_{\ell,\hat{X}_{MMD}}$" L"$A_{\ell,\hat{X}_{GAN}}$" L"$A_{\ell,\hat{X}_{HYB}}$"],
         ylabel = L"$T_2$ amplitude [a.u.]",
-        marker = (5, [:circle :utriangle :square :diamond], [:blue :green :red :orange]),
-        line = ([2 1 1 1], [:solid :dash :dash :dash], [:blue :green :red :orange]),
+        marker = (5, [:circle :utriangle :square :diamond :dtriangle], [:blue :green :red :orange :magenta]),
+        line = ([2 1 1 1], [:solid :dash :dash :dash :dash], [:blue :green :red :orange :magenta]),
         common_args...
     );
     _save_and_display(p, "compare_genatr_t2_distbn")
     p = plot(
         Xs["data"]["Y_t2maps"]["t2times"],
         abs.(hcat(
-            vec(mean(Xs["mle"]["X_t2dist"]; dims = 1)),
-            [vec(mean(Xs[G]["Xhat_t2dist"]; dims = 1)) for G in ["mmd", "gan"]]...,
+            # vec(mean(Xs["mle"]["X_t2dist"]; dims = 1)),
+            vec(mean(Xs["mle"]["Xeps0_t2dist"]; dims = 1)),
+            [vec(mean(Xs[G]["Xhat_t2dist"]; dims = 1)) for G in GENERATOR_NAMES]...,
         ) .- vec(mean(Xs["data"]["Y_t2dist"]; dims = 1)));
-        label = [L"|A_{\ell,X} - A_{\ell,Y}|" L"$|A_{\ell,\hat{X}_{MMD}} - A_{\ell,Y}|$" L"$|A_{\ell,\hat{X}_{GAN}} - A_{\ell,Y}|$"],
+        label = [L"|A_{\ell,X_{\epsilon_0}} - A_{\ell,Y}|" L"$|A_{\ell,\hat{X}_{MMD}} - A_{\ell,Y}|$" L"$|A_{\ell,\hat{X}_{GAN}} - A_{\ell,Y}|$" L"$|A_{\ell,\hat{X}_{HYB}} - A_{\ell,Y}|$"],
         ylabel = L"$T_2$ amplitude difference [a.u.]",
-        marker = (5, [:utriangle :square :diamond], [:green :red :orange]),
-        line = (2, [:solid :solid :solid], [:green :red :orange]),
+        marker = (5, [:utriangle :square :diamond :dtriangle], [:green :red :orange :magenta]),
+        line = (2, [:solid :solid :solid :solid], [:green :red :orange :magenta]),
         common_args...
     );
     _save_and_display(p, "compare_genatr_t2_distbn_diff")
 end
 
-for G in ["mmd", "gan"]
+for G in GENERATOR_NAMES
     common_args = Dict{Symbol,Any}(
         :tickfontsize => 10, :legendfontsize => 12, :xscale => :log10, :xrot => 30.0,
         :xlabel => L"$T_2$ time [ms]",
@@ -297,7 +306,7 @@ end
 #### Plot learned correction vs. theta
 ####
 
-for G in ["mmd", "gan"]
+for G in GENERATOR_NAMES
     function make_binned(x, y; binwidth)
         Is = partition(sortperm(x), binwidth)
         xbar = [mean(x[I]) for I in Is]

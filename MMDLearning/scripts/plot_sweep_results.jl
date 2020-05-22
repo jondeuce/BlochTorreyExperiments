@@ -3,9 +3,7 @@ Pkg.activate(joinpath(@__DIR__, ".."))
 
 using MAT, BSON, TOML, DataFrames
 using Statistics, StatsPlots
-# pyplot(size = (1200,800))
 pyplot(size = (800,600))
-# pyplot(size = (500,400))
 empty!(Revise.queue_errors);
 
 const SWEEP_FIELD = "gan" #TODO one of: "mmd", "gan", "vae"
@@ -81,10 +79,10 @@ function read_results(results_dir)
             df_best_row.time[1] = sum(df_curr.time[1:ibest])
             df_curr_row.time[1] = sum(df_curr.time)
 
-            # mean over last WINDOW entries
-            WINDOW = 250
-            df_curr_row.signal_fit_logL[1] = mean(df_curr.signal_fit_logL[clamp(end-WINDOW+1,1,end) : end])
-            df_curr_row.signal_fit_rmse[1] = mean(df_curr.signal_fit_rmse[clamp(end-WINDOW+1,1,end) : end])
+            # median over last WINDOW entries
+            WINDOW = 128
+            df_curr_row.signal_fit_logL[1] = median(df_curr.signal_fit_logL[clamp(end-WINDOW+1,1,end) : end])
+            df_curr_row.signal_fit_rmse[1] = median(df_curr.signal_fit_rmse[clamp(end-WINDOW+1,1,end) : end])
 
             currfolder = basename(root)
             best_results = append!(best_results, hcat(DataFrame(:folder => currfolder), df_sweep, df_best_row))
@@ -94,41 +92,7 @@ function read_results(results_dir)
     return best_results, curr_results, sweep_temp, prog_temp
 end
 
-# Remove checkpointed models
-#   ls -alhq1 **/sweep/**/checkpoint/checkpoint-model.epoch.*.bson | wc -l
-#   rm **/sweep/**/checkpoint/checkpoint-model.epoch.*.bson
-
-# Read results to DataFrame
-# results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-3/toymmdopt-v1"
-# results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-3/toymmdopt-v4"
-# results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v5"
-# results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v7"
-# results_dir = "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7"
-# results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/ganopt-v2"
-results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toyganopt-v3"
-# results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybridganopt-v1"
-sweep_dir = joinpath(results_dir, "sweep");
-df_best, df_curr, sweep_temp, prog_temp = read_results(sweep_dir);
-# df = df_best
-df = df_curr
-
-# Write sorted DataFrame to text file
-foreach([:signal_fit_rmse, :signal_fit_logL]) do metric #[:loss, :rmse, :mae, :linf]
-    open(joinpath(results_dir, "results-by-$metric.txt"); write = true) do io
-        savecols = Colon() #Not(:logsigma) #TODO
-        dfsave = dropmissing(df, metric)[:, savecols]
-        show(io, sort(dfsave, metric); allrows = true, allcols = true)
-    end
-end
-
-# Show top results
-let
-    savecols = Colon() #Not([:logsigma]) #TODO
-    show(stdout, first(sort(df[:,savecols], :signal_fit_logL), 10); allrows = true, allcols = true); println("\n")
-    @show size(df);
-end
-
-function make_plots(df, sweepcols, metric, thresh = 0.5)
+function make_plots(df, sweepcols, metric; savepath = nothing, thresh = 0.5)
     dfp = dropmissing(df, metric)
     dfp = filter(r -> !any(x -> isa(x, Number) && isnan(x), r), dfp)
     if isempty(dfp)
@@ -148,19 +112,41 @@ function make_plots(df, sweepcols, metric, thresh = 0.5)
         push!(ps, p)
     end
     p = plot(ps...)
-    savefig.(joinpath.(results_dir, "results-by-$metric" .* [".png", ".pdf"]))
+    !isnothing(savepath) && savefig.(joinpath.(savepath, "results-by-$metric" .* [".png", ".pdf"]))
     display(p)
     nothing
 end
-# make_plots.(Ref(df), Ref(names(sweep_temp)), [:loss, :rmse, :linf, :time], [0.5, 0.5, 0.5, 1.0]);
-# make_plots.(Ref(df), Ref(names(sweep_temp)), [:signal_fit_rmse, :signal_fit_logL], 0.9);
-make_plots.(Ref(filter(r -> r.signal_fit_logL < 0, dropmissing(df))), Ref(names(sweep_temp)), [:signal_fit_rmse, :signal_fit_logL], 1.0);
+
+# Read results to DataFrame
+for results_dir in [
+        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toyganopt-v3", # toy gan
+        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybridganopt-v1", # toy hybrid gan
+        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/ganopt-v3", # mri gan
+        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v1", # mri hybrid gan
+        # "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7", # mri mmd gan
+    ]
+    sweep_dir = joinpath(results_dir, "sweep");
+    df_best, df_curr, sweep_temp, prog_temp = read_results(sweep_dir);
+
+    # global df = df_best
+    global df = df_curr
+    savecols = :logsigma ∈ names(df) ? Not(:logsigma) : Colon()
+
+    # Write sorted DataFrame to text file
+    foreach([:signal_fit_rmse, :signal_fit_logL]) do metric #[:loss, :rmse, :mae, :linf]
+        open(joinpath(results_dir, "results-by-$metric.txt"); write = true) do io
+            dfsave = dropmissing(df, metric)[:, savecols]
+            show(io, sort(dfsave, metric); allrows = true, allcols = true)
+        end
+    end
+
+    # Show top results
+    show(stdout, first(sort(df[:,savecols], :signal_fit_logL), 10); allrows = true, allcols = true); println("\n")
+    @show size(df);
+
+    # make_plots.(Ref(df), Ref(names(sweep_temp)), [:loss, :rmse, :linf, :time], [0.5, 0.5, 0.5, 1.0]; savepath = results_dir);
+    # make_plots.(Ref(df), Ref(names(sweep_temp)), [:signal_fit_rmse, :signal_fit_logL]; savepath = results_dir, thresh = 0.9);
+    make_plots.(Ref(filter(r -> !ismissing(r.signal_fit_logL) && r.signal_fit_logL < 0, df)), Ref(names(sweep_temp)), [:signal_fit_rmse, :signal_fit_logL]; savepath = results_dir, thresh = 1.0);
+end
 
 nothing
-
-# using Flux
-# model = BSON.load(joinpath(sweep_dir, "22", "best-model.bson"))["model"] |> deepcopy;
-# for (i,layer) in enumerate(model)
-#     layer isa Flux.Dense && savefig(heatmap([layer.W[end:-1:1,:] repeat(layer.b, 1, 10)]), "dense$i.png")
-# end
-# @show sum(length, params(model));

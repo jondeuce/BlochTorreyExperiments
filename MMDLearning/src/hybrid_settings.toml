@@ -21,20 +21,21 @@ normalize = false
 theta_labels = ["alpha", "T2short", "dT2", "Ashort", "Along"]
 
 [gan]
-Dsteps     = 5
 stepsize   = 1e-4 #3.1623e-4 #1.0e-5 #TODO
 stepdrop   = 1.0 #10.0 3.1623 #1.7783
 stepthresh = 1e-5
 steprate   = 1000
-batchsize  = 2048 #3072
+batchsize  = 1024 #2048 #3072
 nbatches   = 10
 epochs     = 999_999
-traintime  = 1e9 #18000.0 #TODO
-saveperiod = 300.0 #120.0 #900.0 #TODO
+traintime  = 1e9 #TODO
+saveperiod = 300.0 #TODO
 showrate   = 1 #TODO
-ninfer     = 32 #TODO Number of MLE parameter inferences
+ninfer     = 128 #TODO Number of MLE parameter inferences
 nperms     = 128 # Number of permutations for c_alpha calculation + perm plot
 nsamples   = 1 # Number of MMD samples for perm plot
+GANrate    = 5
+Dsteps     = 10
 hdim       = 128
 nhidden    = 2
 # maxcorr    = 0.005 # normalized signals
@@ -52,7 +53,7 @@ lambda     = 0.0
 stepsize   = 1e-2
 epochs     = 1
 nbatches   = 10
-rate       = 10
+rate       = 50
 
 [prior]
 nterms    = 2

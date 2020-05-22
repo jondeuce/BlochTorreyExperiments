@@ -68,6 +68,48 @@ let
     )
 end
 
+#= Test code for loading pre-trained models
+let
+    # Load pre-trained GAN + MMD
+    gan_folder = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/ganopt-v3/sweep/72"
+    mmd_folder = "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7/sweep/63"
+    gan_settings = TOML.parsefile(joinpath(gan_folder, "settings.toml"))
+    mmd_settings = TOML.parsefile(joinpath(mmd_folder, "settings.toml"))
+    gan_models   = BSON.load(joinpath(gan_folder, "current-model.bson"))
+    mmd_models   = BSON.load(joinpath(mmd_folder, "current-model.bson"))
+    mmd_prog     = BSON.load(joinpath(mmd_folder, "current-progress.bson"))["progress"]
+
+    # models["G"] = deepcopy(mmd_models["mmd"])
+    models["G"] = deepcopy(gan_models["G"])
+    models["D"] = deepcopy(gan_models["D"])
+    models["logsigma"] = copy(mmd_prog[end, :logsigma])
+
+    # Update settings to match loaded models
+    for gan_field in ["hdim", "nhidden", "maxcorr", "noisebounds"]
+        settings["gan"][gan_field] = deepcopy(gan_settings["gan"][gan_field])
+    end
+    for kernel_field in ["bwbounds", "nbandwidth", "losstype"]
+        settings["gan"]["kernel"][kernel_field] = deepcopy(mmd_settings["mmd"]["kernel"][kernel_field])
+    end
+
+    # Save updated settings
+    open(joinpath(settings["data"]["out"], "settings.toml"); write = true) do io
+        TOML.print(io, settings)
+    end
+
+    # Update sweep settings file, if it exists
+    if haskey(ENV, "SETTINGSFILE")
+        sweep_settings = TOML.parsefile(ENV["SETTINGSFILE"])
+        merge_values_into!(d1::Dict, d2::Dict) = (foreach(k -> d1[k] isa Dict ? merge_values_into!(d1[k], d2[k]) : (d1[k] = deepcopy(d2[k])), keys(d1)); return d1) # recurse keys of d1, copying d2 values into d1. assumes d1 keys are present in d2
+        merge_values_into!(sweep_settings, settings)
+        cp(ENV["SETTINGSFILE"], ENV["SETTINGSFILE"] * ".bak"; force = true)
+        open(ENV["SETTINGSFILE"]; write = true) do io
+            TOML.print(io, sweep_settings)
+        end
+    end
+end
+=#
+
 # Convenience functions
 split_correction_and_noise(μlogϵ) = μlogϵ[1:end÷2, :], exp.(μlogϵ[end÷2+1:end, :])
 noise_instance(X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
@@ -322,15 +364,20 @@ callback = let
                             objective = :mle, bounds = theta_bounds_fun(),
                         )
                     end
-                    bbres, optres = (x->x[1]).(res), (x->x[2]).(res)
-                    θbb = reduce(hcat, Optim.minimizer.(optres))
+                    mle_results = map(res) do (bbopt_res, optim_res)
+                        x1, ℓ1 = BlackBoxOptim.best_candidate(bbopt_res), BlackBoxOptim.best_fitness(bbopt_res)
+                        x2, ℓ2 = Optim.minimizer(optim_res), Optim.minimum(optim_res)
+                        (ℓ1 < ℓ2) && @warn "BlackBoxOptim results less than Optim result" #TODO
+                        ℓ1 < ℓ2 ? (x = x1, loss = ℓ1) : (x = x2, loss = ℓ2)
+                    end
+                    θbb = reduce(hcat, (r -> r.x).(mle_results))
+                    mle_err = (r -> r.loss).(mle_results)
                     cb_state.last_θbb[] = copy(θbb)
                     cb_state.last_global_i_fits[] = copy(global_i_fits)
-
+                    
                     Xθbb = mock_forward_model(θbb, nothing)
                     dXθbb, ϵθbb = get_correction_and_noise(Xθbb)
                     Xθϵbb = get_corrected_signal(Xθbb, dXθbb, ϵθbb)
-                    mle_err = Optim.minimum.(optres)
                     rmse_err = sqrt.(mean(abs2, Yθϵ[:,global_i_fits] .- Xθϵbb; dims = 1)) |> vec
 
                     # i_sorted = sortperm(mle_err)[1:7*(ninfer÷8)] # best 7/8 of mle fits (sorted)
@@ -405,7 +452,6 @@ callback = let
                 end
             end
         end
-
 
         function saveprogress(savefolder, prefix, suffix)
             !isdir(savefolder) && mkpath(savefolder)
@@ -576,6 +622,7 @@ end
 function train_hybrid_gan_model(;
         n          :: Int     = settings["data"]["nsignal"],
         m          :: Int     = settings["gan"]["batchsize"],
+        GANrate    :: Int     = settings["gan"]["GANrate"],
         Dsteps     :: Int     = settings["gan"]["Dsteps"],
         kernelrate :: Int     = settings["gan"]["kernel"]["rate"],
         epochs     :: Int     = settings["gan"]["epochs"],
@@ -595,18 +642,20 @@ function train_hybrid_gan_model(;
 
             @timeit timer "epoch" begin
                 @timeit timer "batch loop" for _ in 1:nbatches
-                    @timeit timer "GAN discriminator" for _ in 1:Dsteps
-                        @timeit timer "sampleX" Xtrain = sampleX(m; dataset = :train)
-                        @timeit timer "sampleY" Ytrain = sampleY(m; dataset = :train)
-                        @timeit timer "forward" _, back = Zygote.pullback(() -> Dloss(Xtrain, Ytrain), Flux.params(models["D"]))
-                        @timeit timer "reverse" gs = back(1)
-                        @timeit timer "update!" Flux.Optimise.update!(optimizers["D"], Flux.params(models["D"]), gs)
-                    end
-                    @timeit timer "GAN generator" begin
-                        @timeit timer "sampleX" Xtrain = sampleX(m; dataset = :train)
-                        @timeit timer "forward" _, back = Zygote.pullback(() -> Gloss(Xtrain), Flux.params(models["G"]))
-                        @timeit timer "reverse" gs = back(1)
-                        @timeit timer "update!" Flux.Optimise.update!(optimizers["G"], Flux.params(models["G"]), gs)
+                    if mod(epoch, GANrate) == 0
+                        @timeit timer "GAN discriminator" for _ in 1:Dsteps
+                            @timeit timer "sampleX" Xtrain = sampleX(m; dataset = :train)
+                            @timeit timer "sampleY" Ytrain = sampleY(m; dataset = :train)
+                            @timeit timer "forward" _, back = Zygote.pullback(() -> Dloss(Xtrain, Ytrain), Flux.params(models["D"]))
+                            @timeit timer "reverse" gs = back(1)
+                            @timeit timer "update!" Flux.Optimise.update!(optimizers["D"], Flux.params(models["D"]), gs)
+                        end
+                        @timeit timer "GAN generator" begin
+                            @timeit timer "sampleX" Xtrain = sampleX(m; dataset = :train)
+                            @timeit timer "forward" _, back = Zygote.pullback(() -> Gloss(Xtrain), Flux.params(models["G"]))
+                            @timeit timer "reverse" gs = back(1)
+                            @timeit timer "update!" Flux.Optimise.update!(optimizers["G"], Flux.params(models["G"]), gs)
+                        end
                     end
                     if mod(epoch, kernelrate) == 0
                         @timeit timer "MMD kernel" begin
