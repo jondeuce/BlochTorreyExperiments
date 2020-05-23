@@ -64,29 +64,32 @@ function read_results(results_dir)
         occursin("checkpoint", root) && continue
         if "sweep_settings.toml" ∈ files && "settings.toml" ∈ files && "current-progress.bson" ∈ files #TODO: && "best-progress.bson" ∈ files
             df_sweep = read_to_dataframe(joinpath(root, "sweep_settings.toml"), SWEEP_FIELD)
-            df_curr = read_to_dataframe(joinpath(root, "current-progress.bson"), "progress")
-            if isnothing(df_curr)
+            df_prog = read_to_dataframe(joinpath(root, "current-progress.bson"), "progress")
+            if isnothing(df_prog)
                 @warn "Failed to load results: $root"
                 continue
             end
 
-            # ibest = findmin(df_curr.loss)[2]
-            # ibest = findmin(df_curr.rmse)[2]
-            ibest = !all(ismissing, df_curr.signal_fit_logL) ? findmin(skipmissing(df_curr.signal_fit_logL))[2] : nrow(df_curr)
-            df_best_row = DataFrame(df_curr[ibest, :])
-            df_curr_row = DataFrame(df_curr[end, :])
+            # find best row
+            ibest = skipmissing(df_prog.signal_fit_logL) |> x -> !isempty(x) ? argmin(x) : nrow(df_prog)
+            df_best_row = DataFrame(df_prog[ibest, :])
+            df_curr_row = DataFrame(df_prog[  end, :])
 
-            df_best_row.time[1] = sum(df_curr.time[1:ibest])
-            df_curr_row.time[1] = sum(df_curr.time)
+            # change time to total time
+            df_best_row.time[1] = sum(df_prog.time[1:ibest])
+            df_curr_row.time[1] = sum(df_prog.time)
 
-            # median over last WINDOW entries
-            WINDOW = 128
-            df_curr_row.signal_fit_logL[1] = median(df_curr.signal_fit_logL[clamp(end-WINDOW+1,1,end) : end])
-            df_curr_row.signal_fit_rmse[1] = median(df_curr.signal_fit_rmse[clamp(end-WINDOW+1,1,end) : end])
+            # consider last WINDOW entries
+            WINDOW = 100
+            reducer = median #mean
+            df_best_row.signal_fit_logL[1] = reducer(df_prog.signal_fit_logL[clamp(ibest-WINDOW+1, 1, ibest) : ibest])
+            df_best_row.signal_fit_rmse[1] = reducer(df_prog.signal_fit_rmse[clamp(ibest-WINDOW+1, 1, ibest) : ibest])
+            df_curr_row.signal_fit_logL[1] = reducer(df_prog.signal_fit_logL[clamp(  end-WINDOW+1, 1,   end) : end])
+            df_curr_row.signal_fit_rmse[1] = reducer(df_prog.signal_fit_rmse[clamp(  end-WINDOW+1, 1,   end) : end])
 
-            currfolder = basename(root)
-            best_results = append!(best_results, hcat(DataFrame(:folder => currfolder), df_sweep, df_best_row))
-            curr_results = append!(curr_results, hcat(DataFrame(:folder => currfolder), df_sweep, df_curr_row))
+            # add rows to list
+            append!(best_results, hcat(DataFrame(:folder => basename(root)), df_sweep, df_best_row))
+            append!(curr_results, hcat(DataFrame(:folder => basename(root)), df_sweep, df_curr_row))
         end
     end
     return best_results, curr_results, sweep_temp, prog_temp
@@ -119,10 +122,11 @@ end
 
 # Read results to DataFrame
 for results_dir in [
-        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toyganopt-v3", # toy gan
-        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybridganopt-v1", # toy hybrid gan
-        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/ganopt-v3", # mri gan
-        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v1", # mri hybrid gan
+        # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toyganopt-v3", # toy gan
+        # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-toyganopt-v1", # toy hybrid gan
+        # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/ganopt-v3", # mri gan
+        # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v1", # mri hybrid gan
+        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v2", # mri hybrid gan
         # "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7", # mri mmd gan
     ]
     sweep_dir = joinpath(results_dir, "sweep");
