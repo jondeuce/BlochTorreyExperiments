@@ -129,8 +129,8 @@ callback = let
         θ = θtest,
         fits = testfits,
         last_time = Ref(time()),
-        last_checkpoint = Ref(time()),
-        last_best_checkpoint = Ref(time()),
+        last_checkpoint = Ref(-Inf),
+        last_best_checkpoint = Ref(-Inf),
         last_θbb = Union{AbstractVecOrMat{Float64}, Nothing}[nothing],
         last_global_i_fits = Union{Vector{Int}, Nothing}[nothing],
     )
@@ -426,7 +426,7 @@ callback = let
 
         if is_best_model
             @timeit timer "best model" saveprogress(outfolder, "best-", "")
-            if time() - cb_state.last_best_checkpoint[] >= saveperiod
+            if epoch == 0 || time() - cb_state.last_best_checkpoint[] >= saveperiod
                 cb_state.last_best_checkpoint[] = time()
                 @timeit timer "make best plots" plothandles = makeplots()
                 @timeit timer "save best plots" saveplots(outfolder, "best-", "", plothandles)

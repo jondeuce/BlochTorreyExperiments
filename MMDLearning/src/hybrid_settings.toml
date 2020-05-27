@@ -2,7 +2,6 @@
 out       = "./output/tmp"
 ntheta    = 5
 nsignal   = 128
-normalize = false
 theta_labels = ["freq", "phase", "offset", "amp", "tconst"]
 # ntheta    = 5
 # nsignal   = 48
@@ -34,8 +33,8 @@ showrate   = 1 #TODO
 ninfer     = 128 #TODO Number of MLE parameter inferences
 nperms     = 128 # Number of permutations for c_alpha calculation + perm plot
 nsamples   = 1 # Number of MMD samples for perm plot
-GANrate    = 5
-Dsteps     = 10
+GANrate    = 10 #TODO
+Dsteps     = 10 #TODO
 hdim       = 128
 nhidden    = 2
 # maxcorr    = 0.005 # normalized signals
@@ -45,14 +44,17 @@ nhidden    = 2
 maxcorr    = 0.1 # toy signals
 noisebounds= [-8.0, -2.0] # toy signals
 [gan.kernel]
-nbandwidth = 8
-bwbounds   = [-8.0, 4.0] # bounds for kernel bandwidths (logsigma)
-losstype   = "tstatistic" # "MMD"
+# nbandwidth = 4 #TODO
+# bwbounds   = [-10.0, 4.0] # bounds for kernel bandwidths (logsigma)
+# losstype   = "tstatistic" #"MMD"
+nbandwidth = 4 #TODO
+bwbounds   = [-8.0, 4.0] # toy problem bounds for kernel bandwidths (logsigma)
+losstype   = "tstatistic" #"MMD"
 lambda     = 0.0
 stepsize   = 1e-2
 epochs     = 1
 nbatches   = 10
-rate       = 50
+rate       = 50 #TODO
 
 [prior]
 nterms    = 2

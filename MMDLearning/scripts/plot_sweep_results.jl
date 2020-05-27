@@ -123,7 +123,7 @@ end
 # Read results to DataFrame
 for results_dir in [
         # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toyganopt-v3", # toy gan
-        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-toyganopt-v2", # toy hybrid gan
+        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-toyganopt-v3", # toy hybrid gan
         # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/ganopt-v3", # mri gan
         # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v1", # mri hybrid gan
         # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v2", # mri hybrid gan

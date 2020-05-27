@@ -188,8 +188,8 @@ callback = let
         θ = θtest,
         fits = testfits,
         last_time = Ref(time()),
-        last_checkpoint = Ref(time()),
-        last_best_checkpoint = Ref(time()),
+        last_checkpoint = Ref(-Inf),
+        last_best_checkpoint = Ref(-Inf),
         last_θbb = Union{AbstractVecOrMat{Float64}, Nothing}[nothing],
         last_global_i_fits = Union{Vector{Int}, Nothing}[nothing],
     )
@@ -279,7 +279,7 @@ callback = let
         gloss = mean(log.(1 .- d_g_x))
 
         # Update dataframe
-        push!(state, [epoch, :test, dt, gloss, dloss, mean(d_y), mean(d_g_x), MMDsq, MMDvar, tstat, c_α, P_α, rmse, θ_fit_err, sig_fit_logL, sig_fit_rmse]) #copy(models["logsigma"]) #TODO
+        push!(state, [epoch, :test, dt, gloss, dloss, mean(d_y), mean(d_g_x), MMDsq, MMDvar, tstat, c_α, P_α, rmse, θ_fit_err, sig_fit_logL, sig_fit_rmse])
 
         function makeplots()
             s = x -> x == round(x) ? round(Int, x) : round(x; sigdigits = 4) # for plotting
@@ -374,7 +374,7 @@ callback = let
                     mle_err = (r -> r.loss).(mle_results)
                     cb_state.last_θbb[] = copy(θbb)
                     cb_state.last_global_i_fits[] = copy(global_i_fits)
-                    
+
                     Xθbb = mock_forward_model(θbb, nothing)
                     dXθbb, ϵθbb = get_correction_and_noise(Xθbb)
                     Xθϵbb = get_corrected_signal(Xθbb, dXθbb, ϵθbb)
@@ -474,7 +474,7 @@ callback = let
 
         if is_best_model
             @timeit timer "best model" saveprogress(outfolder, "best-", "")
-            if time() - cb_state.last_best_checkpoint[] >= saveperiod
+            if epoch == 0 || time() - cb_state.last_best_checkpoint[] >= saveperiod
                 cb_state.last_best_checkpoint[] = time()
                 @timeit timer "make best plots" plothandles = makeplots()
                 @timeit timer "save best plots" saveplots(outfolder, "best-", "", plothandles)
@@ -632,12 +632,23 @@ function train_hybrid_gan_model(;
     for epoch in epoch0 .+ (0:epochs)
         try
             if epoch == epoch0
+                @timeit timer "initial MMD kernel" train_mmd_kernel!(models["logsigma"])
                 @timeit timer "initial callback" callback(epoch0)
                 continue
             end
 
             @timeit timer "epoch" begin
+                if mod(epoch, kernelrate) == 0
+                    @timeit timer "MMD kernel" train_mmd_kernel!(models["logsigma"])
+                end
                 @timeit timer "batch loop" for _ in 1:nbatches
+                    @timeit timer "MMD generator" begin
+                        @timeit timer "sampleX" Xtrain = sampleX(m; dataset = :train)
+                        @timeit timer "sampleY" Ytrain = sampleY(m; dataset = :train)
+                        @timeit timer "forward" _, back = Zygote.pullback(() -> MMDloss(Xtrain, Ytrain), Flux.params(models["G"]))
+                        @timeit timer "reverse" gs = back(1)
+                        @timeit timer "update!" Flux.Optimise.update!(optimizers["mmd"], Flux.params(models["G"]), gs)
+                    end
                     if mod(epoch, GANrate) == 0
                         @timeit timer "GAN discriminator" for _ in 1:Dsteps
                             @timeit timer "sampleX" Xtrain = sampleX(m; dataset = :train)
@@ -653,25 +664,13 @@ function train_hybrid_gan_model(;
                             @timeit timer "update!" Flux.Optimise.update!(optimizers["G"], Flux.params(models["G"]), gs)
                         end
                     end
-                    if mod(epoch, kernelrate) == 0
-                        @timeit timer "MMD kernel" begin
-                            train_mmd_kernel!(models["logsigma"])
-                        end
-                    end
-                    @timeit timer "MMD generator" begin
-                        @timeit timer "sampleX" Xtrain = sampleX(m; dataset = :train)
-                        @timeit timer "sampleY" Ytrain = sampleY(m; dataset = :train)
-                        @timeit timer "forward" _, back = Zygote.pullback(() -> MMDloss(Xtrain, Ytrain), Flux.params(models["G"]))
-                        @timeit timer "reverse" gs = back(1)
-                        @timeit timer "update!" Flux.Optimise.update!(optimizers["mmd"], Flux.params(models["G"]), gs)
-                    end
                 end
                 @timeit timer "callback" callback(epoch)
             end
 
             if mod(epoch, showrate) == 0
                 show(stdout, timer); println("\n")
-                show(stdout, last(state[:, Not(:theta_fit_err)], 10)); println("\n") #TODO Not(:logsigma)
+                show(stdout, last(state[:, Not(:theta_fit_err)], 10)); println("\n")
             end
             (epoch == epoch0 + 1) && TimerOutputs.reset_timer!(timer) # throw out initial loop (precompilation, first plot, etc.)
 
