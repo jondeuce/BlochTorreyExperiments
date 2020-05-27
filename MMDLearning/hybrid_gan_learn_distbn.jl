@@ -4,7 +4,7 @@ using MWFLearning
 pyplot(size=(800,600))
 Random.seed!(0);
 
-const IS_TOY_MODEL = false
+const IS_TOY_MODEL = true
 const TOY_NOISE_LEVEL = 1e-2
 const models = Dict{String, Any}()
 const settings = load_settings(joinpath(@__DIR__, "src", "hybrid_settings.toml"))
