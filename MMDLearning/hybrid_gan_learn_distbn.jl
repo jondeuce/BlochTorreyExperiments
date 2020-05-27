@@ -470,11 +470,7 @@ callback = let
         end
 
         # Check for best loss + save model/plots
-        is_best_model = if IS_TOY_MODEL
-            state.rmse[end] <= minimum(state.rmse) #state.loss[end] <= minimum(state.loss)
-        else
-            any(!ismissing, state.signal_fit_logL) && state.signal_fit_logL[findlast(!ismissing, state.signal_fit_logL)] <= minimum(skipmissing(state.signal_fit_logL))
-        end
+        is_best_model = any(!ismissing, state.signal_fit_logL) && state.signal_fit_logL[findlast(!ismissing, state.signal_fit_logL)] <= minimum(skipmissing(state.signal_fit_logL))
 
         if is_best_model
             @timeit timer "best model" saveprogress(outfolder, "best-", "")
