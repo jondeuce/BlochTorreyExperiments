@@ -80,8 +80,8 @@ function read_results(results_dir)
             df_curr_row.time[1] = sum(df_prog.time)
 
             # consider last WINDOW entries
-            WINDOW = 100
-            reducer = median #mean
+            WINDOW = 25
+            reducer = mean #mean
             df_best_row.signal_fit_logL[1] = reducer(df_prog.signal_fit_logL[clamp(ibest-WINDOW+1, 1, ibest) : ibest])
             df_best_row.signal_fit_rmse[1] = reducer(df_prog.signal_fit_rmse[clamp(ibest-WINDOW+1, 1, ibest) : ibest])
             df_curr_row.signal_fit_logL[1] = reducer(df_prog.signal_fit_logL[clamp(  end-WINDOW+1, 1,   end) : end])
@@ -123,34 +123,35 @@ end
 # Read results to DataFrame
 for results_dir in [
         # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toyganopt-v3", # toy gan
-        # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-toyganopt-v1", # toy hybrid gan
+        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-toyganopt-v1", # toy hybrid gan
         # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/ganopt-v3", # mri gan
         # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v1", # mri hybrid gan
-        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v2", # mri hybrid gan
+        # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v2", # mri hybrid gan
         # "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7", # mri mmd gan
     ]
     sweep_dir = joinpath(results_dir, "sweep");
     df_best, df_curr, sweep_temp, prog_temp = read_results(sweep_dir);
 
-    # global df = df_best
-    global df = df_curr
-    savecols = :logsigma ∈ names(df) ? Not(:logsigma) : Colon()
+    for resname in ["curr", "best"]
+        global df = resname == "curr" ? df_curr : df_best
+        savecols = :logsigma ∈ names(df) ? Not(:logsigma) : Colon()
 
-    # Write sorted DataFrame to text file
-    foreach([:signal_fit_rmse, :signal_fit_logL]) do metric #[:loss, :rmse, :mae, :linf]
-        open(joinpath(results_dir, "results-by-$metric.txt"); write = true) do io
-            dfsave = dropmissing(df, metric)[:, savecols]
-            show(io, sort(dfsave, metric); allrows = true, allcols = true)
+        # Write sorted DataFrame to text file
+        foreach([:signal_fit_rmse, :signal_fit_logL]) do metric #[:loss, :rmse, :mae, :linf]
+            open(joinpath(results_dir, "$resname-results-by-$metric.txt"); write = true) do io
+                dfsave = dropmissing(df, metric)[:, savecols]
+                show(io, sort(dfsave, metric); allrows = true, allcols = true)
+            end
         end
+
+        # Show top results
+        show(stdout, first(sort(df[:,savecols], :signal_fit_logL), 10); allrows = true, allcols = true); println("\n")
+        @show size(df);
+
+        # make_plots.(Ref(df), Ref(names(sweep_temp)), [:loss, :rmse, :linf, :time], [0.5, 0.5, 0.5, 1.0]; savepath = results_dir);
+        # make_plots.(Ref(df), Ref(names(sweep_temp)), [:signal_fit_rmse, :signal_fit_logL]; savepath = results_dir, thresh = 0.9);
+        make_plots.(Ref(filter(r -> !ismissing(r.signal_fit_logL) && r.signal_fit_logL < 0, df)), Ref(names(sweep_temp)), [:signal_fit_rmse, :signal_fit_logL]; savepath = results_dir, thresh = 1.0);
     end
-
-    # Show top results
-    show(stdout, first(sort(df[:,savecols], :signal_fit_logL), 10); allrows = true, allcols = true); println("\n")
-    @show size(df);
-
-    # make_plots.(Ref(df), Ref(names(sweep_temp)), [:loss, :rmse, :linf, :time], [0.5, 0.5, 0.5, 1.0]; savepath = results_dir);
-    # make_plots.(Ref(df), Ref(names(sweep_temp)), [:signal_fit_rmse, :signal_fit_logL]; savepath = results_dir, thresh = 0.9);
-    make_plots.(Ref(filter(r -> !ismissing(r.signal_fit_logL) && r.signal_fit_logL < 0, df)), Ref(names(sweep_temp)), [:signal_fit_rmse, :signal_fit_logL]; savepath = results_dir, thresh = 1.0);
 end
 
 nothing
