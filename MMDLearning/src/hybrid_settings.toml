@@ -1,8 +1,8 @@
 [data]
 out       = "./output/tmp"
-ntheta    = 5
-nsignal   = 128
-theta_labels = ["freq", "phase", "offset", "amp", "tconst"]
+# ntheta    = 5
+# nsignal   = 128
+# theta_labels = ["freq", "phase", "offset", "amp", "tconst"]
 # ntheta    = 5
 # nsignal   = 48
 # echotime  = 8e-3
@@ -13,11 +13,11 @@ theta_labels = ["freq", "phase", "offset", "amp", "tconst"]
 # echotime  = 8e-3
 # normalize = false
 # theta_labels = ["alpha", "T2short", "dT2", "Ashort"]
-# ntheta    = 5
-# nsignal   = 48
-# echotime  = 8e-3
-# normalize = false
-# theta_labels = ["alpha", "T2short", "dT2", "Ashort", "Along"]
+ntheta    = 5
+nsignal   = 48
+echotime  = 8e-3
+normalize = false
+theta_labels = ["alpha", "T2short", "dT2", "Ashort", "Along"]
 
 [gan]
 stepsize   = 1e-4 #3.1623e-4 #1.0e-5 #TODO
@@ -39,16 +39,14 @@ hdim       = 128
 nhidden    = 2
 # maxcorr    = 0.005 # normalized signals
 # noisebounds= [-10.0, -4.0] # normalized signals
-# maxcorr    = 0.025 # unnormalized signals (but scaled down by 1e6)
-# noisebounds= [-6.0, -3.0] # unnormalized signals (but scaled down by 1e6)
-maxcorr    = 0.1 # toy signals
-noisebounds= [-8.0, -2.0] # toy signals
+maxcorr    = 0.025 # unnormalized signals (but scaled down by 1e6)
+noisebounds= [-6.0, -3.0] # unnormalized signals (but scaled down by 1e6)
+# maxcorr    = 0.1 # toy signals
+# noisebounds= [-8.0, -2.0] # toy signals
 [gan.kernel]
-# nbandwidth = 4 #TODO
-# bwbounds   = [-10.0, 4.0] # bounds for kernel bandwidths (logsigma)
-# losstype   = "tstatistic" #"MMD"
 nbandwidth = 4 #TODO
-bwbounds   = [-8.0, 4.0] # toy problem bounds for kernel bandwidths (logsigma)
+bwbounds   = [-10.0, 4.0] # bounds for kernel bandwidths (logsigma)
+# bwbounds   = [-8.0, 4.0] # toy problem bounds for kernel bandwidths (logsigma)
 losstype   = "tstatistic" #"MMD"
 lambda     = 0.0
 stepsize   = 1e-2
