@@ -188,7 +188,7 @@ callback = let
         θ = θtest,
         fits = testfits,
         last_time = Ref(time()),
-        last_checkpoint = Ref(-Inf),
+        last_curr_checkpoint = Ref(-Inf),
         last_best_checkpoint = Ref(-Inf),
         last_θbb = Union{AbstractVecOrMat{Float64}, Nothing}[nothing],
         last_global_i_fits = Union{Vector{Int}, Nothing}[nothing],
@@ -469,23 +469,33 @@ callback = let
             end
         end
 
-        # Check for best loss + save model/plots
-        is_best_model = any(!ismissing, state.signal_fit_logL) && state.signal_fit_logL[findlast(!ismissing, state.signal_fit_logL)] <= minimum(skipmissing(state.signal_fit_logL))
+        # NOTE: `makeplots()` updates `state.signal_fit_logL`, therefore `_check_and_save_best_model()` should be called after `makeplots()`
+        _is_best_model() = collect(skipmissing(state.signal_fit_logL)) |> x -> !isempty(x) && (x[end] <= minimum(x))
+        _save_best_model() = @timeit timer "save best model" saveprogress(outfolder, "best-", "")
+        _check_and_save_best_model() = _is_best_model() ? (_save_best_model(); true) : false
 
-        if is_best_model
-            @timeit timer "best model" saveprogress(outfolder, "best-", "")
-            if epoch == 0 || time() - cb_state.last_best_checkpoint[] >= saveperiod
+        if epoch == 0 || time() - cb_state.last_curr_checkpoint[] >= saveperiod
+            # Save current model + state every `saveperiod` seconds
+            cb_state.last_curr_checkpoint[] = time()
+            @timeit timer "save current model" saveprogress(outfolder, "current-", "")
+            @timeit timer "make current plots" plothandles = makeplots()
+            @timeit timer "save current plots" saveplots(outfolder, "current-", "", plothandles)
+
+            # Making plots updates loss; check for best model
+            if _check_and_save_best_model()
+                cb_state.last_best_checkpoint[] = cb_state.last_curr_checkpoint[]
+                @timeit timer "save best plots" saveplots(outfolder, "best-", "", plothandles)
+            end
+        elseif _check_and_save_best_model()
+            # Check for and save best model + make best model plots every `saveperiod` seconds
+            if time() - cb_state.last_best_checkpoint[] >= saveperiod
                 cb_state.last_best_checkpoint[] = time()
                 @timeit timer "make best plots" plothandles = makeplots()
                 @timeit timer "save best plots" saveplots(outfolder, "best-", "", plothandles)
-            end
-        end
 
-        if epoch == 0 || time() - cb_state.last_checkpoint[] >= saveperiod
-            cb_state.last_checkpoint[] = time()
-            @timeit timer "current model" saveprogress(outfolder, "current-", "")
-            @timeit timer "make current plots" plothandles = makeplots()
-            @timeit timer "save current plots" saveplots(outfolder, "current-", "", plothandles)
+                # Making plots updates loss; check for best model
+                _check_and_save_best_model()
+            end
         end
 
         if epoch > 0 && mod(epoch, lrdroprate) == 0
