@@ -452,7 +452,7 @@ function toy_signal_model(
     ts = 0:nsamples-1
     y = @. (offset + amp * abs(sin(2*(pi*freq*ts) - phase))^power) * exp(-ts/tconst)
     if !isnothing(epsilon)
-        y = @. rand(Rician(y, epsilon))
+        y = rand.(Rician.(y, epsilon))
     end
     return y
 end
@@ -526,13 +526,13 @@ function signal_loglikelihood_inference(
     # Deterministic loss function, suitable for Optim
     function mle_loss(θ)
         ȳhat, ϵhat = model(signal_fun(θ))
-        return sum(@. -logpdf(Rician(ȳhat, ϵhat; check_args = false), y))
+        return -sum(logpdf.(Rician.(ȳhat, ϵhat), y))
     end
 
     # Stochastic loss function, only suitable for BlackBoxOptim
     function rmse_loss(θ)
         ȳhat, ϵhat = model(signal_fun(θ))
-        yhat = @. rand(Rician(ȳhat, ϵhat; check_args = false))
+        yhat = rand.(Rician.(ȳhat, ϵhat))
         return sqrt(mean(abs2, y .- yhat))
     end
 
@@ -565,11 +565,14 @@ end
 function signal_loglikelihood_inference(Y::AbstractMatrix, θ0::Union{<:AbstractMatrix, Nothing} = nothing, args...; kwargs...)
     _args = [deepcopy(args) for _ in 1:Threads.nthreads()]
     _kwargs = [deepcopy(kwargs) for _ in 1:Threads.nthreads()]
-    ThreadPools.qmap(1:size(Y,2)) do j # map(1:size(Y,2)) do j
-        tid = Threads.threadid()
-        initial_guess = !isnothing(θ0) ? θ0[:,j] : nothing
-        signal_loglikelihood_inference(Y[:,j], initial_guess, _args[tid]...; _kwargs[tid]...)
+    tasks = map(1:size(Y,2)) do j
+        Threads.@spawn begin
+            tid = Threads.threadid()
+            initial_guess = !isnothing(θ0) ? θ0[:,j] : nothing
+            signal_loglikelihood_inference(Y[:,j], initial_guess, _args[tid]...; _kwargs[tid]...)
+        end
     end
+    return map(Threads.fetch, tasks)
 end
 
 #=
@@ -647,7 +650,7 @@ function toy_theta_mcmc_inference(
     )
     model = function (x)
         xhat, ϵhat = correction_and_noise(x)
-        yhat = @. rand(Rician(xhat, ϵhat; check_args = false))
+        yhat = rand.(Rician.(xhat, ϵhat))
         return yhat
     end
     res = signal_loglikelihood_inference(y, nothing, model)
@@ -691,7 +694,7 @@ for _ in 1:1
         # zR = ϵhat .* randn(size(x)...)
         # zI = ϵhat .* randn(size(x)...)
         # yhat = @. sqrt((xhat + zR)^2 + zI^2)
-        yhat = @. rand(Rician(xhat, ϵhat))
+        yhat = rand.(Rician.(xhat, ϵhat))
     end
     fitresults = function(y, c)
         θhat = map(k -> mean(c[k])[1,:mean], [:freq, :phase, :offset, :amp, :tconst])

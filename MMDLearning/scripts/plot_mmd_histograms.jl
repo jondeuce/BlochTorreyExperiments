@@ -16,19 +16,19 @@ const save_folder  = mkpath(MWFLearning.getnow());
 
 # Load data samplers
 if !(@isdefined(sampleX) && @isdefined(sampleY) && @isdefined(sampleθ) && @isdefined(fits))
-    global sampleX, sampleY, sampleθ, _, fits, _ = make_mle_data_samplers(
+    global sampleX, sampleY, sampleθ, _, _, fits = make_mle_data_samplers(
         mmd_settings["prior"]["data"]["image"]::String,
         mmd_settings["prior"]["data"]["thetas"]::String;
         ntheta = mmd_settings["data"]["ntheta"]::Int,
         padtrain = false,
         normalizesignals = false,
         filteroutliers = false,
-        plothist = false, #TODO
+        plothist = false,
     )
 end
-const θ = copy(sampleθ(nothing; dataset = :test));
-const X = copy(sampleX(nothing; dataset = :test));
-const Y = copy(sampleY(nothing; dataset = :test));
+const θ = copy(sampleθ(nothing; dataset = :val));
+const X = copy(sampleX(nothing; dataset = :val));
+const Y = copy(sampleY(nothing; dataset = :val));
 const Y_RES = minimum(filter(>(0), Y)); # resolution of signal values
 const Y_EDGES = unique!(sort!(copy(vec(Y)))); # unique values
 θ[1,:] .= cosd.(θ[1,:]); # transform flipangle -> cosd(flipangle)
@@ -64,15 +64,37 @@ const all_generators = Dict{String,Any}(
     #####
     ##### MMD models (MMD optimized kernels)
     #####
-    "mmd" => Dict{String,Any}("modelfile" => "best-model.bson", "folder" => "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7/sweep/224"), # MMD-kernel
+    # "mmd" => Dict{String,Any}("modelfile" => "best-model.bson", "folder" => "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7/sweep/236"), # MMD-kernel (hdim = 256)
+    # "mmd" => Dict{String,Any}("modelfile" => "best-model.bson", "folder" => "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7/sweep/224"), # MMD-kernel (hdim = 256)
+    "mmd" => Dict{String,Any}("modelfile" => "best-model.bson", "folder" => "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7/sweep/126"), # MMD-kernel #best
+    # "mmd" => Dict{String,Any}("modelfile" => "best-model.bson", "folder" => "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7/sweep/96"), # MMD-kernel
+    # "mmd" => Dict{String,Any}("modelfile" => "best-model.bson", "folder" => "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7/sweep/63"), # MMD-kernel
     #####
     ##### Hybrid GAN + MMD models (MMD optimized kernels)
     #####
     # "hyb" => Dict{String,Any}("modelfile" => "best-model.bson", "folder" => "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v2/sweep/90"), # MMD-kernel #great
     # "hyb" => Dict{String,Any}("modelfile" => "current-model.bson", "folder" => "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v2/sweep/158"), # MMD-kernel #quite good
-    "hyb" => Dict{String,Any}("modelfile" => "current-model.bson", "folder" => "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v2/sweep/190"), # MMD-kernel #quite good
+    # "hyb" => Dict{String,Any}("modelfile" => "current-model.bson", "folder" => "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v2/sweep/190"), # MMD-kernel #quite good
     # "hyb" => Dict{String,Any}("modelfile" => "best-model.bson", "folder" => "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v2/sweep/12"), # MMD-kernel #decent
     # "hyb" => Dict{String,Any}("modelfile" => "best-model.bson", "folder" => "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v2/sweep/74"), # MMD-kernel #bad
+    # 
+    # │ Row │ folder │ kernel.losstype │ hdim  │ signal_fit_logL │ modeltype │ Cityblock │ Euclidean │ ChiSqDist │ Wasserstein │
+    # │     │ String │ String          │ Int64 │ Any             │ String    │ Int64     │ Float64   │ Float64   │ Float64     │
+    # ├─────┼────────┼─────────────────┼───────┼─────────────────┼───────────┼───────────┼───────────┼───────────┼─────────────┤
+    # │ 1   │ 89     │ tstatistic      │ 256   │                 │ current   │ 80606     │ 18078.8   │ 3668.42   │ 214.031     │
+    # │ 2   │ 272    │ MMD             │ 256   │                 │ current   │ 94268     │ 22015.0   │ 3927.13   │ 240.334     │
+    # │ 3   │ 67     │ MMD             │ 128   │                 │ current   │ 92351     │ 21371.8   │ 3868.36   │ 246.672     │
+    # │ 4   │ 187    │ MMD             │ 128   │                 │ current   │ 93842     │ 18614.2   │ 1879.88   │ 246.774     │
+    # │ 5   │ 243    │ MMD             │ 256   │                 │ current   │ 93924     │ 19876.1   │ 2826.87   │ 251.505     │
+    # │ 6   │ 197    │ tstatistic      │ 128   │ -169.459        │ best      │ 91490     │ 19864.4   │ 3411.13   │ 255.975     │
+    # "hyb" => Dict{String,Any}("modelfile" => "current-model.bson", "folder" => "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v3/sweep/272"),
+    # "hyb" => Dict{String,Any}("modelfile" => "current-model.bson", "folder" => "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v3/sweep/67"),
+    "hyb" => Dict{String,Any}("modelfile" => "current-model.bson", "folder" => "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v3/sweep/187"),
+    # "hyb" => Dict{String,Any}("modelfile" => "best-model.bson",    "folder" => "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v3/sweep/19"),
+    # "hyb" => Dict{String,Any}("modelfile" => "current-model.bson", "folder" => "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v3/sweep/138"),
+    # "hyb" => Dict{String,Any}("modelfile" => "best-model.bson",    "folder" => "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v3/sweep/275"),
+    # "hyb" => Dict{String,Any}("modelfile" => "best-model.bson",    "folder" => "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v3/sweep/187"),
+    # "hyb" => Dict{String,Any}("modelfile" => "current-model.bson", "folder" => "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v3/sweep/275"),
     #####
     ##### GAN models
     #####
@@ -236,7 +258,6 @@ const t2partopts = T2partOptions(
 );
 
 #= #TODO
-=#
 for (dataset, signals) in Xs, (name, _X) in signals
     # dataset == "hyb" || continue #TODO
     if name ∈ ["X", "Y", "Xeps0", "Xhat", "Xdelta", "Xeps"]
@@ -247,6 +268,7 @@ for (dataset, signals) in Xs, (name, _X) in signals
         end
     end
 end;
+=#
 
 ####
 #### Noise level (epsilon) histograms
@@ -393,7 +415,6 @@ _save_and_display(p, "compare_genatr_whole_signal_hist_diff");
 ####
 
 #= #TODO
-=#
 let
     common_args = Dict{Symbol,Any}(
         :tickfontsize => 10, :legendfontsize => 9, :xscale => :log10, :xrot => 30.0,
@@ -466,6 +487,7 @@ for G in GENERATOR_NAMES
     );
     _save_and_display(p, "$(G)_t2_distbn_diff")
 end
+=#
 
 ####
 #### Plot learned correction vs. theta
@@ -537,4 +559,57 @@ nothing
             @show x1; @show x2
         end
     end;
+=#
+
+#=
+include("/project/st-arausch-1/jcd1994/code/BlochTorreyExperiments-active/MMDLearning/scripts/plot_sweep_results.jl")
+=#
+function hist_distance_loop(
+        df,
+        X,
+        Y;
+        results_dir = "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v3/sweep/"
+    )
+    global Y_RES, Y_EDGES
+    binwidth = ceil(Int, mean(vec(Y)) / (50 * Y_RES))
+    edges = Y_EDGES[1:binwidth:end]
+    hY = _make_hist_fast(vec(Y), edges)
+
+    df_print = DataFrame()
+    for row in eachrow(sort(df, :signal_fit_logL))
+        if row.signal_fit_logL > -169
+            break
+        end
+        for mtype in ["current", "best"]
+            Generator.G[] = deepcopy(BSON.load(joinpath(results_dir, row.folder, "$mtype-model.bson"))["G"])
+            X̂ = Generator.get_corrected_signal(X)
+            hX̂ = _make_hist_fast(vec(X̂), edges)
+            ds = (
+                Cityblock = _dhist(hX̂, hY, Cityblock()),
+                Euclidean = _dhist(hX̂, hY, Euclidean()),
+                ChiSqDist = _dhist(hX̂, hY, ChiSqDist()),
+                Wasserstein = _dhist(hX̂, hY, :wasserstein_distance),
+            )
+            df_print_row = hcat(
+                DataFrame(row[[:folder, Symbol("kernel.losstype"), :hdim, :signal_fit_logL]]),
+                DataFrame(; modeltype = mtype, ds...)
+            )
+            (mtype == "current") && (df_print_row[1,:signal_fit_logL] = nothing)
+            append!(df_print, df_print_row)
+        end
+        show(sort(df_print, :Wasserstein); allrows = true, allcols = true); println("")
+    end
+
+    return df_print
+end
+df_dist = hist_distance_loop(df,X,Y)
+
+#=
+│ Row │ folder │ kernel.losstype │ hdim  │ signal_fit_logL │ modeltype │ Cityblock │ Euclidean │ ChiSqDist │ Wasserstein │
+│     │ String │ String          │ Int64 │ Any             │ String    │ Int64     │ Float64   │ Float64   │ Float64     │
+├─────┼────────┼─────────────────┼───────┼─────────────────┼───────────┼───────────┼───────────┼───────────┼─────────────┤
+│ 1   │ 272    │ MMD             │ 256   │                 │ current   │ 93329     │ 22296.8   │ 4047.58   │ 241.576     │
+│ 2   │ 187    │ MMD             │ 128   │                 │ current   │ 92852     │ 18331.2   │ 1819.99   │ 247.628     │
+│ 3   │ 19     │ MMD             │ 128   │ -170.731        │ best      │ 98404     │ 24584.0   │ 4765.81   │ 253.325     │
+│ 4   │ 67     │ MMD             │ 128   │                 │ current   │ 94382     │ 21653.4   │ 4039.9    │ 253.573     │
 =#

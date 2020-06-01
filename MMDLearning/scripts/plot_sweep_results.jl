@@ -7,6 +7,7 @@ pyplot(size = (800,600))
 empty!(Revise.queue_errors);
 
 const SWEEP_FIELD = "gan" #TODO one of: "mmd", "gan", "vae"
+const WINDOW = 25
 
 function flatten_dict!(dout::Dict{<:AbstractString, Any}, din::Dict{<:AbstractString, Any})
     for (k,v) in din
@@ -70,6 +71,16 @@ function read_results(results_dir)
                 continue
             end
 
+            # # Use only error values that were explicitly optimized
+            # let θerr = df_prog.theta_fit_err
+            #     I = findall(>(1e-8), [maximum(abs, θerr[i-1] .- θerr[i]) for i in 2:length(θerr)])
+            #     if isempty(I)
+            #         @warn "Filtered out all results: $root"
+            #     else
+            #         df_prog = df_prog[I, :]
+            #     end
+            # end
+
             # find best row
             ibest = skipmissing(df_prog.signal_fit_logL) |> x -> !isempty(x) ? argmin(x) : nrow(df_prog)
             df_best_row = DataFrame(df_prog[ibest, :])
@@ -80,7 +91,6 @@ function read_results(results_dir)
             df_curr_row.time[1] = sum(df_prog.time)
 
             # consider last WINDOW entries
-            WINDOW = 25
             reducer = mean #mean
             df_best_row.signal_fit_logL[1] = reducer(df_prog.signal_fit_logL[clamp(ibest-WINDOW+1, 1, ibest) : ibest])
             df_best_row.signal_fit_rmse[1] = reducer(df_prog.signal_fit_rmse[clamp(ibest-WINDOW+1, 1, ibest) : ibest])
@@ -123,10 +133,15 @@ end
 # Read results to DataFrame
 for results_dir in [
         # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toyganopt-v3", # toy gan
-        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-toyganopt-v3", # toy hybrid gan
+        # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-toyganopt-v3", # toy hybrid gan
+        # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-toyganopt-v4", # toy hybrid gan
+        # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-toyganopt-v5", # toy hybrid gan
         # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/ganopt-v3", # mri gan
         # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v1", # mri hybrid gan
         # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v2", # mri hybrid gan
+        "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/hybrid-mri-gan-opt-v3", # mri hybrid gan
+        # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toymmdopt-v8",
+        # "/project/st-arausch-1/jcd1994/simulations/MMD-Learning/toymmdopt-v9",
         # "/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7", # mri mmd gan
     ]
     sweep_dir = joinpath(results_dir, "sweep");
