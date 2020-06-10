@@ -258,6 +258,7 @@ const t2partopts = T2partOptions(
 );
 
 #= #TODO
+=#
 for (dataset, signals) in Xs, (name, _X) in signals
     # dataset == "hyb" || continue #TODO
     if name ∈ ["X", "Y", "Xeps0", "Xhat", "Xdelta", "Xeps"]
@@ -268,7 +269,6 @@ for (dataset, signals) in Xs, (name, _X) in signals
         end
     end
 end;
-=#
 
 ####
 #### Noise level (epsilon) histograms
@@ -415,6 +415,7 @@ _save_and_display(p, "compare_genatr_whole_signal_hist_diff");
 ####
 
 #= #TODO
+=#
 let
     common_args = Dict{Symbol,Any}(
         :tickfontsize => 10, :legendfontsize => 9, :xscale => :log10, :xrot => 30.0,
@@ -487,7 +488,6 @@ for G in GENERATOR_NAMES
     );
     _save_and_display(p, "$(G)_t2_distbn_diff")
 end
-=#
 
 ####
 #### Plot learned correction vs. theta
@@ -563,7 +563,6 @@ nothing
 
 #=
 include("/project/st-arausch-1/jcd1994/code/BlochTorreyExperiments-active/MMDLearning/scripts/plot_sweep_results.jl")
-=#
 function hist_distance_loop(
         df,
         X,
@@ -603,6 +602,7 @@ function hist_distance_loop(
     return df_print
 end
 df_dist = hist_distance_loop(df,X,Y)
+=#
 
 #=
 │ Row │ folder │ kernel.losstype │ hdim  │ signal_fit_logL │ modeltype │ Cityblock │ Euclidean │ ChiSqDist │ Wasserstein │
@@ -612,4 +612,98 @@ df_dist = hist_distance_loop(df,X,Y)
 │ 2   │ 187    │ MMD             │ 128   │                 │ current   │ 92852     │ 18331.2   │ 1819.99   │ 247.628     │
 │ 3   │ 19     │ MMD             │ 128   │ -170.731        │ best      │ 98404     │ 24584.0   │ 4765.81   │ 253.325     │
 │ 4   │ 67     │ MMD             │ 128   │                 │ current   │ 94382     │ 21653.4   │ 4039.9    │ 253.573     │
+=#
+
+#=
+let
+    d = Dict{String,Any}()
+    d["t2times"] = copy(Xs["data"]["Y_t2maps"]["t2times"])
+    for (name, maps) in Xs
+        d[name] = Dict{String,Any}()
+        for (arrname, arr) in maps
+            if endswith(arrname, "t2dist")
+                d[name][arrname] = vec(mean(Xs[name][arrname]; dims = 1))
+            end
+        end
+    end
+    # for (name, t2maps) in d
+    #     println(name); display(t2maps)
+    # end
+    MAT.matwrite("mri_t2dists.mat", deepcopy(d))
+    d
+end;
+=#
+
+####
+#### Toy model data
+####
+
+#=
+let
+    local θ = toy_theta_sampler(10_000)
+    local X = toy_signal_model(θ, nothing, 4)
+    local Y = toy_signal_model(θ, 0.01, 2)
+    local Ytrue = toy_signal_model(θ, nothing, 2)
+    local toymodels = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/code/BlochTorreyExperiments-active/MMDLearning/output/plots-checkpoint-5/inference-2020-05-31-T-16-28-35-131/toy_inference.bson")["toy_models"])
+
+    ####
+    #### Load models + make corrected data
+    ####
+
+    # Make corrected data
+    local GENERATOR_NAMES  = ["mmd", "gan", "hyb"];
+    local GENERATOR_MODELS = Chain[toymodels["MMD"], toymodels["GAN"], toymodels["HYB"]];
+
+    local Xs = Dict{String,Any}(
+        "data" => Dict{String,Any}("Y" => copy(Y), "Ytrue" => copy(Ytrue)),
+        "mle" => Dict{String,Any}("X" => copy(X), "Xeps0" => rand.(Rician.(X, 0.01))),
+        [G => Dict{String,Any}() for G in GENERATOR_NAMES]...,
+    );
+    for (dataset, G) in zip(GENERATOR_NAMES, GENERATOR_MODELS)
+        local _G = deepcopy(Generator.G[])
+        Generator.G[] = deepcopy(G)
+        local g_delta, g_eps = Generator.get_correction_and_noise(X);
+        Xs[dataset]["Xhat"]    = Generator.get_corrected_signal(X, g_delta, g_eps); # add learned correction + learned noise
+        Xs[dataset]["Xdelta"]  = abs.(X .+ g_delta); # add learned noise only
+        Xs[dataset]["Xeps"]    = Generator.get_corrected_signal(X, g_eps); # add learned noise only
+        Xs[dataset]["g_delta"] = copy(g_delta);
+        Xs[dataset]["g_eps"]   = copy(g_eps);
+        Generator.G[] = deepcopy(_G)
+    end;
+    for (name, maps) in Xs
+        println(name); display(Xs[name])
+    end
+    MAT.matwrite("toy_data.mat", deepcopy(Xs))
+    Xs
+end
+=#
+
+#=
+let data = deepcopy(BSON.load("/project/st-arausch-1/jcd1994/code/BlochTorreyExperiments-active/MMDLearning/output/plots-checkpoint-5/inference-2020-05-31-T-16-28-35-131/toy_inference.bson"))
+    local toy_models = deepcopy(data["toy_models"])
+    local toy_inf = deepcopy(data["toy_inference"])
+
+    for (name, infdata) in toy_inf
+        name == "CVAE" && continue
+        println(name)
+        local err = if name == "F2"
+            local Y = toy_signal_model(toy_inf[name].θ, nothing, 2)
+            local Xhat = toy_signal_model(toy_inf[name].θhat, nothing, 2)
+            100 .* sqrt.(vec(mean(abs2, Y .- Xhat; dims = 1)))
+        elseif name == "F4"
+            local Y = toy_signal_model(toy_inf[name].θ, nothing, 2)
+            local Xhat = toy_signal_model(toy_inf[name].θhat, nothing, 4)
+            100 .* sqrt.(vec(mean(abs2, Y .- Xhat; dims = 1)))
+        elseif name != "CVAE"
+            local Y = toy_signal_model(toy_inf[name].θ, nothing, 2)
+            local X = toy_signal_model(toy_inf[name].θhat, nothing, 4)
+            local gdelta = toy_models[name](X)[1:div(end,2), :]
+            local Xhat = abs.(X .+ gdelta)
+            100 .* sqrt.(vec(mean(abs2, Y .- Xhat; dims = 1)))
+        end
+        local mu = mean(err)
+        local s = std(err) / sqrt(length(err))
+        @printf("rmse = %.3f +/- %.3f\n", mu, s)
+    end
+end
 =#
