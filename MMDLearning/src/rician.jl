@@ -305,3 +305,36 @@ for ν in [0, 1, 10], σ in [1e-3, 1.0, 10.0]
     vline!(histogram([std(rand(d,1000)) for _ in 1:1000]; nbins = 50), [std(d)], line = (:black, :solid, 5), title = "nu = $ν, sigma = $σ") |> display
 end
 =#
+
+####
+#### ChainRules
+####
+
+#=
+_besselix(ν::Real, x::Real) = SpecialFunctions.besselix(oftype(float(x), ν), float(x)) # besselix(nu, x) = I_nu(x) * exp(-|x|)
+_logbesseli0(x::Real) = log(_besselix(0, x)) + abs(x) # since log(besselix(nu, x)) = log(I_nu(x)) - |x|
+_logbesseli1(x::Real) = log(_besselix(1, x)) + abs(x)
+
+# Define chain rule
+ChainRules.@scalar_rule(
+    _besselix(ν::Real, x::Real),
+    (ChainRules.DoesNotExist(), (_besselix(ν - 1, x) + _besselix(ν + 1, x)) / 2 - sign(x) * Ω),
+)
+
+# Define corresponding dual rule
+function _besselix(ν::Real, x::ForwardDiff.Dual{T,V,N}) where {T,V,N}
+    y, ẏ = ChainRules.frule((ChainRules.NO_FIELDS, ChainRules.DoesNotExist(), 1), _besselix, ν, ForwardDiff.value(x))
+    return ForwardDiff.Dual{T,V,N}(y, ẏ * ForwardDiff.partials(x))
+end
+
+for T in [Float32, Float64], ν in [0, zero(T), 1, one(T), rand(T), -rand(T)], x in [exp(one(T)), T(pi), one(T)]
+    for f in [x -> _besselix(ν, x), x -> cos(2 * _besselix(ν, x)^2), _logbesseli0]
+        δ_fd  = FiniteDifferences.central_fdm(5,1)(f, x)
+        δ_fwd = ForwardDiff.derivative(f, x)
+        δ_rev = Zygote.gradient(f, x)[1]
+        @assert δ_fd  ≈ δ_fwd atol = 0 rtol = sqrt(eps(T))
+        @assert δ_fd  ≈ δ_rev atol = 0 rtol = sqrt(eps(T))
+        @assert δ_fwd ≈ δ_rev atol = 0 rtol = 10*eps(T)
+    end
+end
+=#
