@@ -26,11 +26,11 @@ export Rician, NotTrainable, DenseResize, Scale
 
 include("rician.jl")
 include("batched_math.jl")
+include("math_utils.jl")
+include("mmd.jl")
+include("physics.jl")
 include("utils.jl")
 include("layers.jl")
-include("mmd_math.jl")
-include("mmd_flux.jl")
-include("mmd_utils.jl")
 include("models.jl")
 
 end # module

@@ -1,4 +1,83 @@
 """
+    batchsize(x::AbstractArray)
+
+Returns the length of the last dimension of the data `x`.
+`x` must have dimension of at least 2, otherwise an error is thrown.
+"""
+batchsize(x::AbstractVector) = error("x must have dimension of at least 2, but x is a $(typeof(x))")
+batchsize(x::AbstractArray{T,N}) where {T,N} = size(x, N)
+
+"""
+    channelsize(x::AbstractArray)
+
+Returns the length of the second-last dimension of the data `x`.
+`x` must have dimension of at least 3, otherwise an error is thrown.
+"""
+channelsize(x::AbstractVecOrMat) = error("x must have dimension of at least 3, but x is a $(typeof(x))")
+channelsize(x::AbstractArray{T,N}) where {T,N} = size(x, N-1)
+
+"""
+    heightsize(x::AbstractArray)
+
+Returns the length of the first dimension of the data `x`.
+`x` must have dimension of at least 3, otherwise an error is thrown.
+"""
+heightsize(x::AbstractVecOrMat) = error("x must have dimension of at least 3, but x is a $(typeof(x))")
+heightsize(x::AbstractArray) = size(x, 1)
+
+"""
+Kaiming uniform initialization.
+"""
+function kaiming_uniform(T::Type, dims; gain = 1)
+   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
+   bound = sqrt(3) * gain / sqrt(fan_in)
+   return rand(Uniform(-bound, bound), dims) |> Array{T}
+end
+kaiming_uniform(T::Type, dims...; kwargs...) = kaiming_uniform(T::Type, dims; kwargs...)
+kaiming_uniform(args...; kwargs...) = kaiming_uniform(Float64, args...; kwargs...)
+
+"""
+Kaiming normal initialization.
+"""
+function kaiming_normal(T::Type, dims; gain = 1)
+   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
+   std = gain / sqrt(fan_in)
+   return rand(Normal(0, std), dims) |> Array{T}
+end
+kaiming_normal(T::Type, dims...; kwargs...) = kaiming_normal(T::Type, dims; kwargs...)
+kaiming_normal(args...; kwargs...) = kaiming_normal(Float64, args...; kwargs...)
+
+"""
+Xavier uniform initialization.
+"""
+function xavier_uniform(T::Type, dims; gain = 1)
+   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
+   fan_out = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end-1]
+   bound = sqrt(3) * gain * sqrt(2 / (fan_in + fan_out))
+   return rand(Uniform(-bound, bound), dims) |> Array{T}
+end
+xavier_uniform(T::Type, dims...; kwargs...) = xavier_uniform(T::Type, dims; kwargs...)
+xavier_uniform(args...; kwargs...) = xavier_uniform(Float64, args...; kwargs...)
+
+"""
+Xavier normal initialization.
+"""
+function xavier_normal(T::Type, dims; gain = 1)
+   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
+   fan_out = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end-1]
+   std = gain * sqrt(2 / (fan_in + fan_out))
+   return rand(Normal(0, std), dims) |> Array{T}
+end
+xavier_normal(T::Type, dims...; kwargs...) = xavier_normal(T::Type, dims; kwargs...)
+xavier_normal(args...; kwargs...) = xavier_normal(Float64, args...; kwargs...)
+
+# Override flux defaults
+# Flux.glorot_uniform(dims...) = xavier_uniform(Float64, dims...)
+# Flux.glorot_uniform(T::Type, dims...) = xavier_uniform(T, dims...)
+# Flux.glorot_normal(dims...) = xavier_normal(Float64, dims...)
+# Flux.glorot_normal(T::Type, dims...) = xavier_normal(T, dims...)
+
+"""
     dropout(x, p, dims = :)
 
 Fix definition of dropout kernel to apply dropout on both forward and

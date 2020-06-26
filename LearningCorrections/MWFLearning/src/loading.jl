@@ -477,9 +477,63 @@ function init_labels_props(settings::Dict, labels::AbstractMatrix)
     return props
 end
 
+linearsampler(a,b) = a + rand() * (b - a)
+rangesampler(a,b,s=1) = rand(a:s:b)
+log10sampler(a,b) = 10^linearsampler(log10(a), log10(b))
+acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
+
+# Lazy mini batching
+struct LazyMiniBatches{xType,yType,X,Y}
+    len::Int
+    x_sampler::X
+    y_sampler::Y
+    function LazyMiniBatches(len::Int, x_sampler::X, y_sampler::Y) where {X,Y}
+        x = x_sampler()
+        y = y_sampler(x)
+        new{typeof(x), typeof(y), X, Y}(len, x_sampler, y_sampler)
+    end
+end
+function Random.rand(rng::AbstractRNG, d::Random.SamplerTrivial{<:LazyMiniBatches{xType,yType}}) where {xType,yType}
+    x = d[].x_sampler()  :: xType
+    y = d[].y_sampler(x) :: yType
+    return (x,y)
+end
+Base.length(S::LazyMiniBatches) = S.len
+Base.eltype(::Type{<:LazyMiniBatches{xType,yType}}) where {xType,yType} = Tuple{xType,yType}
+Base.iterate(S::LazyMiniBatches, state = 1) = state > S.len ? nothing : (rand(S), state+1)
+Base.iterate(rS::Iterators.Reverse{LazyMiniBatches}, state = rS.itr.len) = state < 1 ? nothing : (rand(rS.itr), state-1)
+# Base.firstindex(::LazyMiniBatches) = 1
+# Base.lastindex(S::LazyMiniBatches) = S.len
+# Base.getindex(S::LazyMiniBatches, i::Number) = rand(S)
+# Base.getindex(S::LazyMiniBatches, I) = [rand(S) for i in I]
+
 # ---------------------------------------------------------------------------- #
 # Physics models
 # ---------------------------------------------------------------------------- #
+
+"""
+    to_float_type_T(T, x)
+
+Convert a number or collection `x` to have floating point type `T`.
+"""
+to_float_type_T(T, x) = map(T, x) # fallback
+to_float_type_T(T, x::Number) = T(x)
+to_float_type_T(T, x::AbstractVector) = convert(Vector{T}, x)
+to_float_type_T(T, x::AbstractMatrix) = convert(Matrix{T}, x)
+to_float_type_T(T, x::AbstractVector{C}) where {C <: Complex} = convert(Vector{Complex{T}}, x)
+to_float_type_T(T, x::AbstractMatrix{C}) where {C <: Complex} = convert(Matrix{Complex{T}}, x)
+
+"""
+Extract `nTE` complex signal echoes from data `z`.
+Assume that `z` is sampled every `TE/n` seconds for some positive integer `n`.
+The output is the magnitude of the last `nTE` points sampled at a multiple of `TE`.
+"""
+function cplx_signal(z::AbstractVecOrMat{C}, nTE::Int = size(z,1) - 1) where {C <: Complex}
+    n = size(z,1)
+    dt = (n-1) ÷ nTE
+    @assert n == 1 + dt * nTE
+    return z[n - dt * (nTE-1) : dt : n, ..]
+end
 
 """
     Hard-coded forward physics model given matrix of parameters

@@ -2,6 +2,26 @@
 # Utils
 # ---------------------------------------------------------------------------- #
 
+function load_settings(
+        default_settings_file,
+    )
+    # Load default settings + merge in custom settings, if given
+    settings = TOML.parsefile(default_settings_file)
+    mergereducer!(x, y) = deepcopy(y) # fallback
+    mergereducer!(x::Dict, y::Dict) = merge!(mergereducer!, x, y)
+    haskey(ENV, "SETTINGSFILE") && merge!(mergereducer!, settings, TOML.parsefile(ENV["SETTINGSFILE"]))
+
+    # Save + print resulting settings
+    outpath = settings["data"]["out"]
+    !isdir(outpath) && mkpath(outpath)
+    open(joinpath(outpath, "settings.toml"); write = true) do io
+        TOML.print(io, settings)
+    end
+    TOML.print(stdout, settings)
+
+    return settings
+end
+
 # Saving, formatting
 getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
 savebson(filename, data::Dict) = @elapsed BSON.bson(filename, data)
@@ -21,36 +41,6 @@ end
 testing_batches(features, labels) = make_minibatch(features, labels, :)
 features(batch) = batch[1]
 labels(batch) = batch[2]
-
-# Lazy mini batching
-struct LazyMiniBatches{xType,yType,X,Y}
-    len::Int
-    x_sampler::X
-    y_sampler::Y
-    function LazyMiniBatches(len::Int, x_sampler::X, y_sampler::Y) where {X,Y}
-        x = x_sampler()
-        y = y_sampler(x)
-        new{typeof(x), typeof(y), X, Y}(len, x_sampler, y_sampler)
-    end
-end
-function Random.rand(rng::AbstractRNG, d::Random.SamplerTrivial{<:LazyMiniBatches{xType,yType}}) where {xType,yType}
-    x = d[].x_sampler()  :: xType
-    y = d[].y_sampler(x) :: yType
-    return (x,y)
-end
-Base.length(S::LazyMiniBatches) = S.len
-Base.eltype(::Type{<:LazyMiniBatches{xType,yType}}) where {xType,yType} = Tuple{xType,yType}
-Base.iterate(S::LazyMiniBatches, state = 1) = state > S.len ? nothing : (rand(S), state+1)
-Base.iterate(rS::Iterators.Reverse{LazyMiniBatches}, state = rS.itr.len) = state < 1 ? nothing : (rand(rS.itr), state-1)
-# Base.firstindex(::LazyMiniBatches) = 1
-# Base.lastindex(S::LazyMiniBatches) = S.len
-# Base.getindex(S::LazyMiniBatches, i::Number) = rand(S)
-# Base.getindex(S::LazyMiniBatches, I) = [rand(S) for i in I]
-
-linearsampler(a,b) = a + rand() * (b - a)
-rangesampler(a,b,s=1) = rand(a:s:b)
-log10sampler(a,b) = 10^linearsampler(log10(a), log10(b))
-acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
 
 function param_summary(model, train_set, test_set)
     test_dofs = length(test_set[2])
@@ -123,180 +113,6 @@ function make_variancelr(state, opt; rate = 250, factor = √10, stdthresh = Inf
         end
     end
 end
-
-"""
-    batchsize(x::AbstractArray)
-
-Returns the length of the last dimension of the data `x`.
-`x` must have dimension of at least 2, otherwise an error is thrown.
-"""
-# batchsize(x::AbstractVector) = 1
-batchsize(x::AbstractVector) = error("x must have dimension of at least 2, but x is a $(typeof(x))")
-# batchsize(x::AbstractVecOrMat) = error("x must have dimension of at least 3, but x is a $(typeof(x))")
-batchsize(x::AbstractArray{T,N}) where {T,N} = size(x, N)
-
-"""
-    channelsize(x::AbstractArray)
-
-Returns the length of the second-last dimension of the data `x`.
-`x` must have dimension of at least 3, otherwise an error is thrown.
-"""
-# Old docstring:
-# Returns the length of the second-last dimension of the data `x`, unless:
-#     `x` is a `Matrix`, in which case 1 is returned.
-#     `x` is a `Vector`, in which case an error is thrown.
-# channelsize(x::AbstractVector) = error("Channel size undefined for AbstractVector's")
-# channelsize(x::AbstractMatrix) = 1
-channelsize(x::AbstractVecOrMat) = error("x must have dimension of at least 3, but x is a $(typeof(x))")
-channelsize(x::AbstractArray{T,N}) where {T,N} = size(x, N-1)
-
-"""
-    heightsize(x::AbstractArray)
-
-Returns the length of the first dimension of the data `x`.
-`x` must have dimension of at least 3, otherwise an error is thrown.
-"""
-# heightsize(x::AbstractVector) = error("heightsize undefined for vectors")
-heightsize(x::AbstractVecOrMat) = error("x must have dimension of at least 3, but x is a $(typeof(x))")
-heightsize(x::AbstractArray) = size(x, 1)
-
-"""
-    log10range(a, b; length = 10)
-
-Returns a `length`-element vector with log-linearly spaced data
-between `a` and `b`
-"""
-log10range(a, b; length = 10) = 10 .^ range(log10(a), log10(b); length = length)
-
-"""
-    linspace(x1,x2,y1,y2) = x -> (y2 - y1) / (x2 - x1) * (x - x1) + y1
-"""
-@inline linspace(x1,x2,y1,y2) = x -> (y2 - y1) / (x2 - x1) * (x - x1) + y1
-
-"""
-    logspace(x1,x2,y1,y2) = x -> 10^linspace(x1, x2, log10(y1), log10(y2))(x)
-"""
-@inline logspace(x1,x2,y1,y2) = x -> 10^linspace(x1, x2, log10(y1), log10(y2))(x)
-
-"""
-    unitsum(x; dims = :) = x ./ sum(x; dims = dims)
-"""
-unitsum(x; dims = :) = x ./ sum(x; dims = dims)
-unitsum!(x; dims = :) = x ./= sum(x; dims = dims)
-
-"""
-    to_float_type_T(T, x)
-
-Convert a number or collection `x` to have floating point type `T`.
-"""
-to_float_type_T(T, x) = map(T, x) # fallback
-to_float_type_T(T, x::Number) = T(x)
-to_float_type_T(T, x::AbstractVector) = convert(Vector{T}, x)
-to_float_type_T(T, x::AbstractMatrix) = convert(Matrix{T}, x)
-to_float_type_T(T, x::AbstractVector{C}) where {C <: Complex} = convert(Vector{Complex{T}}, x)
-to_float_type_T(T, x::AbstractMatrix{C}) where {C <: Complex} = convert(Matrix{Complex{T}}, x)
-
-"""
-Extract `nTE` complex signal echoes from data `z`.
-Assume that `z` is sampled every `TE/n` seconds for some positive integer `n`.
-The output is the magnitude of the last `nTE` points sampled at a multiple of `TE`.
-"""
-function cplx_signal(z::AbstractVecOrMat{C}, nTE::Int = size(z,1) - 1) where {C <: Complex}
-    n = size(z,1)
-    dt = (n-1) ÷ nTE
-    @assert n == 1 + dt * nTE
-    return z[n - dt * (nTE-1) : dt : n, ..]
-end
-
-"""
-    snr(x, n)
-
-Signal-to-noise ratio of the signal `x` relative to the noise `n`.
-"""
-snr(x, n; dims = 1) = 10 .* log10.(sum(abs2, x; dims = dims) ./ sum(abs2, n; dims = dims))
-
-"""
-    noise_level(z, SNR)
-
-Standard deviation of gaussian noise with a given `SNR` level, proportional to the first time point.
-    Note: `SNR` ≤ 0 is special cased to return a noise level of zero.
-"""
-noise_level(z::AbstractArray{T}, SNR::Number) where {T} =
-    SNR ≤ 0 ? 0 .* z[1:1, ..] : abs.(z[1:1, ..]) ./ T(10^(SNR/20)) # Works for both real and complex
-
-gaussian_noise(z::AbstractArray, SNR) = noise_level(z, SNR) .* randn(eltype(z), size(z))
-
-"""
-    add_gaussian(z, SNR)
-
-Add gaussian noise with signal-to-noise ratio `SNR` proportional to the first time point.
-"""
-add_gaussian!(out::AbstractArray, z::AbstractArray, SNR) = out .= z .+ gaussian_noise(z, SNR)
-add_gaussian!(z::AbstractArray, SNR) = z .+= gaussian_noise(z, SNR)
-add_gaussian(z::AbstractArray, SNR) = z .+ gaussian_noise(z, SNR)
-
-"""
-    add_rician(z, SNR)
-
-Add rician noise with signal-to-noise ratio `SNR` proportional to the first time point.
-Always returns a real array.
-"""
-add_rician(m::AbstractArray{<:Real}, SNR) = add_rician(complex.(m), SNR)
-add_rician(z::AbstractArray{<:Complex}, SNR) = abs.(add_gaussian(z, SNR))
-# add_rician(m::AbstractArray{<:Real}, SNR) = add_rician!(copy(m), SNR)
-# add_rician!(m::AbstractArray{<:Real}, SNR) = (gr = inv(√2) * gaussian_noise(m, SNR); gi = inv(√2) * gaussian_noise(m, SNR); m .= sqrt.(abs2.(m.+gr) .+ abs2.(gi)); return m)
-
-"""
-Kaiming uniform initialization.
-"""
-function kaiming_uniform(T::Type, dims; gain = 1)
-   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
-   bound = sqrt(3) * gain / sqrt(fan_in)
-   return rand(Uniform(-bound, bound), dims) |> Array{T}
-end
-kaiming_uniform(T::Type, dims...; kwargs...) = kaiming_uniform(T::Type, dims; kwargs...)
-kaiming_uniform(args...; kwargs...) = kaiming_uniform(Float64, args...; kwargs...)
-
-"""
-Kaiming normal initialization.
-"""
-function kaiming_normal(T::Type, dims; gain = 1)
-   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
-   std = gain / sqrt(fan_in)
-   return rand(Normal(0, std), dims) |> Array{T}
-end
-kaiming_normal(T::Type, dims...; kwargs...) = kaiming_normal(T::Type, dims; kwargs...)
-kaiming_normal(args...; kwargs...) = kaiming_normal(Float64, args...; kwargs...)
-
-"""
-Xavier uniform initialization.
-"""
-function xavier_uniform(T::Type, dims; gain = 1)
-   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
-   fan_out = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end-1]
-   bound = sqrt(3) * gain * sqrt(2 / (fan_in + fan_out))
-   return rand(Uniform(-bound, bound), dims) |> Array{T}
-end
-xavier_uniform(T::Type, dims...; kwargs...) = xavier_uniform(T::Type, dims; kwargs...)
-xavier_uniform(args...; kwargs...) = xavier_uniform(Float64, args...; kwargs...)
-
-"""
-Xavier normal initialization.
-"""
-function xavier_normal(T::Type, dims; gain = 1)
-   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
-   fan_out = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end-1]
-   std = gain * sqrt(2 / (fan_in + fan_out))
-   return rand(Normal(0, std), dims) |> Array{T}
-end
-xavier_normal(T::Type, dims...; kwargs...) = xavier_normal(T::Type, dims; kwargs...)
-xavier_normal(args...; kwargs...) = xavier_normal(Float64, args...; kwargs...)
-
-# Override flux defaults
-# Flux.glorot_uniform(dims...) = xavier_uniform(Float64, dims...)
-# Flux.glorot_uniform(T::Type, dims...) = xavier_uniform(T, dims...)
-# Flux.glorot_normal(dims...) = xavier_normal(Float64, dims...)
-# Flux.glorot_normal(T::Type, dims...) = xavier_normal(T, dims...)
 
 ####
 #### Callbacks
@@ -538,73 +354,4 @@ function make_checkpoint_model_cb(state, model, opt, filename = nothing)
             @warn sprint(showerror, e, catch_backtrace())
         end
     end
-end
-
-####
-#### Gradient testing
-####
-
-function ngradient(f, xs::AbstractArray...)
-    grads = zeros.(eltype.(xs), size.(xs))
-    for (x, Δ) in zip(xs, grads), i in 1:length(x)
-        δ = cbrt(eps(eltype(x))) # cbrt seems to be slightly better than sqrt
-        tmp = x[i]
-        x[i] = tmp - δ/2
-        y1 = f(xs...)
-        x[i] = tmp + δ/2
-        y2 = f(xs...)
-        x[i] = tmp
-        Δ[i] = (y2-y1)/δ
-        display.(Δ[i]) #TODO FIXME
-    end
-    return grads
-end
-
-function gradcheck(f, m, xs::AbstractArray...; onlyfirst = true, seed = 0)
-    ps = Flux.params(m)
-    !isnothing(seed) && Random.seed!(seed)
-    g0 = Flux.gradient(() -> f(m, xs...), ps) |> g -> [g[p] for p in ps]
-    onlyfirst && (g0 = first.(g0))
-    display.(g0) #TODO FIXME
-
-    m  = Flux.paramtype(BigFloat, m)
-    ys = Flux.paramtype(BigFloat, xs)
-    ps = Flux.params(m)
-    onlyfirst && (ps = [@views(p[1:1]) for p in ps])
-    g1 = MWFLearning.ngradient(ps...) do (args...)
-        !isnothing(seed) && Random.seed!(seed)
-        f(m, ys...)
-    end
-    onlyfirst && (g1 = first.(g1))
-    display.(g1) #TODO FIXME
-
-    display.(g0 .- g1) #TODO FIXME
-    map(g0, g1) do g0, g1
-        display(abs.(g0 .- g1) .< cbrt.(eps.(g0))^2) #TODO FIXME
-    end
-end;
-
-#=
-let
-    m = Flux.Dense(2,2,Flux.relu) |> Flux.f32
-    x = 100*rand(2) |> Flux.f32
-    MWFLearning.gradcheck((m,x) -> sum(abs2, m(x)), m, x)
-end;
-let m = Flux.f32(m), xy = Flux.f32(test_data)
-    # MWFLearning.H_LIGOCVAE(m, xy...) |> display
-    MWFLearning.gradcheck((m,xy...) -> MWFLearning.H_LIGOCVAE(m, xy...), m, xy...)
-end;
-let m = Flux.f64(m), xy = Flux.f64(test_data)
-    # MWFLearning.H_LIGOCVAE(m, xy...) |> display
-    MWFLearning.gradcheck((m,xy...) -> MWFLearning.H_LIGOCVAE(m, xy...), m, xy...)
-end;
-=#
-
-function gradcheck(f, xs::AbstractArray...)
-    dx0 = Flux.gradient(f, xs...)
-    dx1 = ngradient(f, xs...)
-    @show maximum.(abs, dx0)
-    @show maximum.(abs, dx1)
-    @show maximum.(abs, (dx0 .- dx1) ./ dx0)
-    all(isapprox.(dx0, dx1, rtol = 1e-4, atol = 0))
 end

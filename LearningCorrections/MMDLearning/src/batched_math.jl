@@ -95,7 +95,6 @@ Zygote.@adjoint function batcheddiag(x::AbstractMatrix)
         (LinearAlgebra.Diagonal(reshape(Δ,:)),) # ...but need to reshape nx1 matrix Δ to n-vector
     end
 end
-# Zygote.refresh() #TODO
 
 function batcheddiag(x::AbstractArray{T,3}) where {T}
     nbatch = size(x,3)
@@ -124,7 +123,6 @@ Zygote.@adjoint function batcheddiag(x::AbstractArray{T,3}) where {T}
         return (y,)
     end
 end
-# Zygote.refresh() #TODO
 
 function batcheddiag_brute(x::AbstractArray{T,3}) where {T}
     nbatch = size(x,3)

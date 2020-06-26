@@ -1,26 +1,83 @@
 ####
-#### Settings file loading
+#### Physics model
 ####
 
-function load_settings(
-        default_settings_file,
-    )
-    # Load default settings + merge in custom settings, if given
-    settings = TOML.parsefile(default_settings_file)
-    mergereducer!(x, y) = deepcopy(y) # fallback
-    mergereducer!(x::Dict, y::Dict) = merge!(mergereducer!, x, y)
-    haskey(ENV, "SETTINGSFILE") && merge!(mergereducer!, settings, TOML.parsefile(ENV["SETTINGSFILE"]))
+abstract type PhysicsModel end
 
-    # Save + print resulting settings
-    outpath = settings["data"]["out"]
-    !isdir(outpath) && mkpath(outpath)
-    open(joinpath(outpath, "settings.toml"); write = true) do io
-        TOML.print(io, settings)
-    end
-    TOML.print(stdout, settings)
-
-    return settings
+struct ClosedForm{P<:PhysicsModel}
+    p::P
 end
+
+const MaybeClosedForm{P} = Union{<:P, ClosedForm{<:P}}
+
+# Abstract interface
+hasclosedform(p::PhysicsModel) = false # fallback
+physicsmodel(p::PhysicsModel) = p
+physicsmodel(c::ClosedForm) = c.p
+ntheta(c::ClosedForm) = ntheta(physicsmodel(c))
+nsignal(c::ClosedForm) = nsignal(physicsmodel(c))
+θbounds(p::PhysicsModel) = tuple.(θlower(p), θupper(p))
+
+####
+#### Toy problem
+####
+
+@with_kw struct ToyModel_v1{T} <: PhysicsModel
+    ϵ0::T = T(0.01)
+    Ytrain::Ref{Matrix{T}} = Ref(zeros(T,0,0))
+    Ytest::Ref{Matrix{T}} = Ref(zeros(T,0,0))
+    Yval::Ref{Matrix{T}} = Ref(zeros(T,0,0))
+end
+
+ntheta(::ToyModel_v1) = 5
+nsignal(::ToyModel_v1) = 128
+hasclosedform(::ToyModel_v1) = true
+beta(::ToyModel_v1) = 4
+beta(::ClosedForm{<:ToyModel_v1}) = 2
+
+θlabels(::ToyModel_v1) = ["freq", "phase", "offset", "amp", "tconst"]
+θlower(::ToyModel_v1{T}) where {T} = [1/T(64),    T(0), 1/T(4), 1/T(10),  T(16)]
+θupper(::ToyModel_v1{T}) where {T} = [1/T(32), T(pi)/2, 1/T(2),  1/T(4), T(128)]
+θerror(p::ToyModel_v1, theta, thetahat) = abs.((theta .- thetahat)) ./ (θupper(p) .- θlower(p))
+
+function initialize!(p::ToyModel_v1; ntrain::Int = 1_000, ntest::Int = ntrain, nval::Int = ntrain)
+    rng = Random.seed!(0)
+    p.Ytrain[] = sampleX(ClosedForm(p), ntrain, p.ϵ0)
+    p.Ytest[]  = sampleX(ClosedForm(p), ntest, p.ϵ0)
+    p.Yval[]   = sampleX(ClosedForm(p), nval, p.ϵ0)
+    Random.seed!(rng)
+    return p
+end
+
+sampleθ(p::ToyModel_v1, n::Int = 1) = permutedims(reduce(hcat, rand.(Uniform.(θlower(p), θupper(p)), n)))
+
+sampleX(p::MaybeClosedForm{ToyModel_v1}, n::Int = 1, epsilon = nothing) = signal_model(p, sampleθ(physicsmodel(p), n), epsilon)
+sampleX(p::MaybeClosedForm{ToyModel_v1}, theta, epsilon = nothing) = signal_model(p, theta, epsilon)
+
+function sampleY(p::ToyModel_v1, n::Int = 1; dataset::Symbol)
+    dataset == :train ? (isnothing(n) ? p.Ytrain[] : sample_columns(p.Ytrain[], n)) :
+    dataset == :test  ? (isnothing(n) ? p.Ytest[]  : sample_columns(p.Ytest[], n)) :
+    dataset == :val   ? (isnothing(n) ? p.Yval[]   : sample_columns(p.Yval[], n)) :
+    error("dataset must be :train, :test, or :val")
+end
+
+function _signal_model(
+        theta::AbstractVecOrMat,
+        epsilon,
+        nsamples::Int,
+        beta::Int,
+    )
+    freq, phase, offset, amp, tconst = theta[1:1,:], theta[2:2,:], theta[3:3,:], theta[4:4,:], theta[5:5,:]
+    ts = 0:nsamples-1
+    y = @. (offset + amp * sin(2*(pi*freq*ts) - phase)^beta) * exp(-ts/tconst)
+    if !isnothing(epsilon)
+        ϵR = epsilon .* randn(eltype(theta), nsamples, size(theta, 2))
+        ϵI = epsilon .* randn(eltype(theta), nsamples, size(theta, 2))
+        y = @. sqrt((y + ϵR)^2 + ϵI^2)
+    end
+    return y
+end
+signal_model(p::MaybeClosedForm{ToyModel_v1}, theta::AbstractVecOrMat, epsilon) = _signal_model(theta, epsilon, nsignal(p), beta(p))
 
 ####
 #### Signal model
@@ -139,145 +196,6 @@ function mutate_signal(Y::AbstractVecOrMat; meanmutations::Int = 0)
     p = meanmutations / nrow
     return Y .* (rand(size(Y)...) .> p)
 end
-
-####
-#### MMD plotting
-####
-
-function mmd_heatmap(X, Y, σ; skipdiag = true)
-    γ = inv(2*σ^2)
-    k = Δ -> exp(-γ*Δ)
-
-    # compute mmd
-    work = mmd_work(X, Y)
-    mmd = mmd!(work, k, X, Y)
-
-    # recompute with diag for plotting
-    @unpack Kxx, Kyy, Kxy = work
-    if !skipdiag
-        kernel_pairwise!(Kxx, k, X, X, Val(false))
-        kernel_pairwise!(Kyy, k, Y, Y, Val(false))
-        kernel_pairwise!(Kxy, k, X, Y, Val(false))
-    end
-
-    s = x -> string(round(x; sigdigits = 3))
-    m = size(Kxx, 1)
-    K = [Kxx Kxy; Kxy' Kyy]
-    Kplot = (x -> x == 0 ? 0.0 : log10(x)).(K[end:-1:1,:])
-    p = heatmap(Kplot; title = "m*MMD = $(s(m*mmd)), sigma = $(s(σ))", clims = (max(minimum(Kplot), -10), 0))
-
-    return p
-end
-
-function mmd_witness(X, Y, σ; skipdiag = false)
-    γ = inv(2*σ^2)
-    k = Δ -> exp(-γ*Δ)
-
-    # compute mmd
-    work = mmd_work(X, Y)
-    mmd = mmd!(work, k, X, Y)
-
-    # recompute with diag for plotting
-    @unpack Kxx, Kyy, Kxy = work
-    if !skipdiag
-        kernel_pairwise!(Kxx, k, X, X, Val(false))
-        kernel_pairwise!(Kyy, k, Y, Y, Val(false))
-        kernel_pairwise!(Kxy, k, X, Y, Val(false))
-    end
-
-    s = x -> string(round(x; sigdigits = 3))
-    m = size(Kxx, 1)
-    fX = vec(mean(Kxx; dims = 1)) - mean(Kxy; dims = 2)
-    fY = vec(mean(Kxy; dims = 1)) - vec(mean(Kyy; dims = 1))
-    phist = plot(; title = "mmd = $(m * (mean(fX) - mean(fY)))")
-    density!(phist, m .* fY; l = (4, :blue), label = "true data: m*fY")
-    density!(phist, m .* fX; l = (4, :red),  label = "simulated: m*fX")
-
-    return phist
-end
-
-####
-#### Kernel bandwidth opt
-####
-
-function mmd_bandwidth_bruteopt(sampleX, sampleY, bounds; nsigma = 100, nevals = 100)
-    # work = mmd_work(sampleX(), sampleY())
-    function f(logσ)
-        σ = exp(logσ)
-        γ = inv(2*σ^2)
-        k = Δ -> exp(-γ*Δ)
-        X, Y = sampleX(), sampleY()
-        mmds = [mmd(k, sampleX(), sampleY()) for _ in 1:nevals]
-        MMDsq = mean(mmds)
-        MMDvar = var(mmds)
-        σ = √MMDvar
-        MMDsq / σ
-    end
-    logσ = range(bounds[1], bounds[2]; length = nsigma)
-    return logσ, [f(logσ) for logσ in logσ]
-end
-
-function mmd_bandwidth_optfun(logσ::Real, X, Y)
-    m = size(X,2)
-    σ = exp(logσ)
-    γ = inv(2σ^2)
-    k(Δ) = exp(-γ*Δ)
-    MMDsq  = m * mmd(k, X, Y)
-    MMDvar = m^2 * mmdvar(k, X, Y)
-    ϵ = eps(typeof(MMDvar))
-    t = MMDsq / √max(MMDvar, ϵ) # avoid division by zero/negative
-    return t
-end
-∇mmd_bandwidth_optfun(logσ::Real, args...; kwargs...) = ForwardDiff.derivative(logσ -> mmd_bandwidth_optfun(logσ, args...; kwargs...), logσ)
-
-function mmd_flux_bandwidth_optfun(logσ::AbstractArray, X, Y)
-    # Avoiding div by zero/negative:
-    #   m^2 * MMDvar >= ϵ  -->  m * MMDσ >= √ϵ
-    MMDsq, MMDvar = mmd_and_mmdvar_flux(logσ, X, Y)
-    m = size(X,2)
-    ϵ = eps(typeof(MMDvar))
-    t = m*MMDsq / √max(m^2*MMDvar, ϵ)
-    return t
-end
-function ∇mmd_flux_bandwidth_optfun(logσ::AbstractArray, args...; kwargs...)
-    if length(logσ) <= 16
-        ForwardDiff.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)
-    else
-        Zygote.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)[1]
-    end
-end
-∇mmd_flux_bandwidth_optfun_fwddiff(logσ::AbstractArray, args...; kwargs...) = ForwardDiff.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)
-∇mmd_flux_bandwidth_optfun_zygote(logσ::AbstractArray, args...; kwargs...) = Zygote.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)[1]
-
-#= (∇)mmd_(flux_)bandwidth_optfun speed + consistency testing
-for m in [32,64,128,256,512], nsigma in [16], a in [2.0]
-    logsigma = rand(nsigma)
-    X, Y = randn(2,m), a.*randn(2,m)
-    
-    if nsigma == 1
-        t1 = mmd_bandwidth_optfun(logsigma, X, Y)
-        t2 = mmd_flux_bandwidth_optfun(logsigma, X, Y)
-        # @show t1, t2
-        # @show t1-t2
-        @assert t1≈t2
-    end
-
-    g1 = nsigma == 1 ? ∇mmd_bandwidth_optfun(logsigma, X, Y) : nothing
-    g2 = ∇mmd_flux_bandwidth_optfun_fwddiff(logsigma, X, Y)
-    g3 = ∇mmd_flux_bandwidth_optfun_zygote(logsigma, X, Y)
-    # @show g1, g2, g3
-    # @show g1-g2, g2-g3
-    @assert (nsigma != 1 || g1≈g2) && g2≈g3
-
-    # @btime mmd_bandwidth_optfun($logsigma, $X, $Y)
-    # @btime mmd_flux_bandwidth_optfun($logsigma, $X, $Y)
-
-    @show m, nsigma
-    (nsigma == 1) && @btime ∇mmd_bandwidth_optfun($logsigma, $X, $Y)
-    @btime ∇mmd_flux_bandwidth_optfun_fwddiff($logsigma, $X, $Y)
-    @btime ∇mmd_flux_bandwidth_optfun_zygote($logsigma, $X, $Y)
-end
-=#
 
 ####
 #### Direct data samplers from prior derived from MLE fitted signals
@@ -431,82 +349,6 @@ function make_mle_data_samplers(
     Random.seed!(rng)
 
     return @ntuple(sampleX, sampleY, sampleθ, fits_train, fits_test, fits_val)
-end
-
-####
-#### Toy problem samplers
-####
-
-function toy_signal_model(
-        theta::AbstractVecOrMat,
-        epsilon = nothing,
-        power = 2;
-        nsamples = 128,
-    )
-    @assert size(theta, 1) == 5
-    freq   = theta[1:1,:]
-    phase  = theta[2:2,:]
-    offset = theta[3:3,:]
-    amp    = theta[4:4,:]
-    tconst = theta[5:5,:]
-    ts = 0:nsamples-1
-    y = @. (offset + amp * abs(sin(2*(pi*freq*ts) - phase))^power) * exp(-ts/tconst)
-    if !isnothing(epsilon)
-        y = rand.(Rician.(y, epsilon))
-    end
-    return y
-end
-toy_signal_model(n::Int, args...; kwargs...) = toy_signal_model(toy_theta_sampler(n), args...; kwargs...)
-
-toy_theta_bounds(T = Float64) = map(x -> T.(x), [(1/64, 1/32), (0.0, pi/2), (0.25, 0.5), (0.1, 0.25), (16.0, 128.0)])
-
-function toy_theta_sampler(n::Int = 1)
-    freq   = rand(Uniform(1/64,  1/32), n)
-    phase  = rand(Uniform( 0.0,  pi/2), n)
-    offset = rand(Uniform(0.25,   0.5), n)
-    amp    = rand(Uniform( 0.1,  0.25), n)
-    tconst = rand(Uniform(16.0, 128.0), n)
-    return permutedims(hcat(freq, phase, offset, amp, tconst))
-end
-
-function toy_theta_error(theta, thetahat)
-    return abs.((theta .- thetahat)) ./ [1/32 - 1/64, pi/2 - 0.0, 0.5 - 0.25, 0.25 - 0.1, 128.0 - 16.0]
-end
-
-function make_toy_samplers(;
-        input_noise = false,
-        epsilon = nothing,
-        power = 4.0,
-        ntrain = 1_000,
-        ntest = ntrain,
-        nval = ntrain,
-    )
-
-    # Set random seed for consistent test/train/val sets
-    rng = Random.seed!(0)
-
-    # Sample parameter prior space
-    sampleθ = toy_theta_sampler
-
-    # Sample (incorrect) model
-    sampleX = input_noise ?
-        (batchsize, noise) -> toy_signal_model(batchsize, noise, power) :
-        (batchsize) -> toy_signal_model(batchsize, nothing, power)
-
-    # Sample data
-    _sampleY(batchsize) = toy_signal_model(batchsize, epsilon, 2)
-    Ytrain, Ytest, Yval = _sampleY(ntrain), _sampleY(ntest), _sampleY(nval)
-    sampleY = function(batchsize; dataset = :train)
-        dataset == :train ? (batchsize === nothing ? Ytrain : _sampleY(batchsize)) :
-        dataset == :test  ? (batchsize === nothing ? Ytest  : _sampleY(batchsize)) :
-        dataset == :val   ? (batchsize === nothing ? Yval   : _sampleY(batchsize)) :
-        error("dataset must be :train, :test, or :val")
-    end
-
-    # Reset random seed
-    Random.seed!(rng)
-
-    return sampleX, sampleY, sampleθ
 end
 
 ####

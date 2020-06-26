@@ -22,7 +22,7 @@ make_model(settings::Dict) = Dict{String,Any}([name => make_model(settings, name
 
 function is_model_name(name::Symbol)
     try
-        hasmethod(MWFLearning.eval(name), (DataInfo,))
+        hasmethod(MMDLearning.eval(name), (DataInfo,))
     catch e
         (e isa UndefVarError) ? false : rethrow(e)
     end
