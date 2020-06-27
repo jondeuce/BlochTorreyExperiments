@@ -111,25 +111,6 @@ end;
 # Save models
 BSON.bson(joinpath(save_folder, "plot-models.bson"), all_generators);
 
-# Convenience functions
-module Generator
-    import Flux: Chain
-    const G = Ref{Chain}()
-    split_correction_and_noise(μlogσ) = μlogσ[1:end÷2, :], exp.(μlogσ[end÷2+1:end, :])
-    noise_instance(X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
-    get_correction_and_noise(X) = split_correction_and_noise(G[](X))
-    get_correction(X) = get_correction_and_noise(X)[1]
-    get_noise(X) = get_correction_and_noise(X)[2]
-    get_noise_instance(X) = noise_instance(X, get_noise(X))
-    get_corrected_signal(X) = get_corrected_signal(X, get_correction_and_noise(X)...)
-    get_corrected_signal(X, dX, ϵ) = get_corrected_signal(abs.(X .+ dX), ϵ)
-    function get_corrected_signal(X, ϵ)
-        ϵR, ϵI = noise_instance(X, ϵ), noise_instance(X, ϵ)
-        Xϵ = @. sqrt((X + ϵR)^2 + ϵI^2)
-        return Xϵ
-    end
-end
-
 #= TODO
 let _models = BSON.load("/project/st-arausch-1/jcd1994/code/BlochTorreyExperiments-active/MMDLearning/output/plots-checkpoint-3/plot-models.bson")
     # GENERATOR_MODELS[1] = _models[:mmd_models]["mmd"]
@@ -153,11 +134,10 @@ const Xs = Dict{String,Any}(
 );
 for (dataset, G) in zip(GENERATOR_NAMES, GENERATOR_MODELS)
     # dataset == "hyb" || continue #TODO
-    Generator.G[] = G
-    g_delta, g_eps   = Generator.get_correction_and_noise(X);
-    Xs[dataset]["Xhat"]    = Generator.get_corrected_signal(X, g_delta, g_eps); # add learned correction + learned noise
+    g_delta, g_eps = correction_and_noiselevel(G, X);
+    Xs[dataset]["Xhat"]    = corrected_signal_instance(G, X, g_delta, g_eps); # add learned correction + learned noise
     Xs[dataset]["Xdelta"]  = abs.(X .+ g_delta); # add learned noise only
-    Xs[dataset]["Xeps"]    = Generator.get_corrected_signal(X, g_eps); # add learned noise only
+    Xs[dataset]["Xeps"]    = corrected_signal_instance(G, X, g_eps); # add learned noise only
     Xs[dataset]["g_delta"] = g_delta;
     Xs[dataset]["g_eps"]   = g_eps;
 end;
@@ -579,8 +559,8 @@ function hist_distance_loop(
             break
         end
         for mtype in ["current", "best"]
-            Generator.G[] = deepcopy(BSON.load(joinpath(results_dir, row.folder, "$mtype-model.bson"))["G"])
-            X̂ = Generator.get_corrected_signal(X)
+            G = deepcopy(BSON.load(joinpath(results_dir, row.folder, "$mtype-model.bson"))["G"])
+            X̂ = corrected_signal_instance(G, X)
             hX̂ = _make_hist_fast(vec(X̂), edges)
             ds = (
                 Cityblock = _dhist(hX̂, hY, Cityblock()),
@@ -659,15 +639,12 @@ let
         [G => Dict{String,Any}() for G in GENERATOR_NAMES]...,
     );
     for (dataset, G) in zip(GENERATOR_NAMES, GENERATOR_MODELS)
-        local _G = deepcopy(Generator.G[])
-        Generator.G[] = deepcopy(G)
-        local g_delta, g_eps = Generator.get_correction_and_noise(X);
-        Xs[dataset]["Xhat"]    = Generator.get_corrected_signal(X, g_delta, g_eps); # add learned correction + learned noise
+        local g_delta, g_eps = correction_and_noiselevel(G, X);
+        Xs[dataset]["Xhat"]    = corrected_signal_instance(G, X, g_delta, g_eps); # add learned correction + learned noise
         Xs[dataset]["Xdelta"]  = abs.(X .+ g_delta); # add learned noise only
-        Xs[dataset]["Xeps"]    = Generator.get_corrected_signal(X, g_eps); # add learned noise only
+        Xs[dataset]["Xeps"]    = corrected_signal_instance(G, X, g_eps); # add learned noise only
         Xs[dataset]["g_delta"] = copy(g_delta);
         Xs[dataset]["g_eps"]   = copy(g_eps);
-        Generator.G[] = deepcopy(_G)
     end;
     for (name, maps) in Xs
         println(name); display(Xs[name])

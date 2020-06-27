@@ -55,22 +55,6 @@ if SAVE && (TEST_DATA_LEARNED_CORR || TEST_DATA_LEARNED_NOISE || TRAIN_DATA_LEAR
     BSON.bson(savepath("log", "mmd-models.bson"), deepcopy(mmd_models))
 end
 
-# Convenience functions
-split_correction_and_noise(μlogσ) = μlogσ[1:end÷2, :], exp.(μlogσ[end÷2+1:end, :])
-noise_instance(X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
-get_correction_and_noise(X) = split_correction_and_noise(mmd_models["mmd"](mmd_models["vae.E"](X)))
-get_correction(X) = get_correction_and_noise(X)[1]
-get_noise(X) = get_correction_and_noise(X)[2]
-get_noise_instance(X) = noise_instance(X, get_noise(X))
-get_corrected_signal(X) = get_corrected_signal(X, get_correction_and_noise(X)...)
-get_corrected_signal(X, dX, ϵ) = get_corrected_signal(abs.(X .+ dX), ϵ)
-function get_corrected_signal(X, ϵ)
-    ϵR, ϵI = noise_instance(X, ϵ), noise_instance(X, ϵ)
-    Xϵ = @. sqrt((X + ϵR)^2 + ϵI^2)
-    # !IS_TOY_MODEL && (Xϵ = Xϵ ./ sum(Xϵ; dims = 1)) #TODO don't need to normalize learned corrections
-    return Xϵ
-end
-
 # Load and prepare signal data
 @info "Preparing data..."
 function make_samples(n; dataset)
@@ -137,8 +121,8 @@ function rician_data_noise(y)
     y = nrm == "unitsum" ? unitsum(y; dims = 1) : y
     return y
 end
-learned_data_noise(y) = (_y = DenseResize()(y); reshape(get_corrected_signal(_y, get_noise(_y)), size(y))) # add learned Rician noise to uncorrected data
-learned_data_correction_and_noise(y) = reshape(get_corrected_signal(DenseResize()(y)), size(y)) # add learned Rician noise to corrected data
+learned_data_noise(y) = (_y = DenseResize()(y); reshape(corrected_signal_instance(_y, get_noise(_y)), size(y))) # add learned Rician noise to uncorrected data
+learned_data_correction_and_noise(y) = reshape(corrected_signal_instance(DenseResize()(y)), size(y)) # add learned Rician noise to corrected data
 
 test_data_noise(y) = TEST_DATA_LEARNED_CORR ? learned_data_correction_and_noise(y) : TEST_DATA_LEARNED_NOISE ? learned_data_noise(y) : rician_data_noise(y)
 train_data_noise(y) = TRAIN_DATA_LEARNED_CORR ? learned_data_correction_and_noise(y) : TRAIN_DATA_LEARNED_NOISE ? learned_data_noise(y) : rician_data_noise(y)

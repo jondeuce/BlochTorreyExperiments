@@ -1,5 +1,43 @@
 ####
-#### Physics model
+#### Rician correctors
+####
+
+abstract type RicianCorrector end
+
+# G : 𝐑^n -> 𝐑^2n mapping X ∈ 𝐑^n ⟶ δX,logϵ ∈ 𝐑^n concatenated as [δX; logϵ]
+@with_kw struct VectorRicianCorrector{Gtype} <: RicianCorrector
+    G::Gtype
+end
+
+# G : 𝐑^n -> 𝐑^n mapping X ∈ 𝐑^n ⟶ δX ∈ 𝐑^n with fixed noise ϵ0 ∈ 𝐑, or ϵ0 ∈ 𝐑^n
+@with_kw struct FixedNoiseVectorRicianCorrector{Gtype,T} <: RicianCorrector
+    G::Gtype
+    ϵ0::T
+end
+
+# Concrete methods to extract δX and ϵ
+function correction_and_noiselevel(G::VectorRicianCorrector, X)
+    δX_logϵ = G.G(X)
+    δX_logϵ[1:end÷2, :], exp.(δX_logϵ[end÷2+1:end, :])
+end
+correction_and_noiselevel(G::FixedNoiseVectorRicianCorrector, X) = G.G(X), ϵ0
+
+# Derived convenience functions
+correction(G::RicianCorrector, X) = correction_and_noiselevel(G, X)[1]
+noiselevel(G::RicianCorrector, X) = correction_and_noiselevel(G, X)[2]
+noise_instance(G::RicianCorrector, X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
+noise_instance(G::RicianCorrector, X) = noise_instance(G, X, noiselevel(G, X))
+corrected_signal_instance(G::RicianCorrector, X) = corrected_signal_instance(G, X, correction_and_noiselevel(G, X)...)
+corrected_signal_instance(G::RicianCorrector, X, δX, ϵ) = corrected_signal_instance(G, abs.(X .+ δX), ϵ)
+function corrected_signal_instance(G::RicianCorrector, X, ϵ)
+    ϵR = noise_instance(G, X, ϵ)
+    ϵI = noise_instance(G, X, ϵ)
+    Xϵ = @. sqrt((X + ϵR)^2 + ϵI^2)
+    return Xϵ
+end
+
+####
+#### Physics model interface
 ####
 
 abstract type PhysicsModel end
@@ -8,39 +46,40 @@ struct ClosedForm{P<:PhysicsModel}
     p::P
 end
 
-const MaybeClosedForm{P} = Union{<:P, ClosedForm{<:P}}
-
 # Abstract interface
 hasclosedform(p::PhysicsModel) = false # fallback
 physicsmodel(p::PhysicsModel) = p
 physicsmodel(c::ClosedForm) = c.p
+θbounds(p::PhysicsModel) = tuple.(θlower(p), θupper(p))
+θbounds(c::ClosedForm) = θbounds(physicsmodel(c))
 ntheta(c::ClosedForm) = ntheta(physicsmodel(c))
 nsignal(c::ClosedForm) = nsignal(physicsmodel(c))
-θbounds(p::PhysicsModel) = tuple.(θlower(p), θupper(p))
 
 ####
 #### Toy problem
 ####
 
-@with_kw struct ToyModel_v1{T} <: PhysicsModel
+@with_kw struct ToyModel{T} <: PhysicsModel
     ϵ0::T = T(0.01)
     Ytrain::Ref{Matrix{T}} = Ref(zeros(T,0,0))
     Ytest::Ref{Matrix{T}} = Ref(zeros(T,0,0))
     Yval::Ref{Matrix{T}} = Ref(zeros(T,0,0))
 end
+const ClosedToyModel{T} = ClosedForm{ToyModel{T}}
+const MaybeClosedToyModel{T} = Union{ToyModel{T}, ClosedToyModel{T}}
 
-ntheta(::ToyModel_v1) = 5
-nsignal(::ToyModel_v1) = 128
-hasclosedform(::ToyModel_v1) = true
-beta(::ToyModel_v1) = 4
-beta(::ClosedForm{<:ToyModel_v1}) = 2
+ntheta(::ToyModel) = 5
+nsignal(::ToyModel) = 128
+hasclosedform(::ToyModel) = true
+beta(::ToyModel) = 4
+beta(::ClosedToyModel) = 2
 
-θlabels(::ToyModel_v1) = ["freq", "phase", "offset", "amp", "tconst"]
-θlower(::ToyModel_v1{T}) where {T} = [1/T(64),    T(0), 1/T(4), 1/T(10),  T(16)]
-θupper(::ToyModel_v1{T}) where {T} = [1/T(32), T(pi)/2, 1/T(2),  1/T(4), T(128)]
-θerror(p::ToyModel_v1, theta, thetahat) = abs.((theta .- thetahat)) ./ (θupper(p) .- θlower(p))
+θlabels(::ToyModel) = ["freq", "phase", "offset", "amp", "tconst"]
+θlower(::ToyModel{T}) where {T} = [1/T(64),   T(0), 1/T(4), 1/T(10),  T(16)]
+θupper(::ToyModel{T}) where {T} = [1/T(32), T(π)/2, 1/T(2),  1/T(4), T(128)]
+θerror(p::ToyModel, theta, thetahat) = abs.((theta .- thetahat)) ./ (θupper(p) .- θlower(p))
 
-function initialize!(p::ToyModel_v1; ntrain::Int = 1_000, ntest::Int = ntrain, nval::Int = ntrain)
+function initialize!(p::ToyModel; ntrain::Int = 1_000, ntest::Int = ntrain, nval::Int = ntrain)
     rng = Random.seed!(0)
     p.Ytrain[] = sampleX(ClosedForm(p), ntrain, p.ϵ0)
     p.Ytest[]  = sampleX(ClosedForm(p), ntest, p.ϵ0)
@@ -49,12 +88,12 @@ function initialize!(p::ToyModel_v1; ntrain::Int = 1_000, ntest::Int = ntrain, n
     return p
 end
 
-sampleθ(p::ToyModel_v1, n::Int = 1) = permutedims(reduce(hcat, rand.(Uniform.(θlower(p), θupper(p)), n)))
+sampleθ(p::ToyModel, n::Union{Int, Nothing}) = permutedims(reduce(hcat, rand.(Uniform.(θlower(p), θupper(p)), n)))
 
-sampleX(p::MaybeClosedForm{ToyModel_v1}, n::Int = 1, epsilon = nothing) = signal_model(p, sampleθ(physicsmodel(p), n), epsilon)
-sampleX(p::MaybeClosedForm{ToyModel_v1}, theta, epsilon = nothing) = signal_model(p, theta, epsilon)
+sampleX(p::MaybeClosedToyModel, n::Union{Int, Nothing}, epsilon = nothing) = sampleX(p, sampleθ(physicsmodel(p), n), epsilon)
+sampleX(p::MaybeClosedToyModel, theta, epsilon = nothing) = signal_model(p, theta, epsilon)
 
-function sampleY(p::ToyModel_v1, n::Int = 1; dataset::Symbol)
+function sampleY(p::ToyModel, n::Union{Int, Nothing}; dataset::Symbol)
     dataset == :train ? (isnothing(n) ? p.Ytrain[] : sample_columns(p.Ytrain[], n)) :
     dataset == :test  ? (isnothing(n) ? p.Ytest[]  : sample_columns(p.Ytest[], n)) :
     dataset == :val   ? (isnothing(n) ? p.Yval[]   : sample_columns(p.Yval[], n)) :
@@ -68,8 +107,8 @@ function _signal_model(
         beta::Int,
     )
     freq, phase, offset, amp, tconst = theta[1:1,:], theta[2:2,:], theta[3:3,:], theta[4:4,:], theta[5:5,:]
-    ts = 0:nsamples-1
-    y = @. (offset + amp * sin(2*(pi*freq*ts) - phase)^beta) * exp(-ts/tconst)
+    t = 0:nsamples-1
+    y = @. (offset + amp * sin(2*(pi*freq)*t - phase)^beta) * exp(-t/tconst)
     if !isnothing(epsilon)
         ϵR = epsilon .* randn(eltype(theta), nsamples, size(theta, 2))
         ϵI = epsilon .* randn(eltype(theta), nsamples, size(theta, 2))
@@ -77,7 +116,7 @@ function _signal_model(
     end
     return y
 end
-signal_model(p::MaybeClosedForm{ToyModel_v1}, theta::AbstractVecOrMat, epsilon) = _signal_model(theta, epsilon, nsignal(p), beta(p))
+signal_model(p::MaybeClosedToyModel, theta::AbstractVecOrMat, epsilon) = _signal_model(theta, epsilon, nsignal(p), beta(p))
 
 ####
 #### Signal model
@@ -426,19 +465,19 @@ for _ in 1:1
     xϵ = toy_signal_model(θ, noise_level, 4);
     yϵ = toy_signal_model(θ, noise_level, 2);
 
-    m = x -> ((dx, ϵ) = get_correction_and_noise(x); return (abs.(x.+dx), ϵ));
+    m = x -> ((dx, ϵ) = correction_and_noiselevel(x); return (abs.(x.+dx), ϵ));
 
     @time bbres1, _ = signal_loglikelihood_inference(yϵ, nothing, m; objective = :rmse)[1];
     θhat1 = BlackBoxOptim.best_candidate(bbres1);
     xhat1 = toy_signal_model(θhat1, nothing, 4);
-    dxhat1, ϵhat1 = get_correction_and_noise(xhat1);
-    yhat1 = get_corrected_signal(xhat1, dxhat1, ϵhat1);
+    dxhat1, ϵhat1 = correction_and_noiselevel(xhat1);
+    yhat1 = corrected_signal_instance(xhat1, dxhat1, ϵhat1);
 
     @time bbres2, optres2 = signal_loglikelihood_inference(yϵ, nothing, m; objective = :mle)[1];
     θhat2 = Optim.minimizer(optres2); #BlackBoxOptim.best_candidate(bbres2);
     xhat2 = toy_signal_model(θhat2, nothing, 4);
-    dxhat2, ϵhat2 = get_correction_and_noise(xhat2);
-    yhat2 = get_corrected_signal(xhat2, dxhat2, ϵhat2);
+    dxhat2, ϵhat2 = correction_and_noiselevel(xhat2);
+    yhat2 = corrected_signal_instance(xhat2, dxhat2, ϵhat2);
 
     p1 = plot([y[:,1] x[:,1]]; label = ["Yθ" "Xθ"], line = (2,));
     p2 = plot([yϵ[:,1] xϵ[:,1]]; label = ["Yθϵ" "Xθϵ"], line = (2,));
@@ -450,8 +489,8 @@ for _ in 1:1
     @show toy_theta_error(θ[:,1], θhat2)';
     @show √mean(abs2, y[:,1] .- (xhat1 .+ dxhat1));
     @show √mean(abs2, y[:,1] .- (xhat2 .+ dxhat2));
-    @show √mean([mean(abs2, yϵ[:,1] .- get_corrected_signal(xhat1, dxhat1, ϵhat1)) for _ in 1:1000]);
-    @show √mean([mean(abs2, yϵ[:,1] .- get_corrected_signal(xhat2, dxhat2, ϵhat2)) for _ in 1:1000]);
+    @show √mean([mean(abs2, yϵ[:,1] .- corrected_signal_instance(xhat1, dxhat1, ϵhat1)) for _ in 1:1000]);
+    @show √mean([mean(abs2, yϵ[:,1] .- corrected_signal_instance(xhat2, dxhat2, ϵhat2)) for _ in 1:1000]);
 end;
 =#
 
@@ -462,7 +501,7 @@ end;
 #=
 Turing.@model toy_model_rician_noise(
         y,
-        correction_and_noise,
+        correction_and_noiselevel,
     ) = begin
     freq   ~ Uniform(1/64,  1/32)
     phase  ~ Uniform( 0.0,  pi/2)
@@ -474,7 +513,7 @@ Turing.@model toy_model_rician_noise(
 
     # Compute toy signal model without noise
     x = toy_signal_model([freq, phase, offset, amp, tconst], nothing, 4)
-    yhat, ϵhat = correction_and_noise(x)
+    yhat, ϵhat = correction_and_noiselevel(x)
 
     # Model noise as Rician
     for i in 1:length(y)
@@ -487,19 +526,19 @@ end
 
 function toy_theta_mcmc_inference(
         y::AbstractVector,
-        correction_and_noise,
+        correction_and_noiselevel,
         callback = (y, chain) -> true,
     )
     model = function (x)
-        xhat, ϵhat = correction_and_noise(x)
+        xhat, ϵhat = correction_and_noiselevel(x)
         yhat = rand.(Rician.(xhat, ϵhat))
         return yhat
     end
     res = signal_loglikelihood_inference(y, nothing, model)
     theta0 = best_candidate(res)
     while true
-        chain = sample(toy_model_rician_noise(y, correction_and_noise), NUTS(), 1000; verbose = true, init_theta = theta0)
-        # chain = psample(toy_model_rician_noise(y, correction_and_noise), NUTS(), 1000, 3; verbose = true, init_theta = theta0)
+        chain = sample(toy_model_rician_noise(y, correction_and_noiselevel), NUTS(), 1000; verbose = true, init_theta = theta0)
+        # chain = psample(toy_model_rician_noise(y, correction_and_noiselevel), NUTS(), 1000, 3; verbose = true, init_theta = theta0)
         callback(y, chain) && return chain
     end
 end
@@ -524,7 +563,7 @@ end
 
 #=
 for _ in 1:1
-    correction_and_noise = let _model = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/2020-02-20T15:43:48.506/best-model.bson")["model"]) #deepcopy(model)
+    correction_and_noiselevel = let _model = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/MMDLearning/output/2020-02-20T15:43:48.506/best-model.bson")["model"]) #deepcopy(model)
         function(x)
             out = _model(x)
             dx, logϵ = out[1:end÷2], out[end÷2+1:end]
@@ -533,7 +572,7 @@ for _ in 1:1
     end
     signal_model = function(θhat)
         x = toy_signal_model(θhat, nothing, 4)
-        xhat, ϵhat = correction_and_noise(x)
+        xhat, ϵhat = correction_and_noiselevel(x)
         # zR = ϵhat .* randn(size(x)...)
         # zI = ϵhat .* randn(size(x)...)
         # yhat = @. sqrt((xhat + zR)^2 + zI^2)
@@ -542,7 +581,7 @@ for _ in 1:1
     fitresults = function(y, c)
         θhat = map(k -> mean(c[k])[1,:mean], [:freq, :phase, :offset, :amp, :tconst])
         # ϵhat = 10^map(k -> mean(c[k])[1,:mean], [:logeps])[1]
-        # yhat, ϵhat = correction_and_noise(toy_signal_model(θhat, nothing, 4))
+        # yhat, ϵhat = correction_and_noiselevel(toy_signal_model(θhat, nothing, 4))
         yhat = signal_model(θhat)
         yerr = sqrt(mean(abs2, y - yhat))
         @ntuple(θhat, yhat, yerr)
@@ -562,7 +601,7 @@ for _ in 1:1
     θ = toy_theta_sampler(16);
     Y = toy_signal_model(θ, noise_level, 2);
 
-    # @time cs = toy_theta_mcmc_inference(Y, correction_and_noise);
+    # @time cs = toy_theta_mcmc_inference(Y, correction_and_noiselevel);
     # res = map(j -> fitresults(Y[:,j], cs[j]), 1:size(Y,2))
     # ps = map(j -> plotresults(Y[:,j], cs[j]), 1:size(Y,2))
     # θhat = reduce(hcat, map(k -> mean(c[k])[1,:mean], [:freq, :phase, :offset, :amp, :tconst]) for c in cs)

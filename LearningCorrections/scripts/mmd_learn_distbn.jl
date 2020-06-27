@@ -85,26 +85,7 @@ let
 end
 @assert(models["vae.E"] === identity && models["vae.D"] === identity, "encoder/decoder is currently assumed to be identity")
 
-# Convenience functions
-split_correction_and_noise(μlogσ) = μlogσ[1:end÷2, :], exp.(μlogσ[end÷2+1:end, :])
-noise_instance(X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
-get_correction_and_noise(X) = split_correction_and_noise(models["mmd"](models["vae.E"](X))) # Learning correction + noise
-# get_correction_and_noise(X) = models["mmd"](models["vae.E"](X)), fill(eltype(X)(TOY_NOISE_LEVEL), size(X)...) # Learning correction w/ fixed noise
-# get_correction_and_noise(X) = models["mmd"](models["vae.E"](X)), zeros(eltype(X), size(X)...) # Learning correction only
-get_correction(X) = get_correction_and_noise(X)[1]
-get_noise(X) = get_correction_and_noise(X)[2]
-get_noise_instance(X) = noise_instance(X, get_noise(X))
-get_corrected_signal(X) = get_corrected_signal(X, get_correction_and_noise(X)...)
-get_corrected_signal(X, dX, ϵ) = get_corrected_signal(abs.(X .+ dX), ϵ)
-function get_corrected_signal(X, ϵ)
-    ϵR, ϵI = noise_instance(X, ϵ), noise_instance(X, ϵ)
-    Xϵ = @. sqrt((X + ϵR)^2 + ϵI^2)
-    # Don't use Flux.softmax(Xϵ), as then we can't interpret dX and ϵ as offset + Rician noise
-    # !IS_TOY_MODEL && (Xϵ = Xϵ ./ sum(Xϵ; dims = 1)) #TODO don't need to normalize learned corrections
-    return Xϵ
-end
-
-sampleLatentX(m; kwargs...) = models["vae.E"](get_corrected_signal(sampleX(m; kwargs...)))
+sampleLatentX(m; kwargs...) = models["vae.E"](corrected_signal_instance(sampleX(m; kwargs...)))
 sampleLatentY(m; kwargs...) = models["vae.E"](sampleY(m; kwargs...))
 
 function train_mmd_kernel!(
@@ -336,8 +317,8 @@ function train_mmd_model(;
 
     regularizer = MMDLearning.make_tikh_penalty(n, Float64)
     function loss(X,Y)
-        dX, ϵ = get_correction_and_noise(X)
-        Xϵ = get_corrected_signal(X, dX, ϵ)
+        dX, ϵ = correction_and_noiselevel(X)
+        Xϵ = corrected_signal_instance(X, dX, ϵ)
         ℓ = m * mmd_flux(models["logsigma"], models["vae.E"](Xϵ), models["vae.E"](Y))
         if lambda != 0
             ℓ += lambda * regularizer(dX)
@@ -357,8 +338,8 @@ function train_mmd_model(;
             dt, cb_state.last_time[] = time() - cb_state.last_time[], time()
 
             # Compute signal correction, noise instances, etc.
-            dX, ϵ = get_correction_and_noise(X)
-            Xϵ = get_corrected_signal(X, dX, ϵ)
+            dX, ϵ = correction_and_noiselevel(X)
+            Xϵ = corrected_signal_instance(X, dX, ϵ)
 
             true_forward_model = IS_TOY_MODEL ?
                 (θ, noise) -> toy_signal_model(θ, noise, 2) :
@@ -372,8 +353,8 @@ function train_mmd_model(;
             Yθ = true_forward_model(θ, nothing)
             Yθϵ = true_forward_model(θ, TOY_NOISE_LEVEL)
             Xθ = mock_forward_model(θ, nothing)
-            dXθ, ϵθ = get_correction_and_noise(Xθ)
-            Xθϵ = get_corrected_signal(Xθ, dXθ, ϵθ)
+            dXθ, ϵθ = correction_and_noiselevel(Xθ)
+            Xθϵ = corrected_signal_instance(Xθ, dXθ, ϵθ)
 
             rmse, θ_fit_err, sig_fit_logL, sig_fit_rmse = missing, missing, missing, missing
             if IS_TOY_MODEL
@@ -382,7 +363,7 @@ function train_mmd_model(;
 
             # Get corrected rician model params; input ν is a model signal
             function get_corrected_ν_and_ϵ(ν)
-                local _dν, _ϵ = get_correction_and_noise(ν)
+                local _dν, _ϵ = correction_and_noiselevel(ν)
                 return abs.(ν .+ _dν), _ϵ
             end
 
@@ -390,8 +371,8 @@ function train_mmd_model(;
                 # θbb results from inference on Yθϵ from a previous iteration; use this θbb as a proxy for the current "best guess" θ
                 θbb = cb_state.last_θbb[]
                 Xθbb = mock_forward_model(θbb, nothing)
-                dXθbb, ϵθbb = get_correction_and_noise(Xθbb)
-                Xθϵbb = get_corrected_signal(Xθbb, dXθbb, ϵθbb)
+                dXθbb, ϵθbb = correction_and_noiselevel(Xθbb)
+                Xθϵbb = corrected_signal_instance(Xθbb, dXθbb, ϵθbb)
 
                 global_i_fits = cb_state.last_global_i_fits[] # use same data as previous mle fits
                 mle_err = [sum(.-logpdf.(Rician.(get_corrected_ν_and_ϵ(Xθbb[:,j])...; check_args = false), Yθϵ[:,jY])) for (j,jY) in enumerate(global_i_fits)]
@@ -510,8 +491,8 @@ function train_mmd_model(;
                         cb_state.last_global_i_fits[] = copy(global_i_fits)
 
                         Xθbb = mock_forward_model(θbb, nothing)
-                        dXθbb, ϵθbb = get_correction_and_noise(Xθbb)
-                        Xθϵbb = get_corrected_signal(Xθbb, dXθbb, ϵθbb)
+                        dXθbb, ϵθbb = correction_and_noiselevel(Xθbb)
+                        Xθϵbb = corrected_signal_instance(Xθbb, dXθbb, ϵθbb)
                         rmse_err = sqrt.(mean(abs2, Yθϵ[:,global_i_fits] .- Xθϵbb; dims = 1)) |> vec
 
                         # i_sorted = sortperm(mle_err)[1:7*(ninfer÷8)] # best 7/8 of mle fits (sorted)

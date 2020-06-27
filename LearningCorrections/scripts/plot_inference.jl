@@ -7,8 +7,8 @@ pyplot(size = (800,600))
 
 # Convenience functions
 split_correction_and_noise(μlogσ) = μlogσ[1:end÷2, :], exp.(μlogσ[end÷2+1:end, :])
-get_correction_and_noise(G, X) = split_correction_and_noise(G(X))
-get_rician_params(G, X) = ((dX, ϵ) = get_correction_and_noise(G, X); return (abs.(X .+ dX), ϵ))
+correction_and_noiselevel(G, X) = split_correction_and_noise(G(X))
+get_rician_params(G, X) = ((dX, ϵ) = correction_and_noiselevel(G, X); return (abs.(X .+ dX), ϵ))
 
 # Inference wrapper
 function do_inference(F, P, Y, θ, θ0, θbd)

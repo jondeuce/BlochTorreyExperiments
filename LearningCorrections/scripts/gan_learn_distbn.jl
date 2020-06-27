@@ -58,26 +58,9 @@ let
     ) |> Flux.f64
 end
 
-# Convenience functions
-split_correction_and_noise(μlogσ) = μlogσ[1:end÷2, :], exp.(μlogσ[end÷2+1:end, :])
-noise_instance(X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
-get_correction_and_noise(X) = split_correction_and_noise(models["G"](X)) # Learning correction + noise
-# get_correction_and_noise(X) = models["G"](X), fill(eltype(X)(TOY_NOISE_LEVEL), size(X)...) # Learning correction w/ fixed noise
-# get_correction_and_noise(X) = models["G"](X), zeros(eltype(X), size(X)...) # Learning correction only
-get_correction(X) = get_correction_and_noise(X)[1]
-get_noise(X) = get_correction_and_noise(X)[2]
-get_noise_instance(X) = noise_instance(X, get_noise(X))
-get_corrected_signal(X) = get_corrected_signal(X, get_correction_and_noise(X)...)
-get_corrected_signal(X, dX, ϵ) = get_corrected_signal(abs.(X .+ dX), ϵ)
-function get_corrected_signal(X, ϵ)
-    ϵR, ϵI = noise_instance(X, ϵ), noise_instance(X, ϵ)
-    Xϵ = @. sqrt((X + ϵR)^2 + ϵI^2)
-    return Xϵ
-end
-
 # Generator and discriminator losses
 get_D_Y(Y) = models["D"](Y) # discrim on real data
-get_D_G_X(X) = models["D"](get_corrected_signal(X)) # discrim on genatr data (`get_corrected_signal` wraps the generator `models["G"]`)
+get_D_G_X(X) = models["D"](corrected_signal_instance(X)) # discrim on genatr data (`corrected_signal_instance` wraps the generator `models["G"]`)
 Dloss(X,Y) = -mean(log.(get_D_Y(Y)) .+ log.(1 .- get_D_G_X(X)))
 Gloss(X) = mean(log.(1 .- get_D_G_X(X)))
 
@@ -151,8 +134,8 @@ callback = let
         @unpack X, Y, θ, fits = cb_state
 
         # Compute signal correction, noise instances, etc.
-        dX, ϵ = get_correction_and_noise(X)
-        Xϵ = get_corrected_signal(X, dX, ϵ)
+        dX, ϵ = correction_and_noiselevel(X)
+        Xϵ = corrected_signal_instance(X, dX, ϵ)
 
         true_forward_model = IS_TOY_MODEL ?
             (θ, noise) -> toy_signal_model(θ, noise, 2) :
@@ -166,8 +149,8 @@ callback = let
         Yθ = true_forward_model(θ, nothing)
         Yθϵ = true_forward_model(θ, TOY_NOISE_LEVEL)
         Xθ = mock_forward_model(θ, nothing)
-        dXθ, ϵθ = get_correction_and_noise(Xθ)
-        Xθϵ = get_corrected_signal(Xθ, dXθ, ϵθ)
+        dXθ, ϵθ = correction_and_noiselevel(Xθ)
+        Xθϵ = corrected_signal_instance(Xθ, dXθ, ϵθ)
 
         rmse, θ_fit_err, sig_fit_logL, sig_fit_rmse = missing, missing, missing, missing
         if IS_TOY_MODEL
@@ -176,7 +159,7 @@ callback = let
 
         # Get corrected rician model params; input ν is a model signal
         function get_corrected_ν_and_σ(ν)
-            dν, σ = get_correction_and_noise(ν)
+            dν, σ = correction_and_noiselevel(ν)
             return abs.(ν .+ dν), σ
         end
 
@@ -184,8 +167,8 @@ callback = let
             # θbb results from inference on Yθϵ from a previous iteration; use this θbb as a proxy for the current "best guess" θ
             θbb = cb_state.last_θbb[]
             Xθbb = mock_forward_model(θbb, nothing)
-            dXθbb, ϵθbb = get_correction_and_noise(Xθbb)
-            Xθϵbb = get_corrected_signal(Xθbb, dXθbb, ϵθbb)
+            dXθbb, ϵθbb = correction_and_noiselevel(Xθbb)
+            Xθϵbb = corrected_signal_instance(Xθbb, dXθbb, ϵθbb)
 
             global_i_fits = cb_state.last_global_i_fits[] # use same data as previous mle fits
             mle_err = [sum(.-logpdf.(Rician.(get_corrected_ν_and_σ(Xθbb[:,j])...; check_args = false), Yθϵ[:,jY])) for (j,jY) in enumerate(global_i_fits)]
@@ -320,8 +303,8 @@ callback = let
                     cb_state.last_global_i_fits[] = copy(global_i_fits)
 
                     Xθbb = mock_forward_model(θbb, nothing)
-                    dXθbb, ϵθbb = get_correction_and_noise(Xθbb)
-                    Xθϵbb = get_corrected_signal(Xθbb, dXθbb, ϵθbb)
+                    dXθbb, ϵθbb = correction_and_noiselevel(Xθbb)
+                    Xθϵbb = corrected_signal_instance(Xθbb, dXθbb, ϵθbb)
                     mle_err = Optim.minimum.(optres)
                     rmse_err = sqrt.(mean(abs2, Yθϵ[:,global_i_fits] .- Xθϵbb; dims = 1)) |> vec
 
