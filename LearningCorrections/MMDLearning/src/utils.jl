@@ -101,7 +101,7 @@ function make_variancelr(state, opt; rate = 250, factor = √10, stdthresh = Inf
             return lr(opt)
         elseif e > 2 * rate && e - last_lr_update > rate
             min_epoch = max(1, min(state[end, :epoch] - rate, rate))
-            df = dropmissing(state[(state.dataset .== :test) .& (min_epoch .<= state.epoch), [:epoch, :loss]])
+            df = dropmissing(state[(state.dataset .=== :test) .& (min_epoch .<= state.epoch), [:epoch, :loss]])
             if !isempty(df) && std(df[!, :loss]) > stdthresh
                 last_lr_update = e
                 return lr(opt) / √10
@@ -317,7 +317,7 @@ function make_save_best_model_cb(state, model, opt, filename = nothing)
     function()
         # If this is the best accuracy we've seen so far, save the model out
         isempty(state) && return nothing
-        df = state[state.dataset .== :test, :]
+        df = state[state.dataset .=== :test, :]
         ismissing(df.acc[end]) && return nothing
         isempty(skipmissing(df.acc)) && return nothing
 
@@ -354,4 +354,137 @@ function make_checkpoint_model_cb(state, model, opt, filename = nothing)
             @warn sprint(showerror, e, catch_backtrace())
         end
     end
+end
+
+####
+#### GAN Callbacks
+####
+
+function initialize_callback(phys::ToyModel; nsamples::Int)
+    cb_state = Dict{String,Any}()
+    cb_state["θ"]  = sampleθ(phys, nsamples; dataset = :test)
+    cb_state["Xθ"] = sampleX(phys, cb_state["θ"]) # sampleX == signal_model when given explicit θ
+    cb_state["Yθ"] = sampleX(ClosedForm(phys), cb_state["θ"])
+    cb_state["Yθhat"] = sampleX(ClosedForm(phys), cb_state["θ"], epsilon(ClosedForm(phys)))
+    cb_state["Y"]  = sampleY(phys, nsamples; dataset = :test) # Y is deliberately sampled with different θ values
+    cb_state["curr_time"] = time()
+    cb_state["last_time"] = -Inf
+    cb_state["last_fit_time"] = -Inf
+    cb_state["last_curr_checkpoint"] = -Inf
+    cb_state["last_best_checkpoint"] = -Inf
+    # cb_state["fits"] = nothing
+    # cb_state["last_θbb"] = Union{AbstractVecOrMat{Float64}, Nothing}[nothing]
+    # cb_state["last_i_fit"] = Union{Vector{Int}, Nothing}[nothing]
+    return cb_state
+end
+
+#=
+function initialize_callback!(cb_state::Dict, phys::EPGModel)
+    # Sample X and θ randomly, but choose Ys + corresponding fits consistently in order to compare models, and choose Ys with reasonable agreeance with data in order to not be overconfident in improving terrible fits
+    Xtest = sampleX(settings["gan"]["batchsize"]; dataset = :test)
+    θtest = sampleθ(settings["gan"]["batchsize"]; dataset = :test)
+    iY = if settings["data"]["normalize"]::Bool
+        iY = filter(i -> fits_test.loss[i] <= -200.0 && fits_test.rmse[i] <= 0.002, 1:nrow(fits_test)) #TODO
+    else
+        iY = filter(i -> fits_test.loss[i] <= -125.0 && fits_test.rmse[i] <= 0.15, 1:nrow(fits_test)) #TODO
+    end
+    iY = sample(MersenneTwister(0), iY, settings["gan"]["batchsize"]; replace = false)
+    Ytest = sampleY(nothing; dataset = :test)[..,iY]
+    testfits = fits_test[iY,:]
+
+    cb_state["Xθ"] = sampleX(phys, nsamples; dataset = :test)
+    cb_state["Y"] = sampleY(phys, nsamples; dataset = :test)
+    cb_state["θ"] = sampleθ(phys, nsamples; dataset = :test)
+    cb_state["last_time"] = Ref(time())
+    cb_state["last_curr_checkpoint"] = Ref(-Inf)
+    cb_state["last_best_checkpoint"] = Ref(-Inf)
+    cb_state["fits"] = testfits
+    cb_state["last_θbb"] = Union{AbstractVecOrMat{Float64}, Nothing}[nothing]
+    cb_state["last_i_fit"] = Union{Vector{Int}, Nothing}[nothing]
+    return cb_state
+end
+=#
+
+function update_callback!(
+        cb_state::Dict,
+        phys::PhysicsModel,
+        G::RicianCorrector;
+        ninfer::Int,
+        infermethod::Symbol = :mle,
+        inferperiod::Float64 = 300.0,
+        forceinfer::Bool = false,
+    )
+
+    cb_state["last_time"] = cb_state["curr_time"]
+    cb_state["curr_time"] = time()
+
+    # Compute signal correction, noise instances, etc.
+    @unpack θ, Xθ, Yθ, Yθhat, Y = cb_state
+    δθ, ϵθ = correction_and_noiselevel(G, Xθ)
+    Xθδ = abs.(Xθ .+ δθ)
+    Xθhat = corrected_signal_instance(G, Xθδ, ϵθ)
+    @pack! cb_state = δθ, ϵθ, Xθδ, Xθhat
+
+    # Record useful metrics
+    metrics = Dict{String,Any}()
+    metrics["rmse"] = hasclosedform(phys) ? sqrt(mean(abs2, Yθ - Xθδ)) : missing
+
+    if infermethod === :mle
+        # If closed form model is known, fit to Yθhat (which has known θ); otherwise, fit to Y samples
+        Ydata = hasclosedform(phys) ? Yθhat : Y
+
+        if forceinfer || cb_state["curr_time"] - cb_state["last_fit_time"] >= inferperiod
+            cb_state["last_fit_time"] = cb_state["curr_time"]
+
+            # Sample `ninfer` new Ydata to fit to
+            i_fit = sample(1:size(Ydata,2), ninfer; replace = false)
+            Yfit = Ydata[:,i_fit]
+            all_infer_results = @timeit "theta inference" begin
+                signal_loglikelihood_inference(Yfit, nothing, X -> rician_params(G, X), θ -> signal_model(phys, θ); objective = :mle, bounds = θbounds(phys))
+            end
+
+            # Extract and sort best results
+            best_infer_results = map(all_infer_results) do (bbopt_res, optim_res)
+                x1, ℓ1 = BlackBoxOptim.best_candidate(bbopt_res), BlackBoxOptim.best_fitness(bbopt_res)
+                x2, ℓ2 = Optim.minimizer(optim_res), Optim.minimum(optim_res)
+                (ℓ1 < ℓ2) && @warn "BlackBoxOptim results less than Optim result" #TODO
+                return ℓ1 < ℓ2 ? (x = x1, loss = ℓ1) : (x = x2, loss = ℓ2)
+            end
+            θfit = mapreduce(r -> r.x, hcat, best_infer_results)
+            i_fit, Yfit, θfit = sortperm(map(r -> r.loss, best_infer_results)) |> I -> (i_fit[I], Yfit[:,I], θfit[:,I])
+
+            # Record sorted fit results in cb state
+            @pack! cb_state = i_fit, Yfit, θfit
+        else
+            # Use θfit results from previous inference on Yfit; θfit is a proxy for the current "best guess" θ
+            @unpack i_fit, Yfit, θfit = cb_state
+        end
+
+        # Compute signal correction, noise instances, etc.
+        Xθfit = signal_model(phys, θfit)
+        δθfit, ϵθfit = correction_and_noiselevel(G, Xθfit)
+        Xθδfit = abs.(Xθfit .+ δθfit)
+        Xθhatfit = corrected_signal_instance(G, Xθδfit, ϵθfit)
+        Yθfit = hasclosedform(phys) ? signal_model(ClosedForm(phys), θfit) : missing
+        Yθhatfit = hasclosedform(phys) ? signal_model(ClosedForm(phys), θfit, epsilon(ClosedForm(phys))) : missing
+        @pack! cb_state = Xθfit, Yθfit, Yθhatfit, δθfit, ϵθfit, Xθδfit, Xθhatfit
+
+        # Compute error metrics
+        all_signal_fit_rmse = sqrt.(mean(abs2, Yfit .- Xθhatfit; dims = 1)) |> vec
+        all_signal_fit_logL = .-sum(logpdf.(Rician.(Xθδfit, ϵθfit), Yfit); dims = 1) |> vec
+        signal_fit_rmse = mean(all_signal_fit_rmse)
+        signal_fit_logL = mean(all_signal_fit_logL)
+        @pack! metrics = all_signal_fit_rmse, all_signal_fit_logL, signal_fit_rmse, signal_fit_logL
+
+        if hasclosedform(phys)
+            # Evaluate error in recovered θ if closed form is known
+            θ_fit_err = mean(θerror(phys, θ[:,i_fit], θfit); dims = 2) |> vec |> copy
+            @pack! metrics = θ_fit_err
+        end
+    end
+
+    # Save metrics
+    @pack! cb_state = metrics
+
+    return cb_state
 end

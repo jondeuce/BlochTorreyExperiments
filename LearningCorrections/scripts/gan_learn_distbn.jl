@@ -171,7 +171,7 @@ callback = let
             Xθϵbb = corrected_signal_instance(Xθbb, dXθbb, ϵθbb)
 
             global_i_fits = cb_state.last_global_i_fits[] # use same data as previous mle fits
-            mle_err = [sum(.-logpdf.(Rician.(get_corrected_ν_and_σ(Xθbb[:,j])...; check_args = false), Yθϵ[:,jY])) for (j,jY) in enumerate(global_i_fits)]
+            mle_err = [sum(.-logpdf.(Rician.(get_corrected_ν_and_σ(Xθbb[:,j])...), Yθϵ[:,jY])) for (j,jY) in enumerate(global_i_fits)]
             rmse_err = [sqrt(mean(abs2, Xθϵbb[:,j] .- Yθϵ[:,jY])) for (j,jY) in enumerate(global_i_fits)]
 
             i_sorted = sortperm(mle_err) #sortperm(mle_err)[1:7*(ninfer÷8)] #TODO

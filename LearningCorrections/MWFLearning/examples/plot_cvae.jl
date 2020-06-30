@@ -38,11 +38,11 @@ function read_to_dataframe(sweep_dir)
     if state isa Dict
         function dict_to_df(dataset)
             nrows = length(state[:callbacks][dataset][:epoch])
-            loopidx = dataset == :testing ? findall(in(state[:callbacks][dataset][:epoch]), intersect(state[:loop][:epoch])) : nothing
+            loopidx = dataset === :testing ? findall(in(state[:callbacks][dataset][:epoch]), intersect(state[:loop][:epoch])) : nothing
             # loopidx = findall(in(state[:callbacks][dataset][:epoch]), intersect(state[:loop][:epoch]))
             DataFrame(
                 :epoch    => state[:callbacks][dataset][:epoch],
-                :dataset  => fill(ifelse(dataset == :testing, :test, :train), nrows),
+                :dataset  => fill(ifelse(dataset === :testing, :test, :train), nrows),
                 :loss     => convert(Vector{Union{Float64, Missing}}, isnothing(loopidx) ? missings(nrows) : state[:loop][:loss][loopidx]),
                 :acc      => convert(Vector{Union{Float64, Missing}}, state[:callbacks][dataset][:acc]),
                 :ELBO     => convert(Vector{Union{Float64, Missing}}, isnothing(loopidx) ? missings(nrows) : state[:loop][:ELBO][loopidx]),
@@ -52,7 +52,7 @@ function read_to_dataframe(sweep_dir)
         end
         state = vcat(dict_to_df(:training), dict_to_df(:testing))
     end
-    state = state[state.dataset .== :test, :]
+    state = state[state.dataset .=== :test, :]
     # dropmissing!(state) # drop rows with missings
     filter!(r -> all(x -> !((x isa Number && isnan(x)) || (x isa AbstractArray{<:Number} && any(isnan, x))), r), state) # drop rows with NaNs
     labelerr = skipmissing(state.labelerr)
@@ -158,7 +158,7 @@ function recurse_make_plots(
         savefig(p, joinpath(outpath, "by-$metric.png"))
 
         open(joinpath(outpath, "by-$metric.txt"); write = true) do io
-            show(io, sort(dropmissing(df, metric), metric; rev = metric == :acc); allrows = true, allcols = true)
+            show(io, sort(dropmissing(df, metric), metric; rev = metric === :acc); allrows = true, allcols = true)
         end
     end
     if depth < maxdepth && length(sweepcols) > 1
@@ -179,7 +179,7 @@ recurse_make_plots(df)
 # Write sorted DataFrame to text file
 foreach(names(metrics_temp)) do metric
     open(joinpath(results_dir, "results-by-$metric.txt"); write = true) do io
-        show(io, sort(dropmissing(df, metric), metric; rev = metric == :acc); allrows = true, allcols = true)
+        show(io, sort(dropmissing(df, metric), metric; rev = metric === :acc); allrows = true, allcols = true)
     end
 end
 

@@ -264,11 +264,11 @@ function BatchDenseConnection(
     CD(σ = identity) = ChannelwiseDense(H, C=>C, σ).layers
     BN(σ = identity) = batchnorm ? Flux.BatchNorm(C, σ) : groupnorm ? Flux.GroupNorm(C, C÷2, σ) : identity
     AF() = @λ x -> σ.(x)
-    if mode == :pre
+    if mode === :pre
         Flux.Chain(BN(), AF(), CD()..., BN(), AF(), CD()...)
-    elseif mode == :post
+    elseif mode === :post
         Flux.Chain(CD()..., BN(), AF(), CD()..., BN(), AF())
-    elseif mode == :hybrid
+    elseif mode === :hybrid
         Flux.Chain(BN(), CD(σ)..., BN(), CD()...)
     else
         error("Unknown BatchDenseConnection mode $mode")
@@ -293,11 +293,11 @@ function BatchConvConnection(
     CV(ch, σ = identity) = XavierConv(k, ch, σ; pad = (k.-1).÷2)
     BN(C,  σ = identity) = batchnorm ? Flux.BatchNorm(C, σ) : groupnorm ? Flux.GroupNorm(C, C÷2, σ) : identity
     AF() = @λ x -> σ.(x)
-    if mode == :pre
+    if mode === :pre
         Flux.Chain(BN(ch[1]), AF(), CV(ch[1]=>ch[2]), vcat(([BN(ch[2]), AF(), CV(ch[2]=>ch[2])] for _ in 1:numlayers-2)...)..., BN(ch[2]), AF(), CV(ch[2]=>ch[2]))
-    elseif mode == :post
+    elseif mode === :post
         Flux.Chain(CV(ch[1]=>ch[1]), BN(ch[1]), AF(), vcat(([CV(ch[1]=>ch[1]), BN(ch[1]), AF()] for _ in 1:numlayers-2)...)..., CV(ch[1]=>ch[2]), BN(ch[2]), AF())
-    elseif mode == :hybrid
+    elseif mode === :hybrid
         Flux.Chain(BN(ch[1]), CV(ch[1]=>ch[1], σ),    vcat(([BN(ch[1]), CV(ch[1]=>ch[1], σ)]    for _ in 1:numlayers-2)...)..., BN(ch[1]), CV(ch[1]=>ch[2]))
     else
         error("Unknown BatchDenseConnection mode $mode")

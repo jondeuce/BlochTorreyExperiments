@@ -4,21 +4,21 @@
 
 abstract type RicianCorrector end
 
-# G : 𝐑^n -> 𝐑^2n mapping X ∈ 𝐑^n ⟶ δX,logϵ ∈ 𝐑^n concatenated as [δX; logϵ]
+# G : 𝐑^n -> 𝐑^2n mapping X ∈ 𝐑^n ⟶ δ,logϵ ∈ 𝐑^n concatenated as [δ; logϵ]
 @with_kw struct VectorRicianCorrector{Gtype} <: RicianCorrector
     G::Gtype
 end
 
-# G : 𝐑^n -> 𝐑^n mapping X ∈ 𝐑^n ⟶ δX ∈ 𝐑^n with fixed noise ϵ0 ∈ 𝐑, or ϵ0 ∈ 𝐑^n
+# G : 𝐑^n -> 𝐑^n mapping X ∈ 𝐑^n ⟶ δ ∈ 𝐑^n with fixed noise ϵ0 ∈ 𝐑, or ϵ0 ∈ 𝐑^n
 @with_kw struct FixedNoiseVectorRicianCorrector{Gtype,T} <: RicianCorrector
     G::Gtype
     ϵ0::T
 end
 
-# Concrete methods to extract δX and ϵ
+# Concrete methods to extract δ and ϵ
 function correction_and_noiselevel(G::VectorRicianCorrector, X)
-    δX_logϵ = G.G(X)
-    δX_logϵ[1:end÷2, :], exp.(δX_logϵ[end÷2+1:end, :])
+    δ_logϵ = G.G(X)
+    δ_logϵ[1:end÷2, :], exp.(δ_logϵ[end÷2+1:end, :])
 end
 correction_and_noiselevel(G::FixedNoiseVectorRicianCorrector, X) = G.G(X), ϵ0
 
@@ -28,12 +28,17 @@ noiselevel(G::RicianCorrector, X) = correction_and_noiselevel(G, X)[2]
 noise_instance(G::RicianCorrector, X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
 noise_instance(G::RicianCorrector, X) = noise_instance(G, X, noiselevel(G, X))
 corrected_signal_instance(G::RicianCorrector, X) = corrected_signal_instance(G, X, correction_and_noiselevel(G, X)...)
-corrected_signal_instance(G::RicianCorrector, X, δX, ϵ) = corrected_signal_instance(G, abs.(X .+ δX), ϵ)
+corrected_signal_instance(G::RicianCorrector, X, δ, ϵ) = corrected_signal_instance(G, abs.(X .+ δ), ϵ)
 function corrected_signal_instance(G::RicianCorrector, X, ϵ)
     ϵR = noise_instance(G, X, ϵ)
     ϵI = noise_instance(G, X, ϵ)
     Xϵ = @. sqrt((X + ϵR)^2 + ϵI^2)
     return Xϵ
+end
+function rician_params(G::RicianCorrector, X)
+    δ, ϵ = correction_and_noiselevel(G, X)
+    ν, σ = abs.(X .+ δ), ϵ
+    return ν, σ
 end
 
 ####
@@ -54,6 +59,7 @@ physicsmodel(c::ClosedForm) = c.p
 θbounds(c::ClosedForm) = θbounds(physicsmodel(c))
 ntheta(c::ClosedForm) = ntheta(physicsmodel(c))
 nsignal(c::ClosedForm) = nsignal(physicsmodel(c))
+function epsilon end
 
 ####
 #### Toy problem
@@ -65,38 +71,39 @@ nsignal(c::ClosedForm) = nsignal(physicsmodel(c))
     Ytest::Ref{Matrix{T}} = Ref(zeros(T,0,0))
     Yval::Ref{Matrix{T}} = Ref(zeros(T,0,0))
 end
-const ClosedToyModel{T} = ClosedForm{ToyModel{T}}
-const MaybeClosedToyModel{T} = Union{ToyModel{T}, ClosedToyModel{T}}
+const ClosedFormToyModel{T} = ClosedForm{ToyModel{T}}
+const MaybeClosedFormToyModel{T} = Union{ToyModel{T}, ClosedFormToyModel{T}}
 
 ntheta(::ToyModel) = 5
 nsignal(::ToyModel) = 128
 hasclosedform(::ToyModel) = true
 beta(::ToyModel) = 4
-beta(::ClosedToyModel) = 2
+beta(::ClosedFormToyModel) = 2
+epsilon(c::ClosedFormToyModel) = physicsmodel(c).ϵ0
 
 θlabels(::ToyModel) = ["freq", "phase", "offset", "amp", "tconst"]
 θlower(::ToyModel{T}) where {T} = [1/T(64),   T(0), 1/T(4), 1/T(10),  T(16)]
 θupper(::ToyModel{T}) where {T} = [1/T(32), T(π)/2, 1/T(2),  1/T(4), T(128)]
 θerror(p::ToyModel, theta, thetahat) = abs.((theta .- thetahat)) ./ (θupper(p) .- θlower(p))
 
-function initialize!(p::ToyModel; ntrain::Int = 1_000, ntest::Int = ntrain, nval::Int = ntrain)
+function initialize!(p::ToyModel; ntrain::Int, ntest::Int = ntrain, nval::Int = ntrain)
     rng = Random.seed!(0)
-    p.Ytrain[] = sampleX(ClosedForm(p), ntrain, p.ϵ0)
-    p.Ytest[]  = sampleX(ClosedForm(p), ntest, p.ϵ0)
-    p.Yval[]   = sampleX(ClosedForm(p), nval, p.ϵ0)
+    p.Ytrain[] = sampleX(ClosedForm(p), ntrain, p.ϵ0; dataset = :train)
+    p.Ytest[]  = sampleX(ClosedForm(p), ntest, p.ϵ0; dataset = :test)
+    p.Yval[]   = sampleX(ClosedForm(p), nval, p.ϵ0; dataset = :val)
     Random.seed!(rng)
     return p
 end
 
-sampleθ(p::ToyModel, n::Union{Int, Nothing}) = permutedims(reduce(hcat, rand.(Uniform.(θlower(p), θupper(p)), n)))
+sampleθ(p::ToyModel, n::Union{Int, Symbol}; dataset::Symbol) = permutedims(reduce(hcat, rand.(Uniform.(θlower(p), θupper(p)), n)))
 
-sampleX(p::MaybeClosedToyModel, n::Union{Int, Nothing}, epsilon = nothing) = sampleX(p, sampleθ(physicsmodel(p), n), epsilon)
-sampleX(p::MaybeClosedToyModel, theta, epsilon = nothing) = signal_model(p, theta, epsilon)
+sampleX(p::MaybeClosedFormToyModel, n::Union{Int, Symbol}, epsilon = nothing; dataset::Symbol) = sampleX(p, sampleθ(physicsmodel(p), n; dataset = dataset), epsilon)
+sampleX(p::MaybeClosedFormToyModel, theta, epsilon = nothing) = signal_model(p, theta, epsilon)
 
-function sampleY(p::ToyModel, n::Union{Int, Nothing}; dataset::Symbol)
-    dataset == :train ? (isnothing(n) ? p.Ytrain[] : sample_columns(p.Ytrain[], n)) :
-    dataset == :test  ? (isnothing(n) ? p.Ytest[]  : sample_columns(p.Ytest[], n)) :
-    dataset == :val   ? (isnothing(n) ? p.Yval[]   : sample_columns(p.Yval[], n)) :
+function sampleY(p::ToyModel, n::Union{Int, Symbol}; dataset::Symbol)
+    dataset === :train ? (n === :all ? p.Ytrain[] : sample_columns(p.Ytrain[], n)) :
+    dataset === :test  ? (n === :all ? p.Ytest[]  : sample_columns(p.Ytest[], n)) :
+    dataset === :val   ? (n === :all ? p.Yval[]   : sample_columns(p.Yval[], n)) :
     error("dataset must be :train, :test, or :val")
 end
 
@@ -116,7 +123,7 @@ function _signal_model(
     end
     return y
 end
-signal_model(p::MaybeClosedToyModel, theta::AbstractVecOrMat, epsilon) = _signal_model(theta, epsilon, nsignal(p), beta(p))
+signal_model(p::MaybeClosedFormToyModel, theta::AbstractVecOrMat, epsilon = nothing) = _signal_model(theta, epsilon, nsignal(p), beta(p))
 
 ####
 #### Signal model
@@ -337,9 +344,9 @@ function make_mle_data_samplers(
     # True data (Y) samplers
     Ytrain, Ytest, Yval = Y[:,itrain], Y[:,itest], Y[:,ival]
     function sampleY(batchsize; dataset = :train)
-        dataset == :train ? (batchsize === nothing ? Ytrain : sample_columns(Ytrain, batchsize)) :
-        dataset == :test  ? (batchsize === nothing ? Ytest  : sample_columns(Ytest,  batchsize)) :
-        dataset == :val   ? (batchsize === nothing ? Yval   : sample_columns(Yval,   batchsize)) :
+        dataset === :train ? (batchsize === nothing ? Ytrain : sample_columns(Ytrain, batchsize)) :
+        dataset === :test  ? (batchsize === nothing ? Ytest  : sample_columns(Ytest,  batchsize)) :
+        dataset === :val   ? (batchsize === nothing ? Yval   : sample_columns(Yval,   batchsize)) :
         error("dataset must be :train, :test, or :val")
     end
 
@@ -350,9 +357,9 @@ function make_mle_data_samplers(
         θtrain = θtrain[:,shuffle(MersenneTwister(0), 1:size(θtrain,2))] # mix training + padded thetas
     end
     function sampleθ(batchsize; dataset = :train)
-        dataset == :train ? (batchsize === nothing ? θtrain : sample_columns(θtrain, batchsize)) :
-        dataset == :test  ? (batchsize === nothing ? θtest  : sample_columns(θtest,  batchsize)) :
-        dataset == :val   ? (batchsize === nothing ? θval   : sample_columns(θval,   batchsize)) :
+        dataset === :train ? (batchsize === nothing ? θtrain : sample_columns(θtrain, batchsize)) :
+        dataset === :test  ? (batchsize === nothing ? θtest  : sample_columns(θtest,  batchsize)) :
+        dataset === :val   ? (batchsize === nothing ? θval   : sample_columns(θval,   batchsize)) :
         error("dataset must be :train, :test, or :val")
     end
 
@@ -366,9 +373,9 @@ function make_mle_data_samplers(
     Xtest  = _sampleX_model(nothing; dataset = :test)
     Xval   = _sampleX_model(nothing; dataset = :val)
     function _sampleX_direct(batchsize; dataset = :train)
-        dataset == :train ? (batchsize === nothing ? Xtrain : sample_columns(Xtrain, batchsize)) :
-        dataset == :test  ? (batchsize === nothing ? Xtest  : sample_columns(Xtest,  batchsize)) :
-        dataset == :val   ? (batchsize === nothing ? Xval   : sample_columns(Xval,   batchsize)) :
+        dataset === :train ? (batchsize === nothing ? Xtrain : sample_columns(Xtrain, batchsize)) :
+        dataset === :test  ? (batchsize === nothing ? Xtest  : sample_columns(Xtest,  batchsize)) :
+        dataset === :val   ? (batchsize === nothing ? Xval   : sample_columns(Xval,   batchsize)) :
         error("dataset must be :train, :test, or :val")
     end
 
@@ -519,7 +526,7 @@ Turing.@model toy_model_rician_noise(
     for i in 1:length(y)
         # ν, σ = x[i], epsilon
         ν, σ = yhat[i], ϵhat[i]
-        y[i] ~ Rician(ν, σ; check_args = false)
+        y[i] ~ Rician(ν, σ)
     end
 end
 =#

@@ -409,7 +409,7 @@ function TestModel4(
         local G0, G, C, D, k, σ = Nfeat, Nfeat, Nblock, Ndense, (Nkern,1), actfun
         ConvFactory = @λ ch -> XavierConv(k, ch, σ; pad = (k.-1).÷2)
         BatchConvFactory = @λ ch -> BatchConvConnection(k, ch, σ; numlayers = Nconv, batchnorm = batchnorm, groupnorm = groupnorm, mode = batchmode)
-        Factory = factory == :conv ? ConvFactory : BatchConvFactory
+        Factory = factory === :conv ? ConvFactory : BatchConvFactory
         gff_layers = []
         for g in 1:Nglobal
             if g > 1
@@ -496,8 +496,8 @@ function DeepResNet(
     )
 
     resnet_maker =
-        type == :ResNet18  ? resnet18  : type == :ResNet34  ? resnet34  : type == :ResNet50 ? resnet50 :
-        type == :ResNet101 ? resnet101 : type == :ResNet152 ? resnet152 :
+        type === :ResNet18  ? resnet18  : type === :ResNet34  ? resnet34  : type === :ResNet50 ? resnet50 :
+        type === :ResNet101 ? resnet101 : type === :ResNet152 ? resnet152 :
         error("Unknown DeepResNet type: " * type)
     resnet = resnet_maker(top_in, bottom_in; initial_filters = nfilt)
 

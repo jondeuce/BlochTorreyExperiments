@@ -113,7 +113,7 @@ function err_subplots(k,v)
     p1 = plot(epoch, loss;     title = "Loss ($k: min = $(round(minimum(loss); sigdigits = 4)))",                      lw = 3, titlefontsize = 10, label = "loss",     legend = :topright,   ylim = (minimum(loss), quantile(loss, 0.95)))
     p2 = plot(epoch, acc;      title = "Accuracy ($k: peak = $(round(maximum(acc); sigdigits = 4))%)",                 lw = 3, titlefontsize = 10, label = "acc",      legend = :topleft,    ylim = (clamp(maximum(acc), 50, 99) - 0.5, 100))
     p3 = plot(epoch, labelerr; title = "Label Error ($k: rel. %)",                                     c = labelcolor, lw = 3, titlefontsize = 10, label = labelnames, legend = labellegend, ylim = (max(0, minimum(vec(labelerr)) - 1.0), min(50, 1.2 * maximum(labelerr[end,:])))) #min(50, quantile(vec(labelerr), 0.90))
-    (k == :testing) && plot!(p2, loop_errs[:testing][:epoch] .+ 1, loop_errs[:testing][:acc]; label = "loop acc", lw = 2) # Epochs shifted by 1 since accuracy is evaluated after a training within an epoch, whereas callbacks above are called before training
+    (k === :testing) && plot!(p2, loop_errs[:testing][:epoch] .+ 1, loop_errs[:testing][:acc]; label = "loop acc", lw = 2) # Epochs shifted by 1 since accuracy is evaluated after a training within an epoch, whereas callbacks above are called before training
     plot(p1, p2, p3; layout = (1,3))
 end
 train_err_cb = let LAST_EPOCH = 0

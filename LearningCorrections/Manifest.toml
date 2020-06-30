@@ -194,9 +194,9 @@ version = "0.12.2"
 
 [[CommonSubexpressions]]
 deps = ["Test"]
-git-tree-sha1 = "efdaf19ab11c7889334ca247ff4c9f7c322817b0"
+git-tree-sha1 = "34aa50efad19a788db0cb2eb44d149942f64816a"
 uuid = "bbf7d656-a473-5ed7-a52c-81e309532950"
-version = "0.2.0"
+version = "0.2.1"
 
 [[Compat]]
 deps = ["Base64", "Dates", "DelimitedFiles", "Distributed", "InteractiveUtils", "LibGit2", "Libdl", "LinearAlgebra", "Markdown", "Mmap", "Pkg", "Printf", "REPL", "Random", "SHA", "Serialization", "SharedArrays", "Sockets", "SparseArrays", "Statistics", "Test", "UUIDs", "Unicode"]
@@ -448,9 +448,9 @@ version = "0.5.1"
 
 [[GeometryBasics]]
 deps = ["IterTools", "LinearAlgebra", "StaticArrays", "StructArrays", "Tables"]
-git-tree-sha1 = "c1a5a41f28a301d1bf7c393671accee56b02d207"
+git-tree-sha1 = "798dd3339842b9d44e6fb72c6a61fb4ab502c494"
 uuid = "5c1252a2-5f33-56bf-86c9-59e7332b4326"
-version = "0.2.13"
+version = "0.2.14"
 
 [[GeometryTypes]]
 deps = ["ColorTypes", "FixedPointNumbers", "LinearAlgebra", "StaticArrays"]
@@ -928,9 +928,9 @@ version = "1.0.1"
 
 [[RecipesPipeline]]
 deps = ["Dates", "PlotUtils", "RecipesBase"]
-git-tree-sha1 = "9477d23b9ded11153622d8619d0c20c4626a4ac8"
+git-tree-sha1 = "d2a58b8291d1c0abae6a91489973f8a92bf5c04a"
 uuid = "01d81517-befc-4cb6-b9ec-a95719d0359c"
-version = "0.1.10"
+version = "0.1.11"
 
 [[Reexport]]
 deps = ["Pkg"]
