@@ -38,7 +38,7 @@ phys = initialize!(
 
 # Initialize generator + discriminator + kernel
 let
-    n  = nsignal(phys)::Int #TODO
+    n  = nsignal(phys)::Int
     Dh = settings["gan"]["hdim"]::Int
     Nh = settings["gan"]["nhidden"]::Int
     δ  = settings["gan"]["maxcorr"]::Float64
@@ -125,8 +125,8 @@ Dloss(X,Y) = -mean(log.(get_D_Y(Y)) .+ log.(1 .- get_D_G_X(X)))
 Gloss(X) = mean(log.(1 .- get_D_G_X(X)))
 MMDloss(X,Y) = size(Y,2) * mmd_flux(models["logsigma"], corrected_signal_instance(ricegen, X), Y) # m*MMD^2 on genatr data
 
-# Global state
-state = DataFrame(
+# Global logger
+logger = DataFrame(
     :epoch    => Int[], # mandatory field
     :dataset  => Symbol[], # mandatory field
     :time     => Union{Float64, Missing}[],
@@ -153,8 +153,6 @@ optimizers = Dict{String,Any}(
 cb_state = initialize_callback(phys; nsamples = 2048) #TODO
 
 function callback(epoch;
-        n          :: Int     = settings["data"]["nsignal"],
-        ntheta     :: Int     = settings["data"]["ntheta"],
         m          :: Int     = settings["gan"]["batchsize"],
         outfolder  :: String  = settings["data"]["out"],
         saveperiod :: Float64 = settings["gan"]["saveperiod"],
@@ -192,194 +190,46 @@ function callback(epoch;
     dt = cb_state["curr_time"] - cb_state["last_time"]
 
     # Update dataframe
-    push!(state, [epoch, :test, dt, gloss, dloss, mean(d_y), mean(d_g_x), MMDsq, MMDvar, tstat, c_α, P_α, rmse, θ_fit_err, signal_fit_logL, signal_fit_rmse])
+    push!(logger, [epoch, :test, dt, gloss, dloss, mean(d_y), mean(d_g_x), MMDsq, MMDvar, tstat, c_α, P_α, rmse, θ_fit_err, signal_fit_logL, signal_fit_rmse])
 
-    function makeplots()
-        s = x -> x == round(x) ? round(Int, x) : round(x; sigdigits = 4) # for plotting
-        window = 100 # window for plotting error metrics etc.
+    function makeplots(;showplot = false)
         try
-            pgan = @timeit "gan loss plot" let
-                dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, state)
-                dfp = dropmissing(dfp[:, [:epoch, :Gloss, :Dloss, :D_Y, :D_G_X]])
-                if !isempty(dfp)
-                    pgan = @df dfp plot(:epoch, [:Gloss :Dloss :D_Y :D_G_X]; label = ["G loss" "D loss" "D(Y)" "D(G(X))"], lw = 2)
-                    (epoch >= lrdroprate) && vline!(pgan, lrdroprate : lrdroprate : epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
-                    plot!(pgan; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
-                else
-                    nothing
-                end
-            end
-            !isnothing(pgan) && display(pgan) #TODO
-
-            pmodel = @timeit "model plot" let
-                @unpack δθ, ϵθ = cb_state
-                plot(
-                    plot(
-                        plot(mean(δθ; dims = 2); yerr = std(δθ; dims = 2), label = L"signal correction $g_\delta(X)$", c = :red, title = "model outputs vs. data channel"),
-                        plot(mean(ϵθ; dims = 2); yerr = std(ϵθ; dims = 2), label = L"noise amplitude $\exp(g_\epsilon(X))$", c = :blue);
-                        layout = (2,1),
-                    ),
-                    plot(permutedims(models["logsigma"]); leg = :none, title = "logσ vs. data channel"),
-                )
-            end
-            display(pmodel) #TODO
-
-            psignals = @timeit "signal plot" let
-                @unpack Xθ, Xθhat, δθ, Yθ = cb_state
-                nθplot = 4 # number of θ sets to draw for plotting simulated signals
-                θplotidx = sample(1:size(Xθ,2), nθplot; replace = false)
-                if hasclosedform(phys)
-                    plot(
-                        [plot(hcat(Yθ[:,j], Xθhat[:,j]); c = [:blue :red], lab = [L"Goal $Y$" L"\hat{X} \sim G(X)"]) for j in θplotidx]...,
-                        [plot(hcat(Yθ[:,j] - Xθ[:,j], δθ[:,j]); c = [:blue :red], lab = [L"Goal $Y - X$" L"$g_\delta(X)$"]) for j in θplotidx]...,
-                        [plot(Yθ[:,j] - Xθ[:,j] - δθ[:,j]; lab = L"$Y - |X + g_\delta(X)|$") for j in θplotidx]...;
-                        layout = (3, nθplot),
-                    )
-                else
-                    plot(
-                        [plot(hcat(Xθ[:,j], Xθhat[:,j]); c = [:blue :red], lab = [L"$X$" L"\hat{X} \sim G(X)"]) for j in θplotidx]...,
-                        [plot(Xθhat[:,j] - Xθ[:,j]; c = :red, lab = L"$\hat{X} - X$") for j in θplotidx]...,
-                        [plot(δθ[:,j]; lab = L"$g_\delta(X)$") for j in θplotidx]...;
-                        layout = (3, nθplot),
-                    )
-                end
-            end
-            display(psignals) #TODO
-
-            pmmd = @timeit "mmd loss plot" let
-                dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, state)
-                if !isempty(dfp)
-                    tstat_nan_outliers = map((_tstat, _mmdvar) -> _mmdvar > eps() ? _tstat : NaN, dfp.tstat, dfp.MMDvar)
-                    tstat_drop_outliers = filter(!isnan, tstat_nan_outliers)
-                    tstat_median = isempty(tstat_drop_outliers) ? NaN : median(tstat_drop_outliers)
-                    tstat_ylim = isempty(tstat_drop_outliers) ? nothing : quantile(tstat_drop_outliers, [0.01, 0.99])
-                    p1 = plot(dfp.epoch, dfp.MMDsq; label = "m*MMD²", title = "median loss = $(s(median(state.MMDsq)))") # ylim = quantile(state.MMDsq, [0.01, 0.99])
-                    p2 = plot(dfp.epoch, dfp.MMDvar; label = "m²MMDvar", title = "median m²MMDvar = $(s(median(state.MMDvar)))") # ylim = quantile(state.MMDvar, [0.01, 0.99])
-                    p3 = plot(dfp.epoch, tstat_nan_outliers; title = "median t = $(s(tstat_median))", label = "t = MMD²/MMDσ", ylim = tstat_ylim)
-                    p4 = plot(dfp.epoch, dfp.P_alpha; label = "P_α", title = "median P_α = $(s(median(state.P_alpha)))", ylim = (0,1))
-                    foreach([p1,p2,p3,p4]) do p
-                        (epoch >= lrdroprate) && vline!(p, lrdroprate:lrdroprate:epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
-                        plot!(p; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
-                    end
-                    plot(p1, p2, p3, p4)
-                else
-                    nothing
-                end
-            end
-            !isnothing(pmmd) && display(pmmd) #TODO
-
+            pgan     = MMDLearning.plot_gan_loss(logger, cb_state, phys; showplot = showplot, lrdroprate = lrdroprate, lrdrop = lrdrop)
+            pmodel   = MMDLearning.plot_rician_model(logger, cb_state, phys; bandwidths = permutedims(models["logsigma"]), showplot = showplot)
+            psignals = MMDLearning.plot_rician_signals(logger, cb_state, phys; showplot = showplot)
+            pmmd     = MMDLearning.plot_mmd_losses(logger, cb_state, phys; showplot = showplot, lrdroprate = lrdroprate, lrdrop = lrdrop)
+            pinfer   = MMDLearning.plot_rician_inference(logger, cb_state, phys; showplot = showplot)
             pwitness = nothing #mmd_witness(Xϵ, Y, sigma)
-            pheat = nothing #mmd_heatmap(Xϵ, Y, sigma)
-
-            pperm = @timeit "permutation plot" mmd_perm_test_power_plot(permtest)
-            display(pperm) #TODO
-
-            pinfer = @timeit "theta inference plot" let
-                dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, state)
-                df_inf = filter(dfp) do r
-                    !ismissing(r.signal_fit_rmse) && !ismissing(r.signal_fit_logL) && !(hasclosedform(phys) && ismissing(r.theta_fit_err))
-                end
-
-                if !isempty(dfp) && !isempty(df_inf)
-                    @unpack Xθfit, Xθhatfit, Xθδfit, Yfit, Yθfit, Yθhatfit, i_fit, δθfit, θfit, ϵθfit = cb_state
-                    @unpack all_signal_fit_logL, all_signal_fit_rmse = cb_state["metrics"]
-                    plot(
-                        plot(
-                            hasclosedform(phys) ?
-                                plot(hcat(Yθfit[:,end÷2], Xθfit[:,end÷2]); c = [:blue :red], lab = [L"$Y(\hat{\theta})$ fit" L"$X(\hat{\theta})$ fit"]) :
-                                plot(hcat( Yfit[:,end÷2], Xθfit[:,end÷2]); c = [:blue :red], lab = [L"Data $Y$" L"$X(\hat{\theta})$ fit"]),
-                            sticks(all_signal_fit_rmse; m = (:circle,4), lab = "rmse: fits"),
-                            sticks(all_signal_fit_logL; m = (:circle,4), lab = "-logL: fits"),
-                            layout = @layout([a{0.25h}; b{0.375h}; c{0.375h}]),
-                        ),
-                        let
-                            _subplots = Any[]
-                            if hasclosedform(phys)
-                                prmse = plot(dfp.epoch, dfp.rmse; title = "min rmse = $(s(minimum(dfp.rmse)))", label = L"rmse: $Y(\hat{\theta}) - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$", xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
-                                pθerr = plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.theta_fit_err)); title = "min max error = $(s(minimum(maximum.(df_inf.theta_fit_err))))", label = permutedims(θlabels(phys)), xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
-                                append!(_subplots, [prmse, pθerr])
-                            end
-
-                            rmselab, logLlab = L"rmse: $Y - \hat{X}(\hat{\theta})$", L"-logL: $Y - \hat{X}(\hat{\theta})$"
-                            if false #TODO MRI model
-                                rmselab *= "\nrmse prior: $(round(mean(phys.testfits.rmse); sigdigits = 4))"
-                                logLlab *= "\n-logL prior: $(round(mean(phys.testfits.loss); sigdigits = 4))"
-                            end
-                            prmse = plot(df_inf.epoch, df_inf.signal_fit_rmse; title = "min rmse = $(s(minimum(df_inf.signal_fit_rmse)))", lab = rmselab, xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
-                            plogL = plot(df_inf.epoch, df_inf.signal_fit_logL; title = "min -logL = $(s(minimum(df_inf.signal_fit_logL)))", lab = logLlab, xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10), ylims = (-Inf, min(-100, maximum(df_inf.signal_fit_logL))))
-                            append!(_subplots, [prmse, plogL])
-
-                            plot(_subplots...)
-                        end;
-                        layout = @layout([a{0.25w} b{0.75w}]),
-                    )
-                else
-                    nothing
-                end
+            pheat    = nothing #mmd_heatmap(Xϵ, Y, sigma)
+            pperm    = @timeit "permutation plot" try
+                mmd_perm_test_power_plot(permtest)
+            catch e
+                handleinterrupt(e; msg = "Error during permutation plot")
             end
-            !isnothing(pinfer) && display(pinfer) #TODO
+            showplot && display(pperm)
 
-            return @ntuple(pgan, pmodel, psignals, pinfer, pmmd, pwitness, pheat, pperm)
+            return @dict(pgan, pmodel, psignals, pmmd, pinfer, pwitness, pheat, pperm)
         catch e
-            if e isa InterruptException
-                @warn "Plotting interrupted"
-                rethrow(e)
-            else
-                @warn "Error plotting"
-                @warn sprint(showerror, e, catch_backtrace())
-            end
+            handleinterrupt(e; msg = "Error plotting")
         end
     end
 
-    function saveplots(savefolder, prefix, suffix, plothandles)
-        !isdir(savefolder) && mkpath(savefolder)
-        try
-            for (name, p) in zip(keys(plothandles), values(plothandles))
-                !isnothing(p) && savefig(p, joinpath(savefolder, "$(prefix)$(string(name)[2:end])$(suffix).png"))
-            end
-        catch e
-            if e isa InterruptException
-                @warn "Saving plots interrupted"
-                rethrow(e)
-            else
-                @warn "Error saving plots"
-                @warn sprint(showerror, e, catch_backtrace())
-            end
-        end
-    end
-
-    function saveprogress(savefolder, prefix, suffix)
-        !isdir(savefolder) && mkpath(savefolder)
-        try
-            BSON.bson(joinpath(savefolder, "$(prefix)progress$(suffix).bson"), Dict("progress" => deepcopy(state)))
-            BSON.bson(joinpath(savefolder, "$(prefix)model$(suffix).bson"), deepcopy(models))
-        catch e
-            if e isa InterruptException
-                @warn "Saving progress interrupted"
-                rethrow(e)
-            else
-                @warn "Error saving progress"
-                @warn sprint(showerror, e, catch_backtrace())
-            end
-        end
-    end
-
-    # Save current model + state every `saveperiod` seconds
+    # Save current model + logger every `saveperiod` seconds
     if epoch == 0 || time() - cb_state["last_curr_checkpoint"] >= saveperiod
         cb_state["last_curr_checkpoint"] = time()
-        @timeit "save current model" saveprogress(outfolder, "current-", "")
+        @timeit "save current model" saveprogress(@dict(models, optimizers, logger); savefolder = outfolder, prefix = "current-")
         @timeit "make current plots" plothandles = makeplots()
-        @timeit "save current plots" saveplots(outfolder, "current-", "", plothandles)
+        @timeit "save current plots" saveplots(plothandles; savefolder = outfolder, prefix = "current-")
     end
 
     # Check for and save best model + make best model plots every `saveperiod` seconds
-    _is_best_model = collect(skipmissing(state.signal_fit_logL)) |> x -> !isempty(x) && (x[end] <= minimum(x))
+    _is_best_model = collect(skipmissing(logger.signal_fit_logL)) |> x -> !isempty(x) && (x[end] <= minimum(x))
     if _is_best_model
-        @timeit "save best model" saveprogress(outfolder, "best-", "")
+        @timeit "save best model" saveprogress(@dict(models, optimizers, logger); savefolder = outfolder, prefix = "best-")
         if time() - cb_state["last_best_checkpoint"] >= saveperiod
             cb_state["last_best_checkpoint"] = time()
             @timeit "make best plots" plothandles = makeplots()
-            @timeit "save best plots" saveplots(outfolder, "best-", "", plothandles)
+            @timeit "save best plots" saveplots(plothandles; savefolder = outfolder, prefix = "best-")
         end
     end
 
@@ -498,11 +348,7 @@ function train_mmd_kernel!(
             end
             recordprogress && callback(epoch, X̂, Y)
         catch e
-            if e isa InterruptException
-                break
-            else
-                rethrow(e)
-            end
+            handleinterrupt(e; msg = "Error during kernel training")
         end
     end
 
@@ -522,7 +368,7 @@ function train_hybrid_gan_model(;
     )
     tstart = Dates.now()
 
-    epoch0 = isempty(state) ? 0 : state.epoch[end]+1
+    epoch0 = isempty(logger) ? 0 : logger.epoch[end]+1
     for epoch in epoch0 .+ (0:epochs)
         try
             if epoch == epoch0
@@ -564,7 +410,7 @@ function train_hybrid_gan_model(;
 
             if mod(epoch, showrate) == 0
                 show(stdout, TimerOutputs.get_defaulttimer()); println("\n")
-                show(stdout, last(state[:, Not(:theta_fit_err)], 10)); println("\n")
+                show(stdout, last(logger[:, Not(:theta_fit_err)], 10)); println("\n")
             end
             (epoch == epoch0 + 1) && TimerOutputs.reset_timer!() # throw out initial loop (precompilation, first plot, etc.)
 
@@ -573,14 +419,14 @@ function train_hybrid_gan_model(;
                 break
             end
         catch e
-            if e isa InterruptException
+            if e isa InterruptException || e isa Flux.Optimise.StopException
                 break
             else
-                rethrow(e)
+                handleinterrupt(e; msg = "Error during training")
             end
         end
     end
-    @info "Finished: trained for $(state.epoch[end])/$epochs epochs"
+    @info "Finished: trained for $(logger.epoch[end])/$epochs epochs"
 
     return nothing
 end

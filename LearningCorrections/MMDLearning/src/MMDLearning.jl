@@ -12,6 +12,7 @@ import TOML, BSON, Flux, NNlib, Zygote, ChainRules, BlackBoxOptim, Optim, Forwar
 export TOML, BSON, Flux, NNlib, Zygote, ChainRules, BlackBoxOptim, Optim, ForwardDiff, Yeppp, DECAES
 
 export load_settings
+export handleinterrupt, saveprogress, saveplots
 # export make_toy_samplers, make_mle_data_samplers
 # export signal_loglikelihood_inference
 # export signal_theta_error, theta_bounds, signal_model, signal_model!, signal_model_work

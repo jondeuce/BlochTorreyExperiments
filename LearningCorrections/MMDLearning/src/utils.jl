@@ -22,10 +22,54 @@ function load_settings(
     return settings
 end
 
-# Saving, formatting
+####
+#### Saving and formatting
+####
+
 getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
 savebson(filename, data::Dict) = @elapsed BSON.bson(filename, data)
 # gitdir() = realpath(DrWatson.projectdir(".."))
+
+function handleinterrupt(e; msg = "Error")
+    if e isa InterruptException
+        @info "User interrupt"
+    elseif e isa Flux.Optimise.StopException
+        @info "Training stopped Flux callback"
+    else
+        !isempty(msg) && @warn msg
+        @warn sprint(showerror, e, catch_backtrace())
+    end
+    return nothing
+end
+
+# previously: saveprogress(savefolder, prefix, suffix)
+function saveprogress(savedata::Dict; savefolder, prefix = "", suffix = "")
+    !isdir(savefolder) && mkpath(savefolder)
+    for (key, data) in savedata
+        try
+            BSON.bson(
+                joinpath(savefolder, "$(prefix)$(key)$(suffix).bson"),
+                Dict{String,Any}(string(key) => deepcopy(data)),
+            )
+        catch e
+            handleinterrupt(e; msg = "Error saving progress")
+        end
+    end
+end
+
+# previously: saveplots(savefolder, prefix, suffix, plothandles)
+function saveplots(plothandles::Dict; savefolder, prefix = "", suffix = "", ext = ".png")
+    !isdir(savefolder) && mkpath(savefolder)
+    try
+        for (name, p) in plothandles
+            if !isnothing(p)
+                savefig(p, joinpath(savefolder, "$(prefix)$(string(name)[2:end])$(suffix)$(ext)"))
+            end
+        end
+    catch e
+        handleinterrupt(e; msg = "Error saving plots")
+    end
+end
 
 # Mini batching
 make_minibatch(features, labels, idxs) = (features[.., idxs], labels[.., idxs])
@@ -137,6 +181,7 @@ function log10ticks(a, b; baseticks = 1:10)
     ticks = unique!(vcat([10.0^x .* baseticks for x in l:u]...))
     return filter!(x -> a ≤ x ≤ b, ticks)
 end
+
 function slidingindices(epoch, window = 100)
     i1_window = findfirst(e -> e ≥ epoch[end] - window + 1, epoch)
     i1_first  = findfirst(e -> e ≥ window, epoch)
@@ -157,6 +202,7 @@ function make_test_err_cb(state, lossfun, accfun, laberrfun, test_set)
         # @info @sprintf("[%d] -> Updating testing error... (%d ms)", state[row, :epoch], 1000 * update_time)
     end
 end
+
 function make_train_err_cb(state, lossfun, accfun, laberrfun, train_set)
     function()
         update_time = @elapsed begin
@@ -170,6 +216,7 @@ function make_train_err_cb(state, lossfun, accfun, laberrfun, train_set)
         # @info @sprintf("[%d] -> Updating training error... (%d ms)", state[row, :epoch], 1000 * update_time)
     end
 end
+
 function make_plot_errs_cb(state, filename = nothing; labelnames = "")
     function err_subplots()
         ps = Any[]
@@ -216,15 +263,11 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
             end
             # @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[end, :epoch], 1000 * plot_time)
         catch e
-            if e isa InterruptException
-                rethrow(e) # Training interrupted by user
-            else
-                @info @sprintf("[%d] -> PLOTTING FAILED...", state[end, :epoch])
-                @warn sprint(showerror, e, catch_backtrace())
-            end
+            handleinterrupt(e; msg = @sprintf("[%d] -> PLOTTING FAILED...", state[end, :epoch]))
         end
     end
 end
+
 function make_checkpoint_state_cb(state, filename = nothing; filtermissings = false, filternans = false)
     function()
         save_time = @elapsed let state = deepcopy(state)
@@ -237,6 +280,7 @@ function make_checkpoint_state_cb(state, filename = nothing; filtermissings = fa
         # @info @sprintf("[%d] -> Error checkpoint... (%d ms)", state[end, :epoch], 1000 * save_time)
     end
 end
+
 function make_plot_gan_losses_cb(state, filename = nothing)
     function()
         try
@@ -247,15 +291,11 @@ function make_plot_gan_losses_cb(state, filename = nothing)
             end
             # @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[end, :epoch], 1000 * plot_time)
         catch e
-            if e isa InterruptException
-                rethrow(e) # Training interrupted by user
-            else
-                @info @sprintf("[%d] -> PLOTTING FAILED...", state[end, :epoch])
-                @warn sprint(showerror, e, catch_backtrace())
-            end
+            handleinterrupt(e; msg = @sprintf("[%d] -> PLOTTING FAILED...", state[end, :epoch]))
         end
     end
 end
+
 function make_plot_ligocvae_losses_cb(state, filename = nothing)
     function()
         try
@@ -283,15 +323,11 @@ function make_plot_ligocvae_losses_cb(state, filename = nothing)
             end
             # @info @sprintf("[%d] -> Plotting progress... (%d ms)", state[end, :epoch], 1000 * plot_time)
         catch e
-            if e isa InterruptException
-                rethrow(e) # Training interrupted by user
-            else
-                @info @sprintf("[%d] -> PLOTTING FAILED...", state[end, :epoch])
-                @warn sprint(showerror, e, catch_backtrace())
-            end
+            handleinterrupt(e; msg = @sprintf("[%d] -> PLOTTING FAILED...", state[end, :epoch]))
         end
     end
 end
+
 function make_update_lr_cb(state, opt, lrfun; lrcutoff = 1e-6)
     last_lr = nothing
     curr_lr = lr(opt)
@@ -313,6 +349,7 @@ function make_update_lr_cb(state, opt, lrfun; lrcutoff = 1e-6)
         return nothing
     end
 end
+
 function make_save_best_model_cb(state, model, opt, filename = nothing)
     function()
         # If this is the best accuracy we've seen so far, save the model out
@@ -339,6 +376,7 @@ function make_save_best_model_cb(state, model, opt, filename = nothing)
         nothing
     end
 end
+
 function make_checkpoint_model_cb(state, model, opt, filename = nothing)
     function()
         try
@@ -487,4 +525,156 @@ function update_callback!(
     @pack! cb_state = metrics
 
     return cb_state
+end
+
+####
+#### GAN Plots
+####
+
+function plot_gan_loss(logger, cb_state, phys; window = 100, lrdroprate = typemax(Int), lrdrop = 1.0, showplot = false)
+    @timeit "gan loss plot" try
+        epoch = logger.epoch[end]
+        dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, logger)
+        dfp = dropmissing(dfp[:, [:epoch, :Gloss, :Dloss, :D_Y, :D_G_X]])
+        if !isempty(dfp)
+            p = @df dfp plot(:epoch, [:Gloss :Dloss :D_Y :D_G_X]; label = ["G loss" "D loss" "D(Y)" "D(G(X))"], lw = 2)
+            (epoch >= lrdroprate) && vline!(p, lrdroprate : lrdroprate : epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
+            p = plot!(p; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
+        else
+            p = nothing
+        end
+        showplot && !isnothing(p) && display(p)
+        return p
+    catch e
+        handleinterrupt(e; msg = "Error making gan loss plot")
+    end
+end
+
+function plot_rician_model(logger, cb_state, phys; bandwidths = nothing, showplot = false)
+    @timeit "model plot" try
+        @unpack δθ, ϵθ = cb_state
+        _subplots = []
+        push!(_subplots, plot(
+            plot(mean(δθ; dims = 2); yerr = std(δθ; dims = 2), label = L"signal correction $g_\delta(X)$", c = :red, title = "model outputs vs. data channel"),
+            plot(mean(ϵθ; dims = 2); yerr = std(ϵθ; dims = 2), label = L"noise amplitude $\exp(g_\epsilon(X))$", c = :blue);
+            layout = (2,1),
+        ))
+        !isnothing(bandwidths) && push!(_subplots, plot(
+            bandwidths; leg = :none, title = "logσ vs. data channel"
+        ))
+        p = plot(_subplots...)
+        showplot && !isnothing(p) && display(p)
+        return p
+    catch e
+        handleinterrupt(e; msg = "Error making Rician model plot")
+    end
+end
+
+function plot_rician_signals(logger, cb_state, phys; showplot = false)
+    @timeit "signal plot" try
+        @unpack Xθ, Xθhat, δθ, Yθ = cb_state
+        nθplot = 4 # number of θ sets to draw for plotting simulated signals
+        θplotidx = sample(1:size(Xθ,2), nθplot; replace = false)
+        p = if hasclosedform(phys)
+            plot(
+                [plot(hcat(Yθ[:,j], Xθhat[:,j]); c = [:blue :red], lab = [L"Goal $Y$" L"\hat{X} \sim G(X)"]) for j in θplotidx]...,
+                [plot(hcat(Yθ[:,j] - Xθ[:,j], δθ[:,j]); c = [:blue :red], lab = [L"Goal $Y - X$" L"$g_\delta(X)$"]) for j in θplotidx]...,
+                [plot(Yθ[:,j] - Xθ[:,j] - δθ[:,j]; lab = L"$Y - |X + g_\delta(X)|$") for j in θplotidx]...;
+                layout = (3, nθplot),
+            )
+        else
+            plot(
+                [plot(hcat(Xθ[:,j], Xθhat[:,j]); c = [:blue :red], lab = [L"$X$" L"\hat{X} \sim G(X)"]) for j in θplotidx]...,
+                [plot(Xθhat[:,j] - Xθ[:,j]; c = :red, lab = L"$\hat{X} - X$") for j in θplotidx]...,
+                [plot(δθ[:,j]; lab = L"$g_\delta(X)$") for j in θplotidx]...;
+                layout = (3, nθplot),
+            )
+        end
+        showplot && !isnothing(p) && display(p)
+        return p
+    catch e
+        handleinterrupt(e; msg = "Error making Rician signal plot")
+    end
+end
+
+function plot_mmd_losses(logger, cb_state, phys; window = 100, lrdroprate = typemax(Int), lrdrop = 1.0, showplot = false)
+    @timeit "mmd loss plot" try
+        epoch = logger.epoch[end]
+        s = x -> x == round(x) ? round(Int, x) : round(x; sigdigits = 4)
+        dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, logger)
+        if !isempty(dfp)
+            tstat_nan_outliers = map((_tstat, _mmdvar) -> _mmdvar > eps() ? _tstat : NaN, dfp.tstat, dfp.MMDvar)
+            tstat_drop_outliers = filter(!isnan, tstat_nan_outliers)
+            tstat_median = isempty(tstat_drop_outliers) ? NaN : median(tstat_drop_outliers)
+            tstat_ylim = isempty(tstat_drop_outliers) ? nothing : quantile(tstat_drop_outliers, [0.01, 0.99])
+            p1 = plot(dfp.epoch, dfp.MMDsq; label = "m*MMD²", title = "median loss = $(s(median(logger.MMDsq)))") # ylim = quantile(logger.MMDsq, [0.01, 0.99])
+            p2 = plot(dfp.epoch, dfp.MMDvar; label = "m²MMDvar", title = "median m²MMDvar = $(s(median(logger.MMDvar)))") # ylim = quantile(logger.MMDvar, [0.01, 0.99])
+            p3 = plot(dfp.epoch, tstat_nan_outliers; title = "median t = $(s(tstat_median))", label = "t = MMD²/MMDσ", ylim = tstat_ylim)
+            p4 = plot(dfp.epoch, dfp.P_alpha; label = "P_α", title = "median P_α = $(s(median(logger.P_alpha)))", ylim = (0,1))
+            foreach([p1,p2,p3,p4]) do p
+                (epoch >= lrdroprate) && vline!(p, lrdroprate : lrdroprate : epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
+                plot!(p; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
+            end
+            p = plot(p1, p2, p3, p4)
+        else
+            p = nothing
+        end
+        showplot && !isnothing(p) && display(p)
+        return p
+    catch e
+        handleinterrupt(e; msg = "Error making MMD losses plot")
+    end
+end
+
+function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = false)
+    @timeit "theta inference plot" try
+        epoch = logger.epoch[end]
+        s = x -> x == round(x) ? round(Int, x) : round(x; sigdigits = 4)
+        dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, logger)
+        df_inf = filter(dfp) do r
+            !ismissing(r.signal_fit_rmse) && !ismissing(r.signal_fit_logL) && !(hasclosedform(phys) && ismissing(r.theta_fit_err))
+        end
+
+        if !isempty(dfp) && !isempty(df_inf)
+            @unpack Xθfit, Xθhatfit, Xθδfit, Yfit, Yθfit, Yθhatfit, i_fit, δθfit, θfit, ϵθfit = cb_state
+            @unpack all_signal_fit_logL, all_signal_fit_rmse = cb_state["metrics"]
+            p = plot(
+                plot(
+                    hasclosedform(phys) ?
+                        plot(hcat(Yθfit[:,end÷2], Xθfit[:,end÷2]); c = [:blue :red], lab = [L"$Y(\hat{\theta})$ fit" L"$X(\hat{\theta})$ fit"]) :
+                        plot(hcat( Yfit[:,end÷2], Xθfit[:,end÷2]); c = [:blue :red], lab = [L"Data $Y$" L"$X(\hat{\theta})$ fit"]),
+                    sticks(all_signal_fit_rmse; m = (:circle,4), lab = "rmse: fits"),
+                    sticks(all_signal_fit_logL; m = (:circle,4), lab = "-logL: fits"),
+                    layout = @layout([a{0.25h}; b{0.375h}; c{0.375h}]),
+                ),
+                let
+                    _subplots = Any[]
+                    if hasclosedform(phys)
+                        prmse = plot(dfp.epoch, dfp.rmse; title = "min rmse = $(s(minimum(dfp.rmse)))", label = L"rmse: $Y(\hat{\theta}) - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$", xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
+                        pθerr = plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.theta_fit_err)); title = "min max error = $(s(minimum(maximum.(df_inf.theta_fit_err))))", label = permutedims(θlabels(phys)), xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
+                        append!(_subplots, [prmse, pθerr])
+                    end
+
+                    rmselab, logLlab = L"rmse: $Y - \hat{X}(\hat{\theta})$", L"-logL: $Y - \hat{X}(\hat{\theta})$"
+                    if false #TODO MRI model
+                        rmselab *= "\nrmse prior: $(round(mean(phys.testfits.rmse); sigdigits = 4))"
+                        logLlab *= "\n-logL prior: $(round(mean(phys.testfits.loss); sigdigits = 4))"
+                    end
+                    prmse = plot(df_inf.epoch, df_inf.signal_fit_rmse; title = "min rmse = $(s(minimum(df_inf.signal_fit_rmse)))", lab = rmselab, xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
+                    plogL = plot(df_inf.epoch, df_inf.signal_fit_logL; title = "min -logL = $(s(minimum(df_inf.signal_fit_logL)))", lab = logLlab, xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10), ylims = (-Inf, min(-100, maximum(df_inf.signal_fit_logL))))
+                    append!(_subplots, [prmse, plogL])
+
+                    plot(_subplots...)
+                end;
+                layout = @layout([a{0.25w} b{0.75w}]),
+            )
+        else
+            p = nothing
+        end
+
+        showplot && !isnothing(p) && display(p)
+        return p
+    catch e
+        handleinterrupt(e; msg = "Error making θ inference plot")
+    end
 end
