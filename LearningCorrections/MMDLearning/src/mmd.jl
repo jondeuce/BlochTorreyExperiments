@@ -1321,33 +1321,38 @@ function mmd_witness(X, Y, σ; skipdiag = false)
 end
 
 # Plot permutation test results
-function mmd_perm_test_power_plot(perm_test_results)
-    @unpack alpha, m, c_alpha, P_alpha, P_alpha_approx, MMDsq, MMDvar, MMDσ, c_alpha_perms, mmd_samples, mmdvar_samples = perm_test_results
+function mmd_perm_test_power_plot(perm_test_results; showplot = false)
+    @timeit "permutation plot" try
+        @unpack alpha, m, c_alpha, P_alpha, P_alpha_approx, MMDsq, MMDvar, MMDσ, c_alpha_perms, mmd_samples, mmdvar_samples = perm_test_results
 
-    s = x -> string(round(x; sigdigits = 4))
-    p = plot(; title = "P_α = $(s(P_alpha)) ~ $(s(P_alpha_approx))")
-    xl = extrema([extrema(c_alpha_perms)..., extrema(m .* mmd_samples)...])
+        s = x -> string(round(x; sigdigits = 4))
+        p = plot(; title = "P_α = $(s(P_alpha)) ~ $(s(P_alpha_approx))")
+        xl = extrema([extrema(c_alpha_perms)..., extrema(m .* mmd_samples)...])
 
-    # Permutation test plot:
-    #   c_alpha_perms: m*MMD^2 for mixed (X,Y) data
-    #   c_alpha: the (1-alpha)'th quantile for c_alpha_perms
-    density!(p, c_alpha_perms; label = "c_α samples (α = $alpha)", line = (3,:blue))
-    vline!(p, [c_alpha]; label = "c_α threshold (α = $alpha)", line = (2,:blue,:dash))
+        # Permutation test plot:
+        #   c_alpha_perms: m*MMD^2 for mixed (X,Y) data
+        #   c_alpha: the (1-alpha)'th quantile for c_alpha_perms
+        density!(p, c_alpha_perms; label = "c_α samples (α = $alpha)", line = (3,:blue))
+        vline!(p, [c_alpha]; label = "c_α threshold (α = $alpha)", line = (2,:blue,:dash))
 
-    # m*MMD^2 samples plot:
-    #   mmd_samples: m*MMD^2 samples for different (X,Y) batches
-    #   MMDsq, MMDσ: estimates for mean, std of mmd_samples
-    vline!(p, [m*MMDsq]; line = (2,:red,:dash), label = "m*MMD² mean (μ = $(s(m*MMDsq)))")
-    vline!(p, m*MMDsq .+ [-m*MMDσ, m*MMDσ]; line = (2,:red,:dot), label = "±1σ bounds (σ = $(s(m*MMDσ)))")
-    if m^2 * MMDvar > eps(typeof(MMDvar))
-        plot!(p, Normal(m*MMDsq, m*MMDσ); label = "m*MMD² distbn ~ N(μ,σ)", line = (3,:red))
+        # m*MMD^2 samples plot:
+        #   mmd_samples: m*MMD^2 samples for different (X,Y) batches
+        #   MMDsq, MMDσ: estimates for mean, std of mmd_samples
+        vline!(p, [m*MMDsq]; line = (2,:red,:dash), label = "m*MMD² mean (μ = $(s(m*MMDsq)))")
+        vline!(p, m*MMDsq .+ [-m*MMDσ, m*MMDσ]; line = (2,:red,:dot), label = "±1σ bounds (σ = $(s(m*MMDσ)))")
+        if m^2 * MMDvar > eps(typeof(MMDvar))
+            plot!(p, Normal(m*MMDsq, m*MMDσ); label = "m*MMD² distbn ~ N(μ,σ)", line = (3,:red))
+        end
+
+        if length(mmd_samples) > 1
+            density!(p, m .* mmd_samples; label = "m*MMD² samples", line = (2,:green))
+        end
+
+        showplot && !isnothing(p) && display(p)
+        return p
+    catch e
+        handleinterrupt(e; msg = "Error during permutation plot")
     end
-
-    if length(mmd_samples) > 1
-        density!(p, m .* mmd_samples; label = "m*MMD² samples", line = (2,:green))
-    end
-
-    return p
 end
 
 #=
@@ -1374,7 +1379,107 @@ end
 #### Kernel bandwidth opt
 ####
 
-function mmd_bandwidth_bruteopt(sampleX, sampleY, bounds; nsigma = 100, nevals = 100)
+function tstat(logσ::Real, X, Y)
+    m = size(X,2)
+    σ = exp(logσ)
+    γ = inv(2σ^2)
+    k(Δ) = exp(-γ*Δ)
+    MMDsq  = m * mmd(k, X, Y)
+    MMDvar = m^2 * mmdvar(k, X, Y)
+    ϵ = eps(typeof(MMDvar))
+    t = MMDsq / √max(MMDvar, ϵ) # avoid division by zero/negative
+    return t
+end
+∇tstat(logσ::Real, args...; kwargs...) = ForwardDiff.derivative(logσ -> tstat(logσ, args...; kwargs...), logσ)
+
+function tstat_flux(logσ::AbstractArray, X, Y, isillposed = nothing)
+    # Avoiding div by zero/negative:
+    #   m^2 * MMDvar >= ϵ  -->  m * MMDσ >= √ϵ
+    MMDsq, MMDvar = mmd_and_mmdvar_flux(logσ, X, Y)
+    m = size(X,2)
+    ϵ = eps(typeof(MMDvar))
+    t = m*MMDsq / √max(m^2*MMDvar, ϵ)
+    if !isnothing(isillposed)
+        isillposed[] = (MMDsq < 0) || (m^2*MMDvar < ϵ)
+    end
+    return t
+end
+
+function ∇tstat_flux(logσ::AbstractArray, args...; kwargs...)
+    if length(logσ) <= 16
+        ForwardDiff.gradient(logσ -> tstat_flux(logσ, args...; kwargs...), logσ)
+    else
+        Zygote.gradient(logσ -> tstat_flux(logσ, args...; kwargs...), logσ)[1]
+    end
+end
+
+∇tstat_flux_fwddiff(logσ::AbstractArray, args...; kwargs...) = ForwardDiff.gradient(logσ -> tstat_flux(logσ, args...; kwargs...), logσ)
+∇tstat_flux_zygote(logσ::AbstractArray, args...; kwargs...) = Zygote.gradient(logσ -> tstat_flux(logσ, args...; kwargs...), logσ)[1]
+
+function kernel_bandwidth_loss_flux(logσ::AbstractArray, X, Y, ::Val{losstype}, isillposed = nothing) where {losstype}
+    if losstype === :mmd
+        !isnothing(isillposed) && (isillposed[] = false)
+        return mmd_flux(logσ, X, Y)
+    elseif losstype === :tstatistic
+        return tstat_flux(logσ, X, Y, isillposed)
+    else
+        error("Loss type must be :mmd or :tstatistic")
+    end
+end
+
+function train_kernel_bandwidth_flux!(logσ::AbstractArray, X, Y; kernelloss::String, kernellr = 0.01, bwbounds = nothing)
+    # Kernel is trained with new optimizer for each X, Y; loss jumps too wildly
+    opt = Flux.ADAM(kernellr)
+    isillposed = Ref(false)
+    losstype = Val(Symbol(kernelloss))
+    loss(_logσ) = kernel_bandwidth_loss_flux(_logσ, X, Y, losstype, isillposed)
+
+    # Training should not be performed using t-statistic loss function if MMD^2 < 0 or Var[MMD^2] < 0
+    @timeit "forward" ℓ, back = Zygote.pullback(loss, logσ)
+    if !isillposed[]
+        @timeit "reverse" ∇ℓ = back(1)[1]
+        Flux.Optimise.update!(opt, logσ, ∇ℓ)
+        if !isnothing(bwbounds)
+            clamp!(logσ, bwbounds...)
+        end
+    end
+
+    # Let caller know if training was applied
+    success = !isillposed[]
+    return success
+end
+
+#= (∇)mmd_(flux_)bandwidth_loss speed + consistency testing
+for m in [32,64,128,256,512], nsigma in [16], a in [2.0]
+    logsigma = rand(nsigma)
+    X, Y = randn(2,m), a.*randn(2,m)
+    
+    if nsigma == 1
+        t1 = tstat(logsigma, X, Y)
+        t2 = tstat_flux(logsigma, X, Y)
+        # @show t1, t2
+        # @show t1-t2
+        @assert t1≈t2
+    end
+
+    g1 = nsigma == 1 ? ∇tstat(logsigma, X, Y) : nothing
+    g2 = ∇tstat_flux_fwddiff(logsigma, X, Y)
+    g3 = ∇tstat_flux_zygote(logsigma, X, Y)
+    # @show g1, g2, g3
+    # @show g1-g2, g2-g3
+    @assert (nsigma != 1 || g1≈g2) && g2≈g3
+
+    # @btime tstat($logsigma, $X, $Y)
+    # @btime tstat_flux($logsigma, $X, $Y)
+
+    @show m, nsigma
+    (nsigma == 1) && @btime ∇tstat($logsigma, $X, $Y)
+    @btime ∇tstat_flux_fwddiff($logsigma, $X, $Y)
+    @btime ∇tstat_flux_zygote($logsigma, $X, $Y)
+end
+=#
+
+function tstat_bandwidth_bruteopt(sampleX, sampleY, bounds; nsigma = 100, nevals = 100)
     # work = mmd_work(sampleX(), sampleY())
     function f(logσ)
         σ = exp(logσ)
@@ -1390,65 +1495,3 @@ function mmd_bandwidth_bruteopt(sampleX, sampleY, bounds; nsigma = 100, nevals =
     logσ = range(bounds[1], bounds[2]; length = nsigma)
     return logσ, [f(logσ) for logσ in logσ]
 end
-
-function mmd_bandwidth_optfun(logσ::Real, X, Y)
-    m = size(X,2)
-    σ = exp(logσ)
-    γ = inv(2σ^2)
-    k(Δ) = exp(-γ*Δ)
-    MMDsq  = m * mmd(k, X, Y)
-    MMDvar = m^2 * mmdvar(k, X, Y)
-    ϵ = eps(typeof(MMDvar))
-    t = MMDsq / √max(MMDvar, ϵ) # avoid division by zero/negative
-    return t
-end
-∇mmd_bandwidth_optfun(logσ::Real, args...; kwargs...) = ForwardDiff.derivative(logσ -> mmd_bandwidth_optfun(logσ, args...; kwargs...), logσ)
-
-function mmd_flux_bandwidth_optfun(logσ::AbstractArray, X, Y)
-    # Avoiding div by zero/negative:
-    #   m^2 * MMDvar >= ϵ  -->  m * MMDσ >= √ϵ
-    MMDsq, MMDvar = mmd_and_mmdvar_flux(logσ, X, Y)
-    m = size(X,2)
-    ϵ = eps(typeof(MMDvar))
-    t = m*MMDsq / √max(m^2*MMDvar, ϵ)
-    return t
-end
-function ∇mmd_flux_bandwidth_optfun(logσ::AbstractArray, args...; kwargs...)
-    if length(logσ) <= 16
-        ForwardDiff.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)
-    else
-        Zygote.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)[1]
-    end
-end
-∇mmd_flux_bandwidth_optfun_fwddiff(logσ::AbstractArray, args...; kwargs...) = ForwardDiff.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)
-∇mmd_flux_bandwidth_optfun_zygote(logσ::AbstractArray, args...; kwargs...) = Zygote.gradient(logσ -> mmd_flux_bandwidth_optfun(logσ, args...; kwargs...), logσ)[1]
-
-#= (∇)mmd_(flux_)bandwidth_optfun speed + consistency testing
-for m in [32,64,128,256,512], nsigma in [16], a in [2.0]
-    logsigma = rand(nsigma)
-    X, Y = randn(2,m), a.*randn(2,m)
-    
-    if nsigma == 1
-        t1 = mmd_bandwidth_optfun(logsigma, X, Y)
-        t2 = mmd_flux_bandwidth_optfun(logsigma, X, Y)
-        # @show t1, t2
-        # @show t1-t2
-        @assert t1≈t2
-    end
-
-    g1 = nsigma == 1 ? ∇mmd_bandwidth_optfun(logsigma, X, Y) : nothing
-    g2 = ∇mmd_flux_bandwidth_optfun_fwddiff(logsigma, X, Y)
-    g3 = ∇mmd_flux_bandwidth_optfun_zygote(logsigma, X, Y)
-    # @show g1, g2, g3
-    # @show g1-g2, g2-g3
-    @assert (nsigma != 1 || g1≈g2) && g2≈g3
-
-    # @btime mmd_bandwidth_optfun($logsigma, $X, $Y)
-    # @btime mmd_flux_bandwidth_optfun($logsigma, $X, $Y)
-
-    @show m, nsigma
-    (nsigma == 1) && @btime ∇mmd_bandwidth_optfun($logsigma, $X, $Y)
-    @btime ∇mmd_flux_bandwidth_optfun_fwddiff($logsigma, $X, $Y)
-    @btime ∇mmd_flux_bandwidth_optfun_zygote($logsigma, $X, $Y)
-end
-=#

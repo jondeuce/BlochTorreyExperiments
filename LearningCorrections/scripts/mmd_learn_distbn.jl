@@ -120,7 +120,7 @@ function train_mmd_kernel!(
 
     function loss(_logσ, X, Y)
         ℓ = kernelloss == "tstatistic" ?
-            -mmd_flux_bandwidth_optfun(_logσ, X, Y) : # Minimize -t = -MMDsq/MMDσ
+            -tstat_flux(_logσ, X, Y) : # Minimize -t = -MMDsq/MMDσ
             -m * mmd_flux(_logσ, X, Y) # Minimize -m*MMDsq
         if lambda != 0
             ℓ += lambda * regularizer(permutedims(_logσ))

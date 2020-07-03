@@ -63,7 +63,7 @@ function saveplots(plothandles::Dict; savefolder, prefix = "", suffix = "", ext 
     try
         for (name, p) in plothandles
             if !isnothing(p)
-                savefig(p, joinpath(savefolder, "$(prefix)$(string(name)[2:end])$(suffix)$(ext)"))
+                savefig(p, joinpath(savefolder, "$(prefix)$(name)$(suffix)$(ext)"))
             end
         end
     catch e

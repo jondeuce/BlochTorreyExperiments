@@ -114,6 +114,19 @@ Non-trainable wrapper of `Diagonal` layer. Output is `α .* x .+ β`.
 Scale(α = 1, β = zero(α)) = NotTrainable(Flux.Diagonal(α, β))
 
 """
+CatScale(bd::Vector{<:NTuple{2}}, n::Vector{Int})
+
+Create a `Scale` instance, acting on inputs `x` of height `sum(n)`, which scales
+each chunk of height `n[i]` elements to the range `(bd[i][1], bd[i][2])`.
+Assumes all elements of `x` are in `(-1,1)`.
+"""
+CatScale(bd::Vector{<:NTuple{2}}, n::Vector{Int}) =
+    Scale(
+        mapreduce(((bd, n)) -> fill((bd[2] - bd[1])/2, n), vcat, bd, n),
+        mapreduce(((bd, n)) -> fill((bd[1] + bd[2])/2, n), vcat, bd, n),
+    )
+
+"""
     wrapprint(io::IO, layer)
 """
 wrapprint(io::IO, layer) = Flux.Chain(
@@ -136,12 +149,10 @@ PrintSize() = @λ (x -> printsize(x))
 """
 DenseResize()
 
-Non-trainable layer which resizes input arguments `x` to be a matrix with batchsize(x) columns.
+Non-trainable layer which reshapes input arguments `x` with dimensions `(d1, ..., dN)`
+into matrices with `dN` columns.
 """
-struct DenseResize end
-Flux.@functor DenseResize
-(l::DenseResize)(x::AbstractArray) = reshape(x, :, batchsize(x))
-Base.show(io::IO, l::DenseResize) = print(io, "DenseResize()")
+DenseResize() = Flux.flatten
 
 """
 ChannelResize(c::Int)
@@ -236,6 +247,20 @@ Wraps `SkipConnection` from the Flux library.
 """
 CatSkip(dims, layer::Flux.Chain) = Flux.SkipConnection(layer, @λ (a,b) -> cat(a, b; dims = dims))
 CatSkip(dims, layer) = CatSkip(dims, Flux.Chain(layer))
+
+"""
+MLP
+
+Multi-layer perceptron mapping inputs with height `sz[1]` to outputs with height `sz[2]`.
+`Nhid+2` total dense layers are used with `Dhid` hidden nodes. The first `Nhid+1` layers
+use activation `σhid` and the last layer uses activation `σout`. 
+"""
+MLP(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout = identity) =
+    Flux.Chain(
+        Flux.Dense(sz[1], Dhid, σhid),
+        [Flux.Dense(Dhid, Dhid, σhid) for _ in 1:Nhid]...,
+        Flux.Dense(Dhid, sz[2], σout)
+    )
 
 """
 `Conv` wrapper which initializes using `xavier_uniform`
