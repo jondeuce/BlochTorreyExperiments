@@ -56,19 +56,19 @@ MMDloss(X,Y) = size(Y,2) * mmd_flux(models["logsigma"], corrected_signal_instanc
 
 # Global state
 const logger = DataFrame(
-    :epoch    => Int[], # mandatory field
-    :dataset  => Symbol[], # mandatory field
-    :time     => Union{Float64, Missing}[],
-    :Gloss    => Union{Float64, Missing}[],
-    :Dloss    => Union{Float64, Missing}[],
-    :D_Y      => Union{Float64, Missing}[],
-    :D_G_X    => Union{Float64, Missing}[],
-    :MMDsq    => Union{Float64, Missing}[],
-    :MMDvar   => Union{Float64, Missing}[],
-    :tstat    => Union{Float64, Missing}[],
-    :c_alpha  => Union{Float64, Missing}[],
-    :P_alpha  => Union{Float64, Missing}[],
-    :rmse     => Union{Float64, Missing}[],
+    :epoch   => Int[], # mandatory field
+    :dataset => Symbol[], # mandatory field
+    :time    => Union{Float64, Missing}[],
+    :Gloss   => Union{Float64, Missing}[],
+    :Dloss   => Union{Float64, Missing}[],
+    :D_Y     => Union{Float64, Missing}[],
+    :D_G_X   => Union{Float64, Missing}[],
+    :MMDsq   => Union{Float64, Missing}[],
+    :MMDvar  => Union{Float64, Missing}[],
+    :tstat   => Union{Float64, Missing}[],
+    :c_alpha => Union{Float64, Missing}[],
+    :P_alpha => Union{Float64, Missing}[],
+    :rmse    => Union{Float64, Missing}[],
     :theta_fit_err => Union{Vector{Float64}, Missing}[],
     :signal_fit_logL => Union{Float64, Missing}[],
     :signal_fit_rmse => Union{Float64, Missing}[],
@@ -97,28 +97,38 @@ function callback(epoch;
         update_callback!(cb_state, phys, ricegen; ninfer = ninfer, inferperiod = saveperiod)
     end
 
+    # Initialize metrics dictionary
+    metrics = Dict{Any,Any}()
+    metrics[:epoch]   = epoch
+    metrics[:dataset] = :test
+    metrics[:time]    = cb_state["curr_time"] - cb_state["last_time"]
+
     # Perform permutation test
     @timeit "perm test" begin
-        permtest = mmd_perm_test_power(models["logsigma"], cb_state["Xθhat"], cb_state["Y"]; batchsize = m, nperms = nperms, nsamples = 1)
-        c_α = permtest.c_alpha
-        P_α = permtest.P_alpha_approx
-        tstat = permtest.MMDsq / permtest.MMDσ
-        MMDsq = m * permtest.MMDsq
-        MMDvar = m^2 * permtest.MMDvar
+        permtest = mmd_perm_test_power(models["logsigma"], MMDLearning.sample_columns(cb_state["Xθhat"], m), MMDLearning.sample_columns(cb_state["Y"], m); nperms = nperms)
+        metrics[:MMDsq]   = m * permtest.MMDsq
+        metrics[:MMDvar]  = m^2 * permtest.MMDvar
+        metrics[:tstat]   = permtest.MMDsq / permtest.MMDσ
+        metrics[:c_alpha] = permtest.c_alpha
+        metrics[:P_alpha] = permtest.P_alpha_approx
     end
 
     # Compute GAN losses
     d_y = D_Y_loss(cb_state["Y"])
     d_g_x = D_G_X_loss(cb_state["Xθhat"])
-    dloss = -mean(log.(d_y) .+ log.(1 .- d_g_x))
-    gloss = mean(log.(1 .- d_g_x))
+    metrics[:Gloss] = mean(log.(1 .- d_g_x))
+    metrics[:Dloss] = -mean(log.(d_y) .+ log.(1 .- d_g_x))
+    metrics[:D_Y]   = mean(d_y)
+    metrics[:D_G_X] = mean(d_g_x)
 
     # Metrics computed in update_callback!
-    @unpack rmse, θ_fit_err, signal_fit_logL, signal_fit_rmse = cb_state["metrics"]
-    dt = cb_state["curr_time"] - cb_state["last_time"]
+    metrics[:rmse] = cb_state["metrics"]["rmse"]
+    metrics[:theta_fit_err]   = cb_state["metrics"]["θ_fit_err"]
+    metrics[:signal_fit_logL] = cb_state["metrics"]["signal_fit_logL"]
+    metrics[:signal_fit_rmse] = cb_state["metrics"]["signal_fit_rmse"]
 
-    # Update dataframe
-    push!(logger, [epoch, :test, dt, gloss, dloss, mean(d_y), mean(d_g_x), MMDsq, MMDvar, tstat, c_α, P_α, rmse, θ_fit_err, signal_fit_logL, signal_fit_rmse])
+    # Update logger dataframe
+    push!(logger, metrics; cols = :setequal)
 
     function makeplots(;showplot = false)
         try
@@ -155,6 +165,8 @@ function callback(epoch;
             @timeit "save best plots" saveplots(plothandles; savefolder = outfolder, prefix = "best-")
         end
     end
+
+    return deepcopy(metrics)
 end
 
 function train_hybrid_gan_model(;

@@ -1262,7 +1262,7 @@ function mmd_perm_test_power(
 end
 
 # Perform permutation test with a single explicit (X,Y) pair
-mmd_perm_test_power(kernelargs, X::AbstractMatrix, Y::AbstractMatrix; kwargs...) = mmd_perm_test_power(kernelargs, m->X, m->Y; kwargs..., nsamples = 1)
+mmd_perm_test_power(kernelargs, X::AbstractMatrix, Y::AbstractMatrix; kwargs...) = mmd_perm_test_power(kernelargs, m->X, m->Y; kwargs..., batchsize = size(X,2), nsamples = 1)
 
 ####
 #### MMD plotting

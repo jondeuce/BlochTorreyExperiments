@@ -1,15 +1,18 @@
 module MMDLearning
 
 using Reexport
-@reexport using LinearAlgebra, Distributions, Statistics, Random, SpecialFunctions, StatsBase, Dates, Printf, DataFrames
-@reexport using DrWatson, Parameters, EllipsisNotation, LegibleLambdas, BenchmarkTools, TimerOutputs, LaTeXStrings
+@reexport using LinearAlgebra, Statistics, Random, Dates, Printf
+@reexport using StatsBase, SpecialFunctions, Distributions, DataFrames, TimerOutputs, BenchmarkTools
+@reexport using Parameters, EllipsisNotation, LegibleLambdas, LaTeXStrings
 @reexport using StatsPlots
 
-import UnsafeArrays
+import UnsafeArrays, Yeppp
 using UnsafeArrays: uview, uviews, @uviews
 
-import TOML, BSON, Flux, NNlib, Zygote, ChainRules, BlackBoxOptim, Optim, ForwardDiff, Yeppp, DECAES
-export TOML, BSON, Flux, NNlib, Zygote, ChainRules, BlackBoxOptim, Optim, ForwardDiff, Yeppp, DECAES
+import TOML, BSON, DrWatson, Flux, NNlib, Zygote, ChainRules, BlackBoxOptim, Optim, ForwardDiff, DECAES
+export TOML, BSON, DrWatson, Flux, NNlib, Zygote, ChainRules, BlackBoxOptim, Optim, ForwardDiff, DECAES
+using DrWatson: @dict, @ntuple, @pack!, @unpack
+export @dict, @ntuple, @pack!, @unpack
 
 export load_settings
 export handleinterrupt, saveprogress, saveplots
@@ -25,7 +28,7 @@ export Rician, RicianCorrector, VectorRicianCorrector, FixedNoiseVectorRicianCor
 export correction, noiselevel, correction_and_noiselevel, noise_instance, corrected_signal_instance, rician_params
 
 export PhysicsModel, ClosedForm, ToyModel
-export physicsmodel, hasclosedform, initialize!, ntheta, nsignal, signal_model
+export physicsmodel, hasclosedform, initialize!, ntheta, nsignal, signal_model, epsilon
 export θbounds, θlower, θupper, θlabels, θerror
 export sampleθ, sampleX, sampleY
 export initialize_callback, update_callback!
@@ -42,5 +45,7 @@ include("physics.jl")
 include("utils.jl")
 include("layers.jl")
 include("models.jl")
+
+include("Ignite.jl")
 
 end # module

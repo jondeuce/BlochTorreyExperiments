@@ -232,14 +232,14 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
             p1 = plot()
             if !isempty(dfp)
                 minloss = round(minimum(dfp.loss); sigdigits = 4)
-                p1 = @df dfp plot(:epoch, :loss; title = "Loss ($dataset): min = $minloss)", label = "loss", ylim = (minloss, quantile(dfp.loss, 0.99)), commonkw...)
+                p1 = plot(dfp.epoch, dfp.loss; title = "Loss ($dataset): min = $minloss)", label = "loss", ylim = (minloss, quantile(dfp.loss, 0.99)), commonkw...)
             end
 
             dfp = logspacing!(dropmissing(df[!, [:epoch, :acc]]))
             p2 = plot()
             if !isempty(dfp)
                 maxacc = round(maximum(dfp.acc); sigdigits = 4)
-                p2 = @df dfp plot(:epoch, :acc; title = "Accuracy ($dataset): peak = $maxacc%)", label = "acc", yticks = 50:0.1:100, ylim = (clamp(maxacc, 50, 99) - 1.5, min(maxacc + 0.5, 100.0)), commonkw...)
+                p2 = plot(dfp.epoch, dfp.acc; title = "Accuracy ($dataset): peak = $maxacc%)", label = "acc", yticks = 50:0.1:100, ylim = (clamp(maxacc, 50, 99) - 1.5, min(maxacc + 0.5, 100.0)), commonkw...)
             end
 
             dfp = logspacing!(dropmissing(df[!, [:epoch, :labelerr]]))
@@ -247,7 +247,7 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
             if !isempty(dfp)
                 labelerr = permutedims(reduce(hcat, dfp[!, :labelerr]))
                 labcol = size(labelerr,2) == 1 ? :blue : permutedims(RGB[cgrad(:darkrainbow)[z] for z in range(0.0, 1.0, length = size(labelerr,2))])
-                p3 = @df dfp plot(:epoch, labelerr; title = "Label Error ($dataset): rel. %)", label = labelnames, c = labcol, yticks = 0:100, ylim = (0, min(50, maximum(labelerr[end,:]) + 3.0)), commonkw...)
+                p3 = plot(dfp.epoch, labelerr; title = "Label Error ($dataset): rel. %)", label = labelnames, c = labcol, yticks = 0:100, ylim = (0, min(50, maximum(labelerr[end,:]) + 3.0)), commonkw...)
             end
 
             push!(ps, plot(p1, p2, p3; layout = (1,3)))
@@ -285,7 +285,7 @@ function make_plot_gan_losses_cb(state, filename = nothing)
     function()
         try
             plot_time = @elapsed begin
-                fig = @df state plot(:epoch, [:Gloss :Dloss :D_x :D_G_z]; label = ["G Loss" "D loss" "D(x)" "D(G(z))"], lw = 3)
+                fig = plot(state.epoch, [state.Gloss state.Dloss state.D_x state.D_G_z]; label = ["G Loss" "D loss" "D(x)" "D(G(z))"], lw = 3)
                 !(filename === nothing) && savefig(fig, filename)
                 display(fig)
             end
@@ -310,9 +310,9 @@ function make_plot_ligocvae_losses_cb(state, filename = nothing)
                     p = plot()
                     if !isempty(dfp)
                         commonkw = (xaxis = (:log10, log10ticks(dfp[1, :epoch], dfp[end, :epoch])), xrotation = 60.0, legend = :best, lw = 3, xformatter = x->string(round(Int,x)))
-                        pKL   = @df dfp plot(:epoch, :KL;   title =   "KL vs. epoch ($dataset): max = $(round(maximum(dfp.KL);   sigdigits = 4))", lab = "KL",   c = :orange, commonkw...)
-                        pELBO = @df dfp plot(:epoch, :ELBO; title = "ELBO vs. epoch ($dataset): min = $(round(minimum(dfp.ELBO); sigdigits = 4))", lab = "ELBO", c = :blue,   commonkw...)
-                        pH    = @df dfp plot(:epoch, :loss; title =    "H vs. epoch ($dataset): min = $(round(minimum(dfp.loss); sigdigits = 4))", lab = "loss", c = :green,  commonkw...)
+                        pKL   = plot(dfp.epoch, dfp.KL;   title =   "KL vs. epoch ($dataset): max = $(round(maximum(dfp.KL);   sigdigits = 4))", lab = "KL",   c = :orange, commonkw...)
+                        pELBO = plot(dfp.epoch, dfp.ELBO; title = "ELBO vs. epoch ($dataset): min = $(round(minimum(dfp.ELBO); sigdigits = 4))", lab = "ELBO", c = :blue,   commonkw...)
+                        pH    = plot(dfp.epoch, dfp.loss; title =    "H vs. epoch ($dataset): min = $(round(minimum(dfp.loss); sigdigits = 4))", lab = "loss", c = :green,  commonkw...)
                         p     = plot(pKL, pELBO, pH; layout = (3,1))
                     end
                     push!(ps, p)
@@ -537,8 +537,8 @@ function plot_gan_loss(logger, cb_state, phys; window = 100, lrdroprate = typema
         dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, logger)
         dfp = dropmissing(dfp[:, [:epoch, :Gloss, :Dloss, :D_Y, :D_G_X]])
         if !isempty(dfp)
-            p = @df dfp plot(:epoch, [:Gloss :Dloss :D_Y :D_G_X]; label = ["G loss" "D loss" "D(Y)" "D(G(X))"], lw = 2)
-            (epoch >= lrdroprate) && vline!(p, lrdroprate : lrdroprate : epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
+            p = plot(dfp.epoch, [dfp.Gloss dfp.Dloss dfp.D_Y dfp.D_G_X]; label = ["G loss" "D loss" "D(Y)" "D(G(X))"], lw = 2)
+            (epoch >= lrdroprate) && plot!(p, lrdroprate : lrdroprate : epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)", seriestype = :vline)
             p = plot!(p; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
         else
             p = nothing
