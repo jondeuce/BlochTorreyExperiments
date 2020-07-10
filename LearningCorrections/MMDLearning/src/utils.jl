@@ -453,7 +453,7 @@ function update_callback!(
         forceinfer::Bool = false,
     )
 
-    cb_state["last_time"] = cb_state["curr_time"]
+    cb_state["last_time"] = get!(cb_state, "curr_time", time())
     cb_state["curr_time"] = time()
 
     # Compute signal correction, noise instances, etc.
@@ -471,7 +471,7 @@ function update_callback!(
         # If closed form model is known, fit to Yθhat (which has known θ); otherwise, fit to Y samples
         Ydata = hasclosedform(phys) ? Yθhat : Y
 
-        if forceinfer || cb_state["curr_time"] - cb_state["last_fit_time"] >= inferperiod
+        if forceinfer || cb_state["curr_time"] - get!(cb_state, "last_fit_time", -Inf) >= inferperiod
             cb_state["last_fit_time"] = cb_state["curr_time"]
 
             # Sample `ninfer` new Ydata to fit to

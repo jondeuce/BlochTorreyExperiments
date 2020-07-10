@@ -5,7 +5,7 @@
 using Pkg; Pkg.activate(joinpath(@__DIR__, ".."))
 using MMDLearning
 pyplot(size=(800,600))
-const settings = load_settings(joinpath(@__DIR__, "..", "settings", "default_settings.toml"))
+const settings = load_settings(joinpath(@__DIR__, "..", "settings", "ignite_settings.toml"))
 
 # Initialize generator + discriminator + kernel
 function make_models(phys)
@@ -77,17 +77,11 @@ const logger = DataFrame(
     :signal_fit_rmse => Union{Float64, Missing}[],
 )
 const optimizers = Dict{String,Any}(
-    "G"   => Flux.ADAM(settings["genatr"]["stepsize"]),
-    "D"   => Flux.ADAM(settings["discrim"]["stepsize"]),
-    "mmd" => Flux.ADAM(settings["kernel"]["stepsize"]),
+    "G"   => Flux.ADAM(settings["opt"]["G"]["lr"]),
+    "D"   => Flux.ADAM(settings["opt"]["D"]["lr"]),
+    "mmd" => Flux.ADAM(settings["opt"]["mmd"]["lr"]),
 )
-const cb_state = Dict{String,Any}(
-    "curr_time" => time(),
-    "last_time" => -Inf,
-    "last_fit_time" => -Inf,
-    "last_curr_checkpoint" => -Inf,
-    "last_best_checkpoint" => -Inf,
-)
+const cb_state = Dict{String,Any}()
 
 ####
 #### Training
@@ -110,16 +104,16 @@ const ignite = pyimport("ignite")
 # const RunningAverage = ignite.metrics.RunningAverage
 
 function train_step(engine, batch)
-    @unpack nbatches, kernelrate, kernelsteps, kernelloss, GANrate, Dsteps = settings["training"]
-    @unpack stepsize, bwbounds = settings["kernel"]
+    @unpack kernelrate, kernelsteps, GANrate, GANsucc, Dsteps = settings["train"]
     _, Xtrain, Ytrain = array.(batch)
 
-    @timeit "batch loop" begin
-        if mod(engine.state.iteration-1, nbatches * kernelrate) == 0
+    @timeit "train batch" begin
+        if mod(engine.state.iteration-1, kernelrate) == 0
             @timeit "MMD kernel" begin
                 @timeit "sample G(X)" X̂train = corrected_signal_instance(ricegen, Xtrain)
                 for _ in 1:kernelsteps
-                    success = train_kernel_bandwidth_flux!(models["logsigma"], X̂train, Ytrain; kernelloss = kernelloss, kernellr = stepsize, bwbounds = bwbounds) # timed internally
+                    success = train_kernel_bandwidth_flux!(models["logsigma"], X̂train, Ytrain;
+                        kernelloss = settings["opt"]["k"]["loss"], kernellr = settings["opt"]["k"]["lr"], bwbounds = settings["kernel"]["bwbounds"]) # timed internally
                     !success && break
                 end
             end
@@ -129,7 +123,7 @@ function train_step(engine, batch)
             @timeit "reverse" gs = back(1)
             @timeit "update!" Flux.Optimise.update!(optimizers["mmd"], Flux.params(models["G"]), gs)
         end
-        if mod((engine.state.iteration-1) ÷ nbatches, GANrate) == 0
+        if mod((engine.state.iteration-1) ÷ GANsucc, GANrate) == 0
             @timeit "GAN discriminator" for _ in 1:Dsteps
                 @timeit "forward" _, back = Zygote.pullback(() -> Dloss(Xtrain, Ytrain), Flux.params(models["D"]))
                 @timeit "reverse" gs = back(1)
@@ -146,57 +140,8 @@ function train_step(engine, batch)
     return nothing
 end
 
-#= TODO
-    let
-        function ignite_pattern(max_epochs, nbatches, kernelrate, GANrate, kernelsteps, Dsteps)
-            list = Symbol[]
-            for iter = 1:max_epochs * nbatches
-                if mod(iter-1, nbatches * kernelrate) == 0
-                    for _ in 1:kernelsteps
-                        push!(list, :kernel)
-                    end
-                end
-                push!(list, :mmdG)
-                if mod((iter-1) ÷ nbatches, GANrate) == 0
-                    for _ in 1:Dsteps
-                        push!(list, :ganD)
-                    end
-                    push!(list, :ganG)
-                end
-            end
-            return list
-        end
-
-        function hyb_pattern(max_epochs, nbatches, kernelrate, GANrate, kernelsteps, Dsteps)
-            list = Symbol[]
-            for epoch = 1:max_epochs
-                if mod(epoch-1, kernelrate) == 0
-                    for _ in 1:kernelsteps
-                        push!(list, :kernel)
-                    end
-                end
-                for _ in 1:nbatches
-                    push!(list, :mmdG)
-                    if mod(epoch-1, GANrate) == 0
-                        for _ in 1:Dsteps
-                            push!(list, :ganD)
-                        end
-                        push!(list, :ganG)
-                    end
-                end
-            end
-            return list
-        end
-
-        while true
-            params = rand(1:100, 6)
-            @assert ignite_pattern(params...) == hyb_pattern(params...)
-        end
-    end
-=#
-
 function eval_metrics(engine, batch)
-    @timeit "callback" begin
+    @timeit "eval batch" begin
         # Update callback state
         @timeit "update cb state" let
             cb_state["θ"], cb_state["Xθ"], cb_state["Y"] = array.(batch)
@@ -204,7 +149,7 @@ function eval_metrics(engine, batch)
                 cb_state["Yθ"] = signal_model(ClosedForm(phys), cb_state["θ"])
                 cb_state["Yθhat"] = signal_model(ClosedForm(phys), cb_state["θ"], epsilon(ClosedForm(phys)))
             end
-            update_callback!(cb_state, phys, ricegen; ninfer = settings["training"]["ninfer"], inferperiod = settings["training"]["saveperiod"])
+            update_callback!(cb_state, phys, ricegen; ninfer = settings["eval"]["ninfer"], inferperiod = settings["eval"]["inferperiod"])
         end
 
         # Initialize metrics dictionary
@@ -221,8 +166,8 @@ function eval_metrics(engine, batch)
 
         # Perform permutation test
         @timeit "perm test" let
-            m = settings["training"]["batchsize"] # training batch size, not size of val set
-            cb_state["permtest"] = mmd_perm_test_power(models["logsigma"], MMDLearning.sample_columns(cb_state["Xθhat"], m), MMDLearning.sample_columns(cb_state["Y"], m); nperms = settings["training"]["nperms"])
+            m = settings["train"]["batchsize"] # training batch size, not size of val set
+            cb_state["permtest"] = mmd_perm_test_power(models["logsigma"], MMDLearning.sample_columns(cb_state["Xθhat"], m), MMDLearning.sample_columns(cb_state["Y"], m); nperms = settings["eval"]["nperms"])
             metrics[:MMDsq]   = m * cb_state["permtest"].MMDsq
             metrics[:MMDvar]  = m^2 * cb_state["permtest"].MMDvar
             metrics[:tstat]   = cb_state["permtest"].MMDsq / cb_state["permtest"].MMDσ
@@ -250,10 +195,10 @@ end
 function makeplots(;showplot = false)
     try
         Dict{Symbol, Any}(
-            :gan       => MMDLearning.plot_gan_loss(logger, cb_state, phys; showplot = showplot, lrdroprate = settings["training"]["steprate"], lrdrop = settings["training"]["stepdrop"]),
+            :gan       => MMDLearning.plot_gan_loss(logger, cb_state, phys; showplot = showplot, lrdroprate = settings["opt"]["lrrate"], lrdrop = settings["opt"]["lrdrop"]),
             :ricemodel => MMDLearning.plot_rician_model(logger, cb_state, phys; showplot = showplot, bandwidths = permutedims(models["logsigma"])),
             :signals   => MMDLearning.plot_rician_signals(logger, cb_state, phys; showplot = showplot),
-            :mmd       => MMDLearning.plot_mmd_losses(logger, cb_state, phys; showplot = showplot, lrdroprate = settings["training"]["steprate"], lrdrop = settings["training"]["stepdrop"]),
+            :mmd       => MMDLearning.plot_mmd_losses(logger, cb_state, phys; showplot = showplot, lrdroprate = settings["opt"]["lrrate"], lrdrop = settings["opt"]["lrdrop"]),
             :infer     => MMDLearning.plot_rician_inference(logger, cb_state, phys; showplot = showplot),
             :witness   => nothing, #mmd_witness(Xϵ, Y, sigma)
             :heat      => nothing, #mmd_heatmap(Xϵ, Y, sigma)
@@ -270,7 +215,7 @@ function make_data_tuples(dataset)
     X = sampleX(phys, θ)
     return [(θ[:,j], X[:,j], Y[:,j]) for j in 1:size(Y,2)]
 end
-train_loader = torch.utils.data.DataLoader(make_data_tuples(:train); batch_size = settings["training"]["batchsize"], shuffle = true, drop_last = true)
+train_loader = torch.utils.data.DataLoader(make_data_tuples(:train); batch_size = settings["train"]["batchsize"], shuffle = true, drop_last = true)
 val_loader = torch.utils.data.DataLoader(make_data_tuples(:val); batch_size = settings["data"]["nval"], shuffle = false, drop_last = false)
 
 trainer = ignite.engine.Engine(@j2p train_step)
@@ -286,9 +231,9 @@ trainer.add_event_handler(
 
 # Checkpoint current model + logger + make plots
 trainer.add_event_handler(
-    ignite.engine.Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["training"]["saveperiod"])),
+    ignite.engine.Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["saveperiod"])),
     @j2p function (engine)
-        @timeit "save checkpoint" begin
+        @timeit "checkpoint" begin
             @timeit "save current model" saveprogress(@dict(models, optimizers, logger); savefolder = settings["data"]["out"], prefix = "current-")
             @timeit "make current plots" plothandles = makeplots()
             @timeit "save current plots" saveplots(plothandles; savefolder = settings["data"]["out"], prefix = "current-")
@@ -302,7 +247,7 @@ trainer.add_event_handler(
     @j2p function (engine)
         losses = logger.signal_fit_logL[logger.dataset .=== :test] |> skipmissing |> collect
         if !isempty(losses) && (length(losses) == 1 || losses[end] < minimum(losses[1:end-1]))
-            @timeit "save best" begin
+            @timeit "save best progress" begin
                 @timeit "save best model" saveprogress(@dict(models, optimizers, logger); savefolder = settings["data"]["out"], prefix = "best-")
                 @timeit "make best plots" plothandles = makeplots()
                 @timeit "save best plots" saveplots(plothandles; savefolder = settings["data"]["out"], prefix = "best-")
@@ -313,14 +258,14 @@ trainer.add_event_handler(
 
 #=
     #TODO Drop learning rate
-    if loop_epoch > 1 && mod(loop_epoch-1, settings["training"]["steprate"]) == 0
+    if loop_epoch > 1 && mod(loop_epoch-1, settings["opt"]["lrrate"]) == 0
         for (optname, opt) in optimizers
-            new_eta = opt.eta / settings["training"]["stepdrop"]
-            if new_eta >= settings["training"]["stepthresh"]
+            new_eta = opt.eta / settings["opt"]["lrdrop"]
+            if new_eta >= settings["opt"]["lrthresh"]
                 @info "$epoch: Dropping $optname optimizer learning rate to $new_eta"
                 opt.eta = new_eta
             else
-                @info "$epoch: Learning rate dropped below $(settings["training"]["stepthresh"]) for $optname optimizer, exiting..."
+                @info "$epoch: Learning rate dropped below $(settings["opt"]["lrthresh"]) for $optname optimizer, exiting..."
                 throw(InterruptException())
             end
         end
@@ -331,7 +276,7 @@ trainer.add_event_handler(
 trainer.add_event_handler(
     ignite.engine.Events.EPOCH_COMPLETED,
     @j2p function (engine)
-        if mod(engine.state.epoch-1, settings["training"]["showrate"]) == 0
+        if mod(engine.state.epoch-1, settings["eval"]["showrate"]) == 0
             show(stdout, TimerOutputs.get_defaulttimer()); println("\n")
             show(stdout, last(logger[:, Not(:theta_fit_err)], 10)); println("\n")
         end
@@ -341,9 +286,9 @@ trainer.add_event_handler(
 
 # Timeout
 trainer.add_event_handler(
-    ignite.engine.Events.EPOCH_COMPLETED(event_filter = @j2p run_timeout(settings["training"]["traintime"])),
+    ignite.engine.Events.EPOCH_COMPLETED(event_filter = @j2p run_timeout(settings["train"]["timeout"])),
     @j2p function (engine)
-        @info "Exiting: training time exceeded $(DECAES.pretty_time(settings["training"]["traintime"]))"
+        @info "Exiting: training time exceeded $(DECAES.pretty_time(settings["train"]["timeout"]))"
         engine.terminate()
     end
 )

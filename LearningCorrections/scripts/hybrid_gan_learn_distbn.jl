@@ -74,27 +74,27 @@ const logger = DataFrame(
     :signal_fit_rmse => Union{Float64, Missing}[],
 )
 const optimizers = Dict{String,Any}(
-    "G"   => Flux.ADAM(settings["genatr"]["stepsize"]),
-    "D"   => Flux.ADAM(settings["discrim"]["stepsize"]),
-    "mmd" => Flux.ADAM(settings["kernel"]["stepsize"]),
+    "G"   => Flux.ADAM(settings["opt"]["G"]["lr"]),
+    "D"   => Flux.ADAM(settings["opt"]["D"]["lr"]),
+    "mmd" => Flux.ADAM(settings["opt"]["mmd"]["lr"]),
 )
-const cb_state = initialize_callback(phys; nsamples = settings["training"]["batchsize"]) #TODO
+const cb_state = initialize_callback(phys; nsamples = settings["train"]["batchsize"]) #TODO
 
 function callback(epoch;
-        m          :: Int     = settings["training"]["batchsize"],
-        saveperiod :: Float64 = settings["training"]["saveperiod"],
-        ninfer     :: Int     = settings["training"]["ninfer"],
-        nperms     :: Int     = settings["training"]["nperms"],
-        nsamples   :: Int     = settings["training"]["nsamples"],
-        lrthresh   :: Float64 = settings["training"]["stepthresh"],
-        lrdrop     :: Float64 = settings["training"]["stepdrop"],
-        lrdroprate :: Int     = settings["training"]["steprate"],
-        outfolder  :: String  = settings["data"]["out"],
+        m           :: Int     = settings["train"]["batchsize"],
+        saveperiod  :: Float64 = settings["eval"]["saveperiod"],
+        inferperiod :: Float64 = settings["eval"]["inferperiod"],
+        ninfer      :: Int     = settings["eval"]["ninfer"],
+        nperms      :: Int     = settings["eval"]["nperms"],
+        lrthresh    :: Float64 = settings["opt"]["lrthresh"],
+        lrdrop      :: Float64 = settings["opt"]["lrdrop"],
+        lrdroprate  :: Int     = settings["opt"]["lrrate"],
+        outfolder   :: String  = settings["data"]["out"],
     )
 
     # Update callback state
     @timeit "update cb state" begin
-        update_callback!(cb_state, phys, ricegen; ninfer = ninfer, inferperiod = saveperiod)
+        update_callback!(cb_state, phys, ricegen; ninfer = ninfer, inferperiod = inferperiod)
     end
 
     # Initialize metrics dictionary
@@ -170,20 +170,20 @@ function callback(epoch;
 end
 
 function train_hybrid_gan_model(;
-        epochs     :: Int     = settings["training"]["epochs"],
-        m          :: Int     = settings["training"]["batchsize"],
-        nbatches   :: Int     = settings["training"]["nbatches"],
-        lrdrop     :: Float64 = settings["training"]["stepdrop"],
-        lrthresh   :: Float64 = settings["training"]["stepthresh"],
-        lrdroprate :: Int     = settings["training"]["steprate"],
-        GANrate    :: Int     = settings["training"]["GANrate"],
-        Dsteps     :: Int     = settings["training"]["Dsteps"],
-        kernelrate :: Int     = settings["training"]["kernelrate"],
-        kernelloss :: String  = settings["training"]["kernelloss"],
-        kernelsteps:: Int     = settings["training"]["kernelsteps"],
-        timeout    :: Float64 = settings["training"]["traintime"],
-        showrate   :: Int     = settings["training"]["showrate"],
-        kernellr   :: Float64 = settings["kernel"]["stepsize"],
+        timeout    :: Float64 = settings["train"]["timeout"],
+        epochs     :: Int     = settings["train"]["epochs"],
+        m          :: Int     = settings["train"]["batchsize"],
+        nbatches   :: Int     = settings["train"]["nbatches"],
+        GANrate    :: Int     = settings["train"]["GANrate"],
+        Dsteps     :: Int     = settings["train"]["Dsteps"],
+        kernelsteps:: Int     = settings["train"]["kernelsteps"],
+        kernelrate :: Int     = settings["train"]["kernelrate"],
+        showrate   :: Int     = settings["eval"]["showrate"],
+        lrdrop     :: Float64 = settings["opt"]["lrdrop"],
+        lrthresh   :: Float64 = settings["opt"]["lrthresh"],
+        lrdroprate :: Int     = settings["opt"]["lrrate"],
+        kernelloss :: String  = settings["opt"]["k"]["loss"],
+        kernellr   :: Float64 = settings["opt"]["k"]["lr"],
         bwbounds   :: Vector{Float64} = settings["kernel"]["bwbounds"],
     )
     TimerOutputs.reset_timer!()

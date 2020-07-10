@@ -8,18 +8,18 @@ nval   = 10_240
 timeout     = 1e9 #TODO
 epochs      = 999_999
 batchsize   = 1024 #2048 #3072
-nbatches    = 10 # Number of batches sampled per epoch
-kernelrate  = 10
-kernelsteps = 10
-GANrate     = 10 # Rate that genatr/discrim is trained using GAN losses
-Dsteps      = 10 # Number of discrim training steps per genatr step
+kernelrate  = 100 # Train kernel every `kernelrate` iterations
+kernelsteps = 10 # Gradient updates per kernel train
+GANrate     = 10 # Train GAN losses every `GANrate` iterations, on average
+GANsucc     = 10 # Train GAN losses for `GANsucc` successive iterations, then break for `(GANrate-1)*GANsucc` iterations
+Dsteps      = 10 # Train GAN losses with `Dsteps` discrim updates per genatr update
 
 [eval]
-ninfer      = 128 #TODO Number of MLE parameter inferences
+ninfer      = 128 # Number of MLE parameter inferences
 nperms      = 128 # Number of permutations for c_alpha calculation + perm plot
 inferperiod = 300.0 # TODO
-saveperiod  = 300.0 #TODO
-showrate    = 1 #TODO
+saveperiod  = 300.0 # TODO
+showrate    = 1 # TODO
 
 [opt]
 lrdrop   = 1.0 #10.0 3.1623 #1.7783
