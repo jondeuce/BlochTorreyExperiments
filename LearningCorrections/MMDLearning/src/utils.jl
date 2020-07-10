@@ -83,17 +83,18 @@ function training_batches(features, labels, minibatchsize; overtrain = false)
     end
 end
 testing_batches(features, labels) = make_minibatch(features, labels, :)
+validation_batches(features, labels) = make_minibatch(features, labels, :)
 features(batch) = batch[1]
 labels(batch) = batch[2]
 
-function param_summary(model, train_set, test_set)
-    test_dofs = length(test_set[2])
+function param_summary(model, train_set, val_set)
+    val_dofs = length(val_set[2])
     train_dofs = sum(batch -> length(batch[2]), train_set)
     param_dofs = sum(length, Flux.params(model))
-    test_param_density = param_dofs / test_dofs
+    val_param_density = param_dofs / val_dofs
     train_param_density = param_dofs / train_dofs
-    @info @sprintf(" Testing parameter density: %d/%d (%.2f %%)", param_dofs, test_dofs, 100 * test_param_density)
-    @info @sprintf("Training parameter density: %d/%d (%.2f %%)", param_dofs, train_dofs, 100 * train_param_density)
+    @info @sprintf("  Training parameter density: %d/%d (%.2f %%)", param_dofs, train_dofs, 100 * train_param_density)
+    @info @sprintf("Validation parameter density: %d/%d (%.2f %%)", param_dofs, val_dofs,   100 * val_param_density)
 end
 
 # Losses
@@ -145,7 +146,7 @@ function make_variancelr(state, opt; rate = 250, factor = √10, stdthresh = Inf
             return lr(opt)
         elseif e > 2 * rate && e - last_lr_update > rate
             min_epoch = max(1, min(state[end, :epoch] - rate, rate))
-            df = dropmissing(state[(state.dataset .=== :test) .& (min_epoch .<= state.epoch), [:epoch, :loss]])
+            df = dropmissing(state[(state.dataset .=== :val) .& (min_epoch .<= state.epoch), [:epoch, :loss]])
             if !isempty(df) && std(df[!, :loss]) > stdthresh
                 last_lr_update = e
                 return lr(opt) / √10
@@ -189,17 +190,17 @@ function slidingindices(epoch, window = 100)
     return min(i1_window, i1_first) : length(epoch)
 end
 
-function make_test_err_cb(state, lossfun, accfun, laberrfun, test_set)
+function make_val_err_cb(state, lossfun, accfun, laberrfun, val_set)
     function()
         update_time = @elapsed begin
             if !isempty(state)
-                row = findlast(==(:test), state.dataset)
-                state[row, :loss]     = Flux.cpu(lossfun(test_set...))
-                state[row, :acc]      = Flux.cpu(accfun(test_set...))
-                state[row, :labelerr] = Flux.cpu(laberrfun(test_set...))
+                row = findlast(==(:val), state.dataset)
+                state[row, :loss]     = Flux.cpu(lossfun(val_set...))
+                state[row, :acc]      = Flux.cpu(accfun(val_set...))
+                state[row, :labelerr] = Flux.cpu(laberrfun(val_set...))
             end
         end
-        # @info @sprintf("[%d] -> Updating testing error... (%d ms)", state[row, :epoch], 1000 * update_time)
+        # @info @sprintf("[%d] -> Updating validation error... (%d ms)", state[row, :epoch], 1000 * update_time)
     end
 end
 
@@ -354,7 +355,7 @@ function make_save_best_model_cb(state, model, opt, filename = nothing)
     function()
         # If this is the best accuracy we've seen so far, save the model out
         isempty(state) && return nothing
-        df = state[state.dataset .=== :test, :]
+        df = state[state.dataset .=== :val, :]
         ismissing(df.acc[end]) && return nothing
         isempty(skipmissing(df.acc)) && return nothing
 
@@ -400,11 +401,11 @@ end
 
 function initialize_callback(phys::ToyModel; nsamples::Int)
     cb_state = Dict{String,Any}()
-    cb_state["θ"]  = sampleθ(phys, nsamples; dataset = :test)
+    cb_state["θ"]  = sampleθ(phys, nsamples; dataset = :val)
     cb_state["Xθ"] = sampleX(phys, cb_state["θ"]) # sampleX == signal_model when given explicit θ
     cb_state["Yθ"] = sampleX(ClosedForm(phys), cb_state["θ"])
     cb_state["Yθhat"] = sampleX(ClosedForm(phys), cb_state["θ"], epsilon(ClosedForm(phys)))
-    cb_state["Y"]  = sampleY(phys, nsamples; dataset = :test) # Y is deliberately sampled with different θ values
+    cb_state["Y"]  = sampleY(phys, nsamples; dataset = :val) # Y is deliberately sampled with different θ values
     cb_state["curr_time"] = time()
     cb_state["last_time"] = -Inf
     cb_state["last_fit_time"] = -Inf
@@ -419,24 +420,24 @@ end
 #=
 function initialize_callback!(cb_state::Dict, phys::EPGModel)
     # Sample X and θ randomly, but choose Ys + corresponding fits consistently in order to compare models, and choose Ys with reasonable agreeance with data in order to not be overconfident in improving terrible fits
-    Xtest = sampleX(settings["gan"]["batchsize"]; dataset = :test)
-    θtest = sampleθ(settings["gan"]["batchsize"]; dataset = :test)
+    Xval = sampleX(settings["gan"]["batchsize"]; dataset = :val)
+    θval = sampleθ(settings["gan"]["batchsize"]; dataset = :val)
     iY = if settings["data"]["normalize"]::Bool
-        iY = filter(i -> fits_test.loss[i] <= -200.0 && fits_test.rmse[i] <= 0.002, 1:nrow(fits_test)) #TODO
+        iY = filter(i -> fits_val.loss[i] <= -200.0 && fits_val.rmse[i] <= 0.002, 1:nrow(fits_val)) #TODO
     else
-        iY = filter(i -> fits_test.loss[i] <= -125.0 && fits_test.rmse[i] <= 0.15, 1:nrow(fits_test)) #TODO
+        iY = filter(i -> fits_val.loss[i] <= -125.0 && fits_val.rmse[i] <= 0.15, 1:nrow(fits_val)) #TODO
     end
     iY = sample(MersenneTwister(0), iY, settings["gan"]["batchsize"]; replace = false)
-    Ytest = sampleY(nothing; dataset = :test)[..,iY]
-    testfits = fits_test[iY,:]
+    Yval = sampleY(nothing; dataset = :val)[..,iY]
+    valfits = fits_val[iY,:]
 
-    cb_state["Xθ"] = sampleX(phys, nsamples; dataset = :test)
-    cb_state["Y"] = sampleY(phys, nsamples; dataset = :test)
-    cb_state["θ"] = sampleθ(phys, nsamples; dataset = :test)
+    cb_state["Xθ"] = sampleX(phys, nsamples; dataset = :val)
+    cb_state["Y"] = sampleY(phys, nsamples; dataset = :val)
+    cb_state["θ"] = sampleθ(phys, nsamples; dataset = :val)
     cb_state["last_time"] = Ref(time())
     cb_state["last_curr_checkpoint"] = Ref(-Inf)
     cb_state["last_best_checkpoint"] = Ref(-Inf)
-    cb_state["fits"] = testfits
+    cb_state["fits"] = valfits
     cb_state["last_θbb"] = Union{AbstractVecOrMat{Float64}, Nothing}[nothing]
     cb_state["last_i_fit"] = Union{Vector{Int}, Nothing}[nothing]
     return cb_state
@@ -657,8 +658,8 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
 
                     rmselab, logLlab = L"rmse: $Y - \hat{X}(\hat{\theta})$", L"-logL: $Y - \hat{X}(\hat{\theta})$"
                     if false #TODO MRI model
-                        rmselab *= "\nrmse prior: $(round(mean(phys.testfits.rmse); sigdigits = 4))"
-                        logLlab *= "\n-logL prior: $(round(mean(phys.testfits.loss); sigdigits = 4))"
+                        rmselab *= "\nrmse prior: $(round(mean(phys.valfits.rmse); sigdigits = 4))"
+                        logLlab *= "\n-logL prior: $(round(mean(phys.valfits.loss); sigdigits = 4))"
                     end
                     prmse = plot(df_inf.epoch, df_inf.signal_fit_rmse; title = "min rmse = $(s(minimum(df_inf.signal_fit_rmse)))", lab = rmselab, xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
                     plogL = plot(df_inf.epoch, df_inf.signal_fit_logL; title = "min -logL = $(s(minimum(df_inf.signal_fit_logL)))", lab = logLlab, xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10), ylims = (-Inf, min(-100, maximum(df_inf.signal_fit_logL))))

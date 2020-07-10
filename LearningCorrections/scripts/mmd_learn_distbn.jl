@@ -12,8 +12,8 @@ const settings = load_settings(joinpath(@__DIR__, "..", "settings", "mmd_setting
 global sampleX, sampleY, sampleθ, fits_train, fits_test, fits_val
 if IS_TOY_MODEL
     _sampleX, _sampleY, _sampleθ = make_toy_samplers(ntrain = settings["mmd"]["batchsize"]::Int, epsilon = TOY_NOISE_LEVEL, power = 4.0)
-    global sampleX = (m; dataset = :train) -> _sampleX(m) # samples are generated on demand; train/test not relevant
-    global sampleθ = (m; dataset = :train) -> _sampleθ(m) # samples are generated on demand; train/test not relevant
+    global sampleX = (m; dataset = :train) -> _sampleX(m) # samples are generated on demand; train/test/val not relevant
+    global sampleθ = (m; dataset = :train) -> _sampleθ(m) # samples are generated on demand; train/test/val not relevant
     global sampleY = _sampleY
     global fits_train, fits_test, fits_val = nothing, nothing, nothing
 else
@@ -400,7 +400,7 @@ function train_mmd_model(;
             end
 
             # Use permutation test results to compute loss
-            #@timeit timer "test loss" ℓ = loss(X, Y)
+            #@timeit timer "val loss" ℓ = loss(X, Y)
             reg = lambda * regularizer(dX)
             ℓ = MMDsq + reg
 
@@ -625,22 +625,22 @@ function train_mmd_model(;
         end
     end
 
-    local Xtest, Ytest, θtest, fits
+    local Xval, Yval, θval, fits
     if IS_TOY_MODEL
         # X and θ are generated on demand
-        Xtest, Ytest, θtest, fits = sampleX(m; dataset = :test), sampleY(m; dataset = :test), sampleθ(m; dataset = :test), nothing
+        Xval, Yval, θval, fits = sampleX(m; dataset = :val), sampleY(m; dataset = :val), sampleθ(m; dataset = :val), nothing
     else
         # Sample X and θ randomly, but choose Ys + corresponding fits consistently in order to compare models
-        Xtest = sampleX(m; dataset = :test)
-        θtest = sampleθ(m; dataset = :test)
+        Xval = sampleX(m; dataset = :val)
+        θval = sampleθ(m; dataset = :val)
         iY = if settings["data"]["normalize"]::Bool
-            iY = filter(i -> fits_test.loss[i] <= -200.0 && fits_test.rmse[i] <= 0.002, 1:nrow(fits_test)) #TODO
+            iY = filter(i -> fits_val.loss[i] <= -200.0 && fits_val.rmse[i] <= 0.002, 1:nrow(fits_val)) #TODO
         else
-            iY = filter(i -> fits_test.loss[i] <= -125.0 && fits_test.rmse[i] <= 0.15, 1:nrow(fits_test)) #TODO
+            iY = filter(i -> fits_val.loss[i] <= -125.0 && fits_val.rmse[i] <= 0.15, 1:nrow(fits_val)) #TODO
         end
         iY = sample(MersenneTwister(0), iY, m; replace = false)
-        Ytest = sampleY(nothing; dataset = :test)[..,iY]
-        fits = fits_test[iY,:]
+        Yval = sampleY(nothing; dataset = :val)[..,iY]
+        fits = fits_val[iY,:]
     end
 
     opt = Flux.ADAM(lr)
@@ -648,7 +648,7 @@ function train_mmd_model(;
         try
             if epoch == 0
                 @timeit timer "initial train kernel" train_mmd_kernel!(models["logsigma"])
-                @timeit timer "initial callback" callback(0, Xtest, Ytest, θtest, fits)
+                @timeit timer "initial callback" callback(0, Xval, Yval, θval, fits)
                 continue
             end
 
@@ -663,7 +663,7 @@ function train_mmd_model(;
                     @timeit timer "reverse" gs = back(1)
                     @timeit timer "update!" Flux.Optimise.update!(opt, Flux.params(models["mmd"]), gs)
                 end
-                @timeit timer "callback" callback(epoch, Xtest, Ytest, θtest, fits)
+                @timeit timer "callback" callback(epoch, Xval, Yval, θval, fits)
             end
 
             if mod(epoch, showrate) == 0

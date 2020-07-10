@@ -39,8 +39,8 @@ end
 
 # MMD settings
 const IS_TOY_MODEL = true #TODO
-const TEST_DATA_LEARNED_CORR = false #TODO learned correction and noise
-const TEST_DATA_LEARNED_NOISE = false #TODO learned noise only
+const VAL_DATA_LEARNED_CORR = false #TODO learned correction and noise
+const VAL_DATA_LEARNED_NOISE = false #TODO learned noise only
 const TRAIN_DATA_LEARNED_CORR = false #TODO learned correction and noise
 const TRAIN_DATA_LEARNED_NOISE = false #TODO learned noise only
 const mmd_settings = load_settings(joinpath(@__DIR__, "..", "settings", "mmd_settings.toml"))
@@ -51,7 +51,7 @@ const mmd_models = let
         load_not_trainable("/project/st-arausch-1/jcd1994/MMD-Learning/toymmdopt_eps=1e-2/toymmdopt-v7/sweep/2/best-model.bson") :
         load_not_trainable("/project/st-arausch-1/jcd1994/MMD-Learning/mmdopt-v7/sweep/63/current-model.bson")
 end
-if SAVE && (TEST_DATA_LEARNED_CORR || TEST_DATA_LEARNED_NOISE || TRAIN_DATA_LEARNED_CORR || TRAIN_DATA_LEARNED_NOISE)
+if SAVE && (VAL_DATA_LEARNED_CORR || VAL_DATA_LEARNED_NOISE || TRAIN_DATA_LEARNED_CORR || TRAIN_DATA_LEARNED_NOISE)
     BSON.bson(savepath("log", "mmd-models.bson"), deepcopy(mmd_models))
 end
 
@@ -61,12 +61,12 @@ function make_samples(n; dataset)
     local θ, Y
 
     if IS_TOY_MODEL
-        # train data has different distribution (exponent 4.0), test data has "true" distribution (exponent 2.0)
+        # train data has different distribution (exponent 4.0), val data has "true" distribution (exponent 2.0)
         power = dataset === :train ? T(4.0) : T(2.0)
         θ = toy_theta_sampler(n)
         Y = toy_signal_model(θ, nothing, power)
     else
-        # train data and test data may have different distributions (EPG model or "true" MMD-corrected EPG model)
+        # train data and val data may have different distributions (EPG model or "true" MMD-corrected EPG model)
         sampleY, _, sampleθ = make_mle_data_samplers(
             mmd_settings["prior"]["data"]["image"]::String,
             mmd_settings["prior"]["data"]["thetas"]::String;
@@ -100,7 +100,7 @@ function make_samples(n; dataset)
     return θ, Y
 end
 const train_data = MMDLearning.training_batches(make_samples(settings["data"]["ntrain"]; dataset = :train)..., settings["data"]["train_batch"])
-const test_data = MMDLearning.testing_batches(make_samples(settings["data"]["ntest"]; dataset = :test)...)
+const val_data = MMDLearning.validation_batches(make_samples(settings["data"]["nval"]; dataset = :val)...)
 
 thetas = batch -> MMDLearning.features(batch)
 signals = batch -> MMDLearning.labels(batch)
@@ -110,7 +110,7 @@ labelbatch(batch) = (signals(batch), thetas(batch))
 @info "Constructing model..."
 m = MMDLearning.make_model(settings, "DenseLIGOCVAE");
 MMDLearning.model_summary(m, savepath("models", "architecture.txt"));
-MMDLearning.param_summary(m, labelbatch.(train_data), labelbatch(test_data));
+MMDLearning.param_summary(m, labelbatch.(train_data), labelbatch(val_data));
 
 # Loss and accuracy function
 theta_weights()::VT = inv.(settings["data"]["info"]["labwidth"]) .* MMDLearning.unitsum(settings["data"]["info"]["labweights"]) |> copy |> VT
@@ -124,15 +124,15 @@ end
 learned_data_noise(y) = (_y = DenseResize()(y); reshape(corrected_signal_instance(_y, get_noise(_y)), size(y))) # add learned Rician noise to uncorrected data
 learned_data_correction_and_noise(y) = reshape(corrected_signal_instance(DenseResize()(y)), size(y)) # add learned Rician noise to corrected data
 
-test_data_noise(y) = TEST_DATA_LEARNED_CORR ? learned_data_correction_and_noise(y) : TEST_DATA_LEARNED_NOISE ? learned_data_noise(y) : rician_data_noise(y)
+val_data_noise(y) = VAL_DATA_LEARNED_CORR ? learned_data_correction_and_noise(y) : VAL_DATA_LEARNED_NOISE ? learned_data_noise(y) : rician_data_noise(y)
 train_data_noise(y) = TRAIN_DATA_LEARNED_CORR ? learned_data_correction_and_noise(y) : TRAIN_DATA_LEARNED_NOISE ? learned_data_noise(y) : rician_data_noise(y)
-test_data_noise(d::Tuple) = (d[1], test_data_noise(d[2]))
+val_data_noise(d::Tuple) = (d[1], val_data_noise(d[2]))
 train_data_noise(d::Tuple) = (d[1], train_data_noise(d[2]))
 
 #= #TODO
 plot(
-    plot(((test_data[2])[:,1,1,1:3]); title = "test"),
-    plot(test_data_noise((test_data[2])[:,1,1,1:3]); title = "noisy test"),
+    plot(((val_data[2])[:,1,1,1:3]); title = "val"),
+    plot(val_data_noise((val_data[2])[:,1,1,1:3]); title = "noisy val"),
     plot(((train_data[1][2])[:,1,1,4:6]); title = "train"),
     plot(train_data_noise((train_data[1][2])[:,1,1,4:6]); title = "noisy train"),
 ) |> display
@@ -170,7 +170,7 @@ state = DataFrame(
     :labelerr => Union{VT, Missing}[],
 )
 blanktrainrow = push!(deepcopy(state), [0; :train; missings(size(state,2)-2)])
-blanktestrow  = push!(deepcopy(state), [0; :test; missings(size(state,2)-2)])
+blankvalrow   = push!(deepcopy(state), [0; :val; missings(size(state,2)-2)])
 
 update_lr_cb            = MMDLearning.make_update_lr_cb(state, opt, lrfun)
 checkpoint_state_cb     = MMDLearning.make_checkpoint_state_cb(state, savepath("log", "errors.bson"); filtermissings = true, filternans = true)
@@ -225,19 +225,19 @@ train_loop! = function()
             append!(state, newtrainrow)
 
             # Testing evaluation
-            newtestrow = deepcopy(blanktestrow)
-            newtestrow[end, :epoch] = epoch
+            newvalrow = deepcopy(blankvalrow)
+            newvalrow[end, :epoch] = epoch
             if mod(epoch, 10) == 0 #TODO FIXME (10)
-                @timeit timer "test eval" begin
-                    @timeit timer "noise" d = test_data_noise(test_data) # add unique noise instance (as well as any learned corrections)
-                    @timeit timer "θerr"  newtestrow[end, :labelerr] = θerr(labelbatch(d)...)
-                    @timeit timer "θacc"  newtestrow[end, :acc]      = θacc(labelbatch(d)...)
-                    @timeit timer "H"     newtestrow[end, :loss]     = H_loss(d...)
-                    @timeit timer "ELBO"  newtestrow[end, :ELBO]     = L_loss(d...)
-                    @timeit timer "KL"    newtestrow[end, :KL]       = KL_loss(d...)
+                @timeit timer "val eval" begin
+                    @timeit timer "noise" d = val_data_noise(val_data) # add unique noise instance (as well as any learned corrections)
+                    @timeit timer "θerr"  newvalrow[end, :labelerr] = θerr(labelbatch(d)...)
+                    @timeit timer "θacc"  newvalrow[end, :acc]      = θacc(labelbatch(d)...)
+                    @timeit timer "H"     newvalrow[end, :loss]     = H_loss(d...)
+                    @timeit timer "ELBO"  newvalrow[end, :ELBO]     = L_loss(d...)
+                    @timeit timer "KL"    newvalrow[end, :KL]       = KL_loss(d...)
                 end
             end
-            append!(state, newtestrow)
+            append!(state, newvalrow)
 
             # Post-training callbacks
             @timeit timer "posttraincbs" posttraincbs()
@@ -268,10 +268,10 @@ end
 @info "Computing resulting labels..."
 best_model   = SAVE ? BSON.load(savepath("log", "model-best.bson"))[:model] : deepcopy(m); #TODO
 # best_model   = deepcopy(m); #TODO FIXME
-eval_data    = test_data_noise(test_data); #TODO FIXME
+eval_data    = val_data_noise(val_data); #TODO FIXME
 true_thetas  = thetas(eval_data);
 true_signals = signals(eval_data);
-# eval_data    = test_data_noise(test_data); #TODO FIXME
+# eval_data    = val_data_noise(val_data); #TODO FIXME
 # true_thetas  = thetas(eval_data)[:,1:min(10000,end)];
 # true_signals = signals(eval_data)[:,:,:,1:min(10000,end)];
 # eval_data    = train_data_noise(reduce(hcat, (x->x[1]).(train_data)), reduce((x,y) -> cat(x,y;dims=4), (x->x[2]).(train_data))); #TODO FIXME

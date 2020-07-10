@@ -25,9 +25,9 @@ if !(@isdefined(sampleX) && @isdefined(sampleY) && @isdefined(sampleθ) && @isde
         plothist = false,
     )
 end
-const θ = copy(sampleθ(nothing; dataset = :val));
-const X = copy(sampleX(nothing; dataset = :val));
-const Y = copy(sampleY(nothing; dataset = :val));
+const θ = copy(sampleθ(nothing; dataset = :test));
+const X = copy(sampleX(nothing; dataset = :test));
+const Y = copy(sampleY(nothing; dataset = :test));
 const Y_RES = minimum(filter(>(0), Y)); # resolution of signal values
 const Y_EDGES = unique!(sort!(copy(vec(Y)))); # unique values
 θ[1,:] .= cosd.(θ[1,:]); # transform flipangle -> cosd(flipangle)

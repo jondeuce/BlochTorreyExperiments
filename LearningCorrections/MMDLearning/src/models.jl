@@ -777,8 +777,6 @@ end
 Flux.@functor LIGOCVAE
 Base.show(io::IO, m::LIGOCVAE) = model_summary(io, Dict("E1" => m.E1, "E2" => m.E2, "D" => m.D))
 
-Flux.testmode!(m::LIGOCVAE, mode = true) = (map(x -> Flux.testmode!(x, mode), [m.E1, m.E2, m.D]); m)
-
 # Split `μ` into mean and standard deviation
 split_mean_std(μ) = (μ[1:end÷2, ..], μ[end÷2+1:end, ..])
 

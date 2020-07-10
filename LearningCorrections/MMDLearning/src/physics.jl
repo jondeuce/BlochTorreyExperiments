@@ -84,7 +84,7 @@ epsilon(c::ClosedFormToyModel) = physicsmodel(c).ϵ0
 θlabels(::ToyModel) = ["freq", "phase", "offset", "amp", "tconst"]
 θlower(::ToyModel{T}) where {T} = [1/T(64),   T(0), 1/T(4), 1/T(10),  T(16)]
 θupper(::ToyModel{T}) where {T} = [1/T(32), T(π)/2, 1/T(2),  1/T(4), T(128)]
-θerror(p::ToyModel, theta, thetahat) = abs.((theta .- thetahat)) ./ (θupper(p) .- θlower(p))
+θerror(p::ToyModel, θ, θhat) = abs.((θ .- θhat)) ./ (θupper(p) .- θlower(p))
 
 function initialize!(p::ToyModel; ntrain::Int, ntest::Int = ntrain, nval::Int = ntrain)
     rng = Random.seed!(0)
@@ -97,8 +97,8 @@ end
 
 sampleθ(p::ToyModel, n::Union{Int, Symbol}; dataset::Symbol) = permutedims(reduce(hcat, rand.(Uniform.(θlower(p), θupper(p)), n)))
 
-sampleX(p::MaybeClosedFormToyModel, n::Union{Int, Symbol}, epsilon = nothing; dataset::Symbol) = sampleX(p, sampleθ(physicsmodel(p), n; dataset = dataset), epsilon)
-sampleX(p::MaybeClosedFormToyModel, theta, epsilon = nothing) = signal_model(p, theta, epsilon)
+sampleX(p::MaybeClosedFormToyModel, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = sampleX(p, sampleθ(physicsmodel(p), n; dataset = dataset), ϵ)
+sampleX(p::MaybeClosedFormToyModel, θ, ϵ = nothing) = signal_model(p, θ, ϵ)
 
 function sampleY(p::ToyModel, n::Union{Int, Symbol}; dataset::Symbol)
     dataset === :train ? (n === :all ? p.Ytrain[] : sample_columns(p.Ytrain[], n)) :
@@ -107,23 +107,18 @@ function sampleY(p::ToyModel, n::Union{Int, Symbol}; dataset::Symbol)
     error("dataset must be :train, :test, or :val")
 end
 
-function _signal_model(
-        theta::AbstractVecOrMat,
-        epsilon,
-        nsamples::Int,
-        beta::Int,
-    )
-    freq, phase, offset, amp, tconst = theta[1:1,:], theta[2:2,:], theta[3:3,:], theta[4:4,:], theta[5:5,:]
-    t = 0:nsamples-1
-    y = @. (offset + amp * sin(2*(pi*freq)*t - phase)^beta) * exp(-t/tconst)
-    if !isnothing(epsilon)
-        ϵR = epsilon .* randn(eltype(theta), nsamples, size(theta, 2))
-        ϵI = epsilon .* randn(eltype(theta), nsamples, size(theta, 2))
+function _signal_model(θ::AbstractVecOrMat, ϵ, n::Int, β::Int)
+    t = 0:n-1
+    f, ϕ, a₀, a₁, τ = θ[1:1,:], θ[2:2,:], θ[3:3,:], θ[4:4,:], θ[5:5,:]
+    y = @. (a₀ + a₁ * sin(2*(π*f)*t - ϕ)^β) * exp(-t/τ)
+    if !isnothing(ϵ)
+        ϵR = ϵ .* randn(eltype(θ), n, size(θ,2))
+        ϵI = ϵ .* randn(eltype(θ), n, size(θ,2))
         y = @. sqrt((y + ϵR)^2 + ϵI^2)
     end
     return y
 end
-signal_model(p::MaybeClosedFormToyModel, theta::AbstractVecOrMat, epsilon = nothing) = _signal_model(theta, epsilon, nsignal(p), beta(p))
+signal_model(p::MaybeClosedFormToyModel, θ::AbstractVecOrMat, ϵ = nothing) = _signal_model(θ, ϵ, nsignal(p), beta(p))
 
 ####
 #### Signal model
@@ -258,7 +253,7 @@ function make_mle_data_samplers(
     )
     @assert !(padtrain && !normalizesignals) "unnormalized padded training data is not implemented"
 
-    # Set random seed for consistent test/train sets
+    # Set random seed for consistent train/test/val sets
     rng = Random.seed!(0)
 
     # Load + preprocess fit results (~25% of voxels dropped)

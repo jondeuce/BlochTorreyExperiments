@@ -78,21 +78,6 @@ xavier_normal(args...; kwargs...) = xavier_normal(Float64, args...; kwargs...)
 # Flux.glorot_normal(T::Type, dims...) = xavier_normal(T, dims...)
 
 """
-    dropout(x, p, dims = :)
-
-Fix definition of dropout kernel to apply dropout on both forward and
-reverse passes. Test/train mode is handled by [`Dropout`](@ref).
-
-See: https://github.com/FluxML/Flux.jl/issues/1084
-"""
-# function Flux.dropout(x, p; dims = :)
-#     q = 1 - p
-#     y = rand!(similar(x, Flux._dropout_shape(x, dims)))
-#     y .= Flux._dropout_kernel.(y, p, q)
-#     x .* y
-# end
-
-"""
 NotTrainable(layer)
 
 Wraps the callable `layer` such that any parameters internal to `layer`

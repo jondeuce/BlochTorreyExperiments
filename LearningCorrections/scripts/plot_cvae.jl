@@ -35,7 +35,7 @@ function read_to_dataframe(sweep_dir)
         sweep = hcat(sweep, DataFrame(Symbol(k) => typeof(v)[v]))
     end
     state = BSON.load(findendswith(joinpath(sweep_dir, "log"), ".errors.bson"))[:state]
-    state = state[state.dataset .=== :test, :]
+    state = state[state.dataset .=== :val, :]
     # dropmissing!(state) # drop rows with missings
     filter!(r -> all(x -> !((x isa Number && isnan(x)) || (x isa AbstractArray{<:Number} && any(isnan, x))), r), state) # drop rows with NaNs
     labelerr = skipmissing(state.labelerr)

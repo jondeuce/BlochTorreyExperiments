@@ -100,7 +100,7 @@ function callback(epoch;
     # Initialize metrics dictionary
     metrics = Dict{Any,Any}()
     metrics[:epoch]   = epoch
-    metrics[:dataset] = :test
+    metrics[:dataset] = :val
     metrics[:time]    = cb_state["curr_time"] - cb_state["last_time"]
 
     # Perform permutation test

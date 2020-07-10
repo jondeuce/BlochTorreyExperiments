@@ -40,7 +40,7 @@ function pyheatmap(data; formatter = nothing, filename = nothing, clim = nothing
 
     return nothing
 end
-# pyheatmap(randn(6,3), filename = "test", clim = (0,1))
+# pyheatmap(randn(6,3), filename = "val", clim = (0,1))
 
 ####
 #### Load image data

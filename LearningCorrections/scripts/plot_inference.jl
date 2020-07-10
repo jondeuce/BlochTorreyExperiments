@@ -121,13 +121,13 @@ function do_mri_inference(mrimodels; nsamples = 1, seed = 0)
     # CVAE params:   cosd(alpha), T2short, T2long, Ashort, Along
     # Signal params:       alpha, T2short,    dT2, Ashort, Along
     Random.seed!(seed)
-    Is   = sample(MersenneTwister(seed), 1:size(sampleY(nothing; dataset = :val), 2), nsamples; replace = false)
-    θ    = sampleθ(nothing; dataset = :val)[:, Is]
-    X    = sampleX(nothing; dataset = :val)[:, Is]
-    Y    = sampleY(nothing; dataset = :val)[:, Is]
+    Is   = sample(MersenneTwister(seed), 1:size(sampleY(nothing; dataset = :test), 2), nsamples; replace = false)
+    θ    = sampleθ(nothing; dataset = :test)[:, Is]
+    X    = sampleX(nothing; dataset = :test)[:, Is]
+    Y    = sampleY(nothing; dataset = :test)[:, Is]
     fits = deepcopy(fits_val)[Is, :]
     θ0   = deepcopy(θ)
-    θbd  = vec(extrema(sampleθ(nothing; dataset = :val); dims = 2))
+    θbd  = vec(extrema(sampleθ(nothing; dataset = :test); dims = 2))
     #θbd = [(50.0, 180.0), (8.0, 1000.0), (8.0, 1000.0), (0.0, 3.8), (0.0, 21.0)]
     results = Dict{String, Any}()
 
@@ -326,7 +326,7 @@ mri_inf["CVAE"] = let
     global mri_inf
     local Y   = copy(mri_inf["F"].Y)
     local θ   = copy(mri_inf["F"].θ)
-    local θbd = vec(extrema(sampleθ(nothing; dataset = :val); dims = 2))
+    local θbd = vec(extrema(sampleθ(nothing; dataset = :test); dims = 2))
     @time θ0_cvae = mean([MRIMODELS["CVAE"](Y) for _ in 1:100])
     θ0_cvae[1,:] .= acosd.(clamp.(θ0_cvae[1,:], -1, 1)); # transform cosd(flipangle) -> flipangle
     θ0_cvae[3,:] .= θ[3,:] .- θ[2,:]; # transform T2long = T2short + dT2 -> dT2

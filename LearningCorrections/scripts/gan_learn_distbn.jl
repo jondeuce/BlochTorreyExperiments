@@ -12,8 +12,8 @@ const settings = load_settings(joinpath(@__DIR__, "..", "settings", "gan_setting
 global sampleX, sampleY, sampleθ, fits_train, fits_test, fits_val
 if IS_TOY_MODEL
     _sampleX, _sampleY, _sampleθ = make_toy_samplers(ntrain = settings["gan"]["batchsize"]::Int, epsilon = TOY_NOISE_LEVEL, power = 4.0)
-    global sampleX = (m; dataset = :train) -> _sampleX(m) # samples are generated on demand; train/test not relevant
-    global sampleθ = (m; dataset = :train) -> _sampleθ(m) # samples are generated on demand; train/test not relevant
+    global sampleX = (m; dataset = :train) -> _sampleX(m) # samples are generated on demand; train/test/val not relevant
+    global sampleθ = (m; dataset = :train) -> _sampleθ(m) # samples are generated on demand; train/test/val not relevant
     global sampleY = _sampleY
     global fits_train, fits_test, fits_val = nothing, nothing, nothing
 else
@@ -85,31 +85,31 @@ optimizers = Dict(
 )
 
 callback = let
-    local Xtest, Ytest, θtest, testfits
+    local Xval, Yval, θval, valfits
 
     if IS_TOY_MODEL
         # X and θ are generated on demand
-        Xtest, Ytest, θtest = sampleX(settings["gan"]["batchsize"]), sampleY(settings["gan"]["batchsize"]; dataset = :test), sampleθ(settings["gan"]["batchsize"])
-        testfits = nothing
+        Xval, Yval, θval = sampleX(settings["gan"]["batchsize"]), sampleY(settings["gan"]["batchsize"]; dataset = :val), sampleθ(settings["gan"]["batchsize"])
+        valfits = nothing
     else
         # Sample X and θ randomly, but choose Ys + corresponding fits consistently in order to compare models, and choose Ys with reasonable agreeance with data in order to not be overconfident in improving terrible fits
-        Xtest = sampleX(settings["gan"]["batchsize"]; dataset = :test)
-        θtest = sampleθ(settings["gan"]["batchsize"]; dataset = :test)
+        Xval = sampleX(settings["gan"]["batchsize"]; dataset = :val)
+        θval = sampleθ(settings["gan"]["batchsize"]; dataset = :val)
         iY = if settings["data"]["normalize"]::Bool
-            iY = filter(i -> fits_test.loss[i] <= -200.0 && fits_test.rmse[i] <= 0.002, 1:nrow(fits_test)) #TODO
+            iY = filter(i -> fits_val.loss[i] <= -200.0 && fits_val.rmse[i] <= 0.002, 1:nrow(fits_val)) #TODO
         else
-            iY = filter(i -> fits_test.loss[i] <= -125.0 && fits_test.rmse[i] <= 0.15, 1:nrow(fits_test)) #TODO
+            iY = filter(i -> fits_val.loss[i] <= -125.0 && fits_val.rmse[i] <= 0.15, 1:nrow(fits_val)) #TODO
         end
         iY = sample(MersenneTwister(0), iY, settings["gan"]["batchsize"]; replace = false)
-        Ytest = sampleY(nothing; dataset = :test)[..,iY]
-        testfits = fits_test[iY,:]
+        Yval = sampleY(nothing; dataset = :val)[..,iY]
+        valfits = fits_val[iY,:]
     end
 
     cb_state = (
-        X = Xtest,
-        Y = Ytest,
-        θ = θtest,
-        fits = testfits,
+        X = Xval,
+        Y = Yval,
+        θ = θval,
+        fits = valfits,
         last_time = Ref(time()),
         last_curr_checkpoint = Ref(-Inf),
         last_best_checkpoint = Ref(-Inf),
@@ -197,7 +197,7 @@ callback = let
             end
 
             # Use permutation test results to compute loss
-            #@timeit timer "test loss" ℓ = loss(X, Y)
+            #@timeit timer "val loss" ℓ = loss(X, Y)
             reg = lambda * regularizer(dX)
             ℓ = MMDsq + reg
 
@@ -212,7 +212,7 @@ callback = let
         gloss = mean(log.(1 .- d_g_x))
 
         # Update dataframe
-        push!(state, [epoch, :test, dt, gloss, dloss, mean(d_y), mean(d_g_x), rmse, θ_fit_err, sig_fit_logL, sig_fit_rmse])
+        push!(state, [epoch, :val, dt, gloss, dloss, mean(d_y), mean(d_g_x), rmse, θ_fit_err, sig_fit_logL, sig_fit_rmse])
 
         function makeplots()
             s = x -> x == round(x) ? round(Int, x) : round(x; sigdigits = 4) # for plotting

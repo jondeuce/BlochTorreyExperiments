@@ -154,8 +154,8 @@ function eval_metrics(engine, batch)
 
         # Initialize metrics dictionary
         metrics = Dict{Any,Any}()
-        metrics[:epoch]   = :test ∉ logger.dataset ? 0 : logger.epoch[findlast(d -> d === :test, logger.dataset)] + 1 #TODO :test
-        metrics[:dataset] = :test #TODO
+        metrics[:epoch]   = :val ∉ logger.dataset ? 0 : logger.epoch[findlast(d -> d === :val, logger.dataset)] + 1
+        metrics[:dataset] = :val
         metrics[:time]    = cb_state["curr_time"] - cb_state["last_time"]
 
         # Metrics computed in update_callback!
@@ -245,7 +245,7 @@ trainer.add_event_handler(
 trainer.add_event_handler(
     ignite.engine.Events.EPOCH_COMPLETED,
     @j2p function (engine)
-        losses = logger.signal_fit_logL[logger.dataset .=== :test] |> skipmissing |> collect
+        losses = logger.signal_fit_logL[logger.dataset .=== :val] |> skipmissing |> collect
         if !isempty(losses) && (length(losses) == 1 || losses[end] < minimum(losses[1:end-1]))
             @timeit "save best progress" begin
                 @timeit "save best model" saveprogress(@dict(models, optimizers, logger); savefolder = settings["data"]["out"], prefix = "best-")

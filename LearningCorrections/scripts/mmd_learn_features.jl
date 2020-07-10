@@ -199,7 +199,7 @@ function train_vae_model(
     modelparams = Flux.params(A, f)
     opt = Flux.ADAM(lr)
 
-    callback(0, sampleY(nothing; dataset = :test))
+    callback(0, sampleY(nothing; dataset = :val))
     for epoch in 1:epochs
         try
             @timeit timer "epoch" for _ in 1:nbatches
@@ -207,8 +207,8 @@ function train_vae_model(
                 @timeit timer "batch" Flux.train!(loss, modelparams, [(Ytrain,)], opt)
             end
             @timeit timer "callback" begin
-                @timeit timer "sampleY" Ytest = sampleY(nothing; dataset = :test)
-                callback(epoch, Ytest)
+                @timeit timer "sampleY" Yval = sampleY(nothing; dataset = :val)
+                callback(epoch, Yval)
             end
 
             if Dates.now() - tstart >= Dates.Second(floor(Int, timeout))
