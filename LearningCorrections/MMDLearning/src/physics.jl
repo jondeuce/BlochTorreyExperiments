@@ -60,19 +60,20 @@ physicsmodel(c::ClosedForm) = c.p
 ntheta(c::ClosedForm) = ntheta(physicsmodel(c))
 nsignal(c::ClosedForm) = nsignal(physicsmodel(c))
 function epsilon end
+# Base.eltype for float type
 
 ####
 #### Toy problem
 ####
 
-@with_kw struct ToyModel{T} <: PhysicsModel
-    ϵ0::T = T(0.01)
-    Ytrain::Ref{Matrix{T}} = Ref(zeros(T,0,0))
-    Ytest::Ref{Matrix{T}} = Ref(zeros(T,0,0))
-    Yval::Ref{Matrix{T}} = Ref(zeros(T,0,0))
+@with_kw struct ToyModel{T,isfinite} <: PhysicsModel
+    ϵ0::T = 0.01
+    θ::Dict{Symbol,Matrix{T}} = Dict()
+    X::Dict{Symbol,Matrix{T}} = Dict()
+    Y::Dict{Symbol,Matrix{T}} = Dict()
 end
-const ClosedFormToyModel{T} = ClosedForm{ToyModel{T}}
-const MaybeClosedFormToyModel{T} = Union{ToyModel{T}, ClosedFormToyModel{T}}
+const ClosedFormToyModel{T,isfinite} = ClosedForm{ToyModel{T,isfinite}}
+const MaybeClosedFormToyModel{T,isfinite} = Union{ToyModel{T,isfinite}, ClosedFormToyModel{T,isfinite}}
 
 ntheta(::ToyModel) = 5
 nsignal(::ToyModel) = 128
@@ -80,32 +81,39 @@ hasclosedform(::ToyModel) = true
 beta(::ToyModel) = 4
 beta(::ClosedFormToyModel) = 2
 epsilon(c::ClosedFormToyModel) = physicsmodel(c).ϵ0
+Base.eltype(::MaybeClosedFormToyModel{T}) where {T} = T
+Base.eltype(::Type{<:MaybeClosedFormToyModel{T}}) where {T} = T
 
 θlabels(::ToyModel) = ["freq", "phase", "offset", "amp", "tconst"]
 θlower(::ToyModel{T}) where {T} = [1/T(64),   T(0), 1/T(4), 1/T(10),  T(16)]
 θupper(::ToyModel{T}) where {T} = [1/T(32), T(π)/2, 1/T(2),  1/T(4), T(128)]
 θerror(p::ToyModel, θ, θhat) = abs.((θ .- θhat)) ./ (θupper(p) .- θlower(p))
 
-function initialize!(p::ToyModel; ntrain::Int, ntest::Int = ntrain, nval::Int = ntrain)
-    rng = Random.seed!(0)
-    p.Ytrain[] = sampleX(ClosedForm(p), ntrain, p.ϵ0; dataset = :train)
-    p.Ytest[]  = sampleX(ClosedForm(p), ntest, p.ϵ0; dataset = :test)
-    p.Yval[]   = sampleX(ClosedForm(p), nval, p.ϵ0; dataset = :val)
+function initialize!(p::ToyModel{T,isfinite}; ntrain::Int, ntest::Int, nval::Int, seed::Int = 0) where {T,isfinite}
+    rng = Random.seed!(seed)
+    for (d, n) in [(:train, ntrain), (:test, ntest), (:val, nval)]
+        if isfinite
+            p.θ[d] = sampleθprior(p, n)
+            p.X[d] = signal_model(p, p.θ[d])
+        else
+            empty!(p.θ)
+            empty!(p.X)
+        end
+        p.Y[d] = signal_model(ClosedForm(p), sampleθprior(p, n), p.ϵ0)
+    end
     Random.seed!(rng)
     return p
 end
 
-sampleθ(p::ToyModel, n::Union{Int, Symbol}; dataset::Symbol) = permutedims(reduce(hcat, rand.(Uniform.(θlower(p), θupper(p)), n)))
+sampleθprior(p::ToyModel, n::Union{Int, Symbol}) = permutedims(reduce(hcat, rand.(Uniform.(θlower(p), θupper(p)), n)))
+sampleθ(p::ToyModel{T,true},  n::Union{Int, Symbol}; dataset::Symbol) where {T} = n === :all ? physicsmodel(p).θ[dataset] : sample_columns(physicsmodel(p).θ[dataset], n)
+sampleθ(p::ToyModel{T,false}, n::Union{Int, Symbol}; dataset::Symbol) where {T} = sampleθprior(p, n)
 
-sampleX(p::MaybeClosedFormToyModel, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = sampleX(p, sampleθ(physicsmodel(p), n; dataset = dataset), ϵ)
+sampleX(p::MaybeClosedFormToyModel{T,true},  n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = n === :all ? physicsmodel(p).X[dataset] : sample_columns(physicsmodel(p).X[dataset], n)
+sampleX(p::MaybeClosedFormToyModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleX(p, sampleθ(physicsmodel(p), n; dataset = dataset), ϵ)
 sampleX(p::MaybeClosedFormToyModel, θ, ϵ = nothing) = signal_model(p, θ, ϵ)
 
-function sampleY(p::ToyModel, n::Union{Int, Symbol}; dataset::Symbol)
-    dataset === :train ? (n === :all ? p.Ytrain[] : sample_columns(p.Ytrain[], n)) :
-    dataset === :test  ? (n === :all ? p.Ytest[]  : sample_columns(p.Ytest[], n)) :
-    dataset === :val   ? (n === :all ? p.Yval[]   : sample_columns(p.Yval[], n)) :
-    error("dataset must be :train, :test, or :val")
-end
+sampleY(p::ToyModel, n::Union{Int, Symbol}; dataset::Symbol) = n === :all ? physicsmodel(p).Y[dataset] : sample_columns(physicsmodel(p).Y[dataset], n)
 
 function _signal_model(θ::AbstractVecOrMat, ϵ, n::Int, β::Int)
     t = 0:n-1
@@ -398,11 +406,11 @@ end
 
 function signal_loglikelihood_inference(
         y::AbstractVector,
-        initial_guess = nothing,
-        model = x -> (x, zero(x)),
-        signal_fun = θ -> toy_signal_model(θ, nothing, 4);
-        bounds = toy_theta_bounds(),
-        objective = :mle,
+        initial_guess::Union{<:AbstractVector, Nothing},
+        model, # x -> (x, zero(x)),
+        signal_fun; # θ -> toy_signal_model(θ, nothing, 4);
+        bounds::AbstractVector{<:Tuple},
+        objective::Symbol = :mle,
         bbopt_kwargs = Dict(:MaxTime => 1.0),
     )
 
@@ -423,8 +431,9 @@ function signal_loglikelihood_inference(
 
     bbres = nothing
     if objective !== :mle || (objective === :mle && isnothing(initial_guess))
-        bbres = BlackBoxOptim.bboptimize(loss;
-            SearchRange = bounds,
+        loss_f64(θ) = convert(Vector{eltype(y)}, θ) |> loss |> Float64 # TODO bbopt expects Float64
+        bbres = BlackBoxOptim.bboptimize(loss_f64;
+            SearchRange = NTuple{2,Float64}.(bounds), #TODO bbopt expects Float64
             TraceMode = :silent,
             bbopt_kwargs...
         )
@@ -432,15 +441,16 @@ function signal_loglikelihood_inference(
 
     optres = nothing
     if objective === :mle
-        θ0 = isnothing(initial_guess) ? BlackBoxOptim.best_candidate(bbres) : initial_guess
-        lo = (x->x[1]).(bounds)
-        hi = (x->x[2]).(bounds)
-        # dfc = Optim.TwiceDifferentiableConstraints(lo, hi)
-        # df = Optim.TwiceDifferentiable(loss, θ0; autodiff = :forward)
-        # optres = Optim.optimize(df, dfc, θ0, Optim.IPNewton())
+        θ0 = isnothing(initial_guess) ? BlackBoxOptim.best_candidate(bbres) : initial_guess #TODO bbopt returns Float64
+        θ0 = convert(Vector{Float64}, θ0) #TODO fails with Float32?
+        lo = convert(Vector{Float64}, (x -> x[1]).(bounds)) #TODO fails with Float32?
+        hi = convert(Vector{Float64}, (x -> x[2]).(bounds)) #TODO fails with Float32?
         df = Optim.OnceDifferentiable(loss, θ0; autodiff = :forward)
         optres = Optim.optimize(df, lo, hi, θ0, Optim.Fminbox(Optim.LBFGS()))
         # optres = Optim.optimize(df, lo, hi, θ0, Optim.Fminbox(Optim.BFGS()))
+        # dfc = Optim.TwiceDifferentiableConstraints(lo, hi)
+        # df = Optim.TwiceDifferentiable(loss, θ0; autodiff = :forward)
+        # optres = Optim.optimize(df, dfc, θ0, Optim.IPNewton())
     end
 
     return @ntuple(bbres, optres)

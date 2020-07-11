@@ -6,8 +6,9 @@ using Reexport
 @reexport using Parameters, EllipsisNotation, LegibleLambdas, LaTeXStrings
 @reexport using StatsPlots
 
-import UnsafeArrays, Yeppp
+import UnsafeArrays, LoopVectorization
 using UnsafeArrays: uview, uviews, @uviews
+using LoopVectorization: @avx
 
 import TOML, BSON, DrWatson, Flux, NNlib, Zygote, ChainRules, BlackBoxOptim, Optim, ForwardDiff, DECAES
 export TOML, BSON, DrWatson, Flux, NNlib, Zygote, ChainRules, BlackBoxOptim, Optim, ForwardDiff, DECAES

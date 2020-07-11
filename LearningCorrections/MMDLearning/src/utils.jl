@@ -450,7 +450,7 @@ function update_callback!(
         G::RicianCorrector;
         ninfer::Int,
         infermethod::Symbol = :mle,
-        inferperiod::Float64 = 300.0,
+        inferperiod::Real = 300.0,
         forceinfer::Bool = false,
     )
 
@@ -487,8 +487,10 @@ function update_callback!(
                 x1, ℓ1 = BlackBoxOptim.best_candidate(bbopt_res), BlackBoxOptim.best_fitness(bbopt_res)
                 x2, ℓ2 = Optim.minimizer(optim_res), Optim.minimum(optim_res)
                 (ℓ1 < ℓ2) && @warn "BlackBoxOptim results less than Optim result" #TODO
-                return ℓ1 < ℓ2 ? (x = x1, loss = ℓ1) : (x = x2, loss = ℓ2)
+                T = eltype(phys) #TODO BlackBoxOptim/Optim return Float64
+                return ℓ1 < ℓ2 ? (x = T.(x1), loss = T(ℓ1)) : (x = T.(x2), loss = T(ℓ2))
             end
+
             θfit = mapreduce(r -> r.x, hcat, best_infer_results)
             i_fit, Yfit, θfit = sortperm(map(r -> r.loss, best_infer_results)) |> I -> (i_fit[I], Yfit[:,I], θfit[:,I])
 

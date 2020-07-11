@@ -1,40 +1,25 @@
 ####
-#### Fast exponential function using Yeppp
+#### Accelerated batched functions
 ####
 
-function fast_exp!(B::AbstractMatrix, A::AbstractMatrix)
-    @assert size(A) == size(B)
-    Threads.@threads for j in 1:size(A,2)
-        Yeppp.exp!(view(B,:,j), view(A,:,j))
-    end
-    return B
-end
-
-function fast_exp!(A::AbstractMatrix)
-    Threads.@threads for j in 1:size(A,2)
-        Yeppp.exp!(view(A,:,j))
-    end
-    return A
-end
-
-function fast_exp!(B::AbstractArray{<:Any,3}, A::AbstractArray{<:Any,3})
-    @assert size(A) == size(B)
-    for k in 1:size(A,3)
-        Threads.@threads for j in 1:size(A,2)
-            Yeppp.exp!(view(B,:,j,k), view(A,:,j,k))
+function avx_map!(f, dst::AbstractArray, src::AbstractArray)
+    if length(dst) < Threads.nthreads()
+        @avx for i in eachindex(src,dst)
+            dst[i] = f(src[i])
+        end
+    else
+        Threads.@sync for I in Iterators.partition(eachindex(src,dst), length(dst) ÷ Threads.nthreads())
+            Threads.@spawn begin
+                @avx for i in I
+                    dst[i] = f(src[i])
+                end
+            end
         end
     end
-    return B
+    return dst
 end
-
-function fast_exp!(A::AbstractArray{<:Any,3})
-    for k in 1:size(A,3)
-        Threads.@threads for j in 1:size(A,2)
-            Yeppp.exp!(view(A,:,j,k))
-        end
-    end
-    return A
-end
+avx_map!(f, A::AbstractArray) = avx_map!(f, A, A)
+fast_exp!(A...) = avx_map!(exp, A...)
 
 ####
 #### In-place transpose-related helpers
@@ -101,10 +86,8 @@ function batcheddiag(x::AbstractArray{T,3}) where {T}
     ndiag = min(size(x,1), size(x,2))
     y = similar(x, ndiag, 1, nbatch)
     # Threads.@threads
-    for k in 1:nbatch
-        @simd for i in 1:ndiag
-            @inbounds y[i,1,k] = x[i,i,k]
-        end
+    @avx for k in 1:nbatch, i in 1:ndiag
+        y[i,1,k] = x[i,i,k]
     end
     return y
 end
@@ -115,10 +98,8 @@ Zygote.@adjoint function batcheddiag(x::AbstractArray{T,3}) where {T}
         ndiag = min(size(x,1), size(x,2))
         y = zero(x)
         # Threads.@threads
-        for k in 1:nbatch
-            @simd for i in 1:ndiag
-                @inbounds y[i,i,k] = Δ[i,1,k]
-            end
+        @avx for k in 1:nbatch, i in 1:ndiag
+            y[i,i,k] = Δ[i,1,k]
         end
         return (y,)
     end

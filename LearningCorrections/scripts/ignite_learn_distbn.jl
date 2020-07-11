@@ -11,38 +11,43 @@ const settings = load_settings(joinpath(@__DIR__, "..", "settings", "ignite_sett
 function make_models(phys)
     models = Dict{String, Any}()
     n = nsignal(phys)
+    toT(m) = Flux.paramtype(eltype(phys), m)
 
     # Rician generator. First `n` elements for `δX` scaled to (-δ, δ), second `n` elements for `logϵ` scaled to (logϵ_bw[1], logϵ_bw[2])
     models["G"] = let
-        hdim = settings["genatr"]["hdim"]::Int
-        nhidden = settings["genatr"]["nhidden"]::Int
-        maxcorr = settings["genatr"]["maxcorr"]::Float64
-        noisebounds = settings["genatr"]["noisebounds"]::Vector{Float64}
+        hdim = settings["arch"]["genatr"]["hdim"]::Int
+        nhidden = settings["arch"]["genatr"]["nhidden"]::Int
+        maxcorr = settings["arch"]["genatr"]["maxcorr"]::Float64
+        noisebounds = settings["arch"]["genatr"]["noisebounds"]::Vector{Float64}
         Flux.Chain(
             MMDLearning.MLP(n => 2n, nhidden, hdim, Flux.relu, tanh)...,
             MMDLearning.CatScale([(-maxcorr, maxcorr), (noisebounds...,)], [n,n]),
-        ) |> Flux.f64
+        ) |> toT
     end
 
     # Discriminator
-    models["D"] = let
-        hdim = settings["discrim"]["hdim"]::Int
-        nhidden = settings["discrim"]["nhidden"]::Int
-        MMDLearning.MLP(n => 1, nhidden, hdim, Flux.relu, Flux.sigmoid) |> Flux.f64
+    if settings["arch"]["type"] ∈ ["gan", "hyb"]
+        models["D"] = let
+            hdim = settings["arch"]["discrim"]["hdim"]::Int
+            nhidden = settings["arch"]["discrim"]["nhidden"]::Int
+            MMDLearning.MLP(n => 1, nhidden, hdim, Flux.relu, Flux.sigmoid) |> toT
+        end
     end
 
     # Initialize `nbandwidth` linearly spaced kernel bandwidths `logσ` for each `n` channels strictly within the range (bwbounds[1], bwbounds[2])
-    models["logsigma"] = let
-        bwbounds = settings["kernel"]["bwbounds"]::Vector{Float64}
-        nbandwidth = settings["kernel"]["nbandwidth"]::Int
-        repeat(range(bwbounds...; length = nbandwidth+2)[2:end-1], 1, n) |> Matrix{Float64}
+    if settings["arch"]["type"] ∈ ["mmd", "hyb"]
+        models["logsigma"] = let
+            bwbounds = settings["arch"]["kernel"]["bwbounds"]::Vector{Float64}
+            nbandwidth = settings["arch"]["kernel"]["nbandwidth"]::Int
+            repeat(range(bwbounds...; length = nbandwidth+2)[2:end-1], 1, n) |> toT
+        end
     end
 
     return models
 end
 
 const phys = initialize!(
-    ToyModel{Float64}();
+    ToyModel{Float32,true}();
     ntrain = settings["data"]["ntrain"]::Int,
     ntest = settings["data"]["ntest"]::Int,
     nval = settings["data"]["nval"]::Int,
@@ -62,19 +67,19 @@ const logger = DataFrame(
     :epoch   => Int[], # mandatory field
     :dataset => Symbol[], # mandatory field
     :time    => Union{Float64, Missing}[],
-    :Gloss   => Union{Float64, Missing}[],
-    :Dloss   => Union{Float64, Missing}[],
-    :D_Y     => Union{Float64, Missing}[],
-    :D_G_X   => Union{Float64, Missing}[],
-    :MMDsq   => Union{Float64, Missing}[],
-    :MMDvar  => Union{Float64, Missing}[],
-    :tstat   => Union{Float64, Missing}[],
-    :c_alpha => Union{Float64, Missing}[],
-    :P_alpha => Union{Float64, Missing}[],
-    :rmse    => Union{Float64, Missing}[],
-    :theta_fit_err => Union{Vector{Float64}, Missing}[],
-    :signal_fit_logL => Union{Float64, Missing}[],
-    :signal_fit_rmse => Union{Float64, Missing}[],
+    :Gloss   => Union{eltype(phys), Missing}[],
+    :Dloss   => Union{eltype(phys), Missing}[],
+    :D_Y     => Union{eltype(phys), Missing}[],
+    :D_G_X   => Union{eltype(phys), Missing}[],
+    :MMDsq   => Union{eltype(phys), Missing}[],
+    :MMDvar  => Union{eltype(phys), Missing}[],
+    :tstat   => Union{eltype(phys), Missing}[],
+    :c_alpha => Union{eltype(phys), Missing}[],
+    :P_alpha => Union{eltype(phys), Missing}[],
+    :rmse    => Union{eltype(phys), Missing}[],
+    :theta_fit_err => Union{Vector{eltype(phys)}, Missing}[],
+    :signal_fit_logL => Union{eltype(phys), Missing}[],
+    :signal_fit_rmse => Union{eltype(phys), Missing}[],
 )
 const optimizers = Dict{String,Any}(
     "G"   => Flux.ADAM(settings["opt"]["G"]["lr"]),
@@ -108,31 +113,38 @@ function train_step(engine, batch)
     _, Xtrain, Ytrain = array.(batch)
 
     @timeit "train batch" begin
-        if mod(engine.state.iteration-1, kernelrate) == 0
-            @timeit "MMD kernel" begin
-                @timeit "sample G(X)" X̂train = corrected_signal_instance(ricegen, Xtrain)
-                for _ in 1:kernelsteps
-                    success = train_kernel_bandwidth_flux!(models["logsigma"], X̂train, Ytrain;
-                        kernelloss = settings["opt"]["k"]["loss"], kernellr = settings["opt"]["k"]["lr"], bwbounds = settings["kernel"]["bwbounds"]) # timed internally
-                    !success && break
+        if settings["arch"]["type"] ∈ ["mmd", "hyb"]
+            # Train MMD kernel bandwidths
+            if mod(engine.state.iteration-1, kernelrate) == 0
+                @timeit "MMD kernel" begin
+                    @timeit "sample G(X)" X̂train = corrected_signal_instance(ricegen, Xtrain)
+                    for _ in 1:kernelsteps
+                        success = train_kernel_bandwidth_flux!(models["logsigma"], X̂train, Ytrain;
+                            kernelloss = settings["opt"]["k"]["loss"], kernellr = settings["opt"]["k"]["lr"], bwbounds = settings["arch"]["kernel"]["bwbounds"]) # timed internally
+                        !success && break
+                    end
                 end
             end
-        end
-        @timeit "MMD generator" begin
-            @timeit "forward" _, back = Zygote.pullback(() -> MMDloss(Xtrain, Ytrain), Flux.params(models["G"]))
-            @timeit "reverse" gs = back(1)
-            @timeit "update!" Flux.Optimise.update!(optimizers["mmd"], Flux.params(models["G"]), gs)
-        end
-        if mod((engine.state.iteration-1) ÷ GANsucc, GANrate) == 0
-            @timeit "GAN discriminator" for _ in 1:Dsteps
-                @timeit "forward" _, back = Zygote.pullback(() -> Dloss(Xtrain, Ytrain), Flux.params(models["D"]))
-                @timeit "reverse" gs = back(1)
-                @timeit "update!" Flux.Optimise.update!(optimizers["D"], Flux.params(models["D"]), gs)
+            # Train generator on MMD loss
+            @timeit "MMD generator" begin
+                @timeit "forward" _, back = Zygote.pullback(() -> MMDloss(Xtrain, Ytrain), Flux.params(models["G"]))
+                @timeit "reverse" gs = back(one(eltype(phys)))
+                @timeit "update!" Flux.Optimise.update!(optimizers["mmd"], Flux.params(models["G"]), gs)
             end
-            @timeit "GAN generator" begin
-                @timeit "forward" _, back = Zygote.pullback(() -> Gloss(Xtrain), Flux.params(models["G"]))
-                @timeit "reverse" gs = back(1)
-                @timeit "update!" Flux.Optimise.update!(optimizers["G"], Flux.params(models["G"]), gs)
+        end
+
+        if settings["arch"]["type"] ∈ ["gan", "hyb"]
+            if settings["arch"]["type"] == "gan" || mod((engine.state.iteration-1) ÷ GANsucc, GANrate) == 0
+                @timeit "GAN discriminator" for _ in 1:Dsteps
+                    @timeit "forward" _, back = Zygote.pullback(() -> Dloss(Xtrain, Ytrain), Flux.params(models["D"]))
+                    @timeit "reverse" gs = back(one(eltype(phys)))
+                    @timeit "update!" Flux.Optimise.update!(optimizers["D"], Flux.params(models["D"]), gs)
+                end
+                @timeit "GAN generator" begin
+                    @timeit "forward" _, back = Zygote.pullback(() -> Gloss(Xtrain), Flux.params(models["G"]))
+                    @timeit "reverse" gs = back(one(eltype(phys)))
+                    @timeit "update!" Flux.Optimise.update!(optimizers["G"], Flux.params(models["G"]), gs)
+                end
             end
         end
     end
@@ -165,28 +177,32 @@ function eval_metrics(engine, batch)
         metrics[:signal_fit_rmse] = cb_state["metrics"]["signal_fit_rmse"]
 
         # Perform permutation test
-        @timeit "perm test" let
-            m = settings["train"]["batchsize"] # training batch size, not size of val set
-            cb_state["permtest"] = mmd_perm_test_power(models["logsigma"], MMDLearning.sample_columns(cb_state["Xθhat"], m), MMDLearning.sample_columns(cb_state["Y"], m); nperms = settings["eval"]["nperms"])
-            metrics[:MMDsq]   = m * cb_state["permtest"].MMDsq
-            metrics[:MMDvar]  = m^2 * cb_state["permtest"].MMDvar
-            metrics[:tstat]   = cb_state["permtest"].MMDsq / cb_state["permtest"].MMDσ
-            metrics[:c_alpha] = cb_state["permtest"].c_alpha
-            metrics[:P_alpha] = cb_state["permtest"].P_alpha_approx
+        if settings["arch"]["type"] ∈ ["mmd", "hyb"]
+            @timeit "perm test" let
+                m = settings["train"]["batchsize"] # training batch size, not size of val set
+                cb_state["permtest"] = mmd_perm_test_power(models["logsigma"], MMDLearning.sample_columns(cb_state["Xθhat"], m), MMDLearning.sample_columns(cb_state["Y"], m); nperms = settings["eval"]["nperms"])
+                metrics[:MMDsq]   = m * cb_state["permtest"].MMDsq
+                metrics[:MMDvar]  = m^2 * cb_state["permtest"].MMDvar
+                metrics[:tstat]   = cb_state["permtest"].MMDsq / cb_state["permtest"].MMDσ
+                metrics[:c_alpha] = cb_state["permtest"].c_alpha
+                metrics[:P_alpha] = cb_state["permtest"].P_alpha_approx
+            end
         end
 
         # Compute GAN losses
-        @timeit "gan losses" let
-            d_y = D_Y_loss(cb_state["Y"])
-            d_g_x = D_G_X_loss(cb_state["Xθhat"])
-            metrics[:Gloss] = mean(log.(1 .- d_g_x))
-            metrics[:Dloss] = -mean(log.(d_y) .+ log.(1 .- d_g_x))
-            metrics[:D_Y]   = mean(d_y)
-            metrics[:D_G_X] = mean(d_g_x)
+        if settings["arch"]["type"] ∈ ["gan", "hyb"]
+            @timeit "gan losses" let
+                d_y = D_Y_loss(cb_state["Y"])
+                d_g_x = D_G_X_loss(cb_state["Xθhat"])
+                metrics[:Gloss] = mean(log.(1 .- d_g_x))
+                metrics[:Dloss] = -mean(log.(d_y) .+ log.(1 .- d_g_x))
+                metrics[:D_Y]   = mean(d_y)
+                metrics[:D_G_X] = mean(d_g_x)
+            end
         end
 
         # Update logger dataframe
-        push!(logger, metrics; cols = :setequal)
+        push!(logger, metrics; cols = :subset)
     end
 
     return deepcopy(metrics) #TODO convert to PyDict?
@@ -195,14 +211,14 @@ end
 function makeplots(;showplot = false)
     try
         Dict{Symbol, Any}(
-            :gan       => MMDLearning.plot_gan_loss(logger, cb_state, phys; showplot = showplot, lrdroprate = settings["opt"]["lrrate"], lrdrop = settings["opt"]["lrdrop"]),
-            :ricemodel => MMDLearning.plot_rician_model(logger, cb_state, phys; showplot = showplot, bandwidths = permutedims(models["logsigma"])),
+            :gan       => settings["arch"]["type"] ∈ ["gan", "hyb"] ? MMDLearning.plot_gan_loss(logger, cb_state, phys; showplot = showplot, lrdroprate = settings["opt"]["lrrate"], lrdrop = settings["opt"]["lrdrop"]) : nothing,
+            :ricemodel => MMDLearning.plot_rician_model(logger, cb_state, phys; showplot = showplot, bandwidths = haskey(models, "logsigma") ? permutedims(models["logsigma"]) : nothing),
             :signals   => MMDLearning.plot_rician_signals(logger, cb_state, phys; showplot = showplot),
-            :mmd       => MMDLearning.plot_mmd_losses(logger, cb_state, phys; showplot = showplot, lrdroprate = settings["opt"]["lrrate"], lrdrop = settings["opt"]["lrdrop"]),
+            :mmd       => settings["arch"]["type"] ∈ ["mmd", "hyb"] ? MMDLearning.plot_mmd_losses(logger, cb_state, phys; showplot = showplot, lrdroprate = settings["opt"]["lrrate"], lrdrop = settings["opt"]["lrdrop"]) : nothing,
             :infer     => MMDLearning.plot_rician_inference(logger, cb_state, phys; showplot = showplot),
             :witness   => nothing, #mmd_witness(Xϵ, Y, sigma)
             :heat      => nothing, #mmd_heatmap(Xϵ, Y, sigma)
-            :perm      => mmd_perm_test_power_plot(cb_state["permtest"]; showplot = showplot),
+            :perm      => settings["arch"]["type"] ∈ ["mmd", "hyb"] ? mmd_perm_test_power_plot(cb_state["permtest"]; showplot = showplot) : nothing,
         )
     catch e
         handleinterrupt(e; msg = "Error plotting")
@@ -210,9 +226,9 @@ function makeplots(;showplot = false)
 end
 
 function make_data_tuples(dataset)
+    θ = sampleθ(phys, :all; dataset = dataset)
+    X = sampleX(phys, :all; dataset = dataset)
     Y = sampleY(phys, :all; dataset = dataset)
-    θ = sampleθ(phys, size(Y,2); dataset = dataset) #TODO fix θ to be precomputed
-    X = sampleX(phys, θ)
     return [(θ[:,j], X[:,j], Y[:,j]) for j in 1:size(Y,2)]
 end
 train_loader = torch.utils.data.DataLoader(make_data_tuples(:train); batch_size = settings["train"]["batchsize"], shuffle = true, drop_last = true)
@@ -256,21 +272,26 @@ trainer.add_event_handler(
     end
 )
 
-#=
-    #TODO Drop learning rate
-    if loop_epoch > 1 && mod(loop_epoch-1, settings["opt"]["lrrate"]) == 0
-        for (optname, opt) in optimizers
-            new_eta = opt.eta / settings["opt"]["lrdrop"]
-            if new_eta >= settings["opt"]["lrthresh"]
-                @info "$epoch: Dropping $optname optimizer learning rate to $new_eta"
-                opt.eta = new_eta
-            else
-                @info "$epoch: Learning rate dropped below $(settings["opt"]["lrthresh"]) for $optname optimizer, exiting..."
-                throw(InterruptException())
+# Drop learning rate
+trainer.add_event_handler(
+    ignite.engine.Events.EPOCH_COMPLETED,
+    @j2p function (engine)
+        @unpack lrrate, lrdrop, lrthresh = settings["opt"]
+        epoch = engine.state.epoch
+        if epoch > 1 && mod(epoch-1, lrrate) == 0
+            for (optname, opt) in optimizers
+                new_eta = opt.eta / lrdrop
+                if new_eta >= lrthresh
+                    @info "$epoch: Dropping $optname optimizer learning rate to $new_eta"
+                    opt.eta = new_eta
+                else
+                    @info "$epoch: Learning rate dropped below $lrthresh for $optname optimizer, exiting..."
+                    throw(InterruptException())
+                end
             end
         end
     end
-=#
+)
 
 # Print TimerOutputs timings
 trainer.add_event_handler(
@@ -298,4 +319,4 @@ trainer.logger = ignite.utils.setup_logger("trainer")
 evaluator.logger = ignite.utils.setup_logger("evaluator")
 
 # Run trainer
-trainer.run(train_loader, max_epochs = 1_000_000)
+trainer.run(train_loader, max_epochs = settings["train"]["epochs"])

@@ -1,5 +1,5 @@
 [data]
-out    = "./output/hyb-tmp"
+out    = "./output/ignite-tmp"
 ntrain = 102_400
 ntest  = 10_240
 nval   = 10_240
@@ -35,12 +35,13 @@ lr = 1e-4 #3.1623e-4 #1.0e-5 #TODO
 [opt.D]
 lr = 1e-4 #3.1623e-4 #1.0e-5 #TODO
 
-[kernel]
+[arch]
+type = "hyb" # "gan", "mmd", or "hyb"
+[arch.kernel]
 nbandwidth = 4 #TODO
 #bwbounds  = [-10.0, 4.0] # bounds for kernel bandwidths (logsigma)
 bwbounds   = [-8.0, 4.0] # toy problem bounds for kernel bandwidths (logsigma)
-
-[genatr]
+[arch.genatr]
 hdim        = 128
 nhidden     = 2
 #maxcorr    = 0.005 # normalized signals
@@ -49,7 +50,6 @@ nhidden     = 2
 #noisebounds= [-6.0, -3.0] # unnormalized signals (but scaled down by 1e6)
 maxcorr     = 0.1 # toy signals
 noisebounds = [-8.0, -2.0] # toy signals
-
-[discrim]
+[arch.discrim]
 hdim    = 128
 nhidden = 2

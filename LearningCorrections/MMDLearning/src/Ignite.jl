@@ -15,6 +15,7 @@ end
 # Convert row major Torch array to column major Julia array
 reversedims(x::AbstractArray{T,N}) where {T,N} = permutedims(x, ntuple(i -> N-i+1, N))
 array(x) = reversedims(x.detach().cpu().numpy())
+array(x::AbstractArray) = x # fallback for Julia arrays
 
 # Throttle even to run every `period` seconds
 function event_throttler(period = 0.0)

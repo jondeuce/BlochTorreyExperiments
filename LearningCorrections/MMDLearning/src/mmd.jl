@@ -291,6 +291,24 @@ end
 function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
     Kxx, Kyy, Kxy = X'X, Y'Y, X'Y
     xx, yy = batcheddiag(Kxx), batcheddiag(Kyy)
+    Threads.@threads for j in 1:size(Kxx,2)
+        @avx for i in 1:size(Kxx,1)
+            Kxx[i,j] = 2 * Kxx[i,j] - xx[i] - xx[j]
+            Kyy[i,j] = 2 * Kyy[i,j] - yy[i] - yy[j]
+            Kxy[i,j] = 2 * Kxy[i,j] - xx[i] - yy[j]
+        end
+    end
+    fast_exp!(Kxx)
+    fast_exp!(Kyy)
+    fast_exp!(Kxy)
+
+    @ntuple(Kxx, Kyy, Kxy)
+end
+
+#=
+function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
+    Kxx, Kyy, Kxy = X'X, Y'Y, X'Y
+    xx, yy = batcheddiag(Kxx), batcheddiag(Kyy)
     Kxx .= 2 .* Kxx .- xx .- xx'
     Kyy .= 2 .* Kyy .- yy .- yy'
     Kxy .= 2 .* Kxy .- xx .- yy'
@@ -300,6 +318,7 @@ function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
 
     @ntuple(Kxx, Kyy, Kxy)
 end
+=#
 
 Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
     # Store kernel matrices for reverse pass
@@ -371,6 +390,29 @@ function _mmd_flux_kernel_matrices_inner(X::AbstractArray{<:Any,3}, Y::AbstractA
     Kxy = NNlib.batched_mul(NNlib.batched_adjoint(X), Y)
     xx  = batcheddiag(Kxx)
     yy  = batcheddiag(Kyy)
+    Threads.@sync for k in 1:size(Kxx,3) #TODO can be improved; k is usually small
+        Threads.@spawn begin
+            @avx for j in 1:size(Kxx,2), i in 1:size(Kxx,1)
+                Kxx[i,j,k] = 2 * Kxx[i,j,k] - xx[i,1,k] - xx[j,1,k]
+                Kyy[i,j,k] = 2 * Kyy[i,j,k] - yy[i,1,k] - yy[j,1,k]
+                Kxy[i,j,k] = 2 * Kxy[i,j,k] - xx[i,1,k] - yy[j,1,k]
+            end
+        end
+    end
+    fast_exp!(Kxx)
+    fast_exp!(Kyy)
+    fast_exp!(Kxy)
+
+    @ntuple(Kxx, Kyy, Kxy)
+end
+
+#=
+function _mmd_flux_kernel_matrices_inner(X::AbstractArray{<:Any,3}, Y::AbstractArray{<:Any,3})
+    Kxx = NNlib.batched_mul(NNlib.batched_adjoint(X), X)
+    Kyy = NNlib.batched_mul(NNlib.batched_adjoint(Y), Y)
+    Kxy = NNlib.batched_mul(NNlib.batched_adjoint(X), Y)
+    xx  = batcheddiag(Kxx)
+    yy  = batcheddiag(Kyy)
     xxT = NNlib.batched_adjoint(xx)
     yyT = NNlib.batched_adjoint(yy)
     Kxx .= 2 .* Kxx .- xx .- xxT
@@ -382,6 +424,8 @@ function _mmd_flux_kernel_matrices_inner(X::AbstractArray{<:Any,3}, Y::AbstractA
 
     @ntuple(Kxx, Kyy, Kxy)
 end
+=#
+
 function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3}, Y::AbstractArray{<:Any,3})
     @unpack Kxx, Kyy, Kxy = _mmd_flux_kernel_matrices_inner(X, Y)
     Kxx = dropdims(mean(Kxx; dims = 3); dims = 3)
@@ -550,7 +594,7 @@ let
             print("$f call:   \t"); @btime $f($logsigma, $X, $Y)
             print("$f forward:\t"); y, back = @btime Zygote.pullback(logσ -> $f(logσ, $X, $Y), $logsigma)
             print("$f value:  \t$y\n")
-            print("$f reverse:\t"); @btime $back(1)
+            print("$f reverse:\t"); @btime $back(1.0)
         end
     end
 end
@@ -1150,7 +1194,7 @@ function perm_u_statistic!(K, ipermvec)
     return (kxx + kyy - 2kxy) / (m*(m-1))
 end
 
-function mmd_perm_test_brute(kernelargs, X, Y; nperms = size(X,2), alpha = 0.01)
+function mmd_perm_test_brute(kernelargs, X, Y; nperms = size(X,2), alpha = 1//100)
     m = size(X,2)
     c_alpha_perms = [m * mmd_flux(kernelargs, mix_columns(X, Y)...) for _ in 1:nperms]
     c_alpha = quantile(c_alpha_perms, 1-alpha)
@@ -1158,7 +1202,7 @@ function mmd_perm_test_brute(kernelargs, X, Y; nperms = size(X,2), alpha = 0.01)
     return @ntuple(MMDsq, MMDvar, c_alpha, c_alpha_perms)
 end
 
-function mmd_perm_test(kernelargs, X, Y; nperms = size(X,2), alpha = 0.01)
+function mmd_perm_test(kernelargs, X, Y; nperms = size(X,2), alpha = 1//100)
     @unpack Kxx, Kyy, Kxy = mmd_flux_kernel_matrices_batched(kernelargs, X, Y)
     # @unpack Kxx, Kyy, Kxy = mmd_flux_kernel_matrices(kernelargs, X, Y)
     MMDsq, MMDvar = mmd_and_mmdvar_flux_u_statistic(Kxx, Kyy, Kxy)
@@ -1166,13 +1210,15 @@ function mmd_perm_test(kernelargs, X, Y; nperms = size(X,2), alpha = 0.01)
 
     m = size(X,2)
     nt = Threads.nthreads()
-    c_alpha_perms = if nt > 1
+    if nt > 1
         # Compute c_α permutations in parallel
         work = [zeros(Int, 2m) for _ in 1:nt]
         c_alpha_perms = zeros(eltype(K), nperms)
-        Threads.@threads for i in 1:nperms
-            ipermvec = work[Threads.threadid()]
-            c_alpha_perms[i] = m * perm_u_statistic!(K, ipermvec)
+        Threads.@sync for i in 1:nperms
+            Threads.@spawn begin
+                ipermvec = work[Threads.threadid()]
+                c_alpha_perms[i] = m * perm_u_statistic!(K, ipermvec)
+            end
         end
         c_alpha_perms
     else
@@ -1191,11 +1237,11 @@ let a = 2.0
         X, Y = randn(2,m), a*randn(2,m)
         k = d -> exp(-d)
         @show m, nperms
-        # @btime mmd_perm_test_brute($k, $X, $Y; nperms = $nperms, alpha = 0.1)
-        @btime mmd_perm_test($k, $X, $Y; nperms = $nperms, alpha = 0.1)
+        # @btime mmd_perm_test_brute($k, $X, $Y; nperms = $nperms, alpha = 1//10)
+        @btime mmd_perm_test($k, $X, $Y; nperms = $nperms, alpha = 1//10)
         qqplot(
-            mmd_perm_test_brute(k, X, Y; nperms = nperms, alpha = 0.1).c_alpha_perms,
-            mmd_perm_test(k, X, Y; nperms = nperms, alpha = 0.1).c_alpha_perms,
+            mmd_perm_test_brute(k, X, Y; nperms = nperms, alpha = 1//10).c_alpha_perms,
+            mmd_perm_test(k, X, Y; nperms = nperms, alpha = 1//10).c_alpha_perms,
         ) |> display
     end
 end
@@ -1207,11 +1253,11 @@ let m = 100
         X, Y = randn(2,m), a*randn(2,m)
         p = plot()
 
-        @time res1 = mmd_perm_test_brute(d->exp(-d), X, Y; nperms = 1000, alpha = 0.1)
+        @time res1 = mmd_perm_test_brute(d->exp(-d), X, Y; nperms = 1000, alpha = 1//10)
         @show a, res1.MMDsq, res1.c_alpha
         density!(p, res1.c_alpha_perms; label = "brute")
 
-        @time res2 = mmd_perm_test(d->exp(-d), X, Y; nperms = 1000, alpha = 0.1)
+        @time res2 = mmd_perm_test(d->exp(-d), X, Y; nperms = 1000, alpha = 1//10)
         @show a, res2.MMDsq, res2.c_alpha
         density!(p, res2.c_alpha_perms; label = "fast")
 
@@ -1237,7 +1283,7 @@ function mmd_perm_test_power(
         batchsize = 100,
         nperms = batchsize,
         nsamples = 10,
-        alpha = 0.01
+        alpha = 1//100
     )
     @unpack MMDsq, MMDvar, c_alpha, c_alpha_perms =
         mmd_perm_test(kernelargs, sampleX(batchsize), sampleY(batchsize); nperms = nperms, alpha = alpha)
@@ -1250,13 +1296,12 @@ function mmd_perm_test_power(
     end
 
     m = batchsize
-    P_alpha = count(MMDsq -> m * MMDsq > c_alpha, mmd_samples) / nsamples
-
     MMDsq = mean(mmd_samples)
     MMDvar = mean(mmdvar_samples) # var(mmd_samples) is less accurate for small nsamples
-    MMDσ = √max(MMDvar, eps(typeof(MMDvar))/m^2) # ensure m^2*MMDvar >= ϵ
+    MMDσ = √max(MMDvar, eps(typeof(MMDvar))/m^2) # ensure m^2 * MMDvar >= ϵ
     z = MMDsq / MMDσ - c_alpha / (m * MMDσ)
-    P_alpha_approx = cdf(Normal(), z)
+    P_alpha_approx = cdf(Normal(), z) |> typeof(MMDsq)
+    P_alpha = count(MMDsq -> m * MMDsq > c_alpha, mmd_samples) / nsamples |> typeof(MMDsq)
 
     return @ntuple(alpha, m, c_alpha, P_alpha, P_alpha_approx, MMDsq, MMDvar, MMDσ, c_alpha_perms, mmd_samples, mmdvar_samples)
 end
@@ -1437,7 +1482,7 @@ function train_kernel_bandwidth_flux!(logσ::AbstractArray, X, Y; kernelloss::St
     # Training should not be performed using t-statistic loss function if MMD^2 < 0 or Var[MMD^2] < 0
     @timeit "forward" ℓ, back = Zygote.pullback(loss, logσ)
     if !isillposed[]
-        @timeit "reverse" ∇ℓ = back(1)[1]
+        @timeit "reverse" ∇ℓ = back(one(eltype(logσ)))[1]
         Flux.Optimise.update!(opt, logσ, ∇ℓ)
         if !isnothing(bwbounds)
             clamp!(logσ, bwbounds...)
