@@ -176,7 +176,7 @@ function ngradient(f, xs::AbstractArray...)
         y2 = f(xs...)
         x[i] = tmp
         Δ[i] = (y2-y1)/δ
-        display.(Δ[i]) #TODO FIXME
+        # display.(Δ[i]) #TODO FIXME
     end
     return grads
 end

@@ -478,8 +478,15 @@ function update_callback!(
             # Sample `ninfer` new Ydata to fit to
             i_fit = sample(1:size(Ydata,2), ninfer; replace = false)
             Yfit = Ydata[:,i_fit]
-            all_infer_results = @timeit "theta inference" begin
-                signal_loglikelihood_inference(Yfit, nothing, X -> rician_params(G, X), θ -> signal_model(phys, θ); objective = :mle, bounds = θbounds(phys))
+            all_infer_results = @timeit "theta inference" let
+                #TODO: Optimizers fail without Float64:
+                #   - BlackBoxOptim hardcodes Float64 internally
+                #   - Optim should work, but the optimizer tends to error with Float32... floating point issues?
+                _G = G |> Flux.cpu |> Flux.f64
+                _model = X -> rician_params(_G, X)
+                _signal_fun = θ -> signal_model(phys, θ) # `phys` only used for dispatch; type of θ is used
+                _θbounds = NTuple{2,Float64}.(θbounds(phys))
+                signal_loglikelihood_inference(Yfit, nothing, _model, _signal_fun; objective = :mle, bounds = _θbounds)
             end
 
             # Extract and sort best results

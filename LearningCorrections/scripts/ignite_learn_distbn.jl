@@ -4,8 +4,68 @@
 
 using Pkg; Pkg.activate(joinpath(@__DIR__, ".."))
 using MMDLearning
+using PyCall
 pyplot(size=(800,600))
-const settings = load_settings(joinpath(@__DIR__, "..", "settings", "ignite_settings.toml"))
+
+const settings = TOML.parse("""
+    [data]
+        out    = "./output/ignite-tmp"
+        ntrain = 102_400
+        ntest  = 10_240
+        nval   = 10_240
+
+    [train]
+        timeout     = 1e9 #TODO
+        epochs      = 999_999
+        batchsize   = 1024 #2048 #3072
+        kernelrate  = 100 # Train kernel every `kernelrate` iterations
+        kernelsteps = 10 # Gradient updates per kernel train
+        GANrate     = 10 # Train GAN losses every `GANrate` iterations, on average
+        GANsucc     = 10 # Train GAN losses for `GANsucc` successive iterations, then break for `(GANrate-1)*GANsucc` iterations
+        Dsteps      = 10 # Train GAN losses with `Dsteps` discrim updates per genatr update
+
+    [eval]
+        ninfer      = 128 # Number of MLE parameter inferences
+        nperms      = 128 # Number of permutations for c_alpha calculation + perm plot
+        inferperiod = 300.0 # TODO
+        saveperiod  = 300.0 # TODO
+        showrate    = 1 # TODO
+
+    [opt]
+        lrdrop   = 1.0 #10.0 3.1623 #1.7783
+        lrthresh = 1e-5
+        lrrate   = 1000
+        [opt.k]
+            loss = "tstatistic" #"MMD"
+            lr = 1e-2
+        [opt.mmd]
+            lr = 1e-4 #3.1623e-4 #1.0e-5 #TODO
+        [opt.G]
+            lr = 1e-4 #3.1623e-4 #1.0e-5 #TODO
+        [opt.D]
+            lr = 1e-4 #3.1623e-4 #1.0e-5 #TODO
+
+    [arch]
+        physics = "toy" # "toy" or "mri"
+        type    = "hyb" # "gan", "mmd", or "hyb"
+        [arch.kernel]
+            nbandwidth = 4 #TODO
+            bwbounds   = [0.0, 0.0] # unset by default; bounds for kernel bandwidths (logsigma)
+        [arch.genatr]
+            hdim        = 128
+            nhidden     = 2
+            maxcorr     = 0.0 # unset by default; correction amplitude
+            noisebounds = [0.0, 0.0] # unset by default; noise amplitude
+        [arch.discrim]
+            hdim    = 128
+            nhidden = 2
+""")
+
+Ignite.parse_command_line!(settings)
+Ignite.compare_and_set!(settings["arch"]["kernel"], "bwbounds",    [0.0, 0.0], settings["arch"]["physics"] == "toy" ?  [-8.0, 4.0] : [-10.0, 4.0])
+Ignite.compare_and_set!(settings["arch"]["genatr"], "maxcorr",            0.0, settings["arch"]["physics"] == "toy" ?          0.1 :       0.025 )
+Ignite.compare_and_set!(settings["arch"]["genatr"], "noisebounds", [0.0, 0.0], settings["arch"]["physics"] == "toy" ? [-8.0, -2.0] : [-6.0, -3.0])
+Ignite.save_and_print(settings; outpath = settings["data"]["out"], filename = "settings.toml")
 
 # Initialize generator + discriminator + kernel
 function make_models(phys)
@@ -46,14 +106,15 @@ function make_models(phys)
     return models
 end
 
-const phys = initialize!(
+phys = initialize!(
     ToyModel{Float32,true}();
     ntrain = settings["data"]["ntrain"]::Int,
     ntest = settings["data"]["ntest"]::Int,
     nval = settings["data"]["nval"]::Int,
 )
-const models = make_models(phys)
-const ricegen = VectorRicianCorrector(models["G"]) # Generator produces 𝐑^2n outputs parameterizing n Rician distributions
+models = make_models(phys)
+ricegen = VectorRicianCorrector(models["G"]) # Generator produces 𝐑^2n outputs parameterizing n Rician distributions
+MMDLearning.model_summary(models)
 
 # Generator and discriminator losses
 D_Y_loss(Y) = models["D"](Y) # discrim on real data
@@ -92,9 +153,6 @@ const cb_state = Dict{String,Any}()
 #### Training
 ####
 
-using PyCall
-using MMDLearning.Ignite
-
 const torch = pyimport("torch")
 const logging = pyimport("logging")
 const ignite = pyimport("ignite")
@@ -110,7 +168,7 @@ const ignite = pyimport("ignite")
 
 function train_step(engine, batch)
     @unpack kernelrate, kernelsteps, GANrate, GANsucc, Dsteps = settings["train"]
-    _, Xtrain, Ytrain = array.(batch)
+    _, Xtrain, Ytrain = Ignite.array.(batch)
 
     @timeit "train batch" begin
         if settings["arch"]["type"] ∈ ["mmd", "hyb"]
@@ -156,7 +214,7 @@ function eval_metrics(engine, batch)
     @timeit "eval batch" begin
         # Update callback state
         @timeit "update cb state" let
-            cb_state["θ"], cb_state["Xθ"], cb_state["Y"] = array.(batch)
+            cb_state["θ"], cb_state["Xθ"], cb_state["Y"] = Ignite.array.(batch)
             if hasclosedform(phys)
                 cb_state["Yθ"] = signal_model(ClosedForm(phys), cb_state["θ"])
                 cb_state["Yθhat"] = signal_model(ClosedForm(phys), cb_state["θ"], epsilon(ClosedForm(phys)))

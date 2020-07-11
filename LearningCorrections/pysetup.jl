@@ -14,3 +14,7 @@ Conda.add("ignite"; channel = "pytorch")
 # Install wandb via pip (https://docs.wandb.com/quickstart)
 #   pip install wandb
 run(`$(joinpath(Conda.ROOTENV, "bin", "pip")) install wandb`)
+
+# Install hydra via pip (https://hydra.cc/docs/intro#installation)
+#   pip install hydra-core --upgrade
+run(`$(joinpath(Conda.ROOTENV, "bin", "pip")) install hydra-core --upgrade`)

@@ -608,7 +608,7 @@ uuid = "d8e11817-5142-5d16-987a-aa16d5891078"
 version = "0.4.0"
 
 [[MMDLearning]]
-deps = ["BSON", "BenchmarkTools", "BlackBoxOptim", "ChainRules", "DECAES", "DataFrames", "Dates", "Distributions", "DrWatson", "EllipsisNotation", "Flux", "ForwardDiff", "LaTeXStrings", "LegibleLambdas", "LinearAlgebra", "LoopVectorization", "MAT", "NNlib", "Optim", "Parameters", "Printf", "Random", "Reexport", "SpecialFunctions", "Statistics", "StatsBase", "StatsPlots", "TOML", "TimerOutputs", "UnsafeArrays", "Zygote"]
+deps = ["ArgParse", "BSON", "BenchmarkTools", "BlackBoxOptim", "ChainRules", "DECAES", "DataFrames", "Dates", "Distributions", "DrWatson", "EllipsisNotation", "Flux", "ForwardDiff", "LaTeXStrings", "LegibleLambdas", "LinearAlgebra", "LoopVectorization", "MAT", "NNlib", "Optim", "Parameters", "Printf", "Random", "Reexport", "SpecialFunctions", "Statistics", "StatsBase", "StatsPlots", "TOML", "TimerOutputs", "UnsafeArrays", "Zygote"]
 path = "MMDLearning"
 uuid = "032358f6-e4b1-47a4-bb61-f69598110e2e"
 version = "0.1.0"

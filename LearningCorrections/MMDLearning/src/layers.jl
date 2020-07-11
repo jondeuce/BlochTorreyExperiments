@@ -413,6 +413,23 @@ DenseFeatureFusion(G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,1), σ = Flux.
         ch -> XavierConv(k, ch, σ; pad = (k.-1).÷2), # Default factory for RDB's
         G0, G, C, D, k, σ; kwargs...)
 
+#= Pirate NNlib methods to not warn for Dual number inputs
+    const FloatDual{V} = ForwardDiff.Dual{T,V,N} where {T,N}
+    const MaybeDual{V} = Union{V,<:FloatDual{V}}
+    for front_name in (:conv, :∇conv_data, :∇conv_filter,
+                    :depthwiseconv, :∇depthwiseconv_data, :∇depthwiseconv_filter)
+        @eval begin
+            function NNlib.$(Symbol("$(front_name)!"))(
+                            y::AbstractArray{<:MaybeDual{T},N},
+                            in1::AbstractArray{<:MaybeDual{T},N},
+                            in2::AbstractArray{<:MaybeDual{T},N}, cdims::NNlib.ConvDims;
+                            kwargs...) where {T, N}
+                NNlib.$(Symbol("$(front_name)_direct!"))(y, in1, in2, cdims; kwargs...)
+            end
+        end
+    end
+=#
+    
 """
 Print model/layer
 """
@@ -509,6 +526,11 @@ function _model_summary(io::IO, model::MultiInput, depth::Int = 0; kwargs...)
         (i < length(model.layers)) ? println(io, ",") : println(io, "")
     end
     print(io, _getindent(depth) * ")")
+end
+
+# Arrays
+function _model_summary(io::IO, model::AbstractArray, depth::Int = 0; kwargs...)
+    print(io, _getindent(depth) * "$(typeof(model)) with dimensions $(size(model))")
 end
 
 # Functions

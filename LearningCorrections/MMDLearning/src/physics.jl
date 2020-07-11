@@ -8,12 +8,14 @@ abstract type RicianCorrector end
 @with_kw struct VectorRicianCorrector{Gtype} <: RicianCorrector
     G::Gtype
 end
+Flux.@functor VectorRicianCorrector
 
 # G : 𝐑^n -> 𝐑^n mapping X ∈ 𝐑^n ⟶ δ ∈ 𝐑^n with fixed noise ϵ0 ∈ 𝐑, or ϵ0 ∈ 𝐑^n
 @with_kw struct FixedNoiseVectorRicianCorrector{Gtype,T} <: RicianCorrector
     G::Gtype
     ϵ0::T
 end
+Flux.@functor FixedNoiseVectorRicianCorrector
 
 # Concrete methods to extract δ and ϵ
 function correction_and_noiselevel(G::VectorRicianCorrector, X)

@@ -48,5 +48,6 @@ include("layers.jl")
 include("models.jl")
 
 include("Ignite.jl")
+@reexport using .Ignite
 
 end # module
