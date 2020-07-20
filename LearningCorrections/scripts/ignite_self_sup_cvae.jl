@@ -9,98 +9,106 @@ pyplot(size=(800,600))
 
 const settings = TOML.parse("""
     [data]
-        out    = "./output/ignite-tmp"
+        out    = "./output/ignite-cvae-tmp"
         ntrain = 102_400
         ntest  = 10_240
         nval   = 10_240
 
     [train]
-        timeout     = 1e9 #TODO
-        epochs      = 999_999
-        batchsize   = 1024 #2048 #3072
-        kernelrate  = 100 # Train kernel every `kernelrate` iterations
-        kernelsteps = 10 # Gradient updates per kernel train
-        GANrate     = 10 # Train GAN losses every `GANrate` iterations, on average
-        GANsucc     = 10 # Train GAN losses for `GANsucc` successive iterations, then break for `(GANrate-1)*GANsucc` iterations
-        Dsteps      = 10 # Train GAN losses with `Dsteps` discrim updates per genatr update
+        timeout   = 1e9
+        epochs    = 999_999
+        batchsize = 1024
 
     [eval]
-        ninfer      = 128 # Number of MLE parameter inferences
-        nperms      = 128 # Number of permutations for c_alpha calculation + perm plot
-        inferperiod = 300.0 # TODO
-        saveperiod  = 300.0 # TODO
-        showrate    = 1 # TODO
+        showrate = 1 # TODO
 
     [opt]
-        lrdrop   = 1.0 #10.0 3.1623 #1.7783
+        lr       = 1e-4 # default for optimizers below
+        lrdrop   = 1.0
         lrthresh = 1e-5
         lrrate   = 1000
-        [opt.k]
-            loss = "tstatistic" #"MMD"
-            lr = 1e-2
-        [opt.mmd]
-            lr = 1e-4 #3.1623e-4 #1.0e-5 #TODO
         [opt.G]
-            lr = 1e-4 #3.1623e-4 #1.0e-5 #TODO
+            lr = 0.0
+        [opt.E1]
+            lr = 0.0
+        [opt.E2]
+            lr = 0.0
         [opt.D]
-            lr = 1e-4 #3.1623e-4 #1.0e-5 #TODO
+            lr = 0.0
 
     [arch]
         physics = "toy" # "toy" or "mri"
-        type    = "hyb" # "gan", "mmd", or "hyb"
-        [arch.kernel]
-            nbandwidth = 4 #TODO
-            bwbounds   = [0.0, 0.0] # unset by default; bounds for kernel bandwidths (logsigma)
-        [arch.genatr]
-            hdim        = 128
-            nhidden     = 2
+        nlatent = 1 # number of latent variables Z
+        zdim    = 4 # embedding dimension of z
+        hdim    = 64 # default for models below
+        nhidden = 2 # default for models below
+        [arch.G]
+            hdim        = 0
+            nhidden     = 0
             maxcorr     = 0.0 # unset by default; correction amplitude
             noisebounds = [0.0, 0.0] # unset by default; noise amplitude
-        [arch.discrim]
-            hdim    = 128
-            nhidden = 2
+        [arch.E1]
+            hdim    = 0
+            nhidden = 0
+        [arch.E2]
+            hdim    = 0
+            nhidden = 0
+        [arch.D]
+            hdim    = 0
+            nhidden = 0
 """)
 
 Ignite.parse_command_line!(settings)
-Ignite.compare_and_set!(settings["arch"]["kernel"], "bwbounds",    [0.0, 0.0], settings["arch"]["physics"] == "toy" ?  [-8.0, 4.0] : [-10.0, 4.0])
-Ignite.compare_and_set!(settings["arch"]["genatr"], "maxcorr",            0.0, settings["arch"]["physics"] == "toy" ?          0.1 :       0.025 )
-Ignite.compare_and_set!(settings["arch"]["genatr"], "noisebounds", [0.0, 0.0], settings["arch"]["physics"] == "toy" ? [-8.0, -2.0] : [-6.0, -3.0])
+Ignite.compare_and_set!(settings["arch"]["G"], "maxcorr",            0.0, settings["arch"]["physics"] == "toy" ?          0.1 :       0.025 )
+Ignite.compare_and_set!(settings["arch"]["G"], "noisebounds", [0.0, 0.0], settings["arch"]["physics"] == "toy" ? [-8.0, -2.0] : [-6.0, -3.0])
+Ignite.compare_and_set!.([settings["opt"][k]  for k in ("G","E1","E2","D")], "lr",    0.0, settings["opt"]["lr"])
+Ignite.compare_and_set!.([settings["arch"][k] for k in ("G","E1","E2","D")], "hdim",    0, settings["arch"]["hdim"])
+Ignite.compare_and_set!.([settings["arch"][k] for k in ("G","E1","E2","D")], "nhidden", 0, settings["arch"]["nhidden"])
 Ignite.save_and_print(settings; outpath = settings["data"]["out"], filename = "settings.toml")
 
 # Initialize generator + discriminator + kernel
 function make_models(phys)
     models = Dict{String, Any}()
-    n = nsignal(phys)
+    n   = nsignal(phys) # input signal length
+    nθ  = ntheta(phys) # number of physics variables
+    θbd = θbounds(phys)
+    k   = settings["arch"]["nlatent"]::Int # number of latent variables Z
+    nz  = settings["arch"]["zdim"]::Int # embedding dimension
     toT(m) = Flux.paramtype(eltype(phys), m)
 
-    # Rician generator. First `n` elements for `δX` scaled to (-δ, δ), second `n` elements for `logϵ` scaled to (logϵ_bw[1], logϵ_bw[2])
+    # Rician generator. First `n` elements for `δX` scaled to (-δ, δ), second `n` elements for `logϵ` scaled to (noisebounds[1], noisebounds[2])
     models["G"] = let
-        hdim = settings["arch"]["genatr"]["hdim"]::Int
-        nhidden = settings["arch"]["genatr"]["nhidden"]::Int
-        maxcorr = settings["arch"]["genatr"]["maxcorr"]::Float64
-        noisebounds = settings["arch"]["genatr"]["noisebounds"]::Vector{Float64}
+        hdim = settings["arch"]["G"]["hdim"]::Int
+        nhidden = settings["arch"]["G"]["nhidden"]::Int
+        maxcorr = settings["arch"]["G"]["maxcorr"]::Float64
+        noisebounds = settings["arch"]["G"]["noisebounds"]::Vector{Float64}
         Flux.Chain(
-            MMDLearning.MLP(n => 2n, nhidden, hdim, Flux.relu, tanh)...,
+            MMDLearning.MLP(n + k => 2n, nhidden, hdim, Flux.relu, tanh)...,
             MMDLearning.CatScale([(-maxcorr, maxcorr), (noisebounds...,)], [n,n]),
         ) |> toT
     end
 
-    # Discriminator
-    if settings["arch"]["type"] ∈ ["gan", "hyb"]
-        models["D"] = let
-            hdim = settings["arch"]["discrim"]["hdim"]::Int
-            nhidden = settings["arch"]["discrim"]["nhidden"]::Int
-            MMDLearning.MLP(n => 1, nhidden, hdim, Flux.relu, Flux.sigmoid) |> toT
-        end
+    # Encoders
+    models["E1"] = let
+        hdim = settings["arch"]["E1"]["hdim"]::Int
+        nhidden = settings["arch"]["E1"]["nhidden"]::Int
+        MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity) |> toT
     end
 
-    # Initialize `nbandwidth` linearly spaced kernel bandwidths `logσ` for each `n` channels strictly within the range (bwbounds[1], bwbounds[2])
-    if settings["arch"]["type"] ∈ ["mmd", "hyb"]
-        models["logsigma"] = let
-            bwbounds = settings["arch"]["kernel"]["bwbounds"]::Vector{Float64}
-            nbandwidth = settings["arch"]["kernel"]["nbandwidth"]::Int
-            repeat(range(bwbounds...; length = nbandwidth+2)[2:end-1], 1, n) |> toT
-        end
+    models["E2"] = let
+        hdim = settings["arch"]["E2"]["hdim"]::Int
+        nhidden = settings["arch"]["E2"]["nhidden"]::Int
+        MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity) |> toT
+    end
+
+    # Decoder
+    models["D"] = let
+        hdim = settings["arch"]["D"]["hdim"]::Int
+        nhidden = settings["arch"]["D"]["nhidden"]::Int
+        Flux.Chain(
+            MMDLearning.MLP(n + nz => 2*(nθ + k), nhidden, hdim, Flux.relu, identity)...,
+            MMDLearning.CatScale(eltype(θbd)[θbd; (-1, 1)], [ones(Int, nθ); k + nθ + k]),
+        ) |> toT
     end
 
     return models
@@ -116,12 +124,71 @@ models = make_models(phys)
 ricegen = VectorRicianCorrector(models["G"]) # Generator produces 𝐑^2n outputs parameterizing n Rician distributions
 MMDLearning.model_summary(models)
 
-# Generator and discriminator losses
-D_Y_loss(Y) = models["D"](Y) # discrim on real data
-D_G_X_loss(X) = models["D"](corrected_signal_instance(ricegen, X)) # discrim on genatr data
-Dloss(X,Y) = -mean(log.(D_Y_loss(Y)) .+ log.(1 .- D_G_X_loss(X)))
-Gloss(X) = mean(log.(1 .- D_G_X_loss(X)))
-MMDloss(X,Y) = size(Y,2) * mmd_flux(models["logsigma"], corrected_signal_instance(ricegen, X), Y) # m*MMD^2 on genatr data
+# # Generator and discriminator losses
+# D_Y_loss(Y) = models["D"](Y) # discrim on real data
+# D_G_X_loss(X) = models["D"](corrected_signal_instance(ricegen, X)) # discrim on genatr data
+# Dloss(X,Y) = -mean(log.(D_Y_loss(Y)) .+ log.(1 .- D_G_X_loss(X)))
+# Gloss(X) = mean(log.(1 .- D_G_X_loss(X)))
+# MMDloss(X,Y) = size(Y,2) * mmd_flux(models["logsigma"], corrected_signal_instance(ricegen, X), Y) # m*MMD^2 on genatr data
+
+# Helpers
+split_mean_std(μ::Matrix) = (μ[1:end÷2,:], μ[end÷2+1:end,:])
+split_theta_latent(μ::Matrix) = (μ[1:ntheta(phys),:], μ[ntheta(phys)+1:end,:])
+sample_mv_normal(μ0::Matrix{T}, σ::Matrix{T}) where {T} = μ0 .+ σ .* randn(T, max.(size(μ0), size(σ)))
+@inline square(x) = x*x
+
+# Self-supervised CVAE loss
+function SelfCVAEloss(Y)
+    Nbatch = size(Y,2)
+
+    # Invert Y
+    θ, Z = let
+        μr = models["E1"](Y)
+        zr = sample_mv_normal(split_mean_std(μr)...)
+        μx = models["D"](vcat(Y,zr))
+        x  = sample_mv_normal(split_mean_std(μx)...)
+        split_theta_latent(x)
+    end
+
+    # Limit information capacity of Z with ℓ2 regularization
+    #   - Equivalently, as 1/2||Z||^2 is the negative log likelihood of Z ~ N(0,1) (dropping normalization factor)
+    Zreg = sum(abs2, Z) / (2*Nbatch)
+
+    # Drop gradients for θ and Z, and compute uncorrected X from physics model
+    θ = Zygote.dropgrad(θ)
+    Z = Zygote.dropgrad(Z)
+    X = Zygote.ignore() do
+        sampleX(phys, θ)
+    end
+
+    # Corrected X̂ instance
+    μG0, σG = rician_params(ricegen, X, Z)
+    X̂ = add_noise_instance(ricegen, μG0, σG)
+
+    # Rician negative log likelihood
+    σG2 = square.(σG)
+    YlogL = -sum(@. log(Y / σG2) + MMDLearning._logbesseli0(Y * μG0 / σG2) - (Y^2 + μG0^2) / (2 * σG2)) / Nbatch
+    # YlogL = sum(@. log(σG2) + square(Y - μG0) / σG2) / (2 * Nbatch) # Gaussian likelihood for testing
+
+    # Cross-entropy loss function
+    μr0, σr = split_mean_std(models["E1"](Y))
+    μq0, σq = split_mean_std(models["E2"](vcat(X̂,θ,Z)))
+    zq = sample_mv_normal(μq0, σq)
+    μx0, σx = split_mean_std(models["D"](vcat(Y,zq)))
+    x = vcat(θ,Z)
+
+    σr2, σq2, σx2 = square.(σr), square.(σq), square.(σx)
+    KLdiv = sum(@. (σq2 + square(μr0 - μq0)) / σr2 + log(σr2 / σq2)) / (2*Nbatch) # KL-divergence contribution to cross-entropy (Note: dropped constant -Zdim/2 term)
+    ELBO = sum(@. square(x - μx0) / σx2 + log(σx2)) / (2*Nbatch) # Negative log-likelihood/ELBO contribution to cross-entropy (Note: dropped constant +Zdim*log(2π)/2 term)
+
+    return Zreg + YlogL + ELBO + KLdiv
+end
+
+let Y = sampleY(phys, 1024; dataset = :train)
+    @btime SelfCVAEloss($Y)
+    @btime Zygote.gradient(() -> SelfCVAEloss($Y), $(Flux.params(values(models)...)))
+end
+error("here")
 
 # Global state
 const logger = DataFrame(

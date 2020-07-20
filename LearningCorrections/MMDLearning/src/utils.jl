@@ -404,7 +404,7 @@ function initialize_callback(phys::ToyModel; nsamples::Int)
     cb_state["θ"]  = sampleθ(phys, nsamples; dataset = :val)
     cb_state["Xθ"] = sampleX(phys, cb_state["θ"]) # sampleX == signal_model when given explicit θ
     cb_state["Yθ"] = sampleX(ClosedForm(phys), cb_state["θ"])
-    cb_state["Yθhat"] = sampleX(ClosedForm(phys), cb_state["θ"], epsilon(ClosedForm(phys)))
+    cb_state["Yθhat"] = sampleX(ClosedForm(phys), cb_state["θ"], noiselevel(ClosedForm(phys)))
     cb_state["Y"]  = sampleY(phys, nsamples; dataset = :val) # Y is deliberately sampled with different θ values
     cb_state["curr_time"] = time()
     cb_state["last_time"] = -Inf
@@ -461,7 +461,7 @@ function update_callback!(
     @unpack θ, Xθ, Yθ, Yθhat, Y = cb_state
     δθ, ϵθ = correction_and_noiselevel(G, Xθ)
     Xθδ = abs.(Xθ .+ δθ)
-    Xθhat = corrected_signal_instance(G, Xθδ, ϵθ)
+    Xθhat = add_noise_instance(G, Xθδ, ϵθ)
     @pack! cb_state = δθ, ϵθ, Xθδ, Xθhat
 
     # Record useful metrics
@@ -512,9 +512,9 @@ function update_callback!(
         Xθfit = signal_model(phys, θfit)
         δθfit, ϵθfit = correction_and_noiselevel(G, Xθfit)
         Xθδfit = abs.(Xθfit .+ δθfit)
-        Xθhatfit = corrected_signal_instance(G, Xθδfit, ϵθfit)
+        Xθhatfit = add_noise_instance(G, Xθδfit, ϵθfit)
         Yθfit = hasclosedform(phys) ? signal_model(ClosedForm(phys), θfit) : missing
-        Yθhatfit = hasclosedform(phys) ? signal_model(ClosedForm(phys), θfit, epsilon(ClosedForm(phys))) : missing
+        Yθhatfit = hasclosedform(phys) ? signal_model(ClosedForm(phys), θfit, noiselevel(ClosedForm(phys))) : missing
         @pack! cb_state = Xθfit, Yθfit, Yθhatfit, δθfit, ϵθfit, Xθδfit, Xθhatfit
 
         # Compute error metrics

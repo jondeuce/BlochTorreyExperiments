@@ -101,9 +101,11 @@ Scale(α = 1, β = zero(α)) = NotTrainable(Flux.Diagonal(α, β))
 """
 CatScale(bd::Vector{<:NTuple{2}}, n::Vector{Int})
 
-Create a `Scale` instance, acting on inputs `x` of height `sum(n)`, which scales
-each chunk of height `n[i]` elements to the range `(bd[i][1], bd[i][2])`.
-Assumes all elements of `x` are in `(-1,1)`.
+Create a `Scale` instance acting on inputs `x` of height `sum(n)`.
+An affine transformation is constructed which represents `length(n)` separate
+transformations of chunks of height `n[i]` of the input `x`.
+Each transformation is such that values in `(-1,1)` are mapped to `(bd[i][1], bd[i][2])`.
+Input/output bounds are not enforced.
 """
 CatScale(bd::Vector{<:NTuple{2}}, n::Vector{Int}) =
     Scale(

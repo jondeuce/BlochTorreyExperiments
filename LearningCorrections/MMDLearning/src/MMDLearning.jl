@@ -26,10 +26,10 @@ export mmd_perm_test_power, mmd_perm_test_power_plot
 
 export NotTrainable, DenseResize, Scale
 export Rician, RicianCorrector, VectorRicianCorrector, FixedNoiseVectorRicianCorrector
-export correction, noiselevel, correction_and_noiselevel, noise_instance, corrected_signal_instance, rician_params
+export correction, noiselevel, correction_and_noiselevel, corrected_signal_instance, add_noise_instance, rician_params
 
 export PhysicsModel, ClosedForm, ToyModel
-export physicsmodel, hasclosedform, initialize!, ntheta, nsignal, signal_model, epsilon
+export physicsmodel, hasclosedform, initialize!, ntheta, nsignal, signal_model
 export θbounds, θlower, θupper, θlabels, θerror
 export sampleθ, sampleX, sampleY
 export initialize_callback, update_callback!

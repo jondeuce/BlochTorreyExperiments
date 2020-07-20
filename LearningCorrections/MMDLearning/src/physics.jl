@@ -4,13 +4,13 @@
 
 abstract type RicianCorrector end
 
-# G : 𝐑^n -> 𝐑^2n mapping X ∈ 𝐑^n ⟶ δ,logϵ ∈ 𝐑^n concatenated as [δ; logϵ]
+# G : 𝐑^(n+k) -> 𝐑^2n mapping X ∈ 𝐑^n, Z ∈ 𝐑^k ⟶ δ, logϵ ∈ 𝐑^n concatenated as [δ; logϵ]
 @with_kw struct VectorRicianCorrector{Gtype} <: RicianCorrector
     G::Gtype
 end
 Flux.@functor VectorRicianCorrector
 
-# G : 𝐑^n -> 𝐑^n mapping X ∈ 𝐑^n ⟶ δ ∈ 𝐑^n with fixed noise ϵ0 ∈ 𝐑, or ϵ0 ∈ 𝐑^n
+# G : 𝐑^(n+k) -> 𝐑^n mapping X ∈ 𝐑^n, Z ∈ 𝐑^k ⟶ δ ∈ 𝐑^n with fixed noise ϵ0 ∈ 𝐑, or ϵ0 ∈ 𝐑^n
 @with_kw struct FixedNoiseVectorRicianCorrector{Gtype,T} <: RicianCorrector
     G::Gtype
     ϵ0::T
@@ -18,27 +18,26 @@ end
 Flux.@functor FixedNoiseVectorRicianCorrector
 
 # Concrete methods to extract δ and ϵ
-function correction_and_noiselevel(G::VectorRicianCorrector, X)
-    δ_logϵ = G.G(X)
+function correction_and_noiselevel(G::VectorRicianCorrector, X, Z = nothing)
+    δ_logϵ = G.G(maybevcat(X,Z))
     δ_logϵ[1:end÷2, :], exp.(δ_logϵ[end÷2+1:end, :])
 end
-correction_and_noiselevel(G::FixedNoiseVectorRicianCorrector, X) = G.G(X), ϵ0
+correction_and_noiselevel(G::FixedNoiseVectorRicianCorrector, X, Z = nothing) = G.G(maybevcat(X,Z)), G.ϵ0
+@inline maybevcat(X, Z = nothing) = isnothing(Z) ? X : vcat(X,Z)
 
 # Derived convenience functions
-correction(G::RicianCorrector, X) = correction_and_noiselevel(G, X)[1]
-noiselevel(G::RicianCorrector, X) = correction_and_noiselevel(G, X)[2]
-noise_instance(G::RicianCorrector, X, ϵ) = ϵ .* randn(eltype(X), size(X)...)
-noise_instance(G::RicianCorrector, X) = noise_instance(G, X, noiselevel(G, X))
-corrected_signal_instance(G::RicianCorrector, X) = corrected_signal_instance(G, X, correction_and_noiselevel(G, X)...)
-corrected_signal_instance(G::RicianCorrector, X, δ, ϵ) = corrected_signal_instance(G, abs.(X .+ δ), ϵ)
-function corrected_signal_instance(G::RicianCorrector, X, ϵ)
-    ϵR = noise_instance(G, X, ϵ)
-    ϵI = noise_instance(G, X, ϵ)
+correction(G::RicianCorrector, X, Z = nothing) = correction_and_noiselevel(G, X, Z)[1]
+noiselevel(G::RicianCorrector, X, Z = nothing) = correction_and_noiselevel(G, X, Z)[2]
+corrected_signal_instance(G::RicianCorrector, X, Z = nothing) = corrected_signal_instance(G, X, correction_and_noiselevel(G, X, Z)...)
+corrected_signal_instance(G::RicianCorrector, X, δ, ϵ) = add_noise_instance(G, abs.(X .+ δ), ϵ)
+function add_noise_instance(G::RicianCorrector, X, ϵ)
+    ϵR = ϵ .* randn(eltype(X), size(X)...)
+    ϵI = ϵ .* randn(eltype(X), size(X)...)
     Xϵ = @. sqrt((X + ϵR)^2 + ϵI^2)
     return Xϵ
 end
-function rician_params(G::RicianCorrector, X)
-    δ, ϵ = correction_and_noiselevel(G, X)
+function rician_params(G::RicianCorrector, X, Z = nothing)
+    δ, ϵ = correction_and_noiselevel(G, X, Z)
     ν, σ = abs.(X .+ δ), ϵ
     return ν, σ
 end
@@ -47,11 +46,13 @@ end
 #### Physics model interface
 ####
 
-abstract type PhysicsModel end
+abstract type PhysicsModel{T} end
 
 struct ClosedForm{P<:PhysicsModel}
     p::P
 end
+
+const MaybeClosedForm{T} = Union{<:PhysicsModel{T}, <:ClosedForm{<:PhysicsModel{T}}}
 
 # Abstract interface
 hasclosedform(p::PhysicsModel) = false # fallback
@@ -61,14 +62,15 @@ physicsmodel(c::ClosedForm) = c.p
 θbounds(c::ClosedForm) = θbounds(physicsmodel(c))
 ntheta(c::ClosedForm) = ntheta(physicsmodel(c))
 nsignal(c::ClosedForm) = nsignal(physicsmodel(c))
-function epsilon end
-# Base.eltype for float type
+Base.eltype(::MaybeClosedForm{T}) where {T} = T
+Base.eltype(::Type{<:MaybeClosedForm{T}}) where {T} = T
+function noiselevel end
 
 ####
 #### Toy problem
 ####
 
-@with_kw struct ToyModel{T,isfinite} <: PhysicsModel
+@with_kw struct ToyModel{T,isfinite} <: PhysicsModel{T}
     ϵ0::T = 0.01
     θ::Dict{Symbol,Matrix{T}} = Dict()
     X::Dict{Symbol,Matrix{T}} = Dict()
@@ -82,9 +84,7 @@ nsignal(::ToyModel) = 128
 hasclosedform(::ToyModel) = true
 beta(::ToyModel) = 4
 beta(::ClosedFormToyModel) = 2
-epsilon(c::ClosedFormToyModel) = physicsmodel(c).ϵ0
-Base.eltype(::MaybeClosedFormToyModel{T}) where {T} = T
-Base.eltype(::Type{<:MaybeClosedFormToyModel{T}}) where {T} = T
+noiselevel(c::ClosedFormToyModel) = physicsmodel(c).ϵ0
 
 θlabels(::ToyModel) = ["freq", "phase", "offset", "amp", "tconst"]
 θlower(::ToyModel{T}) where {T} = [1/T(64),   T(0), 1/T(4), 1/T(10),  T(16)]
