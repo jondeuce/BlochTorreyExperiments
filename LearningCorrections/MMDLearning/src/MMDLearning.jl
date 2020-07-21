@@ -25,7 +25,7 @@ export mmd_flux, mmd_and_mmdvar_flux, tstat_flux, kernel_bandwidth_loss_flux, tr
 export mmd_perm_test_power, mmd_perm_test_power_plot
 
 export NotTrainable, DenseResize, Scale
-export Rician, RicianCorrector, VectorRicianCorrector, FixedNoiseVectorRicianCorrector
+export Rician, RicianCorrector, VectorRicianCorrector, FixedNoiseVectorRicianCorrector, LatentVectorRicianCorrector
 export correction, noiselevel, correction_and_noiselevel, corrected_signal_instance, add_noise_instance, rician_params
 
 export PhysicsModel, ClosedForm, ToyModel

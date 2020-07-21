@@ -17,13 +17,18 @@ Flux.@functor VectorRicianCorrector
 end
 Flux.@functor FixedNoiseVectorRicianCorrector
 
-# Concrete methods to extract δ and ϵ
-function correction_and_noiselevel(G::VectorRicianCorrector, X, Z = nothing)
-    δ_logϵ = G.G(maybevcat(X,Z))
-    δ_logϵ[1:end÷2, :], exp.(δ_logϵ[end÷2+1:end, :])
+# G : 𝐑^(n+k) -> 𝐑^n mapping X ∈ 𝐑^n, Z ∈ 𝐑^k ⟶ δ ∈ 𝐑^n with fixed noise ϵ0 ∈ 𝐑, or ϵ0 ∈ 𝐑^n
+@with_kw struct LatentVectorRicianCorrector{Gtype} <: RicianCorrector
+    G::Gtype
 end
-correction_and_noiselevel(G::FixedNoiseVectorRicianCorrector, X, Z = nothing) = G.G(maybevcat(X,Z)), G.ϵ0
-@inline maybevcat(X, Z = nothing) = isnothing(Z) ? X : vcat(X,Z)
+Flux.@functor LatentVectorRicianCorrector
+
+# Concrete methods to extract δ and ϵ
+@inline maybe_vcat(X, Z = nothing) = isnothing(Z) ? X : vcat(X,Z)
+@inline split_delta_epsilon(δ_logϵ) = δ_logϵ[1:end÷2, :], exp.(δ_logϵ[end÷2+1:end, :])
+correction_and_noiselevel(G::VectorRicianCorrector, X, Z = nothing) = split_delta_epsilon(G.G(maybe_vcat(X,Z)))
+correction_and_noiselevel(G::FixedNoiseVectorRicianCorrector, X, Z = nothing) = G.G(maybe_vcat(X,Z)), G.ϵ0
+correction_and_noiselevel(G::LatentVectorRicianCorrector, X, Z) = split_delta_epsilon(G.G(Z))
 
 # Derived convenience functions
 correction(G::RicianCorrector, X, Z = nothing) = correction_and_noiselevel(G, X, Z)[1]

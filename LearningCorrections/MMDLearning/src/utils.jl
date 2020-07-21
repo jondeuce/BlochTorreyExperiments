@@ -646,15 +646,15 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
         end
 
         if !isempty(dfp) && !isempty(df_inf)
-            @unpack Xθfit, Xθhatfit, Xθδfit, Yfit, Yθfit, Yθhatfit, i_fit, δθfit, θfit, ϵθfit = cb_state
+            @unpack Xθfit, Yfit, Yθfit = cb_state
             @unpack all_signal_fit_logL, all_signal_fit_rmse = cb_state["metrics"]
             p = plot(
                 plot(
                     hasclosedform(phys) ?
                         plot(hcat(Yθfit[:,end÷2], Xθfit[:,end÷2]); c = [:blue :red], lab = [L"$Y(\hat{\theta})$ fit" L"$X(\hat{\theta})$ fit"]) :
                         plot(hcat( Yfit[:,end÷2], Xθfit[:,end÷2]); c = [:blue :red], lab = [L"Data $Y$" L"$X(\hat{\theta})$ fit"]),
-                    sticks(all_signal_fit_rmse; m = (:circle,4), lab = "rmse: fits"),
-                    sticks(all_signal_fit_logL; m = (:circle,4), lab = "-logL: fits"),
+                    sticks(sort(all_signal_fit_rmse[sample(1:end, min(128,end))]); m = (:circle,4), lab = "rmse: fits"),
+                    sticks(sort(all_signal_fit_logL[sample(1:end, min(128,end))]); m = (:circle,4), lab = "-logL: fits"),
                     layout = @layout([a{0.25h}; b{0.375h}; c{0.375h}]),
                 ),
                 let
