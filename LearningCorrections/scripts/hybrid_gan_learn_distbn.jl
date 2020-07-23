@@ -69,9 +69,9 @@ const logger = DataFrame(
     :c_alpha => Union{Float64, Missing}[],
     :P_alpha => Union{Float64, Missing}[],
     :rmse    => Union{Float64, Missing}[],
-    :theta_fit_err => Union{Vector{Float64}, Missing}[],
-    :signal_fit_logL => Union{Float64, Missing}[],
-    :signal_fit_rmse => Union{Float64, Missing}[],
+    :theta_err => Union{Vector{Float64}, Missing}[],
+    :Xhat_logL => Union{Float64, Missing}[],
+    :Xhat_rmse => Union{Float64, Missing}[],
 )
 const optimizers = Dict{String,Any}(
     "G"   => Flux.ADAM(settings["opt"]["G"]["lr"]),
@@ -123,9 +123,9 @@ function callback(epoch;
 
     # Metrics computed in update_callback!
     metrics[:rmse] = cb_state["metrics"]["rmse"]
-    metrics[:theta_fit_err]   = cb_state["metrics"]["θ_fit_err"]
-    metrics[:signal_fit_logL] = cb_state["metrics"]["signal_fit_logL"]
-    metrics[:signal_fit_rmse] = cb_state["metrics"]["signal_fit_rmse"]
+    metrics[:theta_err] = cb_state["metrics"]["theta_err"]
+    metrics[:Xhat_logL] = cb_state["metrics"]["Xhat_logL"]
+    metrics[:Xhat_rmse] = cb_state["metrics"]["Xhat_rmse"]
 
     # Update logger dataframe
     push!(logger, metrics; cols = :setequal)
@@ -156,7 +156,7 @@ function callback(epoch;
     end
 
     # Check for and save best model + make best model plots every `saveperiod` seconds
-    is_best_model = collect(skipmissing(logger.signal_fit_logL)) |> x -> !isempty(x) && (x[end] <= minimum(x))
+    is_best_model = collect(skipmissing(logger.Xhat_logL)) |> x -> !isempty(x) && (x[end] <= minimum(x))
     if is_best_model
         @timeit "save best model" saveprogress(@dict(models, optimizers, logger); savefolder = outfolder, prefix = "best-")
         if time() - cb_state["last_best_checkpoint"] >= saveperiod
@@ -239,7 +239,7 @@ function train_hybrid_gan_model(;
             # Print timer and logger
             if mod(loop_epoch-1, showrate) == 0
                 show(stdout, TimerOutputs.get_defaulttimer()); println("\n")
-                show(stdout, last(logger[:, Not(:theta_fit_err)], 10)); println("\n")
+                show(stdout, last(logger[:, Not(:theta_err)], 10)); println("\n")
             end
             (loop_epoch == 1) && TimerOutputs.reset_timer!() # throw out compilation timings
 

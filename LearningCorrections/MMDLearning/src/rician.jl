@@ -82,8 +82,8 @@ _laguerre½(x::Real) = (x < 0 ? one(x) : exp(x)) * ((1 - x) * _besselix(0, -x/2)
 # @inline Distributions.entropy(d::Rician) = ?
 
 #### Evaluation
-@inline _rician_logpdf(x, ν, σ2) = log(x / σ2 + eps(float(typeof(x)))) + _logbesseli0(x * ν / σ2) - (x^2 + ν^2) / (2σ2)
-@inline Distributions.logpdf(d::Rician, x::Real) = _rician_logpdf(x, d.ν, d.σ^2)
+@inline _rician_logpdf(x::Real, ν::Real, σ::Real) = (ϵ = eps(float(typeof(x))); σ2 = σ*σ; log(x/σ2 + ϵ) + _logbesseli0(x*ν/σ2) - (x*x + ν*ν)/2σ2)
+@inline Distributions.logpdf(d::Rician, x::Real) = _rician_logpdf(x, d.ν, d.σ)
 @inline Distributions.pdf(d::Rician, x::Real) = exp(logpdf(d, x)) # below version errors for large x (besseli throws); otherwise is consistent
 # @inline Distributions.pdf(d::Rician, x::Real) = x * besseli(0, x * d.ν / d.σ^2) * exp(-(x^2 + d.ν^2) / (2*d.σ^2)) / d.σ^2
 

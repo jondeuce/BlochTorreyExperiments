@@ -4,37 +4,45 @@
 
 abstract type RicianCorrector end
 
-# G : 𝐑^(n+k) -> 𝐑^2n mapping X ∈ 𝐑^n, Z ∈ 𝐑^k ⟶ δ, logϵ ∈ 𝐑^n concatenated as [δ; logϵ]
+# G : [X; Z] ∈ 𝐑^(n+k) -> [δ; logϵ] ∈ 𝐑^2n
 @with_kw struct VectorRicianCorrector{Gtype} <: RicianCorrector
     G::Gtype
 end
 Flux.@functor VectorRicianCorrector
 
-# G : 𝐑^(n+k) -> 𝐑^n mapping X ∈ 𝐑^n, Z ∈ 𝐑^k ⟶ δ ∈ 𝐑^n with fixed noise ϵ0 ∈ 𝐑, or ϵ0 ∈ 𝐑^n
+# G : [X; Z] ∈ 𝐑^(n+k) -> δ ∈ 𝐑^n with fixed noise ϵ0 ∈ 𝐑 or ϵ0 ∈ 𝐑^n
 @with_kw struct FixedNoiseVectorRicianCorrector{Gtype,T} <: RicianCorrector
     G::Gtype
     ϵ0::T
 end
 Flux.@functor FixedNoiseVectorRicianCorrector
 
-# G : 𝐑^(n+k) -> 𝐑^n mapping X ∈ 𝐑^n, Z ∈ 𝐑^k ⟶ δ ∈ 𝐑^n with fixed noise ϵ0 ∈ 𝐑, or ϵ0 ∈ 𝐑^n
+# G : Z ∈ 𝐑^k -> [δ; logϵ] ∈ 𝐑^2n
 @with_kw struct LatentVectorRicianCorrector{Gtype} <: RicianCorrector
     G::Gtype
 end
 Flux.@functor LatentVectorRicianCorrector
 
+# G : Z ∈ 𝐑^k -> logϵ ∈ 𝐑^n with fixed δ = 0
+@with_kw struct LatentVectorRicianNoiseCorrector{Gtype} <: RicianCorrector
+    G::Gtype
+end
+Flux.@functor LatentVectorRicianNoiseCorrector
+
 # Concrete methods to extract δ and ϵ
 @inline maybe_vcat(X, Z = nothing) = isnothing(Z) ? X : vcat(X,Z)
-@inline split_delta_epsilon(δ_logϵ) = δ_logϵ[1:end÷2, :], exp.(δ_logϵ[end÷2+1:end, :])
+@inline split_delta_epsilon(δ_logϵ) = δ_logϵ[1:end÷2, :], exp.(δ_logϵ[end÷2+1:end, :]) .+ sqrt(eps(eltype(δ_logϵ)))
 correction_and_noiselevel(G::VectorRicianCorrector, X, Z = nothing) = split_delta_epsilon(G.G(maybe_vcat(X,Z)))
 correction_and_noiselevel(G::FixedNoiseVectorRicianCorrector, X, Z = nothing) = G.G(maybe_vcat(X,Z)), G.ϵ0
 correction_and_noiselevel(G::LatentVectorRicianCorrector, X, Z) = split_delta_epsilon(G.G(Z))
+correction_and_noiselevel(G::LatentVectorRicianNoiseCorrector, X, Z) = zero(X), exp.(G.G(Z)) .+ sqrt(eps(eltype(Z)))
 
 # Derived convenience functions
 correction(G::RicianCorrector, X, Z = nothing) = correction_and_noiselevel(G, X, Z)[1]
 noiselevel(G::RicianCorrector, X, Z = nothing) = correction_and_noiselevel(G, X, Z)[2]
 corrected_signal_instance(G::RicianCorrector, X, Z = nothing) = corrected_signal_instance(G, X, correction_and_noiselevel(G, X, Z)...)
-corrected_signal_instance(G::RicianCorrector, X, δ, ϵ) = add_noise_instance(G, abs.(X .+ δ), ϵ)
+corrected_signal_instance(G::RicianCorrector, X, δ, ϵ) = add_noise_instance(G, add_correction(G, X, δ), ϵ)
+add_correction(G::RicianCorrector, X, δ) = @. abs(X + δ) #@. max(X + δ, 0)
 function add_noise_instance(G::RicianCorrector, X, ϵ)
     ϵR = ϵ .* randn(eltype(X), size(X)...)
     ϵI = ϵ .* randn(eltype(X), size(X)...)
@@ -43,7 +51,7 @@ function add_noise_instance(G::RicianCorrector, X, ϵ)
 end
 function rician_params(G::RicianCorrector, X, Z = nothing)
     δ, ϵ = correction_and_noiselevel(G, X, Z)
-    ν, σ = abs.(X .+ δ), ϵ
+    ν, σ = add_correction(G, X, δ), ϵ
     return ν, σ
 end
 

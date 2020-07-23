@@ -460,7 +460,7 @@ function update_callback!(
     # Compute signal correction, noise instances, etc.
     @unpack θ, Xθ, Yθ, Yθhat, Y = cb_state
     δθ, ϵθ = correction_and_noiselevel(G, Xθ)
-    Xθδ = abs.(Xθ .+ δθ)
+    Xθδ = add_correction(G, Xθ, δθ)
     Xθhat = add_noise_instance(G, Xθδ, ϵθ)
     @pack! cb_state = δθ, ϵθ, Xθδ, Xθhat
 
@@ -511,23 +511,23 @@ function update_callback!(
         # Compute signal correction, noise instances, etc.
         Xθfit = signal_model(phys, θfit)
         δθfit, ϵθfit = correction_and_noiselevel(G, Xθfit)
-        Xθδfit = abs.(Xθfit .+ δθfit)
+        Xθδfit = add_correction(G, Xθfit, δθfit)
         Xθhatfit = add_noise_instance(G, Xθδfit, ϵθfit)
         Yθfit = hasclosedform(phys) ? signal_model(ClosedForm(phys), θfit) : missing
         Yθhatfit = hasclosedform(phys) ? signal_model(ClosedForm(phys), θfit, noiselevel(ClosedForm(phys))) : missing
         @pack! cb_state = Xθfit, Yθfit, Yθhatfit, δθfit, ϵθfit, Xθδfit, Xθhatfit
 
         # Compute error metrics
-        all_signal_fit_rmse = sqrt.(mean(abs2, Yfit .- Xθhatfit; dims = 1)) |> vec
-        all_signal_fit_logL = .-sum(logpdf.(Rician.(Xθδfit, ϵθfit), Yfit); dims = 1) |> vec
-        signal_fit_rmse = mean(all_signal_fit_rmse)
-        signal_fit_logL = mean(all_signal_fit_logL)
-        @pack! metrics = all_signal_fit_rmse, all_signal_fit_logL, signal_fit_rmse, signal_fit_logL
+        all_Xhat_rmse = sqrt.(mean(abs2, Yfit .- Xθhatfit; dims = 1)) |> vec
+        all_Xhat_logL = .-sum(logpdf.(Rician.(Xθδfit, ϵθfit), Yfit); dims = 1) |> vec
+        Xhat_rmse = mean(all_Xhat_rmse)
+        Xhat_logL = mean(all_Xhat_logL)
+        @pack! metrics = all_Xhat_rmse, all_Xhat_logL, Xhat_rmse, Xhat_logL
 
         if hasclosedform(phys)
             # Evaluate error in recovered θ if closed form is known
-            θ_fit_err = mean(θerror(phys, θ[:,i_fit], θfit); dims = 2) |> vec |> copy
-            @pack! metrics = θ_fit_err
+            theta_err = mean(θerror(phys, θ[:,i_fit], θfit); dims = 2) |> vec |> copy
+            @pack! metrics = theta_err
         end
     end
 
@@ -642,26 +642,26 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
         s = x -> x == round(x) ? round(Int, x) : round(x; sigdigits = 4)
         dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, logger)
         df_inf = filter(dfp) do r
-            !ismissing(r.signal_fit_rmse) && !ismissing(r.signal_fit_logL) && !(hasclosedform(phys) && ismissing(r.theta_fit_err))
+            !ismissing(r.Xhat_rmse) && !ismissing(r.Xhat_logL) && !(hasclosedform(phys) && ismissing(r.theta_err))
         end
 
         if !isempty(dfp) && !isempty(df_inf)
             @unpack Xθfit, Yfit, Yθfit = cb_state
-            @unpack all_signal_fit_logL, all_signal_fit_rmse = cb_state["metrics"]
+            @unpack all_Xhat_logL, all_Xhat_rmse = cb_state["metrics"]
             p = plot(
                 plot(
                     hasclosedform(phys) ?
                         plot(hcat(Yθfit[:,end÷2], Xθfit[:,end÷2]); c = [:blue :red], lab = [L"$Y(\hat{\theta})$ fit" L"$X(\hat{\theta})$ fit"]) :
                         plot(hcat( Yfit[:,end÷2], Xθfit[:,end÷2]); c = [:blue :red], lab = [L"Data $Y$" L"$X(\hat{\theta})$ fit"]),
-                    sticks(sort(all_signal_fit_rmse[sample(1:end, min(128,end))]); m = (:circle,4), lab = "rmse: fits"),
-                    sticks(sort(all_signal_fit_logL[sample(1:end, min(128,end))]); m = (:circle,4), lab = "-logL: fits"),
+                    sticks(sort(all_Xhat_rmse[sample(1:end, min(128,end))]); m = (:circle,4), lab = "rmse: fits"),
+                    sticks(sort(all_Xhat_logL[sample(1:end, min(128,end))]); m = (:circle,4), lab = "-logL: fits"),
                     layout = @layout([a{0.25h}; b{0.375h}; c{0.375h}]),
                 ),
                 let
                     _subplots = Any[]
                     if hasclosedform(phys)
                         prmse = plot(dfp.epoch, dfp.rmse; title = "min rmse = $(s(minimum(dfp.rmse)))", label = L"rmse: $Y(\hat{\theta}) - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$", xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
-                        pθerr = plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.theta_fit_err)); title = "min max error = $(s(minimum(maximum.(df_inf.theta_fit_err))))", label = permutedims(θlabels(phys)), xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
+                        pθerr = plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.theta_err)); title = "min max error = $(s(minimum(maximum.(df_inf.theta_err))))", label = permutedims(θlabels(phys)), xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
                         append!(_subplots, [prmse, pθerr])
                     end
 
@@ -670,8 +670,8 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
                         rmselab *= "\nrmse prior: $(round(mean(phys.valfits.rmse); sigdigits = 4))"
                         logLlab *= "\n-logL prior: $(round(mean(phys.valfits.loss); sigdigits = 4))"
                     end
-                    prmse = plot(df_inf.epoch, df_inf.signal_fit_rmse; title = "min rmse = $(s(minimum(df_inf.signal_fit_rmse)))", lab = rmselab, xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
-                    plogL = plot(df_inf.epoch, df_inf.signal_fit_logL; title = "min -logL = $(s(minimum(df_inf.signal_fit_logL)))", lab = logLlab, xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10), ylims = (-Inf, min(-100, maximum(df_inf.signal_fit_logL))))
+                    prmse = plot(df_inf.epoch, df_inf.Xhat_rmse; title = "min rmse = $(s(minimum(df_inf.Xhat_rmse)))", lab = rmselab, xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
+                    plogL = plot(df_inf.epoch, df_inf.Xhat_logL; title = "min -logL = $(s(minimum(df_inf.Xhat_logL)))", lab = logLlab, xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10), ylims = (-Inf, min(-100, maximum(df_inf.Xhat_logL))))
                     append!(_subplots, [prmse, plogL])
 
                     plot(_subplots...)
@@ -686,5 +686,24 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
         return p
     catch e
         handleinterrupt(e; msg = "Error making θ inference plot")
+    end
+end
+
+function plot_vae_rician_signals(logger, cb_state, phys; showplot = false)
+    @timeit "signal plot" try
+        @unpack Y, Xθ, Xθhat, δθ, Yθ = cb_state
+        nθplot = 4 # number of θ sets to draw for plotting simulated signals
+        θplotidx = sample(1:size(Xθ,2), nθplot; replace = false)
+        p = plot(
+            [plot(hcat(Y[:,j], Xθhat[:,j]); c = [:blue :red], lab = [L"$Y$" L"\hat{X} \sim G(X)"]) for j in θplotidx]...,
+            [plot(hcat(Y[:,j] - Xθ[:,j], δθ[:,j]); c = [:blue :red], lab = [L"$Y - X$" L"$g_\delta(X)$"]) for j in θplotidx]...,
+            [plot(Y[:,j] - Xθ[:,j] - δθ[:,j]; lab = L"$Y - |X + g_\delta(X)|$") for j in θplotidx]...;
+            # [plot(Y[:,j] - max.(Xθ[:,j] .+ δθ[:,j], 0); lab = L"$Y - max(X + g_\delta(X), 0)$") for j in θplotidx]...;
+            layout = (3, nθplot),
+        )
+        showplot && !isnothing(p) && display(p)
+        return p
+    catch e
+        handleinterrupt(e; msg = "Error making Rician signal plot")
     end
 end

@@ -138,9 +138,9 @@ const logger = DataFrame(
     :c_alpha => Union{eltype(phys), Missing}[],
     :P_alpha => Union{eltype(phys), Missing}[],
     :rmse    => Union{eltype(phys), Missing}[],
-    :theta_fit_err => Union{Vector{eltype(phys)}, Missing}[],
-    :signal_fit_logL => Union{eltype(phys), Missing}[],
-    :signal_fit_rmse => Union{eltype(phys), Missing}[],
+    :theta_err => Union{Vector{eltype(phys)}, Missing}[],
+    :Xhat_logL => Union{eltype(phys), Missing}[],
+    :Xhat_rmse => Union{eltype(phys), Missing}[],
 )
 const optimizers = Dict{String,Any}(
     "G"   => Flux.ADAM(settings["opt"]["G"]["lr"]),
@@ -230,9 +230,9 @@ function eval_metrics(engine, batch)
 
         # Metrics computed in update_callback!
         metrics[:rmse] = cb_state["metrics"]["rmse"]
-        metrics[:theta_fit_err]   = cb_state["metrics"]["θ_fit_err"]
-        metrics[:signal_fit_logL] = cb_state["metrics"]["signal_fit_logL"]
-        metrics[:signal_fit_rmse] = cb_state["metrics"]["signal_fit_rmse"]
+        metrics[:theta_err] = cb_state["metrics"]["theta_err"]
+        metrics[:Xhat_logL] = cb_state["metrics"]["Xhat_logL"]
+        metrics[:Xhat_rmse] = cb_state["metrics"]["Xhat_rmse"]
 
         # Perform permutation test
         if settings["arch"]["type"] ∈ ["mmd", "hyb"]
@@ -319,7 +319,7 @@ trainer.add_event_handler(
 trainer.add_event_handler(
     ignite.engine.Events.EPOCH_COMPLETED,
     @j2p function (engine)
-        losses = logger.signal_fit_logL[logger.dataset .=== :val] |> skipmissing |> collect
+        losses = logger.Xhat_logL[logger.dataset .=== :val] |> skipmissing |> collect
         if !isempty(losses) && (length(losses) == 1 || losses[end] < minimum(losses[1:end-1]))
             @timeit "save best progress" begin
                 @timeit "save best model" saveprogress(@dict(models, optimizers, logger); savefolder = settings["data"]["out"], prefix = "best-")
@@ -357,7 +357,7 @@ trainer.add_event_handler(
     @j2p function (engine)
         if mod(engine.state.epoch-1, settings["eval"]["showrate"]) == 0
             show(stdout, TimerOutputs.get_defaulttimer()); println("\n")
-            show(stdout, last(logger[:, Not(:theta_fit_err)], 10)); println("\n")
+            show(stdout, last(logger[:, Not(:theta_err)], 10)); println("\n")
         end
         (engine.state.epoch == 1) && TimerOutputs.reset_timer!() # throw out compilation timings
     end
