@@ -99,10 +99,10 @@ beta(::ToyModel) = 4
 beta(::ClosedFormToyModel) = 2
 noiselevel(c::ClosedFormToyModel) = physicsmodel(c).ϵ0
 
-θlabels(::ToyModel) = ["freq", "phase", "offset", "amp", "tconst"]
-θlower(::ToyModel{T}) where {T} = [1/T(64),   T(0), 1/T(4), 1/T(10),  T(16)]
-θupper(::ToyModel{T}) where {T} = [1/T(32), T(π)/2, 1/T(2),  1/T(4), T(128)]
-θerror(p::ToyModel, θ, θhat) = abs.((θ .- θhat)) ./ (θupper(p) .- θlower(p))
+θlabels(::ToyModel) = [L"f", L"\phi", L"a_0", L"a_1", L"\tau"]
+θlower(::ToyModel{T}) where {T} = T[1/T(64),   T(0), 1/T(4), 1/T(10),  T(16)]
+θupper(::ToyModel{T}) where {T} = T[1/T(32), T(π)/2, 1/T(2),  1/T(4), T(128)]
+θerror(p::ToyModel, θ, θhat) = 100 .* abs.((θ .- θhat)) ./ (θupper(p) .- θlower(p))
 
 function initialize!(p::ToyModel{T,isfinite}; ntrain::Int, ntest::Int, nval::Int, seed::Int = 0) where {T,isfinite}
     rng = Random.seed!(seed)
@@ -120,7 +120,7 @@ function initialize!(p::ToyModel{T,isfinite}; ntrain::Int, ntest::Int, nval::Int
     return p
 end
 
-sampleθprior(p::ToyModel, n::Union{Int, Symbol}) = permutedims(reduce(hcat, rand.(Uniform.(θlower(p), θupper(p)), n)))
+sampleθprior(p::ToyModel{T}, n::Union{Int, Symbol}) where {T} = θlower(p) .+ (θupper(p) .- θlower(p)) .* rand(T, ntheta(p), n)
 sampleθ(p::ToyModel{T,true},  n::Union{Int, Symbol}; dataset::Symbol) where {T} = n === :all ? physicsmodel(p).θ[dataset] : sample_columns(physicsmodel(p).θ[dataset], n)
 sampleθ(p::ToyModel{T,false}, n::Union{Int, Symbol}; dataset::Symbol) where {T} = sampleθprior(p, n)
 

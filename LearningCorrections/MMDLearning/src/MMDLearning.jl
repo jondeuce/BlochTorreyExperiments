@@ -31,7 +31,7 @@ export correction, noiselevel, correction_and_noiselevel, corrected_signal_insta
 export PhysicsModel, ClosedForm, ToyModel
 export physicsmodel, hasclosedform, initialize!, ntheta, nsignal, signal_model
 export θbounds, θlower, θupper, θlabels, θerror
-export sampleθ, sampleX, sampleY
+export sampleθprior, sampleθ, sampleX, sampleY
 export initialize_callback, update_callback!
 
 ####

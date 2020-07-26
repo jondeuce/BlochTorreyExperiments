@@ -338,14 +338,13 @@ trainer.add_event_handler(
         epoch = engine.state.epoch
         if epoch > 1 && mod(epoch-1, lrrate) == 0
             for (optname, opt) in optimizers
-                new_eta = opt.eta / lrdrop
-                if new_eta >= lrthresh
+                new_eta = max(opt.eta / lrdrop, lrthresh)
+                if new_eta > lrthresh
                     @info "$epoch: Dropping $optname optimizer learning rate to $new_eta"
-                    opt.eta = new_eta
                 else
-                    @info "$epoch: Learning rate dropped below $lrthresh for $optname optimizer, exiting..."
-                    throw(InterruptException())
+                    @info "$epoch: Learning rate reached minimum value $lrthresh for $optname optimizer"
                 end
+                opt.eta = new_eta
             end
         end
     end

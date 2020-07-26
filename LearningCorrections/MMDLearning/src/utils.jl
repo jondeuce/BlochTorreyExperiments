@@ -707,3 +707,22 @@ function plot_vae_rician_signals(logger, cb_state, phys; showplot = false)
         handleinterrupt(e; msg = "Error making Rician signal plot")
     end
 end
+
+function plot_selfcvae_losses(logger, cb_state, phys;
+        colnames = [:loss, :Zreg, :KLdiv, :ELBO, :MMDsq, :Xhat_logL, :Xhat_rmse, :Yhat_logL, :Yhat_rmse],
+        window = 100,
+        showplot = false,
+    )
+    @timeit "signal plot" try
+        epoch = logger.epoch[end]
+        dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, logger)
+        ps = map(colnames) do colname
+            plot(dfp.epoch, dfp[!, colname]; lab = string(colname), xscale = ifelse(epoch < 10*window, :identity, :log10))
+        end
+        p = plot(ps...)
+        showplot && !isnothing(p) && display(p)
+        return p
+    catch e
+        handleinterrupt(e; msg = "Error making Rician signal plot")
+    end
+end
