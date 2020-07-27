@@ -18,7 +18,6 @@ const settings = TOML.parse("""
     [data]
         out    = "./output/ignite-cvae-$(MMDLearning.getnow())"
         ntrain = 102_400
-        # ntrain = 10_240
         ntest  = 10_240
         nval   = 10_240
 
@@ -28,24 +27,28 @@ const settings = TOML.parse("""
         batchsize = 2048
         kernelrate  = 10 # Train kernel every `kernelrate` iterations
         kernelsteps = 1 # Gradient updates per kernel train
+        GANrate     = 10 # Train GAN losses every `GANrate` iterations
+        Dsteps      = 10 # Train GAN losses with `Dsteps` discrim updates per genatr update
 
     [eval]
         saveperiod = 180.0 # TODO
         showrate   = 1 # TODO
 
     [opt]
-        lrdrop   = 3.17
+        lrdrop   = 1.0
         lrthresh = 1e-5
         lrrate   = 1000
-        [opt.pre]
+        [opt.genatr]
+            lr = 1e-4
+        [opt.discrim]
             lr = 1e-4
         [opt.mmd]
-            lr = 1e-4 #TODO
-        [opt.cvae]
-            lr = 3e-5 #TODO
+            lr = 1e-4
         [opt.kernel]
             loss = "mmd" #"tstatistic"
             lr = 1e-2
+        [opt.cvae]
+            lr = 1e-4
 
     [arch]
         physics = "toy" # "toy" or "mri"
@@ -53,31 +56,34 @@ const settings = TOML.parse("""
         zdim    = 6 # embedding dimension of z
         hdim    = 64 # default for models below
         nhidden = 4 # default for models below
-        [arch.G]
+        [arch.genatr]
             hdim        = 32
             nhidden     = 2
             maxcorr     = 0.0 # unset by default; correction amplitude
             noisebounds = [0.0, 0.0] # unset by default; noise amplitude
-        [arch.E1]
-            hdim    = 0
-            nhidden = 0
-        [arch.E2]
-            hdim    = 0
-            nhidden = 0
-        [arch.D]
+        [arch.discrim]
             hdim    = 0
             nhidden = 0
         [arch.kernel]
             nbandwidth = 8
             bwbounds   = [0.0, 0.0] # unset by default; bounds for kernel bandwidths (logsigma)
+        [arch.enc1]
+            hdim    = 0
+            nhidden = 0
+        [arch.enc2]
+            hdim    = 0
+            nhidden = 0
+        [arch.dec]
+            hdim    = 0
+            nhidden = 0
 """)
 
 Ignite.parse_command_line!(settings)
-Ignite.compare_and_set!(settings["arch"]["G"],      "maxcorr",     0.0,        settings["arch"]["physics"] == "toy" ? 0.1          : 0.025)
-Ignite.compare_and_set!(settings["arch"]["G"],      "noisebounds", [0.0, 0.0], settings["arch"]["physics"] == "toy" ? [-8.0, -2.0] : [-6.0, -3.0])
+Ignite.compare_and_set!(settings["arch"]["genatr"], "maxcorr",     0.0,        settings["arch"]["physics"] == "toy" ? 0.1          : 0.025)
+Ignite.compare_and_set!(settings["arch"]["genatr"], "noisebounds", [0.0, 0.0], settings["arch"]["physics"] == "toy" ? [-8.0, -2.0] : [-6.0, -3.0])
 Ignite.compare_and_set!(settings["arch"]["kernel"], "bwbounds",    [0.0, 0.0], settings["arch"]["physics"] == "toy" ? [-8.0, 4.0]  : [-10.0, 4.0])
-Ignite.compare_and_set!.([settings["arch"][k] for k in ("G","E1","E2","D")], "hdim",    0, settings["arch"]["hdim"])
-Ignite.compare_and_set!.([settings["arch"][k] for k in ("G","E1","E2","D")], "nhidden", 0, settings["arch"]["nhidden"])
+Ignite.compare_and_set!.([settings["arch"][k] for k in ("genatr","discrim","enc1","enc2","dec")], "hdim",    0, settings["arch"]["hdim"])
+Ignite.compare_and_set!.([settings["arch"][k] for k in ("genatr","discrim","enc1","enc2","dec")], "nhidden", 0, settings["arch"]["nhidden"])
 Ignite.save_and_print(settings; outpath = settings["data"]["out"], filename = "settings.toml")
 
 # Initialize generator + discriminator + kernel
@@ -91,11 +97,11 @@ function make_models(phys, Gtype::Type{<:RicianCorrector})
     toT(m) = Flux.paramtype(eltype(phys), m)
 
     # Rician generator. First `n` elements for `δX` scaled to (-δ, δ), second `n` elements for `logϵ` scaled to (noisebounds[1], noisebounds[2])
-    models["G"] = let
-        hdim = settings["arch"]["G"]["hdim"]::Int
-        nhidden = settings["arch"]["G"]["nhidden"]::Int
-        maxcorr = settings["arch"]["G"]["maxcorr"]::Float64
-        noisebounds = settings["arch"]["G"]["noisebounds"]::Vector{Float64}
+    models["genatr"] = let
+        hdim = settings["arch"]["genatr"]["hdim"]::Int
+        nhidden = settings["arch"]["genatr"]["nhidden"]::Int
+        maxcorr = settings["arch"]["genatr"]["maxcorr"]::Float64
+        noisebounds = settings["arch"]["genatr"]["noisebounds"]::Vector{Float64}
         nin  = Gtype <: Union{<:VectorRicianCorrector, <:FixedNoiseVectorRicianCorrector} ? n + k :
                Gtype <: Union{<:LatentVectorRicianCorrector, <:LatentVectorRicianNoiseCorrector} ? k :
                error("Unsupported corrector type: $Gtype")
@@ -114,26 +120,33 @@ function make_models(phys, Gtype::Type{<:RicianCorrector})
     end
 
     # Encoders
-    models["E1"] = let
-        hdim = settings["arch"]["E1"]["hdim"]::Int
-        nhidden = settings["arch"]["E1"]["nhidden"]::Int
+    models["enc1"] = let
+        hdim = settings["arch"]["enc1"]["hdim"]::Int
+        nhidden = settings["arch"]["enc1"]["nhidden"]::Int
         MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity) |> toT
     end
 
-    models["E2"] = let
-        hdim = settings["arch"]["E2"]["hdim"]::Int
-        nhidden = settings["arch"]["E2"]["nhidden"]::Int
+    models["enc2"] = let
+        hdim = settings["arch"]["enc2"]["hdim"]::Int
+        nhidden = settings["arch"]["enc2"]["nhidden"]::Int
         MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity) |> toT
     end
 
     # Decoder
-    models["D"] = let
-        hdim = settings["arch"]["D"]["hdim"]::Int
-        nhidden = settings["arch"]["D"]["nhidden"]::Int
+    models["dec"] = let
+        hdim = settings["arch"]["dec"]["hdim"]::Int
+        nhidden = settings["arch"]["dec"]["nhidden"]::Int
         Flux.Chain(
             MMDLearning.MLP(n + nz => 2*(nθ + k), nhidden, hdim, Flux.relu, identity)...,
             MMDLearning.CatScale(eltype(θbd)[θbd; (-1, 1)], [ones(Int, nθ); k + nθ + k]),
         ) |> toT
+    end
+
+    # Discriminator
+    models["discrim"] = let
+        hdim = settings["arch"]["discrim"]["hdim"]::Int
+        nhidden = settings["arch"]["discrim"]["nhidden"]::Int
+        MMDLearning.MLP(n => 1, nhidden, hdim, Flux.relu, Flux.sigmoid) |> toT
     end
 
     # MMD kernel bandwidths
@@ -153,13 +166,14 @@ const phys = initialize!(
     nval = settings["data"]["nval"]::Int,
 )
 const RiceGen = LatentVectorRicianCorrector #LatentVectorRicianNoiseCorrector #VectorRicianCorrector
-# const models = make_models(phys, RiceGen)
-const models = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/LearningCorrections/output/ignite-cvae-2020-07-25-T-16-32-01-989/current-models.bson")["models"]) #TODO
-const ricegen = RiceGen(models["G"]) # Generator produces 𝐑^2n outputs parameterizing n Rician distributions
+const models = make_models(phys, RiceGen)
+# const models = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/LearningCorrections/output/ignite-cvae-2020-07-25-T-16-32-01-989/current-models.bson")["models"]) #TODO
+const ricegen = RiceGen(models["genatr"]) # Generator produces 𝐑^2n outputs parameterizing n Rician distributions
 const optimizers = Dict{String,Any}(
-    "pre" => Flux.ADAM(settings["opt"]["pre"]["lr"]),
-    "mmd" => Flux.ADAM(settings["opt"]["mmd"]["lr"]),
-    "cvae" => Flux.ADAM(settings["opt"]["cvae"]["lr"]),
+    "genatr"  => Flux.ADAM(settings["opt"]["genatr"]["lr"]),
+    "discrim" => Flux.ADAM(settings["opt"]["discrim"]["lr"]),
+    "mmd"     => Flux.ADAM(settings["opt"]["mmd"]["lr"]),
+    "cvae"    => Flux.ADAM(settings["opt"]["cvae"]["lr"]),
 )
 
 MMDLearning.model_summary(models, joinpath(settings["data"]["out"], "model-summary.txt"))
@@ -170,12 +184,29 @@ MMDLearning.model_summary(models, joinpath(settings["data"]["out"], "model-summa
 @inline sample_mv_normal(μ0::Matrix{T}, σ::Matrix{T}) where {T} = μ0 .+ σ .* randn(T, max.(size(μ0), size(σ)))
 @inline pow2(x) = x*x
 
+# KL-divergence contribution to cross-entropy (Note: dropped constant -zdim/2 term)
+@inline kl_div_kernel(μq0, σq, μr0, σr) = pow2(σq / σr) + pow2((μr0 - μq0) / σr) - 2 * log(σq / σr)
+KLDivergence(μq0, σq, μr0, σr) = sum(@. kl_div_kernel(μq0, σq, μr0, σr)) / 2
+
+# Negative log-likelihood/ELBO contribution to cross-entropy (Note: dropped constant +zdim*log(2π)/2 term)
+@inline elbo_kernel(x, μx0, σx) = pow2((x - μx0) / σx) + 2 * log(σx)
+EvidenceLowerBound(x, μx0, σx) = sum(@. elbo_kernel(x, μx0, σx)) / 2
+
+# GAN losses
+D_Y_loss(Y) = models["discrim"](Y) # discrim on real data
+D_G_X_loss(X,Z) = models["discrim"](corrected_signal_instance(ricegen, X, Z)) # discrim on genatr data
+Dloss(X,Y,Z) = -mean(log.(D_Y_loss(Y)) .+ log.(1 .- D_G_X_loss(X,Z)))
+Gloss(X,Z) = mean(log.(1 .- D_G_X_loss(X,Z)))
+
+# Maximum mean discrepency (m*MMD^2) loss
+MMDloss(X̂,Y) = size(Y,2) * mmd_flux(models["logsigma"], X̂, Y)
+
 function InvertY(Y)
-    μr = models["E1"](Y)
+    μr = models["enc1"](Y)
     μr0, σr = split_mean_std(μr)
     zr = sample_mv_normal(μr0, σr)
 
-    μx = models["D"](vcat(Y,zr))
+    μx = models["dec"](vcat(Y,zr))
     μx0, σx = split_mean_std(μx)
     x = sample_mv_normal(μx0, σx)
 
@@ -202,13 +233,18 @@ function sampleθZ(Y; recover_θ = true, recover_Z = true)
     end
 end
 
-function sampleX̂θZ(Y; kwargs...)
+function sampleXθZ(Y; kwargs...)
     θ, Z = sampleθZ(Y; kwargs...)
     X = signal_model(phys, θ)
-    μG0, σG = rician_params(ricegen, X, Z)
-    X̂ = add_noise_instance(ricegen, μG0, σG)
+    return X, θ, Z
+end
+
+function sampleX̂θZ(Y; kwargs...)
+    X, θ, Z = sampleXθZ(Y; kwargs...)
+    X̂ = corrected_signal_instance(ricegen, X, Z)
     return X̂, θ, Z
 end
+
 sampleX̂(Y; kwargs...) = sampleX̂θZ(Y; kwargs...)[1]
 
 function DataConsistency(Y, μG0, σG)
@@ -219,23 +255,12 @@ function DataConsistency(Y, μG0, σG)
     return YlogL
 end
 
-# KL-divergence contribution to cross-entropy (Note: dropped constant -zdim/2 term)
-@inline kl_div_kernel(μq0, σq, μr0, σr) = pow2(σq / σr) + pow2((μr0 - μq0) / σr) - 2 * log(σq / σr)
-KLDivergence(μq0, σq, μr0, σr) = sum(@. kl_div_kernel(μq0, σq, μr0, σr)) / 2
-
-# Negative log-likelihood/ELBO contribution to cross-entropy (Note: dropped constant +zdim*log(2π)/2 term)
-@inline elbo_kernel(x, μx0, σx) = pow2((x - μx0) / σx) + 2 * log(σx)
-EvidenceLowerBound(x, μx0, σx) = sum(@. elbo_kernel(x, μx0, σx)) / 2
-
-# Maximum mean discrepency (m*MMD^2) loss
-MMDloss(X̂,Y) = size(Y,2) * mmd_flux(models["logsigma"], X̂, Y)
-
 function CVAEloss(Y, θ, Z; recover_Z = true)
     # Cross-entropy loss function
-    μr0, σr = split_mean_std(models["E1"](Y))
-    μq0, σq = split_mean_std(models["E2"](vcat(Y,θ,Z)))
+    μr0, σr = split_mean_std(models["enc1"](Y))
+    μq0, σq = split_mean_std(models["enc2"](vcat(Y,θ,Z)))
     zq = sample_mv_normal(μq0, σq)
-    μx0, σx = split_mean_std(models["D"](vcat(Y,zq)))
+    μx0, σx = split_mean_std(models["dec"](vcat(Y,zq)))
 
     KLdiv = KLDivergence(μq0, σq, μr0, σr)
     ELBO = if recover_Z
@@ -310,114 +335,6 @@ function RegularizeX̂(Y; recover_Z = true)
 end
 
 ####
-#### Pre-training
-####
-
-function pre_train_step(engine, batch)
-    Ytrain, θtrain, Ztrain = Ignite.array.(batch)
-
-    @timeit "pre-train batch" begin
-        ps = Flux.params(models["E1"], models["E2"], models["D"])
-        @timeit "forward" ℓ, back = Zygote.pullback(() -> CVAEloss(Ytrain, θtrain, Ztrain; recover_Z = false), ps)
-        @timeit "reverse" gs = back(one(eltype(phys)))
-        @timeit "update!" Flux.Optimise.update!(optimizers["pre"], ps, gs)
-    end
-
-    return nothing
-end
-
-function pre_eval_metrics(engine, batch)
-    @timeit "pre-eval batch" begin
-        Y, θ, Z = Ignite.array.(batch)
-        Nbatch = size(Y,2)
-
-        # Cross-entropy loss function
-        μr0, σr = split_mean_std(models["E1"](Y))
-        μq0, σq = split_mean_std(models["E2"](vcat(Y,θ,Z)))
-        zq = sample_mv_normal(μq0, σq)
-        μx0, σx = split_mean_std(models["D"](vcat(Y,zq)))
-
-        KLdiv = KLDivergence(μq0, σq, μr0, σr) / Nbatch
-        ELBO = EvidenceLowerBound(vcat(θ,Z), μx0, σx) / Nbatch
-        loss = KLdiv + ELBO
-
-        θfit, _ = InvertY(Y)
-        Xfit = signal_model(phys, θfit)
-        theta_err = mean(θerror(phys, θ, θfit); dims = 2) |> vec |> copy
-        Y_fit_err = sqrt.(mean(abs2, Y .- Xfit; dims = 1)) |> mean
-
-        # Initialize output metrics dictionary
-        metrics = Dict{Any,Any}()
-        metrics[:epoch]   = engine.state.iteration
-        metrics[:dataset] = :val
-        metrics[:loss]    = loss
-        metrics[:KLdiv]   = KLdiv
-        metrics[:ELBO]    = ELBO
-        metrics[:theta_err] = theta_err
-        metrics[:Y_fit_err] = Y_fit_err
-
-        # Print progress
-        if mod(engine.state.epoch-1, settings["eval"]["showrate"]) == 0
-            show(stdout, TimerOutputs.get_defaulttimer()); println("\n")
-            show(stdout, DataFrame(metrics)); println("\n")
-        end
-    end
-
-    return deepcopy(metrics) #TODO convert to PyDict?
-end
-
-function make_pre_train_data_tuples(dataset)
-    #TODO this should be done with some sort of fitting etc.
-    θ = sampleθ(phys, :all; dataset = dataset)
-    Y = signal_model(phys, θ, noiselevel(ClosedForm(phys)))
-    Z = zeros(eltype(phys), settings["arch"]["nlatent"], size(θ,2))
-    tuple.(copy.(eachcol(Y)), copy.(eachcol(θ)), copy.(eachcol(Z)))
-end
-pre_train_loader = torch.utils.data.DataLoader(make_pre_train_data_tuples(:train); batch_size = settings["train"]["batchsize"], shuffle = true, drop_last = true)
-pre_val_loader = torch.utils.data.DataLoader(make_pre_train_data_tuples(:val); batch_size = settings["data"]["nval"], shuffle = false, drop_last = false)
-
-pre_trainer = ignite.engine.Engine(@j2p pre_train_step)
-pre_evaluator = ignite.engine.Engine(@j2p pre_eval_metrics)
-
-# Force terminate
-pre_trainer.add_event_handler(
-    ignite.engine.Events.STARTED | ignite.engine.Events.ITERATION_STARTED | ignite.engine.Events.ITERATION_COMPLETED,
-    @j2p function (engine)
-        if isfile(joinpath(settings["data"]["out"], "stop.txt"))
-            @info "Exiting: found file $(joinpath(settings["data"]["out"], "stop.txt"))"
-            engine.terminate()
-        end
-    end
-)
-
-# Compute callback metrics
-pre_trainer.add_event_handler(
-    ignite.engine.Events.STARTED | ignite.engine.Events.EPOCH_COMPLETED,
-    @j2p function (engine)
-        pre_evaluator.run(pre_val_loader)
-    end
-)
-
-# Timeout
-pre_trainer.add_event_handler(
-    ignite.engine.Events.EPOCH_COMPLETED(event_filter = @j2p run_timeout(settings["train"]["timeout"])),
-    @j2p function (engine)
-        @info "Exiting: training time exceeded $(DECAES.pretty_time(settings["train"]["timeout"]))"
-        engine.terminate()
-    end
-)
-
-# Setup loggers
-pre_trainer.logger = ignite.utils.setup_logger("pre_trainer")
-pre_evaluator.logger = ignite.utils.setup_logger("pre_evaluator")
-
-# Run pre-trainer
-#TODO pre_trainer.run(pre_train_loader, max_epochs = settings["train"]["epochs"])
-
-#TODO drop lr?
-#TODO saveprogress(@dict(models, optimizers); savefolder = settings["data"]["out"], prefix = "pretrain-")
-
-####
 #### Training
 ####
 
@@ -433,6 +350,10 @@ const logger = DataFrame(
     :KLdiv      => Union{eltype(phys), Missing}[],
     :ELBO       => Union{eltype(phys), Missing}[],
     :MMDsq      => Union{eltype(phys), Missing}[],
+    :Gloss      => Union{eltype(phys), Missing}[],
+    :Dloss      => Union{eltype(phys), Missing}[],
+    :D_Y        => Union{eltype(phys), Missing}[],
+    :D_G_X      => Union{eltype(phys), Missing}[],
     :rmse       => Union{eltype(phys), Missing}[],
     :theta_err  => Union{Vector{eltype(phys)}, Missing}[],
     :Z_err      => Union{Vector{eltype(phys)}, Missing}[],
@@ -450,12 +371,12 @@ function train_step(engine, batch)
     Ytrain, = Ignite.array.(batch)
 
     @timeit "train batch" begin
-        # Regularize X̂ via MMD
-        @timeit "mmd kernel" let
-            if mod(engine.state.iteration-1, settings["train"]["kernelrate"]) == 0
+        #= Regularize X̂ via MMD
+        if mod(engine.state.iteration-1, settings["train"]["kernelrate"]) == 0
+            @timeit "mmd kernel" let
                 if haskey(cb_state, "learncorrections") && cb_state["learncorrections"]
                     @timeit "regularize X̂" let
-                        ps = Flux.params(models["E1"], models["D"], models["G"])
+                        ps = Flux.params(models["enc1"], models["dec"], models["genatr"])
                         @timeit "forward" ℓ, back = Zygote.pullback(() -> RegularizeX̂(Ytrain; recover_Z = true), ps)
                         @timeit "reverse" gs = back(one(eltype(phys)))
                         @timeit "update!" Flux.Optimise.update!(optimizers["mmd"], ps, gs)
@@ -474,13 +395,32 @@ function train_step(engine, batch)
                 =#
             end
         end
+        =#
 
-        # Train self CVAE loss
+        if mod(engine.state.iteration-1, settings["train"]["GANrate"]) == 0
+            @timeit "gan" let
+                @timeit "sampleXθZ" Xtrain, θtrain, Ztrain = sampleXθZ(Ytrain; recover_θ = false, recover_Z = false)
+                @timeit "discrim" let
+                    ps = Flux.params(models["discrim"])
+                    for _ in 1:settings["train"]["Dsteps"]
+                        @timeit "forward" _, back = Zygote.pullback(() -> Dloss(Xtrain, Ytrain, Ztrain), ps)
+                        @timeit "reverse" gs = back(one(eltype(phys)))
+                        @timeit "update!" Flux.Optimise.update!(optimizers["discrim"], ps, gs)
+                    end
+                end
+                @timeit "genatr" let
+                    ps = Flux.params(models["genatr"])
+                    @timeit "forward" _, back = Zygote.pullback(() -> Gloss(Xtrain, Ztrain), ps)
+                    @timeit "reverse" gs = back(one(eltype(phys)))
+                    @timeit "update!" Flux.Optimise.update!(optimizers["genatr"], ps, gs)
+                end
+            end
+        end
+
+        # Train CVAE loss
         @timeit "cvae" let
-            # @show typeof.((X̂train, θtrain, Ztrain)) #TODO
-            # @show eltype.(ps) #TODO
-            X̂train, θtrain, Ztrain = sampleX̂θZ(Ytrain; recover_θ = false, recover_Z = false)
-            ps = Flux.params(models["E1"], models["E2"], models["D"])
+            @timeit "sampleX̂θZ" X̂train, θtrain, Ztrain = sampleX̂θZ(Ytrain; recover_θ = false, recover_Z = false)
+            ps = Flux.params(models["enc1"], models["enc2"], models["dec"])
             @timeit "forward" ℓ, back = Zygote.pullback(() -> CVAEloss(X̂train, θtrain, Ztrain; recover_Z = true), ps)
             @timeit "reverse" gs = back(one(eltype(phys)))
             @timeit "update!" Flux.Optimise.update!(optimizers["cvae"], ps, gs)
@@ -503,7 +443,7 @@ function train_step(engine, batch)
         =#
 
         #= Train self CVAE loss
-            ps = Flux.params(models["E1"], models["E2"], models["D"], models["G"])
+            ps = Flux.params(models["enc1"], models["enc2"], models["dec"], models["genatr"])
             @timeit "forward" ℓ, back = Zygote.pullback(() -> SelfCVAEloss(Ytrain; recover_Z = true), ps)
             @timeit "reverse" gs = back(one(eltype(phys)))
             @timeit "update!" Flux.Optimise.update!(optimizers["cvae"], ps, gs)
@@ -532,20 +472,30 @@ function val_metrics(engine, batch)
         X̂ = add_noise_instance(ricegen, μG0, σG)
 
         # Cross-entropy loss function
-        μr0, σr = split_mean_std(models["E1"](X̂)) #TODO X̂ or Y?
-        μq0, σq = split_mean_std(models["E2"](vcat(X̂,θ,Z))) #TODO X̂ or Y?
+        μr0, σr = split_mean_std(models["enc1"](X̂)) #TODO X̂ or Y?
+        μq0, σq = split_mean_std(models["enc2"](vcat(X̂,θ,Z))) #TODO X̂ or Y?
         zq = sample_mv_normal(μq0, σq)
-        μx0, σx = split_mean_std(models["D"](vcat(X̂,zq))) #TODO X̂ or Y?
+        μx0, σx = split_mean_std(models["dec"](vcat(X̂,zq))) #TODO X̂ or Y?
 
-        Zreg = sum(abs2, Z) / (2*Nbatch)
-        # YlogL = DataConsistency(Y, μG0, σG) / Nbatch #TODO
-        KLdiv = KLDivergence(μq0, σq, μr0, σr) / Nbatch
-        ELBO = EvidenceLowerBound(vcat(θ,Z), μx0, σx) / Nbatch
-        MMDsq = let m = settings["train"]["batchsize"]
-            100 * MMDloss(X̂[:,1:min(end,m)], Y[:,1:min(end,m)]) #TODO
+        let
+            Zreg = sum(abs2, Z) / (2*Nbatch)
+            # YlogL = DataConsistency(Y, μG0, σG) / Nbatch #TODO
+            KLdiv = KLDivergence(μq0, σq, μr0, σr) / Nbatch
+            ELBO = EvidenceLowerBound(vcat(θ,Z), μx0, σx) / Nbatch
+            MMDsq = let m = settings["train"]["batchsize"]
+                100 * MMDloss(X̂[:,1:min(end,m)], Y[:,1:min(end,m)]) #TODO
+            end
+            loss = KLdiv + ELBO #TODO Zreg, MMDsq, YlogL
+
+            d_y = D_Y_loss(Y)
+            d_g_x = D_G_X_loss(X, Z)
+            Gloss = mean(log.(1 .- d_g_x))
+            Dloss = -mean(log.(d_y) .+ log.(1 .- d_g_x))
+            D_Y   = mean(d_y)
+            D_G_X = mean(d_g_x)
+
+            @pack! cb_state["metrics"] = Zreg, KLdiv, ELBO, loss, MMDsq, Gloss, Dloss, D_Y, D_G_X #TODO YlogL
         end
-        loss = KLdiv + ELBO #TODO Zreg, MMDsq, YlogL
-        @pack! cb_state["metrics"] = Zreg, KLdiv, ELBO, loss, MMDsq #TODO YlogL
 
         # Cache cb state variables using naming convention
         function cache_cb_state!(Y, θ, Z, Xθ, δθ, ϵθ, Xθδ, Xθhat, Yθ, Yθhat; suf::String)
@@ -618,6 +568,10 @@ function val_metrics(engine, batch)
         metrics[:KLdiv] = cb_state["metrics"]["KLdiv"]
         metrics[:MMDsq] = cb_state["metrics"]["MMDsq"]
         metrics[:ELBO]  = cb_state["metrics"]["ELBO"]
+        metrics[:Gloss] = cb_state["metrics"]["Gloss"]
+        metrics[:Dloss] = cb_state["metrics"]["Dloss"]
+        metrics[:D_Y]   = cb_state["metrics"]["D_Y"]
+        metrics[:D_G_X] = cb_state["metrics"]["D_G_X"]
         metrics[:rmse]  = cb_state["metrics"]["rmse"]
         metrics[:theta_err] = cb_state["metrics"]["θ_err"]
         metrics[:Z_err]     = cb_state["metrics"]["Z_err"]
@@ -642,6 +596,7 @@ function makeplots(;showplot = false)
             :signals    => MMDLearning.plot_rician_signals(logger, cb_state, phys; showplot = showplot),
             :vaesignals => MMDLearning.plot_vae_rician_signals(logger, cb_state, phys; showplot = showplot),
             :infer      => MMDLearning.plot_rician_inference(logger, cb_state, phys; showplot = showplot),
+            :ganloss    => MMDLearning.plot_gan_loss(logger, cb_state, phys; showplot = showplot, lrdroprate = settings["opt"]["lrrate"], lrdrop = settings["opt"]["lrdrop"]),
             :losses     => MMDLearning.plot_selfcvae_losses(logger, cb_state, phys; showplot = showplot),
         )
     catch e
