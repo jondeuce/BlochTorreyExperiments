@@ -89,12 +89,10 @@ function parse_command_line!(
             end
         end
     end
+    _add_arg_table!(defaults)
 
     # Parse and merge into defaults
-    _add_arg_table!(defaults)
-    user_settings = parse_args(args, settings)
-
-    for (k, v) in user_settings
+    for (k, v) in parse_args(args, settings)
         ksplit = String.(split(k, "."))
         din = defaults[ksplit[1]]
         for kin in ksplit[2:end-1]
@@ -102,6 +100,20 @@ function parse_command_line!(
         end
         din[ksplit[end]] = deepcopy(v)
     end
+
+    # Fields taking value "%PARENT%" take default values of their parent field
+    function _set_parent_fields!(d, dparent = nothing)
+        for (k,v) in d
+            if v isa Dict
+                _set_parent_fields!(v, d)
+            elseif v == "%PARENT%" && !isnothing(dparent)
+                @show k, v
+                @show d
+                d[k] = deepcopy(dparent[k])
+            end
+        end
+    end
+    _set_parent_fields!(defaults)
 
     return defaults
 end

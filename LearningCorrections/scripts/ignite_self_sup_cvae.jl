@@ -28,30 +28,31 @@ const settings = TOML.parse("""
         kernelrate  = 10 # Train kernel every `kernelrate` iterations
         kernelsteps = 1 # Gradient updates per kernel train
         GANrate     = 10 # Train GAN losses every `GANrate` iterations
-        Dsteps      = 10 # Train GAN losses with `Dsteps` discrim updates per genatr update
+        Dsteps      = 20 # Train GAN losses with `Dsteps` discrim updates per genatr update
 
     [eval]
         saveperiod = 180.0 # TODO
         showrate   = 1 # TODO
 
     [opt]
+        lr       = 3e-5 #TODO
         lrdrop   = 1.0
         lrthresh = 1e-5
         lrrate   = 1000
         [opt.genatr]
-            lr = 1e-4
+            lr = "%PARENT%"
         [opt.discrim]
-            lr = 1e-4
+            lr = 1e-4 #TODO "%PARENT%"
         [opt.mmd]
-            lr = 1e-4
+            lr = "%PARENT%"
         [opt.kernel]
             loss = "mmd" #"tstatistic"
             lr = 1e-2
         [opt.cvae]
-            lr = 1e-4
+            lr = "%PARENT%"
 
     [arch]
-        physics = "toy" # "toy" or "mri"
+        physics = "$(get(ENV, "JL_PHYS_MODEL", "toy"))" # "toy" or "mri"
         nlatent = 1 # number of latent variables Z
         zdim    = 6 # embedding dimension of z
         hdim    = 64 # default for models below
@@ -59,31 +60,25 @@ const settings = TOML.parse("""
         [arch.genatr]
             hdim        = 32
             nhidden     = 2
-            maxcorr     = 0.0 # unset by default; correction amplitude
-            noisebounds = [0.0, 0.0] # unset by default; noise amplitude
+            maxcorr     = $(get(ENV, "JL_PHYS_MODEL", "toy") == "toy" ? 0.1 : 0.025) # correction amplitude
+            noisebounds = $(get(ENV, "JL_PHYS_MODEL", "toy") == "toy" ? [-8.0, -2.0] : [-6.0, -3.0]) # noise amplitude
         [arch.discrim]
-            hdim    = 0
-            nhidden = 0
+            hdim    = "%PARENT%"
+            nhidden = "%PARENT%"
         [arch.kernel]
             nbandwidth = 8
-            bwbounds   = [0.0, 0.0] # unset by default; bounds for kernel bandwidths (logsigma)
+            bwbounds   = $(get(ENV, "JL_PHYS_MODEL", "toy") == "toy" ? [-8.0, 4.0] : [-10.0, 4.0]) # bounds for kernel bandwidths (logsigma)
         [arch.enc1]
-            hdim    = 0
-            nhidden = 0
+            hdim    = "%PARENT%"
+            nhidden = "%PARENT%"
         [arch.enc2]
-            hdim    = 0
-            nhidden = 0
+            hdim    = "%PARENT%"
+            nhidden = "%PARENT%"
         [arch.dec]
-            hdim    = 0
-            nhidden = 0
+            hdim    = "%PARENT%"
+            nhidden = "%PARENT%"
 """)
-
 Ignite.parse_command_line!(settings)
-Ignite.compare_and_set!(settings["arch"]["genatr"], "maxcorr",     0.0,        settings["arch"]["physics"] == "toy" ? 0.1          : 0.025)
-Ignite.compare_and_set!(settings["arch"]["genatr"], "noisebounds", [0.0, 0.0], settings["arch"]["physics"] == "toy" ? [-8.0, -2.0] : [-6.0, -3.0])
-Ignite.compare_and_set!(settings["arch"]["kernel"], "bwbounds",    [0.0, 0.0], settings["arch"]["physics"] == "toy" ? [-8.0, 4.0]  : [-10.0, 4.0])
-Ignite.compare_and_set!.([settings["arch"][k] for k in ("genatr","discrim","enc1","enc2","dec")], "hdim",    0, settings["arch"]["hdim"])
-Ignite.compare_and_set!.([settings["arch"][k] for k in ("genatr","discrim","enc1","enc2","dec")], "nhidden", 0, settings["arch"]["nhidden"])
 Ignite.save_and_print(settings; outpath = settings["data"]["out"], filename = "settings.toml")
 
 # Initialize generator + discriminator + kernel
@@ -167,7 +162,7 @@ const phys = initialize!(
 )
 const RiceGen = LatentVectorRicianCorrector #LatentVectorRicianNoiseCorrector #VectorRicianCorrector
 const models = make_models(phys, RiceGen)
-# const models = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/LearningCorrections/output/ignite-cvae-2020-07-25-T-16-32-01-989/current-models.bson")["models"]) #TODO
+# const models = deepcopy(BSON.load("/home/jon/Documents/UBCMRI/BlochTorreyExperiments-master/LearningCorrections/output/ignite-cvae-working-gan-2020-07-26-T-13-14-48-018/current-models.bson")["models"]) #TODO
 const ricegen = RiceGen(models["genatr"]) # Generator produces 𝐑^2n outputs parameterizing n Rician distributions
 const optimizers = Dict{String,Any}(
     "genatr"  => Flux.ADAM(settings["opt"]["genatr"]["lr"]),
