@@ -107,8 +107,6 @@ function parse_command_line!(
             if v isa Dict
                 _set_parent_fields!(v, d)
             elseif v == "%PARENT%" && !isnothing(dparent)
-                @show k, v
-                @show d
                 d[k] = deepcopy(dparent[k])
             end
         end

@@ -49,7 +49,7 @@ function saveprogress(savedata::Dict; savefolder, prefix = "", suffix = "")
         try
             BSON.bson(
                 joinpath(savefolder, "$(prefix)$(key)$(suffix).bson"),
-                Dict{String,Any}(string(key) => deepcopy(data)),
+                Dict{String,Any}(string(key) => deepcopy(Flux.cpu(data))),
             )
         catch e
             handleinterrupt(e; msg = "Error saving progress")
@@ -717,9 +717,13 @@ function plot_selfcvae_losses(logger, cb_state, phys;
         epoch = logger.epoch[end]
         dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, logger)
         ps = map(colnames) do colname
-            plot(dfp.epoch, dfp[!, colname]; lab = string(colname), xscale = ifelse(epoch < 10*window, :identity, :log10))
+            if !all(ismissing, dfp[!, colname])
+                plot(dfp.epoch, dfp[!, colname]; lab = string(colname), xscale = ifelse(epoch < 10*window, :identity, :log10))
+            else
+                nothing
+            end
         end
-        p = plot(ps...)
+        p = plot(filter(!isnothing, ps)...)
         showplot && !isnothing(p) && display(p)
         return p
     catch e

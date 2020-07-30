@@ -10,8 +10,8 @@ import UnsafeArrays, LoopVectorization
 using UnsafeArrays: uview, uviews, @uviews
 using LoopVectorization: @avx
 
-import TOML, BSON, DrWatson, Flux, NNlib, Zygote, ChainRules, BlackBoxOptim, Optim, ForwardDiff, DECAES
-export TOML, BSON, DrWatson, Flux, NNlib, Zygote, ChainRules, BlackBoxOptim, Optim, ForwardDiff, DECAES
+import TOML, BSON, DrWatson, Flux, Flux.CUDA, NNlib, Zygote, ChainRules, BlackBoxOptim, Optim, ForwardDiff, DECAES
+export TOML, BSON, DrWatson, Flux,      CUDA, NNlib, Zygote, ChainRules, BlackBoxOptim, Optim, ForwardDiff, DECAES
 using DrWatson: @dict, @ntuple, @pack!, @unpack
 export @dict, @ntuple, @pack!, @unpack
 
@@ -29,6 +29,7 @@ export Rician, RicianCorrector, VectorRicianCorrector, FixedNoiseVectorRicianCor
 export correction, noiselevel, correction_and_noiselevel, corrected_signal_instance, add_correction, add_noise_instance, rician_params
 
 export PhysicsModel, ClosedForm, ToyModel
+export randn_similar, rand_similar
 export physicsmodel, hasclosedform, initialize!, ntheta, nsignal, signal_model
 export θbounds, θlower, θupper, θlabels, θerror
 export sampleθprior, sampleθ, sampleX, sampleY

@@ -1,4 +1,15 @@
 ####
+#### Helpers
+####
+
+randn_similar(::AbstractArray{T}, sz...) where {T} = Base.randn(T, sz...)
+randn_similar(::CUDA.CuArray{T}, sz...) where {T} = Zygote.ignore(() -> CUDA.randn(T, sz...))
+rand_similar(::AbstractArray{T}, sz...) where {T} = Base.rand(T, sz...)
+rand_similar(::CUDA.CuArray{T}, sz...) where {T} = Zygote.ignore(() -> CUDA.rand(T, sz...))
+maybe_vcat(X, Z = nothing) = isnothing(Z) ? X : vcat(X,Z)
+map_dict(f, d::Dict{String,Any}) = Dict{String,Any}(map(((k,v),) -> k => f(v), collect(d)))
+
+####
 #### Rician correctors
 ####
 
@@ -30,7 +41,6 @@ end
 Flux.@functor LatentVectorRicianNoiseCorrector
 
 # Concrete methods to extract δ and ϵ
-@inline maybe_vcat(X, Z = nothing) = isnothing(Z) ? X : vcat(X,Z)
 @inline split_delta_epsilon(δ_logϵ) = δ_logϵ[1:end÷2, :], exp.(δ_logϵ[end÷2+1:end, :]) .+ sqrt(eps(eltype(δ_logϵ)))
 correction_and_noiselevel(G::VectorRicianCorrector, X, Z = nothing) = split_delta_epsilon(G.G(maybe_vcat(X,Z)))
 correction_and_noiselevel(G::FixedNoiseVectorRicianCorrector, X, Z = nothing) = G.G(maybe_vcat(X,Z)), G.ϵ0
@@ -44,8 +54,8 @@ corrected_signal_instance(G::RicianCorrector, X, Z = nothing) = corrected_signal
 corrected_signal_instance(G::RicianCorrector, X, δ, ϵ) = add_noise_instance(G, add_correction(G, X, δ), ϵ)
 add_correction(G::RicianCorrector, X, δ) = @. abs(X + δ) #@. max(X + δ, 0)
 function add_noise_instance(G::RicianCorrector, X, ϵ)
-    ϵR = ϵ .* randn(eltype(X), size(X)...)
-    ϵI = ϵ .* randn(eltype(X), size(X)...)
+    ϵR = ϵ .* randn_similar(X, size(X)...)
+    ϵI = ϵ .* randn_similar(X, size(X)...)
     Xϵ = @. sqrt((X + ϵR)^2 + ϵI^2)
     return Xϵ
 end
@@ -135,8 +145,8 @@ function _signal_model(θ::AbstractVecOrMat, ϵ, n::Int, β::Int)
     f, ϕ, a₀, a₁, τ = θ[1:1,:], θ[2:2,:], θ[3:3,:], θ[4:4,:], θ[5:5,:]
     y = @. (a₀ + a₁ * sin(2*(π*f)*t - ϕ)^β) * exp(-t/τ)
     if !isnothing(ϵ)
-        ϵR = ϵ .* randn(eltype(θ), n, size(θ,2))
-        ϵI = ϵ .* randn(eltype(θ), n, size(θ,2))
+        ϵR = ϵ .* randn_similar(θ, n, size(θ,2))
+        ϵI = ϵ .* randn_similar(θ, n, size(θ,2))
         y = @. sqrt((y + ϵR)^2 + ϵI^2)
     end
     return y
