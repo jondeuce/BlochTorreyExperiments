@@ -5,6 +5,7 @@ Test/*
 GeometryGeneration/Images/*
 Results/*
 LearningCorrections/output/*
+LearningCorrections/wandb/*
 MyelinWaterTools/scripts/output/*
 
 ####################

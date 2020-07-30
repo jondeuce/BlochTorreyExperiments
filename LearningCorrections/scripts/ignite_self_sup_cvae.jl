@@ -26,7 +26,7 @@ const settings = TOML.parse("""
         nval   = 10_240
 
     [train]
-        timeout   = 1800.0 #TODO 1e9
+        timeout   = 3600.0 #TODO 1e9
         epochs    = 999_999
         batchsize = 1024 #TODO 256 2048
         kernelrate  = 10 # Train kernel every `kernelrate` iterations
@@ -41,9 +41,9 @@ const settings = TOML.parse("""
 
     [opt]
         lr       = 1e-4 #TODO
-        lrdrop   = 3.17
+        lrdrop   = 1.0
         lrthresh = 1e-5
-        lrrate   = 500
+        lrrate   = 1000
         [opt.cvae]
             lr = "%PARENT%"
         [opt.genatr]
@@ -636,7 +636,8 @@ evaluator.logger = ignite.utils.setup_logger("evaluator")
 ####
 
 # Initialize logger
-wandb_logger = try WandBLogger() catch e; WandBLogger() end # weird bug; first call to WandBLogger() always throws "ERROR W&B process (PID XXX) did not respond"
+init_wandb_logger() = while true; try return WandBLogger() catch e; sleep(1.0); end; end # weird bug; first call to WandBLogger() always throws "ERROR W&B process (PID XXX) did not respond"
+wandb_logger = init_wandb_logger()
 
 # Attach training/validation output handlers
 for (tag, engine) in [("training", trainer), ("validation", evaluator)]
