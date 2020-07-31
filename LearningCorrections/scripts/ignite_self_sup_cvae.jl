@@ -43,7 +43,7 @@ const settings = TOML.parse("""
         Dsteps      = 1 # Train GAN losses with `Dsteps` discrim updates per genatr update
 
     [eval]
-        metricperiod = 60.0 #TODO
+        metricperiod = 30.0 #TODO
         printperiod  = 60.0 #TODO
         saveperiod   = 300.0 #TODO
         showrate     = 1 #TODO
@@ -642,23 +642,6 @@ trainer.logger = ignite.utils.setup_logger("trainer")
 evaluator = ignite.engine.Engine(@j2p val_metrics)
 evaluator.logger = ignite.utils.setup_logger("evaluator")
 
-####
-#### Weights & biases logger
-####
-
-# Attach training/validation output handlers
-if !isnothing(wandb_logger)
-    for (tag, engine) in [("training", trainer), ("validation", evaluator)]
-        wandb_logger.attach_output_handler(
-            engine;
-            event_name = Events.EPOCH_COMPLETED,
-            tag = tag,
-            output_transform = @j2p(metrics -> metrics),
-            global_step_transform = @j2p((args...;kwargs...) -> trainer.state.epoch),
-        )
-    end
-end
-
 # Force terminate
 trainer.add_event_handler(
     Events.STARTED | Events.ITERATION_STARTED | Events.ITERATION_COMPLETED,
@@ -681,8 +664,8 @@ trainer.add_event_handler(
 
 # Compute callback metrics
 trainer.add_event_handler(
-    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(every = 1), #TODO
-    # Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["metricperiod"])),
+    # Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(every = 1), #TODO
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["metricperiod"])),
     @j2p function (engine)
         evaluator.run(val_loader)
     end
@@ -754,6 +737,23 @@ trainer.add_event_handler(
         (engine.state.epoch == 1) && TimerOutputs.reset_timer!() # throw out compilation timings
     end
 )
+
+####
+#### Weights & biases logger
+####
+
+# Attach training/validation output handlers
+if !isnothing(wandb_logger)
+    for (tag, engine) in [("training", trainer), ("validation", evaluator)]
+        wandb_logger.attach_output_handler(
+            engine;
+            event_name = Events.EPOCH_COMPLETED(event_filter = @j2p run_timeout(settings["eval"]["metricperiod"])),
+            tag = tag,
+            output_transform = @j2p(metrics -> metrics),
+            global_step_transform = @j2p((args...;kwargs...) -> trainer.state.epoch),
+        )
+    end
+end
 
 ####
 #### Run trainer
