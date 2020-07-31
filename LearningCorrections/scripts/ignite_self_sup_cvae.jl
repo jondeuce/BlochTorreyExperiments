@@ -2,31 +2,39 @@
 #### Setup
 ####
 
-using Pkg; Pkg.activate(joinpath(@__DIR__, ".."))
 using MMDLearning
 using PyCall
 pyplot(size=(800,600))
 Threads.@threads for i in 1:Threads.nthreads(); set_zero_subnormals(true); end
-CUDA.allowscalar(false)
-CUDA.device!(0)
+if CUDA.functional() && !haskey(ENV, "JL_DISABLE_GPU")
+    CUDA.allowscalar(false)
+    CUDA.device!(parse(Int, get(ENV, "JL_CUDA_DEVICE", "0")))
+    @eval todevice(x) = Flux.gpu(x)
+else
+    @eval todevice(x) = Flux.cpu(x)
+end
 
 const torch = pyimport("torch")
 const wandb = pyimport("wandb")
 const ignite = pyimport("ignite")
 const logging = pyimport("logging")
-@py_str "from ignite.contrib.handlers.wandb_logger import *\n"
+py"""
+from ignite.contrib.handlers.wandb_logger import *
+"""
+
 const Events = ignite.engine.Events
 const WandBLogger = ignite.contrib.handlers.wandb_logger.WandBLogger
+const wandb_logger = haskey(ENV, "JL_WANDB_LOGGER") ? WandBLogger() : nothing
 
 const settings = TOML.parse("""
     [data]
-        out    = "./output/ignite-cvae-$(MMDLearning.getnow())"
+        out    = "$(!isnothing(wandb_logger) ? wandb.run.dir : "./output/ignite-cvae-" * MMDLearning.getnow())"
         ntrain = 102_400
         ntest  = 10_240
         nval   = 10_240
 
     [train]
-        timeout   = 3600.0 #TODO 1e9
+        timeout   = 10800.0 #TODO 1e9
         epochs    = 999_999
         batchsize = 1024 #TODO 256 2048
         kernelrate  = 10 # Train kernel every `kernelrate` iterations
@@ -36,6 +44,7 @@ const settings = TOML.parse("""
 
     [eval]
         metricperiod = 60.0 #TODO
+        printperiod  = 60.0 #TODO
         saveperiod   = 300.0 #TODO
         showrate     = 1 #TODO
 
@@ -87,14 +96,14 @@ Ignite.parse_command_line!(settings)
 Ignite.save_and_print(settings; outpath = settings["data"]["out"], filename = "settings.toml")
 
 # Initialize generator + discriminator + kernel
-function make_models(phys, Gtype::Type{<:RicianCorrector})
+function make_models(phys, ::Type{Gtype}) where {Gtype<:RicianCorrector}
     models = Dict{String, Any}()
     n   = nsignal(phys) # input signal length
     nθ  = ntheta(phys) # number of physics variables
     θbd = θbounds(phys)
     k   = settings["arch"]["nlatent"]::Int # number of latent variables Z
     nz  = settings["arch"]["zdim"]::Int # embedding dimension
-    toT(m) = Flux.paramtype(eltype(phys), m) |> Flux.gpu
+    toT(m) = Flux.paramtype(eltype(phys), m) |> todevice
 
     # Rician generator. First `n` elements for `δX` scaled to (-δ, δ), second `n` elements for `logϵ` scaled to (noisebounds[1], noisebounds[2])
     models["genatr"] = let
@@ -165,10 +174,12 @@ const phys = initialize!(
     ntest = settings["data"]["ntest"]::Int,
     nval = settings["data"]["nval"]::Int,
 )
-const RiceGen = LatentVectorRicianCorrector #LatentVectorRicianNoiseCorrector #VectorRicianCorrector
-const models = make_models(phys, RiceGen)
-# const models = deepcopy(BSON.load("/home/jdoucette/Documents/code/BlochTorreyExperiments-master/LearningCorrections/output/ignite-cvae-2020-07-29-T-10-42-28-529/current-models.bson")["models"]) |> d -> MMDLearning.map_dict(Flux.gpu, d) #TODO
-const ricegen = RiceGen(models["genatr"]) # Generator produces 𝐑^2n outputs parameterizing n Rician distributions
+RiceGenType = LatentVectorRicianCorrector #LatentVectorRicianNoiseCorrector #VectorRicianCorrector
+const models = make_models(phys, RiceGenType)
+# const models = deepcopy(BSON.load("/home/jdoucette/Documents/code/BlochTorreyExperiments-master/LearningCorrections/output/ignite-cvae-2020-07-29-T-10-42-28-529/current-models.bson")["models"]) |> d -> MMDLearning.map_dict(todevice, d) #TODO
+const ricegen = Dict{String,Any}(
+    "genatr" => RiceGenType(models["genatr"]), # Generator produces 𝐑^2n outputs parameterizing n Rician distributions
+)
 const optimizers = Dict{String,Any}(
     "genatr"  => Flux.ADAM(settings["opt"]["genatr"]["lr"]),
     "discrim" => Flux.ADAM(settings["opt"]["discrim"]["lr"]),
@@ -183,8 +194,8 @@ MMDLearning.model_summary(models, joinpath(settings["data"]["out"], "model-summa
 @inline sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ)))
 @inline sample_mv_normal(μ0::Matrix{T}, σ::Matrix{T}) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ)))
 @inline pow2(x) = x*x
-const theta_lower_bounds = θlower(phys) |> Flux.gpu
-const theta_upper_bounds = θupper(phys) |> Flux.gpu
+const theta_lower_bounds = θlower(phys) |> todevice
+const theta_upper_bounds = θupper(phys) |> todevice
 sampleθprior_similar(Y, n = size(Y,2)) = rand_similar(Y, ntheta(phys), n) .* (theta_upper_bounds .- theta_lower_bounds) .+ theta_lower_bounds
 
 # KL-divergence contribution to cross-entropy (Note: dropped constant -zdim/2 term)
@@ -195,7 +206,7 @@ EvidenceLowerBound(x, μx0, σx) = sum(@. pow2((x - μx0) / σx) + 2 * log(σx))
 
 # GAN losses
 D_Y_loss(Y) = models["discrim"](Y) # discrim on real data
-D_G_X_loss(X,Z) = models["discrim"](corrected_signal_instance(ricegen, X, Z)) # discrim on genatr data
+D_G_X_loss(X,Z) = models["discrim"](corrected_signal_instance(ricegen["genatr"], X, Z)) # discrim on genatr data
 Dloss(X,Y,Z) = -mean(log.(D_Y_loss(Y)) .+ log.(1 .- D_G_X_loss(X,Z)))
 Gloss(X,Z) = mean(log.(1 .- D_G_X_loss(X,Z)))
 
@@ -242,7 +253,7 @@ end
 
 function sampleX̂θZ(Y; kwargs...)
     @timeit "sampleXθZ" CUDA.@sync X, θ, Z = sampleXθZ(Y; kwargs...)
-    @timeit "sampleX̂"   CUDA.@sync X̂ = corrected_signal_instance(ricegen, X, Z)
+    @timeit "sampleX̂"   CUDA.@sync X̂ = corrected_signal_instance(ricegen["genatr"], X, Z)
     return X̂, θ, Z
 end
 
@@ -251,8 +262,8 @@ sampleX̂(Y; kwargs...) = sampleX̂θZ(Y; kwargs...)[1]
 function DataConsistency(Y, μG0, σG)
     # YlogL = -sum(@. MMDLearning._rician_logpdf(Y, μG0, σG)) # Rician negative log likelihood
     YlogL = sum(@. 2 * log(σG) + pow2((Y - μG0) / σG)) / 2 # Gaussian negative likelihood for testing
-    # YlogL += 1000 * sum(abs2, Y .- add_noise_instance(ricegen, μG0, σG)) / 2 # L2 norm for testing/pretraining
-    # YlogL = 10 * sum(abs, Y .- add_noise_instance(ricegen, μG0, σG)) # L1 norm for testing/pretraining
+    # YlogL += 1000 * sum(abs2, Y .- add_noise_instance(ricegen["genatr"], μG0, σG)) / 2 # L2 norm for testing/pretraining
+    # YlogL = 10 * sum(abs, Y .- add_noise_instance(ricegen["genatr"], μG0, σG)) # L1 norm for testing/pretraining
     return YlogL
 end
 
@@ -290,8 +301,8 @@ function SelfCVAEloss(Y; recover_Z = true)
 
     # Corrected X̂ instance
     X = signal_model(phys, θ) # differentiate through physics model
-    μG0, σG = rician_params(ricegen, X, Z) # Rician negative log likelihood
-    X̂ = add_noise_instance(ricegen, μG0, σG)
+    μG0, σG = rician_params(ricegen["genatr"], X, Z) # Rician negative log likelihood
+    X̂ = add_noise_instance(ricegen["genatr"], μG0, σG)
 
     # Data consistency penalty
     # YlogL = DataConsistency(Y, μG0, σG) / Nbatch #TODO
@@ -318,7 +329,7 @@ function RegularizeX̂(Y; recover_Z = true)
     θhat, Zhat = InvertY(Y)
 
     # X = signal_model(phys, θhat) # differentiate through physics model
-    # μG0, σG = rician_params(ricegen, X, Zhat)
+    # μG0, σG = rician_params(ricegen["genatr"], X, Zhat)
     # YlogL = DataConsistency(Y, μG0, σG) / Nbatch
 
     # Limit distribution of X̂ ∼ G(X) with MMD
@@ -326,8 +337,8 @@ function RegularizeX̂(Y; recover_Z = true)
     θ = Zygote.dropgrad(θhat)
     X = Zygote.dropgrad(signal_model(phys, θ))
     Z = (recover_Z ? randn : zeros)(eltype(Zhat), size(Zhat)...)
-    μG0, σG = rician_params(ricegen, X, Z)
-    X̂ = add_noise_instance(ricegen, μG0, σG)
+    μG0, σG = rician_params(ricegen["genatr"], X, Z)
+    X̂ = add_noise_instance(ricegen["genatr"], μG0, σG)
     MMDsq = MMDloss(X̂, Y)
 
     # Return total loss
@@ -372,7 +383,7 @@ val_loader = torch.utils.data.DataLoader(make_data_tuples(:val); batch_size = se
 
 function train_step(engine, batch)
     Ytrain_cpu, = Ignite.array.(batch)
-    Ytrain = Ytrain_cpu |> Flux.gpu
+    Ytrain = Ytrain_cpu |> todevice
     metrics = Dict{Any,Any}()
 
     @timeit "train batch" CUDA.@sync begin
@@ -404,7 +415,7 @@ function train_step(engine, batch)
 
         if mod(engine.state.iteration-1, settings["train"]["GANrate"]) == 0
             @timeit "gan" CUDA.@sync let
-                @timeit "sampleXθZ" CUDA.@sync Xtrain, θtrain, Ztrain = sampleXθZ(Ytrain; recover_θ = true, recover_Z = false) .|> Flux.gpu
+                @timeit "sampleXθZ" CUDA.@sync Xtrain, θtrain, Ztrain = sampleXθZ(Ytrain; recover_θ = true, recover_Z = false) .|> todevice
                 @timeit "discrim" CUDA.@sync let
                     ps = Flux.params(models["discrim"])
                     for _ in 1:settings["train"]["Dsteps"]
@@ -426,7 +437,7 @@ function train_step(engine, batch)
 
         # Train CVAE loss
         @timeit "cvae" CUDA.@sync let
-            @timeit "sampleX̂θZ" CUDA.@sync X̂train, θtrain, Ztrain = sampleX̂θZ(Ytrain; recover_θ = false, recover_Z = false) .|> Flux.gpu
+            @timeit "sampleX̂θZ" CUDA.@sync X̂train, θtrain, Ztrain = sampleX̂θZ(Ytrain; recover_θ = false, recover_Z = false) .|> todevice
             ps = Flux.params(models["enc1"], models["enc2"], models["dec"])
             @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(() -> CVAEloss(X̂train, θtrain, Ztrain; recover_Z = true), ps)
             @timeit "reverse" CUDA.@sync gs = back(one(eltype(phys)))
@@ -469,13 +480,13 @@ function val_metrics(engine, batch)
         cb_state["metrics"] = Dict{String,Any}()
 
         # Invert Y and make Xs
-        Y, = Ignite.array.(batch) .|> Flux.gpu
+        Y, = Ignite.array.(batch) .|> todevice
         Nbatch = size(Y,2)
         θ, Z = InvertY(Y)
         X = signal_model(phys, θ)
-        δG0, σG = correction_and_noiselevel(ricegen, X, Z)
-        μG0 = add_correction(ricegen, X, δG0)
-        X̂ = add_noise_instance(ricegen, μG0, σG)
+        δG0, σG = correction_and_noiselevel(ricegen["genatr"], X, Z)
+        μG0 = add_correction(ricegen["genatr"], X, δG0)
+        X̂ = add_noise_instance(ricegen["genatr"], μG0, σG)
 
         # Cross-entropy loss function
         μr0, σr = split_mean_std(models["enc1"](X̂)) #TODO X̂ or Y?
@@ -537,9 +548,9 @@ function val_metrics(engine, batch)
             θfit, Zfit = split_theta_latent(sample_mv_normal(μx0, σx))
             θfit .= clamp.(θfit, theta_lower_bounds, theta_upper_bounds)
             Xθfit = signal_model(phys, θfit)
-            δθfit, ϵθfit = correction_and_noiselevel(ricegen, Xθfit, Zfit)
-            Xθδfit = add_correction(ricegen, Xθfit, δθfit)
-            Xθhatfit = add_noise_instance(ricegen, Xθδfit, ϵθfit)
+            δθfit, ϵθfit = correction_and_noiselevel(ricegen["genatr"], Xθfit, Zfit)
+            Xθδfit = add_correction(ricegen["genatr"], Xθfit, δθfit)
+            Xθhatfit = add_noise_instance(ricegen["genatr"], Xθδfit, ϵθfit)
             Yθfit = hasclosedform(phys) ? signal_model(ClosedForm(phys), θfit) : missing
             Yθhatfit = hasclosedform(phys) ? signal_model(ClosedForm(phys), θfit, noiselevel(ClosedForm(phys))) : missing
             cache_cb_state!(X̂, θfit, Zfit, Xθfit, δθfit, ϵθfit, Xθδfit, Xθhatfit, Yθfit, Yθhatfit; suf = "fit") #TODO X̂ or Y?
@@ -635,19 +646,17 @@ evaluator.logger = ignite.utils.setup_logger("evaluator")
 #### Weights & biases logger
 ####
 
-# Initialize logger
-init_wandb_logger() = while true; try return WandBLogger() catch e; sleep(1.0); end; end # weird bug; first call to WandBLogger() always throws "ERROR W&B process (PID XXX) did not respond"
-wandb_logger = init_wandb_logger()
-
 # Attach training/validation output handlers
-for (tag, engine) in [("training", trainer), ("validation", evaluator)]
-    wandb_logger.attach_output_handler(
-        engine;
-        event_name = Events.EPOCH_COMPLETED,
-        tag = tag,
-        output_transform = @j2p(metrics -> metrics),
-        global_step_transform = @j2p((args...;kwargs...) -> trainer.state.epoch),
-    )
+if !isnothing(wandb_logger)
+    for (tag, engine) in [("training", trainer), ("validation", evaluator)]
+        wandb_logger.attach_output_handler(
+            engine;
+            event_name = Events.EPOCH_COMPLETED,
+            tag = tag,
+            output_transform = @j2p(metrics -> metrics),
+            global_step_transform = @j2p((args...;kwargs...) -> trainer.state.epoch),
+        )
+    end
 end
 
 # Force terminate
@@ -672,7 +681,7 @@ trainer.add_event_handler(
 
 # Compute callback metrics
 trainer.add_event_handler(
-    Events.STARTED | Events.EPOCH_COMPLETED(every = 1), #TODO
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(every = 1), #TODO
     # Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["metricperiod"])),
     @j2p function (engine)
         evaluator.run(val_loader)
@@ -695,7 +704,7 @@ trainer.add_event_handler(
 # Check for + save best model + logger + make plots
 trainer.add_event_handler(
     # Events.EPOCH_COMPLETED(every = 10), #TODO
-    Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["saveperiod"])),
+    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["saveperiod"])),
     @j2p function (engine)
         losses = logger.Yhat_logL[logger.dataset .=== :val] |> skipmissing |> collect
         if !isempty(losses) && (length(losses) == 1 || losses[end] < minimum(losses[1:end-1]))
@@ -736,7 +745,7 @@ trainer.add_event_handler(
 # Print TimerOutputs timings
 trainer.add_event_handler(
     # Events.EPOCH_COMPLETED(every = 10),
-    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["metricperiod"])),
+    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["printperiod"])),
     @j2p function (engine)
         if mod(engine.state.epoch-1, settings["eval"]["showrate"]) == 0
             show(stdout, TimerOutputs.get_defaulttimer()); println("\n")

@@ -44,9 +44,9 @@ version = "2.11.0"
 
 [[ArrayLayouts]]
 deps = ["FillArrays", "LinearAlgebra"]
-git-tree-sha1 = "6f6e33efac70fc24c1f2a654a090b7af01690ffe"
+git-tree-sha1 = "951c3fc1ff93497c88fb1dfa893f4de55d0b38e3"
 uuid = "4c555306-a7a7-4459-81d9-ec55ddd5c99a"
-version = "0.3.7"
+version = "0.3.8"
 
 [[AxisAlgorithms]]
 deps = ["LinearAlgebra", "Random", "SparseArrays", "WoodburyMatrices"]
@@ -116,12 +116,9 @@ version = "1.0.0"
 
 [[CUDA]]
 deps = ["AbstractFFTs", "Adapt", "BinaryProvider", "CEnum", "DataStructures", "ExprTools", "GPUArrays", "GPUCompiler", "LLVM", "Libdl", "LinearAlgebra", "Logging", "MacroTools", "NNlib", "Pkg", "Printf", "Random", "Reexport", "Requires", "SparseArrays", "Statistics", "TimerOutputs"]
-git-tree-sha1 = "16fa78f6c888b645a69b0652acc4ae7009f82244"
-pinned = true
-repo-rev = "master"
-repo-url = "https://github.com/JuliaGPU/CUDA.jl.git"
+git-tree-sha1 = "2c007bb3931360013d32bcd53a727e0a7f144e00"
 uuid = "052768ef-5323-5732-b1bb-66c8b64840ba"
-version = "1.2.0"
+version = "1.2.1"
 
 [[CategoricalArrays]]
 deps = ["DataAPI", "Future", "JSON", "Missings", "Printf", "Statistics", "Unicode"]
@@ -607,9 +604,9 @@ uuid = "856f044c-d86e-5d09-b602-aeab76dc8ba7"
 version = "2020.1.216+0"
 
 [[MLStyle]]
-git-tree-sha1 = "077e1f2ddb1dcd06bc1bc4babf3244f0f168404f"
+git-tree-sha1 = "95b06320a3b9cda1815efdb232051015698c39ba"
 uuid = "d8e11817-5142-5d16-987a-aa16d5891078"
-version = "0.4.2"
+version = "0.4.3"
 
 [[MMDLearning]]
 deps = ["ArgParse", "BSON", "BenchmarkTools", "BlackBoxOptim", "ChainRules", "DECAES", "DataFrames", "Dates", "Distributions", "DrWatson", "EllipsisNotation", "Flux", "ForwardDiff", "LaTeXStrings", "LegibleLambdas", "LinearAlgebra", "LoopVectorization", "MAT", "NNlib", "Optim", "Parameters", "Printf", "Random", "Reexport", "SpecialFunctions", "Statistics", "StatsBase", "StatsPlots", "TOML", "TimerOutputs", "UnsafeArrays", "Zygote"]
@@ -1138,9 +1135,9 @@ version = "1.4.5+0"
 
 [[Zygote]]
 deps = ["AbstractFFTs", "ArrayLayouts", "ChainRules", "DiffRules", "Distributed", "FillArrays", "ForwardDiff", "Future", "IRTools", "InteractiveUtils", "LinearAlgebra", "LoopVectorization", "MacroTools", "NNlib", "NaNMath", "Random", "Requires", "SpecialFunctions", "Statistics", "ZygoteRules"]
-git-tree-sha1 = "16a7228209e6f457e9d71c39a58965616425384e"
+git-tree-sha1 = "0079d92995b0fbcffd5d475d49ec8ca49375c471"
 uuid = "e88e6eb3-aa80-5325-afca-941959d7151f"
-version = "0.5.3"
+version = "0.5.4"
 
 [[ZygoteRules]]
 deps = ["MacroTools"]
