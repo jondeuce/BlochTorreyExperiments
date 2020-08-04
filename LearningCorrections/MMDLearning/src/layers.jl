@@ -242,10 +242,10 @@ Multi-layer perceptron mapping inputs with height `sz[1]` to outputs with height
 `Nhid+2` total dense layers are used with `Dhid` hidden nodes. The first `Nhid+1` layers
 use activation `σhid` and the last layer uses activation `σout`. 
 """
-MLP(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout = identity) =
+MLP(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout = identity; skip = false) =
     Flux.Chain(
         Flux.Dense(sz[1], Dhid, σhid),
-        [Flux.Dense(Dhid, Dhid, σhid) for _ in 1:Nhid]...,
+        [Flux.Dense(Dhid, Dhid, σhid) |> l -> skip ? Flux.SkipConnection(l, +) : l for _ in 1:Nhid]...,
         Flux.Dense(Dhid, sz[2], σout)
     )
 

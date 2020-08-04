@@ -53,9 +53,10 @@ noiselevel(G::RicianCorrector, X, Z = nothing) = correction_and_noiselevel(G, X,
 corrected_signal_instance(G::RicianCorrector, X, Z = nothing) = corrected_signal_instance(G, X, correction_and_noiselevel(G, X, Z)...)
 corrected_signal_instance(G::RicianCorrector, X, δ, ϵ) = add_noise_instance(G, add_correction(G, X, δ), ϵ)
 add_correction(G::RicianCorrector, X, δ) = @. abs(X + δ) #@. max(X + δ, 0)
-function add_noise_instance(G::RicianCorrector, X, ϵ)
-    ϵR = ϵ .* randn_similar(X, size(X)...)
-    ϵI = ϵ .* randn_similar(X, size(X)...)
+function add_noise_instance(G::RicianCorrector, X, ϵ, ninstances = nothing)
+    ϵsize = isnothing(ninstances) ? size(X) : (size(X)..., ninstances)
+    ϵR = ϵ .* randn_similar(X, ϵsize)
+    ϵI = ϵ .* randn_similar(X, ϵsize)
     Xϵ = @. sqrt((X + ϵR)^2 + ϵI^2)
     return Xϵ
 end

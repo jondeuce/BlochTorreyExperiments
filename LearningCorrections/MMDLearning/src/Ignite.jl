@@ -15,9 +15,11 @@ export @j2p, event_throttler, run_timeout
 # which is used to terminate training in an error or
 # user interrupt occurs.
 macro j2p(f)
-    local PyCall = __module__.PyCall
     local wrapped_f = :(wrap_catch_interrupt($(esc(f))))
-    :($PyCall.jlfun2pyfun($wrapped_f))
+    local jlfun2pyfun = esc(:(PyCall.jlfun2pyfun))
+    quote
+        $jlfun2pyfun($wrapped_f)
+    end
 end
 
 function wrap_catch_interrupt(f; msg = "")

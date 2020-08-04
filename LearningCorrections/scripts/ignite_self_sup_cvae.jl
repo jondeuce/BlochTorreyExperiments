@@ -34,23 +34,28 @@ const settings = TOML.parse("""
         nval   = 10_240
 
     [train]
-        timeout   = 10800.0 #TODO 1e9
-        epochs    = 999_999
-        batchsize = 1024 #TODO 256 2048
+        timeout     = 1e9 #TODO 10800.0
+        epochs      = 999_999
+        batchsize   = 1024 #TODO 256 2048
         kernelrate  = 10 # Train kernel every `kernelrate` iterations
         kernelsteps = 1 # Gradient updates per kernel train
+        GANcycle    = 10 # CVAE and GAN take turns training for `GANcycle` consecutive epochs (0 trains both each iteration)
         GANrate     = 1 # Train GAN losses every `GANrate` iterations
-        Dsteps      = 1 # Train GAN losses with `Dsteps` discrim updates per genatr update
+        Dsteps      = 5 # Train GAN losses with `Dsteps` discrim updates per genatr update
+        [train.augment]
+            flipsignals = true # Randomly reverse signals
+            Dchunk      = 96   # Discriminator looks at random chunks of size `Dchunk` (0 uses whole signal)
+            Gsamples    = 10   # Discriminator averages over `Gsamples` instances of corrected signals
 
     [eval]
-        metricperiod = 30.0 #TODO
+        metricperiod = 60.0 #TODO
         printperiod  = 60.0 #TODO
         saveperiod   = 300.0 #TODO
         showrate     = 1 #TODO
 
     [opt]
-        lr       = 1e-4 #TODO
-        lrdrop   = 1.0
+        lr       = 1e-4 #3e-5 #TODO
+        lrdrop   = 1.0 #3.17
         lrthresh = 1e-5
         lrrate   = 1000
         [opt.cvae]
@@ -69,25 +74,31 @@ const settings = TOML.parse("""
         physics = "$(get(ENV, "JL_PHYS_MODEL", "toy"))" # "toy" or "mri"
         nlatent = 1 # number of latent variables Z
         zdim    = 6 # embedding dimension of z
-        hdim    = 256 # default for models below
-        nhidden = 4 # default for models below
+        hdim    = 256 # size of hidden layers
+        nhidden = 4 # number of hidden layers
+        skip    = false # skip connection
         [arch.enc1]
             hdim    = "%PARENT%"
             nhidden = "%PARENT%"
+            skip    = "%PARENT%"
         [arch.enc2]
             hdim    = "%PARENT%"
             nhidden = "%PARENT%"
+            skip    = "%PARENT%"
         [arch.dec]
             hdim    = "%PARENT%"
             nhidden = "%PARENT%"
+            skip    = "%PARENT%"
         [arch.genatr]
             hdim        = 32
             nhidden     = 2
+            skip        = "%PARENT%"
             maxcorr     = $(get(ENV, "JL_PHYS_MODEL", "toy") == "toy" ? 0.1 : 0.025) # correction amplitude
             noisebounds = $(get(ENV, "JL_PHYS_MODEL", "toy") == "toy" ? [-8.0, -2.0] : [-6.0, -3.0]) # noise amplitude
         [arch.discrim]
             hdim    = "%PARENT%"
             nhidden = "%PARENT%"
+            skip    = "%PARENT%"
         [arch.kernel]
             nbandwidth = 8
             bwbounds   = $(get(ENV, "JL_PHYS_MODEL", "toy") == "toy" ? [-8.0, 4.0] : [-10.0, 4.0]) # bounds for kernel bandwidths (logsigma)
@@ -109,6 +120,7 @@ function make_models(phys, ::Type{Gtype}) where {Gtype<:RicianCorrector}
     models["genatr"] = let
         hdim = settings["arch"]["genatr"]["hdim"]::Int
         nhidden = settings["arch"]["genatr"]["nhidden"]::Int
+        skip = settings["arch"]["genatr"]["skip"]::Bool
         maxcorr = settings["arch"]["genatr"]["maxcorr"]::Float64
         noisebounds = settings["arch"]["genatr"]["noisebounds"]::Vector{Float64}
         nin  = Gtype <: Union{<:VectorRicianCorrector, <:FixedNoiseVectorRicianCorrector} ? n + k :
@@ -123,30 +135,49 @@ function make_models(phys, ::Type{Gtype}) where {Gtype<:RicianCorrector}
             Gtype <: LatentVectorRicianNoiseCorrector ? MMDLearning.CatScale([(noisebounds...,)], [n]) :
             error("Unsupported corrector type: $Gtype")
         Flux.Chain(
-            MMDLearning.MLP(nin => nout, nhidden, hdim, Flux.relu, tanh)...,
+            MMDLearning.MLP(nin => nout, nhidden, hdim, Flux.relu, tanh; skip = skip)...,
             OutputScale
         ) |> toT
     end
+
+    RESCNN(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout = identity; skip = false) =
+        Flux.Chain(
+            x::AbstractMatrix -> reshape(x, sz[1], 1, 1, size(x,2)),
+            Flux.Conv((3,1), 1=>Dhid, identity; pad = Flux.SamePad()),
+            mapreduce(vcat, 1:Nhid÷2) do _
+                convlayers = [Flux.Conv((3,1), Dhid=>Dhid, σhid; pad = Flux.SamePad()) for _ in 1:2]
+                skip ? [Flux.SkipConnection(Flux.Chain(convlayers...), +)] : convlayers
+            end...,
+            Flux.Conv((1,1), Dhid=>1, identity; pad = Flux.SamePad()),
+            x::AbstractArray{<:Any,4} -> reshape(x, sz[1], size(x,4)),
+            Flux.Dense(sz[1], sz[2], σout),
+        )
 
     # Encoders
     models["enc1"] = let
         hdim = settings["arch"]["enc1"]["hdim"]::Int
         nhidden = settings["arch"]["enc1"]["nhidden"]::Int
-        MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity) |> toT
+        skip = settings["arch"]["enc1"]["skip"]::Bool
+        MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity; skip = skip) |> toT
+        # RESCNN(n => 2*nz, nhidden, hdim, Flux.relu, identity; skip = skip) |> toT
     end
 
     models["enc2"] = let
         hdim = settings["arch"]["enc2"]["hdim"]::Int
         nhidden = settings["arch"]["enc2"]["nhidden"]::Int
-        MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity) |> toT
+        skip = settings["arch"]["enc2"]["skip"]::Bool
+        MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity; skip = skip) |> toT
+        # RESCNN(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity; skip = skip) |> toT
     end
 
     # Decoder
     models["dec"] = let
         hdim = settings["arch"]["dec"]["hdim"]::Int
         nhidden = settings["arch"]["dec"]["nhidden"]::Int
+        skip = settings["arch"]["dec"]["skip"]::Bool
         Flux.Chain(
-            MMDLearning.MLP(n + nz => 2*(nθ + k), nhidden, hdim, Flux.relu, identity)...,
+            MMDLearning.MLP(n + nz => 2*(nθ + k), nhidden, hdim, Flux.relu, identity; skip = skip)...,
+            # RESCNN(n + nz => 2*(nθ + k), nhidden, hdim, Flux.relu, identity; skip = skip)...,
             MMDLearning.CatScale(eltype(θbd)[θbd; (-1, 1)], [ones(Int, nθ); k + nθ + k]),
         ) |> toT
     end
@@ -155,7 +186,10 @@ function make_models(phys, ::Type{Gtype}) where {Gtype<:RicianCorrector}
     models["discrim"] = let
         hdim = settings["arch"]["discrim"]["hdim"]::Int
         nhidden = settings["arch"]["discrim"]["nhidden"]::Int
-        MMDLearning.MLP(n => 1, nhidden, hdim, Flux.relu, Flux.sigmoid) |> toT
+        skip = settings["arch"]["discrim"]["skip"]::Bool
+        Dchunk = settings["train"]["augment"]["Dchunk"]::Int
+        MMDLearning.MLP((Dchunk > 0 ? Dchunk : n) => 1, nhidden, hdim, Flux.relu, Flux.sigmoid; skip = skip) |> toT
+        # RESCNN(n => 1, nhidden, hdim, Flux.relu, Flux.sigmoid; skip = skip) |> toT
     end
 
     # MMD kernel bandwidths
@@ -176,7 +210,7 @@ const phys = initialize!(
 )
 RiceGenType = LatentVectorRicianCorrector #LatentVectorRicianNoiseCorrector #VectorRicianCorrector
 const models = make_models(phys, RiceGenType)
-# const models = deepcopy(BSON.load("/home/jdoucette/Documents/code/BlochTorreyExperiments-master/LearningCorrections/output/ignite-cvae-2020-07-29-T-10-42-28-529/current-models.bson")["models"]) |> d -> MMDLearning.map_dict(todevice, d) #TODO
+# const models = deepcopy(BSON.load("/home/jdoucette/Documents/code/BlochTorreyExperiments-master/LearningCorrections/output/ignite-cvae-2020-08-02-T-18-24-55-306/current-models.bson")["models"]) |> d -> MMDLearning.map_dict(todevice, d) #TODO
 const ricegen = Dict{String,Any}(
     "genatr" => RiceGenType(models["genatr"]), # Generator produces 𝐑^2n outputs parameterizing n Rician distributions
 )
@@ -199,16 +233,35 @@ const theta_upper_bounds = θupper(phys) |> todevice
 sampleθprior_similar(Y, n = size(Y,2)) = rand_similar(Y, ntheta(phys), n) .* (theta_upper_bounds .- theta_lower_bounds) .+ theta_lower_bounds
 
 # KL-divergence contribution to cross-entropy (Note: dropped constant -zdim/2 term)
-KLDivergence(μq0, σq, μr0, σr) = sum(@. pow2(σq / σr) + pow2((μr0 - μq0) / σr) - 2 * log(σq / σr)) / 2
+KLDivergence(μq0, σq, μr0, σr) = (ϵ = sqrt(eps(eltype(μq0))); sum(@. pow2(σq / σr) + pow2((μr0 - μq0) / σr) - 2 * log(σq / σr + ϵ)) / 2)
 
 # Negative log-likelihood/ELBO contribution to cross-entropy (Note: dropped constant +zdim*log(2π)/2 term)
-EvidenceLowerBound(x, μx0, σx) = sum(@. pow2((x - μx0) / σx) + 2 * log(σx)) / 2
+EvidenceLowerBound(x, μx0, σx) = (ϵ = sqrt(eps(eltype(μx0))); sum(@. pow2((x - μx0) / σx) + 2 * log(σx + ϵ)) / 2)
 
 # GAN losses
-D_Y_loss(Y) = models["discrim"](Y) # discrim on real data
-D_G_X_loss(X,Z) = models["discrim"](corrected_signal_instance(ricegen["genatr"], X, Z)) # discrim on genatr data
-Dloss(X,Y,Z) = -mean(log.(D_Y_loss(Y)) .+ log.(1 .- D_G_X_loss(X,Z)))
-Gloss(X,Z) = mean(log.(1 .- D_G_X_loss(X,Z)))
+function augmentations(X)
+    Dchunk = settings["train"]["augment"]["Dchunk"]::Int
+    flipsignals = settings["train"]["augment"]["flipsignals"]::Bool
+    i = Dchunk <= 0 ? Colon() :
+        rand(firstindex(X,1):lastindex(X,1)-Dchunk+1) .+ (0:Dchunk-1)
+    i = !flipsignals ? i :
+        rand(Bool) ? i : (i !== Colon() ? reverse(i) : (lastindex(X,1):-1:firstindex(X,1)))
+    if i !== Colon()
+        X = X[i,..]
+    end
+    return X
+end
+function X̂_augmentations(X,Z)
+    Gsamples = settings["train"]["augment"]["Gsamples"]::Int
+    ν, ϵ = rician_params(ricegen["genatr"], X, Z)
+    X̂ = add_noise_instance(ricegen["genatr"], ν, ϵ, Gsamples)
+    return augmentations(X̂)
+end
+Y_augmentations(Y) = augmentations(Y)
+D_Y_loss(Y) = models["discrim"](Y_augmentations(Y)) # discrim on real data
+D_G_X_loss(X,Z) = (X̂ = X̂_augmentations(X,Z); reshape(models["discrim"](reshape(X̂, size(X̂,1), :)), 1, size(X̂)[2:end]...)) # discrim on genatr data
+Dloss(X,Y,Z) = (ϵ = sqrt(eps(eltype(X))); -mean(log.(D_Y_loss(Y) .+ ϵ) .+ log.(1 .- D_G_X_loss(X,Z) .+ ϵ)))
+Gloss(X,Z) = (ϵ = sqrt(eps(eltype(X))); mean(log.(1 .- D_G_X_loss(X,Z) .+ ϵ)))
 
 # Maximum mean discrepency (m*MMD^2) loss
 MMDloss(X̂,Y) = size(Y,2) * mmd_flux(models["logsigma"], X̂, Y)
@@ -260,8 +313,9 @@ end
 sampleX̂(Y; kwargs...) = sampleX̂θZ(Y; kwargs...)[1]
 
 function DataConsistency(Y, μG0, σG)
+    ϵ = sqrt(eps(eltype(Y)))
     # YlogL = -sum(@. MMDLearning._rician_logpdf(Y, μG0, σG)) # Rician negative log likelihood
-    YlogL = sum(@. 2 * log(σG) + pow2((Y - μG0) / σG)) / 2 # Gaussian negative likelihood for testing
+    YlogL = sum(@. 2 * log(σG + ϵ) + pow2((Y - μG0) / σG)) / 2 # Gaussian negative likelihood for testing
     # YlogL += 1000 * sum(abs2, Y .- add_noise_instance(ricegen["genatr"], μG0, σG)) / 2 # L2 norm for testing/pretraining
     # YlogL = 10 * sum(abs, Y .- add_noise_instance(ricegen["genatr"], μG0, σG)) # L1 norm for testing/pretraining
     return YlogL
@@ -387,6 +441,45 @@ function train_step(engine, batch)
     metrics = Dict{Any,Any}()
 
     @timeit "train batch" CUDA.@sync begin
+        # CVAE and GAN take turns training for `GANcycle` consecutive epochs
+        GANcycle = settings["train"]["GANcycle"]::Int
+        train_CVAE = (GANcycle == 0) || iseven(div(engine.state.epoch-1, GANcycle))
+        train_GAN  = (GANcycle == 0) || !train_CVAE
+
+        # # Train CVAE every iteration, GAN every `GANrate` iterations
+        # train_CVAE = true
+        # train_GAN = mod(engine.state.iteration-1, settings["train"]["GANrate"]::Int) == 0 #TODO
+
+        # Train CVAE loss
+        train_CVAE && @timeit "cvae" CUDA.@sync let
+            ps = Flux.params(models["enc1"], models["enc2"], models["dec"])
+            @timeit "sampleX̂θZ" CUDA.@sync X̂train, θtrain, Ztrain = sampleX̂θZ(Ytrain; recover_θ = false, recover_Z = false) .|> todevice
+            @timeit "forward"   CUDA.@sync ℓ, back = Zygote.pullback(() -> CVAEloss(X̂train, θtrain, Ztrain; recover_Z = true), ps)
+            @timeit "reverse"   CUDA.@sync gs = back(one(eltype(phys)))
+            @timeit "update!"   CUDA.@sync Flux.Optimise.update!(optimizers["cvae"], ps, gs)
+            metrics["CVAEloss"] = ℓ
+        end
+
+        train_GAN && @timeit "gan" CUDA.@sync let
+            @timeit "sampleXθZ" CUDA.@sync Xtrain, θtrain, Ztrain = sampleXθZ(Ytrain; recover_θ = true, recover_Z = false) .|> todevice #TODO
+            @timeit "discrim" CUDA.@sync let
+                ps = Flux.params(models["discrim"])
+                for _ in 1:settings["train"]["Dsteps"]
+                    @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(() -> Dloss(Xtrain, Ytrain, Ztrain), ps)
+                    @timeit "reverse" CUDA.@sync gs = back(one(eltype(phys)))
+                    @timeit "update!" CUDA.@sync Flux.Optimise.update!(optimizers["discrim"], ps, gs)
+                    metrics["Dloss"] = ℓ
+                end
+            end
+            @timeit "genatr" CUDA.@sync let
+                ps = Flux.params(models["genatr"])
+                @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(() -> Gloss(Xtrain, Ztrain), ps)
+                @timeit "reverse" CUDA.@sync gs = back(one(eltype(phys)))
+                @timeit "update!" CUDA.@sync Flux.Optimise.update!(optimizers["genatr"], ps, gs)
+                metrics["Gloss"] = ℓ
+            end
+        end
+
         #= Regularize X̂ via MMD
         if mod(engine.state.iteration-1, settings["train"]["kernelrate"]) == 0
             @timeit "mmd kernel" let
@@ -412,38 +505,6 @@ function train_step(engine, batch)
             end
         end
         =#
-
-        if mod(engine.state.iteration-1, settings["train"]["GANrate"]) == 0
-            @timeit "gan" CUDA.@sync let
-                @timeit "sampleXθZ" CUDA.@sync Xtrain, θtrain, Ztrain = sampleXθZ(Ytrain; recover_θ = true, recover_Z = false) .|> todevice
-                @timeit "discrim" CUDA.@sync let
-                    ps = Flux.params(models["discrim"])
-                    for _ in 1:settings["train"]["Dsteps"]
-                        @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(() -> Dloss(Xtrain, Ytrain, Ztrain), ps)
-                        @timeit "reverse" CUDA.@sync gs = back(one(eltype(phys)))
-                        @timeit "update!" CUDA.@sync Flux.Optimise.update!(optimizers["discrim"], ps, gs)
-                        metrics["Dloss"] = ℓ
-                    end
-                end
-                @timeit "genatr" CUDA.@sync let
-                    ps = Flux.params(models["genatr"])
-                    @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(() -> Gloss(Xtrain, Ztrain), ps)
-                    @timeit "reverse" CUDA.@sync gs = back(one(eltype(phys)))
-                    @timeit "update!" CUDA.@sync Flux.Optimise.update!(optimizers["genatr"], ps, gs)
-                    metrics["Gloss"] = ℓ
-                end
-            end
-        end
-
-        # Train CVAE loss
-        @timeit "cvae" CUDA.@sync let
-            @timeit "sampleX̂θZ" CUDA.@sync X̂train, θtrain, Ztrain = sampleX̂θZ(Ytrain; recover_θ = false, recover_Z = false) .|> todevice
-            ps = Flux.params(models["enc1"], models["enc2"], models["dec"])
-            @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(() -> CVAEloss(X̂train, θtrain, Ztrain; recover_Z = true), ps)
-            @timeit "reverse" CUDA.@sync gs = back(one(eltype(phys)))
-            @timeit "update!" CUDA.@sync Flux.Optimise.update!(optimizers["cvae"], ps, gs)
-            metrics["CVAEloss"] = ℓ
-        end
 
         #= Train MMD kernel bandwidths
             if mod(engine.state.iteration-1, settings["train"]["kernelrate"]) == 0
@@ -472,8 +533,8 @@ function train_step(engine, batch)
     return deepcopy(metrics)
 end
 
-function val_metrics(engine, batch)
-    @timeit "val batch" CUDA.@sync begin
+function compute_metrics(engine, batch; dataset)
+    @timeit "compute metrics" CUDA.@sync begin
         # Update callback state
         cb_state["last_time"] = get!(cb_state, "curr_time", time())
         cb_state["curr_time"] = time()
@@ -505,10 +566,11 @@ function val_metrics(engine, batch)
             MMDsq = missing
             loss = KLdiv + ELBO #TODO Zreg, MMDsq, YlogL
 
+            ϵ = sqrt(eps(eltype(X)))
             d_y = D_Y_loss(Y)
             d_g_x = D_G_X_loss(X, Z)
-            Gloss = mean(log.(1 .- d_g_x))
-            Dloss = -mean(log.(d_y) .+ log.(1 .- d_g_x))
+            Gloss = mean(log.(1 .- d_g_x .+ ϵ))
+            Dloss = -mean(log.(d_y .+ ϵ) .+ log.(1 .- d_g_x .+ ϵ))
             D_Y   = mean(d_y)
             D_G_X = mean(d_g_x)
 
@@ -576,7 +638,7 @@ function val_metrics(engine, batch)
         metrics = Dict{Any,Any}()
         metrics[:epoch]   = trainer.state.epoch
         metrics[:iter]    = trainer.state.iteration
-        metrics[:dataset] = :val
+        metrics[:dataset] = dataset
         metrics[:time]    = cb_state["curr_time"] - cb_state["last_time"]
 
         # Metrics computed in update_callback!
@@ -599,7 +661,26 @@ function val_metrics(engine, batch)
         metrics[:Xhat_rmse] = cb_state["metrics"]["Xhat_rmse"]
 
         # Update logger dataframe
-        push!(logger, metrics; cols = :subset)
+        if isempty(logger) || logger.dataset[end] !== dataset
+            push!(logger, metrics; cols = :subset)
+            nbatches = div(settings["data"]["ntrain"]::Int, settings["train"]["batchsize"]::Int)
+            if dataset === :train
+                for (k,v) in metrics
+                    if k ∉ [:epoch, :iter, :dataset, :time]
+                        logger[end, k] /= nbatches
+                    end
+                end
+            end
+        else
+            @assert dataset === :train
+            logger.time[end] += metrics[:time]
+            nbatches = div(settings["data"]["ntrain"]::Int, settings["train"]["batchsize"]::Int)
+            for (k,v) in metrics
+                if k ∉ [:epoch, :iter, :dataset, :time]
+                    logger[end, k] += v / nbatches
+                end
+            end
+        end
 
         return Dict{Any,Any}(
             "CVAEloss"  => cb_state["metrics"]["loss"],
@@ -639,8 +720,11 @@ end
 trainer = ignite.engine.Engine(@j2p train_step)
 trainer.logger = ignite.utils.setup_logger("trainer")
 
-evaluator = ignite.engine.Engine(@j2p val_metrics)
-evaluator.logger = ignite.utils.setup_logger("evaluator")
+val_evaluator = ignite.engine.Engine(@j2p (args...) -> compute_metrics(args...; dataset = :val))
+val_evaluator.logger = ignite.utils.setup_logger("val_evaluator")
+
+train_evaluator = ignite.engine.Engine(@j2p (args...) -> compute_metrics(args...; dataset = :train))
+train_evaluator.logger = ignite.utils.setup_logger("train_evaluator")
 
 # Force terminate
 trainer.add_event_handler(
@@ -666,9 +750,12 @@ trainer.add_event_handler(
 trainer.add_event_handler(
     # Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(every = 1), #TODO
     Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["metricperiod"])),
-    @j2p function (engine)
-        evaluator.run(val_loader)
-    end
+    @j2p (engine) -> val_evaluator.run(val_loader)
+)
+trainer.add_event_handler(
+    # Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(every = 1), #TODO
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["metricperiod"])),
+    @j2p (engine) -> train_evaluator.run(train_loader)
 )
 
 # Checkpoint current model + logger + make plots
@@ -707,7 +794,7 @@ trainer.add_event_handler(
         @unpack lrrate, lrdrop, lrthresh = settings["opt"]
         epoch = engine.state.epoch
         if epoch > 1 && mod(epoch-1, lrrate) == 0
-            for optname in ["cvae", "mmd"]
+            for optname in ["genatr", "discrim", "cvae", "mmd"]
                 if optname ∉ keys(optimizers)
                     @warn "Optimizer \"$optname\" not found; skipping dropping of lr"
                     continue
@@ -744,11 +831,14 @@ trainer.add_event_handler(
 
 # Attach training/validation output handlers
 if !isnothing(wandb_logger)
-    for (tag, engine) in [("training", trainer), ("validation", evaluator)]
-        wandb_logger.attach_output_handler(
-            engine;
-            event_name = Events.EPOCH_COMPLETED(event_filter = @j2p run_timeout(settings["eval"]["metricperiod"])),
+    for (tag, engine, event) in [
+            ("step",  trainer,         Events.EPOCH_COMPLETED(event_filter = @j2p run_timeout(settings["eval"]["metricperiod"]))), # computed each iteration; throttle recording
+            ("train", train_evaluator, Events.EPOCH_COMPLETED), # throttled above; record every epoch
+            ("val",   val_evaluator,   Events.EPOCH_COMPLETED), # throttled above; record every epoch
+        ]
+        wandb_logger.attach_output_handler(engine;
             tag = tag,
+            event_name = event,
             output_transform = @j2p(metrics -> metrics),
             global_step_transform = @j2p((args...;kwargs...) -> trainer.state.epoch),
         )
