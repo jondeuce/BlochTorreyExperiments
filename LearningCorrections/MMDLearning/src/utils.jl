@@ -8,7 +8,7 @@ function load_settings(
     # Load default settings + merge in custom settings, if given
     settings = TOML.parsefile(default_settings_file)
     mergereducer!(x, y) = deepcopy(y) # fallback
-    mergereducer!(x::Dict, y::Dict) = merge!(mergereducer!, x, y)
+    mergereducer!(x::AbstractDict, y::AbstractDict) = merge!(mergereducer!, x, y)
     haskey(ENV, "SETTINGSFILE") && merge!(mergereducer!, settings, TOML.parsefile(ENV["SETTINGSFILE"]))
 
     # Save + print resulting settings
@@ -27,7 +27,7 @@ end
 ####
 
 getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
-savebson(filename, data::Dict) = @elapsed BSON.bson(filename, data)
+savebson(filename, data::AbstractDict) = @elapsed BSON.bson(filename, data)
 # gitdir() = realpath(DrWatson.projectdir(".."))
 
 function handleinterrupt(e; msg = "Error")
@@ -43,7 +43,7 @@ function handleinterrupt(e; msg = "Error")
 end
 
 # previously: saveprogress(savefolder, prefix, suffix)
-function saveprogress(savedata::Dict; savefolder, prefix = "", suffix = "")
+function saveprogress(savedata::AbstractDict; savefolder, prefix = "", suffix = "")
     !isdir(savefolder) && mkpath(savefolder)
     for (key, data) in savedata
         try
@@ -58,7 +58,7 @@ function saveprogress(savedata::Dict; savefolder, prefix = "", suffix = "")
 end
 
 # previously: saveplots(savefolder, prefix, suffix, plothandles)
-function saveplots(plothandles::Dict; savefolder, prefix = "", suffix = "", ext = ".png")
+function saveplots(plothandles::AbstractDict; savefolder, prefix = "", suffix = "", ext = ".png")
     !isdir(savefolder) && mkpath(savefolder)
     try
         for (name, p) in plothandles
@@ -418,7 +418,7 @@ function initialize_callback(phys::ToyModel; nsamples::Int)
 end
 
 #=
-function initialize_callback!(cb_state::Dict, phys::EPGModel)
+function initialize_callback!(cb_state::AbstractDict, phys::EPGModel)
     # Sample X and θ randomly, but choose Ys + corresponding fits consistently in order to compare models, and choose Ys with reasonable agreeance with data in order to not be overconfident in improving terrible fits
     Xval = sampleX(settings["gan"]["batchsize"]; dataset = :val)
     θval = sampleθ(settings["gan"]["batchsize"]; dataset = :val)
@@ -445,7 +445,7 @@ end
 =#
 
 function update_callback!(
-        cb_state::Dict,
+        cb_state::AbstractDict,
         phys::PhysicsModel,
         G::RicianCorrector;
         ninfer::Int,
@@ -549,14 +549,17 @@ function plot_gan_loss(logger, cb_state, phys; window = 100, lrdroprate = typema
         dfp = dropmissing(dfp[:, [:epoch, :Gloss, :Dloss, :D_Y, :D_G_X]])
         if !isempty(dfp)
             s = x -> (x == round(Int, x) ? round(Int, x) : round(x; sigdigits = 4)) |> string
-            p1 = plot(dfp.epoch, dfp.Dloss; label = "D loss", lw = 2, c = :red)
-            p2 = plot(dfp.epoch, dfp.Gloss; label = "G loss", lw = 2, c = :blue)
-            p3 = plot(dfp.epoch, [dfp.D_Y   dfp.D_G_X]; label = ["D(Y)" "D(G(X))"], c = [:red :blue], lw = 2)
-            (epoch >= lrdroprate) && for p in [p1, p2, p3]
+            ps = [
+                plot(dfp.epoch, dfp.Dloss; label = "D loss", lw = 2, c = :red),
+                plot(dfp.epoch, dfp.Gloss; label = "G loss", lw = 2, c = :blue),
+                plot(dfp.epoch, [dfp.D_Y dfp.D_G_X]; label = ["D(Y)" "D(G(X))"], c = [:red :blue], lw = 2),
+                plot(dfp.epoch, dfp.D_Y - dfp.D_G_X; label = "D(Y) - D(G(X))", c = :green, lw = 2),
+            ]
+            (epoch >= lrdroprate) && map(ps) do p
                 plot!(p, lrdroprate : lrdroprate : epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)", seriestype = :vline)
                 plot!(p; xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
             end
-            p = plot(plot(p1, p2; layout = (2,1)), p3)
+            p = plot(ps...)
         else
             p = nothing
         end

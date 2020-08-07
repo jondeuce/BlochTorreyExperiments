@@ -7,38 +7,57 @@ randn_similar(::CUDA.CuArray{T}, sz...) where {T} = Zygote.ignore(() -> CUDA.ran
 rand_similar(::AbstractArray{T}, sz...) where {T} = Base.rand(T, sz...)
 rand_similar(::CUDA.CuArray{T}, sz...) where {T} = Zygote.ignore(() -> CUDA.rand(T, sz...))
 maybe_vcat(X, Z = nothing) = isnothing(Z) ? X : vcat(X,Z)
-map_dict(f, d::Dict{String,Any}) = Dict{String,Any}(map(((k,v),) -> k => f(v), collect(d)))
+map_dict(f, d::AbstractDict{String,Any}) = Dict{String,Any}(map(((k,v),) -> k => f(v), collect(d)))
 
 ####
 #### Rician correctors
 ####
 
-abstract type RicianCorrector end
+abstract type RicianCorrector{n,nz} end
+
+nsignal(::Type{<:RicianCorrector{n,nz}}) where {n,nz} = n
+nsignal(R::RicianCorrector) = nsignal(typeof(R))
+nlatent(::Type{<:RicianCorrector{n,nz}}) where {n,nz} = nz
+nlatent(R::RicianCorrector) = nlatent(typeof(R))
+ninput(R::RicianCorrector) = ninput(typeof(R))
+noutput(R::RicianCorrector) = noutput(typeof(R))
 
 # G : [X; Z] ∈ 𝐑^(n+k) -> [δ; logϵ] ∈ 𝐑^2n
-@with_kw struct VectorRicianCorrector{Gtype} <: RicianCorrector
+@with_kw struct VectorRicianCorrector{n,nz,Gtype} <: RicianCorrector{n,nz}
     G::Gtype
+    VectorRicianCorrector{n,nz}(G) where {n,nz} = new{n,nz,typeof(G)}(G)
 end
 Flux.@functor VectorRicianCorrector
+ninput(::Type{R}) where {R<:VectorRicianCorrector} = nsignal(R) + nlatent(R)
+noutput(::Type{R}) where {R<:VectorRicianCorrector} = 2 * nsignal(R)
 
 # G : [X; Z] ∈ 𝐑^(n+k) -> δ ∈ 𝐑^n with fixed noise ϵ0 ∈ 𝐑 or ϵ0 ∈ 𝐑^n
-@with_kw struct FixedNoiseVectorRicianCorrector{Gtype,T} <: RicianCorrector
+@with_kw struct FixedNoiseVectorRicianCorrector{n,nz,T,Gtype} <: RicianCorrector{n,nz}
     G::Gtype
     ϵ0::T
+    FixedNoiseVectorRicianCorrector{n,nz}(G,ϵ0) where {n,nz} = new{n,nz,typeof(ϵ0),typeof(G)}(G,ϵ0)
 end
 Flux.@functor FixedNoiseVectorRicianCorrector
+ninput(::Type{R}) where {R<:FixedNoiseVectorRicianCorrector} = nsignal(R) + nlatent(R)
+noutput(::Type{R}) where {R<:FixedNoiseVectorRicianCorrector} = nsignal(R)
 
 # G : Z ∈ 𝐑^k -> [δ; logϵ] ∈ 𝐑^2n
-@with_kw struct LatentVectorRicianCorrector{Gtype} <: RicianCorrector
+@with_kw struct LatentVectorRicianCorrector{n,nz,Gtype} <: RicianCorrector{n,nz}
     G::Gtype
+    LatentVectorRicianCorrector{n,nz}(G) where {n,nz} = new{n,nz,typeof(G)}(G)
 end
 Flux.@functor LatentVectorRicianCorrector
+ninput(::Type{R}) where {R<:LatentVectorRicianCorrector} = nlatent(R)
+noutput(::Type{R}) where {R<:LatentVectorRicianCorrector} = 2 * nsignal(R)
 
 # G : Z ∈ 𝐑^k -> logϵ ∈ 𝐑^n with fixed δ = 0
-@with_kw struct LatentVectorRicianNoiseCorrector{Gtype} <: RicianCorrector
+@with_kw struct LatentVectorRicianNoiseCorrector{n,nz,Gtype} <: RicianCorrector{n,nz}
     G::Gtype
+    LatentVectorRicianNoiseCorrector{n,nz}(G) where {n,nz} = new{n,nz,typeof(G)}(G)
 end
 Flux.@functor LatentVectorRicianNoiseCorrector
+ninput(::Type{R}) where {R<:LatentVectorRicianNoiseCorrector} = nlatent(R)
+noutput(::Type{R}) where {R<:LatentVectorRicianNoiseCorrector} = nsignal(R)
 
 # Concrete methods to extract δ and ϵ
 @inline split_delta_epsilon(δ_logϵ) = δ_logϵ[1:end÷2, :], exp.(δ_logϵ[end÷2+1:end, :]) .+ sqrt(eps(eltype(δ_logϵ)))

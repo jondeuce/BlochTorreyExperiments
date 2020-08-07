@@ -78,6 +78,33 @@ xavier_normal(args...; kwargs...) = xavier_normal(Float64, args...; kwargs...)
 # Flux.glorot_normal(T::Type, dims...) = xavier_normal(T, dims...)
 
 """
+wrapchain(layer)
+
+Wraps `layer` in a `Flux.Chain`. No-op if `layer` is already a `Flux.Chain`.
+"""
+wrapchain(layer::Flux.Chain) = layer
+wrapchain(layer) = Flux.Chain(layer)
+
+"""
+catchain(chain)
+
+Concatenation of `c1` and `c2` into a `Flux.Chain`. If either or both of
+`c1` and `c2` are chain, they will be splatted.
+"""
+catchain(c1::Flux.Chain, c2::Flux.Chain) = Flux.Chain(c1..., c2...)
+catchain(c1::Flux.Chain, c2) = Flux.Chain(c1..., c2)
+catchain(c1, c2::Flux.Chain) = Flux.Chain(c1, c2...)
+catchain(c1, c2) = Flux.Chain(c1, c2)
+
+"""
+flattenchain(chain)
+
+Recursively flattens `chain`.
+"""
+flattenchain(chain::Flux.Chain) = length(chain) == 1 ? flattenchain(chain[1]) : Flux.Chain(reduce(catchain, flattenchain.(chain))...)
+flattenchain(chain) = chain
+
+"""
 NotTrainable(layer)
 
 Wraps the callable `layer` such that any parameters internal to `layer`
@@ -242,12 +269,15 @@ Multi-layer perceptron mapping inputs with height `sz[1]` to outputs with height
 `Nhid+2` total dense layers are used with `Dhid` hidden nodes. The first `Nhid+1` layers
 use activation `σhid` and the last layer uses activation `σout`. 
 """
-MLP(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout = identity; skip = false) =
+function MLP(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout = identity; skip = false, dropout = nothing)
+    maybedropout(l) = !isnothing(dropout) ? Flux.Chain(l, Flux.Dropout(dropout)) : l
+    maybeskip(l) = skip ? Flux.SkipConnection(flattenchain(l), +) : l
     Flux.Chain(
-        Flux.Dense(sz[1], Dhid, σhid),
-        [Flux.Dense(Dhid, Dhid, σhid) |> l -> skip ? Flux.SkipConnection(l, +) : l for _ in 1:Nhid]...,
-        Flux.Dense(Dhid, sz[2], σout)
-    )
+        Flux.Dense(sz[1], Dhid, σhid) |> maybedropout,
+        [Flux.Dense(Dhid, Dhid, σhid) |> maybedropout |> maybeskip for _ in 1:Nhid]...,
+        Flux.Dense(Dhid, sz[2], σout),
+    ) |> flattenchain
+end
 
 """
 `Conv` wrapper which initializes using `xavier_uniform`
@@ -435,7 +465,7 @@ DenseFeatureFusion(G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,1), σ = Flux.
 """
 Print model/layer
 """
-function model_summary(io::IO, models::Dict; kwargs...)
+function model_summary(io::IO, models::AbstractDict; kwargs...)
     for (i,(k,m)) in enumerate(models)
         (k != "") && println(io, string(k) * ":")
         _model_summary(io, m; kwargs...)
@@ -443,7 +473,7 @@ function model_summary(io::IO, models::Dict; kwargs...)
         (i < length(models)) && println(io, "")
     end
 end
-function model_summary(models::Dict, filename = nothing; kwargs...)
+function model_summary(models::AbstractDict, filename = nothing; kwargs...)
     @info "Model summary..."
     (filename != nothing) && open(filename, "w") do file
         model_summary(file, models; kwargs...)

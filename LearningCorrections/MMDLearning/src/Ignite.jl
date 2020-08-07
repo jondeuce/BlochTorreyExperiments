@@ -2,6 +2,7 @@ module Ignite
 
 using ArgParse
 using ..TOML
+using ..DataStructures
 
 export @j2p, event_throttler, run_timeout
 
@@ -66,9 +67,23 @@ function run_timeout(timeout = Inf)
     end
 end
 
+# Flatten settings dictionary
+flatten_dict(d::AbstractDict{<:AbstractString, Any}, prefix = "", delim = ".") = _recurse_insert!(Dict{String,Any}(), d, prefix, delim)
+function _recurse_insert!(dout::AbstractDict{<:AbstractString, Any}, d::AbstractDict{<:AbstractString, Any}, prefix = "", delim = ".")
+    maybeprefix(k) = isempty(prefix) ? k : prefix * delim * k
+    for (k, v) in d
+        if v isa AbstractDict{<:AbstractString, Any}
+            _recurse_insert!(dout, v, maybeprefix(k), delim)
+        else
+            dout[maybeprefix(k)] = deepcopy(v)
+        end
+    end
+    return dout
+end
+
 # Settings parsing
 function parse_command_line!(
-        defaults::Dict{<:AbstractString, Any},
+        defaults::AbstractDict{<:AbstractString, Any},
         args = isinteractive() ? String[] : ARGS,
     )
 
@@ -77,7 +92,7 @@ function parse_command_line!(
 
     function _add_arg_table!(d)
         for (k,v) in d
-            if v isa Dict
+            if v isa AbstractDict
                 _add_arg_table!(Dict{String,Any}(k * "." * kin => deepcopy(vin) for (kin, vin) in v))
             else
                 props = Dict{Symbol,Any}(:default => deepcopy(v))
@@ -106,7 +121,7 @@ function parse_command_line!(
     # Fields taking value "%PARENT%" take default values of their parent field
     function _set_parent_fields!(d, dparent = nothing)
         for (k,v) in d
-            if v isa Dict
+            if v isa AbstractDict
                 _set_parent_fields!(v, d)
             elseif v == "%PARENT%" && !isnothing(dparent)
                 d[k] = deepcopy(dparent[k])
@@ -119,7 +134,7 @@ function parse_command_line!(
 end
 
 # Save and print settings file
-function save_and_print(settings::Dict; outpath, filename)
+function save_and_print(settings::AbstractDict; outpath, filename)
     @assert endswith(filename, ".toml")
     !isdir(outpath) && mkpath(outpath)
     open(joinpath(outpath, filename); write = true) do io
@@ -130,7 +145,7 @@ function save_and_print(settings::Dict; outpath, filename)
 end
 
 # Set `d[k]` to `new` if its current value is `default`, else do nothing
-function compare_and_set!(d::Dict, k, default, new)
+function compare_and_set!(d::AbstractDict, k, default, new)
     if isequal(d[k], default)
         d[k] = deepcopy(new)
     end

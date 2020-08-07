@@ -6,7 +6,7 @@
     labwidth::Vector{T} = ones(nlabels)
 end
 
-function make_model(settings::Dict, name::String)
+function make_model(settings::AbstractDict, name::String)
     if name == "load"
         return BSON.load(settings["model"][name]["path"])[:model]
     else
@@ -18,7 +18,7 @@ function make_model(settings::Dict, name::String)
         return Flux.paramtype(T, model) # ensure correct underlying float type
     end
 end
-make_model(settings::Dict) = Dict{String,Any}([name => make_model(settings, name) for name in keys(settings["model"]) if is_model_name(name)]...)
+make_model(settings::AbstractDict) = Dict{String,Any}([name => make_model(settings, name) for name in keys(settings["model"]) if is_model_name(name)]...)
 
 function is_model_name(name::Symbol)
     try
@@ -29,7 +29,7 @@ function is_model_name(name::Symbol)
 end
 is_model_name(name::String) = is_model_name(Symbol(name))
 
-function model_string(settings::Dict, name::String)
+function model_string(settings::AbstractDict, name::String)
     if name == "load"
         mstring = splitext(basename(settings["model"][name]["path"]))[1]
         dateregex = r"\d\d\d\d-\d\d-\d\d-T-\d\d-\d\d-\d\d-\d\d\d."
@@ -51,9 +51,9 @@ function model_string(settings::Dict, name::String)
         mstring = name * "_" * DrWatson.savename(d)
     end
 end
-model_string(settings::Dict) = DrWatson.savename(settings["model"]) * "_" * join([model_string(settings, name) for (name, model) in settings["model"] if is_model_name(name)], "_")
+model_string(settings::AbstractDict) = DrWatson.savename(settings["model"]) * "_" * join([model_string(settings, name) for (name, model) in settings["model"] if is_model_name(name)], "_")
 
-make_model_kwargs(::Type{T}, m::Dict) where {T} = Dict{Symbol,Any}(Symbol.(keys(m)) .=> clean_model_arg.(T, values(m)))
+make_model_kwargs(::Type{T}, m::AbstractDict) where {T} = Dict{Symbol,Any}(Symbol.(keys(m)) .=> clean_model_arg.(T, values(m)))
 clean_model_arg(::Type{T}, x) where {T} = error("Unsupported model parameter type $(typeof(x)): $x") # fallback
 clean_model_arg(::Type{T}, x::Bool) where {T} = x
 clean_model_arg(::Type{T}, x::Integer) where {T} = Int(x)
