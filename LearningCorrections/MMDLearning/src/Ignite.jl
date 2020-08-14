@@ -81,6 +81,10 @@ function _recurse_insert!(dout::AbstractDict{<:AbstractString, Any}, d::Abstract
     return dout
 end
 
+# Nested dict access
+nestedaccess(d::AbstractDict, args...) = isempty(args) ? d : nestedaccess(d[first(args)], Base.tail(args)...)
+nestedaccess(d) = d
+
 # Settings parsing
 function parse_command_line!(
         defaults::AbstractDict{<:AbstractString, Any},
@@ -90,11 +94,18 @@ function parse_command_line!(
     # Generate arg parser
     settings = ArgParseSettings()
 
-    function _add_arg_table!(d)
+    function _add_arg_table!(d, dglobal = d)
         for (k,v) in d
             if v isa AbstractDict
-                _add_arg_table!(Dict{String,Any}(k * "." * kin => deepcopy(vin) for (kin, vin) in v))
+                _add_arg_table!(Dict{String,Any}(k * "." * kin => deepcopy(vin) for (kin, vin) in v), dglobal)
             else
+                # Fields with value "%PARENT%" take default values of their parent field
+                ksplit = String.(split(k, "."))
+                depth = 0
+                while v == "%PARENT%"
+                    depth += 1
+                    v = deepcopy(nestedaccess(dglobal, ksplit[begin:end-1-depth]..., ksplit[end]))
+                end
                 props = Dict{Symbol,Any}(:default => deepcopy(v))
                 if v isa AbstractVector
                     props[:arg_type] = eltype(v)
@@ -111,24 +122,9 @@ function parse_command_line!(
     # Parse and merge into defaults
     for (k, v) in parse_args(args, settings)
         ksplit = String.(split(k, "."))
-        din = defaults[ksplit[1]]
-        for kin in ksplit[2:end-1]
-            din = din[kin]
-        end
+        din = nestedaccess(defaults, ksplit[begin:end-1]...)
         din[ksplit[end]] = deepcopy(v)
     end
-
-    # Fields taking value "%PARENT%" take default values of their parent field
-    function _set_parent_fields!(d, dparent = nothing)
-        for (k,v) in d
-            if v isa AbstractDict
-                _set_parent_fields!(v, d)
-            elseif v == "%PARENT%" && !isnothing(dparent)
-                d[k] = deepcopy(dparent[k])
-            end
-        end
-    end
-    _set_parent_fields!(defaults)
 
     return defaults
 end

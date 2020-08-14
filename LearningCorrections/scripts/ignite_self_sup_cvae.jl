@@ -41,8 +41,8 @@ const settings = TOML.parse("""
         # GANcycle    = 1 # CVAE and GAN take turns training for `GANcycle` consecutive epochs (0 trains both each iteration)
         # Dcycle      = 0 # Train for `Dcycle` epochs of discrim only, followed by `Dcycle` epochs of CVAE and GAN together
         GANrate     = 10 # Train GAN losses every `GANrate` iterations
-        Dsteps      = 10 # Train GAN losses with `Dsteps` discrim updates per genatr update
-        Dheadstart  = 100 # Train discriminator for `Dheadstart` epochs before training generator
+        Dsteps      = 5  # Train GAN losses with `Dsteps` discrim updates per genatr update
+        Dheadstart  = 0  # Train discriminator for `Dheadstart` epochs before training generator
         [train.augment]
             # Gsamples      = 1     # Discriminator averages over `Gsamples` instances of corrected signals
             Dchunk        = 0     # Discriminator looks at random chunks of size `Dchunk` (0 uses whole signal)
@@ -54,7 +54,7 @@ const settings = TOML.parse("""
     [eval]
         valevalperiod   = 60.0
         trainevalperiod = 120.0
-        saveperiod      = 300.0 #TODO
+        saveperiod      = 900.0 #TODO
         printperiod     = 60.0
 
     [opt]
@@ -65,7 +65,7 @@ const settings = TOML.parse("""
         [opt.cvae]
             lr = "%PARENT%" #TODO 1e-4
         [opt.genatr]
-            lr = "%PARENT%" #TODO 1e-5
+            lr = 1e-5 #TODO "%PARENT%"
         [opt.discrim]
             lr = "%PARENT%" #TODO 3e-4
         # [opt.mmd]
@@ -101,17 +101,19 @@ const settings = TOML.parse("""
             noisebounds = $(get(ENV, "JL_PHYS_MODEL", "toy") == "toy" ? [-8.0, -2.0] : [-6.0, -3.0]) # noise amplitude
         [arch.discrim]
             hdim    = "%PARENT%"
-            nhidden = 2 #TODO "%PARENT%"
+            nhidden = "%PARENT%" #TODO 2
             skip    = "%PARENT%"
-            dropout = 0.0
+            dropout = 0.1
         [arch.kernel]
             nbandwidth = 8
             bwbounds   = $(get(ENV, "JL_PHYS_MODEL", "toy") == "toy" ? [-8.0, 4.0] : [-10.0, 4.0]) # bounds for kernel bandwidths (logsigma)
 """)
 Ignite.parse_command_line!(settings)
 
+error("here")
+
 # Initialize WandBLogger and save settings
-const wandb_logger = haskey(ENV, "JL_WANDB_LOGGER") ? WandBLogger(config = Ignite.flatten_dict(settings["train"])) : nothing #TODO WandBLogger()
+const wandb_logger = !haskey(ENV, "JL_WANDB_LOGGER") ? nothing : isempty(ARGS) ? WandBLogger() : WandBLogger(config = filter(((k,v),) -> any(startswith("--" * k), ARGS), Ignite.flatten_dict(settings)))
 !isnothing(wandb_logger) && (settings["data"]["out"] = wandb.run.dir)
 Ignite.save_and_print(settings; outpath = settings["data"]["out"], filename = "settings.toml")
 
@@ -202,7 +204,7 @@ function make_models(phys)
         encoderspace = settings["train"]["augment"]["encoderspace"]::Bool
         residuals = settings["train"]["augment"]["residuals"]::Bool
         Dchunk = settings["train"]["augment"]["Dchunk"]::Int
-        nin = ifelse(Dchunk > 0, Dchunk, n) * ifelse(residuals, 2, 1) + ifelse(encoderspace, nz, 0) #TODO double for difference
+        nin = ifelse(Dchunk > 0, Dchunk, n) * ifelse(residuals, 2, 1) + ifelse(encoderspace, nz, 0)
         MMDLearning.MLP(nin => 1, nhidden, hdim, Flux.relu, Flux.sigmoid; skip = skip, dropout = dropout) |> toT
         # RESCNN(n => 1, nhidden, hdim, Flux.relu, Flux.sigmoid; skip = skip) |> toT
     end
@@ -492,10 +494,10 @@ function train_step(engine, batch)
 
         # Train CVAE every iteration, GAN every `GANrate` iterations
         train_CVAE = true
-        train_GAN  = mod(engine.state.iteration-1, settings["train"]["GANrate"]::Int) == 0 #TODO
+        train_GAN  = mod(engine.state.iteration-1, settings["train"]["GANrate"]::Int) == 0
         train_discrim = true
-        # train_genatr = true
-        train_genatr = engine.state.epoch >= settings["train"]["Dheadstart"]::Int
+        train_genatr = true
+        # train_genatr = engine.state.epoch >= settings["train"]["Dheadstart"]::Int
 
         # # `Dcycle` epochs of discrim only, followed by `Dcycle` epochs of CVAE and GAN together
         # Dcycle = settings["train"]["Dcycle"]::Int
@@ -803,19 +805,16 @@ trainer.add_event_handler(
 
 # Compute callback metrics
 trainer.add_event_handler(
-    # Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(every = 1), #TODO
     Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["valevalperiod"])),
     @j2p (engine) -> val_evaluator.run(val_loader)
 )
 trainer.add_event_handler(
-    # Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(every = 1), #TODO
     Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["trainevalperiod"])),
     @j2p (engine) -> train_evaluator.run(train_loader)
 )
 
 # Checkpoint current model + logger + make plots
 trainer.add_event_handler(
-    # Events.STARTED | Events.EPOCH_COMPLETED(every = 25), #TODO
     Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["saveperiod"])),
     @j2p function (engine)
         @timeit "checkpoint" let models = MMDLearning.map_dict(Flux.cpu, models)
@@ -828,7 +827,6 @@ trainer.add_event_handler(
 
 # Check for + save best model + logger + make plots
 trainer.add_event_handler(
-    # Events.EPOCH_COMPLETED(every = 10), #TODO
     Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["saveperiod"])),
     @j2p function (engine)
         losses = logger.Yhat_logL[logger.dataset .=== :val] |> skipmissing |> collect

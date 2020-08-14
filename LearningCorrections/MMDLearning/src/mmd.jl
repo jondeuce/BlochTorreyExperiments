@@ -1,96 +1,61 @@
 ####
-#### MMD using buffer matrices
+#### Abstract MMD kernel interface
 ####
 
-function kernel_pairwise!(Kxy::AbstractMatrix{T}, k, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, ::Val{skipdiag} = Val(false)) where {T,skipdiag}
-    @assert size(X) == size(Y) && size(Kxy) == (size(X, 2), size(Y, 2))
-    m = size(X, 2)
-    if X === Y
-        @inbounds for j = 1:m
-            for i in (j + 1):m
-                Kxy[i, j] = k(column_mse(X, Y, i, j))
-            end
-            Kxy[j, j] = skipdiag ? zero(T) : k(column_mse(X, Y, j, j))
-            @simd for i in 1:j-1
-                Kxy[i, j] = Kxy[j, i] # k(x, y) = k(y, x) for all x, y
-            end
-        end
-    else
-        @inbounds for j = 1:m
-            for i in 1:j-1
-                Kxy[i, j] = k(column_mse(X, Y, i, j))
-            end
-            Kxy[j, j] = skipdiag ? zero(T) : k(column_mse(X, Y, j, j))
-            for i in j+1:m
-                Kxy[i, j] = k(column_mse(X, Y, i, j))
-            end
-        end
-    end
-    return Kxy
+abstract type MMDKernel{T} end
+
+struct KernelFunction{T,F} <: MMDKernel{T}
+    f::F
+    KernelFunction{T}(f) where {T} = new{T,typeof(f)}(f)
 end
-function kernel_var_stats!(work, k, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
-    @assert size(X) == size(Y)
-    @unpack Kxx, Kyy, Kxy, Kyx, Kxx_e, Kyy_e, Kxy_e, Kyx_e = work
+(k::KernelFunction)(Δ) = k.f(Δ)
 
-    kernel_pairwise!(Kxx, k, X, X, Val(true))
-    kernel_pairwise!(Kyy, k, Y, Y, Val(true))
-    kernel_pairwise!(Kxy, k, X, Y, Val(false))
-
-    sum_columns!(Kxx_e, Kxx)
-    sum_columns!(Kyy_e, Kyy)
-    sum_columns!(Kxy_e, Kxy)
-    sum_rows!(Kyx_e, Kxy)
-
-    Kxx_F2, Kyy_F2, Kxy_F2    = frob_norm2(Kxx), frob_norm2(Kyy), frob_norm2(Kxy)
-    e_Kxx_e, e_Kyy_e, e_Kxy_e = sum(Kxx), sum(Kyy), sum(Kxy)
-    e_Kxx_Kxy_e, e_Kyy_Kyx_e  = Kxx_e'Kxy_e, Kyy_e'Kyx_e
-    Kxx_e_F2, Kyy_e_F2, Kxy_e_F2, Kyx_e_F2 = frob_norm2(Kxx_e), frob_norm2(Kyy_e), frob_norm2(Kxy_e), frob_norm2(Kyx_e)
-
-    return @ntuple(Kxx_F2, Kyy_F2, Kxy_F2, e_Kxx_e, e_Kyy_e, e_Kxy_e, Kxx_e_F2, Kyy_e_F2, Kxy_e_F2, Kyx_e_F2, e_Kxx_Kxy_e, e_Kyy_Kyx_e)
+struct MMDResults{T}
+    m::T
+    e_Kxx_e::T
+    e_Kyy_e::T
+    e_Kxy_e::T
 end
-function mmd_work(T::Type, sz::NTuple{2,Int})
-    n, m = sz
-    Kxx, Kyy, Kxy, Kyx = (_ -> zeros(T, m, m)).(1:4)
-    Kxx_e, Kyy_e, Kxy_e, Kyx_e = (_ -> zeros(T, m)).(1:4)
-    return @ntuple(Kxx, Kyy, Kxy, Kyx, Kxx_e, Kyy_e, Kxy_e, Kyx_e)
+
+struct MMDVarResults{T}
+    m::T
+    Kxx_F2::T
+    Kyy_F2::T
+    Kxy_F2::T
+    e_Kxx_e::T
+    e_Kyy_e::T
+    e_Kxy_e::T
+    Kxx_e_F2::T
+    Kyy_e_F2::T
+    Kxy_e_F2::T
+    Kyx_e_F2::T
+    e_Kxx_Kxy_e::T
+    e_Kyy_Kyx_e::T
 end
-mmd_work(sz::NTuple{2,Int}) = mmd_work(Float64, sz)
-mmd_work(X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = (@assert size(X) == size(Y); return mmd_work(T, size(X)))
 
-function mmd!(work, k, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
-    @assert size(X) == size(Y)
-    @unpack Kxx, Kyy, Kxy, Kyx = work
-    m = size(X, 2)
+function mmd(res::Union{<:MMDResults, <:MMDVarResults})
+    @unpack m, e_Kxx_e, e_Kyy_e, e_Kxy_e = res
 
-    # Ref: http://www.jmlr.org/papers/volume13/gretton12a/gretton12a.pdf
-    # e_Kxx_e = sum(kernel_pairwise!(Kxx, k, X, X))
-    # e_Kyy_e = sum(kernel_pairwise!(Kyy, k, Y, Y))
-    # e_Kxy_e = sum(kernel_pairwise!(Kxy, k, X, Y))
-    # MMDsq = e_Kxx_e/(m*(m-1)) + e_Kyy_e/(m*(m-1)) - 2*e_Kxy_e/(m^2) # (m^2 * [K])/m^2 = [K] ~ O(1)
+    # See: http://www.jmlr.org/papers/volume13/gretton12a/gretton12a.pdf
+    # MMDsq = e_Kxx_e/(m*(m-1)) + e_Kyy_e/(m*(m-1)) - 2*e_Kxy_e/(m^2)
 
     # MMD²_U: MMD estimator which is a U-statistic
     #   See: https://arxiv.org/pdf/1906.02104.pdf
-    e_Kxx_e = sum(kernel_pairwise!(Kxx, k, X, X, Val(true)))
-    e_Kyy_e = sum(kernel_pairwise!(Kyy, k, Y, Y, Val(true)))
-    e_Kxy_e = sum(kernel_pairwise!(Kxy, k, X, Y, Val(true)))
-    #e_Kyx_e= sum(kernel_pairwise!(Kyx, k, Y, X, Val(true)))
-    #MMDsq= (e_Kxx_e + e_Kyy_e - e_Kxy_e - e_Kxy_e)/(m*(m-1))
-    MMDsq = (e_Kxx_e + e_Kyy_e - 2e_Kxy_e)/(m*(m-1))
+    MMDsq = (e_Kxx_e + e_Kyy_e - 2e_Kxy_e) / (m * (m-1))
 
     return MMDsq
 end
-function mmdvar!(work, k, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
+
+function mmd_and_mmdvar(res::MMDVarResults)
     #   NOTE: Here we assume a symmetric kernel k(x,y) == k(y,x),
     #         and therefore that Kxx == Kxx', Kyy = Kyy', Kxy == Kxy'
     # See:
     #   [1] https://arxiv.org/pdf/1906.02104.pdf
     #   [2] http://www.gatsby.ucl.ac.uk/~dougals/slides/dali/#/50
-    @assert size(X) == size(Y)
-    @unpack Kxx_F2, Kyy_F2, Kxy_F2, e_Kxx_e, e_Kyy_e, e_Kxy_e, Kxx_e_F2, Kyy_e_F2, Kxy_e_F2, Kyx_e_F2, e_Kxx_Kxy_e, e_Kyy_Kyx_e = kernel_var_stats!(work, k, X, Y)
-    m = size(X, 2)
-    m_2 = m*(m-1)
-    m_3 = m*(m-1)*(m-2)
-    m_4 = m*(m-1)*(m-2)*(m-3)
+    @unpack m, Kxx_F2, Kyy_F2, Kxy_F2, e_Kxx_e, e_Kyy_e, e_Kxy_e, Kxx_e_F2, Kyy_e_F2, Kxy_e_F2, Kyx_e_F2, e_Kxx_Kxy_e, e_Kyy_Kyx_e = res
+    m_2 = m * (m-1)
+    m_3 = m_2 * (m-2)
+    m_4 = m_3 * (m-3)
 
     # Var[MMD²_U]: Variance estimator
     #   See: https://arxiv.org/pdf/1906.02104.pdf
@@ -119,8 +84,6 @@ function mmdvar!(work, k, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
     t8_5 = ((  8m) / (m_2^3  )) * (Kxy_F2)
     MMDvar = (((t1_4 + t2_4) - (t3_4 + t5_4 + t6_4 + t7_4 + t8_4)) + ((t4_5 + t5_5 + t6_5 + t8_5) - t2_5)) - t2_6 # NOTE: typo in original paper: +t8 --> -t8
 
-    # @show t1_4, t2_4, t2_5, t2_6, t3_4, t4_5, t5_4, t5_5, t6_4, t6_5, t7_4, t8_4, t8_5
-
     #=
     MMDvar =
         ((      2) / (m^2 * (m-1)^2)) * (2*Kxx_e_F2 - Kxx_F2 + 2*Kyy_e_F2 - Kyy_F2) - # Units: (m*(m*[K])^2)/m^4 + (m^2*[K]^2)/m^4 = [K]^2/m + [K]^2/m^2 ~ [K]^2/m ~ O(1/m)
@@ -132,7 +95,88 @@ function mmdvar!(work, k, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
         ((      8) / (m^3 * (m-1)  )) * (e_Kxx_Kxy_e + Kyy_e'Kxy_e)                   # Units: (m*(m*[K])^2)/m^4 = [K]/m ~ O(1/m). Note: used Kxx, Kyy, Kxy symmetry
     =#
 
-    return MMDvar
+    MMDsq = mmd(res)
+
+    return MMDsq, MMDvar
+end
+
+mmdvar(res::MMDVarResults) = mmd_and_mmdvar(res)[2]
+
+####
+#### Generic MMD using buffer matrices
+####
+
+mmd!(k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmd!(mmd_work(X,Y), k, X, Y)
+mmd!(work, k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmd(kernel_mmd_stats!(work, k, X, Y))
+mmdvar!(k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmdvar!(mmd_work(X,Y), k, X, Y)
+mmdvar!(work, k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmdvar(kernel_mmdvar_stats!(work, k, X, Y))
+mmd_and_mmdvar!(k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmd_and_mmdvar!(mmd_work(X,Y), k, X, Y)
+mmd_and_mmdvar!(work, k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmd_and_mmdvar(kernel_mmdvar_stats!(work, k, X, Y))
+
+function mmd_work(T::Type, sz::NTuple{2,Int})
+    Kxx, Kyy, Kxy = ntuple(_ -> zeros(T, sz[2], sz[2]), 3)
+    Kxx_e, Kyy_e, Kxy_e, Kyx_e = ntuple(_ -> zeros(T, sz[2]), 4)
+    return @ntuple(Kxx, Kyy, Kxy, Kxx_e, Kyy_e, Kxy_e, Kyx_e)
+end
+mmd_work(sz::NTuple{2,Int}) = mmd_work(Float64, sz)
+mmd_work(X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = (@assert size(X) == size(Y); return mmd_work(T, size(X)))
+
+function kernel_pairwise!(Kxy::AbstractMatrix{T}, k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, ::Val{skipdiag} = Val(false)) where {T,skipdiag}
+    @assert size(X) == size(Y) && size(Kxy) == (size(X, 2), size(Y, 2))
+    m = size(X, 2)
+    if X === Y
+        @inbounds for j = 1:m
+            for i in (j + 1):m
+                Kxy[i, j] = k(column_mse(X, Y, i, j))
+            end
+            Kxy[j, j] = skipdiag ? zero(T) : k(column_mse(X, Y, j, j))
+            @simd for i in 1:j-1
+                Kxy[i, j] = Kxy[j, i] # k(x, y) = k(y, x) for all x, y
+            end
+        end
+    else
+        @inbounds for j = 1:m
+            for i in 1:j-1
+                Kxy[i, j] = k(column_mse(X, Y, i, j))
+            end
+            Kxy[j, j] = skipdiag ? zero(T) : k(column_mse(X, Y, j, j))
+            for i in j+1:m
+                Kxy[i, j] = k(column_mse(X, Y, i, j))
+            end
+        end
+    end
+    return Kxy
+end
+
+function kernel_mmd_stats!(work, k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
+    @assert size(X) == size(Y)
+    @unpack Kxx, Kyy, Kxy = work
+    m = size(X, 2)
+    e_Kxx_e = sum(kernel_pairwise!(Kxx, k, X, X, Val(true)))
+    e_Kyy_e = sum(kernel_pairwise!(Kyy, k, Y, Y, Val(true)))
+    e_Kxy_e = sum(kernel_pairwise!(Kxy, k, X, Y, Val(true)))
+    return MMDResults(T(m), e_Kxx_e, e_Kyy_e, e_Kxy_e)
+end
+
+function kernel_mmdvar_stats!(work, k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
+    @assert size(X) == size(Y)
+    @unpack Kxx, Kyy, Kxy, Kxx_e, Kyy_e, Kxy_e, Kyx_e = work
+
+    kernel_pairwise!(Kxx, k, X, X, Val(true))
+    kernel_pairwise!(Kyy, k, Y, Y, Val(true))
+    kernel_pairwise!(Kxy, k, X, Y, Val(false))
+
+    sum_columns!(Kxx_e, Kxx)
+    sum_columns!(Kyy_e, Kyy)
+    sum_columns!(Kxy_e, Kxy)
+    sum_rows!(Kyx_e, Kxy)
+
+    Kxx_F2, Kyy_F2, Kxy_F2 = frob_norm2(Kxx), frob_norm2(Kyy), frob_norm2(Kxy)
+    e_Kxx_e, e_Kyy_e, e_Kxy_e = sum(Kxx), sum(Kyy), sum(Kxy)
+    e_Kxx_Kxy_e, e_Kyy_Kyx_e = Kxx_e'Kxy_e, Kyy_e'Kyx_e
+    Kxx_e_F2, Kyy_e_F2, Kxy_e_F2, Kyx_e_F2 = frob_norm2(Kxx_e), frob_norm2(Kyy_e), frob_norm2(Kxy_e), frob_norm2(Kyx_e)
+
+    return MMDVarResults(T(size(X,2)), Kxx_F2, Kyy_F2, Kxy_F2, e_Kxx_e, e_Kyy_e, e_Kxy_e, Kxx_e_F2, Kyy_e_F2, Kxy_e_F2, Kyx_e_F2, e_Kxx_Kxy_e, e_Kyy_Kyx_e)
 end
 
 #=
@@ -151,11 +195,15 @@ end
 =#
 
 ####
-#### MMD without buffers
+#### Generic MMD without buffers
 ####
 
-function kernel_pairwise_sum(k, X::AbstractMatrix, Y::AbstractMatrix, ::Val{skipdiag} = Val(false)) where {skipdiag}
-    # @assert size(X) == size(Y)
+mmd(k::KernelFunction, X::AbstractMatrix, Y::AbstractMatrix) = mmd(kernel_mmd_stats(k, X, Y))
+mmdvar(k::KernelFunction, X::AbstractMatrix, Y::AbstractMatrix) = mmdvar(kernel_mmdvar_stats(k, X, Y))
+mmd_and_mmdvar(k::KernelFunction, X::AbstractMatrix, Y::AbstractMatrix) = mmd_and_mmdvar(kernel_mmdvar_stats(k, X, Y))
+
+function kernel_pairwise_sum(k::KernelFunction, X::AbstractMatrix, Y::AbstractMatrix, ::Val{skipdiag} = Val(false)) where {skipdiag}
+    @assert size(X) == size(Y)
     m  = size(X, 2)
     Tk = typeof(k(zero(promote_type(eltype(X), eltype(Y)))))
     Σ  = zero(Tk)
@@ -179,11 +227,22 @@ function kernel_pairwise_sum(k, X::AbstractMatrix, Y::AbstractMatrix, ::Val{skip
     end
     return Σ
 end
-function kernel_var_stats(k, X::AbstractMatrix, Y::AbstractMatrix)
+
+function kernel_mmd_stats(k::KernelFunction, X::AbstractMatrix, Y::AbstractMatrix)
+    # Ref: http://www.jmlr.org/papers/volume13/gretton12a/gretton12a.pdf
+    @assert size(X) == size(Y)
+    e_Kxx_e = kernel_pairwise_sum(k, X, X, Val(true))
+    e_Kyy_e = kernel_pairwise_sum(k, Y, Y, Val(true))
+    e_Kxy_e = kernel_pairwise_sum(k, X, Y, Val(true))
+    return MMDResults(typeof(e_Kxy_e)(size(X,2)), e_Kxx_e, e_Kyy_e, e_Kxy_e)
+end
+
+function kernel_mmdvar_stats(k::KernelFunction, X::AbstractMatrix, Y::AbstractMatrix)
     @assert size(X) == size(Y)
     m  = size(X, 2)
     Tk = typeof(k(zero(promote_type(eltype(X), eltype(Y)))))
     Kxx_F2 = Kyy_F2 = Kxy_F2 = e_Kxx_e = e_Kyy_e = e_Kxy_e = Kxx_e_F2 = Kyy_e_F2 = Kxy_e_F2 = Kyx_e_F2 = e_Kxx_Kxy_e = e_Kyy_Kyx_e = zero(Tk)
+
     @inbounds for j = 1:m
         Kxx_e_j = Kyy_e_j = Kxy_e_j = Kyx_e_j = zero(Tk)
         @inbounds @simd for i in 1:j-1
@@ -230,58 +289,8 @@ function kernel_var_stats(k, X::AbstractMatrix, Y::AbstractMatrix)
         e_Kxx_Kxy_e += Kxx_e_j * Kxy_e_j
         e_Kyy_Kyx_e += Kyy_e_j * Kyx_e_j
     end
-    return @ntuple(Kxx_F2, Kyy_F2, Kxy_F2, e_Kxx_e, e_Kyy_e, e_Kxy_e, Kxx_e_F2, Kyy_e_F2, Kxy_e_F2, Kyx_e_F2, e_Kxx_Kxy_e, e_Kyy_Kyx_e)
-end
-function mmd(k, X::AbstractMatrix, Y::AbstractMatrix)
-    # Ref: http://www.jmlr.org/papers/volume13/gretton12a/gretton12a.pdf
-    # @assert size(X) == size(Y)
-    m = size(X, 2)
 
-    # Σxx = kernel_pairwise_sum(k, X)
-    # Σxy = kernel_pairwise_sum(k, X, Y)
-    # Σyy = kernel_pairwise_sum(k, Y)
-    # MMDsq = Σxx/(m*(m-1)) + Σyy/(m*(m-1)) - 2*Σxy/(m^2) # generic unbiased estimator (m^2 -> m*n when m != n)
-
-    # MMD²_U: MMD estimator which is a U-statistic
-    #   See: https://arxiv.org/pdf/1906.02104.pdf
-    e_Kxx_e = kernel_pairwise_sum(k, X, X, Val(true))
-    e_Kyy_e = kernel_pairwise_sum(k, Y, Y, Val(true))
-    e_Kxy_e = kernel_pairwise_sum(k, X, Y, Val(true))
-    #e_Kyx_e= kernel_pairwise_sum(k, Y, X, Val(true))
-    #MMDsq= (e_Kxx_e + e_Kyy_e - e_Kxy_e - e_Kxy_e)/(m*(m-1))
-    MMDsq = (e_Kxx_e + e_Kyy_e - 2e_Kxy_e)/(m*(m-1))
-
-    return MMDsq
-end
-function mmdvar(k, X::AbstractMatrix, Y::AbstractMatrix)
-    #   NOTE: Here we assume a symmetric kernel k(x,y) == k(y,x),
-    #         and therefore that Kxx == Kxx', Kyy = Kyy', Kxy == Kxy'
-    # See:
-    #   [1] https://arxiv.org/pdf/1906.02104.pdf
-    #   [2] http://www.gatsby.ucl.ac.uk/~dougals/slides/dali/#/50
-    @assert size(X) == size(Y)
-    @unpack Kxx_F2, Kyy_F2, Kxy_F2, e_Kxx_e, e_Kyy_e, e_Kxy_e, Kxx_e_F2, Kyy_e_F2, Kxy_e_F2, Kyx_e_F2, e_Kxx_Kxy_e, e_Kyy_Kyx_e = kernel_var_stats(k, X, Y)
-    m = size(X, 2)
-    m_2 = m*(m-1)
-    m_3 = m*(m-1)*(m-2)
-    m_4 = m*(m-1)*(m-2)*(m-3)
-
-    t1_4 = ((   4) / (m_4    )) * (Kxx_e_F2 + Kyy_e_F2)
-    t2_4 = ((4m^2) / (m_2^3  )) * (Kxy_e_F2 + Kyx_e_F2) # NOTE: typo in original paper: m^3*(m-1)^2 --> m^3*(m-1)^3 = m_2^3
-    t2_5 = ((  4m) / (m_2^3  )) * (Kxy_e_F2 + Kyx_e_F2) # NOTE: typo in original paper: m^3*(m-1)^2 --> m^3*(m-1)^3 = m_2^3
-    t2_6 = ((   4) / (m_2^3  )) * (Kxy_e_F2 + Kyx_e_F2) # NOTE: typo in original paper: m^3*(m-1)^2 --> m^3*(m-1)^3 = m_2^3
-    t3_4 = ((   8) / (m*m_3  )) * (e_Kxx_Kxy_e + e_Kyy_Kyx_e)
-    t4_5 = ((   8) / (m^2*m_3)) * ((e_Kxx_e + e_Kyy_e) * e_Kxy_e)
-    t5_4 = ((  4m) / (m_2*m_4)) * (e_Kxx_e^2 + e_Kyy_e^2)
-    t5_5 = ((   6) / (m_2*m_4)) * (e_Kxx_e^2 + e_Kyy_e^2)
-    t6_4 = ((  8m) / (m_2^3  )) * (e_Kxy_e^2)
-    t6_5 = ((  12) / (m_2^3  )) * (e_Kxy_e^2)
-    t7_4 = ((   2) / (m_4    )) * (Kxx_F2 + Kyy_F2)
-    t8_4 = ((4m^2) / (m_2^3  )) * (Kxy_F2)
-    t8_5 = ((  8m) / (m_2^3  )) * (Kxy_F2)
-    MMDvar = (((t1_4 + t2_4) - (t3_4 + t5_4 + t6_4 + t7_4 + t8_4)) + ((t4_5 + t5_5 + t6_5 + t8_5) - t2_5)) - t2_6 # NOTE: typo in original paper: t8_* sign flips
-
-    return MMDvar
+    return MMDVarResults(Tk(m), Kxx_F2, Kyy_F2, Kxy_F2, e_Kxx_e, e_Kyy_e, e_Kxy_e, Kxx_e_F2, Kyy_e_F2, Kxy_e_F2, Kyx_e_F2, e_Kxx_Kxy_e, e_Kyy_Kyx_e)
 end
 
 ####
@@ -757,7 +766,7 @@ end
 #### Kernel matrices with generic kernel function
 ####
 
-function mmd_flux_kernel_matrices(k::Function, X::AbstractMatrix, Y::AbstractMatrix)
+function mmd_flux_kernel_matrices(k::KernelFunction, X::AbstractMatrix, Y::AbstractMatrix)
     @assert size(X) == size(Y)
 
     n = size(X,1)
@@ -1055,7 +1064,7 @@ for a in [3], m in [30]
     sampleX = () -> rand(2,m)
     sampleY = () -> [2-1/a; 1/a] .* rand(2,m)
     X, Y = sampleX(), sampleY()
-    # @btime kernel_var_stats($k, $X, $Y)
+    # @btime kernel_mmdvar_stats($k, $X, $Y)
 
     v1 = @btime mmdvar!($(mmd_work(X, Y)), $k, $X, $Y)
     v2 = @btime mmdvar($k, $X, $Y)
