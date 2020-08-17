@@ -25,6 +25,18 @@ fast_exp!(A...) = avx_map!(exp, A...)
 #### In-place transpose-related helpers
 ####
 
+# Generic versions of `NNlib.batched_transpose` for use outside of `NNlib.batched_mul`
+batched_transpose(A::AbstractMatrix) = transpose(A)
+batched_transpose(A::AbstractTensor3D) = permutedims(A, (2,1,3))
+batched_transpose(A::CUDA.CuMatrix) = transpose(A)
+batched_transpose(A::CuTensor3D) = permutedims(A, (2,1,3))
+
+add_transpose!(A::CUDA.CuMatrix) = A .= A .+ A'
+add_transpose!(A::CuTensor3D) = A .= A .+ batched_transpose(A)
+
+self_transpose!(A::CUDA.CuMatrix) = A .= A'
+self_transpose!(A::CuTensor3D) = A .= batched_transpose(A)
+
 function add_transpose!(A::AbstractMatrix)
     for j in 1:size(A, 2)
         @inbounds @simd for i in 1:j
@@ -35,7 +47,7 @@ function add_transpose!(A::AbstractMatrix)
     return A
 end
 
-function add_transpose!(A::AbstractArray{<:Any,3})
+function add_transpose!(A::AbstractTensor3D)
     for k in 1:size(A, 3)
         for j in 1:size(A, 2)
             @inbounds @simd for i in 1:j
@@ -56,7 +68,7 @@ function self_transpose!(A::AbstractMatrix)
     return A
 end
 
-function self_transpose!(A::AbstractArray{<:Any,3})
+function self_transpose!(A::AbstractTensor3D)
     for k in 1:size(A, 3)
         for j in 1:size(A, 2)
             @inbounds @simd for i in 1:j
@@ -71,9 +83,15 @@ end
 #### Batched diagonal extraction of 3D arrays
 ####
 
-batcheddiag(x::AbstractMatrix) = LinearAlgebra.diag(x)
+batched_diag(x::AbstractMatrix) = LinearAlgebra.diag(x)
+batched_diag(x::CuTensor3D) = batched_diag_brute(x)
 
-Zygote.@adjoint function batcheddiag(x::AbstractMatrix)
+function batched_diag_brute(x::AbstractTensor3D)
+    ndiag = min(size(x,1), size(x,2))
+    return reshape(x[CartesianIndex.(1:ndiag, 1:ndiag), :], ndiag, 1, size(x,3))
+end
+
+Zygote.@adjoint function batched_diag(x::AbstractMatrix)
     return LinearAlgebra.diag(x), function(Δ)
         # Why is Δ sometimes an nx1 matrix? Related to adjoint... e.g. loss = sum(diag(x)')
         # (LinearAlgebra.Diagonal(Δ),) # Should be this...
@@ -81,9 +99,9 @@ Zygote.@adjoint function batcheddiag(x::AbstractMatrix)
     end
 end
 
-function batcheddiag(x::AbstractArray{T,3}) where {T}
-    nbatch = size(x,3)
+function batched_diag(x::AbstractTensor3D)
     ndiag = min(size(x,1), size(x,2))
+    nbatch = size(x,3)
     y = similar(x, ndiag, 1, nbatch)
     # Threads.@threads
     @avx for k in 1:nbatch, i in 1:ndiag
@@ -92,10 +110,10 @@ function batcheddiag(x::AbstractArray{T,3}) where {T}
     return y
 end
 
-Zygote.@adjoint function batcheddiag(x::AbstractArray{T,3}) where {T}
-    return batcheddiag(x), function(Δ)
-        nbatch = size(x,3)
+Zygote.@adjoint function batched_diag(x::AbstractTensor3D)
+    return batched_diag(x), function(Δ)
         ndiag = min(size(x,1), size(x,2))
+        nbatch = size(x,3)
         y = zero(x)
         # Threads.@threads
         @avx for k in 1:nbatch, i in 1:ndiag
@@ -105,26 +123,16 @@ Zygote.@adjoint function batcheddiag(x::AbstractArray{T,3}) where {T}
     end
 end
 
-function batcheddiag_brute(x::AbstractArray{T,3}) where {T}
-    nbatch = size(x,3)
-    ndiag = min(size(x,1), size(x,2))
-
-    idx = CartesianIndex.(1:ndiag, 1:ndiag)
-    y = reshape(x[idx,:], ndiag, 1, nbatch)
-
-    return y
-end
-
 #=
 let
     x = randn(256,256,4)
 
-    @assert batcheddiag(x) == batcheddiag_brute(x)
-    @btime batcheddiag($x)
-    @btime batcheddiag_brute($x)
+    @assert batched_diag(x) == batched_diag_brute(x)
+    @btime batched_diag($x)
+    @btime batched_diag_brute($x)
 
-    f = x -> sum(batcheddiag(x))
-    f_brute = x -> sum(batcheddiag_brute(x))
+    f = x -> sum(batched_diag(x))
+    f_brute = x -> sum(batched_diag_brute(x))
 
     g = Zygote.gradient(f, x)
     g_brute = Zygote.gradient(f_brute, x)

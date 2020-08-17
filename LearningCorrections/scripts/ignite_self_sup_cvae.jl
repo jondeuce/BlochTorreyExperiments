@@ -8,7 +8,7 @@ pyplot(size=(800,600))
 Threads.@threads for i in 1:Threads.nthreads(); set_zero_subnormals(true); end
 if CUDA.functional() && !haskey(ENV, "JL_DISABLE_GPU")
     CUDA.allowscalar(false)
-    CUDA.device!(parse(Int, get(ENV, "JL_CUDA_DEVICE", "0")))
+    CUDA.device!(parse(Int, get(ENV, "JL_CUDA_DEVICE", "3")))
     @eval todevice(x) = Flux.gpu(x)
 else
     @eval todevice(x) = Flux.cpu(x)
@@ -236,7 +236,7 @@ const optimizers = Dict{String,Any}(
 MMDLearning.model_summary(models, joinpath(settings["data"]["out"], "model-summary.txt"))
 
 # Helpers
-@inline flatten_apply(f, x::AbstractArray{<:Any,3}) = (y = f(reshape(x, size(x,1), :)); reshape(y, size(y,1), size(x,2), size(x,3)))
+@inline flatten_apply(f, x::AbstractTensor3D) = (y = f(reshape(x, size(x,1), :)); reshape(y, size(y,1), size(x,2), size(x,3)))
 @inline flatten_apply(f, x::AbstractMatrix) = f(x)
 @inline split_theta_latent(θZ::AbstractMatrix) = size(θZ,1) == ntheta(phys) ? (θZ, similar(θZ,0,size(θZ,2))) : (θZ[1:ntheta(phys),:], θZ[ntheta(phys)+1:end,:])
 @inline split_mean_std(μ::AbstractMatrix) = μ[1:end÷2, :], Flux.softplus.(μ[end÷2+1:end, :]) .+ sqrt(eps(eltype(μ))) #TODO Flux.softplus -> exp?
@@ -288,7 +288,7 @@ function augmentations(X::AbstractMatrix, X̂::AbstractMatrix)
 
     return Xaug
 end
-augmentations(X::AbstractArray{<:Any,3}, X̂::AbstractMatrix) = flatten_apply(x -> augmentations(x, X̂), X)
+augmentations(X::AbstractTensor3D, X̂::AbstractMatrix) = flatten_apply(x -> augmentations(x, X̂), X)
 
 function X̂_augmentations(X,Z,X̂)
     #= TODO

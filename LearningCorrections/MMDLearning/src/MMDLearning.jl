@@ -36,6 +36,14 @@ export sampleθprior, sampleθ, sampleX, sampleY
 export initialize_callback, update_callback!
 
 ####
+#### Global aliases
+####
+const AbstractTensor3D{T} = AbstractArray{T,3}
+const CuTensor3D{T} = CUDA.CuArray{T,3}
+
+export AbstractTensor3D, CuTensor3D
+
+####
 #### Includes
 ####
 

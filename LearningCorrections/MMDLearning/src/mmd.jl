@@ -4,44 +4,47 @@
 
 abstract type MMDKernel{T} end
 
-struct KernelFunction{T,F} <: MMDKernel{T}
+struct FunctionKernel{T,F} <: MMDKernel{T}
     f::F
-    KernelFunction{T}(f) where {T} = new{T,typeof(f)}(f)
+    FunctionKernel{T}(f) where {T} = new{T,typeof(f)}(f)
 end
-(k::KernelFunction)(Δ) = k.f(Δ)
+(k::FunctionKernel)(Δ) = k.f(Δ)
+
+struct ExponentialKernel{T,N,A<:AbstractArray{T,N}} <: MMDKernel{T}
+    σ::A
+    ExponentialKernel(σ::AbstractArray) = new{eltype(σ),ndims(σ),typeof(σ)}(σ)
+end
 
 struct MMDResults{T}
     m::T
-    e_Kxx_e::T
-    e_Kyy_e::T
-    e_Kxy_e::T
+    e_K̃xx_e::T
+    e_K̃yy_e::T
+    e_K̃xy_e::T
 end
 
 struct MMDVarResults{T}
     m::T
-    Kxx_F2::T
-    Kyy_F2::T
+    K̃xx_F2::T
+    K̃yy_F2::T
     Kxy_F2::T
-    e_Kxx_e::T
-    e_Kyy_e::T
+    e_K̃xx_e::T
+    e_K̃yy_e::T
     e_Kxy_e::T
-    Kxx_e_F2::T
-    Kyy_e_F2::T
+    e_K̃xy_e::T
+    K̃xx_e_F2::T
+    K̃yy_e_F2::T
     Kxy_e_F2::T
     Kyx_e_F2::T
-    e_Kxx_Kxy_e::T
-    e_Kyy_Kyx_e::T
+    e_K̃xx_Kxy_e::T
+    e_K̃yy_Kyx_e::T
 end
 
 function mmd(res::Union{<:MMDResults, <:MMDVarResults})
-    @unpack m, e_Kxx_e, e_Kyy_e, e_Kxy_e = res
-
-    # See: http://www.jmlr.org/papers/volume13/gretton12a/gretton12a.pdf
-    # MMDsq = e_Kxx_e/(m*(m-1)) + e_Kyy_e/(m*(m-1)) - 2*e_Kxy_e/(m^2)
+    @unpack m, e_K̃xx_e, e_K̃yy_e, e_K̃xy_e = res
 
     # MMD²_U: MMD estimator which is a U-statistic
     #   See: https://arxiv.org/pdf/1906.02104.pdf
-    MMDsq = (e_Kxx_e + e_Kyy_e - 2e_Kxy_e) / (m * (m-1))
+    MMDsq = (e_K̃xx_e + e_K̃yy_e - 2e_K̃xy_e) / (m * (m-1))
 
     return MMDsq
 end
@@ -52,50 +55,31 @@ function mmd_and_mmdvar(res::MMDVarResults)
     # See:
     #   [1] https://arxiv.org/pdf/1906.02104.pdf
     #   [2] http://www.gatsby.ucl.ac.uk/~dougals/slides/dali/#/50
-    @unpack m, Kxx_F2, Kyy_F2, Kxy_F2, e_Kxx_e, e_Kyy_e, e_Kxy_e, Kxx_e_F2, Kyy_e_F2, Kxy_e_F2, Kyx_e_F2, e_Kxx_Kxy_e, e_Kyy_Kyx_e = res
+    @unpack m, K̃xx_F2, K̃yy_F2, Kxy_F2, e_K̃xx_e, e_K̃yy_e, e_Kxy_e, e_K̃xy_e, K̃xx_e_F2, K̃yy_e_F2, Kxy_e_F2, Kyx_e_F2, e_K̃xx_Kxy_e, e_K̃yy_Kyx_e = res
     m_2 = m * (m-1)
     m_3 = m_2 * (m-2)
     m_4 = m_3 * (m-3)
 
+    # MMD²_U: MMD estimator which is a U-statistic
+    #   See: https://arxiv.org/pdf/1906.02104.pdf
+    MMDsq = mmd(res)
+
     # Var[MMD²_U]: Variance estimator
     #   See: https://arxiv.org/pdf/1906.02104.pdf
-    # MMDvar =
-    #     ((          4) / (m_4    )) * (Kxx_e_F2 + Kyy_e_F2) +
-    #     ((4*(m^2-m-1)) / (m*m_2^2)) * (Kxy_e_F2 + Kyx_e_F2) -
-    #     ((          8) / (m*m_3  )) * (e_Kxx_Kxy_e + e_Kyy_Kyx_e) +
-    #     ((          8) / (m^2*m_3)) * ((e_Kxx_e + e_Kyy_e) * e_Kxy_e) -
-    #     ((   2*(2m-3)) / (m_2*m_4)) * (e_Kxx_e^2 + e_Kyy_e^2) -
-    #     ((   4*(2m-3)) / (m_2^3  )) * (e_Kxy_e^2) -
-    #     ((          2) / (m_4    )) * (Kxx_F2 + Kyy_F2) +
-    #     ((   4m*(m-2)) / (m_2^3  )) * (Kxy_F2)
-
-    t1_4 = ((   4) / (m_4    )) * (Kxx_e_F2 + Kyy_e_F2)
+    t1_4 = ((   4) / (m_4    )) * (K̃xx_e_F2 + K̃yy_e_F2)
     t2_4 = ((4m^2) / (m_2^3  )) * (Kxy_e_F2 + Kyx_e_F2) # NOTE: typo in original paper: m^3*(m-1)^2 --> m^3*(m-1)^3 = m_2^3
     t2_5 = ((  4m) / (m_2^3  )) * (Kxy_e_F2 + Kyx_e_F2) # NOTE: typo in original paper: m^3*(m-1)^2 --> m^3*(m-1)^3 = m_2^3
     t2_6 = ((   4) / (m_2^3  )) * (Kxy_e_F2 + Kyx_e_F2) # NOTE: typo in original paper: m^3*(m-1)^2 --> m^3*(m-1)^3 = m_2^3
-    t3_4 = ((   8) / (m*m_3  )) * (e_Kxx_Kxy_e + e_Kyy_Kyx_e)
-    t4_5 = ((   8) / (m^2*m_3)) * ((e_Kxx_e + e_Kyy_e) * e_Kxy_e)
-    t5_4 = ((  4m) / (m_2*m_4)) * (e_Kxx_e^2 + e_Kyy_e^2)
-    t5_5 = ((   6) / (m_2*m_4)) * (e_Kxx_e^2 + e_Kyy_e^2)
+    t3_4 = ((   8) / (m*m_3  )) * (e_K̃xx_Kxy_e + e_K̃yy_Kyx_e)
+    t4_5 = ((   8) / (m^2*m_3)) * ((e_K̃xx_e + e_K̃yy_e) * e_Kxy_e)
+    t5_4 = ((  4m) / (m_2*m_4)) * (e_K̃xx_e^2 + e_K̃yy_e^2)
+    t5_5 = ((   6) / (m_2*m_4)) * (e_K̃xx_e^2 + e_K̃yy_e^2)
     t6_4 = ((  8m) / (m_2^3  )) * (e_Kxy_e^2)
     t6_5 = ((  12) / (m_2^3  )) * (e_Kxy_e^2)
-    t7_4 = ((   2) / (m_4    )) * (Kxx_F2 + Kyy_F2)
+    t7_4 = ((   2) / (m_4    )) * (K̃xx_F2 + K̃yy_F2)
     t8_4 = ((4m^2) / (m_2^3  )) * (Kxy_F2)
     t8_5 = ((  8m) / (m_2^3  )) * (Kxy_F2)
     MMDvar = (((t1_4 + t2_4) - (t3_4 + t5_4 + t6_4 + t7_4 + t8_4)) + ((t4_5 + t5_5 + t6_5 + t8_5) - t2_5)) - t2_6 # NOTE: typo in original paper: +t8 --> -t8
-
-    #=
-    MMDvar =
-        ((      2) / (m^2 * (m-1)^2)) * (2*Kxx_e_F2 - Kxx_F2 + 2*Kyy_e_F2 - Kyy_F2) - # Units: (m*(m*[K])^2)/m^4 + (m^2*[K]^2)/m^4 = [K]^2/m + [K]^2/m^2 ~ [K]^2/m ~ O(1/m)
-        ((   4m-6) / (m^3 * (m-1)^3)) * (e_Kxx_e^2 + e_Kyy_e^2) +                     # Units: (m^2*[K])^2*m/m^6 = [K]^2/m ~ O(1/m)
-        ((4*(m-2)) / (m^3 * (m-1)^2)) * (2*Kxy_e_F2) -                                # Units: (m^2*[K])^2*m/m^6 = [K]/m ~ O(1/m). Note: used Kxy symmetry
-        ((4*(m-3)) / (m^3 * (m-1)^2)) * (Kxy_F2) -                                    # Units: (m^2*[K]^2)*m/m^5 = [K]/m^2 ~ O(1/m^2)
-        ((  8m-12) / (m^5 * (m-1)  )) * (e_Kxy_e^2) +                                 # Units: (m^2*[K])^2*m/m^6 = [K]/m ~ O(1/m)
-        ((      8) / (m^4 * (m-1)  )) * ((e_Kxx_e + e_Kyy_e) * e_Kxy_e) -             # Units: (m^2*[K])^2/m^5   = [K]/m ~ O(1/m)
-        ((      8) / (m^3 * (m-1)  )) * (e_Kxx_Kxy_e + Kyy_e'Kxy_e)                   # Units: (m*(m*[K])^2)/m^4 = [K]/m ~ O(1/m). Note: used Kxx, Kyy, Kxy symmetry
-    =#
-
-    MMDsq = mmd(res)
 
     return MMDsq, MMDvar
 end
@@ -106,22 +90,22 @@ mmdvar(res::MMDVarResults) = mmd_and_mmdvar(res)[2]
 #### Generic MMD using buffer matrices
 ####
 
-mmd!(k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmd!(mmd_work(X,Y), k, X, Y)
-mmd!(work, k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmd(kernel_mmd_stats!(work, k, X, Y))
-mmdvar!(k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmdvar!(mmd_work(X,Y), k, X, Y)
-mmdvar!(work, k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmdvar(kernel_mmdvar_stats!(work, k, X, Y))
-mmd_and_mmdvar!(k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmd_and_mmdvar!(mmd_work(X,Y), k, X, Y)
-mmd_and_mmdvar!(work, k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmd_and_mmdvar(kernel_mmdvar_stats!(work, k, X, Y))
+mmd!(k::FunctionKernel{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmd!(mmd_work(X,Y), k, X, Y)
+mmd!(work, k::FunctionKernel{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmd(kernel_mmd_stats!(work, k, X, Y))
+mmdvar!(k::FunctionKernel{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmdvar!(mmd_work(X,Y), k, X, Y)
+mmdvar!(work, k::FunctionKernel{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmdvar(kernel_mmdvar_stats!(work, k, X, Y))
+mmd_and_mmdvar!(k::FunctionKernel{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmd_and_mmdvar!(mmd_work(X,Y), k, X, Y)
+mmd_and_mmdvar!(work, k::FunctionKernel{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = mmd_and_mmdvar(kernel_mmdvar_stats!(work, k, X, Y))
 
 function mmd_work(T::Type, sz::NTuple{2,Int})
     Kxx, Kyy, Kxy = ntuple(_ -> zeros(T, sz[2], sz[2]), 3)
-    Kxx_e, Kyy_e, Kxy_e, Kyx_e = ntuple(_ -> zeros(T, sz[2]), 4)
-    return @ntuple(Kxx, Kyy, Kxy, Kxx_e, Kyy_e, Kxy_e, Kyx_e)
+    K̃xx_e, K̃yy_e, Kxy_e, Kyx_e = ntuple(_ -> zeros(T, sz[2]), 4)
+    return @ntuple(Kxx, Kyy, Kxy, K̃xx_e, K̃yy_e, Kxy_e, Kyx_e)
 end
 mmd_work(sz::NTuple{2,Int}) = mmd_work(Float64, sz)
 mmd_work(X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T} = (@assert size(X) == size(Y); return mmd_work(T, size(X)))
 
-function kernel_pairwise!(Kxy::AbstractMatrix{T}, k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, ::Val{skipdiag} = Val(false)) where {T,skipdiag}
+function kernel_pairwise!(Kxy::AbstractMatrix{T}, k::FunctionKernel{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, ::Val{skipdiag} = Val(false)) where {T,skipdiag}
     @assert size(X) == size(Y) && size(Kxy) == (size(X, 2), size(Y, 2))
     m = size(X, 2)
     if X === Y
@@ -148,35 +132,36 @@ function kernel_pairwise!(Kxy::AbstractMatrix{T}, k::KernelFunction{T}, X::Abstr
     return Kxy
 end
 
-function kernel_mmd_stats!(work, k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
+function kernel_mmd_stats!(work, k::FunctionKernel{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
     @assert size(X) == size(Y)
     @unpack Kxx, Kyy, Kxy = work
     m = size(X, 2)
-    e_Kxx_e = sum(kernel_pairwise!(Kxx, k, X, X, Val(true)))
-    e_Kyy_e = sum(kernel_pairwise!(Kyy, k, Y, Y, Val(true)))
+    e_K̃xx_e = sum(kernel_pairwise!(Kxx, k, X, X, Val(true)))
+    e_K̃yy_e = sum(kernel_pairwise!(Kyy, k, Y, Y, Val(true)))
     e_Kxy_e = sum(kernel_pairwise!(Kxy, k, X, Y, Val(true)))
-    return MMDResults(T(m), e_Kxx_e, e_Kyy_e, e_Kxy_e)
+    return MMDResults{T}(m, e_K̃xx_e, e_K̃yy_e, e_Kxy_e)
 end
 
-function kernel_mmdvar_stats!(work, k::KernelFunction{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
+function kernel_mmdvar_stats!(work, k::FunctionKernel{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
     @assert size(X) == size(Y)
-    @unpack Kxx, Kyy, Kxy, Kxx_e, Kyy_e, Kxy_e, Kyx_e = work
+    @unpack Kxx, Kyy, Kxy, K̃xx_e, K̃yy_e, Kxy_e, Kyx_e = work
 
     kernel_pairwise!(Kxx, k, X, X, Val(true))
     kernel_pairwise!(Kyy, k, Y, Y, Val(true))
     kernel_pairwise!(Kxy, k, X, Y, Val(false))
 
-    sum_columns!(Kxx_e, Kxx)
-    sum_columns!(Kyy_e, Kyy)
+    sum_columns!(K̃xx_e, Kxx)
+    sum_columns!(K̃yy_e, Kyy)
     sum_columns!(Kxy_e, Kxy)
     sum_rows!(Kyx_e, Kxy)
 
-    Kxx_F2, Kyy_F2, Kxy_F2 = frob_norm2(Kxx), frob_norm2(Kyy), frob_norm2(Kxy)
-    e_Kxx_e, e_Kyy_e, e_Kxy_e = sum(Kxx), sum(Kyy), sum(Kxy)
-    e_Kxx_Kxy_e, e_Kyy_Kyx_e = Kxx_e'Kxy_e, Kyy_e'Kyx_e
-    Kxx_e_F2, Kyy_e_F2, Kxy_e_F2, Kyx_e_F2 = frob_norm2(Kxx_e), frob_norm2(Kyy_e), frob_norm2(Kxy_e), frob_norm2(Kyx_e)
+    K̃xx_F2, K̃yy_F2, Kxy_F2 = frob_norm2(Kxx), frob_norm2(Kyy), frob_norm2(Kxy)
+    e_K̃xx_e, e_K̃yy_e, e_Kxy_e = sum(Kxx), sum(Kyy), sum(Kxy)
+    e_K̃xy_e = e_Kxy_e - tr(Kxy)
+    e_K̃xx_Kxy_e, e_K̃yy_Kyx_e = dot(K̃xx_e, Kxy_e), dot(K̃yy_e, Kyx_e)
+    K̃xx_e_F2, K̃yy_e_F2, Kxy_e_F2, Kyx_e_F2 = frob_norm2(K̃xx_e), frob_norm2(K̃yy_e), frob_norm2(Kxy_e), frob_norm2(Kyx_e)
 
-    return MMDVarResults(T(size(X,2)), Kxx_F2, Kyy_F2, Kxy_F2, e_Kxx_e, e_Kyy_e, e_Kxy_e, Kxx_e_F2, Kyy_e_F2, Kxy_e_F2, Kyx_e_F2, e_Kxx_Kxy_e, e_Kyy_Kyx_e)
+    return MMDVarResults{T}(size(X,2), K̃xx_F2, K̃yy_F2, Kxy_F2, e_K̃xx_e, e_K̃yy_e, e_Kxy_e, e_K̃xy_e, K̃xx_e_F2, K̃yy_e_F2, Kxy_e_F2, Kyx_e_F2, e_K̃xx_Kxy_e, e_K̃yy_Kyx_e)
 end
 
 #=
@@ -195,14 +180,14 @@ end
 =#
 
 ####
-#### Generic MMD without buffers
+#### MMD using a generic kernel function
 ####
 
-mmd(k::KernelFunction, X::AbstractMatrix, Y::AbstractMatrix) = mmd(kernel_mmd_stats(k, X, Y))
-mmdvar(k::KernelFunction, X::AbstractMatrix, Y::AbstractMatrix) = mmdvar(kernel_mmdvar_stats(k, X, Y))
-mmd_and_mmdvar(k::KernelFunction, X::AbstractMatrix, Y::AbstractMatrix) = mmd_and_mmdvar(kernel_mmdvar_stats(k, X, Y))
+mmd(k::FunctionKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmd(kernel_mmd_stats(k, X, Y))
+mmdvar(k::FunctionKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmdvar(kernel_mmdvar_stats(k, X, Y))
+mmd_and_mmdvar(k::FunctionKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmd_and_mmdvar(kernel_mmdvar_stats(k, X, Y))
 
-function kernel_pairwise_sum(k::KernelFunction, X::AbstractMatrix, Y::AbstractMatrix, ::Val{skipdiag} = Val(false)) where {skipdiag}
+function kernel_pairwise_sum(k::FunctionKernel, X::AbstractMatrix, Y::AbstractMatrix, ::Val{skipdiag} = Val(false)) where {skipdiag}
     @assert size(X) == size(Y)
     m  = size(X, 2)
     Tk = typeof(k(zero(promote_type(eltype(X), eltype(Y)))))
@@ -228,36 +213,37 @@ function kernel_pairwise_sum(k::KernelFunction, X::AbstractMatrix, Y::AbstractMa
     return Σ
 end
 
-function kernel_mmd_stats(k::KernelFunction, X::AbstractMatrix, Y::AbstractMatrix)
+function kernel_mmd_stats(k::FunctionKernel, X::AbstractMatrix, Y::AbstractMatrix)
     # Ref: http://www.jmlr.org/papers/volume13/gretton12a/gretton12a.pdf
     @assert size(X) == size(Y)
-    e_Kxx_e = kernel_pairwise_sum(k, X, X, Val(true))
-    e_Kyy_e = kernel_pairwise_sum(k, Y, Y, Val(true))
+    e_K̃xx_e = kernel_pairwise_sum(k, X, X, Val(true))
+    e_K̃yy_e = kernel_pairwise_sum(k, Y, Y, Val(true))
     e_Kxy_e = kernel_pairwise_sum(k, X, Y, Val(true))
-    return MMDResults(typeof(e_Kxy_e)(size(X,2)), e_Kxx_e, e_Kyy_e, e_Kxy_e)
+    Tk = promote_type(typeof(e_K̃xx_e), typeof(e_K̃yy_e), typeof(e_Kxy_e))
+    return MMDResults{Tk}(size(X,2), e_K̃xx_e, e_K̃yy_e, e_Kxy_e)
 end
 
-function kernel_mmdvar_stats(k::KernelFunction, X::AbstractMatrix, Y::AbstractMatrix)
+function kernel_mmdvar_stats(k::FunctionKernel, X::AbstractMatrix, Y::AbstractMatrix)
     @assert size(X) == size(Y)
     m  = size(X, 2)
     Tk = typeof(k(zero(promote_type(eltype(X), eltype(Y)))))
-    Kxx_F2 = Kyy_F2 = Kxy_F2 = e_Kxx_e = e_Kyy_e = e_Kxy_e = Kxx_e_F2 = Kyy_e_F2 = Kxy_e_F2 = Kyx_e_F2 = e_Kxx_Kxy_e = e_Kyy_Kyx_e = zero(Tk)
+    K̃xx_F2 = K̃yy_F2 = Kxy_F2 = e_K̃xx_e = e_K̃yy_e = e_Kxy_e = K̃xx_e_F2 = K̃yy_e_F2 = Kxy_e_F2 = Kyx_e_F2 = e_K̃xx_Kxy_e = e_K̃yy_Kyx_e = zero(Tk)
 
     @inbounds for j = 1:m
-        Kxx_e_j = Kyy_e_j = Kxy_e_j = Kyx_e_j = zero(Tk)
+        K̃xx_e_j = K̃yy_e_j = Kxy_e_j = Kyx_e_j = zero(Tk)
         @inbounds @simd for i in 1:j-1
             kxx_ij = k(column_mse(X, X, i, j))
             kyy_ij = k(column_mse(Y, Y, i, j))
             kxy_ij = k(column_mse(X, Y, i, j))
             kyx_ij = k(column_mse(Y, X, i, j))
-            Kxx_F2 += 2 * kxx_ij * kxx_ij
-            Kyy_F2 += 2 * kyy_ij * kyy_ij
+            K̃xx_F2 += 2 * kxx_ij * kxx_ij
+            K̃yy_F2 += 2 * kyy_ij * kyy_ij
             Kxy_F2 += kxy_ij * kxy_ij
-            e_Kxx_e += 2 * kxx_ij
-            e_Kyy_e += 2 * kyy_ij
+            e_K̃xx_e += 2 * kxx_ij
+            e_K̃yy_e += 2 * kyy_ij
             e_Kxy_e += kxy_ij
-            Kxx_e_j += kxx_ij
-            Kyy_e_j += kyy_ij
+            K̃xx_e_j += kxx_ij
+            K̃yy_e_j += kyy_ij
             Kxy_e_j += kyx_ij
             Kyx_e_j += kxy_ij
         end
@@ -271,27 +257,178 @@ function kernel_mmdvar_stats(k::KernelFunction, X::AbstractMatrix, Y::AbstractMa
             kyy_ij = k(column_mse(Y, Y, i, j))
             kxy_ij = k(column_mse(X, Y, i, j))
             kyx_ij = k(column_mse(Y, X, i, j))
-            # Kxx_F2 += kxx_ij * kxx_ij
-            # Kyy_F2 += kyy_ij * kyy_ij
             Kxy_F2 += kxy_ij * kxy_ij
-            # e_Kxx_e += kxx_ij
-            # e_Kyy_e += kyy_ij
             e_Kxy_e += kxy_ij
-            Kxx_e_j += kxx_ij
-            Kyy_e_j += kyy_ij
+            K̃xx_e_j += kxx_ij
+            K̃yy_e_j += kyy_ij
             Kxy_e_j += kyx_ij
             Kyx_e_j += kxy_ij
         end
-        Kxx_e_F2 += Kxx_e_j * Kxx_e_j
-        Kyy_e_F2 += Kyy_e_j * Kyy_e_j
+        K̃xx_e_F2 += K̃xx_e_j * K̃xx_e_j
+        K̃yy_e_F2 += K̃yy_e_j * K̃yy_e_j
         Kxy_e_F2 += Kxy_e_j * Kxy_e_j
         Kyx_e_F2 += Kyx_e_j * Kyx_e_j
-        e_Kxx_Kxy_e += Kxx_e_j * Kxy_e_j
-        e_Kyy_Kyx_e += Kyy_e_j * Kyx_e_j
+        e_K̃xx_Kxy_e += K̃xx_e_j * Kxy_e_j
+        e_K̃yy_Kyx_e += K̃yy_e_j * Kyx_e_j
     end
 
-    return MMDVarResults(Tk(m), Kxx_F2, Kyy_F2, Kxy_F2, e_Kxx_e, e_Kyy_e, e_Kxy_e, Kxx_e_F2, Kyy_e_F2, Kxy_e_F2, Kyx_e_F2, e_Kxx_Kxy_e, e_Kyy_Kyx_e)
+    return MMDVarResults{Tk}(m, K̃xx_F2, K̃yy_F2, Kxy_F2, e_K̃xx_e, e_K̃yy_e, e_Kxy_e, K̃xx_e_F2, K̃yy_e_F2, Kxy_e_F2, Kyx_e_F2, e_K̃xx_Kxy_e, e_K̃yy_Kyx_e)
 end
+
+####
+#### MMD using sums of exponential kernels
+####
+
+mmd(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmd(mmd_flux_u_statistic(mmd_flux_kernel_matrices(k.σ, X, Y, Val(true))...))
+mmdvar(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmdvar(mmdvar_flux_u_statistic(mmd_flux_kernel_matrices(k.σ, X, Y, Val(true))...))
+mmd_and_mmdvar(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmd_and_mmdvar(mmdvar_flux_u_statistic(mmd_flux_kernel_matrices(k.σ, X, Y, Val(true))...))
+
+function mmd_flux_u_statistic(Kxx, Kyy, Kxy)
+    @assert size(Kxx) == size(Kyy) == size(Kxy)
+    Tk = promote_type(eltype(Kxx), eltype(Kyy), eltype(Kxy))
+    m = size(Kxx,1)
+    e_K̃xx_e = sum(Kxx) - m # assumes k(0) == 1 --> tr(Kxx) = m
+    e_K̃yy_e = sum(Kyy) - m # assumes k(0) == 1 --> tr(Kyy) = m
+    e_K̃xy_e = sum(Kxy) - tr(Kxy)
+    return MMDResults{Tk}(m, e_K̃xx_e, e_K̃yy_e, e_K̃xy_e)
+end
+
+function mmdvar_flux_u_statistic(Kxx, Kyy, Kxy)
+    @assert size(Kxx) == size(Kyy) == size(Kxy)
+    Tk = promote_type(eltype(Kxx), eltype(Kyy), eltype(Kxy))
+    m = size(Kxx,1)
+
+    e_K̃xx_e = sum(Kxx) - m # assumes k(0) == 1
+    e_K̃yy_e = sum(Kyy) - m # assumes k(0) == 1
+    e_Kxy_e = sum(Kxy)
+    e_K̃xy_e = e_Kxy_e - tr(Kxy)
+    K̃xx_F2 = sum(abs2, Kxx) - m # assumes k(0) == 1
+    K̃yy_F2 = sum(abs2, Kyy) - m # assumes k(0) == 1
+    Kxy_F2 = sum(abs2, Kxy)
+    K̃xx_e = sum(Kxx; dims = 2) .- 1 # assumes k(0) == 1
+    K̃yy_e = sum(Kyy; dims = 2) .- 1 # assumes k(0) == 1
+    Kxy_e = sum(Kxy; dims = 2)
+    Kyx_e = sum(Kxy; dims = 1)
+    K̃xx_e_F2 = sum(abs2, K̃xx_e)
+    K̃yy_e_F2 = sum(abs2, K̃yy_e)
+    Kxy_e_F2 = sum(abs2, Kxy_e)
+    Kyx_e_F2 = sum(abs2, Kyx_e)
+    e_K̃xx_Kxy_e = dot(vec(K̃xx_e), vec(Kxy_e))
+    e_K̃yy_Kyx_e = dot(vec(K̃yy_e), vec(Kyx_e))
+
+    return MMDVarResults{Tk}(m, K̃xx_F2, K̃yy_F2, Kxy_F2, e_K̃xx_e, e_K̃yy_e, e_Kxy_e, e_K̃xy_e, K̃xx_e_F2, K̃yy_e_F2, Kxy_e_F2, Kyx_e_F2, e_K̃xx_Kxy_e, e_K̃yy_Kyx_e)
+end
+
+####
+#### Kernel matrices with generic kernel function
+####
+
+function mmd_flux_kernel_matrices(k::FunctionKernel, X::AbstractMatrix, Y::AbstractMatrix)
+    @assert size(X) == size(Y)
+
+    n = size(X,1)
+    XX, XY, YY = X'X, X'Y, Y'Y
+    xx, yy = batched_diag(XX), batched_diag(YY) # squared norms on diagonal
+    Kxx = k.((xx .- 2 .* XX .+ xx')./n) # note: mean is over data length n, not number of data m
+    Kyy = k.((yy .- 2 .* YY .+ yy')./n)
+    Kxy = k.((xx .- 2 .* XY .+ yy')./n)
+
+    return @ntuple(Kxx, Kyy, Kxy)
+end
+
+####
+#### Kernel matrices specialized for sums of exponential kernels
+####
+
+# Bandwidth array `logsigma` may be:
+#   1D `nbandwidth`-length vector
+#   2D `nbandwidth x n` matrix, where n == size(X,1) == size(Y,1)
+#   3D `n x 1 x nbandwidth` array (not meant for direct use)
+
+mmd_flux_kernel_matrices(logsigma::AbstractVector, args...) = mmd_flux_kernel_matrices(reshape(logsigma, 1, 1, length(logsigma)), args...) # reshape for broadcasting
+mmd_flux_kernel_matrices(logsigma::AbstractMatrix, args...) = mmd_flux_kernel_matrices(reshape(permutedims(logsigma), size(logsigma,2), 1, :), args...) # reshape for broadcasting
+
+function mmd_flux_kernel_matrices(logsigma::AbstractTensor3D, X::AbstractMatrix, Y::AbstractMatrix, batched::Val{true})
+    @assert size(X) == size(Y)
+    n, m = size(X)
+    gamma = @. inv(2n * exp(2 * logsigma)) # gamma = 1/2sigma^2 = 1/2exp(2logsigma)
+    _g = sqrt.(gamma)
+    U, V = _g .* X, _g .* Y
+    return _mmd_flux_kernel_matrices(U, V)
+end
+
+function mmd_flux_kernel_matrices(logsigma::AbstractTensor3D, X::AbstractMatrix, Y::AbstractMatrix, batched::Val{false})
+    @assert size(X) == size(Y)
+
+    n, m = size(X)
+    gamma = @. inv(2n * exp(2 * logsigma)) # gamma = 1/2sigma^2 = 1/2exp(2logsigma)
+    ngamma = size(gamma, 3)
+
+    # Compute matrices one slice at a time
+    _g = sqrt.(gamma[:,1,1])
+    Kxx, Kyy, Kxy = _mmd_flux_kernel_matrices(_g .* X, _g .* Y)
+
+    for k in 2:ngamma
+        _g = sqrt.(gamma[:,1,k])
+        U = _g .* X
+        V = _g .* Y
+        _Kxx, _Kyy, _Kxy = _mmd_flux_kernel_matrices(U, V)
+        Kxx += _Kxx
+        Kyy += _Kyy
+        Kxy += _Kxy
+    end
+
+    Kxx /= ngamma
+    Kyy /= ngamma
+    Kxy /= ngamma
+
+    return @ntuple(Kxx, Kyy, Kxy)
+end
+
+# Speed testing of mmd_flux_kernel_matrices
+function _bench_mmd_flux_kernel_matrices(;T = Float32, n = 128, m = 2048, p = 0, gpu::Bool = false)
+    maybegpu = gpu ? Flux.gpu : Flux.cpu
+    Xsz = p <= 0 ? (n,m) : (n,m,p)
+    Ksz = p <= 0 ? (m,m) : (m,m,p)
+    X = randn(T,Xsz...) |> maybegpu
+    Y = randn(T,Xsz...) |> maybegpu
+    Δ = (Kxx = maybegpu(rand(T,Ksz...)), Kyy = maybegpu(rand(T,Ksz...)), Kxy = maybegpu(rand(T,Ksz...)))
+
+    for nbw in [1,8], nchan in [1,n]
+        @show n, m, nbw, nchan
+        logsigma = (nchan > 1 ? randn(T, nbw, nchan) : randn(T, nbw)) |> maybegpu
+
+        # @assert all(values(mmd_flux_kernel_matrices(logsigma,X,Y,Val(false))) .≈ values(mmd_flux_kernel_matrices(logsigma,X,Y,Val(true))))
+
+        _y, _back = Zygote.pullback((_X,_Y) -> mmd_flux_kernel_matrices(logsigma,_X,_Y,Val(false)), X, Y)
+        _dyA, _dyB = _back(Δ)
+
+        y, back = Zygote.pullback((_X,_Y) -> mmd_flux_kernel_matrices(logsigma,_X,_Y,Val(true)), X, Y)
+        dyA, dyB = back(Δ)
+
+        # @assert all(values(_y) .≈ values(y))
+        # @assert _dyA ≈ dyA
+        # @assert _dyB ≈ dyB
+
+        for isbatched in [true, false]
+            f = (_s,_X,_Y) -> mmd_flux_kernel_matrices(_s,_X,_Y,Val(isbatched))
+            print("isbatched=$isbatched call:   "); @btime CUDA.@sync $f($logsigma, $X, $Y)
+            print("isbatched=$isbatched forward:"); _, back = @btime CUDA.@sync Zygote.pullback((_X,_Y) -> $f($logsigma,_X,_Y), $X, $Y)
+            print("isbatched=$isbatched reverse:"); @btime CUDA.@sync $back($Δ)
+        end
+    end
+end;
+
+#=
+let # Consistency between vectors/matrices of logsigma
+    logsigma1 = randn(4)
+    logsigma2 = repeat(logsigma1, 1, 10)
+    X, Y = randn(10,4), randn(10,4)
+    out1 = mmd_flux_kernel_matrices(logsigma1, X, Y, Val(false))
+    out2 = mmd_flux_kernel_matrices(logsigma2, X, Y, Val(false))
+    isapprox.(values(out1), values(out2))
+end
+=#
 
 ####
 #### Flux differentiable MMD kernel matrices
@@ -299,7 +436,7 @@ end
 
 function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
     Kxx, Kyy, Kxy = X'X, Y'Y, X'Y
-    xx, yy = batcheddiag(Kxx), batcheddiag(Kyy)
+    xx, yy = batched_diag(Kxx), batched_diag(Kyy)
     Threads.@threads for j in 1:size(Kxx,2)
         @avx for i in 1:size(Kxx,1)
             Kxx[i,j] = 2 * Kxx[i,j] - xx[i] - xx[j]
@@ -314,20 +451,14 @@ function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
     @ntuple(Kxx, Kyy, Kxy)
 end
 
-#=
-function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
+function _mmd_flux_kernel_matrices(X::CUDA.CuMatrix, Y::CUDA.CuMatrix)
     Kxx, Kyy, Kxy = X'X, Y'Y, X'Y
-    xx, yy = batcheddiag(Kxx), batcheddiag(Kyy)
-    Kxx .= 2 .* Kxx .- xx .- xx'
-    Kyy .= 2 .* Kyy .- yy .- yy'
-    Kxy .= 2 .* Kxy .- xx .- yy'
-    fast_exp!(Kxx)
-    fast_exp!(Kyy)
-    fast_exp!(Kxy)
-
+    xx, yy = batched_diag(Kxx), batched_diag(Kyy)
+    Kxx .= exp.(2 .* Kxx .- xx .- xx')
+    Kyy .= exp.(2 .* Kyy .- yy .- yy')
+    Kxy .= exp.(2 .* Kxy .- xx .- yy')
     @ntuple(Kxx, Kyy, Kxy)
 end
-=#
 
 Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
     # Store kernel matrices for reverse pass
@@ -393,12 +524,12 @@ Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::Abstrac
     =#
 end
 
-function _mmd_flux_kernel_matrices_inner(X::AbstractArray{<:Any,3}, Y::AbstractArray{<:Any,3})
-    Kxx = NNlib.batched_mul(NNlib.batched_adjoint(X), X)
-    Kyy = NNlib.batched_mul(NNlib.batched_adjoint(Y), Y)
-    Kxy = NNlib.batched_mul(NNlib.batched_adjoint(X), Y)
-    xx  = batcheddiag(Kxx)
-    yy  = batcheddiag(Kyy)
+function _mmd_flux_kernel_matrices_inner(X::AbstractTensor3D, Y::AbstractTensor3D)
+    Kxx = NNlib.batched_mul(NNlib.batched_transpose(X), X)
+    Kyy = NNlib.batched_mul(NNlib.batched_transpose(Y), Y)
+    Kxy = NNlib.batched_mul(NNlib.batched_transpose(X), Y)
+    xx  = batched_diag(Kxx)
+    yy  = batched_diag(Kyy)
     Threads.@sync for k in 1:size(Kxx,3) #TODO can be improved; k is usually small
         Threads.@spawn begin
             @avx for j in 1:size(Kxx,2), i in 1:size(Kxx,1)
@@ -415,27 +546,21 @@ function _mmd_flux_kernel_matrices_inner(X::AbstractArray{<:Any,3}, Y::AbstractA
     @ntuple(Kxx, Kyy, Kxy)
 end
 
-#=
-function _mmd_flux_kernel_matrices_inner(X::AbstractArray{<:Any,3}, Y::AbstractArray{<:Any,3})
-    Kxx = NNlib.batched_mul(NNlib.batched_adjoint(X), X)
-    Kyy = NNlib.batched_mul(NNlib.batched_adjoint(Y), Y)
-    Kxy = NNlib.batched_mul(NNlib.batched_adjoint(X), Y)
-    xx  = batcheddiag(Kxx)
-    yy  = batcheddiag(Kyy)
-    xxT = NNlib.batched_adjoint(xx)
-    yyT = NNlib.batched_adjoint(yy)
-    Kxx .= 2 .* Kxx .- xx .- xxT
-    Kyy .= 2 .* Kyy .- yy .- yyT
-    Kxy .= 2 .* Kxy .- xx .- yyT
-    fast_exp!(Kxx)
-    fast_exp!(Kyy)
-    fast_exp!(Kxy)
-
+function _mmd_flux_kernel_matrices_inner(X::CuTensor3D, Y::CuTensor3D)
+    Kxx = NNlib.batched_mul(NNlib.batched_transpose(X), X)
+    Kyy = NNlib.batched_mul(NNlib.batched_transpose(Y), Y)
+    Kxy = NNlib.batched_mul(NNlib.batched_transpose(X), Y)
+    xx  = batched_diag(Kxx)
+    yy  = batched_diag(Kyy)
+    xxT = batched_transpose(xx)
+    yyT = batched_transpose(yy)
+    Kxx .= exp.(2 .* Kxx .- xx .- xxT)
+    Kyy .= exp.(2 .* Kyy .- yy .- yyT)
+    Kxy .= exp.(2 .* Kxy .- xx .- yyT)
     @ntuple(Kxx, Kyy, Kxy)
 end
-=#
 
-function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3}, Y::AbstractArray{<:Any,3})
+function _mmd_flux_kernel_matrices(X::AbstractTensor3D, Y::AbstractTensor3D)
     @unpack Kxx, Kyy, Kxy = _mmd_flux_kernel_matrices_inner(X, Y)
     Kxx = dropdims(mean(Kxx; dims = 3); dims = 3)
     Kyy = dropdims(mean(Kyy; dims = 3); dims = 3)
@@ -443,7 +568,7 @@ function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3}, Y::AbstractArray{<
     @ntuple(Kxx, Kyy, Kxy)
 end
 
-Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3}, Y::AbstractArray{<:Any,3})
+Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractTensor3D, Y::AbstractTensor3D)
     # Store kernel matrices for reverse pass
     @unpack Kxx, Kyy, Kxy = _mmd_flux_kernel_matrices_inner(X, Y)
     out = (
@@ -452,7 +577,8 @@ Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3}, Y:
         Kxy = dropdims(mean(Kxy; dims = 3); dims = 3),
     )
     return out, function(Δ) # much faster + much less memory usage
-        T = x -> NNlib.batched_adjoint(x)
+        T = NNlib.batched_transpose # lazy transpose for `batched_mul`
+        P = batched_transpose # (possibly eager) permutation
         nbw = size(X,3)
 
         # dK_dX
@@ -461,7 +587,7 @@ Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3}, Y:
         Δ_buf_colsum = sum(Δ_buf; dims = 2)
         add_transpose!(Δ_buf)
         mul_buf = NNlib.batched_mul(X, Δ_buf)
-        dK_dX = 2 .* (mul_buf .- X .* (T(Δ_buf_colsum) .+ Δ_buf_rowsum))
+        dK_dX = 2 .* (mul_buf .- X .* (P(Δ_buf_colsum) .+ Δ_buf_rowsum))
 
         # dK_dX/dK_dY cross-terms
         Δ_buf .= Δ.Kxy .* Kxy ./ nbw
@@ -471,7 +597,7 @@ Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3}, Y:
 
         Δ_buf_colsum = sum(Δ_buf; dims = 2)
         NNlib.batched_mul!(mul_buf, Y, T(Δ_buf))
-        dK_dX .+= 2 .* (mul_buf .- X .* T(Δ_buf_colsum))
+        dK_dX .+= 2 .* (mul_buf .- X .* P(Δ_buf_colsum))
 
         # dK_dY
         Δ_buf .= Δ.Kyy .* Kyy ./ nbw
@@ -479,7 +605,7 @@ Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3}, Y:
         Δ_buf_colsum = sum(Δ_buf; dims = 2)
         add_transpose!(Δ_buf)
         NNlib.batched_mul!(mul_buf, Y, Δ_buf)
-        dK_dY .+= 2 .* (mul_buf .- Y .* (T(Δ_buf_colsum) .+ Δ_buf_rowsum))
+        dK_dY .+= 2 .* (mul_buf .- Y .* (P(Δ_buf_colsum) .+ Δ_buf_rowsum))
 
         return dK_dX, dK_dY
         # return dropdims(mean(dK_dX; dims = 3); dims = 3), dropdims(mean(dK_dY; dims = 3); dims = 3)
@@ -530,6 +656,39 @@ Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractArray{<:Any,3}, Y:
     =#
 end
 
+function _test_mmd_flux_kernel_matrices(;T = Float32, n = 10, m = 10, p = 0)
+    X = p <= 0 ? randn(T,n,m) : randn(T,n,m,p)
+    Y = p <= 0 ? randn(T,n,m) : randn(T,n,m,p)
+    Xc = X |> Flux.gpu
+    Yc = Y |> Flux.gpu
+
+    # out1 = _mmd_flux_kernel_matrices(X, Y)
+    out1, back1 = Zygote.pullback((x,y) -> _mmd_flux_kernel_matrices(x,y), X, Y)
+    grad1 = back1(out1)
+
+    # out2 = _mmd_flux_kernel_matrices(Xc, Yc)
+    out2, back2 = Zygote.pullback((x,y) -> _mmd_flux_kernel_matrices(x,y), Xc, Yc)
+    grad2 = back2(out2)
+
+    function compare(val1, val2)
+        for k in keys(val1)
+            v1 = getfield(val1, k)
+            v2 = getfield(val2, k)
+            (length(v1) < 10) && @show k, v1
+            (length(v2) < 10) && @show k, v2
+            @show v1 ≈ Flux.cpu(v2)
+        end
+    end
+
+    compare(out1, out2)
+    compare(grad1, grad2)
+
+    @btime _mmd_flux_kernel_matrices($X, $Y)
+    @btime $back1($out1)
+    @btime CUDA.@sync _mmd_flux_kernel_matrices($Xc, $Yc)
+    @btime CUDA.@sync $back2($out2)
+end
+
 #=
 # Testing adjoint for _mmd_flux_kernel_matrices
 let
@@ -538,18 +697,18 @@ let
     # Dummy version for Zygote to auto-diff through
     function _kernel_mats(X::AbstractMatrix, Y::AbstractMatrix)
         XX, YY, XY = X'X, Y'Y, X'Y
-        xx, yy = batcheddiag(XX), batcheddiag(YY)
+        xx, yy = batched_diag(XX), batched_diag(YY)
         Kxx = exp.(2 .* XX .- xx .- xx')
         Kyy = exp.(2 .* YY .- yy .- yy')
         Kxy = exp.(2 .* XY .- xx .- yy')
         @ntuple(Kxx, Kyy, Kxy)
     end
-    function _kernel_mats(X::AbstractArray{<:Any,3}, Y::AbstractArray{<:Any,3})
-        XX = NNlib.batched_mul(NNlib.batched_adjoint(X), X)
-        YY = NNlib.batched_mul(NNlib.batched_adjoint(Y), Y)
-        XY = NNlib.batched_mul(NNlib.batched_adjoint(X), Y)
-        xx = batcheddiag(XX)
-        yy = batcheddiag(YY)
+    function _kernel_mats(X::AbstractTensor3D, Y::AbstractTensor3D)
+        XX = NNlib.batched_mul(NNlib.batched_transpose(X), X)
+        YY = NNlib.batched_mul(NNlib.batched_transpose(Y), Y)
+        XY = NNlib.batched_mul(NNlib.batched_transpose(X), Y)
+        xx = batched_diag(XX)
+        yy = batched_diag(YY)
 
         T = x -> permutedims(x, (2,1,3))
         Kxx = exp.(2 .* XX .- xx .- T(xx))
@@ -762,268 +921,6 @@ let
 end
 =#
 
-####
-#### Kernel matrices with generic kernel function
-####
-
-function mmd_flux_kernel_matrices(k::KernelFunction, X::AbstractMatrix, Y::AbstractMatrix)
-    @assert size(X) == size(Y)
-
-    n = size(X,1)
-    XX, XY, YY = X'X, X'Y, Y'Y
-    xx, yy = batcheddiag(XX), batcheddiag(YY) # squared norms on diagonal
-    Kxx = k.((xx .- 2 .* XX .+ xx')./n) # note: mean is over data length n, not number of data m
-    Kyy = k.((yy .- 2 .* YY .+ yy')./n)
-    Kxy = k.((xx .- 2 .* XY .+ yy')./n)
-
-    return @ntuple(Kxx, Kyy, Kxy)
-end
-
-####
-#### Kernel matrices specialized for sums of exponential kernels
-####
-
-# Bandwidth array `logsigma` may be:
-#   1D `nbandwidth`-length vector
-#   2D `nbandwidth x n` matrix, where n == size(X,1) == size(Y,1)
-#   3D `n x 1 x nbandwidth` array (not meant for direct use)
-
-function mmd_flux_kernel_matrices(logsigma::AbstractArray{<:Any,3}, X::AbstractMatrix, Y::AbstractMatrix)
-    @assert size(X) == size(Y)
-
-    n, m = size(X)
-    gamma = @. inv(2n * exp(2 * logsigma)) # gamma = 1/2sigma^2 = 1/2exp(2logsigma)
-
-    T = promote_type(eltype(X), eltype(Y), eltype(gamma))
-    Kxx = zeros(T, m, m)
-    Kyy = zeros(T, m, m)
-    Kxy = zeros(T, m, m)
-    ngamma = size(gamma, 3)
-    for k in 1:ngamma
-        _g = sqrt.(gamma[:,1,k])
-        U = _g .* X
-        V = _g .* Y
-        _Kxx, _Kyy, _Kxy = _mmd_flux_kernel_matrices(U, V)
-        Kxx += _Kxx
-        Kyy += _Kyy
-        Kxy += _Kxy
-    end
-    Kxx /= ngamma
-    Kyy /= ngamma
-    Kxy /= ngamma
-
-    return @ntuple(Kxx, Kyy, Kxy)
-end
-mmd_flux_kernel_matrices(logsigma::AbstractMatrix, args...) = mmd_flux_kernel_matrices(reshape(permutedims(logsigma), size(logsigma,2), 1, :), args...) # reshape for broadcasting
-mmd_flux_kernel_matrices(logsigma::AbstractVector, args...) = mmd_flux_kernel_matrices(reshape(logsigma, 1, 1, length(logsigma)), args...) # reshape for broadcasting
-
-function mmd_flux_kernel_matrices_batched(logsigma::AbstractArray{<:Any,3}, X::AbstractMatrix, Y::AbstractMatrix)
-    @assert size(X) == size(Y)
-    n, m = size(X)
-    gamma = @. inv(2n * exp(2 * logsigma)) # gamma = 1/2sigma^2 = 1/2exp(2logsigma)
-    _g = sqrt.(gamma)
-    U, V = _g .* X, _g .* Y
-    return _mmd_flux_kernel_matrices(U, V)
-end
-mmd_flux_kernel_matrices_batched(logsigma::AbstractMatrix, args...) = mmd_flux_kernel_matrices_batched(reshape(permutedims(logsigma), size(logsigma,2), 1, :), args...) # reshape for broadcasting
-mmd_flux_kernel_matrices_batched(logsigma::AbstractVector, args...) = mmd_flux_kernel_matrices_batched(reshape(logsigma, 1, 1, length(logsigma)), args...) # reshape for broadcasting
-
-#=
-let # Speed testing of mmd_flux_kernel_matrices
-    n, m = 128, 2048 #64
-    X = randn(n,m)
-    Y = randn(n,m)
-    Δ = (Kxx = rand(m,m), Kyy = rand(m,m), Kxy = rand(m,m))
-    for nbw in [1,4]#2,4,8,16,32]
-        @show n, m, nbw
-        logsigma = randn(nbw, n)
-
-        @assert all(values(mmd_flux_kernel_matrices(logsigma,X,Y)) .≈ values(mmd_flux_kernel_matrices_batched(logsigma,X,Y)))
-
-        _y, _back = Zygote.pullback((_X,_Y) -> mmd_flux_kernel_matrices(logsigma,_X,_Y), X, Y)
-        _dyA, _dyB = _back(Δ)
-
-        y, back = Zygote.pullback((_X,_Y) -> mmd_flux_kernel_matrices_batched(logsigma,_X,_Y), X, Y)
-        dyA, dyB = back(Δ)
-
-        @assert all(values(_y) .≈ values(y))
-        @assert _dyA ≈ dyA
-        @assert _dyB ≈ dyB
-
-        for f in (mmd_flux_kernel_matrices, mmd_flux_kernel_matrices_batched)
-            print("$f call:   "); @btime $f($logsigma, $X, $Y)
-            print("$f forward:"); _, back = @btime Zygote.pullback((_X,_Y) -> $f($logsigma,_X,_Y), $X, $Y)
-            print("$f reverse:"); @btime $back($Δ)
-        end
-        #=
-        =#
-    end
-end;
-=#
-
-#=
-let # Consistency between vectors/matrices of logsigma
-    logsigma1 = randn(4)
-    logsigma2 = repeat(logsigma1, 1, 10)
-    X, Y = randn(10,4), randn(10,4)
-    out1 = mmd_flux_kernel_matrices(logsigma1, X, Y)
-    out2 = mmd_flux_kernel_matrices(logsigma2, X, Y)
-    isapprox.(values(out1), values(out2))
-end
-=#
-
-####
-#### Compute U-statistics using kernel matrices
-####
-
-function mmd_flux_u_statistic(Kxx, Kyy, Kxy)
-    @assert size(Kxx) == size(Kyy) == size(Kxy)
-
-    # MMD²_U: MMD estimator which is a U-statistic
-    #   See: https://arxiv.org/pdf/1906.02104.pdf
-    T = promote_type(eltype(Kxx), eltype(Kyy), eltype(Kxy))
-    m = T(size(Kxx,1))
-    e_Kxx_e = sum(Kxx) - m # assumes k(0) == 1 --> tr(Kxx) = m
-    e_Kyy_e = sum(Kyy) - m # assumes k(0) == 1 --> tr(Kyy) = m
-    e_K̃xy_e = sum(Kxy) - tr(Kxy)
-    MMDsq = (e_Kxx_e + e_Kyy_e - 2*e_K̃xy_e) / (m*(m-1))
-
-    return MMDsq
-end
-
-function mmdvar_flux_u_statistic(Kxx, Kyy, Kxy)
-    @assert size(Kxx) == size(Kyy) == size(Kxy)
-
-    # Var[MMD²_U]: Variantes of U-statistic MMD estimator
-    #   See: https://arxiv.org/pdf/1906.02104.pdf
-
-    T = promote_type(eltype(Kxx), eltype(Kyy), eltype(Kxy))
-    m = T(size(Kxx,1)) # m must be float, else denominator can overflow
-    m_2 = m*(m-1)
-    m_3 = m*(m-1)*(m-2)
-    m_4 = m*(m-1)*(m-2)*(m-3)
-
-    e_Kxx_e = sum(Kxx) - m # assumes k(0) == 1
-    e_Kyy_e = sum(Kyy) - m # assumes k(0) == 1
-    e_Kxy_e = sum(Kxy)
-    Kxx_F2 = sum(abs2, Kxx) - m # assumes k(0) == 1
-    Kyy_F2 = sum(abs2, Kyy) - m # assumes k(0) == 1
-    Kxy_F2 = sum(abs2, Kxy)
-    Kxx_e = dropdims(sum(Kxx; dims = 2); dims = 2) .- 1 # assumes k(0) == 1
-    Kyy_e = dropdims(sum(Kyy; dims = 2); dims = 2) .- 1 # assumes k(0) == 1
-    Kxy_e = dropdims(sum(Kxy; dims = 2); dims = 2)
-    Kyx_e = dropdims(sum(Kxy; dims = 1); dims = 1)
-    Kxx_e_F2 = sum(abs2, Kxx_e)
-    Kyy_e_F2 = sum(abs2, Kyy_e)
-    Kxy_e_F2 = sum(abs2, Kxy_e)
-    Kyx_e_F2 = sum(abs2, Kyx_e)
-    e_Kxx_Kxy_e = dot(Kxx_e, Kxy_e)
-    e_Kyy_Kyx_e = dot(Kyy_e, Kyx_e)
-
-    t1_4 = ((   4) / (m_4    )) * (Kxx_e_F2 + Kyy_e_F2)
-    t2_4 = ((4m^2) / (m_2^3  )) * (Kxy_e_F2 + Kyx_e_F2) # NOTE: typo in original paper: m^3*(m-1)^2 --> m^3*(m-1)^3 = m_2^3
-    t2_5 = ((  4m) / (m_2^3  )) * (Kxy_e_F2 + Kyx_e_F2) # NOTE: typo in original paper: m^3*(m-1)^2 --> m^3*(m-1)^3 = m_2^3
-    t2_6 = ((   4) / (m_2^3  )) * (Kxy_e_F2 + Kyx_e_F2) # NOTE: typo in original paper: m^3*(m-1)^2 --> m^3*(m-1)^3 = m_2^3
-    t3_4 = ((   8) / (m*m_3  )) * (e_Kxx_Kxy_e + e_Kyy_Kyx_e)
-    t4_5 = ((   8) / (m^2*m_3)) * ((e_Kxx_e + e_Kyy_e) * e_Kxy_e)
-    t5_4 = ((  4m) / (m_2*m_4)) * (e_Kxx_e^2 + e_Kyy_e^2)
-    t5_5 = ((   6) / (m_2*m_4)) * (e_Kxx_e^2 + e_Kyy_e^2)
-    t6_4 = ((  8m) / (m_2^3  )) * (e_Kxy_e^2)
-    t6_5 = ((  12) / (m_2^3  )) * (e_Kxy_e^2)
-    t7_4 = ((   2) / (m_4    )) * (Kxx_F2 + Kyy_F2)
-    t8_4 = ((4m^2) / (m_2^3  )) * (Kxy_F2)
-    t8_5 = ((  8m) / (m_2^3  )) * (Kxy_F2)
-    MMDvar = (((t1_4 + t2_4) - (t3_4 + t5_4 + t6_4 + t7_4 + t8_4)) + ((t4_5 + t5_5 + t6_5 + t8_5) - t2_5)) - t2_6 # NOTE: typo in original paper: t8_* sign flips
-
-    return MMDvar
-end
-
-function mmd_and_mmdvar_flux_u_statistic(Kxx, Kyy, Kxy)
-    @assert size(Kxx) == size(Kyy) == size(Kxy)
-
-    T = promote_type(eltype(Kxx), eltype(Kyy), eltype(Kxy))
-    m = T(size(Kxx,1))
-    m_2 = m*(m-1)
-    m_3 = m*(m-1)*(m-2)
-    m_4 = m*(m-1)*(m-2)*(m-3)
-    
-    # MMD²_U: MMD estimator which is a U-statistic
-    #   See: https://arxiv.org/pdf/1906.02104.pdf
-    e_Kxx_e = sum(Kxx) - m # assumes k(0) == 1 --> tr(Kxx) = m
-    e_Kyy_e = sum(Kyy) - m # assumes k(0) == 1 --> tr(Kyy) = m
-    e_Kxy_e = sum(Kxy)
-    e_K̃xy_e = e_Kxy_e - tr(Kxy)
-
-    MMDsq = (e_Kxx_e + e_Kyy_e - 2*e_K̃xy_e) / (m*(m-1))
-
-    # Var[MMD²_U]: Variantes of U-statistic MMD estimator
-    #   See: https://arxiv.org/pdf/1906.02104.pdf
-    Kxx_F2 = sum(abs2, Kxx) - m # assumes k(0) == 1
-    Kyy_F2 = sum(abs2, Kyy) - m # assumes k(0) == 1
-    Kxy_F2 = sum(abs2, Kxy)
-    Kxx_e = dropdims(sum(Kxx; dims = 2); dims = 2) .- 1 # assumes k(0) == 1
-    Kyy_e = dropdims(sum(Kyy; dims = 2); dims = 2) .- 1 # assumes k(0) == 1
-    Kxy_e = dropdims(sum(Kxy; dims = 2); dims = 2)
-    Kyx_e = dropdims(sum(Kxy; dims = 1); dims = 1)
-    Kxx_e_F2 = sum(abs2, Kxx_e)
-    Kyy_e_F2 = sum(abs2, Kyy_e)
-    Kxy_e_F2 = sum(abs2, Kxy_e)
-    Kyx_e_F2 = sum(abs2, Kyx_e)
-    e_Kxx_Kxy_e = dot(Kxx_e, Kxy_e)
-    e_Kyy_Kyx_e = dot(Kyy_e, Kyx_e)
-
-    t1_4 = ((   4) / (m_4    )) * (Kxx_e_F2 + Kyy_e_F2)
-    t2_4 = ((4m^2) / (m_2^3  )) * (Kxy_e_F2 + Kyx_e_F2) # NOTE: typo in original paper: m^3*(m-1)^2 --> m^3*(m-1)^3 = m_2^3
-    t2_5 = ((  4m) / (m_2^3  )) * (Kxy_e_F2 + Kyx_e_F2) # NOTE: typo in original paper: m^3*(m-1)^2 --> m^3*(m-1)^3 = m_2^3
-    t2_6 = ((   4) / (m_2^3  )) * (Kxy_e_F2 + Kyx_e_F2) # NOTE: typo in original paper: m^3*(m-1)^2 --> m^3*(m-1)^3 = m_2^3
-    t3_4 = ((   8) / (m*m_3  )) * (e_Kxx_Kxy_e + e_Kyy_Kyx_e)
-    t4_5 = ((   8) / (m^2*m_3)) * ((e_Kxx_e + e_Kyy_e) * e_Kxy_e)
-    t5_4 = ((  4m) / (m_2*m_4)) * (e_Kxx_e^2 + e_Kyy_e^2)
-    t5_5 = ((   6) / (m_2*m_4)) * (e_Kxx_e^2 + e_Kyy_e^2)
-    t6_4 = ((  8m) / (m_2^3  )) * (e_Kxy_e^2)
-    t6_5 = ((  12) / (m_2^3  )) * (e_Kxy_e^2)
-    t7_4 = ((   2) / (m_4    )) * (Kxx_F2 + Kyy_F2)
-    t8_4 = ((4m^2) / (m_2^3  )) * (Kxy_F2)
-    t8_5 = ((  8m) / (m_2^3  )) * (Kxy_F2)
-
-    MMDvar = (((t1_4 + t2_4) - (t3_4 + t5_4 + t6_4 + t7_4 + t8_4)) + ((t4_5 + t5_5 + t6_5 + t8_5) - t2_5)) - t2_6 # NOTE: typo in original paper: t8_* sign flips
-
-    return MMDsq, MMDvar
-end
-
-function mmd_flux(
-        kernelargs::Union{<:Function, <:AbstractArray},
-        X::AbstractMatrix,
-        Y::AbstractMatrix
-    )
-    @assert size(X) == size(Y)
-    @unpack Kxx, Kyy, Kxy = mmd_flux_kernel_matrices_batched(kernelargs, X, Y)
-    # @unpack Kxx, Kyy, Kxy = mmd_flux_kernel_matrices(kernelargs, X, Y)
-    return mmd_flux_u_statistic(Kxx, Kyy, Kxy)
-end
-
-function mmdvar_flux(
-        kernelargs::Union{<:Function, <:AbstractArray},
-        X::AbstractMatrix,
-        Y::AbstractMatrix
-    )
-    @assert size(X) == size(Y)
-    @unpack Kxx, Kyy, Kxy = mmd_flux_kernel_matrices_batched(kernelargs, X, Y)
-    # @unpack Kxx, Kyy, Kxy = mmd_flux_kernel_matrices(kernelargs, X, Y)
-    return mmdvar_flux_u_statistic(Kxx, Kyy, Kxy)
-end
-
-function mmd_and_mmdvar_flux(
-        kernelargs::Union{<:Function, <:AbstractArray},
-        X::AbstractMatrix,
-        Y::AbstractMatrix
-    )
-    @assert size(X) == size(Y)
-    @unpack Kxx, Kyy, Kxy = mmd_flux_kernel_matrices_batched(kernelargs, X, Y)
-    # @unpack Kxx, Kyy, Kxy = mmd_flux_kernel_matrices(kernelargs, X, Y)
-    return mmd_and_mmdvar_flux_u_statistic(Kxx, Kyy, Kxy)
-end
-
 #=
 let
     rng = Random.seed!(0)
@@ -1212,8 +1109,7 @@ function mmd_perm_test_brute(kernelargs, X, Y; nperms = size(X,2), alpha = 1//10
 end
 
 function mmd_perm_test(kernelargs, X, Y; nperms = size(X,2), alpha = 1//100)
-    @unpack Kxx, Kyy, Kxy = mmd_flux_kernel_matrices_batched(kernelargs, X, Y)
-    # @unpack Kxx, Kyy, Kxy = mmd_flux_kernel_matrices(kernelargs, X, Y)
+    @unpack Kxx, Kyy, Kxy = mmd_flux_kernel_matrices(kernelargs, X, Y, Val(true))
     MMDsq, MMDvar = mmd_and_mmdvar_flux_u_statistic(Kxx, Kyy, Kxy)
     K = combine_kernel_matrices(Kxx, Kyy, Kxy)
 
