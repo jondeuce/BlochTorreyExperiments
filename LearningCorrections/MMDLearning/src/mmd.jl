@@ -279,9 +279,9 @@ end
 #### MMD using sums of exponential kernels
 ####
 
-mmd(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmd(mmd_flux_u_statistic(mmd_flux_kernel_matrices(k.σ, X, Y, Val(true))...))
-mmdvar(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmdvar(mmdvar_flux_u_statistic(mmd_flux_kernel_matrices(k.σ, X, Y, Val(true))...))
-mmd_and_mmdvar(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmd_and_mmdvar(mmdvar_flux_u_statistic(mmd_flux_kernel_matrices(k.σ, X, Y, Val(true))...))
+mmd(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmd(mmd_flux_u_statistic(mmd_flux_kernel_matrices(k.σ, X, Y, Val(false))...))
+mmdvar(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmdvar(mmdvar_flux_u_statistic(mmd_flux_kernel_matrices(k.σ, X, Y, Val(false))...))
+mmd_and_mmdvar(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmd_and_mmdvar(mmdvar_flux_u_statistic(mmd_flux_kernel_matrices(k.σ, X, Y, Val(false))...))
 
 function mmd_flux_u_statistic(Kxx, Kyy, Kxy)
     @assert size(Kxx) == size(Kyy) == size(Kxy)
@@ -319,6 +319,41 @@ function mmdvar_flux_u_statistic(Kxx, Kyy, Kxy)
     return MMDVarResults{Tk}(m, K̃xx_F2, K̃yy_F2, Kxy_F2, e_K̃xx_e, e_K̃yy_e, e_Kxy_e, e_K̃xy_e, K̃xx_e_F2, K̃yy_e_F2, Kxy_e_F2, Kyx_e_F2, e_K̃xx_Kxy_e, e_K̃yy_Kyx_e)
 end
 
+
+# Speed testing of mmd_flux_kernel_matrices
+function _bench_mmd_and_mmdvar_cpu_vs_gpu(;T = Float32, n = 128, m = 2048)
+    @assert CUDA.functional()
+    cpu_and_gpu(x) = (Flux.cpu(x), Flux.gpu(x))
+    _isapprox(x,y) = isapprox(Flux.cpu(x), Flux.cpu(y); rtol = sqrt(eps(T)), atol = sqrt(eps(T)))
+    X, Xc = T(0.1) .* randn(T,n,m) |> cpu_and_gpu
+    Y, Yc = T(2.0) .* randn(T,n,m) |> cpu_and_gpu
+
+    for nchan in [n,1], nbw in [32,1], f in [mmdvar, mmd]
+        @show f, n, m, nbw, nchan
+        σ, σc = (nchan > 1 ? randn(T, nbw, nchan) : randn(T, nbw)) |> cpu_and_gpu
+        k, kc = (σ, σc) .|> ExponentialKernel
+
+        @assert _isapprox(@show(f(k,X,Y)), @show(f(kc,Xc,Yc)))
+
+        y, back = Zygote.pullback((x,y) -> f(k,x,y), X, Y)
+        dy1, dy2 = back(one(T))
+
+        yc, backc = Zygote.pullback((xc,yc) -> f(kc,xc,yc), Xc, Yc)
+        dy1c, dy2c = backc(one(T))
+
+        @assert _isapprox(@show(y), @show(yc))
+        @assert _isapprox(@show(norm(dy1)), @show(norm(dy1c))) && _isapprox(@show(norm(dy2)), @show(norm(dy2c)))
+        @assert _isapprox(dy1, dy1c) && _isapprox(dy2, dy2c)
+
+        print("cpu call:   "); @btime CUDA.@sync $f($k, $X, $Y)
+        print("gpu call:   "); @btime CUDA.@sync $f($kc, $Xc, $Yc)
+        print("cpu forward:"); _, back = @btime CUDA.@sync Zygote.pullback((x,y) -> $f($k,x,y), $X, $Y)
+        print("gpu forward:"); _, back = @btime CUDA.@sync Zygote.pullback((xc,yc) -> $f($kc,xc,yc), $Xc, $Yc)
+        print("cpu reverse:"); @btime CUDA.@sync $back($(one(T)))
+        print("gpu reverse:"); @btime CUDA.@sync $backc($(one(T)))
+    end
+end;
+
 ####
 #### Kernel matrices with generic kernel function
 ####
@@ -351,54 +386,47 @@ mmd_flux_kernel_matrices(logsigma::AbstractMatrix, args...) = mmd_flux_kernel_ma
 function mmd_flux_kernel_matrices(logsigma::AbstractTensor3D, X::AbstractMatrix, Y::AbstractMatrix, batched::Val{true})
     @assert size(X) == size(Y)
     n, m = size(X)
-    gamma = @. inv(2n * exp(2 * logsigma)) # gamma = 1/2sigma^2 = 1/2exp(2logsigma)
-    _g = sqrt.(gamma)
-    U, V = _g .* X, _g .* Y
-    return _mmd_flux_kernel_matrices(U, V)
+    γ = @. inv(sqrt(2n * exp(2 * logsigma))) # γ = √(1/2n*sigma^2) = 1/√(2n*exp(2logsigma))
+    return _mmd_flux_kernel_matrices(γ .* X, γ .* Y)
 end
 
 function mmd_flux_kernel_matrices(logsigma::AbstractTensor3D, X::AbstractMatrix, Y::AbstractMatrix, batched::Val{false})
     @assert size(X) == size(Y)
-
     n, m = size(X)
-    gamma = @. inv(2n * exp(2 * logsigma)) # gamma = 1/2sigma^2 = 1/2exp(2logsigma)
-    ngamma = size(gamma, 3)
+    nσ = size(logsigma, 3)
 
     # Compute matrices one slice at a time
-    _g = sqrt.(gamma[:,1,1])
-    Kxx, Kyy, Kxy = _mmd_flux_kernel_matrices(_g .* X, _g .* Y)
+    γ = @. inv(sqrt(2n * exp(2 * logsigma))) # γ = √(1/2n*sigma^2) = 1/√(2n*exp(2logsigma))
+    γk = γ[:,1,1]
+    Kxx, Kyy, Kxy = _mmd_flux_kernel_matrices(γk .* X, γk .* Y)
 
-    for k in 2:ngamma
-        _g = sqrt.(gamma[:,1,k])
-        U = _g .* X
-        V = _g .* Y
-        _Kxx, _Kyy, _Kxy = _mmd_flux_kernel_matrices(U, V)
+    for k in 2:nσ
+        γk = γ[:,1,k]
+        _Kxx, _Kyy, _Kxy = _mmd_flux_kernel_matrices(γk .* X, γk .* Y)
         Kxx += _Kxx
         Kyy += _Kyy
         Kxy += _Kxy
     end
 
-    Kxx /= ngamma
-    Kyy /= ngamma
-    Kxy /= ngamma
+    Kxx /= nσ
+    Kyy /= nσ
+    Kxy /= nσ
 
     return @ntuple(Kxx, Kyy, Kxy)
 end
 
 # Speed testing of mmd_flux_kernel_matrices
-function _bench_mmd_flux_kernel_matrices(;T = Float32, n = 128, m = 2048, p = 0, gpu::Bool = false)
+function _bench_mmd_flux_kernel_matrices(;T = Float32, n = 128, m = 2048, gpu::Bool = false)
     maybegpu = gpu ? Flux.gpu : Flux.cpu
-    Xsz = p <= 0 ? (n,m) : (n,m,p)
-    Ksz = p <= 0 ? (m,m) : (m,m,p)
-    X = randn(T,Xsz...) |> maybegpu
-    Y = randn(T,Xsz...) |> maybegpu
-    Δ = (Kxx = maybegpu(rand(T,Ksz...)), Kyy = maybegpu(rand(T,Ksz...)), Kxy = maybegpu(rand(T,Ksz...)))
+    X = randn(T,n,m) |> maybegpu
+    Y = randn(T,n,m) |> maybegpu
+    Δ = (rand(T,m,m) |> maybegpu for _ in 1:3) |> ((Kxx, Kyy, Kxy),) -> @ntuple(Kxx, Kyy, Kxy)
 
-    for nbw in [1,8], nchan in [1,n]
+    for nbw in [1,8], nchan in [1] #[1,n]
         @show n, m, nbw, nchan
         logsigma = (nchan > 1 ? randn(T, nbw, nchan) : randn(T, nbw)) |> maybegpu
 
-        # @assert all(values(mmd_flux_kernel_matrices(logsigma,X,Y,Val(false))) .≈ values(mmd_flux_kernel_matrices(logsigma,X,Y,Val(true))))
+        @assert all(values(mmd_flux_kernel_matrices(logsigma,X,Y,Val(false))) .≈ values(mmd_flux_kernel_matrices(logsigma,X,Y,Val(true))))
 
         _y, _back = Zygote.pullback((_X,_Y) -> mmd_flux_kernel_matrices(logsigma,_X,_Y,Val(false)), X, Y)
         _dyA, _dyB = _back(Δ)
@@ -406,9 +434,9 @@ function _bench_mmd_flux_kernel_matrices(;T = Float32, n = 128, m = 2048, p = 0,
         y, back = Zygote.pullback((_X,_Y) -> mmd_flux_kernel_matrices(logsigma,_X,_Y,Val(true)), X, Y)
         dyA, dyB = back(Δ)
 
-        # @assert all(values(_y) .≈ values(y))
-        # @assert _dyA ≈ dyA
-        # @assert _dyB ≈ dyB
+        @assert all(values(_y) .≈ values(y))
+        @assert _dyA ≈ dyA
+        @assert _dyB ≈ dyB
 
         for isbatched in [true, false]
             f = (_s,_X,_Y) -> mmd_flux_kernel_matrices(_s,_X,_Y,Val(isbatched))
@@ -1307,8 +1335,8 @@ end
 
 #=
 let m = 100, n = 2, nbw = 4, nperms = 128, nsamples = 100, ntrials = 10
-    # gamma = inv(2 * 2.0^2)
-    # kernelargs = d -> exp(-gamma * d)
+    # γ = inv(2 * 2.0^2)
+    # kernelargs = d -> exp(-γ * d)
     # kernelargs = log.([1.5, 1.0, 0.5])
     kernelargs = randn(nbw, n)
     for a in 1.1:0.1:1.5

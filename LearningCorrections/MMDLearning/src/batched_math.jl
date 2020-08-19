@@ -21,6 +21,10 @@ end
 avx_map!(f, A::AbstractArray) = avx_map!(f, A, A)
 fast_exp!(A...) = avx_map!(exp, A...)
 
+# TODO: Some necessary piracy here: broadcasted `+.(::Diagonal{Fill}, ::CuMatrix)` falls back to scalar indexing
+Zygote.accum(x::Diagonal{<:Any, <:Zygote.FillArrays.Fill}, y::CUDA.CuMatrix) = Zygote.accum.(Diagonal(CUDA.CuVector(diag(x))), y)
+Zygote.accum(x::CUDA.CuMatrix, y::Diagonal{<:Any, <:Zygote.FillArrays.Fill}) = Zygote.accum.(x, Diagonal(CUDA.CuVector(diag(y))))
+
 ####
 #### In-place transpose-related helpers
 ####
@@ -83,8 +87,46 @@ end
 #### Batched diagonal extraction of 3D arrays
 ####
 
+# batched_diag(x::CuTensor3D) = batched_diag_brute(x)
+batched_diag(x::CuTensor3D) = batched_diag!(similar(x, min(size(x,1), size(x,2)), 1, size(x,3)), x)
+
+function batched_diag!(out::CuTensor3D, in::CuTensor3D)
+    w, h, d = size(in)
+    w_out = min(w,h)
+    @assert size(out) == (w_out, 1, d)
+
+    function batched_diag_kernel!(out, in)
+        i = CUDA.threadIdx().x + (CUDA.blockIdx().x-1) * CUDA.blockDim().x
+        j = CUDA.threadIdx().y + (CUDA.blockIdx().y-1) * CUDA.blockDim().y
+        if i <= w_out && j <= d
+            @inbounds out[i,1,j] = in[i,i,j]
+        end
+        return
+    end
+
+    function configurator(kernel)
+        # See: https://github.com/JuliaGPU/CUDA.jl/blob/463a41295bfede5125c584e6be9c51a4b9074e12/examples/pairwise.jl#L88
+        function get_threads(threads)
+            if w_out * d <= threads
+                return (w_out, d)
+            else
+                threads_x = min(2 ^ floor(Int, log2(max(w_out, d))), threads)
+                threads_y = threads ÷ threads_x
+                return w_out >= d ? (threads_x, threads_y) : (threads_y, threads_x)
+            end
+        end
+        config = CUDA.launch_configuration(kernel.fun)
+        threads = get_threads(config.threads)
+        blocks = ceil.(Int, (w_out, d) ./ threads)
+        return (threads=threads, blocks=blocks)
+    end
+
+    CUDA.@cuda name="batched_diag!" config=configurator batched_diag_kernel!(out, in)
+
+    return out
+end
+
 batched_diag(x::AbstractMatrix) = LinearAlgebra.diag(x)
-batched_diag(x::CuTensor3D) = batched_diag_brute(x)
 
 function batched_diag_brute(x::AbstractTensor3D)
     ndiag = min(size(x,1), size(x,2))

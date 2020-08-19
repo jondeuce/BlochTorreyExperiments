@@ -579,7 +579,13 @@ function plot_rician_model(logger, cb_state, phys; bandwidths = nothing, showplo
             plot(mean(ϵθ; dims = 2); yerr = std(ϵθ; dims = 2), label = L"noise amplitude $\exp(g_\epsilon(X))$", c = :blue);
             layout = (2,1),
         ))
-        !isnothing(bandwidths) && push!(_subplots, plot(bandwidths; leg = :none, title = "logσ vs. data channel"))
+        if !isnothing(bandwidths)
+            if (bandwidths isa AbstractVector) || (bandwidths isa AbstractMatrix && size(bandwidths,1) == 1)
+                push!(_subplots, scatter(1:length(bandwidths), vec(bandwidths); label = "logσ", title = "logσ"))
+            else
+                push!(_subplots, plot(bandwidths; leg = :none, title = "logσ vs. data channel"))
+            end
+        end
         p = plot(_subplots...)
         showplot && !isnothing(p) && display(p)
         return p

@@ -2,7 +2,6 @@ module Ignite
 
 using ArgParse
 using ..TOML
-using ..DataStructures
 
 export @j2p, event_throttler, run_timeout
 

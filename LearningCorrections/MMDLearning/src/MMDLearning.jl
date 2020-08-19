@@ -3,7 +3,7 @@ module MMDLearning
 using Reexport
 @reexport using LinearAlgebra, Statistics, Random, Dates, Printf
 @reexport using StatsBase, SpecialFunctions, Distributions, DataFrames, TimerOutputs, BenchmarkTools
-@reexport using DataStructures, Parameters, EllipsisNotation, LegibleLambdas, LaTeXStrings
+@reexport using FFTW, Parameters, EllipsisNotation, LegibleLambdas, LaTeXStrings
 @reexport using StatsPlots
 
 import UnsafeArrays, LoopVectorization
@@ -21,7 +21,7 @@ export handleinterrupt, saveprogress, saveplots
 # export signal_loglikelihood_inference
 # export signal_theta_error, theta_bounds, signal_model, signal_model!, signal_model_work
 # export toy_theta_error, toy_theta_bounds, toy_signal_model, toy_theta_sampler
-export mmd_flux, mmd_and_mmdvar_flux, tstat_flux, kernel_bandwidth_loss_flux, train_kernel_bandwidth_flux!
+export mmd, mmdvar, mmd_and_mmdvar, tstat_flux, kernel_bandwidth_loss_flux, train_kernel_bandwidth_flux!
 export mmd_perm_test_power, mmd_perm_test_power_plot
 
 export NotTrainable, DenseResize, Scale
