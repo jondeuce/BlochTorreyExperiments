@@ -97,33 +97,46 @@ function batched_diag!(out::CuTensor3D, in::CuTensor3D)
 
     function batched_diag_kernel!(out, in)
         i = CUDA.threadIdx().x + (CUDA.blockIdx().x-1) * CUDA.blockDim().x
-        j = CUDA.threadIdx().y + (CUDA.blockIdx().y-1) * CUDA.blockDim().y
-        if i <= w_out && j <= d
-            @inbounds out[i,1,j] = in[i,i,j]
+        if i <= w_out * d
+            I = CartesianIndices((w_out, d))[i]
+            @inbounds out[I[1], 1, I[2]] = in[I[1], I[1], I[2]]
         end
         return
     end
 
     function configurator(kernel)
         # See: https://github.com/JuliaGPU/CUDA.jl/blob/463a41295bfede5125c584e6be9c51a4b9074e12/examples/pairwise.jl#L88
-        function get_threads(threads)
-            if w_out * d <= threads
-                return (w_out, d)
-            else
-                threads_x = min(2 ^ floor(Int, log2(max(w_out, d))), threads)
-                threads_y = threads ÷ threads_x
-                return w_out >= d ? (threads_x, threads_y) : (threads_y, threads_x)
-            end
-        end
         config = CUDA.launch_configuration(kernel.fun)
-        threads = get_threads(config.threads)
-        blocks = ceil.(Int, (w_out, d) ./ threads)
+        threads = min(nextpow(2, w_out * d), config.threads)
+        blocks = div(w_out * d, threads, RoundUp)
         return (threads=threads, blocks=blocks)
     end
 
     CUDA.@cuda name="batched_diag!" config=configurator batched_diag_kernel!(out, in)
 
     return out
+end
+
+function _bench_batched_diag(;T = Float32, m = 1024, n = m, p = 8, gpu = true)
+    init = gpu ? CUDA.rand : Base.rand
+    fs = [batched_diag!]
+
+    for _ in 1:100
+        in   = init(T, rand(1:m), rand(1:n), rand(1:p))
+        out  = init(T, min(size(in,1), size(in,2)), 1, size(in,3))
+        out0 = batched_diag_brute(in)
+        for f in fs
+            out .= 0; f(out, in); @assert out ≈ out0
+        end
+    end
+
+    in, out = init(T,m,n,p), init(T,min(m,n),1,p)
+    @btime CUDA.@sync for _ in 1:1000; batched_diag_brute($in); end
+    for f in fs
+        @btime CUDA.@sync for _ in 1:1000; $f($out, $in); end
+    end
+
+    nothing
 end
 
 batched_diag(x::AbstractMatrix) = LinearAlgebra.diag(x)

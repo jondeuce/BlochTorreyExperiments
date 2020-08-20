@@ -99,7 +99,7 @@ catchain(c1, c2) = Flux.Chain(c1, c2)
 """
 flattenchain(chain)
 
-Recursively flattens `chain`.
+Recursively flattens `chain`, removing redundant `Chain` wrappers.
 """
 flattenchain(chain::Flux.Chain) = length(chain) == 1 ? flattenchain(chain[1]) : Flux.Chain(reduce(catchain, flattenchain.(chain))...)
 flattenchain(chain) = chain
@@ -117,6 +117,25 @@ Flux.@functor NotTrainable # need functor for e.g. `fmap`
 Flux.trainable(l::NotTrainable) = () # no trainable parameters
 (l::NotTrainable)(x...) = l.layer(x...)
 Base.show(io::IO, l::NotTrainable) = (print(io, "NotTrainable("); print(io, l.layer); print(io, ")"))
+
+# Helper function for gradient operators
+constant_filter(args...; kwargs...) = NotTrainable(Flux.Chain(ChannelResize(1), Flux.Conv(args...; kwargs...), DenseResize()))
+
+"""
+CentralDifference()
+
+Non-trainable central-difference layer which convolves the stencil [-1, 0, 1]
+along the first dimension of `d x b` inputs, producing `(d-2) x b` outputs.
+"""
+CentralDifference() = constant_filter(reshape(Float32[-1.0, 0.0, 1.0], 3, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
+
+"""
+Laplacian()
+
+Non-trainable central-difference layer which convolves the stencil [1, -2, 1]
+along the first dimension of `d x b` inputs, producing `(d-2) x b` outputs.
+"""
+Laplacian() = constant_filter(reshape(Float32[1.0, -2.0, 1.0], 3, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
 
 """
 Scale(α = 1, β = zero(α))

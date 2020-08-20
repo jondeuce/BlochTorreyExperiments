@@ -8,11 +8,12 @@ pyplot(size=(800,600))
 Threads.@threads for i in 1:Threads.nthreads(); set_zero_subnormals(true); end
 if CUDA.functional() && !haskey(ENV, "JL_DISABLE_GPU")
     CUDA.allowscalar(false)
-    CUDA.device!(parse(Int, get(ENV, "JL_CUDA_DEVICE", "1")))
+    CUDA.device!(parse(Int, get(ENV, "JL_CUDA_DEVICE", "0")))
     @eval todevice(x) = Flux.gpu(x)
 else
     @eval todevice(x) = Flux.cpu(x)
 end
+to32(x) = x |> Flux.f32 |> todevice
 
 const torch = pyimport("torch")
 const wandb = pyimport("wandb")
@@ -46,14 +47,15 @@ const settings = TOML.parse("""
         MMDrate     = 10 # Train MMD loss every `MMDrate` iterations
         [train.augment]
             fftcat        = false # Fourier transform of input signal, concatenating real/imag
-            fftsplit      = true  # Fourier transform of input signal, treating real/imag separately
+            fftsplit      = false # Fourier transform of input signal, treating real/imag separately
             gradient      = true  # Gradient of input signal (1D central difference)
-            # Gsamples      = 1   # Discriminator averages over `Gsamples` instances of corrected signals
-            Dchunk        = 0     # Discriminator looks at random chunks of size `Dchunk` (0 uses whole signal)
-            encoderspace  = false # Discriminate encoder space representations
+            laplacian     = false # Laplacian of input signal (1D second order)
+            encoderspace  = true  # Discriminate encoder space representations
             residuals     = false # Discriminate residual vectors
             flipsignals   = false # Randomly reverse signals
             scaleandshift = false # Randomly scale and shift signals
+            # Gsamples      = 1   # Discriminator averages over `Gsamples` instances of corrected signals
+            Dchunk        = 0     # Discriminator looks at random chunks of size `Dchunk` (0 uses whole signal)
 
     [eval]
         valevalperiod   = 60.0
@@ -80,7 +82,7 @@ const settings = TOML.parse("""
 
     [arch]
         physics = "$(get(ENV, "JL_PHYS_MODEL", "toy"))" # "toy" or "mri"
-        nlatent = 1 # number of latent variables Z
+        nlatent = 5 # number of latent variables Z
         zdim    = 8 # embedding dimension of z
         hdim    = 256 # size of hidden layers
         nhidden = 4 # number of hidden layers
@@ -98,8 +100,8 @@ const settings = TOML.parse("""
             nhidden = "%PARENT%"
             skip    = "%PARENT%"
         [arch.genatr]
-            hdim        = 32
-            nhidden     = 2
+            hdim        = "%PARENT%" #TODO 32
+            nhidden     = "%PARENT%" #TODO 2
             skip        = "%PARENT%"
             maxcorr     = $(get(ENV, "JL_PHYS_MODEL", "toy") == "toy" ? 0.1 : 0.025) # correction amplitude
             noisebounds = $(get(ENV, "JL_PHYS_MODEL", "toy") == "toy" ? [-8.0, -2.0] : [-6.0, -3.0]) # noise amplitude
@@ -121,7 +123,7 @@ const wandb_logger = !haskey(ENV, "JL_WANDB_LOGGER") ? nothing : isempty(ARGS) ?
 Ignite.save_and_print(settings; outpath = settings["data"]["out"], filename = "settings.toml")
 
 # Initialize generator + discriminator + kernel
-function make_models(phys)
+function make_models(phys::PhysicsModel{Float32})
     models = Dict{String, Any}()
     derived = Dict{String, Any}()
     n   = nsignal(phys) # input signal length
@@ -129,7 +131,6 @@ function make_models(phys)
     θbd = θbounds(phys)
     k   = settings["arch"]["nlatent"]::Int # number of latent variables Z
     nz  = settings["arch"]["zdim"]::Int # embedding dimension
-    toT(m) = Flux.paramtype(eltype(phys), m) |> todevice
 
     RiceGenType = LatentVectorRicianCorrector{n,k}
     # RiceGenType = LatentVectorRicianNoiseCorrector{n,k}
@@ -150,7 +151,7 @@ function make_models(phys)
         Flux.Chain(
             MMDLearning.MLP(ninput(RiceGenType) => noutput(RiceGenType), nhidden, hdim, Flux.relu, tanh; skip = skip)...,
             OutputScale
-        ) |> toT
+        ) |> to32
     end
 
     # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
@@ -174,16 +175,16 @@ function make_models(phys)
         hdim = settings["arch"]["enc1"]["hdim"]::Int
         nhidden = settings["arch"]["enc1"]["nhidden"]::Int
         skip = settings["arch"]["enc1"]["skip"]::Bool
-        MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity; skip = skip) |> toT
-        # RESCNN(n => 2*nz, nhidden, hdim, Flux.relu, identity; skip = skip) |> toT
+        MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity; skip = skip) |> to32
+        # RESCNN(n => 2*nz, nhidden, hdim, Flux.relu, identity; skip = skip) |> to32
     end
 
     models["enc2"] = let
         hdim = settings["arch"]["enc2"]["hdim"]::Int
         nhidden = settings["arch"]["enc2"]["nhidden"]::Int
         skip = settings["arch"]["enc2"]["skip"]::Bool
-        MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity; skip = skip) |> toT
-        # RESCNN(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity; skip = skip) |> toT
+        MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity; skip = skip) |> to32
+        # RESCNN(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity; skip = skip) |> to32
     end
 
     # Decoder
@@ -195,7 +196,7 @@ function make_models(phys)
             MMDLearning.MLP(n + nz => 2*(nθ + k), nhidden, hdim, Flux.relu, identity; skip = skip)...,
             # RESCNN(n + nz => 2*(nθ + k), nhidden, hdim, Flux.relu, identity; skip = skip)...,
             MMDLearning.CatScale(eltype(θbd)[θbd; (-1, 1)], [ones(Int, nθ); k + nθ + k]),
-        ) |> toT
+        ) |> to32
     end
 
     # Discriminator
@@ -208,8 +209,8 @@ function make_models(phys)
         residuals = settings["train"]["augment"]["residuals"]::Bool
         Dchunk = settings["train"]["augment"]["Dchunk"]::Int
         nin = ifelse(Dchunk > 0, Dchunk, n) * ifelse(residuals, 2, 1) + ifelse(encoderspace, nz, 0)
-        MMDLearning.MLP(nin => 1, nhidden, hdim, Flux.relu, Flux.sigmoid; skip = skip, dropout = dropout) |> toT
-        # RESCNN(n => 1, nhidden, hdim, Flux.relu, Flux.sigmoid; skip = skip) |> toT
+        MMDLearning.MLP(nin => 1, nhidden, hdim, Flux.relu, Flux.sigmoid; skip = skip, dropout = dropout) |> to32
+        # RESCNN(n => 1, nhidden, hdim, Flux.relu, Flux.sigmoid; skip = skip) |> to32
     end
 
     # MMD kernel bandwidths
@@ -217,14 +218,11 @@ function make_models(phys)
         bwbounds = settings["arch"]["kernel"]["bwbounds"]::Vector{Float64}
         nbandwidth = settings["arch"]["kernel"]["nbandwidth"]::Int
         channelwise = settings["arch"]["kernel"]["channelwise"]::Bool
-        range(bwbounds...; length = nbandwidth+2)[2:end-1] |> logσ -> (channelwise ? repeat(logσ, 1, n) : logσ) |> toT
+        range(bwbounds...; length = nbandwidth+2)[2:end-1] |> logσ -> (channelwise ? repeat(logσ, 1, n) : logσ) |> to32
     end
 
     # MMD kernel wrapper
     derived["kernel"] = MMDLearning.ExponentialKernel(models["logsigma"])
-
-    # Central difference operator
-    derived["gradient"] = NotTrainable(Flux.Conv(reshape([-1.0,0.0,1.0],:,1,1,1), Flux.Zeros(), identity; stride = 1; pad = 0)) |> toT
 
     return models, derived
 end
@@ -258,16 +256,12 @@ const theta_lower_bounds = θlower(phys) |> todevice
 const theta_upper_bounds = θupper(phys) |> todevice
 sampleθprior_similar(Y, n = size(Y,2)) = rand_similar(Y, ntheta(phys), n) .* (theta_upper_bounds .- theta_lower_bounds) .+ theta_lower_bounds
 
-# KL-divergence contribution to cross-entropy (Note: dropped constant -zdim/2 term)
-KLDivergence(μq0, σq, μr0, σr) = (ϵ = sqrt(eps(eltype(μq0))); sum(@. pow2(σq / σr) + pow2((μr0 - μq0) / σr) - 2 * log(σq / σr + ϵ)) / 2)
-
-# Negative log-likelihood/ELBO contribution to cross-entropy (Note: dropped constant +zdim*log(2π)/2 term)
-EvidenceLowerBound(x, μx0, σx) = (ϵ = sqrt(eps(eltype(μx0))); sum(@. pow2((x - μx0) / σx) + 2 * log(σx + ϵ)) / 2)
+# Misc. useful operators
+derived["gradient"] = MMDLearning.CentralDifference() |> to32
+derived["laplacian"] = MMDLearning.Laplacian() |> to32
+derived["encoderspace"] = NotTrainable(Flux.Chain(models["enc1"]..., split_mean_std, sample_mv_normal)) # non-trainable sampling of encoder signal representations
 
 # Augmentations
-const aug_encoder = NotTrainable(Flux.Chain(models["enc1"]..., split_mean_std, sample_mv_normal))
-# const aug_encoder = NotTrainable(models["enc1"])
-
 function augmentations(X::AbstractMatrix, X̂::Union{Nothing,<:AbstractMatrix})
     Dchunk = settings["train"]["augment"]["Dchunk"]::Int
     flipsignals = settings["train"]["augment"]["flipsignals"]::Bool
@@ -293,7 +287,7 @@ function augmentations(X::AbstractMatrix, X̂::Union{Nothing,<:AbstractMatrix})
     end
 
     if encoderspace
-        Xaug = vcat(Xaug, flatten_apply(aug_encoder, X)) # include encoder-space representation
+        Xaug = vcat(Xaug, flatten_apply(derived["encoderspace"], X)) # include encoder-space representation
     end
 
     return Xaug
@@ -311,6 +305,12 @@ function X̂_augmentations(X,Z,X̂)
 end
 Y_augmentations(Y,X̂) = Zygote.@ignore augmentations(Y,X̂) # don't differentiate through Y augmentations
 
+# KL-divergence contribution to cross-entropy (Note: dropped constant -zdim/2 term)
+KLDivergence(μq0, σq, μr0, σr) = (ϵ = sqrt(eps(eltype(μq0))); sum(@. pow2(σq / σr) + pow2((μr0 - μq0) / σr) - 2 * log(σq / σr + ϵ)) / 2)
+
+# Negative log-likelihood/ELBO contribution to cross-entropy (Note: dropped constant +zdim*log(2π)/2 term)
+EvidenceLowerBound(x, μx0, σx) = (ϵ = sqrt(eps(eltype(μx0))); sum(@. pow2((x - μx0) / σx) + 2 * log(σx + ϵ)) / 2)
+
 D_G_X_prob(X,Z,X̂) = flatten_apply(models["discrim"], X̂_augmentations(X,Z,X̂)) # discrim on genatr data
 D_Y_prob(Y,X̂) = flatten_apply(models["discrim"], Y_augmentations(Y,X̂)) # discrim on real data
 Dloss(X,Y,Z,X̂) = (ϵ = sqrt(eps(eltype(X))); -mean(log.(D_Y_prob(Y,X̂) .+ ϵ) .+ log.(1 .- D_G_X_prob(X,Z,X̂) .+ ϵ)))
@@ -319,28 +319,41 @@ Gloss(X,Z,X̂) = (ϵ = sqrt(eps(eltype(X))); mean(log.(1 .- D_G_X_prob(X,Z,X̂) 
 # Maximum mean discrepency (m*MMD^2) loss
 MMDloss(X̂,Y) = size(Y,2) * mmd(derived["kernel"], X̂, Y)
 function MMDaug(X,Y,Z)
-    X̂aug = X̂_augmentations(X, Z, nothing)
-    Yaug = Y_augmentations(Y, nothing)
-    mmds = (MMDloss(X̂aug, Yaug),)
+    X̂ = corrected_signal_instance(derived["ricegen"], X, Z)
+    mmds = (MMDloss(X̂, Y),)
 
     if settings["train"]["augment"]["fftcat"]::Bool
-        # MMD and MMD FFT
+        # MMD of concatenated real/imag fourier components
         realfft(x) = vcat(reim(rfft(x,1))...)
-        FX̂aug = realfft(X̂aug)
-        FYaug = Zygote.@ignore realfft(Yaug)
-        mmds = (mmds..., MMDloss(FX̂aug, FYaug))
+        FX̂ = realfft(X̂)
+        FY = Zygote.@ignore realfft(Y)
+        mmds = (mmds..., MMDloss(FX̂, FY))
     elseif settings["train"]["augment"]["fftsplit"]::Bool
-        # MMD on separate real/imag MMD FFT
-        rFX̂aug, iFX̂aug = reim(rfft(X̂aug,1))
-        rFYaug, iFYaug = Zygote.@ignore reim(rfft(Yaug,1))
-        mmds = (mmds..., MMDloss(rFX̂aug, rFYaug), MMDloss(iFX̂aug, iFYaug))
+        # MMD of both real/imag fourier components
+        rFX̂, iFX̂ = reim(rfft(X̂,1))
+        rFY, iFY = Zygote.@ignore reim(rfft(Y,1))
+        mmds = (mmds..., MMDloss(rFX̂, rFY), MMDloss(iFX̂, iFY))
     end
 
     if settings["train"]["augment"]["gradient"]::Bool
-        # MMD on signal gradient
-        ∇X̂aug = derived["gradient"](X̂aug)
-        ∇Yaug = Zygote.@ignore derived["gradient"](Yaug)
-        mmds = (mmds..., )
+        # MMD of signal gradient
+        ∇X̂ = derived["gradient"](X̂)
+        ∇Y = Zygote.@ignore derived["gradient"](Y)
+        mmds = (mmds..., MMDloss(∇X̂, ∇Y))
+    end
+
+    if settings["train"]["augment"]["laplacian"]::Bool
+        # MMD of signal laplacian
+        ∇²X̂ = derived["laplacian"](X̂)
+        ∇²Y = Zygote.@ignore derived["laplacian"](Y)
+        mmds = (mmds..., MMDloss(∇²X̂, ∇²Y))
+    end
+
+    if settings["train"]["augment"]["encoderspace"]::Bool
+        # MMD of encoder-space signal
+        X̂enc = derived["encoderspace"](X̂)
+        Yenc = Zygote.@ignore derived["encoderspace"](Y)
+        mmds = (mmds..., MMDloss(X̂enc, Yenc))
     end
 
     return mmds
@@ -590,8 +603,7 @@ function train_step(engine, batch)
 
         # Train MMD loss
         train_MMD && @timeit "mmd" CUDA.@sync let
-            @timeit "sampleXθZ" CUDA.@sync Xtrain, θtrain, Ztrain = sampleXθZ(Ytrain; recover_θ = true, recover_Z = false) .|> todevice
-            # @timeit "sampleX̂"   CUDA.@sync X̂train = sampleX̂(Ytrain; recover_θ = true, recover_Z = true) |> todevice #TODO recover_Z?
+            @timeit "sampleXθZ" CUDA.@sync Xtrain, θtrain, Ztrain = sampleXθZ(Ytrain; recover_θ = true, recover_Z = true) .|> todevice #TODO recover_Z?
             @timeit "genatr" CUDA.@sync let
                 ps = Flux.params(models["genatr"])
                 @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(ps) do
@@ -695,10 +707,10 @@ function compute_metrics(engine, batch; dataset)
             # Gloss = mean(log.(1 .- d_g_x .+ ϵ))
             # D_Y   = mean(d_y)
             # D_G_X = mean(d_g_x)
-            Dloss = length(mmd_aug) >= 1 ? mmd_aug[1] : missing #TODO
-            Gloss = length(mmd_aug) >= 2 ? mmd_aug[2] : missing #TODO
-            D_Y   = length(mmd_aug) >= 3 ? mmd_aug[3] : missing #TODO
-            D_G_X = length(mmd_aug) >= 4 ? mmd_aug[4] : missing #TODO
+            Dloss = length(mmd_aug) >= 1 ? mmd_aug[1] : zero(MMDsq) #TODO
+            Gloss = length(mmd_aug) >= 2 ? mmd_aug[2] : zero(MMDsq) #TODO
+            D_Y   = length(mmd_aug) >= 3 ? mmd_aug[3] : zero(MMDsq) #TODO
+            D_G_X = length(mmd_aug) >= 4 ? mmd_aug[4] : zero(MMDsq) #TODO
 
             @pack! cb_state["metrics"] = Zreg, KLdiv, ELBO, loss, MMDsq, Gloss, Dloss, D_Y, D_G_X
         end
