@@ -1,9 +1,31 @@
 module Ignite
 
 using ArgParse
-using ..TOML
+import ..TOML
+import ..Flux
+import ..CUDA
 
-export @j2p, event_throttler, run_timeout
+export to32, to64, todevice, @j2p, event_throttler, run_timeout
+
+const JL_CUDA_FUNCTIONAL = Ref(get(ENV, "JL_DISABLE_GPU", "0") != "1" && CUDA.functional())
+const JL_CUDA_DEVICE = Ref(parse(Int, get(ENV, "JL_CUDA_DEVICE", "0")))
+const JL_ZERO_SUBNORMALS = Ref(get(ENV, "JL_ZERO_SUBNORMALS", "1") == "1")
+const JL_WANDB_LOGGER = Ref(get(ENV, "JL_WANDB_LOGGER", "0") == "1")
+
+# Send array to CPU or GPU
+if JL_CUDA_FUNCTIONAL[]
+    @eval todevice(x) = Flux.gpu(x)
+else
+    @eval todevice(x) = Flux.cpu(x)
+end
+to32(x) = x |> Flux.f32 |> todevice
+to64(x) = x |> Flux.f64 |> todevice
+
+# Initialize WandBLogger object
+function init_wandb_logger(settings)
+    WandBLogger = Main.ignite.contrib.handlers.wandb_logger.WandBLogger
+    return JL_WANDB_LOGGER[] ? WandBLogger(config = flatten_dict(settings)) : nothing
+end
 
 # Convert Julia callback function to Python function.
 # Julia functions can already by passed directly via pycall
@@ -87,7 +109,6 @@ nestedaccess(d) = d
 # Settings parsing
 function parse_command_line!(
         defaults::AbstractDict{<:AbstractString, Any},
-        args = isinteractive() ? String[] : ARGS,
     )
 
     # Generate arg parser
@@ -119,6 +140,7 @@ function parse_command_line!(
     _add_arg_table!(defaults)
 
     # Parse and merge into defaults
+    args = isinteractive() ? String[] : ARGS
     for (k, v) in parse_args(args, settings)
         ksplit = String.(split(k, "."))
         din = nestedaccess(defaults, ksplit[begin:end-1]...)
@@ -145,6 +167,23 @@ function compare_and_set!(d::AbstractDict, k, default, new)
         d[k] = deepcopy(new)
     end
     return d[k]
+end
+
+function __init__()
+    # CUDA settings
+    if JL_CUDA_FUNCTIONAL[]
+        CUDA.allowscalar(false)
+        CUDA.device!(JL_CUDA_DEVICE[])
+    end
+
+    # Treat subnormals as zero
+    if JL_ZERO_SUBNORMALS[]
+        Threads.@threads for i in 1:Threads.nthreads()
+            set_zero_subnormals(true)
+        end
+    end
+
+    return nothing
 end
 
 end # module

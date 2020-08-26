@@ -5,16 +5,8 @@
 using MMDLearning
 using PyCall
 pyplot(size=(800,600))
-Threads.@threads for i in 1:Threads.nthreads(); set_zero_subnormals(true); end
-if CUDA.functional() && !haskey(ENV, "JL_DISABLE_GPU")
-    CUDA.allowscalar(false)
-    CUDA.device!(parse(Int, get(ENV, "JL_CUDA_DEVICE", "0")))
-    @eval todevice(x) = Flux.gpu(x)
-else
-    @eval todevice(x) = Flux.cpu(x)
-end
-to32(x) = x |> Flux.f32 |> todevice
 
+# Init python resources
 const torch = pyimport("torch")
 const wandb = pyimport("wandb")
 const ignite = pyimport("ignite")
@@ -22,10 +14,9 @@ const logging = pyimport("logging")
 py"""
 from ignite.contrib.handlers.wandb_logger import *
 """
-
 const Events = ignite.engine.Events
-const WandBLogger = ignite.contrib.handlers.wandb_logger.WandBLogger
 
+# Parse command line arguments into default settings
 const settings = TOML.parse("""
     [data]
         out    = "./output/ignite-cvae-$(MMDLearning.getnow())"
@@ -48,9 +39,9 @@ const settings = TOML.parse("""
         [train.augment]
             fftcat        = false # Fourier transform of input signal, concatenating real/imag
             fftsplit      = false # Fourier transform of input signal, treating real/imag separately
-            gradient      = true  # Gradient of input signal (1D central difference)
+            gradient      = false # Gradient of input signal (1D central difference)
             laplacian     = false # Laplacian of input signal (1D second order)
-            encoderspace  = true  # Discriminate encoder space representations
+            encoderspace  = false # Discriminate encoder space representations
             residuals     = false # Discriminate residual vectors
             flipsignals   = false # Randomly reverse signals
             scaleandshift = false # Randomly scale and shift signals
@@ -82,7 +73,7 @@ const settings = TOML.parse("""
 
     [arch]
         physics = "$(get(ENV, "JL_PHYS_MODEL", "toy"))" # "toy" or "mri"
-        nlatent = 5 # number of latent variables Z
+        nlatent = 1 # number of latent variables Z
         zdim    = 8 # embedding dimension of z
         hdim    = 256 # size of hidden layers
         nhidden = 4 # number of hidden layers
@@ -117,8 +108,8 @@ const settings = TOML.parse("""
 """)
 Ignite.parse_command_line!(settings)
 
-# Initialize WandBLogger and save settings
-const wandb_logger = !haskey(ENV, "JL_WANDB_LOGGER") ? nothing : isempty(ARGS) ? WandBLogger() : WandBLogger(config = filter(((k,v),) -> any(startswith("--" * k), ARGS), Ignite.flatten_dict(settings)))
+# Init wandb_logger and save settings
+wandb_logger = Ignite.init_wandb_logger(settings)
 !isnothing(wandb_logger) && (settings["data"]["out"] = wandb.run.dir)
 Ignite.save_and_print(settings; outpath = settings["data"]["out"], filename = "settings.toml")
 
@@ -228,7 +219,7 @@ function make_models(phys::PhysicsModel{Float32})
 end
 
 const phys = initialize!(
-    ToyModel{Float32,true}();
+    MMDLearning.ToyCosineModel{Float32,true}();
     ntrain = settings["data"]["ntrain"]::Int,
     ntest = settings["data"]["ntest"]::Int,
     nval = settings["data"]["nval"]::Int,
@@ -252,9 +243,7 @@ MMDLearning.model_summary(models, joinpath(settings["data"]["out"], "model-summa
 @inline sample_mv_normal(μ0::Matrix{T}, σ::Matrix{T}) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ)))
 @inline sample_mv_normal(μ::Tuple) = sample_mv_normal(μ...)
 @inline pow2(x) = x*x
-const theta_lower_bounds = θlower(phys) |> todevice
-const theta_upper_bounds = θupper(phys) |> todevice
-sampleθprior_similar(Y, n = size(Y,2)) = rand_similar(Y, ntheta(phys), n) .* (theta_upper_bounds .- theta_lower_bounds) .+ theta_lower_bounds
+sampleθprior_similar(Y, n = size(Y,2)) = rand_similar(Y, ntheta(phys), n) .* (todevice(θupper(phys)) .- todevice(θlower(phys))) .+ todevice(θlower(phys))
 
 # Misc. useful operators
 derived["gradient"] = MMDLearning.CentralDifference() |> to32
@@ -335,6 +324,14 @@ function MMDaug(X,Y,Z)
         mmds = (mmds..., MMDloss(rFX̂, rFY), MMDloss(iFX̂, iFY))
     end
 
+    if settings["train"]["augment"]["residuals"]::Bool
+        # Draw another sampled θ ~ P(θ|Y) and subtract noiseless X̄ = X(θ) from X̂ and Y
+        X̄, _, _ = Zygote.@ignore sampleXθZ(Y; recover_θ = true) # Note: Z discarded, `recover_Z` irrelevant
+        δX̂ = X̂ - X̄
+        δY = Zygote.@ignore Y - X̄
+        mmds = (mmds..., MMDloss(δX̂, δY))
+    end
+    
     if settings["train"]["augment"]["gradient"]::Bool
         # MMD of signal gradient
         ∇X̂ = derived["gradient"](X̂)
@@ -356,6 +353,17 @@ function MMDaug(X,Y,Z)
         mmds = (mmds..., MMDloss(X̂enc, Yenc))
     end
 
+    #= Plot augmented representations
+    let datapairs = [@ntuple(X̂, Y), @ntuple(∇X̂, ∇Y), @ntuple(δX̂, δY), @ntuple(X̂enc, Yenc)]
+        plots = Any[]
+        for j in 1:size(Y,2), nt in datapairs
+            push!(plots, plot(hcat(nt[1][:,j], nt[2][:,j]) |> Flux.cpu; lab = permutedims([string.(keys(nt))...])))
+        end
+        p = plot(plots...; layout = (size(Y,2), length(datapairs)))
+        savefig(p, "output/aug.png") #TODO
+    end
+    =#
+
     return mmds
 end
 
@@ -369,7 +377,7 @@ function InvertY(Y)
     x = sample_mv_normal(μx0, σx)
 
     θ, Z = split_theta_latent(x)
-    θ = clamp.(θ, theta_lower_bounds, theta_upper_bounds)
+    θ = clamp.(θ, todevice(θlower(phys)), todevice(θupper(phys)))
     return θ, Z
 end
 
@@ -392,14 +400,14 @@ function sampleθZ(Y; recover_θ = true, recover_Z = true)
 end
 
 function sampleXθZ(Y; kwargs...)
-    @timeit "sampleθZ"     CUDA.@sync θ, Z = sampleθZ(Y; kwargs...)
-    @timeit "signal_model" CUDA.@sync X = signal_model(phys, θ)
+    @timeit "sampleθZ"     θ, Z = sampleθZ(Y; kwargs...)
+    @timeit "signal_model" X = signal_model(phys, θ)
     return X, θ, Z
 end
 
 function sampleX̂θZ(Y; kwargs...)
-    @timeit "sampleXθZ" CUDA.@sync X, θ, Z = sampleXθZ(Y; kwargs...)
-    @timeit "sampleX̂"   CUDA.@sync X̂ = corrected_signal_instance(derived["ricegen"], X, Z)
+    @timeit "sampleXθZ" X, θ, Z = sampleXθZ(Y; kwargs...)
+    @timeit "sampleX̂"   X̂ = corrected_signal_instance(derived["ricegen"], X, Z)
     return X̂, θ, Z
 end
 
@@ -425,8 +433,8 @@ function CVAEloss(Y, θ, Z; recover_Z = true)
     ELBO = if recover_Z
         EvidenceLowerBound(vcat(θ,Z), μx0, σx)
     else
-        μθ0 = split_theta_latent(μx0)[1]
-        σθ  = split_theta_latent(σx)[1]
+        μθ0, _ = split_theta_latent(μx0)
+        σθ,  _ = split_theta_latent(σx)
         EvidenceLowerBound(θ, μθ0, σθ)
     end
 
@@ -581,7 +589,7 @@ function train_step(engine, batch)
         #= Train GAN loss
         train_GAN && @timeit "gan" CUDA.@sync let
             @timeit "sampleXθZ" CUDA.@sync Xtrain, θtrain, Ztrain = sampleXθZ(Ytrain; recover_θ = true, recover_Z = false) .|> todevice
-            @timeit "sampleX̂"   CUDA.@sync X̂train = sampleX̂(Ytrain; recover_θ = true, recover_Z = true) |> todevice #TODO recover_Z?
+            @timeit "sampleX̂"   CUDA.@sync X̂train = sampleX̂(Ytrain; recover_θ = true, recover_Z = false) |> todevice #TODO recover_Z?
             train_discrim && @timeit "discrim" CUDA.@sync let
                 ps = Flux.params(models["discrim"])
                 for _ in 1:settings["train"]["Dsteps"]
@@ -603,12 +611,10 @@ function train_step(engine, batch)
 
         # Train MMD loss
         train_MMD && @timeit "mmd" CUDA.@sync let
-            @timeit "sampleXθZ" CUDA.@sync Xtrain, θtrain, Ztrain = sampleXθZ(Ytrain; recover_θ = true, recover_Z = true) .|> todevice #TODO recover_Z?
+            @timeit "sampleXθZ" CUDA.@sync Xtrain, θtrain, Ztrain = sampleXθZ(Ytrain; recover_θ = true, recover_Z = false) .|> todevice #TODO recover_Z?
             @timeit "genatr" CUDA.@sync let
                 ps = Flux.params(models["genatr"])
-                @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(ps) do
-                    sum(MMDaug(Xtrain, Ytrain, Ztrain))
-                end
+                @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(() -> sum(MMDaug(Xtrain, Ytrain, Ztrain)), ps)
                 @timeit "reverse" CUDA.@sync gs = back(one(eltype(phys)))
                 @timeit "update!" CUDA.@sync Flux.Optimise.update!(optimizers["mmd"], ps, gs)
                 metrics["MMD"] = ℓ
@@ -699,10 +705,10 @@ function compute_metrics(engine, batch; dataset)
             MMDsq = sum(mmd_aug) #TODO missing
             loss = KLdiv + ELBO #TODO Zreg, MMDsq, YlogL
 
-            ϵ = sqrt(eps(eltype(X)))
-            X̂new = sampleX̂(Y; recover_θ = true, recover_Z = true) |> todevice #TODO recover_Z?
-            d_y = D_Y_prob(Y, X̂new)
-            d_g_x = D_G_X_prob(X, Z, X̂new)
+            # ϵ = sqrt(eps(eltype(X)))
+            # X̂new = sampleX̂(Y; recover_θ = true, recover_Z = true) |> todevice #TODO recover_Z?
+            # d_y = D_Y_prob(Y, X̂new)
+            # d_g_x = D_G_X_prob(X, Z, X̂new)
             # Dloss = -mean(log.(d_y .+ ϵ) .+ log.(1 .- d_g_x .+ ϵ))
             # Gloss = mean(log.(1 .- d_g_x .+ ϵ))
             # D_Y   = mean(d_y)
@@ -733,7 +739,7 @@ function compute_metrics(engine, batch; dataset)
         # Cache values for evaluating VAE performance for recovering Y
         let
             Yθ = hasclosedform(phys) ? signal_model(ClosedForm(phys), θ) : missing
-            Yθhat = hasclosedform(phys) ? signal_model(ClosedForm(phys), θ, noiselevel(ClosedForm(phys))) : missing
+            Yθhat = hasclosedform(phys) ? signal_model(ClosedForm(phys), θ, noiselevel(ClosedForm(phys), θ, Z)) : missing
             cache_cb_state!(Y, θ, Z, X, δG0, σG, μG0, X̂, Yθ, Yθhat; suf = "")
 
             all_Yhat_rmse = sqrt.(mean(abs2, Y .- X̂; dims = 1)) |> Flux.cpu |> vec
@@ -746,13 +752,13 @@ function compute_metrics(engine, batch; dataset)
         # Cache values for evaluating CVAE performance for estimating parameters of Y
         let
             θfit, Zfit = split_theta_latent(sample_mv_normal(μx0, σx))
-            θfit .= clamp.(θfit, theta_lower_bounds, theta_upper_bounds)
+            θfit .= clamp.(θfit, todevice(θlower(phys)), todevice(θupper(phys)))
             Xθfit = signal_model(phys, θfit)
             δθfit, ϵθfit = correction_and_noiselevel(derived["ricegen"], Xθfit, Zfit)
             Xθδfit = add_correction(derived["ricegen"], Xθfit, δθfit)
             Xθhatfit = add_noise_instance(derived["ricegen"], Xθδfit, ϵθfit)
             Yθfit = hasclosedform(phys) ? signal_model(ClosedForm(phys), θfit) : missing
-            Yθhatfit = hasclosedform(phys) ? signal_model(ClosedForm(phys), θfit, noiselevel(ClosedForm(phys))) : missing
+            Yθhatfit = hasclosedform(phys) ? signal_model(ClosedForm(phys), θfit, noiselevel(ClosedForm(phys), θfit, Zfit)) : missing
             cache_cb_state!(X̂, θfit, Zfit, Xθfit, δθfit, ϵθfit, Xθδfit, Xθhatfit, Yθfit, Yθhatfit; suf = "fit") #TODO X̂ or Y?
 
             rmse = hasclosedform(phys) ? sqrt(mean(abs2, Yθfit - Xθδfit)) : missing
@@ -760,7 +766,7 @@ function compute_metrics(engine, batch; dataset)
             all_Xhat_logL = -sum(@. MMDLearning._rician_logpdf(Flux.cpu.((X̂, Xθδfit, ϵθfit))...); dims = 1) |> vec #TODO X̂ or Y?
             Xhat_rmse = mean(all_Xhat_rmse)
             Xhat_logL = mean(all_Xhat_logL)
-            θ_err = 100 .* mean(abs, (θ .- θfit) ./ (theta_upper_bounds .- theta_lower_bounds); dims = 2) |> Flux.cpu |> vec |> copy
+            θ_err = 100 .* mean(abs, (θ .- θfit) ./ (todevice(θupper(phys)) .- todevice(θlower(phys))); dims = 2) |> Flux.cpu |> vec |> copy
             Z_err = mean(abs, Z .- Zfit; dims = 2) |> Flux.cpu |> vec |> copy
             @pack! cb_state["metrics"] = Xhat_rmse, Xhat_logL, θ_err, Z_err, rmse, all_Xhat_rmse, all_Xhat_logL
         end

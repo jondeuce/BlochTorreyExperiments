@@ -107,13 +107,43 @@ ntheta(c::ClosedForm) = ntheta(physicsmodel(c))
 nsignal(c::ClosedForm) = nsignal(physicsmodel(c))
 Base.eltype(::MaybeClosedForm{T}) where {T} = T
 Base.eltype(::Type{<:MaybeClosedForm{T}}) where {T} = T
+function sampleZprior end
+function sampleθprior end
+function sampleθ end
+function signal_model end
 function noiselevel end
 
+# Default samplers for models with data stored in `θ`, `X`, `Y` fields
+_sample_data(d::Dict, n::Union{Int, Symbol}; dataset::Symbol) = n === :all ? d[dataset] : sample_columns(d[dataset], n)
+sampleθ(p::MaybeClosedForm, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = _sample_data(physicsmodel(p).θ, n; dataset)
+sampleX(p::MaybeClosedForm, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = _sample_data(physicsmodel(p).X, n; dataset)
+sampleY(p::MaybeClosedForm, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = _sample_data(physicsmodel(p).Y, n; dataset)
+
 ####
-#### Toy problem
+#### Toy problems
 ####
 
-@with_kw struct ToyModel{T,isfinite} <: PhysicsModel{T}
+abstract type AbstractToyModel{T,isfinite} <: PhysicsModel{T} end
+
+function initialize!(p::AbstractToyModel{T,isfinite}; ntrain::Int, ntest::Int, nval::Int, seed::Int = 0) where {T,isfinite}
+    rng = Random.seed!(seed)
+    for (d, n) in [(:train, ntrain), (:test, ntest), (:val, nval)]
+        if isfinite
+            p.θ[d] = sampleθprior(p, n)
+            p.X[d] = signal_model(p, p.θ[d])
+        else
+            empty!(p.θ)
+            empty!(p.X)
+        end
+        θ, Z = sampleθprior(p, n), sampleZprior(p, n)
+        ϵ = noiselevel(ClosedForm(p), θ, Z)
+        p.Y[d] = signal_model(ClosedForm(p), θ, ϵ, Z)
+    end
+    Random.seed!(rng)
+    return p
+end
+
+@with_kw struct ToyModel{T,isfinite} <: AbstractToyModel{T,isfinite}
     ϵ0::T = 0.01
     θ::Dict{Symbol,Matrix{T}} = Dict()
     X::Dict{Symbol,Matrix{T}} = Dict()
@@ -124,43 +154,29 @@ const MaybeClosedFormToyModel{T,isfinite} = Union{ToyModel{T,isfinite}, ClosedFo
 
 ntheta(::ToyModel) = 5
 nsignal(::ToyModel) = 128
+nlatent(::ToyModel) = 0
 hasclosedform(::ToyModel) = true
 beta(::ToyModel) = 4
 beta(::ClosedFormToyModel) = 2
-noiselevel(c::ClosedFormToyModel) = physicsmodel(c).ϵ0
 
 θlabels(::ToyModel) = [L"f", L"\phi", L"a_0", L"a_1", L"\tau"]
-θlower(::ToyModel{T}) where {T} = T[1/T(64),   T(0), 1/T(4), 1/T(10),  T(16)]
-θupper(::ToyModel{T}) where {T} = T[1/T(32), T(π)/2, 1/T(2),  1/T(4), T(128)]
+θlower(::ToyModel{T}) where {T} = T[1/T(64), T(0),   1/T(4), 1/T(10), T(16) ]
+θupper(::ToyModel{T}) where {T} = T[1/T(32), T(π)/2, 1/T(2), 1/T(4),  T(128)]
 θerror(p::ToyModel, θ, θhat) = 100 .* abs.((θ .- θhat)) ./ (θupper(p) .- θlower(p))
 
-function initialize!(p::ToyModel{T,isfinite}; ntrain::Int, ntest::Int, nval::Int, seed::Int = 0) where {T,isfinite}
-    rng = Random.seed!(seed)
-    for (d, n) in [(:train, ntrain), (:test, ntest), (:val, nval)]
-        if isfinite
-            p.θ[d] = sampleθprior(p, n)
-            p.X[d] = signal_model(p, p.θ[d])
-        else
-            empty!(p.θ)
-            empty!(p.X)
-        end
-        p.Y[d] = signal_model(ClosedForm(p), sampleθprior(p, n), p.ϵ0)
-    end
-    Random.seed!(rng)
-    return p
-end
+sampleZprior(p::ToyModel, n::Union{Int, Symbol}) = nothing
 
 sampleθprior(p::ToyModel{T}, n::Union{Int, Symbol}) where {T} = θlower(p) .+ (θupper(p) .- θlower(p)) .* rand(T, ntheta(p), n)
-sampleθ(p::ToyModel{T,true},  n::Union{Int, Symbol}; dataset::Symbol) where {T} = n === :all ? physicsmodel(p).θ[dataset] : sample_columns(physicsmodel(p).θ[dataset], n)
-sampleθ(p::ToyModel{T,false}, n::Union{Int, Symbol}; dataset::Symbol) where {T} = sampleθprior(p, n)
+sampleθ(p::ToyModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleθprior(p, n)
 
-sampleX(p::MaybeClosedFormToyModel{T,true},  n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = n === :all ? physicsmodel(p).X[dataset] : sample_columns(physicsmodel(p).X[dataset], n)
-sampleX(p::MaybeClosedFormToyModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleX(p, sampleθ(physicsmodel(p), n; dataset = dataset), ϵ)
-sampleX(p::MaybeClosedFormToyModel, θ, ϵ = nothing) = signal_model(p, θ, ϵ)
+sampleX(p::ToyModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleX(p, sampleθ(physicsmodel(p), n, ϵ; dataset), ϵ)
+sampleX(p::MaybeClosedFormToyModel, θ, ϵ = nothing) = signal_model(p, θ, ϵ, nothing)
 
-sampleY(p::ToyModel, n::Union{Int, Symbol}; dataset::Symbol) = n === :all ? physicsmodel(p).Y[dataset] : sample_columns(physicsmodel(p).Y[dataset], n)
+noiselevel(c::ClosedFormToyModel, θ = nothing, Z = nothing) = physicsmodel(c).ϵ0
 
-function _signal_model(θ::AbstractVecOrMat, ϵ, n::Int, β::Int)
+function signal_model(p::MaybeClosedFormToyModel, θ::AbstractVecOrMat, ϵ = nothing, Z = nothing)
+    n = nsignal(p)
+    β = beta(p)
     t = 0:n-1
     f, ϕ, a₀, a₁, τ = θ[1:1,:], θ[2:2,:], θ[3:3,:], θ[4:4,:], θ[5:5,:]
     y = @. (a₀ + a₁ * sin(2*(π*f)*t - ϕ)^β) * exp(-t/τ)
@@ -171,7 +187,48 @@ function _signal_model(θ::AbstractVecOrMat, ϵ, n::Int, β::Int)
     end
     return y
 end
-signal_model(p::MaybeClosedFormToyModel, θ::AbstractVecOrMat, ϵ = nothing) = _signal_model(θ, ϵ, nsignal(p), beta(p))
+
+@with_kw struct ToyCosineModel{T,isfinite} <: AbstractToyModel{T,isfinite}
+    ϵbd::NTuple{2,T} = (0.01, 0.1)
+    θ::Dict{Symbol,Matrix{T}} = Dict()
+    X::Dict{Symbol,Matrix{T}} = Dict()
+    Y::Dict{Symbol,Matrix{T}} = Dict()
+end
+const ClosedFormToyCosineModel{T,isfinite} = ClosedForm{ToyCosineModel{T,isfinite}}
+const MaybeClosedFormToyCosineModel{T,isfinite} = Union{ToyCosineModel{T,isfinite}, ClosedFormToyCosineModel{T,isfinite}}
+
+ntheta(::ToyCosineModel) = 3
+nsignal(::ToyCosineModel) = 128
+nlatent(::ToyCosineModel) = 1
+hasclosedform(::ToyCosineModel) = true
+
+θlabels(::ToyCosineModel) = [L"f", L"\phi", L"a_0"]
+θlower(::ToyCosineModel{T}) where {T} = T[T(1/64), T(0),   T(1/2)]
+θupper(::ToyCosineModel{T}) where {T} = T[T(1/32), T(π/2), T(1)]
+θerror(p::ToyCosineModel, θ, θhat) = 100 .* abs.((θ .- θhat)) ./ (θupper(p) .- θlower(p))
+
+sampleZprior(p::ToyCosineModel{T}, n::Union{Int, Symbol}) where {T} = rand(T, nlatent(p), n)
+
+sampleθprior(p::ToyCosineModel{T}, n::Union{Int, Symbol}) where {T} = θlower(p) .+ (θupper(p) .- θlower(p)) .* rand(T, ntheta(p), n)
+sampleθ(p::ToyCosineModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleθprior(p, n)
+
+sampleX(p::ToyCosineModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleX(p, sampleθ(physicsmodel(p), n, ϵ; dataset), ϵ)
+sampleX(p::MaybeClosedFormToyCosineModel, θ, ϵ = nothing) = signal_model(p, θ, ϵ, nothing)
+
+noiselevel(c::ClosedFormToyCosineModel, θ = nothing, Z = nothing) = ((lo,hi) = physicsmodel(c).ϵbd; return @. lo + Z * (hi - lo))
+
+function signal_model(p::MaybeClosedFormToyCosineModel, θ::AbstractVecOrMat, ϵ = nothing, Z = nothing)
+    n = nsignal(p)
+    t = 0:n-1
+    f, ϕ, a₀ = θ[1:1,:], θ[2:2,:], θ[3:3,:]
+    y = @. 1 + a₀ * cos(2*(π*f)*t - ϕ)
+    if !isnothing(ϵ)
+        ϵR = ϵ .* randn_similar(θ, n, size(θ,2))
+        ϵI = ϵ .* randn_similar(θ, n, size(θ,2))
+        y = @. sqrt((y + ϵR)^2 + ϵI^2)
+    end
+    return y
+end
 
 ####
 #### Signal model
