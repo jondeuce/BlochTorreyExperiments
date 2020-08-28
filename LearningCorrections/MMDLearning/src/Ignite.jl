@@ -5,7 +5,9 @@ import ..TOML
 import ..Flux
 import ..CUDA
 
-export to32, to64, todevice, @j2p, event_throttler, run_timeout
+export to32, to64, todevice, @j2p
+export throttler_event_filter, timeout_event_filter
+export file_event
 
 const JL_CUDA_FUNCTIONAL = Ref(get(ENV, "JL_DISABLE_GPU", "0") != "1" && CUDA.functional())
 const JL_CUDA_DEVICE = Ref(parse(Int, get(ENV, "JL_CUDA_DEVICE", "0")))
@@ -66,9 +68,9 @@ array(x) = reversedims(x.detach().cpu().numpy())
 array(x::AbstractArray) = x # fallback for Julia arrays
 
 # Throttle even to run every `period` seconds
-function event_throttler(period = 0.0)
+function throttler_event_filter(period = 0.0)
     last_time = Ref(-Inf)
-    function event_throttler_internal(engine, event)
+    function throttler_event_filter_internal(engine, event)
         now = time()
         if now - last_time[] >= period
             last_time[] = now
@@ -80,11 +82,48 @@ function event_throttler(period = 0.0)
 end
 
 # Timeout run after `period` seconds
-function run_timeout(timeout = Inf)
+function timeout_event_filter(timeout = Inf)
     start_time = time()
-    function run_timeout_internal(engine, event)
+    function timeout_event_filter_internal(engine, event)
         now = time()
         return now - start_time >= timeout
+    end
+end
+
+# Run `f` if `file` is found, or else if predicate `pred(engine)` is true
+function file_event(f, pred; file::AbstractString)
+    function file_event_inner(engine)
+        if isfile(file)
+            try
+                f(engine)
+            finally
+                mv(file, file * ".fired"; force = true)
+            end
+        elseif pred(engine)
+            f(engine)
+        end
+    end
+end
+
+function terminate_file_event(; file::AbstractString)
+    file_event(file = file) do engine
+        @info "Exiting: found file $file"
+        engine.terminate()
+    end
+end
+
+function droplr_file_event(optimizers::AbstractDict{<:AbstractString,Any}; file::AbstractString, lrrate::Int, lrdrop, lrthresh)
+    pred(engine) = engine.state.epoch > 1 && mod(engine.state.epoch-1, lrrate) == 0
+    file_event(pred; file = file) do engine
+        for (name, opt) in optimizers
+            new_eta = max(opt.eta / lrdrop, lrthresh)
+            if new_eta > lrthresh
+                @info "$(engine.state.epoch): Dropping $name optimizer learning rate to $new_eta"
+            else
+                @info "$(engine.state.epoch): Learning rate reached minimum value $lrthresh for $name optimizer"
+            end
+            opt.eta = new_eta
+        end
     end
 end
 
@@ -102,53 +141,17 @@ function _recurse_insert!(dout::AbstractDict{<:AbstractString, Any}, d::Abstract
     return dout
 end
 
+# Set `d[k]` to `new` if its current value is `default`, else do nothing
+function compare_and_set!(d::AbstractDict, k, default, new)
+    if isequal(d[k], default)
+        d[k] = deepcopy(new)
+    end
+    return d[k]
+end
+
 # Nested dict access
 nestedaccess(d::AbstractDict, args...) = isempty(args) ? d : nestedaccess(d[first(args)], Base.tail(args)...)
 nestedaccess(d) = d
-
-# Settings parsing
-function parse_command_line!(
-        defaults::AbstractDict{<:AbstractString, Any},
-    )
-
-    # Generate arg parser
-    settings = ArgParseSettings()
-
-    function _add_arg_table!(d, dglobal = d)
-        for (k,v) in d
-            if v isa AbstractDict
-                _add_arg_table!(Dict{String,Any}(k * "." * kin => deepcopy(vin) for (kin, vin) in v), dglobal)
-            else
-                # Fields with value "%PARENT%" take default values of their parent field
-                ksplit = String.(split(k, "."))
-                depth = 0
-                while v == "%PARENT%"
-                    depth += 1
-                    v = deepcopy(nestedaccess(dglobal, ksplit[begin:end-1-depth]..., ksplit[end]))
-                end
-                props = Dict{Symbol,Any}(:default => deepcopy(v))
-                if v isa AbstractVector
-                    props[:arg_type] = eltype(v)
-                    props[:nargs] = length(v)
-                else
-                    props[:arg_type] = typeof(v)
-                end
-                add_arg_table!(settings, "--" * k, props)
-            end
-        end
-    end
-    _add_arg_table!(defaults)
-
-    # Parse and merge into defaults
-    args = isinteractive() ? String[] : ARGS
-    for (k, v) in parse_args(args, settings)
-        ksplit = String.(split(k, "."))
-        din = nestedaccess(defaults, ksplit[begin:end-1]...)
-        din[ksplit[end]] = deepcopy(v)
-    end
-
-    return defaults
-end
 
 # Save and print settings file
 function save_and_print(settings::AbstractDict; outpath, filename)
@@ -161,12 +164,44 @@ function save_and_print(settings::AbstractDict; outpath, filename)
     return settings
 end
 
-# Set `d[k]` to `new` if its current value is `default`, else do nothing
-function compare_and_set!(d::AbstractDict, k, default, new)
-    if isequal(d[k], default)
-        d[k] = deepcopy(new)
+# Settings parsing
+function parse_command_line!(defaults::AbstractDict{<:AbstractString, Any})
+    # Generate arg parser
+    function _add_arg_table!(parser, def, def_global = def)
+        for (k,v) in def
+            if v isa AbstractDict
+                _add_arg_table!(parser, Dict{String,Any}(k * "." * kin => deepcopy(vin) for (kin, vin) in v), def_global)
+            else
+                # Fields with value "%PARENT%" take default values of their parent field
+                ksplit = String.(split(k, "."))
+                depth = 0
+                while v == "%PARENT%"
+                    depth += 1
+                    v = deepcopy(nestedaccess(def_global, ksplit[begin:end-1-depth]..., ksplit[end]))
+                end
+                props = Dict{Symbol,Any}(:default => deepcopy(v))
+                if v isa AbstractVector
+                    props[:arg_type] = eltype(v)
+                    props[:nargs] = length(v)
+                else
+                    props[:arg_type] = typeof(v)
+                end
+                add_arg_table!(parser, "--" * k, props)
+            end
+        end
+        return parser
     end
-    return d[k]
+    parser = _add_arg_table!(ArgParseSettings(), defaults)
+
+    # Parse and merge into defaults
+    args = isinteractive() ? String[] : ARGS
+    for (k, v) in parse_args(args, parser)
+        ksplit = String.(split(k, "."))
+        din = nestedaccess(defaults, ksplit[begin:end-1]...)
+        din[ksplit[end]] = deepcopy(v)
+    end
+
+    return defaults
 end
 
 function __init__()

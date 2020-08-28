@@ -225,7 +225,6 @@ const phys = initialize!(
     nval = settings["data"]["nval"]::Int,
 )
 const models, derived = make_models(phys)
-# const models = deepcopy(BSON.load("/home/jdoucette/Documents/code/BlochTorreyExperiments-master/LearningCorrections/output/ignite-cvae-2020-08-05-T-12-06-47-294/current-models.bson")["models"]) |> d -> MMDLearning.map_dict(todevice, d) #TODO
 const optimizers = Dict{String,Any}(
     "cvae"    => Flux.ADAM(settings["opt"]["cvae"]["lr"]),
     "genatr"  => Flux.ADAM(settings["opt"]["genatr"]["lr"]),
@@ -863,17 +862,12 @@ train_evaluator.logger = ignite.utils.setup_logger("train_evaluator")
 # Force terminate
 trainer.add_event_handler(
     Events.STARTED | Events.ITERATION_STARTED | Events.ITERATION_COMPLETED,
-    @j2p function (engine)
-        if isfile(joinpath(settings["data"]["out"], "stop.txt"))
-            @info "Exiting: found file $(joinpath(settings["data"]["out"], "stop.txt"))"
-            engine.terminate()
-        end
-    end
+    @j2p terminate_file_event(file = joinpath(settings["data"]["out"], "stop"))
 )
 
 # Timeout
 trainer.add_event_handler(
-    Events.EPOCH_COMPLETED(event_filter = @j2p run_timeout(settings["train"]["timeout"])),
+    Events.EPOCH_COMPLETED(event_filter = @j2p timeout_event_filter(settings["train"]["timeout"])),
     @j2p function (engine)
         @info "Exiting: training time exceeded $(DECAES.pretty_time(settings["train"]["timeout"]))"
         engine.terminate()
@@ -882,17 +876,17 @@ trainer.add_event_handler(
 
 # Compute callback metrics
 trainer.add_event_handler(
-    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["valevalperiod"])),
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p throttler_event_filter(settings["eval"]["valevalperiod"])),
     @j2p (engine) -> val_evaluator.run(val_loader)
 )
 trainer.add_event_handler(
-    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["trainevalperiod"])),
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p throttler_event_filter(settings["eval"]["trainevalperiod"])),
     @j2p (engine) -> train_evaluator.run(train_loader)
 )
 
 # Checkpoint current model + logger + make plots
 trainer.add_event_handler(
-    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["saveperiod"])),
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p throttler_event_filter(settings["eval"]["saveperiod"])),
     @j2p function (engine)
         @timeit "checkpoint" let models = MMDLearning.map_dict(Flux.cpu, models)
             @timeit "save current model" saveprogress(@dict(models, logger); savefolder = settings["data"]["out"], prefix = "current-")
@@ -904,7 +898,7 @@ trainer.add_event_handler(
 
 # Check for + save best model + logger + make plots
 trainer.add_event_handler(
-    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["saveperiod"])),
+    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p throttler_event_filter(settings["eval"]["saveperiod"])),
     @j2p function (engine)
         losses = logger.Yhat_logL[logger.dataset .=== :val] |> skipmissing |> collect
         if !isempty(losses) && (length(losses) == 1 || losses[end] < minimum(losses[1:end-1]))
@@ -920,31 +914,17 @@ trainer.add_event_handler(
 # Drop learning rate
 trainer.add_event_handler(
     Events.EPOCH_COMPLETED,
-    @j2p function (engine)
-        @unpack lrrate, lrdrop, lrthresh = settings["opt"]
-        epoch = engine.state.epoch
-        if epoch > 1 && mod(epoch-1, lrrate) == 0
-            for optname in ["genatr", "discrim", "cvae", "mmd"]
-                if optname ∉ keys(optimizers)
-                    @warn "Optimizer \"$optname\" not found; skipping dropping of lr"
-                    continue
-                end
-                opt = optimizers[optname]
-                new_eta = max(opt.eta / lrdrop, lrthresh)
-                if new_eta > lrthresh
-                    @info "$epoch: Dropping $optname optimizer learning rate to $new_eta"
-                else
-                    @info "$epoch: Learning rate reached minimum value $lrthresh for $optname optimizer"
-                end
-                opt.eta = new_eta
-            end
-        end
-    end
+    @j2p Ignite.droplr_file_event(optimizers;
+        file = joinpath(settings["data"]["out"], "droplr"),
+        lrrate = settings["opt"]["lrrate"]::Int,
+        lrdrop = settings["opt"]["lrdrop"]::Float64,
+        lrthresh = settings["opt"]["lrthresh"]::Float64,
+    )
 )
 
 # Print TimerOutputs timings
 trainer.add_event_handler(
-    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["printperiod"])),
+    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p throttler_event_filter(settings["eval"]["printperiod"])),
     @j2p function (engine)
         show(stdout, TimerOutputs.get_defaulttimer()); println("\n")
         show(stdout, last(logger, 10)); println("\n")
@@ -959,7 +939,7 @@ trainer.add_event_handler(
 # Attach training/validation output handlers
 if !isnothing(wandb_logger)
     for (tag, engine, event) in [
-            ("step",  trainer,         Events.EPOCH_COMPLETED(event_filter = @j2p run_timeout(settings["eval"]["trainevalperiod"]))), # computed each iteration; throttle recording
+            ("step",  trainer,         Events.EPOCH_COMPLETED(event_filter = @j2p timeout_event_filter(settings["eval"]["trainevalperiod"]))), # computed each iteration; throttle recording
             ("train", train_evaluator, Events.EPOCH_COMPLETED), # throttled above; record every epoch
             ("val",   val_evaluator,   Events.EPOCH_COMPLETED), # throttled above; record every epoch
         ]

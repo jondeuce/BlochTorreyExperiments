@@ -305,7 +305,7 @@ trainer.add_event_handler(
 
 # Checkpoint current model + logger + make plots
 trainer.add_event_handler(
-    ignite.engine.Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["saveperiod"])),
+    ignite.engine.Events.EPOCH_COMPLETED(event_filter = @j2p throttler_event_filter(settings["eval"]["saveperiod"])),
     @j2p function (engine)
         @timeit "checkpoint" begin
             @timeit "save current model" saveprogress(@dict(models, optimizers, logger); savefolder = settings["data"]["out"], prefix = "current-")
@@ -364,7 +364,7 @@ trainer.add_event_handler(
 
 # Timeout
 trainer.add_event_handler(
-    ignite.engine.Events.EPOCH_COMPLETED(event_filter = @j2p run_timeout(settings["train"]["timeout"])),
+    ignite.engine.Events.EPOCH_COMPLETED(event_filter = @j2p timeout_event_filter(settings["train"]["timeout"])),
     @j2p function (engine)
         @info "Exiting: training time exceeded $(DECAES.pretty_time(settings["train"]["timeout"]))"
         engine.terminate()

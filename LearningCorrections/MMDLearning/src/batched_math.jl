@@ -2,39 +2,14 @@
 #### Accelerated batched functions
 ####
 
-function avx_map!(f, dst::AbstractArray, src::AbstractArray)
-    if length(dst) < Threads.nthreads()
-        @avx for i in eachindex(src,dst)
-            dst[i] = f(src[i])
-        end
-    else
-        Threads.@sync for I in Iterators.partition(eachindex(src,dst), length(dst) ÷ Threads.nthreads())
-            Threads.@spawn begin
-                @avx for i in I
-                    dst[i] = f(src[i])
-                end
-            end
-        end
-    end
-    return dst
-end
-avx_map!(f, A::AbstractArray) = avx_map!(f, A, A)
-fast_exp!(A...) = avx_map!(exp, A...)
-
 # TODO: Some necessary piracy here: broadcasted `+.(::Diagonal{Fill}, ::CuMatrix)` falls back to scalar indexing
 Zygote.accum(x::Diagonal{<:Any, <:Zygote.FillArrays.Fill}, y::CUDA.CuMatrix) = Zygote.accum.(Diagonal(CUDA.CuVector(diag(x))), y)
 Zygote.accum(x::CUDA.CuMatrix, y::Diagonal{<:Any, <:Zygote.FillArrays.Fill}) = Zygote.accum.(x, Diagonal(CUDA.CuVector(diag(y))))
 
 function mean3(X::AbstractTensor3D)
+    size(X,3) == 1 && return reshape(X, size(X,1), size(X,2))
     γ = inv(eltype(X)(size(X,3)))
-    Y = zeros(eltype(X), size(X,1), size(X,2))
-    Threads.@sync for j in 1:size(X,2)
-        Threads.@spawn begin
-            @avx for k in 1:size(X,3), i in 1:size(X,1)
-                Y[i,j] += γ * X[i,j,k]
-            end
-        end
-    end
+    @tullio Y[i,j] := γ * X[i,j,k]
     return Y
 end
 mean3(X::CuTensor3D) = dropdims(mean(X; dims = 3); dims = 3)
