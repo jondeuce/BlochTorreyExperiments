@@ -467,35 +467,66 @@ function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
     xx, yy = batched_diag(Kxx), batched_diag(Kyy)
     Threads.@threads for j in 1:size(Kxx,2)
         @avx for i in 1:size(Kxx,1)
-            Kxx[i,j] = 2 * Kxx[i,j] - xx[i] - xx[j]
-            Kyy[i,j] = 2 * Kyy[i,j] - yy[i] - yy[j]
-            Kxy[i,j] = 2 * Kxy[i,j] - xx[i] - yy[j]
+            Kxx[i,j] = exp(2 * Kxx[i,j] - xx[i] - xx[j])
+            Kyy[i,j] = exp(2 * Kyy[i,j] - yy[i] - yy[j])
+            Kxy[i,j] = exp(2 * Kxy[i,j] - xx[i] - yy[j])
         end
     end
-    fast_exp!(Kxx)
-    fast_exp!(Kyy)
-    fast_exp!(Kxy)
-
     @ntuple(Kxx, Kyy, Kxy)
 end
 
-#=
-function _mmd_tullio_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
-    XX, YY, XY = X'X, Y'Y, X'Y
-    Tullio.@tullio Kxx[i,j] := exp(2 * XX[i,j] - XX[i,i] - XX[j,j])
-    Tullio.@tullio Kyy[i,j] := exp(2 * YY[i,j] - YY[i,i] - YY[j,j])
-    Tullio.@tullio Kxy[i,j] := exp(2 * XY[i,j] - XX[i,i] - YY[j,j])
-    @ntuple(Kxx, Kyy, Kxy)
-end
-
-Zygote.@adjoint function _mmd_tullio_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
+Zygote.@adjoint function MMDLearning._mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
     # Store kernel matrices for reverse pass
-    @unpack Kxx, Kyy, Kxy = _mmd_tullio_kernel_matrices(X, Y)
+    @unpack Kxx, Kyy, Kxy = MMDLearning._mmd_flux_kernel_matrices(X, Y)
+
+    return @ntuple(Kxx, Kyy, Kxy), function(Δ)
+        ΔKxx, ΔKyy, ΔKxy = Δ.Kxx, Δ.Kyy, Δ.Kxy
+
+        # dK_dX
+        @tullio Δ_buf[i,j] := @inbounds ΔKxx[i,j] * Kxx[i,j]
+        @tullio Δ_buf[i,j] += @inbounds Δ_buf[j,i]
+        Δ_buf_sumbuf = vec(sum(Δ_buf; dims = 1))
+        mul_buf = X * Δ_buf
+        @tullio dK_dX[i,j] := @inbounds 2 * (mul_buf[i,j] - X[i,j] * Δ_buf_sumbuf[j])
+
+        # dK_dX/dK_dY cross-terms
+        @tullio Δ_buf[i,j] = @inbounds ΔKxy[i,j] * Kxy[i,j]
+        Δ_buf_sumbuf = vec(sum(Δ_buf; dims = 1))
+        mul!(mul_buf, X, Δ_buf)
+        @tullio dK_dY[i,j] := @inbounds 2 * (mul_buf[i,j] - Y[i,j] * Δ_buf_sumbuf[j])
+
+        Δ_buf_sumbuf = vec(sum(Δ_buf; dims = 2))
+        mul!(mul_buf, Y, Δ_buf')
+        @tullio dK_dX[i,j] += @inbounds 2 * (mul_buf[i,j] - X[i,j] * Δ_buf_sumbuf[j])
+
+        # dK_dY
+        @tullio Δ_buf[i,j] = @inbounds ΔKyy[i,j] * Kyy[i,j]
+        @tullio Δ_buf[i,j] += @inbounds Δ_buf[j,i]
+        Δ_buf_sumbuf = vec(sum(Δ_buf; dims = 1))
+        mul!(mul_buf, Y, Δ_buf)
+        @tullio dK_dY[i,j] += @inbounds 2 * (mul_buf[i,j] - Y[i,j] * Δ_buf_sumbuf[j])
+
+        return dK_dX, dK_dY
+    end
+end
+
+function _mmd_flux_kernel_matrices(X::CUDA.CuMatrix, Y::CUDA.CuMatrix)
+    Kxx, Kyy, Kxy = X'X, Y'Y, X'Y
+    xx, yy = batched_diag(Kxx), batched_diag(Kyy)
+    Kxx .= exp.(2 .* Kxx .- xx .- xx')
+    Kyy .= exp.(2 .* Kyy .- yy .- yy')
+    Kxy .= exp.(2 .* Kxy .- xx .- yy')
+    @ntuple(Kxx, Kyy, Kxy)
+end
+
+Zygote.@adjoint function _mmd_flux_kernel_matrices(X::CUDA.CuMatrix, Y::CUDA.CuMatrix)
+    # Store kernel matrices for reverse pass
+    @unpack Kxx, Kyy, Kxy = _mmd_flux_kernel_matrices(X, Y)
 
     return @ntuple(Kxx, Kyy, Kxy), function(Δ) # much faster + much less memory usage
         # dK_dX
         Δ_buf = Δ.Kxx .* Kxx
-        add_transpose!(Δ_buf)
+        Δ_buf .+= Δ_buf'
         Δ_buf_rowsum = sum(Δ_buf; dims = 1)
         mul_buf = X * Δ_buf
         dK_dX = 2 .* (mul_buf .- X .* Δ_buf_rowsum)
@@ -512,140 +543,119 @@ Zygote.@adjoint function _mmd_tullio_kernel_matrices(X::AbstractMatrix, Y::Abstr
 
         # dK_dY
         Δ_buf .= Δ.Kyy .* Kyy
-        add_transpose!(Δ_buf)
+        Δ_buf .+= Δ_buf'
         Δ_buf_rowsum = sum(Δ_buf; dims = 1)
         mul!(mul_buf, Y, Δ_buf)
         dK_dY .+= 2 .* (mul_buf .- Y .* Δ_buf_rowsum)
 
         return dK_dX, dK_dY
     end
-end
-=#
-
-function _mmd_flux_kernel_matrices(X::CUDA.CuMatrix, Y::CUDA.CuMatrix)
-    Kxx, Kyy, Kxy = X'X, Y'Y, X'Y
-    xx, yy = batched_diag(Kxx), batched_diag(Kyy)
-    Kxx .= exp.(2 .* Kxx .- xx .- xx')
-    Kyy .= exp.(2 .* Kyy .- yy .- yy')
-    Kxy .= exp.(2 .* Kxy .- xx .- yy')
-    @ntuple(Kxx, Kyy, Kxy)
-end
-
-Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
-    # Store kernel matrices for reverse pass
-    @unpack Kxx, Kyy, Kxy = _mmd_flux_kernel_matrices(X, Y)
-
-    return @ntuple(Kxx, Kyy, Kxy), function(Δ) # much faster + much less memory usage
-        # dK_dX
-        Δ_buf = Δ.Kxx .* Kxx
-        add_transpose!(Δ_buf)
-        Δ_buf_rowsum = sum(Δ_buf; dims = 1)
-        mul_buf = X * Δ_buf
-        dK_dX = 2 .* (mul_buf .- X .* Δ_buf_rowsum)
-
-        # dK_dX/dK_dY cross-terms
-        Δ_buf .= Δ.Kxy .* Kxy
-        Δ_buf_rowsum = sum(Δ_buf; dims = 1)
-        mul!(mul_buf, X, Δ_buf)
-        dK_dY = 2 .* (mul_buf .- Y .* Δ_buf_rowsum)
-
-        self_transpose!(Δ_buf)
-        Δ_buf_rowsum = sum(Δ_buf; dims = 1)
-        mul!(mul_buf, Y, Δ_buf)
-        dK_dX .+= 2 .* (mul_buf .- X .* Δ_buf_rowsum)
-
-        # dK_dY
-        Δ_buf .= Δ.Kyy .* Kyy
-        add_transpose!(Δ_buf)
-        Δ_buf_rowsum = sum(Δ_buf; dims = 1)
-        mul!(mul_buf, Y, Δ_buf)
-        dK_dY .+= 2 .* (mul_buf .- Y .* Δ_buf_rowsum)
-
-        return dK_dX, dK_dY
-    end
-    #=
-    return @ntuple(Kxx, Kyy, Kxy), function(Δ) # moderately faster + less memory usage
-        # dK_dX
-        Δ_buf1 = Δ.Kxx .* Kxx
-        Δ_buf2 = Δ.Kxy .* Kxy
-        mul_buf1 = X * (Δ_buf1 .+ Δ_buf1')
-        mul_buf2 = Y * Δ_buf2'
-        dK_dX = 2 .* (mul_buf1 .+ mul_buf2 .- X .* (sum(Δ_buf1; dims = 2)' .+ sum(Δ_buf1; dims = 1) .+ sum(Δ_buf2; dims = 2)'))
-
-        # dK_dY
-        Δ_buf1 .= Δ.Kyy .* Kyy # Δ_buf2 same as above
-        mul!(mul_buf1, Y, Δ_buf1 .+ Δ_buf1')
-        mul!(mul_buf2, X, Δ_buf2 )
-        dK_dY = 2 .* (mul_buf1 .+ mul_buf2 .- Y .* (sum(Δ_buf1; dims = 2)' .+ sum(Δ_buf1; dims = 1) .+ sum(Δ_buf2; dims = 1)))
-
-        return dK_dX, dK_dY
-    end
-    =#
-    #=
-    return @ntuple(Kxx, Kyy, Kxy), function(Δ) # moderately slower + more memory usage
-        Δ_Kxx = Δ.Kxx .* Kxx
-        Δ_Kyy = Δ.Kyy .* Kyy
-        Δ_Kxy = Δ.Kxy .* Kxy        
-        dK_dX = 2 .* ((X * (Δ_Kxx .+ Δ_Kxx')) .+ (Y * Δ_Kxy') .- X .* (sum(Δ_Kxx; dims = 2)' .+ sum(Δ_Kxx; dims = 1) .+ sum(Δ_Kxy; dims = 2)'))
-        dK_dY = 2 .* ((Y * (Δ_Kyy .+ Δ_Kyy')) .+ (X * Δ_Kxy)  .- Y .* (sum(Δ_Kyy; dims = 2)' .+ sum(Δ_Kyy; dims = 1) .+ sum(Δ_Kxy; dims = 1)))
-        return dK_dX, dK_dY
-    end
-    =#
 end
 
 #=
-function _mmd_tullio_kernel_matrices(X::MMDLearning.AbstractTensor3D, Y::MMDLearning.AbstractTensor3D)
-    @unpack Kxx, Kyy, Kxy = _mmd_tullio_kernel_matrices_inner(X, Y)
-    nbw = size(X,3)
-    Tullio.@tullio _Kxx[i,j] := Kxx[i,j,k] |> (_) / m
-    Tullio.@tullio _Kyy[i,j] := Kyy[i,j,k] |> (_) / m
-    Tullio.@tullio _Kxy[i,j] := Kxy[i,j,k] |> (_) / m
-    (Kxx = _Kxx, Kyy = _Kyy, Kxy = _Kxy)
-end
+function _mmd_tullio_kernel_matrices end
+function _∇mmd_tullio_kernel_matrices end
+function _mmd_tullio_kernel_matrices_inner end
 
-function _mmd_tullio_kernel_matrices_inner(X::MMDLearning.AbstractTensor3D, Y::MMDLearning.AbstractTensor3D)
-    XX, YY, XY = NNlib.batched_mul(NNlib.batched_transpose(X), X), NNlib.batched_mul(NNlib.batched_transpose(Y), Y), NNlib.batched_mul(NNlib.batched_transpose(X), Y)
-    Tullio.@tullio Kxx[i,j,k] := exp(2 * XX[i,j,k] - XX[i,i,k] - XX[j,j,k])
-    Tullio.@tullio Kyy[i,j,k] := exp(2 * YY[i,j,k] - YY[i,i,k] - YY[j,j,k])
-    Tullio.@tullio Kxy[i,j,k] := exp(2 * XY[i,j,k] - XX[i,i,k] - YY[j,j,k])
+function MMDLearning._mmd_tullio_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
+    Kxx, Kyy, Kxy = X'X, Y'Y, X'Y
+    xx, yy = MMDLearning.batched_diag(Kxx), MMDLearning.batched_diag(Kyy)
+    @tullio Kxx[i,j] = exp(2 * Kxx[i,j] - xx[i] - xx[j])
+    @tullio Kyy[i,j] = exp(2 * Kyy[i,j] - yy[i] - yy[j])
+    @tullio Kxy[i,j] = exp(2 * Kxy[i,j] - xx[i] - yy[j])
     @ntuple(Kxx, Kyy, Kxy)
 end
 
-Zygote.@adjoint function _mmd_tullio_kernel_matrices(X::MMDLearning.AbstractTensor3D, Y::MMDLearning.AbstractTensor3D)
+function MMDLearning._∇mmd_tullio_kernel_matrices(Δ,X,Y,Kxx,Kyy,Kxy) # much faster + much less memory usage
+    ΔKxx, ΔKyy, ΔKxy = Δ.Kxx, Δ.Kyy, Δ.Kxy
+    # dK_dX
+    @tullio Δ_buf[i,j] := @inbounds ΔKxx[i,j] * Kxx[i,j] # Δ_buf = Δ.Kxx .* Kxx
+    @tullio Δ_buf[i,j] += @inbounds Δ_buf[j,i]
+    Δ_buf_sumbuf = vec(sum(Δ_buf; dims = 1))
+    mul_buf = X * Δ_buf
+    @tullio dK_dX[i,j] := @inbounds 2 * (mul_buf[i,j] - X[i,j] * Δ_buf_sumbuf[j])
+
+    # dK_dX/dK_dY cross-terms
+    @tullio Δ_buf[i,j] = @inbounds ΔKxy[i,j] * Kxy[i,j]
+    Δ_buf_sumbuf = vec(sum(Δ_buf; dims = 1))
+    mul!(mul_buf, X, Δ_buf)
+    @tullio dK_dY[i,j] := @inbounds 2 * (mul_buf[i,j] - Y[i,j] * Δ_buf_sumbuf[j])
+
+    Δ_buf_sumbuf = vec(sum(Δ_buf; dims = 2))
+    mul!(mul_buf, Y, Δ_buf')
+    @tullio dK_dX[i,j] += @inbounds 2 * (mul_buf[i,j] - X[i,j] * Δ_buf_sumbuf[j])
+
+    # dK_dY
+    @tullio Δ_buf[i,j] = @inbounds ΔKyy[i,j] * Kyy[i,j]
+    @tullio Δ_buf[i,j] += @inbounds Δ_buf[j,i]
+    Δ_buf_sumbuf = vec(sum(Δ_buf; dims = 1))
+    mul!(mul_buf, Y, Δ_buf)
+    @tullio dK_dY[i,j] += @inbounds 2 * (mul_buf[i,j] - Y[i,j] * Δ_buf_sumbuf[j])
+
+    return dK_dX, dK_dY
+end
+
+Zygote.@adjoint function MMDLearning._mmd_tullio_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
     # Store kernel matrices for reverse pass
-    @unpack Kxx, Kyy, Kxy = _mmd_tullio_kernel_matrices_inner(X, Y)
-    nbw = size(X,3)
-    Tullio.@tullio _Kxx[i,j] := Kxx[i,j,k] |> (_) / nbw
-    Tullio.@tullio _Kyy[i,j] := Kyy[i,j,k] |> (_) / nbw
-    Tullio.@tullio _Kxy[i,j] := Kxy[i,j,k] |> (_) / nbw
+    @unpack Kxx, Kyy, Kxy = MMDLearning._mmd_tullio_kernel_matrices(X, Y)
+    return @ntuple(Kxx, Kyy, Kxy), Δ -> MMDLearning._∇mmd_tullio_kernel_matrices(Δ, X, Y, Kxx, Kyy, Kxy)
+end
+
+function MMDLearning._mmd_tullio_kernel_matrices_inner(X::MMDLearning.AbstractTensor3D, Y::MMDLearning.AbstractTensor3D)
+    Kxx, Kyy, Kxy = NNlib.batched_mul(NNlib.batched_transpose(X), X), NNlib.batched_mul(NNlib.batched_transpose(Y), Y), NNlib.batched_mul(NNlib.batched_transpose(X), Y)
+    xx, yy = MMDLearning.batched_diag(Kxx), MMDLearning.batched_diag(Kyy)
+    Tullio.@tullio Kxx[i,j,k] = exp(2 * Kxx[i,j,k] - xx[i,1,k] - xx[j,1,k])
+    Tullio.@tullio Kyy[i,j,k] = exp(2 * Kyy[i,j,k] - yy[i,1,k] - yy[j,1,k])
+    Tullio.@tullio Kxy[i,j,k] = exp(2 * Kxy[i,j,k] - xx[i,1,k] - yy[j,1,k])
+    @ntuple(Kxx, Kyy, Kxy)
+end
+
+function MMDLearning._mmd_tullio_kernel_matrices(X::MMDLearning.AbstractTensor3D, Y::MMDLearning.AbstractTensor3D)
+    @unpack Kxx, Kyy, Kxy = MMDLearning._mmd_tullio_kernel_matrices_inner(X, Y)
+    γ = inv(eltype(Kxx)(size(Kxx,3)))
+    Tullio.@tullio _Kxx[i,j] := γ * Kxx[i,j,k]
+    Tullio.@tullio _Kyy[i,j] := γ * Kyy[i,j,k]
+    Tullio.@tullio _Kxy[i,j] := γ * Kxy[i,j,k]
+    (Kxx = _Kxx, Kyy = _Kyy, Kxy = _Kxy)
+end
+
+Zygote.@adjoint function MMDLearning._mmd_tullio_kernel_matrices(X::MMDLearning.AbstractTensor3D, Y::MMDLearning.AbstractTensor3D)
+    # Store kernel matrices for reverse pass
+    @unpack Kxx, Kyy, Kxy = MMDLearning._mmd_tullio_kernel_matrices_inner(X, Y)
+    γ = inv(eltype(Kxx)(size(Kxx,3)))
+    Tullio.@tullio _Kxx[i,j] := γ * Kxx[i,j,k]
+    Tullio.@tullio _Kyy[i,j] := γ * Kyy[i,j,k]
+    Tullio.@tullio _Kxy[i,j] := γ * Kxy[i,j,k]
     out = (Kxx = _Kxx, Kyy = _Kyy, Kxy = _Kxy)
     return out, function(Δ) # much faster + much less memory usage
+        ΔKxx, ΔKyy, ΔKxy = Δ.Kxx, Δ.Kyy, Δ.Kxy
+
         # dK_dX
-        Δ_buf = Δ.Kxx .* Kxx ./ nbw
-        MMDLearning.add_transpose!(Δ_buf)
+        @tullio Δ_buf[i,j,k] := @inbounds γ * ΔKxx[i,j] * Kxx[i,j,k]
+        @tullio Δ_buf[i,j,k] += @inbounds Δ_buf[j,i,k]
         Δ_buf_rowsum = sum(Δ_buf; dims = 1)
         mul_buf = NNlib.batched_mul(X, Δ_buf)
-        dK_dX = 2 .* (mul_buf .- X .* Δ_buf_rowsum)
+        @tullio dK_dX[i,j,k] := @inbounds 2 * (mul_buf[i,j,k] - X[i,j,k] * Δ_buf_rowsum[1,j,k])
 
         # dK_dX/dK_dY cross-terms
-        Δ_buf .= Δ.Kxy .* Kxy ./ nbw
+        @tullio Δ_buf[i,j,k] = @inbounds γ * ΔKxy[i,j] * Kxy[i,j,k]
         Δ_buf_rowsum = sum(Δ_buf; dims = 1)
         NNlib.batched_mul!(mul_buf, X, Δ_buf)
-        dK_dY = 2 .* (mul_buf .- Y .* Δ_buf_rowsum)
+        @tullio dK_dY[i,j,k] := @inbounds 2 * (mul_buf[i,j,k] - Y[i,j,k] * Δ_buf_rowsum[1,j,k])
 
-        Δ_buf_colsum = permutedims(sum(Δ_buf; dims = 2), (2,1,3))
+        # Δ_buf_colsum = permutedims(sum(Δ_buf; dims = 2), (2,1,3))
+        Δ_buf_colsum = sum(Δ_buf; dims = 2)
         NNlib.batched_mul!(mul_buf, Y, NNlib.batched_transpose(Δ_buf))
-        dK_dX .+= 2 .* (mul_buf .- X .* Δ_buf_colsum)
+        @tullio dK_dX[i,j,k] += @inbounds 2 * (mul_buf[i,j,k] - X[i,j,k] * Δ_buf_colsum[j,1,k])
 
         # dK_dY
-        Δ_buf .= Δ.Kyy .* Kyy ./ nbw
-        MMDLearning.add_transpose!(Δ_buf)
+        @tullio Δ_buf[i,j,k] = @inbounds γ * ΔKyy[i,j] * Kyy[i,j,k]
+        @tullio Δ_buf[i,j,k] += @inbounds Δ_buf[j,i,k]
         Δ_buf_rowsum = sum(Δ_buf; dims = 1)
         NNlib.batched_mul!(mul_buf, Y, Δ_buf)
-        dK_dY .+= 2 .* (mul_buf .- Y .* Δ_buf_rowsum)
+        @tullio dK_dY[i,j,k] += @inbounds 2 * (mul_buf[i,j,k] - Y[i,j,k] * Δ_buf_rowsum[1,j,k])
 
         return dK_dX, dK_dY
-        # return dropdims(mean(dK_dX; dims = 3); dims = 3), dropdims(mean(dK_dY; dims = 3); dims = 3)
     end
 end
 =#
@@ -654,21 +664,16 @@ function _mmd_flux_kernel_matrices_inner(X::AbstractTensor3D, Y::AbstractTensor3
     Kxx = NNlib.batched_mul(NNlib.batched_transpose(X), X)
     Kyy = NNlib.batched_mul(NNlib.batched_transpose(Y), Y)
     Kxy = NNlib.batched_mul(NNlib.batched_transpose(X), Y)
-    xx  = batched_diag(Kxx)
-    yy  = batched_diag(Kyy)
+    xx, yy = batched_diag(Kxx), batched_diag(Kyy)
     Threads.@sync for k in 1:size(Kxx,3) #TODO can be improved; k is usually small
         Threads.@spawn begin
             @avx for j in 1:size(Kxx,2), i in 1:size(Kxx,1)
-                Kxx[i,j,k] = 2 * Kxx[i,j,k] - xx[i,1,k] - xx[j,1,k]
-                Kyy[i,j,k] = 2 * Kyy[i,j,k] - yy[i,1,k] - yy[j,1,k]
-                Kxy[i,j,k] = 2 * Kxy[i,j,k] - xx[i,1,k] - yy[j,1,k]
+                Kxx[i,j,k] = exp(2 * Kxx[i,j,k] - xx[i,1,k] - xx[j,1,k])
+                Kyy[i,j,k] = exp(2 * Kyy[i,j,k] - yy[i,1,k] - yy[j,1,k])
+                Kxy[i,j,k] = exp(2 * Kxy[i,j,k] - xx[i,1,k] - yy[j,1,k])
             end
         end
     end
-    fast_exp!(Kxx)
-    fast_exp!(Kyy)
-    fast_exp!(Kxy)
-
     @ntuple(Kxx, Kyy, Kxy)
 end
 
@@ -688,35 +693,65 @@ end
 
 function _mmd_flux_kernel_matrices(X::AbstractTensor3D, Y::AbstractTensor3D)
     @unpack Kxx, Kyy, Kxy = _mmd_flux_kernel_matrices_inner(X, Y)
-    Kxx = dropdims(mean(Kxx; dims = 3); dims = 3)
-    Kyy = dropdims(mean(Kyy; dims = 3); dims = 3)
-    Kxy = dropdims(mean(Kxy; dims = 3); dims = 3)
+    Kxx, Kyy, Kxy = mean3(Kxx), mean3(Kyy), mean3(Kxy)
     @ntuple(Kxx, Kyy, Kxy)
 end
 
 Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractTensor3D, Y::AbstractTensor3D)
     # Store kernel matrices for reverse pass
     @unpack Kxx, Kyy, Kxy = _mmd_flux_kernel_matrices_inner(X, Y)
-    out = (
-        Kxx = dropdims(mean(Kxx; dims = 3); dims = 3),
-        Kyy = dropdims(mean(Kyy; dims = 3); dims = 3),
-        Kxy = dropdims(mean(Kxy; dims = 3); dims = 3),
-    )
+    out = (Kxx = mean3(Kxx), Kyy = mean3(Kyy), Kxy = mean3(Kxy))
+    return out, function(Δ) # much faster + much less memory usage
+        ΔKxx, ΔKyy, ΔKxy = Δ.Kxx, Δ.Kyy, Δ.Kxy
+        γ = inv(eltype(Kxx)(size(Kxx,3)))
+
+        # dK_dX
+        @tullio Δ_buf[i,j,k] := @inbounds γ * ΔKxx[i,j] * Kxx[i,j,k]
+        @tullio Δ_buf[i,j,k] += @inbounds Δ_buf[j,i,k]
+        Δ_buf_rowsum = sum(Δ_buf; dims = 1)
+        mul_buf = NNlib.batched_mul(X, Δ_buf)
+        @tullio dK_dX[i,j,k] := @inbounds 2 * (mul_buf[i,j,k] - X[i,j,k] * Δ_buf_rowsum[1,j,k])
+
+        # dK_dX/dK_dY cross-terms
+        @tullio Δ_buf[i,j,k] = @inbounds γ * ΔKxy[i,j] * Kxy[i,j,k]
+        Δ_buf_rowsum = sum(Δ_buf; dims = 1)
+        NNlib.batched_mul!(mul_buf, X, Δ_buf)
+        @tullio dK_dY[i,j,k] := @inbounds 2 * (mul_buf[i,j,k] - Y[i,j,k] * Δ_buf_rowsum[1,j,k])
+
+        # Δ_buf_colsum = permutedims(sum(Δ_buf; dims = 2), (2,1,3))
+        Δ_buf_colsum = sum(Δ_buf; dims = 2)
+        NNlib.batched_mul!(mul_buf, Y, NNlib.batched_transpose(Δ_buf))
+        @tullio dK_dX[i,j,k] += @inbounds 2 * (mul_buf[i,j,k] - X[i,j,k] * Δ_buf_colsum[j,1,k])
+
+        # dK_dY
+        @tullio Δ_buf[i,j,k] = @inbounds γ * ΔKyy[i,j] * Kyy[i,j,k]
+        @tullio Δ_buf[i,j,k] += @inbounds Δ_buf[j,i,k]
+        Δ_buf_rowsum = sum(Δ_buf; dims = 1)
+        NNlib.batched_mul!(mul_buf, Y, Δ_buf)
+        @tullio dK_dY[i,j,k] += @inbounds 2 * (mul_buf[i,j,k] - Y[i,j,k] * Δ_buf_rowsum[1,j,k])
+
+        return dK_dX, dK_dY
+    end
+end
+
+Zygote.@adjoint function _mmd_flux_kernel_matrices(X::CuTensor3D, Y::CuTensor3D)
+    # Store kernel matrices for reverse pass
+    @unpack Kxx, Kyy, Kxy = _mmd_flux_kernel_matrices_inner(X, Y)
+    out = (Kxx = mean3(Kxx), Kyy = mean3(Kyy), Kxy = mean3(Kxy))
     return out, function(Δ) # much faster + much less memory usage
         T = NNlib.batched_transpose # lazy transpose for `batched_mul`
         P = batched_transpose # (possibly eager) permutation
-        nbw = size(X,3)
+        γ = inv(eltype(Kxx)(size(Kxx,3)))
 
         # dK_dX
-        Δ_buf = Δ.Kxx .* Kxx ./ nbw
-        Δ_buf_rowsum = sum(Δ_buf; dims = 1)
-        Δ_buf_colsum = sum(Δ_buf; dims = 2)
+        Δ_buf = γ .* Δ.Kxx .* Kxx
         add_transpose!(Δ_buf)
+        Δ_buf_rowsum = sum(Δ_buf; dims = 1)
         mul_buf = NNlib.batched_mul(X, Δ_buf)
-        dK_dX = 2 .* (mul_buf .- X .* (P(Δ_buf_colsum) .+ Δ_buf_rowsum))
+        dK_dX = 2 .* (mul_buf .- X .* Δ_buf_rowsum)
 
         # dK_dX/dK_dY cross-terms
-        Δ_buf .= Δ.Kxy .* Kxy ./ nbw
+        Δ_buf .= γ .* Δ.Kxy .* Kxy
         Δ_buf_rowsum = sum(Δ_buf; dims = 1)
         NNlib.batched_mul!(mul_buf, X, Δ_buf)
         dK_dY = 2 .* (mul_buf .- Y .* Δ_buf_rowsum)
@@ -726,114 +761,62 @@ Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractTensor3D, Y::Abstr
         dK_dX .+= 2 .* (mul_buf .- X .* P(Δ_buf_colsum))
 
         # dK_dY
-        Δ_buf .= Δ.Kyy .* Kyy ./ nbw
-        Δ_buf_rowsum = sum(Δ_buf; dims = 1)
-        Δ_buf_colsum = sum(Δ_buf; dims = 2)
+        Δ_buf .= γ .* Δ.Kyy .* Kyy
         add_transpose!(Δ_buf)
+        Δ_buf_rowsum = sum(Δ_buf; dims = 1)
         NNlib.batched_mul!(mul_buf, Y, Δ_buf)
-        dK_dY .+= 2 .* (mul_buf .- Y .* (P(Δ_buf_colsum) .+ Δ_buf_rowsum))
+        dK_dY .+= 2 .* (mul_buf .- Y .* Δ_buf_rowsum)
 
         return dK_dX, dK_dY
-        # return dropdims(mean(dK_dX; dims = 3); dims = 3), dropdims(mean(dK_dY; dims = 3); dims = 3)
     end
-    #=
-    return out, function(Δ) # moderately faster + less memory usage
-        T = x -> permutedims(x, (2,1,3))
-        nbw = size(X,3)
-
-        # dK_dX
-        Δ_buf1 = Δ.Kxx .* Kxx ./ nbw
-        Δ_buf2 = Δ.Kxy .* Kxy ./ nbw
-        Δ_buf1_rowsum = sum(Δ_buf1; dims = 1)
-        Δ_buf1_colsum = sum(Δ_buf1; dims = 2)
-        Δ_buf2_colsum = sum(Δ_buf2; dims = 2)
-        add_transpose!(Δ_buf1)
-        mul_buf1 = NNlib.batched_mul(X, Δ_buf1)
-        mul_buf2 = NNlib.batched_mul(Y, T(Δ_buf2))
-        dK_dX = 2 .* (mul_buf1 .+ mul_buf2 .- X .* (T(Δ_buf1_colsum) .+ Δ_buf1_rowsum .+ T(Δ_buf2_colsum)))
-        # dK_dX = -2 .* muladd.(X, T(Δ_buf1_colsum) .+ Δ_buf1_rowsum .+ T(Δ_buf2_colsum), .-mul_buf1 .- mul_buf2)
-
-        # dK_dY
-        Δ_buf1 .= Δ.Kyy .* Kyy ./ nbw # Δ_buf2 same as above
-        Δ_buf1_rowsum = sum(Δ_buf1; dims = 1)
-        Δ_buf1_colsum = sum(Δ_buf1; dims = 2)
-        Δ_buf2_rowsum = sum(Δ_buf2; dims = 1)
-        add_transpose!(Δ_buf1)
-        NNlib.batched_mul!(mul_buf1, Y, Δ_buf1)
-        NNlib.batched_mul!(mul_buf2, X, Δ_buf2)
-        dK_dY = 2 .* (mul_buf1 .+ mul_buf2 .- Y .* (T(Δ_buf1_colsum) .+ Δ_buf1_rowsum .+ Δ_buf2_rowsum))
-        # dK_dY = -2 .* muladd.(Y, T(Δ_buf1_colsum) .+ Δ_buf1_rowsum .+ Δ_buf2_rowsum, .-mul_buf1 .- mul_buf2)
-
-        return dK_dX, dK_dY
-        # return dropdims(mean(dK_dX; dims = 3); dims = 3), dropdims(mean(dK_dY; dims = 3); dims = 3)
-    end
-    =#
-    #=
-    return out, function(Δ) # moderately slower + more memory usage
-        T = x -> permutedims(x, (2,1,3))
-        nbw = size(X,3)
-        Δ_Kxx = Δ.Kxx .* Kxx ./ nbw
-        Δ_Kyy = Δ.Kyy .* Kyy ./ nbw
-        Δ_Kxy = Δ.Kxy .* Kxy ./ nbw
-        dK_dX = 2 .* (NNlib.batched_mul(X, Δ_Kxx .+ T(Δ_Kxx)) .+ NNlib.batched_mul(Y, T(Δ_Kxy)) .- X .* (T(sum(Δ_Kxx; dims = 2)) .+ sum(Δ_Kxx; dims = 1) .+ T(sum(Δ_Kxy; dims = 2))))
-        dK_dY = 2 .* (NNlib.batched_mul(Y, Δ_Kyy .+ T(Δ_Kyy)) .+ NNlib.batched_mul(X,   Δ_Kxy ) .- Y .* (T(sum(Δ_Kyy; dims = 2)) .+ sum(Δ_Kyy; dims = 1) .+   sum(Δ_Kxy; dims = 1)))
-        return dK_dX, dK_dY
-    end
-    =#
 end
 
-function _test_mmd_flux_kernel_matrices(fs = nothing, fcs = nothing; T = Float32, n = 10, m = 10, p = 0)
-    X = p <= 0 ? randn(T,n,m) : randn(T,n,m,p)
-    Y = p <= 0 ? randn(T,n,m) : randn(T,n,m,p)
-    Xc = X |> Flux.gpu
-    Yc = Y |> Flux.gpu
+function _test_mmd_flux_kernel_matrices(fs = [_mmd_flux_kernel_matrices], fcs = []; T = Float32, n = 10, m = 10, p = 0)
+    X = (p <= 0 ? randn(T,n,m) : randn(T,n,m,p))
+    Y = (p <= 0 ? randn(T,n,m) : randn(T,n,m,p))
+    Xc = isempty(fcs) ? nothing : Flux.gpu(X)
+    Yc = isempty(fcs) ? nothing : Flux.gpu(Y)
 
     function fwd_and_back(f,X,Y)
         out, back = Zygote.pullback((x,y) -> f(x,y), X, Y)
         grad = back(out)
-        return out, grad, back
+        return @ntuple(out, grad, back)
     end
 
     function compare(val1, val2)
-        for k in keys(val1)
-            v1 = getfield(val1, k)
-            v2 = getfield(val2, k)
-            (length(v1) < 10) && @show k, v1
-            (length(v2) < 10) && @show k, v2
-            cmp = isapprox(Flux.cpu(v1), Flux.cpu(v2)) # rtol = sqrt(eps(T)), atol = sqrt(eps(T)))
-            @show cmp
+        for (k,v1,v2) in zip(keys(val1), values(val1), values(val2))
+            cv1, cv2 = Flux.cpu(v1), Flux.cpu(v2)
+            cmp = isapprox(cv1, cv2; rtol = sqrt(eps(T)), atol = 10 * eps(T))
+            err = maximum(abs, cv1 .- cv2) # / max(sqrt(eps(T)), maximum(abs, cv1), maximum(abs, cv2))
+            @show k, cmp, err
         end
     end
 
-    out1, grad1, back1 = fwd_and_back(_mmd_flux_kernel_matrices, X, Y)
-    out2, grad2, back2 = fwd_and_back(_mmd_flux_kernel_matrices, Xc, Yc)
-    compare(out1, out2); compare(grad1, grad2)
+    fout = isempty(fs) ? [] : map(f -> fwd_and_back(f, X, Y), fs)
+    fcout = isempty(fcs) ? [] : map(fc -> fwd_and_back(fc, Xc, Yc), fcs)
+    allfs = vcat(fs, fcs)
+    allfout = vcat(fout, fcout)
 
-    fout = isnothing(fs) ? nothing : map(fs) do f
-        _out, _grad, _back = fwd_and_back(f, X, Y)
-        compare(out1, _out); compare(grad1, _grad)
-        return _out, _grad, _back
+    for i in 1:length(allfout), j in i+1:length(allfout)
+        labi, labj = (fout -> fout.out isa CUDA.CuArray ? "gpu" : "cpu").((allfout[i], allfout[j]))
+        println("$(allfs[i]) ($labi) vs. $(allfs[j]) ($labj)")
+        compare(allfout[i].out, allfout[j].out)
+        compare(allfout[i].grad, allfout[j].grad)
     end
 
-    fcout = isnothing(fcs) ? nothing : map(fs) do fc
-        _out, _grad, _back = fwd_and_back(fc, Xc, Yc)
-        compare(out1, _out); compare(grad1, _grad)
-        return _out, _grad, _back
-    end
-
-    @btime _mmd_flux_kernel_matrices($X, $Y)
-    @btime $back1($out1)
-    !isnothing(fout) && map(zip(fs, fout)) do (f, (_out, _grad, _back))
+    !isempty(fout) && map(zip(fs, fout)) do (f, (out, _, back))
+        println("$f (cpu)")
         @btime $f($X, $Y)
-        @btime $_back($_out)
+        @btime $back($out)
     end
 
-    @btime CUDA.@sync _mmd_flux_kernel_matrices($Xc, $Yc)
-    @btime CUDA.@sync $back2($out2)
-    !isnothing(fcout) && map(zip(fcs, fcout)) do (fc, (_out, _grad, _back))
+    !isempty(fcout) && map(zip(fcs, fcout)) do (fc, (out, _, back))
+        println("$fc (gpu)")
         @btime CUDA.@sync $fc($Xc, $Yc)
-        @btime CUDA.@sync $_back($_out)
+        @btime CUDA.@sync $back($out)
     end
+
+    return nothing
 end
 
 #=
@@ -861,12 +844,7 @@ let
         Kxx = exp.(2 .* XX .- xx .- T(xx))
         Kyy = exp.(2 .* YY .- yy .- T(yy))
         Kxy = exp.(2 .* XY .- xx .- T(yy))
-        # @ntuple(Kxx, Kyy, Kxy)
-        return (
-            Kxx = dropdims(mean(Kxx; dims = 3); dims = 3),
-            Kyy = dropdims(mean(Kyy; dims = 3); dims = 3),
-            Kxy = dropdims(mean(Kxy; dims = 3); dims = 3),
-        )
+        return (Kxx = mean3(Kxx), Kyy = mean3(Kyy), Kxy = mean3(Kxy))
     end
 
     n, m = 128, 64 #2048

@@ -25,6 +25,20 @@ fast_exp!(A...) = avx_map!(exp, A...)
 Zygote.accum(x::Diagonal{<:Any, <:Zygote.FillArrays.Fill}, y::CUDA.CuMatrix) = Zygote.accum.(Diagonal(CUDA.CuVector(diag(x))), y)
 Zygote.accum(x::CUDA.CuMatrix, y::Diagonal{<:Any, <:Zygote.FillArrays.Fill}) = Zygote.accum.(x, Diagonal(CUDA.CuVector(diag(y))))
 
+function mean3(X::AbstractTensor3D)
+    γ = inv(eltype(X)(size(X,3)))
+    Y = zeros(eltype(X), size(X,1), size(X,2))
+    Threads.@sync for j in 1:size(X,2)
+        Threads.@spawn begin
+            @avx for k in 1:size(X,3), i in 1:size(X,1)
+                Y[i,j] += γ * X[i,j,k]
+            end
+        end
+    end
+    return Y
+end
+mean3(X::CuTensor3D) = dropdims(mean(X; dims = 3); dims = 3)
+
 ####
 #### In-place transpose-related helpers
 ####
