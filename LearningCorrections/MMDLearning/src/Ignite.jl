@@ -6,8 +6,6 @@ import ..Flux
 import ..CUDA
 
 export to32, to64, todevice, @j2p
-export throttler_event_filter, timeout_event_filter
-export file_event
 
 const JL_CUDA_FUNCTIONAL = Ref(get(ENV, "JL_DISABLE_GPU", "0") != "1" && CUDA.functional())
 const JL_CUDA_DEVICE = Ref(parse(Int, get(ENV, "JL_CUDA_DEVICE", "0")))
@@ -91,7 +89,7 @@ function timeout_event_filter(timeout = Inf)
 end
 
 # Run `f` if `file` is found, or else if predicate `pred(engine)` is true
-function file_event(f, pred; file::AbstractString)
+function file_event(f, pred = (engine) -> false; file::AbstractString)
     function file_event_inner(engine)
         if isfile(file)
             try

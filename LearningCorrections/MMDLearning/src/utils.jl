@@ -724,19 +724,26 @@ function plot_vae_rician_signals(logger, cb_state, phys; showplot = false)
     end
 end
 
-function plot_selfcvae_losses(logger, cb_state, phys;
-        colnames = [:loss, :Zreg, :KLdiv, :ELBO, :MMDsq, :Xhat_logL, :Xhat_rmse, :Yhat_logL, :Yhat_rmse],
+function plot_all_logger_losses(logger, cb_state, phys;
+        colnames = setdiff(propertynames(logger), [:epoch, :iter, :dataset, :time]),
+        dataset = :val,
         window = 100,
         showplot = false,
     )
     @timeit "signal plot" try
         s = x -> (x == round(Int, x) ? round(Int, x) : round(x; sigdigits = 4)) |> string
-        dfp = logger[logger.dataset .=== :val, :]
+        dfp = logger[logger.dataset .=== dataset, :]
         epoch = dfp.epoch[end]
         dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, dfp)
-        ps = map(colnames) do colname
-            if !all(ismissing, dfp[!, colname])
-                plot(dfp.epoch, dfp[!, colname]; lab = string(colname), xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
+        ps = map(sort(colnames)) do colname
+            i = (!ismissing).(dfp[!, colname])
+            if any(i)
+                xdata = dfp.epoch[i]
+                ydata = dfp[i, colname]
+                if ydata[1] isa AbstractArray
+                    ydata = permutedims(reduce(hcat, vec.(ydata)))
+                end
+                plot(xdata, ydata; lab = :none, title = string(colname), titlefontsize = 6, ytickfontsize = 6, xtickfontsize = 6, xscale = ifelse(epoch < 10*window, :identity, :log10))
             else
                 nothing
             end

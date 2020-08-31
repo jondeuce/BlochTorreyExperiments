@@ -1,15 +1,4 @@
 ####
-#### Helpers
-####
-
-randn_similar(::AbstractArray{T}, sz...) where {T} = Base.randn(T, sz...)
-randn_similar(::CUDA.CuArray{T}, sz...) where {T} = Zygote.ignore(() -> CUDA.randn(T, sz...))
-rand_similar(::AbstractArray{T}, sz...) where {T} = Base.rand(T, sz...)
-rand_similar(::CUDA.CuArray{T}, sz...) where {T} = Zygote.ignore(() -> CUDA.rand(T, sz...))
-maybe_vcat(X, Z = nothing) = isnothing(Z) ? X : vcat(X,Z)
-map_dict(f, d::AbstractDict{String,Any}) = Dict{String,Any}(map(((k,v),) -> k => f(v), collect(d)))
-
-####
 #### Rician correctors
 ####
 
@@ -60,9 +49,10 @@ ninput(::Type{R}) where {R<:LatentVectorRicianNoiseCorrector} = nlatent(R)
 noutput(::Type{R}) where {R<:LatentVectorRicianNoiseCorrector} = nsignal(R)
 
 # Concrete methods to extract δ and ϵ
+@inline _maybe_vcat(X, Z = nothing) = isnothing(Z) ? X : vcat(X,Z)
 @inline split_delta_epsilon(δ_logϵ) = δ_logϵ[1:end÷2, :], exp.(δ_logϵ[end÷2+1:end, :]) .+ sqrt(eps(eltype(δ_logϵ)))
-correction_and_noiselevel(G::VectorRicianCorrector, X, Z = nothing) = split_delta_epsilon(G.G(maybe_vcat(X,Z)))
-correction_and_noiselevel(G::FixedNoiseVectorRicianCorrector, X, Z = nothing) = G.G(maybe_vcat(X,Z)), G.ϵ0
+correction_and_noiselevel(G::VectorRicianCorrector, X, Z = nothing) = split_delta_epsilon(G.G(_maybe_vcat(X,Z)))
+correction_and_noiselevel(G::FixedNoiseVectorRicianCorrector, X, Z = nothing) = G.G(_maybe_vcat(X,Z)), G.ϵ0
 correction_and_noiselevel(G::LatentVectorRicianCorrector, X, Z) = split_delta_epsilon(G.G(Z))
 correction_and_noiselevel(G::LatentVectorRicianNoiseCorrector, X, Z) = zero(X), exp.(G.G(Z)) .+ sqrt(eps(eltype(Z)))
 

@@ -2,6 +2,60 @@
 #### Math utils
 ####
 
+randn_similar(::AbstractArray{T}, sz...) where {T} = Base.randn(T, sz...)
+randn_similar(::CUDA.CuArray{T}, sz...) where {T} = Zygote.ignore(() -> CUDA.randn(T, sz...))
+rand_similar(::AbstractArray{T}, sz...) where {T} = Base.rand(T, sz...)
+rand_similar(::CUDA.CuArray{T}, sz...) where {T} = Zygote.ignore(() -> CUDA.rand(T, sz...))
+
+# Apply function `f` along dimension 1 of `x` by first flattening `x` into a matrix
+@inline apply_dim1(f, x::AbstractMatrix) = f(x)
+@inline apply_dim1(f, x::AbstractArray) = (y = f(reshape(x, size(x,1), :)); return reshape(y, size(y,1), Base.tail(size(x))...))
+
+# Split `x` in half along first dimension
+@inline split_dim1(x::AbstractArray) = (x[1:end÷2, ..], x[end÷2+1:end, ..])
+
+# Split array into mean/standard deviation
+@inline std_thresh(::AbstractArray{T}) where {T} = sqrt(eps(T))
+@inline split_mean_std(μ::AbstractArray) = split_dim1(μ)
+@inline split_mean_exp_std(μ::AbstractArray) = ((μ0, logσ) = split_dim1(μ); return (μ0, exp.(logσ) .+ std_thresh(logσ)))
+@inline split_mean_softplus_std(μ::AbstractArray) = ((μ0, invσ) = split_dim1(μ); return (μ0, Flux.softplus.(invσ) .+ std_thresh(invσ)))
+
+# Sample multivariate normal
+@inline sample_mv_normal(μ::Tuple) = sample_mv_normal(μ...)
+@inline sample_mv_normal(μ::AbstractMatrix) = sample_mv_normal(split_dim1(μ)...)
+@inline sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ)))
+@inline sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}, nsamples::Int) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ))..., nsamples)
+
+# TODO: Tracker was much faster differentiating pow2.(x) than x.^2 - check for Zygote?
+@inline pow2(x) = x*x
+
+# Map over dictionary values
+map_dict(f, d::AbstractDict{String,Any}) = Dict{String,Any}(map(((k,v),) -> k => f(v), collect(d)))
+
+# Differentiable summing of dictionary values
+sum_dict(d::Dict{Symbol,T}) where {T} = sum(values(d))
+
+Zygote.@adjoint function sum_dict(d::Dict{Symbol,T}) where {T}
+    sum_dict(d), function (Δ)
+        grad = Zygote.grad_mut(__context__, d)
+        for k in keys(d)
+            grad[k] = Zygote.accum(get(grad, k, nothing), Δ)
+        end
+        return (grad,)
+    end
+end
+
+@generated function mask_tuple(tup::NamedTuple{keys, NTuple{N,T}}, ::Val{mask}) where {keys,N,T,mask}
+    ex = [:(keys[$i] => getproperty(tup, keys[$i])) for i in 1:N if mask[i]]
+    return :((; $(ex...)))
+end
+
+@generated function mask_tuple(tup::NTuple{N,T}, ::Val{mask}) where {N,T,mask}
+    ex = [:(tup[$i]) for i in 1:N if mask[i]]
+    return :(($(ex...),))
+end
+
+
 # Smoothed version of max(x,e) for fixed e > 0
 smoothmax(x,e) = e + e * Flux.softplus((x-e) / e)
 

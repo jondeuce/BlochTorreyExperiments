@@ -234,20 +234,14 @@ const optimizers = Dict{String,Any}(
 MMDLearning.model_summary(models, joinpath(settings["data"]["out"], "model-summary.txt"))
 
 # Helpers
-@inline flatten_apply(f, x::AbstractTensor3D) = (y = f(reshape(x, size(x,1), :)); reshape(y, size(y,1), size(x,2), size(x,3)))
-@inline flatten_apply(f, x::AbstractMatrix) = f(x)
+using MMDLearning: map_dict, sum_dict, sample_mv_normal, split_mean_softplus_std, apply_dim1, pow2
 @inline split_theta_latent(θZ::AbstractMatrix) = size(θZ,1) == ntheta(phys) ? (θZ, similar(θZ,0,size(θZ,2))) : (θZ[1:ntheta(phys),:], θZ[ntheta(phys)+1:end,:])
-@inline split_mean_std(μ::AbstractMatrix) = μ[1:end÷2, :], Flux.softplus.(μ[end÷2+1:end, :]) .+ sqrt(eps(eltype(μ))) #TODO Flux.softplus -> exp?
-@inline sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ)))
-@inline sample_mv_normal(μ0::Matrix{T}, σ::Matrix{T}) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ)))
-@inline sample_mv_normal(μ::Tuple) = sample_mv_normal(μ...)
-@inline pow2(x) = x*x
-sampleθprior_similar(Y, n = size(Y,2)) = rand_similar(Y, ntheta(phys), n) .* (todevice(θupper(phys)) .- todevice(θlower(phys))) .+ todevice(θlower(phys))
+@inline sampleθprior_similar(Y, n = size(Y,2)) = rand_similar(Y, ntheta(phys), n) .* (todevice(θupper(phys)) .- todevice(θlower(phys))) .+ todevice(θlower(phys)) #TODO
 
 # Misc. useful operators
 derived["gradient"] = MMDLearning.CentralDifference() |> to32
 derived["laplacian"] = MMDLearning.Laplacian() |> to32
-derived["encoderspace"] = NotTrainable(Flux.Chain(models["enc1"]..., split_mean_std, sample_mv_normal)) # non-trainable sampling of encoder signal representations
+derived["encoderspace"] = NotTrainable(Flux.Chain(models["enc1"]..., split_mean_softplus_std, sample_mv_normal)) # non-trainable sampling of encoder signal representations
 
 # Augmentations
 function augmentations(X::AbstractMatrix, X̂::Union{Nothing,<:AbstractMatrix})
@@ -275,12 +269,12 @@ function augmentations(X::AbstractMatrix, X̂::Union{Nothing,<:AbstractMatrix})
     end
 
     if encoderspace
-        Xaug = vcat(Xaug, flatten_apply(derived["encoderspace"], X)) # include encoder-space representation
+        Xaug = vcat(Xaug, apply_dim1(derived["encoderspace"], X)) # include encoder-space representation
     end
 
     return Xaug
 end
-augmentations(X::AbstractTensor3D, X̂::Union{Nothing,<:AbstractMatrix}) = flatten_apply(x -> augmentations(x, X̂), X)
+augmentations(X::AbstractTensor3D, X̂::Union{Nothing,<:AbstractMatrix}) = apply_dim1(x -> augmentations(x, X̂), X)
 
 function X̂_augmentations(X,Z,X̂)
     #= TODO
@@ -299,28 +293,31 @@ KLDivergence(μq0, σq, μr0, σr) = (ϵ = sqrt(eps(eltype(μq0))); sum(@. pow2(
 # Negative log-likelihood/ELBO contribution to cross-entropy (Note: dropped constant +zdim*log(2π)/2 term)
 EvidenceLowerBound(x, μx0, σx) = (ϵ = sqrt(eps(eltype(μx0))); sum(@. pow2((x - μx0) / σx) + 2 * log(σx + ϵ)) / 2)
 
-D_G_X_prob(X,Z,X̂) = flatten_apply(models["discrim"], X̂_augmentations(X,Z,X̂)) # discrim on genatr data
-D_Y_prob(Y,X̂) = flatten_apply(models["discrim"], Y_augmentations(Y,X̂)) # discrim on real data
+D_G_X_prob(X,Z,X̂) = apply_dim1(models["discrim"], X̂_augmentations(X,Z,X̂)) # discrim on genatr data
+D_Y_prob(Y,X̂) = apply_dim1(models["discrim"], Y_augmentations(Y,X̂)) # discrim on real data
 Dloss(X,Y,Z,X̂) = (ϵ = sqrt(eps(eltype(X))); -mean(log.(D_Y_prob(Y,X̂) .+ ϵ) .+ log.(1 .- D_G_X_prob(X,Z,X̂) .+ ϵ)))
 Gloss(X,Z,X̂) = (ϵ = sqrt(eps(eltype(X))); mean(log.(1 .- D_G_X_prob(X,Z,X̂) .+ ϵ)))
 
 # Maximum mean discrepency (m*MMD^2) loss
 MMDloss(X̂,Y) = size(Y,2) * mmd(derived["kernel"], X̂, Y)
-function MMDaug(X,Y,Z)
+function MMDlosses(X,Y,Z)
+    ℓ = Dict{Symbol,eltype(X)}()
+
     X̂ = corrected_signal_instance(derived["ricegen"], X, Z)
-    mmds = (MMDloss(X̂, Y),)
+    ℓ[:MMD] = MMDloss(X̂, Y)
 
     if settings["train"]["augment"]["fftcat"]::Bool
         # MMD of concatenated real/imag fourier components
         realfft(x) = vcat(reim(rfft(x,1))...)
         FX̂ = realfft(X̂)
         FY = Zygote.@ignore realfft(Y)
-        mmds = (mmds..., MMDloss(FX̂, FY))
+        ℓ[:fftMMD] = MMDloss(FX̂, FY)
     elseif settings["train"]["augment"]["fftsplit"]::Bool
         # MMD of both real/imag fourier components
         rFX̂, iFX̂ = reim(rfft(X̂,1))
         rFY, iFY = Zygote.@ignore reim(rfft(Y,1))
-        mmds = (mmds..., MMDloss(rFX̂, rFY), MMDloss(iFX̂, iFY))
+        ℓ[:rfftMMD] = MMDloss(rFX̂, rFY)
+        ℓ[:ifftMMD] = MMDloss(iFX̂, iFY)
     end
 
     if settings["train"]["augment"]["residuals"]::Bool
@@ -328,28 +325,28 @@ function MMDaug(X,Y,Z)
         X̄, _, _ = Zygote.@ignore sampleXθZ(Y; recover_θ = true) # Note: Z discarded, `recover_Z` irrelevant
         δX̂ = X̂ - X̄
         δY = Zygote.@ignore Y - X̄
-        mmds = (mmds..., MMDloss(δX̂, δY))
+        ℓ[:resMMD] = MMDloss(δX̂, δY)
     end
-    
+
     if settings["train"]["augment"]["gradient"]::Bool
         # MMD of signal gradient
         ∇X̂ = derived["gradient"](X̂)
         ∇Y = Zygote.@ignore derived["gradient"](Y)
-        mmds = (mmds..., MMDloss(∇X̂, ∇Y))
+        ℓ[:gradMMD] = MMDloss(∇X̂, ∇Y)
     end
 
     if settings["train"]["augment"]["laplacian"]::Bool
         # MMD of signal laplacian
         ∇²X̂ = derived["laplacian"](X̂)
         ∇²Y = Zygote.@ignore derived["laplacian"](Y)
-        mmds = (mmds..., MMDloss(∇²X̂, ∇²Y))
+        ℓ[:lapMMD] = MMDloss(∇²X̂, ∇²Y)
     end
 
     if settings["train"]["augment"]["encoderspace"]::Bool
         # MMD of encoder-space signal
         X̂enc = derived["encoderspace"](X̂)
         Yenc = Zygote.@ignore derived["encoderspace"](Y)
-        mmds = (mmds..., MMDloss(X̂enc, Yenc))
+        ℓ[:encMMD] = MMDloss(X̂enc, Yenc)
     end
 
     #= Plot augmented representations
@@ -363,16 +360,16 @@ function MMDaug(X,Y,Z)
     end
     =#
 
-    return mmds
+    return ℓ
 end
 
 function InvertY(Y)
     μr = models["enc1"](Y)
-    μr0, σr = split_mean_std(μr)
+    μr0, σr = split_mean_softplus_std(μr)
     zr = sample_mv_normal(μr0, σr)
 
     μx = models["dec"](vcat(Y,zr))
-    μx0, σx = split_mean_std(μx)
+    μx0, σx = split_mean_softplus_std(μx)
     x = sample_mv_normal(μx0, σx)
 
     θ, Z = split_theta_latent(x)
@@ -421,26 +418,25 @@ function DataConsistency(Y, μG0, σG)
     return YlogL
 end
 
-function CVAEloss(Y, θ, Z; recover_Z = true)
+function CVAElosses(Y, θ, Z; recover_Z = true)
     # Cross-entropy loss function
-    μr0, σr = split_mean_std(models["enc1"](Y))
-    μq0, σq = split_mean_std(models["enc2"](vcat(Y,θ,Z)))
+    μr0, σr = split_mean_softplus_std(models["enc1"](Y))
+    μq0, σq = split_mean_softplus_std(models["enc2"](vcat(Y,θ,Z)))
     zq = sample_mv_normal(μq0, σq)
-    μx0, σx = split_mean_std(models["dec"](vcat(Y,zq)))
+    μx0, σx = split_mean_softplus_std(models["dec"](vcat(Y,zq)))
 
-    KLdiv = KLDivergence(μq0, σq, μr0, σr)
-    ELBO = if recover_Z
-        EvidenceLowerBound(vcat(θ,Z), μx0, σx)
+    ℓ = Dict{Symbol,eltype(Y)}()
+    Nbatch = size(Y,2)
+    ℓ[:KLdiv] = KLDivergence(μq0, σq, μr0, σr) / Nbatch
+    ℓ[:ELBO] = if recover_Z
+        EvidenceLowerBound(vcat(θ,Z), μx0, σx) / Nbatch
     else
         μθ0, _ = split_theta_latent(μx0)
         σθ,  _ = split_theta_latent(σx)
-        EvidenceLowerBound(θ, μθ0, σθ)
+        EvidenceLowerBound(θ, μθ0, σθ) / Nbatch
     end
 
-    Nbatch = size(Y,2)
-    Hloss = (ELBO + KLdiv) / Nbatch
-
-    return Hloss
+    return ℓ
 end
 
 # Self-supervised CVAE loss
@@ -513,22 +509,6 @@ const logger = DataFrame(
     :iter       => Int[], # mandatory field
     :dataset    => Symbol[], # mandatory field
     :time       => Union{Float64, Missing}[],
-    :loss       => Union{eltype(phys), Missing}[],
-    :Zreg       => Union{eltype(phys), Missing}[],
-    :KLdiv      => Union{eltype(phys), Missing}[],
-    :ELBO       => Union{eltype(phys), Missing}[],
-    :MMDsq      => Union{eltype(phys), Missing}[],
-    :Gloss      => Union{eltype(phys), Missing}[],
-    :Dloss      => Union{eltype(phys), Missing}[],
-    :D_Y        => Union{eltype(phys), Missing}[],
-    :D_G_X      => Union{eltype(phys), Missing}[],
-    :rmse       => Union{eltype(phys), Missing}[],
-    :theta_err  => Union{Vector{eltype(phys)}, Missing}[],
-    :Z_err      => Union{Vector{eltype(phys)}, Missing}[],
-    :Yhat_logL  => Union{eltype(phys), Missing}[],
-    :Yhat_rmse  => Union{eltype(phys), Missing}[],
-    :Xhat_logL  => Union{eltype(phys), Missing}[],
-    :Xhat_rmse  => Union{eltype(phys), Missing}[],
 )
 
 make_data_tuples(dataset) = tuple.(copy.(eachcol(sampleY(phys, :all; dataset = dataset))))
@@ -579,7 +559,7 @@ function train_step(engine, batch)
         train_CVAE && @timeit "cvae" CUDA.@sync let
             ps = Flux.params(models["enc1"], models["enc2"], models["dec"])
             @timeit "sampleX̂θZ" CUDA.@sync X̂train, θtrain, Ztrain = sampleX̂θZ(Ytrain; recover_θ = false, recover_Z = false) .|> todevice
-            @timeit "forward"   CUDA.@sync ℓ, back = Zygote.pullback(() -> CVAEloss(X̂train, θtrain, Ztrain; recover_Z = true), ps)
+            @timeit "forward"   CUDA.@sync ℓ, back = Zygote.pullback(() -> sum_dict(CVAElosses(X̂train, θtrain, Ztrain; recover_Z = true)), ps)
             @timeit "reverse"   CUDA.@sync gs = back(one(eltype(phys)))
             @timeit "update!"   CUDA.@sync Flux.Optimise.update!(optimizers["cvae"], ps, gs)
             metrics["CVAEloss"] = ℓ
@@ -613,7 +593,7 @@ function train_step(engine, batch)
             @timeit "sampleXθZ" CUDA.@sync Xtrain, θtrain, Ztrain = sampleXθZ(Ytrain; recover_θ = true, recover_Z = false) .|> todevice #TODO recover_Z?
             @timeit "genatr" CUDA.@sync let
                 ps = Flux.params(models["genatr"])
-                @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(() -> sum(MMDaug(Xtrain, Ytrain, Ztrain)), ps)
+                @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(() -> sum_dict(MMDlosses(Xtrain, Ytrain, Ztrain)), ps)
                 @timeit "reverse" CUDA.@sync gs = back(one(eltype(phys)))
                 @timeit "update!" CUDA.@sync Flux.Optimise.update!(optimizers["mmd"], ps, gs)
                 metrics["MMD"] = ℓ
@@ -680,6 +660,13 @@ function compute_metrics(engine, batch; dataset)
         cb_state["curr_time"] = time()
         cb_state["metrics"] = Dict{String,Any}()
 
+        # Initialize output metrics dictionary
+        log_metrics = Dict{Symbol,Any}()
+        log_metrics[:epoch]   = trainer.state.epoch
+        log_metrics[:iter]    = trainer.state.iteration
+        log_metrics[:dataset] = dataset
+        log_metrics[:time]    = cb_state["curr_time"] - cb_state["last_time"]
+
         # Invert Y and make Xs
         Y, = Ignite.array.(batch) .|> todevice
         Nbatch = size(Y,2)
@@ -689,20 +676,19 @@ function compute_metrics(engine, batch; dataset)
         μG0 = add_correction(derived["ricegen"], X, δG0)
         X̂ = add_noise_instance(derived["ricegen"], μG0, σG)
 
-        # Cross-entropy loss function
-        μr0, σr = split_mean_std(models["enc1"](X̂)) #TODO X̂ or Y?
-        μq0, σq = split_mean_std(models["enc2"](vcat(X̂,θ,Z))) #TODO X̂ or Y?
-        zq = sample_mv_normal(μq0, σq)
-        μx0, σx = split_mean_std(models["dec"](vcat(X̂,zq))) #TODO X̂ or Y?
-
         let
+            ℓ_CVAE = CVAElosses(X̂, θ, Z; recover_Z = true)
+            ℓ_CVAE[:CVAEloss] = sum_dict(ℓ_CVAE)
+            merge!(log_metrics, ℓ_CVAE)
+
+            m = min(size(X̂,2), settings["train"]["batchsize"])
+            ℓ_MMD = MMDlosses(X̂[:,1:m], Y[:,1:m], Z[:,1:m])
+            ℓ_MMD[:MMDloss] = sum_dict(ℓ_MMD)
+            merge!(log_metrics, ℓ_MMD)
+
+            loss = ℓ_CVAE[:CVAEloss] + ℓ_MMD[:MMDloss]
             Zreg = sum(abs2, Z) / (2*Nbatch)
-            # YlogL = DataConsistency(Y, μG0, σG) / Nbatch
-            KLdiv = KLDivergence(μq0, σq, μr0, σr) / Nbatch
-            ELBO = EvidenceLowerBound(vcat(θ,Z), μx0, σx) / Nbatch
-            mmd_aug = min(size(X̂,2), settings["train"]["batchsize"]) |> m -> MMDaug(X̂[:,1:m], Y[:,1:m], Z[:,1:m])
-            MMDsq = sum(mmd_aug) #TODO missing
-            loss = KLdiv + ELBO #TODO Zreg, MMDsq, YlogL
+            @pack! log_metrics = loss, Zreg
 
             # ϵ = sqrt(eps(eltype(X)))
             # X̂new = sampleX̂(Y; recover_θ = true, recover_Z = true) |> todevice #TODO recover_Z?
@@ -712,12 +698,10 @@ function compute_metrics(engine, batch; dataset)
             # Gloss = mean(log.(1 .- d_g_x .+ ϵ))
             # D_Y   = mean(d_y)
             # D_G_X = mean(d_g_x)
-            Dloss = length(mmd_aug) >= 1 ? mmd_aug[1] : zero(MMDsq) #TODO
-            Gloss = length(mmd_aug) >= 2 ? mmd_aug[2] : zero(MMDsq) #TODO
-            D_Y   = length(mmd_aug) >= 3 ? mmd_aug[3] : zero(MMDsq) #TODO
-            D_G_X = length(mmd_aug) >= 4 ? mmd_aug[4] : zero(MMDsq) #TODO
+            Gloss = Dloss = D_Y = D_G_X = missing #TODO
+            @pack! log_metrics = Gloss, Dloss, D_Y, D_G_X
 
-            @pack! cb_state["metrics"] = Zreg, KLdiv, ELBO, loss, MMDsq, Gloss, Dloss, D_Y, D_G_X
+            # @pack! cb_state["metrics"] = Zreg, KLdiv, ELBO, loss, MMDsq, Gloss, Dloss, D_Y, D_G_X
         end
 
         # Cache cb state variables using naming convention
@@ -745,12 +729,13 @@ function compute_metrics(engine, batch; dataset)
             all_Yhat_logL = -sum(@. MMDLearning._rician_logpdf(Flux.cpu.((Y, μG0, σG))...); dims = 1) |> vec
             Yhat_rmse = mean(all_Yhat_rmse)
             Yhat_logL = mean(all_Yhat_logL)
-            @pack! cb_state["metrics"] = all_Yhat_rmse, all_Yhat_logL, Yhat_rmse, Yhat_logL
+            @pack! cb_state["metrics"] = all_Yhat_rmse, all_Yhat_logL
+            @pack! log_metrics = Yhat_rmse, Yhat_logL
         end
 
         # Cache values for evaluating CVAE performance for estimating parameters of Y
         let
-            θfit, Zfit = split_theta_latent(sample_mv_normal(μx0, σx))
+            θfit, Zfit = sampleθZ(X̂; recover_θ = true, recover_Z = true)
             θfit .= clamp.(θfit, todevice(θlower(phys)), todevice(θupper(phys)))
             Xθfit = signal_model(phys, θfit)
             δθfit, ϵθfit = correction_and_noiselevel(derived["ricegen"], Xθfit, Zfit)
@@ -765,85 +750,49 @@ function compute_metrics(engine, batch; dataset)
             all_Xhat_logL = -sum(@. MMDLearning._rician_logpdf(Flux.cpu.((X̂, Xθδfit, ϵθfit))...); dims = 1) |> vec #TODO X̂ or Y?
             Xhat_rmse = mean(all_Xhat_rmse)
             Xhat_logL = mean(all_Xhat_logL)
-            θ_err = 100 .* mean(abs, (θ .- θfit) ./ (todevice(θupper(phys)) .- todevice(θlower(phys))); dims = 2) |> Flux.cpu |> vec |> copy
+            theta_err = 100 .* mean(abs, (θ .- θfit) ./ (todevice(θupper(phys)) .- todevice(θlower(phys))); dims = 2) |> Flux.cpu |> vec |> copy
             Z_err = mean(abs, Z .- Zfit; dims = 2) |> Flux.cpu |> vec |> copy
-            @pack! cb_state["metrics"] = Xhat_rmse, Xhat_logL, θ_err, Z_err, rmse, all_Xhat_rmse, all_Xhat_logL
+            @pack! cb_state["metrics"] = all_Xhat_rmse, all_Xhat_logL
+            @pack! log_metrics = Xhat_rmse, Xhat_logL, theta_err, Z_err, rmse
         end
 
-        # Initialize output metrics dictionary
-        metrics = Dict{Any,Any}()
-        metrics[:epoch]   = trainer.state.epoch
-        metrics[:iter]    = trainer.state.iteration
-        metrics[:dataset] = dataset
-        metrics[:time]    = cb_state["curr_time"] - cb_state["last_time"]
-
-        # Metrics computed in update_callback!
-        metrics[:loss]  = cb_state["metrics"]["loss"]
-        metrics[:Zreg]  = cb_state["metrics"]["Zreg"]
-        # metrics[:YlogL] = cb_state["metrics"]["YlogL"]
-        metrics[:KLdiv] = cb_state["metrics"]["KLdiv"]
-        metrics[:MMDsq] = cb_state["metrics"]["MMDsq"]
-        metrics[:ELBO]  = cb_state["metrics"]["ELBO"]
-        metrics[:Gloss] = cb_state["metrics"]["Gloss"]
-        metrics[:Dloss] = cb_state["metrics"]["Dloss"]
-        metrics[:D_Y]   = cb_state["metrics"]["D_Y"]
-        metrics[:D_G_X] = cb_state["metrics"]["D_G_X"]
-        metrics[:rmse]  = cb_state["metrics"]["rmse"]
-        metrics[:theta_err] = cb_state["metrics"]["θ_err"]
-        metrics[:Z_err]     = cb_state["metrics"]["Z_err"]
-        metrics[:Yhat_logL] = cb_state["metrics"]["Yhat_logL"]
-        metrics[:Yhat_rmse] = cb_state["metrics"]["Yhat_rmse"]
-        metrics[:Xhat_logL] = cb_state["metrics"]["Xhat_logL"]
-        metrics[:Xhat_rmse] = cb_state["metrics"]["Xhat_rmse"]
-
         # Update logger dataframe
-        is_consecutive = !isempty(logger) && (logger.epoch[end] == metrics[:epoch] && logger.iter[end] == metrics[:iter] && logger.dataset[end] === metrics[:dataset])
+        is_consecutive = !isempty(logger) && (logger.epoch[end] == log_metrics[:epoch] && logger.iter[end] == log_metrics[:iter] && logger.dataset[end] === log_metrics[:dataset])
         if !is_consecutive
-            push!(logger, metrics; cols = :subset)
+            push!(logger, log_metrics; cols = :union)
             if dataset === :train # val should always be one batch only
                 nbatches = div(settings["data"]["ntrain"]::Int, settings["train"]["batchsize"]::Int)
-                for (k,v) in metrics
+                for (k,v) in log_metrics
                     (k ∉ [:epoch, :iter, :dataset, :time]) && (logger[end, k] /= nbatches)
                 end
             end
         else
             @assert dataset === :train # val should always be one batch only
-            logger.time[end] += metrics[:time]
+            logger.time[end] += log_metrics[:time]
             nbatches = div(settings["data"]["ntrain"]::Int, settings["train"]["batchsize"]::Int)
-            for (k,v) in metrics
+            for (k,v) in log_metrics
                 (k ∉ [:epoch, :iter, :dataset, :time]) && (logger[end, k] += v / nbatches)
             end
         end
 
-        return Dict{Any,Any}(
-            "CVAEloss"  => cb_state["metrics"]["loss"],
-            "Zreg"      => cb_state["metrics"]["Zreg"],
-            "KLdiv"     => cb_state["metrics"]["KLdiv"],
-            "ELBO"      => cb_state["metrics"]["ELBO"],
-            "Gloss"     => cb_state["metrics"]["Gloss"],
-            "Dloss"     => cb_state["metrics"]["Dloss"],
-            "D_Y"       => cb_state["metrics"]["D_Y"],
-            "D_G_X"     => cb_state["metrics"]["D_G_X"],
-            "rmse"      => cb_state["metrics"]["rmse"],
-            "theta_err" => cb_state["metrics"]["θ_err"],
-            "Z_err"     => cb_state["metrics"]["Z_err"],
-            "Yhat_logL" => cb_state["metrics"]["Yhat_logL"],
-            "Yhat_rmse" => cb_state["metrics"]["Yhat_rmse"],
-            "Xhat_logL" => cb_state["metrics"]["Xhat_logL"],
-            "Xhat_rmse" => cb_state["metrics"]["Xhat_rmse"],
-        )
+        # Merge log_metrics into cb_state and return
+        output_metrics = Dict{Any,Any}(string(k) => deepcopy(v) for (k,v) in log_metrics)
+        foreach(k -> delete!(output_metrics, k), string.([:epoch, :iter, :dataset, :time]))
+        merge!(cb_state["metrics"], output_metrics)
+        return output_metrics
     end
 end
 
 function makeplots(;showplot = false)
     try
         Dict{Symbol, Any}(
-            :ricemodel  => MMDLearning.plot_rician_model(logger, cb_state, phys; showplot = showplot, bandwidths = haskey(models, "logsigma") ? (permutedims(models["logsigma"]) |> Flux.cpu) : nothing),
-            :signals    => MMDLearning.plot_rician_signals(logger, cb_state, phys; showplot = showplot),
-            :vaesignals => MMDLearning.plot_vae_rician_signals(logger, cb_state, phys; showplot = showplot),
-            :infer      => MMDLearning.plot_rician_inference(logger, cb_state, phys; showplot = showplot),
-            :ganloss    => MMDLearning.plot_gan_loss(logger, cb_state, phys; showplot = showplot, lrdroprate = settings["opt"]["lrrate"], lrdrop = settings["opt"]["lrdrop"]),
-            :losses     => MMDLearning.plot_selfcvae_losses(logger, cb_state, phys; showplot = showplot),
+            :ricemodel   => MMDLearning.plot_rician_model(logger, cb_state, phys; showplot = showplot, bandwidths = haskey(models, "logsigma") ? (permutedims(models["logsigma"]) |> Flux.cpu) : nothing),
+            :signals     => MMDLearning.plot_rician_signals(logger, cb_state, phys; showplot = showplot),
+            :vaesignals  => MMDLearning.plot_vae_rician_signals(logger, cb_state, phys; showplot = showplot),
+            :infer       => MMDLearning.plot_rician_inference(logger, cb_state, phys; showplot = showplot),
+            :ganloss     => MMDLearning.plot_gan_loss(logger, cb_state, phys; showplot = showplot, lrdroprate = settings["opt"]["lrrate"], lrdrop = settings["opt"]["lrdrop"]),
+            :vallosses   => MMDLearning.plot_all_logger_losses(logger, cb_state, phys; dataset = :val, showplot = showplot),
+            :trainlosses => MMDLearning.plot_all_logger_losses(logger, cb_state, phys; dataset = :train, showplot = showplot),
         )
     catch e
         handleinterrupt(e; msg = "Error plotting")
@@ -862,12 +811,12 @@ train_evaluator.logger = ignite.utils.setup_logger("train_evaluator")
 # Force terminate
 trainer.add_event_handler(
     Events.STARTED | Events.ITERATION_STARTED | Events.ITERATION_COMPLETED,
-    @j2p terminate_file_event(file = joinpath(settings["data"]["out"], "stop"))
+    @j2p Ignite.terminate_file_event(file = joinpath(settings["data"]["out"], "stop"))
 )
 
 # Timeout
 trainer.add_event_handler(
-    Events.EPOCH_COMPLETED(event_filter = @j2p timeout_event_filter(settings["train"]["timeout"])),
+    Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.timeout_event_filter(settings["train"]["timeout"])),
     @j2p function (engine)
         @info "Exiting: training time exceeded $(DECAES.pretty_time(settings["train"]["timeout"]))"
         engine.terminate()
@@ -876,19 +825,19 @@ trainer.add_event_handler(
 
 # Compute callback metrics
 trainer.add_event_handler(
-    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p throttler_event_filter(settings["eval"]["valevalperiod"])),
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.throttler_event_filter(settings["eval"]["valevalperiod"])),
     @j2p (engine) -> val_evaluator.run(val_loader)
 )
 trainer.add_event_handler(
-    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p throttler_event_filter(settings["eval"]["trainevalperiod"])),
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.throttler_event_filter(settings["eval"]["trainevalperiod"])),
     @j2p (engine) -> train_evaluator.run(train_loader)
 )
 
 # Checkpoint current model + logger + make plots
 trainer.add_event_handler(
-    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p throttler_event_filter(settings["eval"]["saveperiod"])),
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.throttler_event_filter(settings["eval"]["saveperiod"])),
     @j2p function (engine)
-        @timeit "checkpoint" let models = MMDLearning.map_dict(Flux.cpu, models)
+        @timeit "checkpoint" let models = map_dict(Flux.cpu, models)
             @timeit "save current model" saveprogress(@dict(models, logger); savefolder = settings["data"]["out"], prefix = "current-")
             @timeit "make current plots" plothandles = makeplots()
             @timeit "save current plots" saveplots(plothandles; savefolder = settings["data"]["out"], prefix = "current-")
@@ -898,11 +847,11 @@ trainer.add_event_handler(
 
 # Check for + save best model + logger + make plots
 trainer.add_event_handler(
-    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p throttler_event_filter(settings["eval"]["saveperiod"])),
+    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.throttler_event_filter(settings["eval"]["saveperiod"])),
     @j2p function (engine)
         losses = logger.Yhat_logL[logger.dataset .=== :val] |> skipmissing |> collect
         if !isempty(losses) && (length(losses) == 1 || losses[end] < minimum(losses[1:end-1]))
-            @timeit "save best progress" let models = MMDLearning.map_dict(Flux.cpu, models)
+            @timeit "save best progress" let models = map_dict(Flux.cpu, models)
                 @timeit "save best model" saveprogress(@dict(models, logger); savefolder = settings["data"]["out"], prefix = "best-")
                 @timeit "make best plots" plothandles = makeplots()
                 @timeit "save best plots" saveplots(plothandles; savefolder = settings["data"]["out"], prefix = "best-")
@@ -924,10 +873,10 @@ trainer.add_event_handler(
 
 # Print TimerOutputs timings
 trainer.add_event_handler(
-    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p throttler_event_filter(settings["eval"]["printperiod"])),
+    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.throttler_event_filter(settings["eval"]["printperiod"])),
     @j2p function (engine)
         show(stdout, TimerOutputs.get_defaulttimer()); println("\n")
-        show(stdout, last(logger, 10)); println("\n")
+        show(stdout, last(logger[!,[names(logger)[1:4]; sort(names(logger)[5:end])]], 10)); println("\n")
         (engine.state.epoch == 1) && TimerOutputs.reset_timer!() # throw out compilation timings
     end
 )
@@ -939,7 +888,7 @@ trainer.add_event_handler(
 # Attach training/validation output handlers
 if !isnothing(wandb_logger)
     for (tag, engine, event) in [
-            ("step",  trainer,         Events.EPOCH_COMPLETED(event_filter = @j2p timeout_event_filter(settings["eval"]["trainevalperiod"]))), # computed each iteration; throttle recording
+            ("step",  trainer,         Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.timeout_event_filter(settings["eval"]["trainevalperiod"]))), # computed each iteration; throttle recording
             ("train", train_evaluator, Events.EPOCH_COMPLETED), # throttled above; record every epoch
             ("val",   val_evaluator,   Events.EPOCH_COMPLETED), # throttled above; record every epoch
         ]
