@@ -26,6 +26,9 @@ rand_similar(::CUDA.CuArray{T}, sz...) where {T} = Zygote.ignore(() -> CUDA.rand
 @inline sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ)))
 @inline sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}, nsamples::Int) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ))..., nsamples)
 
+# Compile time constant log(2π)
+@inline log2π(::Type{T}) where {T} = log(2*T(π))
+
 # TODO: Tracker was much faster differentiating pow2.(x) than x.^2 - check for Zygote?
 @inline pow2(x) = x*x
 
@@ -147,8 +150,8 @@ function mix_columns(X::AbstractMatrix, Y::AbstractMatrix)
     return (XY[:, idx[1:m]], XY[:, idx[m+1:end]])
 end
 
-function sample_columns(X::AbstractMatrix, batchsize)
-    X[:, sample(1:size(X,2), batchsize; replace = false)]
+function sample_columns(X::AbstractMatrix, batchsize; replace = false)
+    X[:, sample(1:size(X,2), batchsize; replace = replace)]
 end
 
 function column_mse(X::AbstractVecOrMat, Y::AbstractVecOrMat, i, j)

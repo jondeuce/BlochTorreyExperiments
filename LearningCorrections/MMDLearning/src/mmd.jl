@@ -11,9 +11,10 @@ end
 (k::FunctionKernel)(Δ) = k.f(Δ)
 
 struct ExponentialKernel{T,N,A<:AbstractArray{T,N}} <: MMDKernel{T}
-    σ::A
-    ExponentialKernel(σ::AbstractArray) = new{eltype(σ),ndims(σ),typeof(σ)}(σ)
+    logσ::A
+    ExponentialKernel(logσ::AbstractArray) = new{eltype(logσ),ndims(logσ),typeof(logσ)}(logσ)
 end
+logbandwidths(k::ExponentialKernel) = k.logσ
 
 struct MMDResults{T}
     m::T
@@ -279,9 +280,9 @@ end
 #### MMD using sums of exponential kernels
 ####
 
-mmd(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmd(mmd_flux_u_statistic(mmd_flux_kernel_matrices(k.σ, X, Y, Val(false))...))
-mmdvar(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmdvar(mmdvar_flux_u_statistic(mmd_flux_kernel_matrices(k.σ, X, Y, Val(false))...))
-mmd_and_mmdvar(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmd_and_mmdvar(mmdvar_flux_u_statistic(mmd_flux_kernel_matrices(k.σ, X, Y, Val(false))...))
+mmd(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmd(mmd_flux_u_statistic(mmd_flux_kernel_matrices(logbandwidths(k), X, Y, Val(false))...))
+mmdvar(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmdvar(mmdvar_flux_u_statistic(mmd_flux_kernel_matrices(logbandwidths(k), X, Y, Val(false))...))
+mmd_and_mmdvar(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmd_and_mmdvar(mmdvar_flux_u_statistic(mmd_flux_kernel_matrices(logbandwidths(k), X, Y, Val(false))...))
 
 function mmd_flux_u_statistic(Kxx, Kyy, Kxy)
     @assert size(Kxx) == size(Kyy) == size(Kxy)
@@ -330,8 +331,8 @@ function _bench_mmd_and_mmdvar_cpu_vs_gpu(;T = Float32, n = 128, m = 2048)
 
     for nchan in [n,1], nbw in [32,1], f in [mmdvar, mmd]
         @show f, n, m, nbw, nchan
-        σ, σc = (nchan > 1 ? randn(T, nbw, nchan) : randn(T, nbw)) |> cpu_and_gpu
-        k, kc = (σ, σc) .|> ExponentialKernel
+        logσ, logσc = (nchan > 1 ? randn(T, nbw, nchan) : randn(T, nbw)) |> cpu_and_gpu
+        k, kc = (logσ, logσc) .|> ExponentialKernel
 
         @assert _isapprox(@show(f(k,X,Y)), @show(f(kc,Xc,Yc)))
 
@@ -1319,7 +1320,7 @@ function mmd_perm_test_power(
         mmd_perm_test(kernelargs, sampleX(batchsize), sampleY(batchsize); nperms = nperms, alpha = alpha)
 
     mmd_samples, mmdvar_samples = [MMDsq], [MMDvar]
-    for _ in 1:nsamples-1
+    for _ in 2:nsamples
         _MMDsq, _MMDvar = mmd_and_mmdvar_flux(kernelargs, sampleX(batchsize), sampleY(batchsize))
         push!(mmd_samples, _MMDsq)
         push!(mmdvar_samples, _MMDvar)
@@ -1448,6 +1449,57 @@ let m = 100, n = 2, nbw = 4, nperms = 128, nsamples = 100, ntrials = 10
         mmd_perm_test_power_plot(all_res[1]) |> display
     end
 end
+=#
+
+####
+#### Combinatorial bandwidth opt
+####
+function combinatorial_kernel_opt(k::ExponentialKernel, X, Y, σbucket; batchsize::Int, nsamples::Int, maxiters::Int, replace::Bool = true, verbose::Bool = false, pthresh = 1/batchsize)
+    mmdsamples(knew) = map(1:nsamples) do _
+        Xm, Ym = sample_columns(X, batchsize), sample_columns(Y, batchsize)
+        batchsize * mmd(knew, Xm, Ym)
+    end
+    kbest = deepcopy(k)
+    mmdbest = mmdsamples(kbest)
+    for i in 1:maxiters
+        inds = sample(eachindex(σbucket), length(logbandwidths(kbest)); replace)
+        σnew = reshape(σbucket[inds], size(logbandwidths(kbest)))
+        knew = ExponentialKernel(σnew)
+        mmdnew = mmdsamples(knew)
+        t = HypothesisTests.UnequalVarianceTTest(Float64.(mmdnew), Float64.(mmdbest))
+        p = HypothesisTests.pvalue(t)
+        if p < pthresh && mean(mmdnew) > mean(mmdbest)
+            verbose && @info "i = $i: Updating... mmd = $(mean(mmdnew)) > mmd = $(mean(mmdbest)) (p = $p)"
+            kbest = deepcopy(knew)
+            mmdbest = copy(mmdnew)
+        else
+            verbose && @info "i = $i: mmd = $(mean(mmdnew)) <= mmd = $(mean(mmdbest)) (p = $p)"
+        end
+    end
+    return kbest
+end
+
+#=
+    let
+        Ytrain = sampleY(phys, 1024; dataset = :train) |> todevice
+        X̂train, θtrain, Ztrain = sampleX̂θZ(Ytrain; recover_θ = false, recover_Z = false) #.|> todevice
+        ℓ_CVAE = CVAElosses(X̂train, θtrain, Ztrain; recover_Z = true)
+        ℓ_CVAE[:CVAEloss] = sum_dict(ℓ_CVAE)
+        display(ℓ_CVAE)
+
+        Xtrain, θtrain, Ztrain = sampleXθZ(Ytrain; recover_θ = true, recover_Z = false) #.|> todevice #TODO recover_Z?
+        ℓ_MMD = MMDlosses(Xtrain, Ytrain, Ztrain)
+        display(ℓ_MMD)
+    end;
+
+    let
+        Ytrain = sampleY(phys, :all; dataset = :train) |> todevice
+        X̂train = sampleX̂(Ytrain; recover_θ = true, recover_Z = true)
+        MMDLearning.combinatorial_kernel_opt(
+            derived["kernel"], X̂train, Ytrain, (collect(range(-10.0, 5.0; length = 51)) |> to32 |> todevice), #copy(logbandwidths(derived["kernel"])),
+            batchsize = 2048, nsamples = 100, maxiters = 100, replace = true, verbose = true,
+        )
+    end
 =#
 
 ####

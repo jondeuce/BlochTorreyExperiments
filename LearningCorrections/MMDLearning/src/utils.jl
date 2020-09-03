@@ -687,7 +687,7 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
                         logLlab *= "\n-logL prior: $(round(mean(phys.valfits.loss); sigdigits = 4))"
                     end
                     prmse = plot(df_inf.epoch, df_inf.Xhat_rmse; title = "min rmse = $(s(minimum(df_inf.Xhat_rmse)))", lab = rmselab, xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
-                    plogL = plot(df_inf.epoch, df_inf.Xhat_logL; title = "min -logL = $(s(minimum(df_inf.Xhat_logL)))", lab = logLlab, xscale = ifelse(epoch < 10*window, :identity, :log10), ylims = (-Inf, min(-100, maximum(df_inf.Xhat_logL)))) #TODO xformatter = s
+                    plogL = plot(df_inf.epoch, df_inf.Xhat_logL; title = "min -logL = $(s(minimum(df_inf.Xhat_logL)))", lab = logLlab, xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO ylims = (-Inf, min(-100, maximum(df_inf.Xhat_logL)))), xformatter = s
                     append!(_subplots, [prmse, plogL])
 
                     plot(_subplots...)
