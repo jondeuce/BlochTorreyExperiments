@@ -7,19 +7,37 @@ import ..CUDA
 
 export to32, to64, todevice, @j2p
 
-const JL_CUDA_FUNCTIONAL = Ref(get(ENV, "JL_DISABLE_GPU", "0") != "1" && CUDA.functional())
-const JL_CUDA_DEVICE = Ref(parse(Int, get(ENV, "JL_CUDA_DEVICE", "0")))
-const JL_ZERO_SUBNORMALS = Ref(get(ENV, "JL_ZERO_SUBNORMALS", "1") == "1")
-const JL_WANDB_LOGGER = Ref(get(ENV, "JL_WANDB_LOGGER", "0") == "1")
+const JL_CUDA_FUNCTIONAL = Ref(false)
+const JL_CUDA_DEVICE     = Ref(-1)
+const JL_ZERO_SUBNORMALS = Ref(true)
+const JL_WANDB_LOGGER    = Ref(false)
 
-# Send array to CPU or GPU
-if JL_CUDA_FUNCTIONAL[]
-    @eval todevice(x) = Flux.gpu(x)
-else
-    @eval todevice(x) = Flux.cpu(x)
-end
+todevice(x) = Flux.cpu(x)
 to32(x) = x |> Flux.f32 |> todevice
 to64(x) = x |> Flux.f64 |> todevice
+
+function init()
+    JL_CUDA_FUNCTIONAL[] = get(ENV, "JL_DISABLE_GPU", "0") != "1" && CUDA.functional()
+    JL_CUDA_DEVICE[]     = JL_CUDA_FUNCTIONAL[] ? parse(Int, get(ENV, "JL_CUDA_DEVICE", "0")) : -1
+    JL_ZERO_SUBNORMALS[] = get(ENV, "JL_ZERO_SUBNORMALS", "1") == "1"
+    JL_WANDB_LOGGER[]    = get(ENV, "JL_WANDB_LOGGER", "0") == "1"
+
+    # CUDA settings
+    if JL_CUDA_FUNCTIONAL[]
+        @eval todevice(x) = Flux.gpu(x)
+        CUDA.allowscalar(false)
+        CUDA.device!(JL_CUDA_DEVICE[])
+    end
+
+    # Treat subnormals as zero
+    if JL_ZERO_SUBNORMALS[]
+        Threads.@threads for i in 1:Threads.nthreads()
+            set_zero_subnormals(true)
+        end
+    end
+
+    return nothing
+end
 
 # Initialize WandBLogger object
 function init_wandb_logger(settings)
@@ -200,23 +218,6 @@ function parse_command_line!(defaults::AbstractDict{<:AbstractString, Any})
     end
 
     return defaults
-end
-
-function __init__()
-    # CUDA settings
-    if JL_CUDA_FUNCTIONAL[]
-        CUDA.allowscalar(false)
-        CUDA.device!(JL_CUDA_DEVICE[])
-    end
-
-    # Treat subnormals as zero
-    if JL_ZERO_SUBNORMALS[]
-        Threads.@threads for i in 1:Threads.nthreads()
-            set_zero_subnormals(true)
-        end
-    end
-
-    return nothing
 end
 
 end # module

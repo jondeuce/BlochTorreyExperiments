@@ -4,6 +4,7 @@
 
 using MMDLearning
 using PyCall
+Ignite.init()
 pyplot(size=(800,600))
 
 # Init python resources
@@ -37,7 +38,7 @@ const settings = TOML.parse("""
         # GANrate     = 10 # Train GAN losses every `GANrate` iterations
         # Dsteps      = 5  # Train GAN losses with `Dsteps` discrim updates per genatr update
         # Dheadstart  = 0  # Train discriminator for `Dheadstart` epochs before training generator
-        MMDrate     = 10 # Train MMD loss every `MMDrate` iterations
+        MMDrate     = 10 # Train MMD loss every `MMDrate` epochs
         [train.augment]
             fftcat        = false # Fourier transform of input signal, concatenating real/imag
             fftsplit      = false # Fourier transform of input signal, treating real/imag separately
@@ -51,22 +52,22 @@ const settings = TOML.parse("""
             Dchunk        = 0     # Discriminator looks at random chunks of size `Dchunk` (0 uses whole signal)
 
     [eval]
-        valevalperiod   = 60.0
+        valevalperiod   = 120.0
         trainevalperiod = 120.0
         saveperiod      = 300.0 #TODO
-        printperiod     = 60.0
+        printperiod     = 120.0
 
     [opt]
-        lrrel    = 0.1 # Learning rate relative to batch size, i.e. lr = lrrel / batchsize
-        lrdrop   = 3.17 #1.0 #TODO
-        lrthresh = 1e-5 # Absolute minimum learning rate
-        lrrate   = 1000_000 #TODO
+        lrrel    = 0.03 #0.1 # Learning rate relative to batch size, i.e. lr = lrrel / batchsize
+        lrthresh = 0.0 #1e-5 # Absolute minimum learning rate
+        lrdrop   = 10.0 #3.17 #1.0 # Drop learning rate by factor `lrdrop` every `lrrate` epochs
+        lrrate   = 1000_000 # Drop learning rate by factor `lrdrop` every `lrrate` epochs
         [opt.cvae]
-            lrrel = "%PARENT%" #TODO 1e-4
+            lrrel = "%PARENT%" #1e-4
         [opt.genatr]
-            lrrel = "%PARENT%" #TODO 1e-5
+            lrrel = "%PARENT%" #1e-5
         [opt.discrim]
-            lrrel = "%PARENT%" #TODO 3e-4
+            lrrel = "%PARENT%" #3e-4
         [opt.mmd]
             lrrel = "%PARENT%"
 
@@ -120,8 +121,8 @@ function make_models(phys::PhysicsModel{Float32}, models = Dict{String, Any}(), 
     k   = settings["arch"]["nlatent"]::Int # number of latent variables Z
     nz  = settings["arch"]["zdim"]::Int # embedding dimension
 
-    RiceGenType = LatentVectorRicianCorrector{n,k}
-    # RiceGenType = LatentVectorRicianNoiseCorrector{n,k}
+    # RiceGenType = LatentVectorRicianCorrector{n,k}
+    RiceGenType = LatentVectorRicianNoiseCorrector{n,k}
     # RiceGenType = VectorRicianCorrector{n,k}
 
     # Rician generator. First `n` elements for `δX` scaled to (-δ, δ), second `n` elements for `logϵ` scaled to (noisebounds[1], noisebounds[2])
@@ -558,9 +559,13 @@ function train_step(engine, batch)
         # train_genatr = true
         # # train_genatr = engine.state.epoch >= settings["train"]["Dheadstart"]::Int
 
-        # Train CVAE every iteration, MMD every `MMDrate` iterations
-        train_CVAE = true
-        train_MMD  = mod(engine.state.iteration-1, settings["train"]["MMDrate"]::Int) == 0
+        # Train MMD every `MMDrate` epochs, and CVAE every other epoch
+        train_MMD  = mod(engine.state.epoch-1, settings["train"]["MMDrate"]::Int) == 0
+        train_CVAE = !train_MMD
+
+        # # Train CVAE every iteration, MMD every `MMDrate` iterations
+        # train_CVAE = true
+        # train_MMD  = mod(engine.state.iteration-1, settings["train"]["MMDrate"]::Int) == 0
 
         # # `Dcycle` epochs of discrim only, followed by `Dcycle` epochs of CVAE and GAN together
         # Dcycle = settings["train"]["Dcycle"]::Int
