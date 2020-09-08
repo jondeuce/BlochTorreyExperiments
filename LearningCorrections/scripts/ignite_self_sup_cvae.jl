@@ -4,8 +4,8 @@
 
 using MMDLearning
 using PyCall
-Ignite.init()
 pyplot(size=(800,600))
+Ignite.init()
 
 # Init python resources
 const torch = pyimport("torch")
@@ -91,8 +91,8 @@ const settings = TOML.parse("""
             nhidden = "%PARENT%"
             skip    = "%PARENT%"
         [arch.genatr]
-            hdim        = "%PARENT%" #TODO 32
-            nhidden     = "%PARENT%" #TODO 2
+            hdim        = "%PARENT%"
+            nhidden     = "%PARENT%"
             skip        = "%PARENT%"
             maxcorr     = $(get(ENV, "JL_PHYS_MODEL", "toy") == "toy" ? 0.1 : 0.025) # correction amplitude
             noisebounds = $(get(ENV, "JL_PHYS_MODEL", "toy") == "toy" ? [-8.0, -2.0] : [-6.0, -3.0]) # noise amplitude
@@ -142,21 +142,29 @@ function make_models(phys::PhysicsModel{Float32}, models = Dict{String, Any}(), 
             MMDLearning.MLP(nin => nout, nhidden, hdim, Flux.relu, tanh; skip = skip)...,
             OutputScale,
         ) |> to32
-        # Flux.Chain(
-        #     Flux.Dense(nin, nhidden * hdim, identity),
-        #     x -> reshape(x, hdim, :),
-        #     x -> Flux.normalise(x; dims = 1),
-        #     Flux.Dense(hdim, hdim, identity),
-        #     Flux.softmax,
-        #     Flux.Dense(nout, hdim, identity),
-        #     x -> Flux.normalise(x; dims = 1),
-        #     x -> reshape(x, nout, nhidden, :),
-        #     x -> permutedims(x, (2,1,3)),
-        #     x -> reshape(x, nhidden, :),
-        #     Flux.Dense(nhidden, 1, tanh),
-        #     x -> reshape(x, nout, :),
-        #     OutputScale,
-        # ) |> to32
+        #=
+            Flux.Chain(
+                Flux.Dense(nin, nout, tanh),
+                OutputScale,
+            ) |> to32
+        =#
+        #=
+            @assert nhidden >= nin
+            Flux.Chain(
+                Flux.Dense(nin, nhidden * hdim, x -> -abs(x)),
+                x -> reshape(x, nhidden, hdim, :),
+                x -> permutedims(x, (2,1,3)),
+                x -> reshape(x, hdim, :),
+                Flux.softmax,
+                Flux.Dense(hdim, nout, Flux.relu),
+                x -> reshape(x, nout, nhidden, :),
+                x -> permutedims(x, (2,1,3)),
+                x -> reshape(x, nhidden, :),
+                Flux.Dense(nhidden, 1, tanh),
+                x -> reshape(x, nout, :),
+                OutputScale,
+            ) |> to32
+        =#
     end
 
     # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
@@ -457,7 +465,8 @@ function CVAElosses(Y, θ, Z; recover_Z = true)
         # We have an extra degree of freedom: the generator is trained only on Z samples from the CVAE posterior,
         # therefore we must regularize the Z posterior sample means to be unit normally distributed in order to
         # ensure the generator inputs are N(0,1) and e.g. don't degenerate to a point mass or similar
-        KLDivUnitNormal(mean(μZ0; dims = 2), std(μZ0; dims = 2))
+        KLDivUnitNormal(mean(μZ0; dims = 2), std(μZ0; dims = 2)) # mean/std using prediction means alone
+        # KLDivUnitNormal(mean(μZ0; dims = 2), sqrt.(mean(pow2.(σZ); dims = 2) .+ var(μZ0; dims = 2, corrected = false))) # mean/std where predictions are treated as a gaussian ensemble
     end
 
     return ℓ

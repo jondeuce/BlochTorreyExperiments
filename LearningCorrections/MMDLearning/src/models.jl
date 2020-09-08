@@ -65,8 +65,8 @@ make_activation(name::Symbol) = Flux.eval(name)
 make_activation(name::String) = make_activation(Symbol(name))
 
 """
-    Sequence classification with 1D convolutions:
-        https://keras.io/getting-started/sequential-model-guide/
+Sequence classification with 1D convolutions:
+    https://keras.io/getting-started/sequential-model-guide/
 """
 function Keras1DSeqClass(
         info    :: DataInfo{T} = DataInfo();
@@ -296,8 +296,8 @@ function ConvResNet(
 end
 
 """
-    Residual Dense Network for Image Super-Resolution:
-        https://arxiv.org/abs/1802.08797
+Residual Dense Network for Image Super-Resolution:
+    https://arxiv.org/abs/1802.08797
 """
 function ResidualDenseNet(
         info      :: DataInfo{T} = DataInfo();
@@ -374,7 +374,7 @@ function ResidualDenseNet(
 end
 
 """
-    RDN modification, removing all residual-like skip connections
+RDN modification, removing all residual-like skip connections
 """
 function TestModel4(
         info      :: DataInfo{T} = DataInfo();
@@ -463,7 +463,7 @@ function TestModel4(
 end
 
 """
-    DeepResNet
+DeepResNet
 """
 function DeepResNet(
         info::DataInfo{T} = DataInfo();
@@ -764,10 +764,10 @@ function BasicDCGAN1(info::DataInfo{T} = DataInfo()) where {T}
 end
 
 """
-    Bayesian parameter estimation using conditional variational autoencoders for
-    gravitational-wave astronomy: https://arxiv.org/abs/1802.08797
-        y: input data (height Ny, channels Cy)
-        x: true parameters (height Nx)
+Bayesian parameter estimation using conditional variational autoencoders for
+gravitational-wave astronomy: https://arxiv.org/abs/1802.08797
+    y: input data (height Ny, channels Cy)
+    x: true parameters (height Nx)
 """
 struct LIGOCVAE{E1,E2,D}
     E1 :: E1

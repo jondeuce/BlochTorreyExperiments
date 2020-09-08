@@ -10,8 +10,8 @@ using Reexport
 import UnsafeArrays
 using UnsafeArrays: uview, uviews, @uviews
 
-import TOML, BSON, DrWatson, Flux, Flux.CUDA, NNlib, Zygote, ChainRules, BlackBoxOptim, Optim, ForwardDiff, DECAES, HypothesisTests
-export TOML, BSON, DrWatson, Flux,      CUDA, NNlib, Zygote, ChainRules, BlackBoxOptim, Optim, ForwardDiff, DECAES, HypothesisTests
+import Pkg.TOML, BSON, DrWatson, Flux, Flux.CUDA, NNlib, Zygote, ChainRules, BlackBoxOptim, Optim, ForwardDiff, DECAES, HypothesisTests
+export     TOML, BSON, DrWatson, Flux,      CUDA, NNlib, Zygote, ChainRules, BlackBoxOptim, Optim, ForwardDiff, DECAES, HypothesisTests
 using DrWatson: @dict, @ntuple, @pack!, @unpack
 export @dict, @ntuple, @pack!, @unpack
 

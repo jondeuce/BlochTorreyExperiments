@@ -1,5 +1,5 @@
 """
-    batchsize(x::AbstractArray)
+batchsize(x::AbstractArray)
 
 Returns the length of the last dimension of the data `x`.
 `x` must have dimension of at least 2, otherwise an error is thrown.
@@ -8,7 +8,7 @@ batchsize(x::AbstractVector) = error("x must have dimension of at least 2, but x
 batchsize(x::AbstractArray{T,N}) where {T,N} = size(x, N)
 
 """
-    channelsize(x::AbstractArray)
+channelsize(x::AbstractArray)
 
 Returns the length of the second-last dimension of the data `x`.
 `x` must have dimension of at least 3, otherwise an error is thrown.
@@ -17,7 +17,7 @@ channelsize(x::AbstractVecOrMat) = error("x must have dimension of at least 3, b
 channelsize(x::AbstractArray{T,N}) where {T,N} = size(x, N-1)
 
 """
-    heightsize(x::AbstractArray)
+heightsize(x::AbstractArray)
 
 Returns the length of the first dimension of the data `x`.
 `x` must have dimension of at least 3, otherwise an error is thrown.
@@ -160,7 +160,7 @@ CatScale(bd::Vector{<:NTuple{2}}, n::Vector{Int}) =
     )
 
 """
-    wrapprint(io::IO, layer)
+wrapprint(io::IO, layer)
 """
 wrapprint(io::IO, layer) = Flux.Chain(
     @λ(x -> (  print(io, "      layer: "); _model_summary(io, layer); print(io, "\n"); x)),
@@ -202,7 +202,8 @@ Flux.@functor ChannelResize
 Base.show(io::IO, l::ChannelResize) = print(io, "ChannelResize(", l.c, ")")
 
 """
-    Sumout(over)
+Sumout(over)
+
 `Sumout` is a neural network layer, which has a number of internal layers,
 which all have the same input, and returns the elementwise sum of the
 internal layers' outputs.
@@ -220,7 +221,8 @@ function (mo::Sumout)(input::AbstractArray)
 end
 
 """
-    MultiInput(layers...)
+MultiInput(layers...)
+
 Applies `layers` to each element of a tuple input.
     See: https://github.com/FluxML/Flux.jl/pull/776
 """
@@ -244,7 +246,8 @@ function Base.show(io::IO, m::MultiInput)
 end
 
 """
-    Fanout(N::Int)
+Fanout(N::Int)
+
 Repeat input `x`, outputing an N-tuple.
     See: https://github.com/FluxML/Flux.jl/pull/776
 """

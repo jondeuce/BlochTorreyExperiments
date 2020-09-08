@@ -7,7 +7,7 @@ Pkg.activate(joinpath(@__DIR__, ".."))
 
 using MMDLearning
 using GlobalUtils
-using MAT, BSON, TOML, DataFrames
+using MAT, BSON, Pkg.TOML, DataFrames
 using Statistics, StatsPlots
 # pyplot(size = (1200,800))
 pyplot(size = (800,600))
