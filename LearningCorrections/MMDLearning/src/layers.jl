@@ -1,5 +1,5 @@
 """
-    batchsize(x::AbstractArray)
+batchsize(x::AbstractArray)
 
 Returns the length of the last dimension of the data `x`.
 `x` must have dimension of at least 2, otherwise an error is thrown.
@@ -8,7 +8,7 @@ batchsize(x::AbstractVector) = error("x must have dimension of at least 2, but x
 batchsize(x::AbstractArray{T,N}) where {T,N} = size(x, N)
 
 """
-    channelsize(x::AbstractArray)
+channelsize(x::AbstractArray)
 
 Returns the length of the second-last dimension of the data `x`.
 `x` must have dimension of at least 3, otherwise an error is thrown.
@@ -17,7 +17,7 @@ channelsize(x::AbstractVecOrMat) = error("x must have dimension of at least 3, b
 channelsize(x::AbstractArray{T,N}) where {T,N} = size(x, N-1)
 
 """
-    heightsize(x::AbstractArray)
+heightsize(x::AbstractArray)
 
 Returns the length of the first dimension of the data `x`.
 `x` must have dimension of at least 3, otherwise an error is thrown.
@@ -78,6 +78,33 @@ xavier_normal(args...; kwargs...) = xavier_normal(Float64, args...; kwargs...)
 # Flux.glorot_normal(T::Type, dims...) = xavier_normal(T, dims...)
 
 """
+wrapchain(layer)
+
+Wraps `layer` in a `Flux.Chain`. No-op if `layer` is already a `Flux.Chain`.
+"""
+wrapchain(layer::Flux.Chain) = layer
+wrapchain(layer) = Flux.Chain(layer)
+
+"""
+catchain(chain)
+
+Concatenation of `c1` and `c2` into a `Flux.Chain`. If either or both of
+`c1` and `c2` are chain, they will be splatted.
+"""
+catchain(c1::Flux.Chain, c2::Flux.Chain) = Flux.Chain(c1..., c2...)
+catchain(c1::Flux.Chain, c2) = Flux.Chain(c1..., c2)
+catchain(c1, c2::Flux.Chain) = Flux.Chain(c1, c2...)
+catchain(c1, c2) = Flux.Chain(c1, c2)
+
+"""
+flattenchain(chain)
+
+Recursively flattens `chain`, removing redundant `Chain` wrappers.
+"""
+flattenchain(chain::Flux.Chain) = length(chain) == 1 ? flattenchain(chain[1]) : Flux.Chain(reduce(catchain, flattenchain.(chain))...)
+flattenchain(chain) = chain
+
+"""
 NotTrainable(layer)
 
 Wraps the callable `layer` such that any parameters internal to `layer`
@@ -90,6 +117,25 @@ Flux.@functor NotTrainable # need functor for e.g. `fmap`
 Flux.trainable(l::NotTrainable) = () # no trainable parameters
 (l::NotTrainable)(x...) = l.layer(x...)
 Base.show(io::IO, l::NotTrainable) = (print(io, "NotTrainable("); print(io, l.layer); print(io, ")"))
+
+# Helper function for gradient operators
+constant_filter(args...; kwargs...) = NotTrainable(Flux.Chain(ChannelResize(1), Flux.Conv(args...; kwargs...), DenseResize()))
+
+"""
+CentralDifference()
+
+Non-trainable central-difference layer which convolves the stencil [-1, 0, 1]
+along the first dimension of `d x b` inputs, producing `(d-2) x b` outputs.
+"""
+CentralDifference() = constant_filter(reshape(Float32[-1.0, 0.0, 1.0], 3, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
+
+"""
+Laplacian()
+
+Non-trainable central-difference layer which convolves the stencil [1, -2, 1]
+along the first dimension of `d x b` inputs, producing `(d-2) x b` outputs.
+"""
+Laplacian() = constant_filter(reshape(Float32[1.0, -2.0, 1.0], 3, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
 
 """
 Scale(α = 1, β = zero(α))
@@ -114,7 +160,7 @@ CatScale(bd::Vector{<:NTuple{2}}, n::Vector{Int}) =
     )
 
 """
-    wrapprint(io::IO, layer)
+wrapprint(io::IO, layer)
 """
 wrapprint(io::IO, layer) = Flux.Chain(
     @λ(x -> (  print(io, "      layer: "); _model_summary(io, layer); print(io, "\n"); x)),
@@ -156,7 +202,8 @@ Flux.@functor ChannelResize
 Base.show(io::IO, l::ChannelResize) = print(io, "ChannelResize(", l.c, ")")
 
 """
-    Sumout(over)
+Sumout(over)
+
 `Sumout` is a neural network layer, which has a number of internal layers,
 which all have the same input, and returns the elementwise sum of the
 internal layers' outputs.
@@ -174,7 +221,8 @@ function (mo::Sumout)(input::AbstractArray)
 end
 
 """
-    MultiInput(layers...)
+MultiInput(layers...)
+
 Applies `layers` to each element of a tuple input.
     See: https://github.com/FluxML/Flux.jl/pull/776
 """
@@ -198,7 +246,8 @@ function Base.show(io::IO, m::MultiInput)
 end
 
 """
-    Fanout(N::Int)
+Fanout(N::Int)
+
 Repeat input `x`, outputing an N-tuple.
     See: https://github.com/FluxML/Flux.jl/pull/776
 """
@@ -242,12 +291,15 @@ Multi-layer perceptron mapping inputs with height `sz[1]` to outputs with height
 `Nhid+2` total dense layers are used with `Dhid` hidden nodes. The first `Nhid+1` layers
 use activation `σhid` and the last layer uses activation `σout`. 
 """
-MLP(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout = identity) =
+function MLP(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout = identity; skip = false, dropout = nothing)
+    maybedropout(l) = !isnothing(dropout) ? Flux.Chain(l, Flux.Dropout(dropout)) : l
+    maybeskip(l) = skip ? Flux.SkipConnection(flattenchain(l), +) : l
     Flux.Chain(
-        Flux.Dense(sz[1], Dhid, σhid),
-        [Flux.Dense(Dhid, Dhid, σhid) for _ in 1:Nhid]...,
-        Flux.Dense(Dhid, sz[2], σout)
-    )
+        Flux.Dense(sz[1], Dhid, σhid) |> maybedropout,
+        [Flux.Dense(Dhid, Dhid, σhid) |> maybedropout |> maybeskip for _ in 1:Nhid]...,
+        Flux.Dense(Dhid, sz[2], σout),
+    ) |> flattenchain
+end
 
 """
 `Conv` wrapper which initializes using `xavier_uniform`
@@ -435,7 +487,7 @@ DenseFeatureFusion(G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,1), σ = Flux.
 """
 Print model/layer
 """
-function model_summary(io::IO, models::Dict; kwargs...)
+function model_summary(io::IO, models::AbstractDict; kwargs...)
     for (i,(k,m)) in enumerate(models)
         (k != "") && println(io, string(k) * ":")
         _model_summary(io, m; kwargs...)
@@ -443,7 +495,7 @@ function model_summary(io::IO, models::Dict; kwargs...)
         (i < length(models)) && println(io, "")
     end
 end
-function model_summary(models::Dict, filename = nothing; kwargs...)
+function model_summary(models::AbstractDict, filename = nothing; kwargs...)
     @info "Model summary..."
     (filename != nothing) && open(filename, "w") do file
         model_summary(file, models; kwargs...)

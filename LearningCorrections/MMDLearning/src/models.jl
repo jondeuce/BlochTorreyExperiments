@@ -6,7 +6,7 @@
     labwidth::Vector{T} = ones(nlabels)
 end
 
-function make_model(settings::Dict, name::String)
+function make_model(settings::AbstractDict, name::String)
     if name == "load"
         return BSON.load(settings["model"][name]["path"])[:model]
     else
@@ -18,7 +18,7 @@ function make_model(settings::Dict, name::String)
         return Flux.paramtype(T, model) # ensure correct underlying float type
     end
 end
-make_model(settings::Dict) = Dict{String,Any}([name => make_model(settings, name) for name in keys(settings["model"]) if is_model_name(name)]...)
+make_model(settings::AbstractDict) = Dict{String,Any}([name => make_model(settings, name) for name in keys(settings["model"]) if is_model_name(name)]...)
 
 function is_model_name(name::Symbol)
     try
@@ -29,7 +29,7 @@ function is_model_name(name::Symbol)
 end
 is_model_name(name::String) = is_model_name(Symbol(name))
 
-function model_string(settings::Dict, name::String)
+function model_string(settings::AbstractDict, name::String)
     if name == "load"
         mstring = splitext(basename(settings["model"][name]["path"]))[1]
         dateregex = r"\d\d\d\d-\d\d-\d\d-T-\d\d-\d\d-\d\d-\d\d\d."
@@ -51,9 +51,9 @@ function model_string(settings::Dict, name::String)
         mstring = name * "_" * DrWatson.savename(d)
     end
 end
-model_string(settings::Dict) = DrWatson.savename(settings["model"]) * "_" * join([model_string(settings, name) for (name, model) in settings["model"] if is_model_name(name)], "_")
+model_string(settings::AbstractDict) = DrWatson.savename(settings["model"]) * "_" * join([model_string(settings, name) for (name, model) in settings["model"] if is_model_name(name)], "_")
 
-make_model_kwargs(::Type{T}, m::Dict) where {T} = Dict{Symbol,Any}(Symbol.(keys(m)) .=> clean_model_arg.(T, values(m)))
+make_model_kwargs(::Type{T}, m::AbstractDict) where {T} = Dict{Symbol,Any}(Symbol.(keys(m)) .=> clean_model_arg.(T, values(m)))
 clean_model_arg(::Type{T}, x) where {T} = error("Unsupported model parameter type $(typeof(x)): $x") # fallback
 clean_model_arg(::Type{T}, x::Bool) where {T} = x
 clean_model_arg(::Type{T}, x::Integer) where {T} = Int(x)
@@ -65,8 +65,8 @@ make_activation(name::Symbol) = Flux.eval(name)
 make_activation(name::String) = make_activation(Symbol(name))
 
 """
-    Sequence classification with 1D convolutions:
-        https://keras.io/getting-started/sequential-model-guide/
+Sequence classification with 1D convolutions:
+    https://keras.io/getting-started/sequential-model-guide/
 """
 function Keras1DSeqClass(
         info    :: DataInfo{T} = DataInfo();
@@ -296,8 +296,8 @@ function ConvResNet(
 end
 
 """
-    Residual Dense Network for Image Super-Resolution:
-        https://arxiv.org/abs/1802.08797
+Residual Dense Network for Image Super-Resolution:
+    https://arxiv.org/abs/1802.08797
 """
 function ResidualDenseNet(
         info      :: DataInfo{T} = DataInfo();
@@ -374,7 +374,7 @@ function ResidualDenseNet(
 end
 
 """
-    RDN modification, removing all residual-like skip connections
+RDN modification, removing all residual-like skip connections
 """
 function TestModel4(
         info      :: DataInfo{T} = DataInfo();
@@ -463,7 +463,7 @@ function TestModel4(
 end
 
 """
-    DeepResNet
+DeepResNet
 """
 function DeepResNet(
         info::DataInfo{T} = DataInfo();
@@ -764,10 +764,10 @@ function BasicDCGAN1(info::DataInfo{T} = DataInfo()) where {T}
 end
 
 """
-    Bayesian parameter estimation using conditional variational autoencoders for
-    gravitational-wave astronomy: https://arxiv.org/abs/1802.08797
-        y: input data (height Ny, channels Cy)
-        x: true parameters (height Nx)
+Bayesian parameter estimation using conditional variational autoencoders for
+gravitational-wave astronomy: https://arxiv.org/abs/1802.08797
+    y: input data (height Ny, channels Cy)
+    x: true parameters (height Nx)
 """
 struct LIGOCVAE{E1,E2,D}
     E1 :: E1
@@ -777,35 +777,26 @@ end
 Flux.@functor LIGOCVAE
 Base.show(io::IO, m::LIGOCVAE) = model_summary(io, Dict("E1" => m.E1, "E2" => m.E2, "D" => m.D))
 
-# Split `μ` into mean and standard deviation
-split_mean_std(μ) = (μ[1:end÷2, ..], μ[end÷2+1:end, ..])
-
 # Sample from the diagonal multivariate normal distbn defined by `μ`
-sample_mv_normal(μ) = sample_mv_normal(split_mean_std(μ)...)
-sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}) where {T} = μ0 .+ σ .* randn(T, size(σ))
-sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}, nsamples::Int) where {T} = μ0 .+ σ .* randn(T, size(σ)..., nsamples)
 MvNormalSampler() = sample_mv_normal
 
 # Exponentiate logsigma -> sigma
 exp_std(μ0, logσ) = vcat(μ0, exp.(logσ))
-exp_std(μ) = exp_std(split_mean_std(μ)...)
+exp_std(μ) = exp_std(split_dim1(μ)...)
 ExpStd() = exp_std
 
 # Bound mean in (-0.5, 0.5), exponentiate logsigma -> sigma
 bound_mu_exp_std(μ0, logσ) = vcat(tanh.(μ0)./2, exp.(logσ))
-bound_mu_exp_std(μ) = bound_mu_exp_std(split_mean_std(μ)...)
+bound_mu_exp_std(μ) = bound_mu_exp_std(split_dim1(μ)...)
 BoundMuExpStd() = bound_mu_exp_std
-
-# TODO: Tracker was much faster differentiating square.(x) than x.^2 - check for Zygote?
-square(x) = x*x
 
 function (m::LIGOCVAE)(y; nsamples::Int = 100, stddev = false)
     @assert nsamples ≥ ifelse(stddev, 2, 1)
 
-    μr0, σr = m.E1(y) |> split_mean_std
+    μr0, σr = m.E1(y) |> split_dim1
     function sample_rθ_posterior()
         zr = sample_mv_normal(μr0, σr)
-        μx0, σx = m.D((zr,y)) |> split_mean_std
+        μx0, σx = m.D((zr,y)) |> split_dim1
         return sample_mv_normal(μx0, σx)
     end
 
@@ -825,44 +816,44 @@ end
 
 # Cross-entropy loss function
 function H_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}; gamma::T = one(T)) where {T}
-    μr0, σr = split_mean_std(m.E1(y))
-    μq0, σq = split_mean_std(m.E2((x,y)))
+    μr0, σr = split_dim1(m.E1(y))
+    μq0, σq = split_dim1(m.E2((x,y)))
     zq = sample_mv_normal(μq0, σq)
-    μx0, σx = split_mean_std(m.D((zq,y)))
+    μx0, σx = split_dim1(m.D((zq,y)))
 
     Zdim, Xout, Nbatch = size(zq,1), size(μx0,1), size(x,2)
-    σr2, σq2 = square.(σr), square.(σq)
-    σx2, xout = square.(σx), x[1:Xout,:]
+    σr2, σq2 = pow2.(σr), pow2.(σq)
+    σx2, xout = pow2.(σx), x[1:Xout,:]
 
-    KLdiv = sum(@. (σq2 + square(μr0 - μq0)) / σr2 + log(σr2 / σq2)) / (2*Nbatch) # KL-divergence contribution to cross-entropy (Note: dropped constant -Zdim/2 term)
-    ELBO = sum(@. square(xout - μx0) / σx2 + log(σx2)) / (2*Nbatch) # Negative log-likelihood/ELBO contribution to cross-entropy (Note: dropped constant +Zdim*log(2π)/2 term)
+    KLdiv = sum(@. (σq2 + pow2(μr0 - μq0)) / σr2 + log(σr2 / σq2)) / (2*Nbatch) # KL-divergence contribution to cross-entropy (Note: dropped constant -Zdim/2 term)
+    ELBO = sum(@. pow2(xout - μx0) / σx2 + log(σx2)) / (2*Nbatch) # Negative log-likelihood/ELBO contribution to cross-entropy (Note: dropped constant +Zdim*log(2π)/2 term)
 
     return gamma * ELBO + KLdiv
 end
 
 # KL-divergence contribution to cross-entropy
 function KL_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where {T}
-    μr0, σr = split_mean_std(m.E1(y))
-    μq0, σq = split_mean_std(m.E2((x,y)))
+    μr0, σr = split_dim1(m.E1(y))
+    μq0, σq = split_dim1(m.E2((x,y)))
 
     Zdim, Nbatch = size(μq0,1), size(x,2)
-    σr2, σq2 = square.(σr), square.(σq)
+    σr2, σq2 = pow2.(σr), pow2.(σq)
 
-    KLdiv = sum(@. (σq2 + square(μr0 - μq0)) / σr2 + log(σr2 / σq2)) / (2*Nbatch) # KL-divergence contribution to cross-entropy (Note: dropped constant -Zdim/2 term)
+    KLdiv = sum(@. (σq2 + pow2(μr0 - μq0)) / σr2 + log(σr2 / σq2)) / (2*Nbatch) # KL-divergence contribution to cross-entropy (Note: dropped constant -Zdim/2 term)
 
     return KLdiv
 end
 
 # Negative log-likelihood/ELBO loss function
 function L_LIGOCVAE(m::LIGOCVAE, x::AbstractArray{T}, y::AbstractArray{T}) where {T}
-    μq0, σq = split_mean_std(m.E2((x,y)))
+    μq0, σq = split_dim1(m.E2((x,y)))
     zq = sample_mv_normal(μq0, σq)
-    μx0, σx = split_mean_std(m.D((zq,y)))
+    μx0, σx = split_dim1(m.D((zq,y)))
 
     Zdim, Xout, Nbatch = size(zq,1), size(μx0,1), size(x,2)
-    σx2, xout = square.(σx), x[1:Xout,:]
+    σx2, xout = pow2.(σx), x[1:Xout,:]
 
-    ELBO = sum(@. square(xout - μx0) / σx2 + log(σx2)) / (2*Nbatch) # Negative log-likelihood/ELBO contribution to cross-entropy (Note: dropped constant +Zdim*log(2π)/2 term)
+    ELBO = sum(@. pow2(xout - μx0) / σx2 + log(σx2)) / (2*Nbatch) # Negative log-likelihood/ELBO contribution to cross-entropy (Note: dropped constant +Zdim*log(2π)/2 term)
 
     return ELBO
 end

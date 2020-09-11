@@ -1,7 +1,7 @@
 using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 
-using MAT, BSON, TOML, DataFrames
+using MAT, BSON, Pkg.TOML, DataFrames
 using Statistics, StatsPlots
 pyplot(size = (800,600))
 empty!(Revise.queue_errors);

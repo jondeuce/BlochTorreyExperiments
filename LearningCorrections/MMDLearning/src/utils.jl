@@ -8,7 +8,7 @@ function load_settings(
     # Load default settings + merge in custom settings, if given
     settings = TOML.parsefile(default_settings_file)
     mergereducer!(x, y) = deepcopy(y) # fallback
-    mergereducer!(x::Dict, y::Dict) = merge!(mergereducer!, x, y)
+    mergereducer!(x::AbstractDict, y::AbstractDict) = merge!(mergereducer!, x, y)
     haskey(ENV, "SETTINGSFILE") && merge!(mergereducer!, settings, TOML.parsefile(ENV["SETTINGSFILE"]))
 
     # Save + print resulting settings
@@ -27,7 +27,7 @@ end
 ####
 
 getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
-savebson(filename, data::Dict) = @elapsed BSON.bson(filename, data)
+savebson(filename, data::AbstractDict) = @elapsed BSON.bson(filename, data)
 # gitdir() = realpath(DrWatson.projectdir(".."))
 
 function handleinterrupt(e; msg = "Error")
@@ -43,13 +43,13 @@ function handleinterrupt(e; msg = "Error")
 end
 
 # previously: saveprogress(savefolder, prefix, suffix)
-function saveprogress(savedata::Dict; savefolder, prefix = "", suffix = "")
+function saveprogress(savedata::AbstractDict; savefolder, prefix = "", suffix = "")
     !isdir(savefolder) && mkpath(savefolder)
     for (key, data) in savedata
         try
             BSON.bson(
                 joinpath(savefolder, "$(prefix)$(key)$(suffix).bson"),
-                Dict{String,Any}(string(key) => deepcopy(data)),
+                Dict{String,Any}(string(key) => deepcopy(Flux.cpu(data))),
             )
         catch e
             handleinterrupt(e; msg = "Error saving progress")
@@ -58,7 +58,7 @@ function saveprogress(savedata::Dict; savefolder, prefix = "", suffix = "")
 end
 
 # previously: saveplots(savefolder, prefix, suffix, plothandles)
-function saveplots(plothandles::Dict; savefolder, prefix = "", suffix = "", ext = ".png")
+function saveplots(plothandles::AbstractDict; savefolder, prefix = "", suffix = "", ext = ".png")
     !isdir(savefolder) && mkpath(savefolder)
     try
         for (name, p) in plothandles
@@ -194,7 +194,7 @@ function make_val_err_cb(state, lossfun, accfun, laberrfun, val_set)
     function()
         update_time = @elapsed begin
             if !isempty(state)
-                row = findlast(==(:val), state.dataset)
+                row = findlast(===(:val), state.dataset)
                 state[row, :loss]     = Flux.cpu(lossfun(val_set...))
                 state[row, :acc]      = Flux.cpu(accfun(val_set...))
                 state[row, :labelerr] = Flux.cpu(laberrfun(val_set...))
@@ -226,7 +226,7 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
             min_epoch = max(1, min(state[end, :epoch] - window, window))
             df = state[(state.dataset .== dataset) .& (min_epoch .<= state.epoch), :]
 
-            commonkw = (xscale = :log10, xticks = log10ticks(df[1, :epoch], df[end, :epoch]), xrotation = 75.0, xformatter = x->string(round(Int,x)), lw = 3, titlefontsize = 8, tickfontsize = 6, legend = :best, legendfontsize = 6)
+            commonkw = (xscale = :log10, xticks = log10ticks(df[1, :epoch], df[end, :epoch]), xrotation = 75.0, lw = 3, titlefontsize = 8, tickfontsize = 6, legend = :best, legendfontsize = 6) #TODO xformatter = s
             logspacing!(dfp) = isempty(dfp) ? dfp : unique(round.(Int, 10.0 .^ range(log10.(dfp.epoch[[1,end]])...; length = 10000))) |> I -> length(I) ≥ 5000 ? deleterows!(dfp, findall(!in(I), dfp.epoch)) : dfp
 
             dfp = logspacing!(dropmissing(df[!, [:epoch, :loss]]))
@@ -310,7 +310,7 @@ function make_plot_ligocvae_losses_cb(state, filename = nothing)
                     dfp = logspacing!(dropmissing(state[(state.dataset .== dataset) .& (min_epoch .<= state.epoch), [:epoch, :ELBO, :KL, :loss]]))
                     p = plot()
                     if !isempty(dfp)
-                        commonkw = (xaxis = (:log10, log10ticks(dfp[1, :epoch], dfp[end, :epoch])), xrotation = 60.0, legend = :best, lw = 3, xformatter = x->string(round(Int,x)))
+                        commonkw = (xaxis = (:log10, log10ticks(dfp[1, :epoch], dfp[end, :epoch])), xrotation = 60.0, legend = :best, lw = 3) #TODO xformatter = s
                         pKL   = plot(dfp.epoch, dfp.KL;   title =   "KL vs. epoch ($dataset): max = $(round(maximum(dfp.KL);   sigdigits = 4))", lab = "KL",   c = :orange, commonkw...)
                         pELBO = plot(dfp.epoch, dfp.ELBO; title = "ELBO vs. epoch ($dataset): min = $(round(minimum(dfp.ELBO); sigdigits = 4))", lab = "ELBO", c = :blue,   commonkw...)
                         pH    = plot(dfp.epoch, dfp.loss; title =    "H vs. epoch ($dataset): min = $(round(minimum(dfp.loss); sigdigits = 4))", lab = "loss", c = :green,  commonkw...)
@@ -418,7 +418,7 @@ function initialize_callback(phys::ToyModel; nsamples::Int)
 end
 
 #=
-function initialize_callback!(cb_state::Dict, phys::EPGModel)
+function initialize_callback!(cb_state::AbstractDict, phys::EPGModel)
     # Sample X and θ randomly, but choose Ys + corresponding fits consistently in order to compare models, and choose Ys with reasonable agreeance with data in order to not be overconfident in improving terrible fits
     Xval = sampleX(settings["gan"]["batchsize"]; dataset = :val)
     θval = sampleθ(settings["gan"]["batchsize"]; dataset = :val)
@@ -445,7 +445,7 @@ end
 =#
 
 function update_callback!(
-        cb_state::Dict,
+        cb_state::AbstractDict,
         phys::PhysicsModel,
         G::RicianCorrector;
         ninfer::Int,
@@ -538,18 +538,28 @@ function update_callback!(
 end
 
 ####
-#### GAN Plots
+#### Plots
 ####
 
 function plot_gan_loss(logger, cb_state, phys; window = 100, lrdroprate = typemax(Int), lrdrop = 1.0, showplot = false)
     @timeit "gan loss plot" try
-        epoch = logger.epoch[end]
-        dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, logger)
+        dfp = logger[logger.dataset .=== :val, :]
+        epoch = dfp.epoch[end]
+        dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, dfp)
         dfp = dropmissing(dfp[:, [:epoch, :Gloss, :Dloss, :D_Y, :D_G_X]])
         if !isempty(dfp)
-            p = plot(dfp.epoch, [dfp.Gloss dfp.Dloss dfp.D_Y dfp.D_G_X]; label = ["G loss" "D loss" "D(Y)" "D(G(X))"], lw = 2)
-            (epoch >= lrdroprate) && plot!(p, lrdroprate : lrdroprate : epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)", seriestype = :vline)
-            p = plot!(p; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
+            s = x -> (x == round(Int, x) ? round(Int, x) : round(x; sigdigits = 4)) |> string
+            ps = [
+                plot(dfp.epoch, dfp.Dloss; label = "D loss", lw = 2, c = :red),
+                plot(dfp.epoch, dfp.Gloss; label = "G loss", lw = 2, c = :blue),
+                plot(dfp.epoch, [dfp.D_Y dfp.D_G_X]; label = ["D(Y)" "D(G(X))"], c = [:red :blue], lw = 2),
+                plot(dfp.epoch, dfp.D_Y - dfp.D_G_X; label = "D(Y) - D(G(X))", c = :green, lw = 2),
+            ]
+            (epoch >= lrdroprate) && map(ps) do p
+                plot!(p, lrdroprate : lrdroprate : epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)", seriestype = :vline)
+                plot!(p; xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
+            end
+            p = plot(ps...)
         else
             p = nothing
         end
@@ -569,9 +579,13 @@ function plot_rician_model(logger, cb_state, phys; bandwidths = nothing, showplo
             plot(mean(ϵθ; dims = 2); yerr = std(ϵθ; dims = 2), label = L"noise amplitude $\exp(g_\epsilon(X))$", c = :blue);
             layout = (2,1),
         ))
-        !isnothing(bandwidths) && push!(_subplots, plot(
-            bandwidths; leg = :none, title = "logσ vs. data channel"
-        ))
+        if !isnothing(bandwidths)
+            if (bandwidths isa AbstractVector) || (bandwidths isa AbstractMatrix && size(bandwidths,1) == 1)
+                push!(_subplots, scatter(1:length(bandwidths), vec(bandwidths); label = "logσ", title = "logσ"))
+            else
+                push!(_subplots, plot(bandwidths; leg = :none, title = "logσ vs. data channel"))
+            end
+        end
         p = plot(_subplots...)
         showplot && !isnothing(p) && display(p)
         return p
@@ -609,21 +623,22 @@ end
 
 function plot_mmd_losses(logger, cb_state, phys; window = 100, lrdroprate = typemax(Int), lrdrop = 1.0, showplot = false)
     @timeit "mmd loss plot" try
-        epoch = logger.epoch[end]
         s = x -> x == round(x) ? round(Int, x) : round(x; sigdigits = 4)
-        dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, logger)
+        dfp = logger[logger.dataset .=== :val, :]
+        epoch = dfp.epoch[end]
+        dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, dfp)
         if !isempty(dfp)
             tstat_nan_outliers = map((_tstat, _mmdvar) -> _mmdvar > eps() ? _tstat : NaN, dfp.tstat, dfp.MMDvar)
             tstat_drop_outliers = filter(!isnan, tstat_nan_outliers)
             tstat_median = isempty(tstat_drop_outliers) ? NaN : median(tstat_drop_outliers)
             tstat_ylim = isempty(tstat_drop_outliers) ? nothing : quantile(tstat_drop_outliers, [0.01, 0.99])
-            p1 = plot(dfp.epoch, dfp.MMDsq; label = "m*MMD²", title = "median loss = $(s(median(logger.MMDsq)))") # ylim = quantile(logger.MMDsq, [0.01, 0.99])
-            p2 = plot(dfp.epoch, dfp.MMDvar; label = "m²MMDvar", title = "median m²MMDvar = $(s(median(logger.MMDvar)))") # ylim = quantile(logger.MMDvar, [0.01, 0.99])
+            p1 = plot(dfp.epoch, dfp.MMDsq; label = "m*MMD²", title = "median loss = $(s(median(dfp.MMDsq)))") # ylim = quantile(dfp.MMDsq, [0.01, 0.99])
+            p2 = plot(dfp.epoch, dfp.MMDvar; label = "m²MMDvar", title = "median m²MMDvar = $(s(median(dfp.MMDvar)))") # ylim = quantile(dfp.MMDvar, [0.01, 0.99])
             p3 = plot(dfp.epoch, tstat_nan_outliers; title = "median t = $(s(tstat_median))", label = "t = MMD²/MMDσ", ylim = tstat_ylim)
-            p4 = plot(dfp.epoch, dfp.P_alpha; label = "P_α", title = "median P_α = $(s(median(logger.P_alpha)))", ylim = (0,1))
+            p4 = plot(dfp.epoch, dfp.P_alpha; label = "P_α", title = "median P_α = $(s(median(dfp.P_alpha)))", ylim = (0,1))
             foreach([p1,p2,p3,p4]) do p
                 (epoch >= lrdroprate) && vline!(p, lrdroprate : lrdroprate : epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
-                plot!(p; xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
+                plot!(p; xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
             end
             p = plot(p1, p2, p3, p4)
         else
@@ -638,9 +653,10 @@ end
 
 function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = false)
     @timeit "theta inference plot" try
-        epoch = logger.epoch[end]
-        s = x -> x == round(x) ? round(Int, x) : round(x; sigdigits = 4)
-        dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, logger)
+        s = x -> (x == round(Int, x) ? round(Int, x) : round(x; sigdigits = 4)) |> string
+        dfp = logger[logger.dataset .=== :val, :]
+        epoch = dfp.epoch[end]
+        dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, dfp)
         df_inf = filter(dfp) do r
             !ismissing(r.Xhat_rmse) && !ismissing(r.Xhat_logL) && !(hasclosedform(phys) && ismissing(r.theta_err))
         end
@@ -660,8 +676,8 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
                 let
                     _subplots = Any[]
                     if hasclosedform(phys)
-                        prmse = plot(dfp.epoch, dfp.rmse; title = "min rmse = $(s(minimum(dfp.rmse)))", label = L"rmse: $Y(\hat{\theta}) - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$", xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
-                        pθerr = plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.theta_err)); title = "min max error = $(s(minimum(maximum.(df_inf.theta_err))))", label = permutedims(θlabels(phys)), xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
+                        prmse = plot(dfp.epoch, dfp.rmse; title = "min rmse = $(s(minimum(dfp.rmse)))", label = L"rmse: $Y(\hat{\theta}) - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$", xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
+                        pθerr = plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.theta_err)); title = "min max error = $(s(minimum(maximum.(df_inf.theta_err))))", label = permutedims(θlabels(phys)), xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
                         append!(_subplots, [prmse, pθerr])
                     end
 
@@ -670,8 +686,8 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
                         rmselab *= "\nrmse prior: $(round(mean(phys.valfits.rmse); sigdigits = 4))"
                         logLlab *= "\n-logL prior: $(round(mean(phys.valfits.loss); sigdigits = 4))"
                     end
-                    prmse = plot(df_inf.epoch, df_inf.Xhat_rmse; title = "min rmse = $(s(minimum(df_inf.Xhat_rmse)))", lab = rmselab, xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10))
-                    plogL = plot(df_inf.epoch, df_inf.Xhat_logL; title = "min -logL = $(s(minimum(df_inf.Xhat_logL)))", lab = logLlab, xformatter = x -> string(round(Int, x)), xscale = ifelse(epoch < 10*window, :identity, :log10), ylims = (-Inf, min(-100, maximum(df_inf.Xhat_logL))))
+                    prmse = plot(df_inf.epoch, df_inf.Xhat_rmse; title = "min rmse = $(s(minimum(df_inf.Xhat_rmse)))", lab = rmselab, xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
+                    plogL = plot(df_inf.epoch, df_inf.Xhat_logL; title = "min -logL = $(s(minimum(df_inf.Xhat_logL)))", lab = logLlab, xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO ylims = (-Inf, min(-100, maximum(df_inf.Xhat_logL)))), xformatter = s
                     append!(_subplots, [prmse, plogL])
 
                     plot(_subplots...)
@@ -708,18 +724,31 @@ function plot_vae_rician_signals(logger, cb_state, phys; showplot = false)
     end
 end
 
-function plot_selfcvae_losses(logger, cb_state, phys;
-        colnames = [:loss, :Zreg, :KLdiv, :ELBO, :MMDsq, :Xhat_logL, :Xhat_rmse, :Yhat_logL, :Yhat_rmse],
+function plot_all_logger_losses(logger, cb_state, phys;
+        colnames = setdiff(propertynames(logger), [:epoch, :iter, :dataset, :time]),
+        dataset = :val,
         window = 100,
         showplot = false,
     )
     @timeit "signal plot" try
-        epoch = logger.epoch[end]
-        dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, logger)
-        ps = map(colnames) do colname
-            plot(dfp.epoch, dfp[!, colname]; lab = string(colname), xscale = ifelse(epoch < 10*window, :identity, :log10))
+        s = x -> (x == round(Int, x) ? round(Int, x) : round(x; sigdigits = 4)) |> string
+        dfp = logger[logger.dataset .=== dataset, :]
+        epoch = dfp.epoch[end]
+        dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, dfp)
+        ps = map(sort(colnames)) do colname
+            i = (!ismissing).(dfp[!, colname])
+            if any(i)
+                xdata = dfp.epoch[i]
+                ydata = dfp[i, colname]
+                if ydata[1] isa AbstractArray
+                    ydata = permutedims(reduce(hcat, vec.(ydata)))
+                end
+                plot(xdata, ydata; lab = :none, title = string(colname), titlefontsize = 6, ytickfontsize = 6, xtickfontsize = 6, xscale = ifelse(epoch < 10*window, :identity, :log10))
+            else
+                nothing
+            end
         end
-        p = plot(ps...)
+        p = plot(filter(!isnothing, ps)...)
         showplot && !isnothing(p) && display(p)
         return p
     catch e

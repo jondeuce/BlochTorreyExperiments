@@ -121,7 +121,7 @@ D_Y_loss(Y) = models["D"](Y) # discrim on real data
 D_G_X_loss(X) = models["D"](corrected_signal_instance(ricegen, X)) # discrim on genatr data
 Dloss(X,Y) = -mean(log.(D_Y_loss(Y)) .+ log.(1 .- D_G_X_loss(X)))
 Gloss(X) = mean(log.(1 .- D_G_X_loss(X)))
-MMDloss(X,Y) = size(Y,2) * mmd_flux(models["logsigma"], corrected_signal_instance(ricegen, X), Y) # m*MMD^2 on genatr data
+MMDloss(X,Y) = size(Y,2) * mmd(MMDLearning.ExponentialKernel(models["logsigma"]), corrected_signal_instance(ricegen, X), Y) # m*MMD^2 on genatr data
 
 # Global state
 const logger = DataFrame(
@@ -305,7 +305,7 @@ trainer.add_event_handler(
 
 # Checkpoint current model + logger + make plots
 trainer.add_event_handler(
-    ignite.engine.Events.EPOCH_COMPLETED(event_filter = @j2p event_throttler(settings["eval"]["saveperiod"])),
+    ignite.engine.Events.EPOCH_COMPLETED(event_filter = @j2p throttler_event_filter(settings["eval"]["saveperiod"])),
     @j2p function (engine)
         @timeit "checkpoint" begin
             @timeit "save current model" saveprogress(@dict(models, optimizers, logger); savefolder = settings["data"]["out"], prefix = "current-")
@@ -364,7 +364,7 @@ trainer.add_event_handler(
 
 # Timeout
 trainer.add_event_handler(
-    ignite.engine.Events.EPOCH_COMPLETED(event_filter = @j2p run_timeout(settings["train"]["timeout"])),
+    ignite.engine.Events.EPOCH_COMPLETED(event_filter = @j2p timeout_event_filter(settings["train"]["timeout"])),
     @j2p function (engine)
         @info "Exiting: training time exceeded $(DECAES.pretty_time(settings["train"]["timeout"]))"
         engine.terminate()
