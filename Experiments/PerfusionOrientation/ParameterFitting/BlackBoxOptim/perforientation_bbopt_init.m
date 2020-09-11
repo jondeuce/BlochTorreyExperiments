@@ -68,7 +68,8 @@ Weights = Weights / sum(vec(Weights));
 
 % ======================== BLOCH-TORREY SETTINGS ======================== %
 
-Nmajor = 5;
+Nmajor = str2double(getenv('Nmajor'));
+% Nmajor = 5;
 Rminor_mu = 6.0; % Mean vessel size from Shen et al. (MRM 2012 https://onlinelibrary.wiley.com/doi/full/10.1002/mrm.24258)
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7; % Jochimsen et al. (Neuroimage 2010 https://www.sciencedirect.com/science/article/pii/S1053811910002053)
@@ -81,7 +82,8 @@ Rmedium_thresh = 0.0; % Minor vessels with radii > Rmedium_thresh are surrounded
 % D_VRS = []; %[um^2/s]
 % MaskType = '';
 
-D_Tissue = 1500; %[um^2/s]
+D_Tissue = 1000 * str2double(getenv('Dtissue')); %[um^2/s]
+% D_Tissue = 2000; %[um^2/s]
 D_Blood = 3037; %[um^2/s]
 D_VRS = 3037; %[um^2/s]
 % MaskType = 'Vasculature'; % only true in Vasc.
@@ -117,7 +119,8 @@ MinorArterialFrac = 0.0;
 % VRSRelativeRad = sqrt(2); % sqrt(2X) => 1X volume
 % VRSRelativeRad = sqrt(2.5); % sqrt(2.5X) => 1.5X volume
 % VRSRelativeRad = sqrt(3); % sqrt(3X) => 2X volume
-VRSRelativeRad = 2; % 2X => 3X volume
+% VRSRelativeRad = 2; % 2X => 3X volume
+VRSRelativeRad = sqrt(1 + str2double(getenv('PVSvolume')));
 
 PlotFigs = true;
 SaveFigs = true;
