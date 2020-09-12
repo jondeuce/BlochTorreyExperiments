@@ -1,6 +1,6 @@
 #!/bin/bash
-#PBS -l walltime=48:00:00,select=4:ncpus=32:mem=64gb
-# #PBS -l walltime=3:00:00,select=2:ncpus=16:mem=32gb
+#PBS -l walltime=48:00:00,select=4:ncpus=32:ompthreads=32:mem=64gb
+# #PBS -l walltime=3:00:00,select=2:ncpus=16:ompthreads=16:mem=32gb
 # #PBS -I
 # #PBS -X
 # #PBS -q interactive_cpu

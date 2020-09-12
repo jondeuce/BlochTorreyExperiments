@@ -4,6 +4,7 @@
 export JULIA_PATH=/home/jcd1994/julia-1.5.1/bin/julia
 export JULIA_PROJECT=/project/st-arausch-1/jcd1994/code/BlochTorreyExperiments-active/Experiments/PerfusionOrientation/ParameterFitting/BlackBoxOptim #TODO
 export JULIA_SCRIPT=${JULIA_PROJECT}/perforientation_bbopt.jl
+export JULIA_NUM_THREADS=1024
 export SWEEP_DIR=$PWD
 
 JOBCOUNTER=0
@@ -15,6 +16,16 @@ for Nmajor in {1..9} # Number of major vessels
 do
 JOBCOUNTER=$(expr $JOBCOUNTER + 1)
 echo "Job #${JOBCOUNTER}"
+
+# Re-do failed runs
+# __REDO_LIST__="1 2 3"
+# if [[ $__REDO_LIST__ =~ (^|[[:space:]])"$JOBCOUNTER"($|[[:space:]]) ]]
+# then
+# echo "Job #${JOBCOUNTER}"
+# else
+# continue
+# echo "---ERROR---: $JOBCOUNTER" # never reached
+# fi
 
 # Job settings
 export JOB_DIR=${SWEEP_DIR}/Job-${JOBCOUNTER}_Dtissue-${Dtissue}_Nmajor-${Nmajor}_PVSvolume-${PVSvolume}
