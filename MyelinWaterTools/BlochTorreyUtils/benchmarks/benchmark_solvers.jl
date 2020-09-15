@@ -1,4 +1,8 @@
-include(realpath(joinpath(@__DIR__,"../../initpaths.jl")))
+# Initialization project/code loading
+import Pkg
+Pkg.activate(joinpath(@__DIR__, "../.."))
+# Pkg.instantiate()
+
 using Test, BenchmarkTools
 using Parameters: @unpack
 # using SparseArrays, LinearAlgebra, Statistics

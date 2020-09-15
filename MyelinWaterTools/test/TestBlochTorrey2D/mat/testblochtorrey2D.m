@@ -101,7 +101,7 @@ DefaultArgs = struct( ...
     'R2_sp',         1/15e-3, ...       % %TODO (play with these?) Relaxation rate of small pool [s^-1] (Myelin) (Xu et al. 2017) (15e-3s)
     'R2_lp',         1/63e-3, ...       % %TODO (play with these?) 1st attempt was 63E-3. 2nd attempt 76 ms
     'R2_Tissue',     1/63e-3, ...       % %TODO (was 14.5Hz; changed to match R2_lp) Relaxation rate of tissue [s^-1]
-    'R2_water',      1/2.2, ...         % Relaxation rate of pure water
+    'R2_Water',      1/2.2, ...         % Relaxation rate of pure water
     'D_Tissue',      1500.0, ...        % %TODO (reference?) Diffusion coefficient in tissue [um^2/s]
     'D_Sheath',      250.0, ...         % %TODO (reference?) Diffusion coefficient in myelin sheath [um^2/s]
     'D_Axon',        2000.0, ...        % %TODO (reference?) Diffusion coefficient in axon interior [um^2/s]
@@ -120,14 +120,13 @@ DefaultArgs = struct( ...
     'ChiA',          -120e-9, ...       % Anisotropic Susceptibility of myelin [ppb] (Xu et al. 2017)
     'E',             10e-9, ...         % Exchange component to resonance freqeuency [ppb] (Wharton and Bowtell 2012)
     'R2_Fe',         1/1e-6, ...        % Relaxation rate of iron in ferritin. Assumed to be really high.
-    'R2_WM',         1/70e-3, ...       % Relaxation rate of frontal WM. This is empirical;taken from literature. (original 58.403e-3) (patient 58.4717281111171e-3)
     'R_Ferritin',    4.0e-3, ...        % Ferritin mean radius [um].
-    'R_conc',        0.0, ...           % Conntration of iron in the frontal white matter. [mg/g] (0.0424 in frontal WM) (0.2130 in globus pallidus; deep grey matter)
-    'Rho_tissue',    1.073, ...         % White matter tissue density [g/ml]
-    'ChiTissue',     -9.05e-6, ...      % Isotropic susceptibility of tissue
-    'ChiFeUnit',     1.4e-9, ...        % Susceptibility of iron per ppm/ (ug/g) weight fraction of iron.
-    'ChiFeFull',     520.0e-6, ...      % Susceptibility of iron for ferritin particle FULLY loaded with 4500 iron atoms. (use volume of FULL spheres) (from Contributions to magnetic susceptibility)
-    'Rho_Iron',      7.874, ...         % Iron density [g/cm^3]
+    'Fe_Conc',       0.0, ...           % Concentration of iron in the frontal white matter. [mg/g] (0.0424 in frontal WM) (0.2130 in globus pallidus; deep grey matter)
+    'Rho_Tissue',    1.073, ...         % White matter tissue density [g/ml]
+    'Chi_Tissue',    -9.05e-6, ...      % Isotropic susceptibility of tissue
+    'Chi_FeUnit',    1.4e-9, ...        % Susceptibility of iron per ppm/ (ug/g) weight fraction of iron.
+    'Chi_FeFull',    520.0e-6, ...      % Susceptibility of iron for ferritin particle FULLY loaded with 4500 iron atoms. (use volume of FULL spheres) (from Contributions to magnetic susceptibility)
+    'Rho_Fe',        7.874, ...         % Iron density [g/cm^3]
     'Npts',          101, ...           % Number of points per dimension
     'Domain',        [-1,1], ...        % Bounds for side of square domain
     'R_outer_rel',   1, ...             % Outer radius relative to R_mu

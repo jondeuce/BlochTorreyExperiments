@@ -125,18 +125,6 @@ end
 integrate(u::AbstractVector{uType}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = integrate(reinterpret(Tu, u), domain)
 integrate(u::AbstractVector{Tu}, domain::AbstractDomain{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = _integrate(u, domain)
 
-####
-#### "Vectorized" interpolation
-####
-
-# interpolate!(U::VectorOfVectors, f::Function, domains::VectorOfDomains) = map!((u,d) -> interpolate!(u, f, d), U, U, domains)
-# interpolate(f::Function, domains::VectorOfDomains{Tu,uType}) where {Tu,uType<:FieldType{Tu}} = interpolate!(VectorOfVectors{Tu}[zeros(Tu, ndofs(d)) for d in domains], f, domains)
-# interpolate(f::Function, domains::VectorOfDomains{Tu,uType}) where {Tu,uType<:Complex{Tu}} = interpolate!(VectorOfVectors{uType}[zeros(uType, ndofs(d)) for d in domains], f, domains)
-
-# interpolate!(U::VectorOfVectors, u0::FieldType, domains::VectorOfDomains) = map!((u,d) -> interpolate!(u, u0, d), U, U, domains)
-# interpolate(u0::uType, domains::VectorOfDomains{Tu,uType}) where {Tu, uType<:FieldType{Tu}} = interpolate!(VectorOfVectors{Tu}[zeros(Tu, ndofs(d)) for d in domains], u0, domains)
-# interpolate(u0::uType, domains::VectorOfDomains{Tu,uType}) where {Tu, uType<:Complex{Tu}} = interpolate!(VectorOfVectors{uType}[zeros(uType, ndofs(d)) for d in domains], u0, domains)
-
 # ---------------------------------------------------------------------------- #
 # ParabolicDomain methods
 # ---------------------------------------------------------------------------- #
@@ -231,22 +219,21 @@ end
 Base.show(io::IO, m::MyelinDomain) = print(io, "$(typeof(m)) with $(ndofs(m)) degrees of freedom and $(numfibres(m)) fibres")
 
 function createmyelindomains(
-        tissuegrids::AbstractVector{G},#{Grid{gDim,Nd,T,Nf}},
-        myelingrids::AbstractVector{G},#{Grid{gDim,Nd,T,Nf}},
-        axongrids::AbstractVector{G},#{Grid{gDim,Nd,T,Nf}},
-        outercircles::AbstractVector{C},#{Circle{2,T}},
-        innercircles::AbstractVector{C},#{Circle{2,T}},
-        ferritins::AbstractVector{V} = V[],#{Vec{3,T}} = Vec{3,T}[],
-        ::Type{uType} = Vec{2,T}; #Default to same float type as grid
+        tissuegrids::AbstractVector{<:TriangularGrid},
+        myelingrids::AbstractVector{<:TriangularGrid},
+        axongrids::AbstractVector{<:TriangularGrid},
+        outercircles::AbstractVector{<:Circle},
+        innercircles::AbstractVector{<:Circle},
+        ferritins::AbstractVector{<:Vec{3}} = Vec{3,floattype(eltype(tissuegrids))}[],
+        ::Type{uType} = Vec{2,floattype(eltype(tissuegrids))};
         kwargs...
-    ) where {T, G<:TriangularGrid{T}, C<:Circle{2,T}, V<:Vec{3,T}, Tu, uType<:FieldType{Tu}}
+    ) where {Tu, uType <: FieldType{Tu}}
 
     @assert length(outercircles) == length(innercircles) == length(myelingrids) == length(axongrids)
 
     isgridempty(g::Grid) = (getnnodes(g) == 0 || getncells(g) == 0)
 
-    Mtype = TriangularMyelinDomain{R,Tu,uType,T,DType} where {R,DType}
-    ms = Vector{Mtype}()
+    ms = Vector{TriangularMyelinDomain{R,Tu,uType} where {R}}()
 
     for (i, a) in enumerate(axongrids)
         isgridempty(a) && continue
@@ -271,43 +258,38 @@ end
 function MyelinDomain(
         region::PermeableInterfaceRegion,
         prob::MyelinProblem,
-        ms::AbstractVector{<:TriangularMyelinDomain{R,Tu,uType,T} where R}
-    ) where {Tu,uType,T}
+        ms::AbstractVector{<:TriangularMyelinDomain{R,Tu,uType} where R},
+    ) where {Tu,uType}
     domain = ParabolicDomain(region, prob, ms)
-    myelindomain = TriangularMyelinDomain{typeof(region),Tu,uType,T,typeof(domain)}(
+    myelindomain = TriangularMyelinDomain{typeof(region),Tu,uType}(
         region,
         domain,
-        ms[1].outercircles, # assume these are the same for all domains
-        ms[1].innercircles, # assume these are the same for all domains
-        ms[1].ferritins # assume these are the same for all domains
+        ms[1].outercircles, # these should be the same for all domains
+        ms[1].innercircles, # these should be the same for all domains
+        ms[1].ferritins # these should be the same for all domains
     )
     return myelindomain
 end
 
 function ParabolicDomain(
         region::PermeableInterfaceRegion,
-        prob::MyelinProblem,
-        ms::AbstractVector{<:TriangularMyelinDomain{R,Tu,uType,T} where {R}}
-    ) where {Tu,uType,T}
+        prob::MyelinProblem{Tu},
+        ms::AbstractVector{<:TriangularMyelinDomain{R,Tu,uType} where {R}},
+    ) where {Tu,uType}
 
     # Construct one large ParabolicDomain containing all grids
-    gDim, Nd, Nf = 2, 3, 3 # Triangular 2D domain
     grid = Grid(getgrid.(ms)) # combine grids into single large grid
-    
-    #TODO: This segfaults?
-    domain = ParabolicDomain(grid::Grid, uType::Type{<:FieldType};
-        refshape = getrefshape(ms[1])::JuAFEM.AbstractRefShape, # assume these are the same for all domains
-        quadorder = getquadorder(ms[1])::Int, # assume these are the same for all domains
-        funcinterporder = getfuncinterporder(ms[1])::Int, # assume these are the same for all domains
-        geominterporder = getgeominterporder(ms[1])::Int, # assume these are the same for all domains
+    gDim, Nd, Nf = 2, 3, 3 # Triangular 2D domain
+    @assert floattype(prob) == floattype(grid)
+
+    domain = ParabolicDomain(
+        grid,
+        uType;
+        refshape = getrefshape(ms[1]), # these should be the same for all domains
+        quadorder = getquadorder(ms[1]), # these should be the same for all domains
+        funcinterporder = getfuncinterporder(ms[1]), # these should be the same for all domains
+        geominterporder = getgeominterporder(ms[1]), # these should be the same for all domains
     )
-    # error("got here")
-    # domain = ParabolicDomain(grid, uType;
-    #     refshape = getrefshape(ms[1]), # assume these are the same for all domains
-    #     quadorder = getquadorder(ms[1]), # assume these are the same for all domains
-    #     funcinterporder = getfuncinterporder(ms[1]), # assume these are the same for all domains
-    #     geominterporder = getgeominterporder(ms[1]), # assume these are the same for all domains
-    # )
     domain.M = blockdiag(getmass.(ms)...)
     domain.K = blockdiag(getstiffness.(ms)...)
     domain.metadata[:subdomains] = deepcopy.(ms)
@@ -316,7 +298,7 @@ function ParabolicDomain(
     cells, nodes = getcells(getgrid(domain)), getnodes(getgrid(domain))
     boundaryfaceset = getfaceset(getgrid(domain), "boundary") # set of 2-tuples of (cellid, faceid)
     nodepairs = NTuple{2,Int}[JuAFEM.faces(cells[f[1]])[f[2]] for f in boundaryfaceset] # pairs of node indices
-    nodecoordpairs = NTuple{2,Vec{gDim,T}}[(getcoordinates(nodes[n[1]]), getcoordinates(nodes[n[2]])) for n in nodepairs] # pairs of node coordinates
+    nodecoordpairs = NTuple{2,Vec{gDim,Tu}}[(getcoordinates(nodes[n[1]]), getcoordinates(nodes[n[2]])) for n in nodepairs] # pairs of node coordinates
 
     # Sort pairs by midpoints and read off pairs
     bymidpoint = (np) -> (mid = (np[1] + np[2])/2; return norm2(mid), angle(mid))
@@ -326,7 +308,7 @@ function ParabolicDomain(
     @inbounds for i in 1:length(nodecoordindices)-1
         i1, i2 = nodecoordindices[i], nodecoordindices[i+1]
         np1, np2 = nodecoordpairs[i1], nodecoordpairs[i2]
-        if norm2(np1[1] - np2[2]) < eps(T) && norm2(np1[2] - np2[1]) < eps(T)
+        if norm2(np1[1] - np2[2]) < eps(Tu) && norm2(np1[2] - np2[1]) < eps(Tu)
             push!(interfaceindices, (nodepairs[i1]..., nodepairs[i2]...))
         end
     end
@@ -341,7 +323,7 @@ function ParabolicDomain(
     #         # For properly oriented triangles, the edge nodes will be stored in
     #         # opposite order coincident edges which share a triangle face, i.e.
     #         # np1[1] should equal np2[2], and vice-versa
-    #         if norm2(np1[1] - np2[2]) < eps(T) && norm2(np1[2] - np2[1]) < eps(T)
+    #         if norm2(np1[1] - np2[2]) < eps(Tu) && norm2(np1[2] - np2[1]) < eps(Tu)
     #             # The nodes are stored as e.g. np1 = (A,B) and np2 = (B,A).
     #             # We want to keep them in this order, as is expected by the
     #             # local stiffness matrix `Se` below
@@ -360,7 +342,7 @@ function ParabolicDomain(
     _Se = similar(Se) # temp matrix for storing ck * Se
 
     # S matrix global indices
-    Is, Js, Ss = Vector{Int}(), Vector{Int}(), Vector{Tu}()
+    Is, Js, Ss = Int[], Int[], Tu[]
     uDim = fielddim(uType)
     sizehint!(Is, length(Se) * uDim * length(interfaceindices))
     sizehint!(Js, length(Se) * uDim * length(interfaceindices))

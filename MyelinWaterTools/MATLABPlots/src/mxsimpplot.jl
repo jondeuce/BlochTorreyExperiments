@@ -50,8 +50,8 @@ function mxsimpplot(
     mxsimpplot(DistMesh.to_mat(p), DistMesh.to_mat(t); kwargs...)
 end
 
-mxsimpplot(g::G; kwargs...) where {G <: Grid{2,3}} = mxsimpplot(nodematrix(g), cellmatrix(g); kwargs...)
-mxsimpplot(gs::AbstractArray{G}; kwargs...) where {G <: Grid{2,3}} = mxsimpplot(nodecellmatrices(gs)...; kwargs...)
+mxsimpplot(g::G; kwargs...) where {G <: Grid{2,JuAFEM.Triangle}} = mxsimpplot(nodematrix(g), cellmatrix(g); kwargs...)
+mxsimpplot(gs::AbstractArray{G}; kwargs...) where {G <: Grid{2,JuAFEM.Triangle}} = mxsimpplot(nodecellmatrices(gs)...; kwargs...)
 
 ####
 #### mxsimpgif
@@ -92,5 +92,5 @@ function mxsimpgif(
     mxsimpgif(DistMesh.to_mat(p), DistMesh.to_mat(t); kwargs...)
 end
 
-mxsimpgif(g::G; kwargs...) where {G <: Grid{2,3}} = mxsimpgif(nodematrix(g), cellmatrix(g); kwargs...)
-mxsimpgif(gs::AbstractArray{G}; kwargs...) where {G <: Grid{2,3}} = mxsimpgif(nodecellmatrices(gs)...; kwargs...)
+mxsimpgif(g::G; kwargs...) where {G <: Grid{2,JuAFEM.Triangle}} = mxsimpgif(nodematrix(g), cellmatrix(g); kwargs...)
+mxsimpgif(gs::AbstractArray{G}; kwargs...) where {G <: Grid{2,JuAFEM.Triangle}} = mxsimpgif(nodecellmatrices(gs)...; kwargs...)

@@ -6,73 +6,87 @@ const MassType{T} = Union{<:SparseMatrixCSC{T}, <:Symmetric{T,<:SparseMatrixCSC{
 const MassFactType{T} = Factorization{T}
 const StiffnessType{T} = SparseMatrixCSC{Tc} where {Tc<:Union{T,Complex{T}}}
 const VectorOfVectors{T} = AbstractVector{<:AbstractVector{T}}
-const TriangularGrid{T} = Grid{2,3,T,3}
+const TriangularGrid{T} = Grid{2,JuAFEM.Triangle,T}
 const MyelinBoundary{gDim,T} = Union{Circle{gDim,T}, Rectangle{gDim,T}, Ellipse{gDim,T}}
 
 # ---------------------------------------------------------------------------- #
 # BlochTorreyParameters
 #   Physical parameters needed for Bloch-Torrey simulations
 # ---------------------------------------------------------------------------- #
-@with_kw struct BlochTorreyParameters{T}
-    B0::T           = T(-3.0) # ................................. [T]        External magnetic field (z-direction)
-    gamma::T        = T(2.67515255e8) # ......................... [rad/s/T]  Gyromagnetic ratio
-    theta::T        = T(π)/2 # .................................. [rad]      Main magnetic field angle w.r.t B0
-    R1_sp::T        = T(inv(200e-3)) # .......................... [1/s]      1/T1 relaxation rate of small pool (myelin) water [REF: TODO]
-    R1_lp::T        = T(inv(1084e-3)) # ......................... [1/s]      1/T1 relaxation rate of large pool (intra-cellular/axonal) water [REF: TODO]
-    R1_Tissue::T    = T(inv(1084e-3)) # ......................... [1/s]      1/T1 relaxation rate of white matter tissue [REF: 1084 ± 45; https://www.ncbi.nlm.nih.gov/pubmed/16086319]
-    R2_sp::T        = T(inv(15e-3)) # ........................... [1/s]      TODO (play with these?) Relaxation rate of small pool (Myelin) (Xu et al. 2017) (15e-3s)
-    R2_lp::T        = T(inv(63e-3)) # ........................... [1/s]      TODO (play with these?) 1st attempt was 63E-3. 2nd attempt 76 ms
-    R2_Tissue::T    = T(inv(63e-3)) # ........................... [1/s]      TODO (was 14.5Hz; changed to match R2_lp) Relaxation rate of tissue
-    R2_water::T     = T(inv(2.2)) # ............................. [1/s]      Relaxation rate of pure water
-    D_Water::T      = T(3037.0) # ............................... [um^2/s]   Diffusion coefficient in water
-    D_Blood::T      = T(3037.0) # ............................... [um^2/s]   Diffusion coefficient in blood
-    D_Tissue::T     = T(1500.0) # ............................... [um^2/s]   TODO (reference?) Diffusion coefficient in tissue
-    D_Sheath::T     = T(1000.0) # ............................... [um^2/s]   TODO (reference?) Mean diffusivity coefficient in myelin sheath
-    D_Axon::T       = T(2000.0) # ............................... [um^2/s]   TODO (reference?) Diffusion coefficient in axon interior
-    FRD_Sheath::T   = T(0.5) # .................................. [unitless] TODO (reference?) Fractional radial diffusivity within myelin sheath; FRD ∈ [0,1] where 0 is purely polar, 0.5 is isotropic, and 1 is purely radial
+@with_kw struct BlochTorreyParameters{T<:Real} @deftype T
+    B0              = T(-3.0) # ................................. [T]        External magnetic field (z-direction)
+    gamma           = T(2.67515255e8) # ......................... [rad/s/T]  Gyromagnetic ratio
+    theta           = T(π)/2 # .................................. [rad]      Main magnetic field angle w.r.t B0
+    R1_sp           = T(inv(200e-3)) # .......................... [1/s]      1/T1 relaxation rate of small pool (myelin) water [REF: TODO]
+    R1_lp           = T(inv(1084e-3)) # ......................... [1/s]      1/T1 relaxation rate of large pool (intra-cellular/axonal) water [REF: TODO]
+    R1_Tissue       = T(inv(1084e-3)) # ......................... [1/s]      1/T1 relaxation rate of white matter tissue (extra-cellular water) [REF: 1084 ± 45; https://www.ncbi.nlm.nih.gov/pubmed/16086319]
+    R2_sp           = T(inv(15e-3)) # ........................... [1/s]      1/T2 relaxation rate of small pool (myelin) water (Xu et al. 2017)
+    R2_lp           = T(inv(63e-3)) # ........................... [1/s]      1/T2 relaxation rate of large pool (intra-cellular/axonal) water [REF: TODO]
+    R2_lp_DipDip    = T(0.0) # .................................. [1/s]      1/T2 dipole-dipole interaction coefficient for large pool (intra-cellular/axonal) water: R2_lp(θ) = R2_lp + R2_lp_DipDip * (3*cos^2(θ)−1)^2 [REF: https://doi.org/10.1016/j.neuroimage.2013.01.051]
+    R2_Tissue       = T(inv(63e-3)) # ........................... [1/s]      1/T2 relaxation rate of white matter tissue (extra-cellular water) (was 14.5Hz; changed to match R2_lp) [REF: TODO]
+    R2_Water        = T(inv(2.2)) # ............................. [1/s]      Relaxation rate of pure water
+    D_Water         = T(3037.0) # ............................... [um^2/s]   Diffusion coefficient in water
+    D_Blood         = T(3037.0) # ............................... [um^2/s]   Diffusion coefficient in blood
+    D_Tissue        = T(1000.0) # ............................... [um^2/s]   TODO (reference?) Diffusion coefficient in tissue
+    D_Sheath        = T(1000.0) # ............................... [um^2/s]   TODO (reference?) Mean diffusivity coefficient in myelin sheath
+    D_Axon          = T(1000.0) # ............................... [um^2/s]   TODO (reference?) Diffusion coefficient in axon interior
+    FRD_Sheath      = T(0.5) # .................................. [unitless] TODO (reference?) Fractional radial diffusivity within myelin sheath; FRD ∈ [0,1] where 0 is purely polar, 0.5 is isotropic, and 1 is purely radial
     K_perm          = T(1.0e-3) # ............................... [um/s]     TODO (reference?) Interface permeability constant
     K_Axon_Sheath   = T(K_perm) # ............................... [um/s]     Axon-Myelin interface permeability
     K_Tissue_Sheath = T(K_perm) # ............................... [um/s]     Tissue-Myelin interface permeability
-    R_mu::T         = T(0.46) # ................................. [um]       Axon mean radius (taken to be outer radius)
-    R_shape::T      = T(5.7) # .................................. [unitless] Axon shape parameter for Gamma distribution (Xu et al. 2017)
-    R_scale::T      = T(R_mu/R_shape) # ......................... [um]       Axon scale parameter for Gamma distribution (Xu et al. 2017)
-    PD_sp::T        = T(0.5) # .................................. [unitless] Relative proton density (Myelin)
-    PD_lp::T        = T(1.0) # .................................. [unitless] Relative proton density (Intra Extra)
-    PD_Fe::T        = T(1.0) # .................................. [unitless] Relative proton density (Ferritin)
-    g_ratio::T      = T(0.8370) # ............................... [um/um]    g-ratio (originally 0.71; 0.84658 for healthy, 0.8595 for MS)
-    AxonPDensity::T = T(0.83) # ................................. [unitless] Axon packing density based region in white matter (Xu et al. 2017) (originally 0.83)
-    MVF::T          = T(AxonPDensity*(1-g_ratio^2)) # ........... [unitless] Myelin volume fraction, assuming periodic circle packing and constant g_ratio
-    MWF::T          = T(PD_sp*MVF/(PD_lp-(PD_lp-PD_sp)*MVF)) # .. [unitless] Myelin water fraction, assuming periodic circle packing and constant g_ratio
-    ChiI::T         = T(-60e-9) # ............................... [unitless] Isotropic susceptibility of myelin (TODO check how to get it) (Xu et al. 2017)
-    ChiA::T         = T(-120e-9) # .............................. [unitless] Anisotropic Susceptibility of myelin (Xu et al. 2017)
-    E::T            = T(10e-9) # ................................ [unitless] Exchange component to resonance freqeuency (Wharton and Bowtell 2012)
-    R2_Fe::T        = T(inv(1e-6)) # ............................ [1/s]      Relaxation rate of iron in ferritin (assumed extremely high)
-    R2_WM::T        = T(inv(70e-3)) # ........................... [1/s]      Relaxation rate of frontal WM (empirical and taken from literature; original 58.403e-3; patient 58.472e-3)
-    R_Ferritin::T   = T(4.0e-3) # ............................... [um]       Ferritin mean radius
-    R_conc::T       = T(0.0424) # ............................... [mg/g]     Concentration of iron in the frontal white matter (0.0424 in frontal WM; 0.2130 in globus pallidus deep grey matter)
-    Rho_tissue::T   = T(1.073) # ................................ [g/ml]     White matter tissue density
-    ChiTissue::T    = T(-9.05e-6) # ............................. [unitless] Isotropic susceptibility of tissue
-    ChiFeUnit::T    = T(1.4e-9) # ............................... [ug/g]     TODO (check units) Susceptibility of iron per ppm/(ug/g) weight fraction of iron.
-    ChiFeFull::T    = T(520.0e-6) # ............................. [ug/g]     TODO (check units) Susceptibility of iron for ferritin particle FULLY loaded with 4500 iron atoms. (use volume of FULL spheres) (from Contributions to magnetic susceptibility)
-    Rho_Iron::T     = T(7.874) # ................................ [g/cm^3]   Iron density
+    @assert K_perm ≈ K_Axon_Sheath   # different permeabilities not implemented
+    @assert K_perm ≈ K_Tissue_Sheath # different permeabilities not implemented
+    R_mu            = T(0.46) # ................................. [um]       Axon mean radius (taken to be outer radius)
+    R_shape         = T(5.7) # .................................. [unitless] Axon shape parameter for Gamma distribution (Xu et al. 2017)
+    R_scale         = T(R_mu/R_shape) # ......................... [um]       Axon scale parameter for Gamma distribution (Xu et al. 2017)
+    @assert R_scale ≈ R_mu/R_shape
+    PD_sp           = T(0.5) # .................................. [unitless] Relative proton density (Myelin)
+    PD_lp           = T(1.0) # .................................. [unitless] Relative proton density (Intra Extra)
+    PD_Fe           = T(1.0) # .................................. [unitless] Relative proton density (Ferritin)
+    g_ratio         = T(0.8370) # ............................... [um/um]    g-ratio (originally 0.71; 0.84658 for healthy, 0.8595 for MS)
+    AxonPDensity    = T(0.83) # ................................. [unitless] Axon packing density based region in white matter (Xu et al. 2017) (originally 0.83)
+    MVF             = T(AxonPDensity*(1-g_ratio^2)) # ........... [unitless] Myelin volume fraction, assuming periodic circle packing and constant g_ratio
+    MWF             = T(PD_sp*MVF/(PD_lp-(PD_lp-PD_sp)*MVF)) # .. [unitless] Myelin water fraction, assuming periodic circle packing and constant g_ratio
+    @assert MVF ≈ AxonPDensity*(1-g_ratio^2)
+    @assert MWF ≈ PD_sp*MVF/(PD_lp-(PD_lp-PD_sp)*MVF)
+    ChiI            = T(-60e-9) # ............................... [unitless] Isotropic susceptibility of myelin (TODO check how to get it) (Xu et al. 2017)
+    ChiA            = T(-120e-9) # .............................. [unitless] Anisotropic Susceptibility of myelin (Xu et al. 2017)
+    E               = T(10e-9) # ................................ [unitless] Exchange component to resonance freqeuency (Wharton and Bowtell 2012)
+    R2_Fe           = T(inv(1e-6)) # ............................ [1/s]      Relaxation rate of iron in ferritin (assumed extremely high)
+    R_Ferritin      = T(4.0e-3) # ............................... [um]       Ferritin mean radius
+    Fe_Conc         = T(0.0424) # ............................... [mg/g]     Concentration of iron in the frontal white matter (0.0424 in frontal WM; 0.2130 in globus pallidus deep grey matter)
+    Rho_Tissue      = T(1.073) # ................................ [g/ml]     White matter tissue density
+    Chi_Tissue      = T(-9.05e-6) # ............................. [unitless] Isotropic susceptibility of tissue
+    Chi_FeUnit      = T(1.4e-9) # ............................... [ug/g]     TODO (check units) Susceptibility of iron per ppm/(ug/g) weight fraction of iron.
+    Chi_FeFull      = T(520.0e-6) # ............................. [ug/g]     TODO (check units) Susceptibility of iron for ferritin particle FULLY loaded with 4500 iron atoms. (use volume of FULL spheres) (from Contributions to magnetic susceptibility)
+    Rho_Fe          = T(7.874) # ................................ [g/cm^3]   Iron density
 end
 
-function BlochTorreyParameters(d::Dict{Symbol,T}) where {T}
-    d_ = deepcopy(d)
-    f = fieldnames(BlochTorreyParameters)
-    for (k, v) ∈ zip(collect(keys(d_)), collect(values(d_)))
-        # Deprecations, e.g.:
-        # if k == :K_perm
-        #     delete!(d_, k)
-        #     d_[:K_Axon_Sheath] = v
-        #     d_[:K_Tissue_Sheath] = v
-        # end
-        if k ∉ f
-            delete!(d_, k)
-            @warn "Key $k not found a field of BlochTorreyParameters"
-        end
+function BlochTorreyParameters(params::Dict{Symbol,T}) where {T}
+    # Rename deprecated key names
+    checkrename!(d, k, v, oldkey, newkey) = k === oldkey ? (delete!(d, oldkey); d[newkey] = v; true) : false
+
+    # Ignore deleted keys that were never used/were ambiguous
+    btignored = (:R2_WM,)
+    checkignore(k) = k ∈ btignored
+
+    # Unknown keys
+    btfields = fieldnames(BlochTorreyParameters)
+    checkunkown(k) = k ∉ btfields ? (delete!(d, k); @warn "Key $k not found a field of BlochTorreyParameters"; true) : false
+
+    d = deepcopy(params)
+    for (k, v) in params
+        checkignore(k) && continue # Skip ignored keys
+        checkrename!(d, k, v, :R2_water, :R2_Water) && continue # Rename if deprecated
+        checkrename!(d, k, v, :R_conc, :Fe_Conc) && continue
+        checkrename!(d, k, v, :Rho_tissue, :Rho_Tissue) && continue
+        checkrename!(d, k, v, :ChiTissue, :Chi_Tissue) && continue
+        checkrename!(d, k, v, :ChiFeUnit, :Chi_FeUnit) && continue
+        checkrename!(d, k, v, :ChiFeFull, :Chi_FeFull) && continue
+        checkrename!(d, k, v, :Rho_Iron, :Rho_Fe) && continue
+        checkunkown(k) && continue # Unknown key
     end
-    return BlochTorreyParameters{T}(;d_...)
+    return BlochTorreyParameters{T}(;d...)
 end
 Base.Dict(p::BlochTorreyParameters{T}) where {T} = Dict{Symbol,T}(f => getfield(p,f) for f in fieldnames(typeof(p)))
 
@@ -84,6 +98,8 @@ Base.Dict(p::BlochTorreyParameters{T}) where {T} = Dict{Symbol,T}(f => getfield(
 #   given problem on a corresponding AbstractDomain.
 # ---------------------------------------------------------------------------- #
 abstract type AbstractParabolicProblem{T} end
+
+@inline GeometryUtils.floattype(p::AbstractParabolicProblem{T}) where {T} = T
 
 # BlochTorreyProblem: holds the only parameters necessary to solve the Bloch-
 # Torrey equation, naming the Dcoeff, Rdecay, and Omega functions of position
@@ -99,42 +115,31 @@ struct MyelinProblem{T} <: AbstractParabolicProblem{T}
     params::BlochTorreyParameters{T}
 end
 
-@inline GeometryUtils.floattype(p::MyelinProblem{T}) where {T} = T
-
 # ---------------------------------------------------------------------------- #
 # AbstractDomain
 #   Abstract type with the most generic information on the underlying problem:
 #       Tu:     Bottom float type used for underlying function, e.g. Float64
 #       uType:  Vector type of unknown function, e.g. Vec{2,Tu}, Complex{Tu}
 #       gDim:   Spatial dimension of domain
-#       T:      Float type used for geometry
-#       Nd:     Number of nodes per finite element
-#       Nf:     Number of faces per finite element
 # ---------------------------------------------------------------------------- #
-abstract type AbstractDomain{Tu,uType,gDim,T,Nd,Nf} end
-const VectorOfDomains{Tu,uType,gDim,T,Nd,Nf} = AbstractVector{<:AbstractDomain{Tu,uType,gDim,T,Nd,Nf}}
+abstract type AbstractDomain{Tu,uType,gDim} end
+const VectorOfDomains{Tu,uType,gDim} = AbstractVector{<:AbstractDomain{Tu,uType,gDim}}
 
-# ParabolicDomain: generic domain type which holds this information necessary to
-# solve a parabolic FEM problem M*du/dt = K*u
-mutable struct ParabolicDomain{
-        Tu, uType <: FieldType{Tu},
-        gDim, T, Nd, Nf,
-        S <: JuAFEM.AbstractRefShape,
-        CV <: Union{CellValues{gDim,T,S}, Tuple{Vararg{CellValues{gDim,T,S}}}},
-        FV <: Union{FaceValues{gDim,T,S}, Tuple{Vararg{FaceValues{gDim,T,S}}}},
-        MType <: MassType{Tu}, MfactType <: MassFactType{Tu}, KType <: StiffnessType{Tu}
-    } <: AbstractDomain{Tu,uType,gDim,T,Nd,Nf}
-    grid::Grid{gDim,Nd,T,Nf}
-    dh::DofHandler{gDim,Nd,T,Nf}
-    refshape::S
-    cellvalues::CV
-    facevalues::FV
+# ---------------------------------------------------------------------------- #
+# ParabolicDomain
+# ---------------------------------------------------------------------------- #
+mutable struct ParabolicDomain{Tu,uType<:FieldType{Tu},gDim} <: AbstractDomain{Tu,uType,gDim}
+    grid::JuAFEM.Grid{gDim}
+    dh::JuAFEM.DofHandler{gDim}
+    refshape::JuAFEM.AbstractRefShape
+    cellvalues::Union{<:JuAFEM.CellValues{gDim}, <:Tuple{Vararg{<:JuAFEM.CellValues{gDim}}}}
+    facevalues::Union{<:JuAFEM.FaceValues{gDim}, <:Tuple{Vararg{<:JuAFEM.FaceValues{gDim}}}}
     quadorder::Int
     funcinterporder::Int
     geominterporder::Int
-    M::MType
-    Mfact::Union{Nothing,MfactType}
-    K::KType
+    M::MassType{Tu}
+    Mfact::Union{Nothing, <:MassFactType{Tu}}
+    K::StiffnessType{Tu}
     metadata::Dict{Any,Any}
 end
 
@@ -163,17 +168,17 @@ struct PermeableInterfaceRegion <: AbstractRegionUnion end
 #   represented as a ParabolicDomain, which stores the underlying grid, mass
 #   matrix M, stiffness matrix K, etc.
 # ---------------------------------------------------------------------------- #
-mutable struct MyelinDomain{R<:AbstractRegion,Tu,uType,gDim,T,Nd,Nf,DType<:ParabolicDomain{Tu,uType,gDim,T,Nd,Nf}} <: AbstractDomain{Tu,uType,gDim,T,Nd,Nf}
+mutable struct MyelinDomain{R<:AbstractRegion,Tu,uType,gDim} <: AbstractDomain{Tu,uType,gDim}
     region::R
-    domain::DType
-    outercircles::Vector{Circle{2,T}}
-    innercircles::Vector{Circle{2,T}}
-    ferritins::Vector{Vec{3,T}}
+    domain::ParabolicDomain{Tu,uType,gDim}
+    outercircles::Vector{Circle{2,Tu}}
+    innercircles::Vector{Circle{2,Tu}}
+    ferritins::Vector{Vec{3,Tu}}
 end
 
 # TriangularMyelinDomain is a MyelinDomain with grid dimension gDim = 2,
 # nodes per finite element Nd = 3, and faces per finite element Nf = 2
-const TriangularMyelinDomain{R,Tu,uType,T,DType} = MyelinDomain{R,Tu,uType,2,T,3,3,DType}
+const TriangularMyelinDomain{R,Tu,uType} = MyelinDomain{R,Tu,uType,2} #TODO FIXME
 
 # ---------------------------------------------------------------------------- #
 # ParabolicLinearMap <: LinearMap
@@ -184,9 +189,9 @@ struct ParabolicLinearMap{T, MType<:AbstractMatrix, MfactType <: MassFactType, K
     M::MType
     Mfact::MfactType
     K::KType
-    function ParabolicLinearMap(M::AbstractMatrix{T1}, Mfact::MassFactType{T1}, K::AbstractMatrix{T2}) where {T1,T2}
+    function ParabolicLinearMap(M::AbstractMatrix, Mfact::MassFactType, K::AbstractMatrix)
         @assert (size(M) == size(Mfact) == size(K)) && (size(M,1) == size(M,2))
-        T = promote_type(T1, T2)
+        T = promote_type(eltype(M), eltype(Mfact), eltype(K))
         new{T, typeof(M), typeof(Mfact), typeof(K)}(M, Mfact, K)
     end
 end
@@ -215,17 +220,18 @@ end
 
 # Construct a ParabolicDomain from a Grid and interpolation/integration settings
 function ParabolicDomain(
-        grid::Grid{gDim,Nd,T,Nf},
-        ::Type{uType} = Vec{2,T}; #Default to same float type as grid
+        grid::Grid{gDim},
+        ::Type{uType} = Vec{2,floattype(grid)};
         refshape::JuAFEM.AbstractRefShape = RefTetrahedron(),
         quadorder::Int = 3,
         funcinterporder::Int = 1,
         geominterporder::Int = 1
-    ) where {gDim,Nd,T,Nf,Tu,uType<:FieldType{Tu}}
+    ) where {gDim,Tu,uType<:FieldType{Tu}}
 
-    uDim = fielddim(uType)::Int
-    @assert 1 <= uDim <= 3
-    
+    @assert 1 <= fielddim(uType) <= 3
+    @assert floattype(grid) == floattype(uType)
+    uDim = fielddim(uType)
+
     # Quadrature and interpolation rules and corresponding cellvalues/facevalues
     func_interp = Lagrange{gDim, typeof(refshape), funcinterporder}()
     geom_interp = Lagrange{gDim, typeof(refshape), geominterporder}()
@@ -279,21 +285,13 @@ function ParabolicDomain(
     end
     renumber!(dh, perm)
 
-    # Mass and stiffness matrices, and weights vector
-    M = create_sparsity_pattern(dh)
-    # M = create_symmetric_sparsity_pattern(dh)
-    K = uType <: Complex ?
-        complex(create_sparsity_pattern(dh)) :
-        create_sparsity_pattern(dh)
-
-    # Initialize Mfact to nothing
+    # Mass and stiffness matrices
+    M = create_sparsity_pattern(dh) #create_symmetric_sparsity_pattern(dh)
+    K = uType <: Complex ? complex(create_sparsity_pattern(dh)) : create_sparsity_pattern(dh)
     Mfact = nothing
-    MfactType = SuiteSparse.CHOLMOD.Factor{Tu}
 
-    ParabolicDomain{Tu,uType,gDim,T,Nd,Nf,typeof(refshape),typeof(cellvalues),typeof(facevalues),typeof(M),MfactType,typeof(K)}(
-        grid, dh,
-        refshape, cellvalues, facevalues,
-        quadorder, funcinterporder, geominterporder,
+    ParabolicDomain{Tu,uType,gDim}(
+        grid, dh, refshape, cellvalues, facevalues, quadorder, funcinterporder, geominterporder,
         M, Mfact, K, Dict{Any,Any}()
     )
 end
@@ -302,18 +300,15 @@ end
 # is constructed, and so keyword arguments are forwarded to that constructor
 function MyelinDomain(
         region::R,
-        grid::Grid{gDim,Nd,T,Nf},
-        outercircles::Vector{Circle{2,T}},
-        innercircles::Vector{Circle{2,T}},
-        ferritins::Vector{Vec{3,T}} = Vec{3,T}[],
-        ::Type{uType} = Vec{2,T}; #Default to same float type as grid
+        grid::Grid{gDim},
+        outercircles::Vector{<:Circle{2}},
+        innercircles::Vector{<:Circle{2}},
+        ferritins::Vector{<:Vec{3}} = Vec{3,floattype(grid)}[],
+        ::Type{uType} = Vec{2,floattype(grid)};
         kwargs...
-    ) where {R,gDim,T,Nd,Nf,Tu,uType<:FieldType{Tu}}
-
+    ) where {R,gDim,Tu,uType<:FieldType{Tu}}
     domain = ParabolicDomain(grid, uType; kwargs...)
-    return MyelinDomain{R,Tu,uType,gDim,T,Nd,Nf,typeof(domain)}(
-        region, domain, outercircles, innercircles, ferritins
-    )
+    return MyelinDomain{R,Tu,uType,gDim}(region, domain, outercircles, innercircles, ferritins)
 end
 
 # Construct a ParabolicLinearMap from a ParabolicDomain

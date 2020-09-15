@@ -1,18 +1,10 @@
 # Activate project and load packages for this script
 import Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
-include(joinpath(@__DIR__, "../initpaths.jl"))
-Pkg.instantiate()
 
-# NOTE: must load pyplot backend BEFORE loading MATLAB in init.jl
-using StatsPlots
-pyplot(size=(1200,900))
-using GlobalUtils
 using MWFUtils
-mxcall(:cd, 0, pwd()) # Set MATLAB path (Note: pwd(), not @__DIR__)
+using GlobalUtils
 const SIM_START_TIME = MWFUtils.getnow()
-
-# Create reproduce file
 make_reproduce( # Creating backup file
     """
     include("BlochTorreyExperiments/MyelinWaterTools/scripts/MWF-generate.jl")
@@ -20,13 +12,32 @@ make_reproduce( # Creating backup file
     fname = SIM_START_TIME * ".reproduce.jl"
 )
 
-# DrWatson package for tagged saving
-gitdir() = realpath(DrWatson.projectdir(".."))
+pyplot(size=(1200,900))
+mxcall(:cd, 0, pwd()) # Set MATLAB path (Note: pwd(), not @__DIR__)
+gitdir() = realpath(DrWatson.projectdir("..")) # DrWatson package for tagged saving
 
 ####
 #### Geometries to sweep over
 ####
 
+function perturb_geom!(geom, min_rel_gratio = 0.9)
+    # Perturb inner circle radii + corresponding grids
+    @unpack exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
+    @assert 0 < min_rel_gratio <= 1
+    for i in 1:length(outercircles)
+        cout, cin = outercircles[i], innercircles[i]
+        if is_inside(cout, bdry)
+            r1, r2 = radius(cin), radius(cout)
+            o1, o2 = origin(cin), origin(cout)
+            r̄ = (min_rel_gratio + rand() * (1 - min_rel_gratio)) * r1
+            linscale(r, a, b, ā, b̄) = ((b̄ - ā) * (r - a) / (b - a) + ā) / r
+            JuAFEM.transform!(interiorgrids[i], x -> (r̄ / r1) * (x - o1) + o1)
+            JuAFEM.transform!(torigrids[i], x -> linscale(norm(x-o1), r1, r2, r̄, r2) * (x - o1) + o1)
+            innercircles[i] = scale_shape(cin, r̄ / r1)
+        end
+    end
+    return geom
+end
 function copy_and_load_geomfiles!(
         geomfiles::AbstractVector{String};
         maxnnodes::Int = typemax(Int)
@@ -47,7 +58,7 @@ function copy_and_load_geomfiles!(
             DrWatson.@tagsave(
                 joinpath("geom", basename(geomfile)),
                 deepcopy(geom),
-                true, gitdir())
+                safe = true, gitpath = gitdir())
         end
         push!(geomdata, geom)
     end
@@ -85,11 +96,11 @@ copy_and_load_random_geom(geomdir::String; kwargs...) = copy_and_load_random_geo
 const geombasepaths = [
     # realpath("./geom"),
     # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-3/geom",
-    "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-4/geom",
+    # "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/MyelinWaterLearning/geometries/periodic-packed-fibres-4/geom",
+    "/project/st-arausch-1/jcd1994/ismrm2020/experiments/Fall-2019/diff-med-1-input-data/geom-newgridtype", #TODO
 ]
 const geomfiles = reduce(vcat, realpath.(joinpath.(gp, readdir(gp))) for gp in geombasepaths)
 const maxnnodes = 15_000
-# const geomdata = copy_and_load_geomfiles!(geomfiles; maxnnodes = maxnnodes);
 
 ####
 #### Default solver parameters and MWF models
@@ -111,7 +122,7 @@ const default_solverparams_dict = Dict(
     :nTE         => default_nTE,     # Number of echoes for CPMGCallback (Default: 32)
     :nTR         => default_nTR,     # Number of repetitions for CPMGCallback (Default: 1)
     :tspan       => default_tspan,   # Solver time span (Default: (0.0, 320e-3); must start at zero)
-    :reltol      => 1e-8,
+    :reltol      => 1e-4,
     :abstol      => 0.0,
 );
 
@@ -140,11 +151,12 @@ const default_mwfmodels_dict = Dict(map(m -> Symbol(typeof(m)) => Dict(m), defau
 ####
 
 const default_btparams = BlochTorreyParameters{Float64}(
+    B0 = -3.0,
     theta = π/2,
-    D_Tissue = 500.0, # [μm²/s]
-    D_Sheath = 500.0, # [μm²/s]
-    D_Axon = 500.0, # [μm²/s]
-    K_perm = 0.5, # [μm/s]
+    D_Tissue = 1000.0, # [μm²/s]
+    D_Sheath = 1000.0, # [μm²/s]
+    D_Axon = 1000.0, # [μm²/s]
+    K_perm = 0.1, # [μm/s]
 );
 const default_btparams_dict = Dict(default_btparams)
 
@@ -160,15 +172,15 @@ acossampler(a,b) = acosd(linearsampler(cosd(b), cosd(a)))
 const sweepparamsampler_settings = Dict{Symbol,Any}(
     :theta  => (sampler = :acossampler,   args = (lb = 0.0,     ub = 90.0)), # Uniformly random orientations => cosθ ~ Uniform(0,1)
     :alpha  => (sampler = :linearsampler, args = (lb = 120.0,   ub = 180.0)),
-    :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 10.0)),
-    :Dtiss  => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 500.0)), # Diffusion fixed relatively small for faster simulations
-    :Dmye   => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 500.0)), # Diffusion fixed relatively small for faster simulations
-    :Dax    => (sampler = :log10sampler,  args = (lb = 500.0,   ub = 500.0)), # Diffusion fixed relatively small for faster simulations
-    :FRD    => (sampler = :linearsampler, args = (lb = 0.5,     ub = 0.5)),
-    :TE     => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 10e-3)), # NOTE: Fixed time scale; only e.g. T2/TE is learned
-    :nTE    => (sampler = :rangesampler,  args = (lb = 64, ub = 64, step = 2)), # Simulate many echoes; can chop later
+    :K      => (sampler = :log10sampler,  args = (lb = 1e-3,    ub = 0.1)),
+    :Dtiss  => (sampler = :log10sampler,  args = (lb = 1000.0,  ub = 1000.0)),
+    :Dmye   => (sampler = :log10sampler,  args = (lb = 1000.0,  ub = 1000.0)),
+    :Dax    => (sampler = :log10sampler,  args = (lb = 1000.0,  ub = 1000.0)),
+    :FRD    => (sampler = :linearsampler, args = (lb = 0.5,     ub = 0.5)), # Fractional radial diffusivity (0.5 is isotropic, 1.0 fully radial, 0.0 fully axial)
+    :TE     => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 10e-3)), # NOTE: Fixed time scale (only e.g. T2/TE is learned)
+    :nTE    => (sampler = :rangesampler,  args = (lb = 64, ub = 64, step = 2)), # Simulate many echoes (can chop later)
     :TR     => (sampler = :linearsampler, args = (lb = 1000e-3, ub = 1000e-3)), # Irrelevant when nTR = 1 (set below)
-    :nTR    => (sampler = :rangesampler,  args = (lb = 1,       ub = 1)), # Only simulate from t = 0 to t = nTE * TE
+    :nTR    => (sampler = :rangesampler,  args = (lb = 1,       ub = 1)), # nTR = 1 (only simulate from t = 0 to t = nTE * TE)
     :T2sp   => (sampler = :linearsampler, args = (lb = 10e-3,   ub = 70e-3)), # Bounds based on T2sp/TE when TE = 10ms (above), T2sp ∈ [10ms, 35ms], TE ∈ [5ms, 10ms]
     :T2lp   => (sampler = :linearsampler, args = (lb = 50e-3,   ub = 180e-3)), # Bounds based on T2lp/TE when TE = 10ms (above), T2lp ∈ [50ms, 90ms], TE ∈ [5ms, 10ms]
     #:T2tiss=> (sampler = :linearsampler, args = (lb = 50e-3,   ub = 90e-3)),
@@ -176,16 +188,9 @@ const sweepparamsampler_settings = Dict{Symbol,Any}(
     :T1lp   => (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
     #:T1tiss=> (sampler = :linearsampler, args = (lb = 949e-3,  ub = 1219e-3)), #3-sigma range for T1 = 1084 +/- 45
 )
-sweepparamsample() = Dict{Symbol,Union{Float64,Int}}(
-    k => eval(Expr(:call, v.sampler, v.args...))
-    for (k,v) in sweepparamsampler_settings)
+sweepparamsample() = Dict{Symbol,Union{Float64,Int}}(k => eval(Expr(:call, v.sampler, v.args...)) for (k,v) in sweepparamsampler_settings)
 sweepparamconstraints(d) = d[:T2lp] ≥ 1.5*d[:T2sp] # Extreme T2sp and T2lp ranges above require this additional constraint to make sure each sample is realistic
-function sweepparamsampler()
-    while true
-        d = sweepparamsample()
-        sweepparamconstraints(d) && return d
-    end
-end
+sweepparamsampler() = (while true; d = sweepparamsample(); sweepparamconstraints(d) && return d; end)
 
 ####
 #### Save metadata
@@ -194,7 +199,7 @@ end
 DrWatson.@tagsave(
     SIM_START_TIME * ".metadata.bson",
     deepcopy(@dict(sweepparamsampler_settings, geomfiles, default_mwfmodels_dict, default_btparams_dict, default_solverparams_dict, default_nnlsparams_dict, default_TE, default_nTE)),
-    true, gitdir())
+    safe = true, gitpath = gitdir())
 
 ####
 #### Simulation functions
@@ -213,27 +218,39 @@ function runsolve(btparams, sweepparams, geom)
     # Unpack geometry, create myelin domains, and create omegafield
     @unpack exteriorgrids, torigrids, interiorgrids, outercircles, innercircles, bdry = geom
     ferritins = Vec{3,floattype(bdry)}[]
-    
+
     @unpack myelinprob, myelinsubdomains, myelindomains = createdomains(btparams,
         exteriorgrids, torigrids, interiorgrids,
         outercircles, innercircles, ferritins, typeof(solverparams_dict[:u0]))
-    
+
     # Solve Bloch-Torrey equation and plot
     sols = solveblochtorrey(myelinprob, myelindomains; solverparams_dict...)
-    
+
     return @ntuple(sols, myelinprob, myelinsubdomains, myelindomains, solverparams_dict)
 end
 
 function runsimulation!(results, sweepparams, geom)
-    # @unpack alpha, theta, K, Dtiss, Dmye, Dax, FRD, TE, TR, nTE, nTR, T2sp, T2lp, T2tiss, T1sp, T1lp, T1tiss = sweepparams
     density = intersect_area(geom.outercircles, geom.bdry) / area(geom.bdry)
-    gratio = radius(geom.innercircles[1]) / radius(geom.outercircles[1])
-    mvf = (1-gratio^2) * density # myelin volume fraction
+    # gratio = radius(geom.innercircles[1]) / radius(geom.outercircles[1]) # uniform g-ratio
+    gratio = sqrt(sum(area, geom.innercircles) / sum(area, geom.outercircles)) # area weighted g-ratio
+    mvf = (1-gratio^2) * density # myelin volume fraction (for periodically tired circles)
     mwf = mvf/(2-mvf) # myelin water fraction, assuming relative myelin proton density of 1/2
+
+    geomparams_dict = Dict{Symbol,Any}(
+        :gratio    => gratio,
+        :density   => density,
+        :mvf       => mvf,
+        :mwf       => mwf,
+        :Ntri      => sum(JuAFEM.getncells, geom.exteriorgrids) + sum(JuAFEM.getncells, geom.torigrids) + sum(JuAFEM.getncells, geom.interiorgrids),
+        :Npts      => sum(JuAFEM.getnnodes, geom.exteriorgrids) + sum(JuAFEM.getnnodes, geom.torigrids) + sum(JuAFEM.getnnodes, geom.interiorgrids),
+        :numfibres => length(geom.outercircles),
+    )
 
     btparams = BlochTorreyParameters(default_btparams;
         theta = deg2rad(sweepparams[:theta]),
         K_perm = sweepparams[:K],
+        K_Axon_Sheath = sweepparams[:K],
+        K_Tissue_Sheath = sweepparams[:K],
         D_Tissue = sweepparams[:Dtiss],
         D_Sheath = sweepparams[:Dmye],
         D_Axon = sweepparams[:Dax],
@@ -251,7 +268,14 @@ function runsimulation!(results, sweepparams, geom)
         MVF = mvf,
         MWF = mwf,
     )
-    sols, myelinprob, myelinsubdomains, myelindomains, solverparams_dict = runsolve(btparams, sweepparams, geom)
+
+    TimerOutputs.reset_timer!(BlochTorreyUtils.TIMER)
+    @timeit BlochTorreyUtils.TIMER "runsolve" begin
+        @unpack sols, myelinprob, myelinsubdomains, myelindomains, solverparams_dict = runsolve(btparams, sweepparams, geom)
+    end
+    timer_buf = IOBuffer(); TimerOutputs.print_timer(timer_buf, BlochTorreyUtils.TIMER)
+    @info "\n" * String(take!(timer_buf))
+    solve_time = TimerOutputs.tottime(BlochTorreyUtils.TIMER)
     
     # Sample solution signals
     dt = sweepparams[:TE]/20 # TODO how many samples to save?
@@ -265,117 +289,99 @@ function runsimulation!(results, sweepparams, geom)
     fname = DrWatson.savename(curr_time, sweepparams)
     titleparamstr = wrap_string(DrWatson.savename("", sweepparams; connector = ", "), 50, ", ")
 
-    # Compare MWF values
-    # mwfvalues, mwfmodels = nothing, nothing
-    # try
-    #     mwfmodels = map(default_mwfmodels) do model
-    #         if model isa NNLSRegression
-    #             typeof(model)(model; TE = sweepparams[:TE], nTE = sweepparams[:nTE], RefConAngle = sweepparams[:alpha])
-    #         else
-    #             typeof(model)(model; TE = sweepparams[:TE], nTE = sweepparams[:nTE])
-    #         end
-    #     end
-    #     mwfvalues, _ = compareMWFmethods(sols, myelindomains, btparams,
-    #         geom.outercircles, geom.innercircles, geom.bdry;
-    #         models = mwfmodels)
-    # catch e
-    #     @warn "Error comparing MWF methods"
-    #     @warn sprint(showerror, e, catch_backtrace())
-    # end
-
     # Compute exact MWF only
     mwfmodels = nothing
-    mwfvalues = Dict(
-        :exact => getmwf(geom.outercircles, geom.innercircles, geom.bdry)
-    )
+    mwfvalues = Dict(:exact => getmwf(geom.outercircles, geom.innercircles, geom.bdry))
+
+    #=
+    mwfvalues, mwfmodels = nothing, nothing
+    tryshow("Error comparing MWF methods") do
+        mwfmodels = map(default_mwfmodels) do model
+            if model isa NNLSRegression
+                typeof(model)(model; TE = sweepparams[:TE], nTE = sweepparams[:nTE], RefConAngle = sweepparams[:alpha])
+            else
+                typeof(model)(model; TE = sweepparams[:TE], nTE = sweepparams[:nTE])
+            end
+        end
+        mwfvalues, _ = compareMWFmethods(sols, myelindomains, btparams,
+            geom.outercircles, geom.innercircles, geom.bdry;
+            models = mwfmodels)
+    end
+    =#
 
     # Update results struct and return
-    push!(results[:btparams], btparams)
-    push!(results[:solverparams_dict], solverparams_dict)
-    push!(results[:sweepparams], sweepparams)
-    push!(results[:tpoints], tpoints)
-    push!(results[:signals], signals)
-    push!(results[:mwfvalues], mwfvalues)
-    # push!(results[:subregion_names], subregion_names) #TODO
-    # push!(results[:subregion_signals], subregion_signals) #TODO
-    # push!(results[:sols], sols) #TODO
-    # push!(results[:myelinprob], myelinprob) #TODO
-    # push!(results[:myelinsubdomains], myelinsubdomains) #TODO
-    # push!(results[:myelindomains], myelindomains) #TODO
+    # push!(results[:btparams], btparams)
+    # push!(results[:solverparams_dict], solverparams_dict)
+    # push!(results[:sweepparams], sweepparams)
+    # push!(results[:tpoints], tpoints)
+    # push!(results[:signals], signals)
+    # push!(results[:mwfvalues], mwfvalues)
+    # push!(results[:subregion_names], subregion_names)
+    # push!(results[:subregion_signals], subregion_signals)
+    # push!(results[:sols], sols)
+    # push!(results[:myelinprob], myelinprob)
+    # push!(results[:myelinsubdomains], myelinsubdomains)
+    # push!(results[:myelindomains], myelindomains)
 
     # Save measurables
-    try
+    tryshow("Error saving measurables") do
         btparams_dict = Dict(btparams)
         DrWatson.@tagsave(
             "measurables/" * fname * ".measurables.bson",
-            deepcopy(@dict(btparams_dict, solverparams_dict, sweepparams, tpoints, signals, mwfvalues)),
-            true, gitdir())
-    catch e
-        @warn "Error saving measurables"
-        @warn sprint(showerror, e, catch_backtrace())
+            deepcopy(@dict(btparams_dict, solverparams_dict, geomparams_dict, sweepparams, tpoints, signals, mwfvalues, solve_time)),
+            safe = true, gitpath = gitdir())
     end
 
-    # # Save solution as vtk file (NOTE: should only be uncommented for testing)
-    # try
-    #     vtkfilepath = mkpath(joinpath("vtk/", fname))
-    #     saveblochtorrey(myelindomains, sols; timepoints = tpoints, filename = joinpath(vtkfilepath, "vtksolution"))
-    # catch e
-    #     @warn "Error saving solution to vtk file"
-    #     @warn sprint(showerror, e, catch_backtrace())
-    # end
+    #=
+    tryshow("Error saving solution to vtk file") # NOTE: should only be uncommented for testing
+        vtkfilepath = mkpath(joinpath("vtk/", fname))
+        saveblochtorrey(myelindomains, sols; timepoints = tpoints, filename = joinpath(vtkfilepath, "vtksolution"))
+    end
+    =#
 
-    # # Plot frequency/field map
-    # try
-    #     mxplotomega(myelinprob, myelindomains, myelinsubdomains, geom.bdry;
-    #         titlestr = "Frequency Map (theta = $(round(sweepparams[:theta]; digits=3)) deg)",
-    #         fname = "omega/" * fname * ".omega")
-    # catch e
-    #     @warn "Error plotting omega"
-    #     @warn sprint(showerror, e, catch_backtrace())
-    # end
+    #=
+    tryshow("Error plotting omega map")
+        mxplotomega(myelinprob, myelindomains, myelinsubdomains, geom.bdry;
+            titlestr = "Frequency Map (theta = $(round(sweepparams[:theta]; digits=3)) deg)",
+            fname = "omega/" * fname * ".omega")
+    end
+    =#
     
-    # Plot solution magnitude on mesh
-    try
+    #=
+    tryshow("Error plotting magnetization magnitude") #TODO FIXME
         mxplotmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
             titlestr = "Field Magnitude (" * titleparamstr * ")",
             fname = "mag/" * fname * ".magnitude")
-        # mxgifmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-        #     titlestr = "Field Magnitude (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
-        #     fname = "mag/" * fname * ".magnitude.gif")
-    catch e
-        @warn "Error plotting magnetization magnitude"
-        @warn sprint(showerror, e, catch_backtrace())
+        mxgifmagnitude(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+            titlestr = "Field Magnitude (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
+            fname = "mag/" * fname * ".magnitude.gif")
     end
+    =#
 
-    # Plot solution phase on mesh
-    try
+    #=
+    tryshow("Error plotting magnetization phase") #TODO FIXME
         mxplotphase(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
             titlestr = "Field Phase (" * titleparamstr * ")",
             fname = "phase/" * fname * ".phase")
-        # mxgifphase(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-        #     titlestr = "Field Phase (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
-        #     fname = "phase/" * fname * ".phase.gif")
-    catch e
-        @warn "Error plotting magnetization phase"
-        @warn sprint(showerror, e, catch_backtrace())
+        mxgifphase(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+            titlestr = "Field Phase (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
+            fname = "phase/" * fname * ".phase.gif")
     end
+    =#
     
-    # Plot solution longitudinal component on mesh
-    try
-        #TODO only for 3D
+    #=
+    tryshow("Error plotting longitudinal magnetization") #TODO FIXME (only for 3D)
         mxplotlongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
             titlestr = "Longitudinal (" * titleparamstr * ")",
             fname = "long/" * fname * ".longitudinal")
-        # mxgiflongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
-        #     titlestr = "Longitudinal (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
-        #     fname = "long/" * fname * ".longitudinal.gif")
-    catch e
-        @warn "Error plotting longitudinal magnetization"
-        @warn sprint(showerror, e, catch_backtrace())
+        mxgiflongitudinal(typeof(default_solverparams_dict[:u0]), sols, btparams, myelindomains, geom.bdry;
+            titlestr = "Longitudinal (" * titleparamstr * ")", totaltime = (2*sweepparams[:nTR]-1) * 10.0,
+            fname = "long/" * fname * ".longitudinal.gif")
     end
+    =#
     
-    # Plot SEcorr results, if used
-    try
+    #=
+    tryshow("Error plotting SEcorr T2 distribution")
         if mwfmodels != nothing && !isempty(mwfmodels)
             nnlsindex = findfirst(m->m isa NNLSRegression, mwfmodels)
             if !(nnlsindex == nothing)
@@ -384,13 +390,11 @@ function runsimulation!(results, sweepparams, geom)
                     opts = mwfmodels[nnlsindex], fname = "t2dist/" * fname * ".t2dist.SEcorr")
             end
         end
-    catch e
-        @warn "Error plotting SEcorr T2 distribution"
-        @warn sprint(showerror, e, catch_backtrace())
     end
+    =#
 
-    # Plot multiexponential signal compared with true signal
-    try
+    #=
+    tryshow("Error plotting multiexponential signal compared with true signal")
         if mwfmodels != nothing && !isempty(mwfmodels)
             plotmultiexp(sols, btparams, myelindomains,
                 geom.outercircles, geom.innercircles, geom.bdry;
@@ -402,18 +406,19 @@ function runsimulation!(results, sweepparams, geom)
             titlestr = "Magnetization Signal (" * titleparamstr * ")",
             apply_pi_correction = false,
             fname = "sig/" * fname * ".signal")
-    catch e
-        @warn "Error plotting signal"
-        @warn sprint(showerror, e, catch_backtrace())
     end
+    =#
 
     return results
 end
 
-function main(;iters::Int = typemax(Int))
+function main(;
+        iters::Int = typemax(Int),
+        perturb_geometry = true,
+    )
     # Make subfolders
     map(mkpath, ("vtk", "mag", "phase", "long", "t2dist", "sig", "omega", "mwfplots", "measurables"))
-
+    
     # Initialize results
     results = Dict{Symbol,Any}(
         :sweepparams        => [],
@@ -422,18 +427,19 @@ function main(;iters::Int = typemax(Int))
         :tpoints            => [],
         :signals            => [],
         :mwfvalues          => [],
-        # :subregion_names    => [], #TODO: no point saving this for PermeableInterfaceRegion simulations
-        # :subregion_signals  => [], #TODO: no point saving this for PermeableInterfaceRegion simulations
-        # :sols               => [], #TODO: prefer not to save custom types / large memory footprint
-        # :myelinsubdomains   => [], #TODO: prefer not to save custom types / large memory footprint
-        # :myelindomains      => [], #TODO: prefer not to save custom types / large memory footprint
-        # :myelinprob         => [], #TODO: prefer not to save custom types
+        # :subregion_names    => [], # no point saving this for PermeableInterfaceRegion simulations
+        # :subregion_signals  => [], # no point saving this for PermeableInterfaceRegion simulations
+        # :sols               => [], # prefer not to save custom types / large memory footprint
+        # :myelinsubdomains   => [], # prefer not to save custom types / large memory footprint
+        # :myelindomains      => [], # prefer not to save custom types / large memory footprint
+        # :myelinprob         => [], # prefer not to save custom types
     )
-
+    
     all_sweepparams = (sweepparamsampler() for _ in 1:iters)
     for (i,sweepparams) in enumerate(all_sweepparams)
         geom = copy_and_load_random_geom(geombasepaths; maxnnodes = maxnnodes)
-        # geom = rand(geomdata)
+        geomtuple = geometrytuple(geom)
+        perturb_geometry && perturb_geom!(geomtuple)
         tspan = (0.0, sweepparams[:nTE] * sweepparams[:TE] + (sweepparams[:nTR] - 1) * sweepparams[:TR])
         try
             println("\n")
@@ -443,11 +449,10 @@ function main(;iters::Int = typemax(Int))
             @info "    Simulation timespan: (0.0 ms, $(round(1000 .* tspan[2]; digits=3)) ms)"
             
             tic = Dates.now()
-            runsimulation!(results, sweepparams, geometrytuple(geom))
+            runsimulation!(results, sweepparams, geomtuple)
             toc = Dates.now()
-            Δt = Dates.canonicalize(Dates.CompoundPeriod(toc - tic))
-
-            @info "Elapsed simulation time: $Δt"
+    
+            @info "Elapsed simulation time: " * string(Dates.canonicalize(Dates.CompoundPeriod(toc - tic)))
         catch e
             if e isa InterruptException
                 @warn "Parameter sweep interrupted by user. Breaking out of loop and returning current results..."
@@ -458,7 +463,7 @@ function main(;iters::Int = typemax(Int))
             end
         end
     end
-
+    
     return results
 end
 
@@ -466,32 +471,37 @@ end
 #### Run sweep
 ####
 
-results = main()
-@unpack sweepparams, btparams, solverparams_dict, tpoints, signals, mwfvalues = results;
-# @unpack sols, myelinprob, myelinsubdomains, myelindomains = results; #TODO
-btparams_dict = Dict.(btparams);
+main()
 
 ####
 #### Plot and save derived quantities from results
 ####
 
-try
+#=
+tryshow("Error saving all BlochTorreyParameter's")
     BSON.bson(SIM_START_TIME * ".allparams.bson", deepcopy(@dict(sweepparams, btparams_dict)))
-catch e
-    @warn "Error saving all BlochTorreyParameter's"
-    @warn sprint(showerror, e, catch_backtrace())
 end
-
-try
+tryshow("Error saving all measurables")
     BSON.bson(SIM_START_TIME * ".allmeasurables.bson", deepcopy(@dict(tpoints, signals, mwfvalues)))
-catch e
-    @warn "Error saving measurables"
-    @warn sprint(showerror, e, catch_backtrace())
 end
-
-try
+tryshow("Error plotting MWF vs method")
     plotMWFvsMethod(results; disp = false, fname = "mwfplots/" * SIM_START_TIME * ".mwf")
-catch e
-    @warn "Error plotting MWF."
-    @warn sprint(showerror, e, catch_backtrace())
 end
+=#
+
+#=
+function plot_geom(geom, fname = "tmp.png")
+    p = plot();
+    map(g -> simpplot!(p,g), geom.exteriorgrids);
+    map(g -> simpplot!(p,g), geom.torigrids);
+    map(g -> simpplot!(p,g), geom.interiorgrids);
+    map(c -> !is_outside(c, geom.bdry) ? plot!(p,c; line=(3,:black)) : nothing, geom.outercircles)
+    map(c -> !is_outside(c, geom.bdry) ? plot!(p,c; line=(3,:black)) : nothing, geom.innercircles)
+    savefig(p, joinpath(@__DIR__, fname));
+end
+geom = geometrytuple(copy_and_load_random_geom(geombasepaths; maxnnodes = maxnnodes));
+plot_geom(geom, "tmp.png");
+plot_geom(perturb_geom!(geom, 0.5), "tmp-rescaled.png");
+=#
+
+nothing

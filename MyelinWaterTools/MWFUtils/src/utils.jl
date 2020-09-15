@@ -95,7 +95,7 @@ function createsubgrids(
         push!(text[1], t) # otherwise, exterior
     end
 
-    G = Grid{2,3,T,3}
+    G = Grid{2,JuAFEM.Triangle,T}
     exteriorgrids = G[Grid(reorder(p,t)...) for t in text]
     interiorgrids = G[Grid(reorder(p,t)...) for t in tint]
     torigrids     = G[Grid(reorder(p,t)...) for t in ttori]
@@ -113,7 +113,8 @@ function packcircles(btparams::BlochTorreyParameters = BlochTorreyParameters{Flo
         beta        = 1e-6, # mutual distance penalty weight
         lambda      = 1.0, # overlap penalty weight (or lagrange multiplier for constrained version)
         greedyiters = 100, # maximum iterations for greedy packing
-        maxattempts = 5 # maximum attempts for sampling radii + greedy packing + energy packing
+        maxattempts = 5, # maximum attempts for sampling radii + greedy packing + energy packing
+        verbose     = false,
     )
 
     # Initialize
@@ -121,14 +122,14 @@ function packcircles(btparams::BlochTorreyParameters = BlochTorreyParameters{Flo
     # @info "epsilon = $epsilon" #DEBUG
 
     for i in 1:maxattempts
-        println("\nPacking... (attempt $i/$maxattempts)\n")
+        verbose && println("\nPacking... (attempt $i/$maxattempts)\n")
         rs = rand(radiidistribution(btparams), Ncircles) # Initial radii distribution
         
-        print("GreedyCirclePacking: ")
-        @time greedycircles = GreedyCirclePacking.pack(rs; goaldensity = 1.0, iters = greedyiters)
+        verbose && print("GreedyCirclePacking: ")
+        greedycircles = GreedyCirclePacking.pack(rs; goaldensity = 1.0, iters = greedyiters)
 
-        # print("EnergyCirclePacking: ")
-        # @time energycircles = EnergyCirclePacking.pack(greedycircles;
+        # verbose && print("EnergyCirclePacking: ")
+        # energycircles = EnergyCirclePacking.pack(greedycircles;
         #     autodiff = false,
         #     secondorder = false,
         #     setcallback = false,
@@ -140,9 +141,9 @@ function packcircles(btparams::BlochTorreyParameters = BlochTorreyParameters{Flo
         # scaledcircles, domain, _ = CirclePackingUtils.scale_to_density(energycircles, goaldensity, distthresh; MODE = :corners)
         # η_curr = estimate_density(scaledcircles, domain)
         # 
-        # println("GreedyCirclePacking density:  $(estimate_density(greedycircles, domain))")
-        # println("EnergyCirclePacking density:  $(estimate_density(energycircles, domain))")
-        # println("Final scaled circles density: $(estimate_density(scaledcircles, domain))")
+        # verbose && println("GreedyCirclePacking density:  $(estimate_density(greedycircles, domain))")
+        # verbose && println("EnergyCirclePacking density:  $(estimate_density(energycircles, domain))")
+        # verbose && println("Final scaled circles density: $(estimate_density(scaledcircles, domain))")
 
         # Scale greedycircles apart before using as initial guess for PeriodicCirclePacking,
         # otherwise circles tend to get caught in local minima where they are close to tangent,
@@ -150,8 +151,8 @@ function packcircles(btparams::BlochTorreyParameters = BlochTorreyParameters{Flo
         # circles don't start out as tangent
         scaledgreedycircles = translate_shape.(greedycircles, 1.1)
 
-        print("PeriodicCirclePacking: ")
-        @time periodiccircles, initialdomain = PeriodicCirclePacking.pack(scaledgreedycircles;
+        verbose && print("PeriodicCirclePacking: ")
+        periodiccircles, initialdomain = PeriodicCirclePacking.pack(scaledgreedycircles;
             autodiff = false,
             secondorder = false,
             distancescale = btparams.R_mu,
@@ -163,13 +164,13 @@ function packcircles(btparams::BlochTorreyParameters = BlochTorreyParameters{Flo
         η_max = periodic_density(periodiccircles, initialdomain)
         η_curr = periodic_density(finalcircles, finaldomain)
 
-        println("")
-        println("Distance threshold: $distthresh")
-        println("Minimum myelin thickness: $(minimum(radius.(finalcircles))*(1-btparams.g_ratio))")
-        println("Minimum circles distance: $(minimum_signed_edge_distance(finalcircles))")
-        println("")
-        println("Periodic circles density: $η_max")
-        println("Final scaled circles density: $η_curr")
+        verbose && println("")
+        verbose && println("Distance threshold: $distthresh")
+        verbose && println("Minimum myelin thickness: $(minimum(radius.(finalcircles))*(1-btparams.g_ratio))")
+        verbose && println("Minimum circles distance: $(minimum_signed_edge_distance(finalcircles))")
+        verbose && println("")
+        verbose && println("Periodic circles density: $η_max")
+        verbose && println("Final scaled circles density: $η_curr")
         
         (η_curr ≈ goaldensity) && (circles = finalcircles; domain = finaldomain; break)
         (η_curr > η_best) && (η_best = η_curr; circles = finalcircles; domain = finaldomain)
@@ -197,15 +198,19 @@ function creategeometry(::PeriodicPackedFibres, btparams::BlochTorreyParameters{
         FIXPOINTSITERS = 500, #DEBUG
         DENSITYCTRLFREQ = 250, #DEBUG
         DELTAT = 0.1, #DEBUG
+        VERBOSE = false, #DEBUG
         FORCEDENSITY = false, # If this flag is true, an error is thrown if the reached packing density is not goaldensity
         FORCEAREA = false, # If this flag is true, an error is thrown if the resulting grid area doesn't match the bdry area
-        FORCEQUALITY = false # If this flag is true, an error is thrown if the resulting grid doesn't have high enough quality
+        FORCEQUALITY = false, # If this flag is true, an error is thrown if the resulting grid doesn't have high enough quality
     ) where {T}
 
     # Initial set of circles
     outercircles, initialbdry = packcircles(btparams;
-        Ncircles = Ncircles, maxattempts = maxpackiter,
-        goaldensity = goaldensity, distthresh = overlapthresh * btparams.R_mu)
+        Ncircles = Ncircles,
+        maxattempts = maxpackiter,
+        goaldensity = goaldensity,
+        distthresh = overlapthresh * btparams.R_mu,
+        verbose = VERBOSE)
     innercircles = scale_shape.(outercircles, btparams.g_ratio)
     allcircles = collect(Iterators.flatten(zip(outercircles, innercircles)))
 
@@ -263,7 +268,7 @@ function creategeometry(::PeriodicPackedFibres, btparams::BlochTorreyParameters{
         FIXPOINTSITERS = FIXPOINTSITERS,
         DENSITYCTRLFREQ = DENSITYCTRLFREQ,
         DELTAT = DELTAT,
-        VERBOSE = true,
+        VERBOSE = VERBOSE,
         DETERMINISTIC = true,
         PLOT = false,
         PLOTLAST = false)
@@ -356,7 +361,7 @@ function geometrytuple(geom::Dict)
     end
     
     # Ensure proper typing of grids, and return NamedTuple of data
-    G = Grid{2,3,Float64,3} # 2D triangular grid
+    G = Grid{2,JuAFEM.Triangle,Float64} # 2D triangular grid
     C = Circle{2,Float64}
     R = Rectangle{2,Float64}
     exteriorgrids = convert(Vector{G}, geom[:exteriorgrids][:])
@@ -376,15 +381,15 @@ loadgeometry(fname::String) = geometrytuple(BSON.load(fname))
 
 function createdomains(
         btparams::BlochTorreyParameters{Tu},
-        exteriorgrids::AbstractArray{G},
-        torigrids::AbstractArray{G},
-        interiorgrids::AbstractArray{G},
-        outercircles::AbstractArray{C},
-        innercircles::AbstractArray{C},
-        ferritins::AbstractArray{V} = Vec{3,T}[], #Default to geometry float type
+        exteriorgrids::AbstractArray{<:TriangularGrid},
+        torigrids::AbstractArray{<:TriangularGrid},
+        interiorgrids::AbstractArray{<:TriangularGrid},
+        outercircles::AbstractArray{<:Circle{2}},
+        innercircles::AbstractArray{<:Circle{2}},
+        ferritins::AbstractArray{<:Vec{3}} = Vec{3,Tu}[], #Default to geometry float type
         ::Type{uType} = Vec{2,Tu}; #Default btparams float type
         kwargs...
-    ) where {T, G <: TriangularGrid{T}, C <: Circle{2,T}, V <: Vec{3,T}, Tu, uType <: FieldType{Tu}}
+    ) where {Tu, uType <: FieldType{Tu}}
 
     myelinprob = MyelinProblem(btparams)
     myelinsubdomains = createmyelindomains(
@@ -393,11 +398,14 @@ function createdomains(
         uType; kwargs...)
 
     @info "Assembling MyelinDomain from subdomains"
-    print("    Assemble subdomains   "); @time doassemble!.(myelinsubdomains, Ref(myelinprob))
-    print("    Factorize subdomains  "); @time factorize!.(myelinsubdomains)
-    print("    Assemble combined     "); @time myelindomains = [MyelinDomain(PermeableInterfaceRegion(), myelinprob, myelinsubdomains)]
-    print("    Factorize combined    "); @time factorize!.(myelindomains)
-    
+    @timeit BlochTorreyUtils.TIMER "Assembling MyelinDomain" begin
+        @timeit BlochTorreyUtils.TIMER "Assemble subdomains"  foreach(m -> doassemble!(m, myelinprob), myelinsubdomains)
+        @timeit BlochTorreyUtils.TIMER "Factorize subdomains" foreach(m -> factorize!(m), myelinsubdomains)
+        @timeit BlochTorreyUtils.TIMER "Assemble combined"    myelindomains = [MyelinDomain(PermeableInterfaceRegion(), myelinprob, myelinsubdomains)]
+        @timeit BlochTorreyUtils.TIMER "Factorize combined"   foreach(m -> factorize!(m), myelindomains)
+    end
+    # show(stdout, BlochTorreyUtils.TIMER); println("\n")
+
     return @ntuple(myelinprob, myelinsubdomains, myelindomains)
 end
 
@@ -539,13 +547,16 @@ function solveblochtorrey(
     tstops = cpmg_savetimes(tspan, dt, TE, TR, nTE, nTR)
 
     # Setup problem and solve
-    prob = ODEProblem(myelindomain, U0, tspan)
-    sol = solve(prob, alg, args...;
-        dense = false, # don't save all intermediate time steps
-        saveat = tstops, # timepoints to save solution at
-        tstops = tstops, # ensure stopping at all tstops points
-        dt = dt, reltol = reltol, abstol = abstol, callback = callback, kwargs...)
-    
+    @timeit BlochTorreyUtils.TIMER "solveblochtorrey" begin
+        prob = ODEProblem(myelindomain, U0, tspan)
+        sol = solve(prob, alg, args...;
+            dense = false, # don't save all intermediate time steps
+            saveat = tstops, # timepoints to save solution at
+            tstops = tstops, # ensure stopping at all tstops points
+            dt = dt, reltol = reltol, abstol = abstol, callback = callback, kwargs...)
+    end
+    # show(stdout, BlochTorreyUtils.TIMER); println("\n")
+
     if DEBUG_ODEPROBLEM
         BlochTorreyUtils._display_counters()
     end

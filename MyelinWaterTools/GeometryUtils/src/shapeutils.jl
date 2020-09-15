@@ -58,18 +58,16 @@ pulsemat2(α, pulsetype::Symbol) = pulsemat2(Float64, Float64(α), pulsetype)
 @inline transverse(x::Complex{T}) where {T} = Vec{2,T}((real(x), imag(x)))
 @inline longitudinal(x::Vec{3,T}) where {T} = x[3]
 
-# Three argument inner product (v,A,u) = v'(A*u), where scalar A is interpreted as A*I
-LinearAlgebra.dot(v::Number,              A::Number,                u::Number             ) where {dim} = A * (v * u)
-LinearAlgebra.dot(v::Vec{dim},            A::Number,                u::Vec{dim}           ) where {dim} = A * (v ⋅ u)
-LinearAlgebra.dot(v::Vec{dim},            A::AbstractTensor{2,dim}, u::Vec{dim}           ) where {dim} = v ⋅ (A ⋅ u)
-LinearAlgebra.dot(v::AbstractTensor{dim}, A::Number,                u::AbstractTensor{dim}) where {dim} = A * (v ⊡ u)
-LinearAlgebra.dot(v::AbstractTensor{dim}, A::AbstractTensor{2,dim}, u::AbstractTensor{dim}) where {dim} = v ⊡ (A ⋅ u)
+# Three argument inner product dot(v,A,u) = dot(v, A*u), where scalar A is interpreted as A*I
+# LinearAlgebra.dot(v::Number,              A::Number,                u::Number               ) where {dim} = A * (v * u) # this is LinearAlgebra.dot default (also: type piracy)
+# LinearAlgebra.dot(v::Vec{dim},            A::Number,                u::Vec{dim}             ) where {dim} = A * (v ⋅ u) # this is LinearAlgebra.dot default
+LinearAlgebra.dot(v::Vec{dim},              A::AbstractTensor{2,dim}, u::Vec{dim}             ) where {dim} = v ⋅ (A ⋅ u) # optimization; LinearAlgebra.dot uses a loop
+LinearAlgebra.dot(v::AbstractTensor{2,dim}, A::Number,                u::AbstractTensor{2,dim}) where {dim} = A * (v ⊡ u) # this matches behavour as if AbstractTensor{2,dim} were converted to a Matrix
+LinearAlgebra.dot(v::AbstractTensor{2,dim}, A::AbstractTensor{2,dim}, u::AbstractTensor{2,dim}) where {dim} = v ⊡ (A ⋅ u) # this matches behavour as if AbstractTensor{2,dim} were converted to a Matrix
 
 @inline function hadamardproduct(S1::Vec{dim}, S2::Vec{dim}) where {dim}
     return Vec{dim}(@inline function(i) v = S1[i] * S2[i]; return v; end)
 end
-# @inline hadamardproduct2(S1::Vec{2}, S2::Vec{2}) = Vec{2}((S1[1]*S2[1], S1[2]*S2[2]))
-# @inline hadamardproduct3(S1::Vec{3}, S2::Vec{3}) = Vec{3}((S1[1]*S2[1], S1[2]*S2[2], S1[3]*S2[3]))
 const ⊙ = hadamardproduct
 
 # Compute the `skew product` between two 2-dimensional vectors. This is the same

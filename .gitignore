@@ -4,6 +4,10 @@
 Test/*
 GeometryGeneration/Images/*
 Results/*
+LearningCorrections/output/*
+LearningCorrections/wandb/*
+LearningCorrections/scripts/*.so
+MyelinWaterTools/scripts/output/*
 
 ####################
 ## Paraview files ##

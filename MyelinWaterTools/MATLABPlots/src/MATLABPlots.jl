@@ -1,8 +1,5 @@
 module MATLABPlots
 
-# using DistMesh
-# using MeshUtils
-# using JuAFEM
 using GeometryUtils
 using Reexport
 @reexport using MATLAB

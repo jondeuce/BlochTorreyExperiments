@@ -1,0 +1,7 @@
+name = "GlobalUtils"
+uuid = "5eefa528-4655-44ad-8fd1-8a72c7fb3bd6"
+authors = ["Jonathan Doucette <jdoucette@phas.ubc.ca>"]
+version = "0.1.0"
+
+[deps]
+LibGit2 = "76f85450-5226-5b5a-8eaa-529ad045b433"

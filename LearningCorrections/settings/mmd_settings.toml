@@ -1,0 +1,90 @@
+[data]
+out       = "./output/mmd-tmp"
+ntheta    = 5
+nsignal   = 128
+theta_labels = ["freq", "phase", "offset", "amp", "tconst"]
+# ntheta    = 5
+# nsignal   = 48
+# echotime  = 8e-3
+# normalize = false
+# theta_labels = ["refcon", "alpha", "T2short", "dT2", "Ashort"]
+# ntheta    = 4
+# nsignal   = 48
+# echotime  = 8e-3
+# normalize = false
+# theta_labels = ["alpha", "T2short", "dT2", "Ashort"]
+# ntheta    = 5
+# nsignal   = 48
+# echotime  = 8e-3
+# normalize = false
+# theta_labels = ["alpha", "T2short", "dT2", "Ashort", "Along"]
+
+[mmd]
+stepsize   = 1e-4 #3.1623e-4 #1.0e-5 #TODO
+stepdrop   = 1.0 #10.0 3.1623 #1.7783
+stepthresh = 1e-5
+steprate   = 1000
+batchsize  = 1024 #2048 #3072
+nbatches   = 10
+epochs     = 999_999
+traintime  = 1e9 #TODO
+saveperiod = 300.0 #TODO
+showrate   = 1 #TODO
+lambda     = 0.0 #TODO
+ninfer     = 128 #TODO Number of MLE parameter inferences
+nperms     = 128 # Number of permutations for c_alpha calculation + perm plot
+nsamples   = 1 # Number of MMD samples for perm plot
+hdim       = 128
+nhidden    = 2
+# maxcorr    = 0.005 # normalized signals
+# noisebounds= [-10.0, -4.0] # normalized signals
+# maxcorr    = 0.025 # unnormalized signals (but scaled down by 1e6)
+# noisebounds= [-6.0, -3.0] # unnormalized signals (but scaled down by 1e6)
+maxcorr    = 0.1 # toy signals
+noisebounds= [-8.0, -2.0] # toy signals
+[mmd.kernel]
+# nbandwidth = 4 #TODO
+# bwbounds   = [-10.0, 4.0] # bounds for kernel bandwidths (logsigma)
+# losstype   = "tstatistic" #"MMD"
+nbandwidth = 4 #TODO
+bwbounds   = [-8.0, 4.0] # toy problem bounds for kernel bandwidths (logsigma)
+losstype   = "tstatistic" #"MMD"
+lambda     = 0.0
+stepsize   = 1e-2
+epochs     = 1
+nbatches   = 10
+rate       = 50 #TODO
+
+[vae]
+epochs     = 999_999
+batchsize  = 1_000
+nbatches   = 10
+traintime  = 36000.0
+saveperiod = 300.0
+mutations  = 0
+stepsize   = 1e-4
+stepdrop   = 1.0
+steprate   = 1000
+zdim       = 8
+hdim       = 128
+nhidden    = 0
+gamma      = 0.5
+
+[prior]
+nterms    = 2
+batchsize = 100
+nbatches  = 10
+logsigma  = -6.0
+[prior.data]
+#thetas   = "/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v2-allfits/mlefits-shuffled.bson"
+thetas    = "/project/st-arausch-1/jcd1994/MMD-Learning/data/mlefit-v3-allfits/mlefits-shuffled-normalized.bson"
+image     = "/project/st-arausch-1/jcd1994/MMD-Learning/data/images/masked-image-240x240x48x48.mat"
+t2dist    = "/project/st-arausch-1/jcd1994/MMD-Learning/data/images/masked-image-240x240x48x48.t2dist.mat"
+t2maps    = "/project/st-arausch-1/jcd1994/MMD-Learning/data/images/masked-image-240x240x48x48.t2maps.mat"
+t2parts   = "/project/st-arausch-1/jcd1994/MMD-Learning/data/images/masked-image-240x240x48x48.t2parts.mat"
+settings  = "/project/st-arausch-1/jcd1994/MMD-Learning/data/images/masked-image-240x240x48x48.settings-240x240x48x48.txt"
+[prior.fitting]
+losstype   = "mle"
+batchsize  = 1000 # 1000 gives 822 jobs
+batchindex = 1
+maxtime    = 5.0
