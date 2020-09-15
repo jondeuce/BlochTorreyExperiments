@@ -6,6 +6,12 @@ git-tree-sha1 = "0fac443759fa829ed8066db6cf1077d888bb6573"
 uuid = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
 version = "2.0.2"
 
+[[AxisArrays]]
+deps = ["Dates", "IntervalSets", "IterTools", "RangeArrays"]
+git-tree-sha1 = "f31f50712cbdf40ee8287f0443b57503e34122ef"
+uuid = "39de3d68-74b9-583c-8d2d-e117c070f3a9"
+version = "0.4.3"
+
 [[BSON]]
 git-tree-sha1 = "dd36d7cf3d185eeaaf64db902c15174b22f5dafb"
 uuid = "fbb218c0-5317-5bc6-957e-2ee96dd4b1f0"
@@ -131,6 +137,11 @@ git-tree-sha1 = "3676697fd903ba314aaaa0ec8d6813b354edb875"
 uuid = "31c24e10-a181-5473-b8eb-7969acd0382f"
 version = "0.23.11"
 
+[[EllipsisNotation]]
+git-tree-sha1 = "65dad386e877850e6fce4fc77f60fe75a468ce9d"
+uuid = "da5c29d0-fa7d-589e-88eb-ea29b0a81949"
+version = "0.4.0"
+
 [[FFMPEG]]
 deps = ["FFMPEG_jll", "x264_jll"]
 git-tree-sha1 = "9a73ffdc375be61b0e4516d83d880b265366fe1f"
@@ -217,6 +228,12 @@ version = "0.5.0"
 [[InteractiveUtils]]
 deps = ["Markdown"]
 uuid = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+
+[[IntervalSets]]
+deps = ["Dates", "EllipsisNotation", "Statistics"]
+git-tree-sha1 = "3b1cef135bc532b3c3401b309e1b8a2a2ba26af5"
+uuid = "8197267c-284f-5f27-9208-e0e47529a953"
+version = "0.5.1"
 
 [[IterTools]]
 git-tree-sha1 = "05110a2ab1fc5f932622ffea2a003221f4782c18"
@@ -416,6 +433,11 @@ uuid = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 [[Random]]
 deps = ["Serialization"]
 uuid = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+
+[[RangeArrays]]
+git-tree-sha1 = "b9039e93773ddcfc828f12aadf7115b4b4d225f5"
+uuid = "b3c3ace0-ae52-54e7-9d0b-2c1406fd6b9d"
+version = "0.3.2"
 
 [[RecipesBase]]
 git-tree-sha1 = "6ee6c35fe69e79e17c455a386c1ccdc66d9f7da4"

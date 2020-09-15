@@ -26,11 +26,19 @@ end
 
 # Start MATLAB
 @everywhere function init_mx_workers()
-    mxcall(:disp, 0, "Hello from Matlab")
-    mxcall(:rng, 0, 0)
-    mxcall(:addpath, 0, "/arc/project/st-arausch-1/jcd1994/code/")
-    mxcall(:addpath, 0, mxcall(:btpathdef, 1))
-    mxcall(:maxNumCompThreads, 0, Threads.nthreads())
+    repobranch = (@__DIR__)[match(r"BlochTorreyExperiments-", @__DIR__).offset + 23 : match(r"/Experiments/PerfusionOrientation", @__DIR__).offset - 1]
+    reponame = "BlochTorreyExperiments-" * repobranch
+    cdall("/project/st-arausch-1/jcd1994/code")
+    mat"""
+    disp('Hello from Matlab (worker #$(myid()))');
+    cd('/project/st-arausch-1/jcd1994/code');
+    addpath('/project/st-arausch-1/jcd1994/code');
+    addpath(btpathdef);
+    addpath(genpath($reponame));
+    setbtpath($repobranch);
+    maxNumCompThreads($(Threads.nthreads()));
+    rng(0);
+    """
     cdhome()
 end
 @everywhere init_mx_workers()
