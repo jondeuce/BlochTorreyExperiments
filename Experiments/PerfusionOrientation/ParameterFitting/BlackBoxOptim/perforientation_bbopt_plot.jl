@@ -3,16 +3,15 @@ Pkg.activate(@__DIR__)
 Pkg.instantiate()
 
 using Dates, Glob, MAT, BSON, MATLAB, BlackBoxOptim, Plots, LaTeXStrings, AxisArrays, NaNMath
-# pyplot(size = (1600,900))
-pyplot(size = (800,600))
 
-sweepdir() = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-11"
-saveplot(name) = p -> (display(p); foreach(ext -> savefig(p, name * ext), [".png", ".pdf"]))
+homedir() = "/project/st-arausch-1/jcd1994/code"
+sweepdir() = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-12"
+saveplot(name) = p -> (foreach(ext -> savefig(p, name * ext), [".png", ".pdf"]); return p)
 
 jobnum(jobdir) = (s = basename(jobdir); parse(Int, s[6] == '_' ? s[5:5] : s[5:6]))
 jobdirs = glob(glob"Job*", sweepdir()) |> dirs -> Dict(jobnum.(dirs) .=> dirs)
 
-mxcall(:addpath, 0, "/project/st-arausch-1/jcd1994/code/")
+mxcall(:addpath, 0, homedir())
 mxcall(:addpath, 0, mxcall(:btpathdef, 1))
 
 rowvcat(xs) = reduce(vcat, permutedims.(vec.(xs)))
@@ -21,6 +20,24 @@ getresult(r, f1, f2) = r["Results"][f1][f2]
 getresults(rs, fs...) = getresult.(rs, fs...) |> x -> eltype(x) <: AbstractArray ? rowvcat(x) : x
 lossfun(ydata, ymodel, weights, normfun) = mxcall(:perforientation_objfun, 1, zeros(1,3), zeros(size(ydata)...), ydata, ymodel, weights, normfun)
 lossfun(rs, normfun) = lossfun(getresults(rs, "dR2_Data"), getresults(rs, "dR2"), getresults(rs, "args", "Weights"), normfun)
+
+_nanreduce(f, A, ::Colon) = filter(!isnan, A) |> x -> isempty(x) ? eltype(A)(NaN) : f(x)
+_nanreduce(f, A, dims) = mapslices(a->_nanreduce(f,a,:), A, dims=dims)
+nanreduce(f, A; dims=:) = dropdims(_nanreduce(f, A, dims); dims=dims)
+function nanreduce(f, A::AxisArray; dims::Union{Symbol,NTuple{N,Symbol} where N})
+    if dims isa Symbol; dims = (dims,); end
+    ax = filter(ax -> AxisArrays.axisname(ax) ∉ dims, AxisArrays.axes(A))
+    dims = map(d -> axisdim(A, Axis{d}), dims)
+    AxisArray(nanreduce(f, convert(Array, A); dims = dims), ax)
+end
+
+function unzip(x::AbstractArray{<:Tuple})
+    ys = map(xj -> zeros(typeof(xj), size(x)), x[1])
+    for I in eachindex(x), j in 1:length(ys)
+        ys[j][I] = x[I][j]
+    end
+    return ys
+end
 
 function read_and_plot(jobdirs)
     for (j,jobdir) in sort(jobdirs)
@@ -68,7 +85,7 @@ function read_and_plot(jobdirs)
                     (r -> 100 * r["Results"]["aBVF"]).(results) |> y -> scatter(y; ylabel = "aBVF", c = :purple, lab = "curr = $(s(y[end]))");
                 ),
                 layout = @layout([a{0.01h}; b{0.99h}]), size = (1600,900),
-            ) |> saveplot("Losses")
+            ) |> saveplot("Losses") |> display
 
             plot(
                 plot(;title = basename(jobdir), grid = :none, ticks = :none, showaxis = false), #titlefontsize = 12
@@ -83,7 +100,7 @@ function read_and_plot(jobdirs)
                 )
                 end...),
                 layout = @layout([a{0.01h}; b{0.99h}]), size = (1600,900),
-            ) |> saveplot("Fits")
+            ) |> saveplot("Fits") |> display
 
             sleep(0.1)
         finally
@@ -91,7 +108,8 @@ function read_and_plot(jobdirs)
         end
     end
 end
-# read_and_plot(jobdirs)
+pyplot(size = (1600,900))
+read_and_plot(jobdirs)
 
 function save_iterations(jobdirs)
     for (j,jobdir) in sort(jobdirs)
@@ -130,17 +148,28 @@ function save_iterations(jobdirs)
 end
 # save_iterations(jobdirs)
 
-_nanfunc(f, A, ::Colon) = filter(!isnan, A) |> x -> isempty(x) ? eltype(A)(NaN) : f(x)
-_nanfunc(f, A, dims) = mapslices(a->_nanfunc(f,a,:), A, dims=dims)
-nanfunc(f, A; dims=:) = dropdims(_nanfunc(f, A, dims); dims=dims)
-function nanfunc(f, A::AxisArray; dims::Union{Symbol,NTuple{N,Symbol} where N})
-    if dims isa Symbol; dims = (dims,); end
-    ax = filter(ax -> AxisArrays.axisname(ax) ∉ dims, AxisArrays.axes(A))
-    dims = map(d -> axisdim(A, Axis{d}), dims)
-    AxisArray(nanfunc(f, convert(Array, A); dims = dims), ax)
+function plot_jobfit(jobdir; nplots = 4)
+    res = MAT.matread(joinpath(jobdir, "IterationsResults.mat"))
+    isort = sortperm(res["AICc"])
+    s(x) = string(round(x; sigdigits = 4))
+    plot(
+        plot(;title = basename(jobdir), grid = :none, ticks = :none, showaxis = false), #titlefontsize = 12
+        plot(map(isort[begin:min(nplots,end)]) do i
+            xdata, ydata, fdata = vec.((res["alpha_range"][i,:], res["dR2_Data"][i,:], res["dR2"][i,:]))
+            title = "AICc = $(s(res["AICc"][i])), CA = $(s(res["CA"][i])), Rmajor = $(s(res["Rmajor"][i]))\naBVF = $(s(100 * res["aBVF"][i])), iBVF = $(s(100 * res["iBVF"][i])), BVF = $(s(100 * (res["aBVF"][i] + res["iBVF"][i])))"
+            plot(
+                xdata, [ydata fdata];
+                xlab = L"$\alpha$ [degrees]", ylab = L"$\Delta R_2^*$ [Hz]", lab = ["Data" "Fit"], title = title, leg = :bottomright,
+                lw = 2, titlefontsize = 10, labelfontsize = 10, legendfontsize = 10,
+            )
+            end...),
+        layout = @layout([a{0.01h}; b{0.99h}]),
+    ) |> saveplot(joinpath(sweepdir(), basename(jobdir) * ".ModelFits")) |> display
 end
+# pyplot(size = (800,600))
+# plot_jobfit.(readdir(glob"Job-40_*", sweepdir()))
 
-function plot_iterations(jobdirs)
+function plot_sweepsummary(jobdirs)
     jobnums, resfiles, sweepfiles = Int[], String[], String[]
     for (j,jobdir) in sort(jobdirs)
         resfile = joinpath(jobdir, "IterationsResults.mat")
@@ -153,6 +182,8 @@ function plot_iterations(jobdirs)
     end
     results = matread.(resfiles)
     params = matread.(sweepfiles)
+    isort = sortperm(params; by = p -> (p["Dtissue"], p["PVSvolume"], Int(p["Nmajor"])))
+    results, params = results[isort], params[isort]
 
     Dtissue_all, PVSvolume_all, Nmajor_all = (p -> p["Dtissue"]).(params), (p -> p["PVSvolume"]).(params), (p -> Int(p["Nmajor"])).(params)
     Dtissue, PVSvolume, Nmajor = sort(unique(Dtissue_all)), sort(unique(PVSvolume_all)), sort(unique(Nmajor_all))
@@ -160,15 +191,20 @@ function plot_iterations(jobdirs)
     for (ps, rs) in zip(params, results)
         data[atvalue.((ps["Dtissue"], ps["PVSvolume"], ps["Nmajor"]))...] = minimum(rs["AICc"])
     end
+    Dcolors = Dict(0.0 => :blue, 2.0 => :red, 3.0 => :green)
+    PVScolors = Dict(0.0 => :blue, 1.0 => :red, 3.0 => :green)
+    PVSshapes = Dict(0.0 => :circle, 1.0 => :square, 3.0 => :diamond)
+    PVSstyle = Dict(0.0 => :solid, 1.0 => :dash, 3.0 => :dot)
 
     plot(
-        sticks(jobnums, (r -> minimum(r["AICc"])).(results); xlab = "Job #", ylab = "AICc", title = "All Jobs", marker = (3,:red,:circle), leg = :none),
-        plot(Nmajor, nanfunc(minimum, data; dims = :Dtissue)'; xlab = "Nmajor", ylab = "AICc", title = "MIP over Dtissue", label = ("PVSvolume = " .* string.(PVSvolume')), marker = (5,:circle), line = (2,:dash)),
-        plot(Nmajor, nanfunc(minimum, data; dims = :PVSvolume)'; xlab = "Nmajor", ylab = "AICc", title = "MIP over PVSvolume", label = ("Dtissue = " .* string.(Dtissue')), marker = (5,:circle), line = (2,:dash)),
-        plot(PVSvolume, nanfunc(minimum, data; dims = :Nmajor)'; xlab = "PVSvolume", ylab = "AICc", title = "MIP over Nmajor", label = ("Dtissue = " .* string.(Dtissue')), marker = (5,:circle), line = (2,:dash)),
-    ) |> display
+        sticks((r -> minimum(r["AICc"])).(results); xlab = "Simulation #", ylab = "AICc", title = "All Simulations", leg = :none, lw = 1.5, lc = [Dcolors[D] for D in Dtissue_all], linestyle = [PVSstyle[P] for P in PVSvolume_all], marker = (2,:square,:black)), #markersize = 5, markershape = [PVSshapes[P] for P in PVSvolume_all], markercolor = [PVScolors[P] for P in PVSvolume_all]),
+        plot(PVSvolume, nanreduce(minimum, data; dims = :Nmajor)'; xlab = "PVSvolume", ylab = "AICc", title = "Minimum over Nmajor", label = ("Dtissue = " .* string.(Dtissue')), markersize = 5, markershape = [:circle :square :diamond], line = (2,:dash)),
+        plot(Nmajor, nanreduce(minimum, data; dims = :Dtissue)'; xlab = "Nmajor", ylab = "AICc", title = "Minimum over Dtissue", label = ("PVSvolume = " .* string.(PVSvolume')), markersize = 5, markershape = [:circle :square :diamond], line = (2,:dash)),
+        plot(Nmajor, nanreduce(minimum, data; dims = :PVSvolume)'; xlab = "Nmajor", ylab = "AICc", title = "Minimum over PVSvolume", label = ("Dtissue = " .* string.(Dtissue')), markersize = 5, markershape = [:circle :square :diamond], line = (2,:dash)),
+    ) |> saveplot(joinpath(sweepdir(), "PerfOrientResultsSummary")) |> display
 end
-plot_iterations(jobdirs)
+# pyplot(size = (800,600))
+# plot_sweepsummary(jobdirs)
 
 # maybeconvergedjobs = [45]
 # nonconvergedjobs = [24; 30]
@@ -192,5 +228,26 @@ plot_iterations(jobdirs)
 #             @show run(Cmd(["qdel", string(pid)]))
 #         catch
 #         end
+#     end
+# end
+
+# for sweepsetdir in joinpath.(sweepdir(), ["2020-09-11", "2020-09-12"])
+#     mergedir = joinpath(sweepdir(), "merged")
+#     for dir in readdir(glob"Job*", sweepsetdir)
+#         @show dir
+#         @time for iterdir in readdir(glob"2020-09-*-worker-*", dir)
+#             rm(iterdir, recursive=true, force=true)
+#         end
+#     end
+# end
+
+# let
+#     mergedir = sweepdir()
+#     sweepsetdir = "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/PerfusionOrientation/GRE-DSC-PVS-Orientation2020Fall/2020-09-12"
+#     for dir in sort(readdir(glob"Job*", sweepsetdir); by = jobnum)
+#         newdir = joinpath(mergedir, "Job-$(jobnum(dir)+54)" * basename(dir)[end-34:end])
+#         @show dir
+#         @show newdir
+#         mv(dir, newdir)
 #     end
 # end
