@@ -13,7 +13,8 @@ using Distributed
 @everywhere cdall(path) = (cd(path); mxcall(:cd, 0, path); nothing)
 @everywhere cdhome() = cdall(homedir())
 @everywhere getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
-@everywhere function logger(f, prefix)
+@everywhere function logger(f, prefix; active = true)
+    !active && return f()
     local ret = nothing
     open(prefix * ".log", "a") do log
         open(prefix * ".out", "a") do out
@@ -33,17 +34,17 @@ end
 
 # Start MATLAB
 @everywhere function init_mx_workers()
-    repobranch = (@__DIR__)[match(r"BlochTorreyExperiments-", @__DIR__).offset + 23 : match(r"/Experiments/PerfusionOrientation", @__DIR__).offset - 1]
+    btpath = match(r"(.*?)/BlochTorreyExperiments", @__DIR__)[1]
+    repobranch = match(r"BlochTorreyExperiments-(.*?)/", @__DIR__)[1]
     reponame = "BlochTorreyExperiments-" * repobranch
-    cdall("/project/st-arausch-1/jcd1994/code")
+    cdall(btpath)
     mat"""
     disp('Hello from Matlab (worker #$(myid()))');
-    cd('/project/st-arausch-1/jcd1994/code');
-    addpath('/project/st-arausch-1/jcd1994/code');
+    cd($btpath);
+    addpath($btpath);
     addpath(btpathdef);
     addpath(genpath($reponame));
-    setbtpath($repobranch);
-    build_all_blochtorreyop;
+    setbtpath($repobranch, false);
     maxNumCompThreads($(Threads.nthreads()));
     rng(0);
     """
