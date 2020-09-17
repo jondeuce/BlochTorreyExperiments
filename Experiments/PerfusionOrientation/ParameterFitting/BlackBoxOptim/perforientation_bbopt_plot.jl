@@ -5,7 +5,7 @@ Pkg.instantiate()
 using Dates, Glob, MAT, BSON, MATLAB, BlackBoxOptim, Plots, LaTeXStrings, AxisArrays, NaNMath
 
 homedir() = "/project/st-arausch-1/jcd1994/code"
-sweepdir() = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-12"
+sweepdir() = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-11"
 saveplot(name) = p -> (foreach(ext -> savefig(p, name * ext), [".png", ".pdf"]); return p)
 
 jobnum(jobdir) = (s = basename(jobdir); parse(Int, s[6] == '_' ? s[5:5] : s[5:6]))
@@ -47,10 +47,11 @@ function read_and_plot(jobdirs)
             if isfile(joinpath(jobdir, "BBOptWorkspace.mat"))
                 if isfile(joinpath(jobdir, "done.txt"))
                     @info "Done"
+                    continue
                 else
                     if isfile(joinpath(jobdir, "BBOptResults.mat"))
                         @info "Finished"
-                        # touch(joinpath(jobdir, "done.txt"))
+                        touch(joinpath(jobdir, "done.txt"))
                     else
                         @info "Running"
                     end
@@ -61,13 +62,10 @@ function read_and_plot(jobdirs)
                 else
                     @info "Queueing"
                 end
+                continue
             end
-            # continue
 
             cd(jobdir)
-            !isfile(joinpath(jobdir, "BBOptWorkspace.mat")) && continue
-            isfile(joinpath(jobdir, "done.txt")) && continue
-
             resfiles = readdir(glob"2020**/*.mat", jobdir)
             results = matread.(resfiles)
             times = resfiles .|> dirname .|> basename .|> s -> DateTime(s[1:25], "yyyy-mm-dd-T-HH-MM-SS-sss")
@@ -111,10 +109,12 @@ end
 pyplot(size = (1600,900))
 read_and_plot(jobdirs)
 
-function save_iterations(jobdirs)
+function save_iterations(jobdirs; force = false)
     for (j,jobdir) in sort(jobdirs)
         @info "Starting... $(basename(jobdir))"
-        !(isfile(joinpath(jobdir, "BBOptWorkspace.mat")) && isfile(joinpath(jobdir, "done.txt"))) && continue
+        if !force && isfile(joinpath(jobdir, "done.txt"))
+            continue
+        end
 
         @time try
             cd(jobdir)
@@ -146,7 +146,7 @@ function save_iterations(jobdirs)
         end
     end
 end
-# save_iterations(jobdirs)
+save_iterations(jobdirs)
 
 function plot_jobfit(jobdir; nplots = 4)
     res = MAT.matread(joinpath(jobdir, "IterationsResults.mat"))
@@ -164,7 +164,7 @@ function plot_jobfit(jobdir; nplots = 4)
             )
             end...),
         layout = @layout([a{0.01h}; b{0.99h}]),
-    ) |> saveplot(joinpath(sweepdir(), basename(jobdir) * ".ModelFits")) |> display
+    ) |> saveplot(joinpath(sweepdir(), "ModelFits." * basename(jobdir))) |> display
 end
 # pyplot(size = (800,600))
 # plot_jobfit.(readdir(glob"Job-40_*", sweepdir()))
@@ -242,8 +242,8 @@ end
 # end
 
 # let
-#     mergedir = sweepdir()
-#     sweepsetdir = "/home/jdoucette/Documents/code/BlochTorreyResults/Experiments/PerfusionOrientation/GRE-DSC-PVS-Orientation2020Fall/2020-09-12"
+#     sweepsetdir = sweepdir()
+#     mergedir = joinpath(sweepsetdir[1:end-length(basename(sweepsetdir))], "merged")
 #     for dir in sort(readdir(glob"Job*", sweepsetdir); by = jobnum)
 #         newdir = joinpath(mergedir, "Job-$(jobnum(dir)+54)" * basename(dir)[end-34:end])
 #         @show dir

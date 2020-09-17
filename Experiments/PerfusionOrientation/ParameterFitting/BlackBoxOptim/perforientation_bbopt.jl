@@ -15,17 +15,17 @@ using Distributed
 @everywhere getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
 @everywhere function logger(f, prefix)
     local ret = nothing
-    open(prefix * ".log", "a") do io
+    open(prefix * ".log", "a") do log
         open(prefix * ".out", "a") do out
             open(prefix * ".err", "a") do err
-                with_logger(SimpleLogger(io)) do
+                with_logger(SimpleLogger(log)) do
                     redirect_stdout(out) do
                         redirect_stderr(err) do
                             ret = f()
                         end
                     end
                 end
-                foreach(flush, (io, out, err))
+                foreach(flush, (log, out, err))
             end
         end
     end
@@ -44,6 +44,7 @@ end
     addpath(btpathdef);
     addpath(genpath($reponame));
     setbtpath($repobranch);
+    build_all_blochtorreyop;
     maxNumCompThreads($(Threads.nthreads()));
     rng(0);
     """
@@ -72,10 +73,11 @@ end
 
 @everywhere maybefire(file) = (isf = isfile(file); if isf; mv(file, file * ".fired"; force = true); end; return isf)
 @everywhere function cb(ctrl::BlackBoxOptim.OptRunController)
-    if maybefire(joinpath(homedir(), "stop"))
-        BlackBoxOptim.shutdown_optimizer!(ctrl)
-    end
     foreach(flush, (stdout, stdin))
+    if maybefire(joinpath(homedir(), "stop"))
+        error("Halting optimizer: found file `stop`")
+        # BlackBoxOptim.shutdown_optimizer!(ctrl)
+    end
 end
 
 # Initial solve using global optimizer
@@ -108,6 +110,7 @@ function bbopt()
         "results" => deepcopy(res),
     ))
 end
+
 logger(joinpath(homedir(), "Diary")) do
     mxcall(:perforientation_bbopt_init, 0)
     bbopt()
