@@ -2,7 +2,7 @@ import Pkg
 Pkg.activate(@__DIR__)
 Pkg.instantiate()
 
-using Dates, Glob, MAT, BSON, MATLAB, BlackBoxOptim, Plots, LaTeXStrings, AxisArrays, NaNMath
+using Dates, Glob, MAT, BSON, MATLAB, Plots, LaTeXStrings, AxisArrays, NaNMath
 
 homedir() = "/project/st-arausch-1/jcd1994/code"
 sweepdir() = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-11"

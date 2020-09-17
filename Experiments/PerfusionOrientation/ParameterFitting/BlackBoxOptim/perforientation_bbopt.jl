@@ -25,7 +25,6 @@ using Distributed
                         end
                     end
                 end
-                foreach(flush, (log, out, err))
             end
         end
     end
@@ -73,10 +72,9 @@ end
 
 @everywhere maybefire(file) = (isf = isfile(file); if isf; mv(file, file * ".fired"; force = true); end; return isf)
 @everywhere function cb(ctrl::BlackBoxOptim.OptRunController)
-    foreach(flush, (stdout, stdin))
     if maybefire(joinpath(homedir(), "stop"))
-        error("Halting optimizer: found file `stop`")
-        # BlackBoxOptim.shutdown_optimizer!(ctrl)
+        # error("Halting optimizer: found file `stop`")
+        BlackBoxOptim.shutdown_optimizer!(ctrl)
     end
 end
 
