@@ -74,7 +74,7 @@ Rminor_mu = 6.0; % Mean vessel size from Shen et al. (MRM 2012 https://onlinelib
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7; % Jochimsen et al. (Neuroimage 2010 https://www.sciencedirect.com/science/article/pii/S1053811910002053)
 % Rminor_sig = 2.1;
-Rmedium_thresh = 0.0; % Minor vessels with radii > Rmedium_thresh are surrounded by VRS
+Rmedium_thresh = Inf; % Minor vessels with radii > Rmedium_thresh are surrounded by VRS
 
 % ---- With Diffusion ---- %
 % D_Tissue = 3000; %[um^2/s]

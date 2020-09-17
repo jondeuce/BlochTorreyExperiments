@@ -10,9 +10,9 @@ export SWEEP_DIR=$PWD
 JOBCOUNTER=0
 for Dtissue in 2.0 3.0 0.0 # Tissue diffusion
 do
-for PVSvolume in 1.0 0.0 3.0 # PVS relative volume
+for PVSvolume in 0.0 0.5 1.0 2.0 # PVS relative volume
 do
-for Nmajor in {1..9} # Number of major vessels
+for Nmajor in {1..6} # Number of major vessels
 do
 JOBCOUNTER=$(expr $JOBCOUNTER + 1)
 echo "Job #${JOBCOUNTER}"
@@ -28,6 +28,7 @@ echo "Job #${JOBCOUNTER}"
 # fi
 
 # Job settings
+export MAX_TIME_HOURS=47
 export JOB_DIR=${SWEEP_DIR}/Job-${JOBCOUNTER}_Dtissue-${Dtissue}_Nmajor-${Nmajor}_PVSvolume-${PVSvolume}
 mkdir -p $JOB_DIR
 
