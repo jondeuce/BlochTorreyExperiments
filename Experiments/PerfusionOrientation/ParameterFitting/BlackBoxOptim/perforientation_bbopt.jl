@@ -34,9 +34,9 @@ end
 
 # Start MATLAB
 @everywhere function init_mx_workers()
-    btpath = match(r"(.*?)/BlochTorreyExperiments", @__DIR__)[1]
-    repobranch = match(r"BlochTorreyExperiments-(.*?)/", @__DIR__)[1]
-    reponame = "BlochTorreyExperiments-" * repobranch
+    btpath = match(r"(.*?)/BlochTorreyExperiments", @__DIR__)[1] |> string
+    repobranch = match(r"BlochTorreyExperiments-(.*?)/", @__DIR__)[1] |> string
+    reponame = "BlochTorreyExperiments-" * repobranch |> string
     cdall(btpath)
     mat"""
     disp('Hello from Matlab (worker #$(myid()))');

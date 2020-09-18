@@ -5,6 +5,7 @@ Pkg.instantiate()
 using Dates, Glob, MAT, BSON, MATLAB, Plots, LaTeXStrings, AxisArrays, NaNMath
 
 homedir() = "/project/st-arausch-1/jcd1994/code"
+# sweepdir() = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-11"
 sweepdir() = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-16-static"
 saveplot(name) = p -> (foreach(ext -> savefig(p, name * ext), [".png", ".pdf"]); return p)
 
@@ -105,8 +106,8 @@ function read_and_plot(jobdirs)
         end
     end
 end
-pyplot(size = (1600,900))
-read_and_plot(jobdirs)
+# pyplot(size = (1600,900))
+# read_and_plot(jobdirs)
 
 function save_iterations(jobdirs; force = false)
     for (j,jobdir) in sort(jobdirs)
@@ -143,7 +144,7 @@ function save_iterations(jobdirs; force = false)
         end
     end
 end
-save_iterations(jobdirs; force = true)
+# save_iterations(jobdirs; force = true)
 
 function plot_jobfit(jobdir; nplots = 4)
     res = MAT.matread(joinpath(jobdir, "IterationsResults.mat"))
@@ -188,18 +189,17 @@ function plot_sweepsummary(jobdirs)
     for (ps, rs) in zip(params, results)
         data[atvalue.((ps["Dtissue"], ps["PVSvolume"], ps["Nmajor"]))...] = minimum(rs["AICc"])
     end
-    Dcolors = Dict(0.0 => :blue, 2.0 => :red, 3.0 => :green)
-    Dshapes = Dict(0.0 => :circle, 2.0 => :square, 3.0 => :diamond)
-    PVScolors = Dict(0.0 => :blue, 0.5 => :orange, 1.0 => :red, 2.0 => :green)
-    PVSshapes = Dict(0.0 => :circle, 0.5 => :utriangle, 1.0 => :square, 2.0 => :diamond)
-    PVSstyles = Dict(0.0 => :solid, 0.5 => :dashdot, 1.0 => :dash, 2.0 => :dot)
+
     _get(d::Dict, ks) = getindex.(Ref(d), ks)
+    allcolors = Dict(0.0 => :blue,   0.5 => :orange,    1.0 => :purple,    2.0 => :red,    3.0 => :green)
+    allshapes = Dict(0.0 => :circle, 0.5 => :utriangle, 1.0 => :dtriangle, 2.0 => :square, 3.0 => :diamond)
+    allstyles = Dict(0.0 => :solid,  0.5 => :dashdot,   1.0 => :dash,      2.0 => :dot,    3.0 => :dot)
 
     plot(
-        sticks((r -> minimum(r["AICc"])).(results); xlab = "Simulation #", ylab = "AICc", title = "All Simulations", leg = :none, line = (2, _get(Dcolors, Dtissue_all), _get(PVSstyles, PVSvolume_all)), marker = (3,:square,:black)),
-        plot(PVSvolume, nanreduce(minimum, data; dims = :Nmajor)'; xlab = "PVSvolume", ylab = "AICc", title = "Minimum over Nmajor", label = ("Dtissue = " .* string.(Dtissue')), line = (2, :dash, _get(Dcolors, Dtissue')),     marker = (5, _get(Dshapes, Dtissue'), _get(Dcolors, Dtissue'))),
-        plot(Nmajor, nanreduce(minimum, data; dims = :Dtissue)'; xlab = "Nmajor", ylab = "AICc", title = "Minimum over Dtissue", label = ("PVSvolume = " .* string.(PVSvolume')), line = (2, :dash, _get(PVScolors, PVSvolume')), marker = (5, _get(PVSshapes, PVSvolume'), _get(PVScolors, PVSvolume'))),
-        plot(Nmajor, nanreduce(minimum, data; dims = :PVSvolume)'; xlab = "Nmajor", ylab = "AICc", title = "Minimum over PVSvolume", label = ("Dtissue = " .* string.(Dtissue')), line = (2, :dash, _get(Dcolors, Dtissue')),     marker = (5, _get(Dshapes, Dtissue'), _get(Dcolors, Dtissue'))),
+        sticks((r -> minimum(r["AICc"])).(results); xlab = "Simulation #", ylab = "AICc", title = "All Simulations", leg = :none, line = (2, _get(allcolors, Dtissue_all), _get(allstyles, PVSvolume_all)), marker = (3,:square,:black)),
+        plot(PVSvolume, nanreduce(minimum, data; dims = :Nmajor)'; xlab = "PVSvolume", ylab = "AICc", title = "Minimum over Nmajor",    label = ("Dtissue = " .* string.(Dtissue')),     line = (2, :dash, _get(allcolors, Dtissue')),   marker = (5, _get(allshapes, Dtissue'), _get(allcolors, Dtissue'))),
+        plot(Nmajor, nanreduce(minimum, data; dims = :Dtissue)';   xlab = "Nmajor",    ylab = "AICc", title = "Minimum over Dtissue",   label = ("PVSvolume = " .* string.(PVSvolume')), line = (2, :dash, _get(allcolors, PVSvolume')), marker = (5, _get(allshapes, PVSvolume'), _get(allcolors, PVSvolume'))),
+        plot(Nmajor, nanreduce(minimum, data; dims = :PVSvolume)'; xlab = "Nmajor",    ylab = "AICc", title = "Minimum over PVSvolume", label = ("Dtissue = " .* string.(Dtissue')),     line = (2, :dash, _get(allcolors, Dtissue')),   marker = (5, _get(allshapes, Dtissue'), _get(allcolors, Dtissue'))),
     ) |> saveplot(joinpath(sweepdir(), "PerfOrientResultsSummary")) |> display
 end
 pyplot(size = (800,600))
@@ -226,11 +226,8 @@ end
 
 # jobpids = capture_jobpids()
 # for (j,pid) in sort(jobpids)
-#     stopfile = joinpath(jobdirs[j], "stop.fired")
-#     if isfile(stopfile)
-#         @show j, pid
-#         # @show run(Cmd(["qdel", string(pid)]))
-#     end
+#     @show j, pid
+#     try; @show run(Cmd(["qdel", string(pid)])); catch e; end
 # end
 
 # foreach(readdir(sweepdir())) do dir
@@ -249,3 +246,5 @@ end
 #         mv(dir, newdir)
 #     end
 # end
+
+nothing
