@@ -5,7 +5,7 @@ using Distributed
 @everywhere Pkg.activate(@__DIR__)
 @everywhere Pkg.instantiate()
 
-@everywhere using Dates, Logging, Glob, MATLAB, MAT, BSON, BlackBoxOptim, NLopt, Plots, LaTeXStrings
+@everywhere using Dates, Logging, Glob, ReadableRegex, MATLAB, MAT, BSON, BlackBoxOptim, NLopt, Plots, LaTeXStrings
 
 # Helpers
 @everywhere @eval homedir() = $(get(ENV, "JOB_DIR", pwd()))
@@ -110,9 +110,49 @@ function bbopt()
     ))
 end
 
+# Cleanup: save one large file instead of many small files
+function cleanup_bbopt()
+    # Safest to read + re-save results within Matlab to ensure collect handling of class objects, function handles, etc.
+    let
+        files = readdir(glob"**/*.mat", homedir()) .|> string
+        outfile = joinpath(homedir(), "AllIterationsResults.mat") |> string
+        savetime = @elapsed mat"""
+        AllIterationsResults = cell($(length(files)), 1);
+        for ii = 1:numel(AllIterationsResults)
+            AllIterationsResults{ii} = load($files{ii});
+        end
+        save($outfile, 'AllIterationsResults');
+        """
+        println("$(basename(homedir())): collecting iteration results... ($(round(savetime, digits = 1)) s)")
+    end
+
+    # Zip all iteration results together
+    let
+        iterdirs = readdir(glob"*-worker-*", homedir()) .|> string
+        iterfiles = readdir(glob"*-worker-**/*", homedir()) .|> string
+        outfile = joinpath(homedir(), "AllIterationsResults.zip") |> string
+
+        ziptime = @elapsed try
+            run(`zip -rq $outfile $iterdirs`; wait = true) # zip files
+
+            zipinfo = read(`zipinfo -t $(homedir())/AllIterationsResults.zip`, String) |> chomp
+            numfiles = parse(Int, match(r"(\d+) files", zipinfo)[1])
+
+            @assert length(iterfiles) + length(iterdirs) == numfiles # ensure all files accounted for
+            run(`rm -rf $iterdirs`; wait = true)
+        catch e
+            println(sprint(showerror, e, catch_backtrace()))
+        end
+        println("$(basename(homedir())): zipping iteration results... ($(round(ziptime, digits = 1)) s)")
+    end
+
+    return nothing
+end
+
 logger(joinpath(homedir(), "Diary")) do
     mxcall(:perforientation_bbopt_init, 0)
     bbopt()
+    cleanup_bbopt()
 end
 
 #= Refine solution using local optimizer

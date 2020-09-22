@@ -4,9 +4,9 @@
 % saverepostatus('BlochTorreyExperiments-active')
 
 %Save a copy of this script in the directory of the caller
-backupscript  = sprintf('%s__%s.m', datestr(now,30), mfilename);
-currentscript = strcat(mfilename('fullpath'), '.m');
-copyfile(currentscript, backupscript);
+% backupscript  = sprintf('%s__%s.m', datestr(now,30), mfilename);
+% currentscript = strcat(mfilename('fullpath'), '.m');
+% copyfile(currentscript, backupscript);
 
 % ---- Angles to simulate ---- %
 % alpha_range = [2.5, 47.5, 87.5];

@@ -70,7 +70,9 @@ end
 cleanpath(remove_list{:});
 
 cd(btroot);
-savepath([btroot, 'btpathdef.m']);
+if savebtpath
+    savepath([btroot, 'btpathdef.m']);
+end
 
 end
 

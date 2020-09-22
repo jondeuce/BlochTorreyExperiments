@@ -25,4 +25,4 @@ module load matlab/R2019b
 cd ${PBS_O_WORKDIR}
 cd ${JOB_DIR}
 
-time ${JULIA_PATH} -O3 --startup-file=no --project=${JULIA_PROJECT} --machine-file=${PBS_NODEFILE} ${JULIA_SCRIPT}
+time ${JULIA_BINDIR}/julia --startup-file=no --history-file=no --machine-file=${PBS_NODEFILE} ${JULIA_SCRIPT}

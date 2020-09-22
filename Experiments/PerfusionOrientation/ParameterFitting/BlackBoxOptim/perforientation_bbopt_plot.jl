@@ -3,13 +3,18 @@ Pkg.activate(@__DIR__)
 Pkg.instantiate()
 
 using Dates, Glob, MAT, BSON, MATLAB, Plots, LaTeXStrings, AxisArrays, NaNMath
+# pyplot(size = (800,600))
+pyplot(size = (1000,750))
+# pyplot(size = (1600,900))
 
 homedir() = "/project/st-arausch-1/jcd1994/code"
 # sweepdir() = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-11"
-sweepdir() = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-16-static"
+# sweepdir() = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-16-static"
+sweepdir() = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-16-dynamic"
 saveplot(name) = p -> (foreach(ext -> savefig(p, name * ext), [".png", ".pdf"]); return p)
 
-jobnum(jobdir) = (s = basename(jobdir); parse(Int, s[6] == '_' ? s[5:5] : s[5:6]))
+# jobnum(jobdir) = (s = basename(jobdir); parse(Int, s[6] == '_' ? s[5:5] : s[5:6]))
+jobnum(jobdir) = parse(Int, match(r"Job-(\d+)_", jobdir)[1])
 jobdirs = glob(glob"Job*", sweepdir()) |> dirs -> Dict(jobnum.(dirs) .=> dirs)
 
 mxcall(:addpath, 0, homedir())
@@ -43,24 +48,22 @@ end
 function read_and_plot(jobdirs)
     for (j,jobdir) in sort(jobdirs)
         @time try
-            @info "Starting... $(basename(jobdir))"
-
             if isfile(joinpath(jobdir, "BBOptWorkspace.mat"))
                 if isfile(joinpath(jobdir, "stop.fired"))
-                    @info "Done"
+                    @info "Done ---- $(basename(jobdir))"
                     continue
                 else
                     if isfile(joinpath(jobdir, "BBOptResults.mat"))
-                        @info "Finished"
+                        @info "Finished ---- $(basename(jobdir))"
                     else
-                        @info "Running"
+                        @info "Running ---- $(basename(jobdir))"
                     end
                 end
             else
                 if isfile(joinpath(jobdir, "PBS-error.txt"))
-                    @info "---- Re-run! ----"
+                    @info "---- Re-run! ---- $(basename(jobdir))"
                 else
-                    @info "---- Queueing ----"
+                    @info "---- Queueing ---- $(basename(jobdir))"
                 end
                 continue
             end
@@ -70,23 +73,23 @@ function read_and_plot(jobdirs)
             results = matread.(resfiles)
             times = resfiles .|> dirname .|> basename .|> s -> DateTime(s[1:25], "yyyy-mm-dd-T-HH-MM-SS-sss")
             losses = lossfun(results, "AICc")
-            
+
             (length(resfiles) < 5) && continue
             s(x) = string(round(x; sigdigits = 4))
 
             plot(
-                plot(;title = basename(jobdir), grid = :none, ticks = :none, showaxis = false), #titlefontsize = 12
+                plot(;title = basename(jobdir), grid = :none, ticks = :none, showaxis = false),
                 plot(
                     losses |> y -> scatter(y; ylabel = "AICc", c = :blue, lab = "min = $(s(minimum(y)))\ncurr = $(s(y[end]))"),
                     (r -> r["Results"]["CA"]).(results) |> y -> scatter(y; ylabel = "CA", c = :red, lab = "curr = $(s(y[end]))"),
                     (r -> 100 * r["Results"]["iBVF"]).(results) |> y -> scatter(y; ylabel = "iBVF", c = :green, lab = "curr = $(s(y[end]))"),
                     (r -> 100 * r["Results"]["aBVF"]).(results) |> y -> scatter(y; ylabel = "aBVF", c = :purple, lab = "curr = $(s(y[end]))");
                 ),
-                layout = @layout([a{0.01h}; b{0.99h}]), size = (1600,900),
+                layout = @layout([a{0.01h}; b{0.99h}]),
             ) |> saveplot("Losses") |> display
 
             plot(
-                plot(;title = basename(jobdir), grid = :none, ticks = :none, showaxis = false), #titlefontsize = 12
+                plot(;title = basename(jobdir), grid = :none, ticks = :none, showaxis = false),
                 plot(map(sortperm(losses)[1:min(12,end)]) do i
                 res = results[i]["Results"]
                 xdata, ydata, fdata = vec.((res["alpha_range"], res["dR2_Data"], res["dR2"]))
@@ -94,10 +97,10 @@ function read_and_plot(jobdirs)
                 plot(
                     xdata, [ydata fdata];
                     xlab = L"$\alpha$ [degrees]", ylab = L"$\Delta R_2^*$ [Hz]", lab = ["Data" "Fit"], title = title, leg = :bottomright,
-                    lw = 2, titlefontsize = 10, labelfontsize = 10, legendfontsize = 10,
+                    lw = 2, titlefontsize = 8, labelfontsize = 8, legendfontsize = 6,
                 )
                 end...),
-                layout = @layout([a{0.01h}; b{0.99h}]), size = (1600,900),
+                layout = @layout([a{0.01h}; b{0.99h}]),
             ) |> saveplot("Fits") |> display
 
             sleep(0.1)
@@ -106,8 +109,7 @@ function read_and_plot(jobdirs)
         end
     end
 end
-# pyplot(size = (1600,900))
-# read_and_plot(jobdirs)
+read_and_plot(jobdirs)
 
 function save_iterations(jobdirs; force = false)
     for (j,jobdir) in sort(jobdirs)
@@ -144,14 +146,14 @@ function save_iterations(jobdirs; force = false)
         end
     end
 end
-# save_iterations(jobdirs; force = true)
+save_iterations(jobdirs; force = false)
 
 function plot_jobfit(jobdir; nplots = 4)
     res = MAT.matread(joinpath(jobdir, "IterationsResults.mat"))
     isort = sortperm(res["AICc"])
     s(x) = string(round(x; sigdigits = 4))
     plot(
-        plot(;title = basename(jobdir), grid = :none, ticks = :none, showaxis = false), #titlefontsize = 12
+        plot(;title = basename(jobdir), grid = :none, ticks = :none, showaxis = false),
         plot(map(isort[begin:min(nplots,end)]) do i
             xdata, ydata, fdata = vec.((res["alpha_range"][i,:], res["dR2_Data"][i,:], res["dR2"][i,:]))
             title = "AICc = $(s(res["AICc"][i])), CA = $(s(res["CA"][i])), Rmajor = $(s(res["Rmajor"][i]))\naBVF = $(s(100 * res["aBVF"][i])), iBVF = $(s(100 * res["iBVF"][i])), BVF = $(s(100 * (res["aBVF"][i] + res["iBVF"][i])))"
@@ -164,7 +166,6 @@ function plot_jobfit(jobdir; nplots = 4)
         layout = @layout([a{0.01h}; b{0.99h}]),
     ) |> saveplot(joinpath(sweepdir(), "ModelFits." * basename(jobdir))) |> display
 end
-# pyplot(size = (800,600))
 # plot_jobfit.(readdir(glob"Job-40_*", sweepdir()))
 
 function plot_sweepsummary(jobdirs)
@@ -202,33 +203,7 @@ function plot_sweepsummary(jobdirs)
         plot(Nmajor, nanreduce(minimum, data; dims = :PVSvolume)'; xlab = "Nmajor",    ylab = "AICc", title = "Minimum over PVSvolume", label = ("Dtissue = " .* string.(Dtissue')),     line = (2, :dash, _get(allcolors, Dtissue')),   marker = (5, _get(allshapes, Dtissue'), _get(allcolors, Dtissue'))),
     ) |> saveplot(joinpath(sweepdir(), "PerfOrientResultsSummary")) |> display
 end
-pyplot(size = (800,600))
 plot_sweepsummary(jobdirs)
-
-function capture_jobpids()
-    f = tempname()
-    open(f, "w") do io
-        redirect_stdout(io) do
-            run(`qstat -u jcd1994`)
-        end
-    end
-    jobs = map(readlines(f)) do l
-        pid = match(r"(\d+).pbsha", l)
-        jobnum = match(r"job-(\d+)", l)
-        if pid !== nothing && jobnum !== nothing
-            return parse(Int, jobnum[1]) => parse(Int, pid[1])
-        else
-            return nothing
-        end
-    end
-    Dict(filter(!isnothing, jobs))
-end
-
-# jobpids = capture_jobpids()
-# for (j,pid) in sort(jobpids)
-#     @show j, pid
-#     try; @show run(Cmd(["qdel", string(pid)])); catch e; end
-# end
 
 # foreach(readdir(sweepdir())) do dir
 #     if startswith(basename(dir), "Job-") && isempty(readdir(glob"2020-*-worker-*", dir))
@@ -237,13 +212,23 @@ end
 # end
 
 # let
-#     sweepsetdir = sweepdir()
-#     mergedir = joinpath(sweepsetdir[1:end-length(basename(sweepsetdir))], "merged")
+#     offset = 48
+#     sweepsetdir = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-16-static"
 #     for dir in sort(readdir(glob"Job*", sweepsetdir); by = jobnum)
-#         newdir = joinpath(mergedir, "Job-$(jobnum(dir)+54)" * basename(dir)[end-34:end])
+#         new = joinpath(sweepsetdir, "Job-$(jobnum(dir)+offset)" * basename(dir)[end-34:end])
 #         @show dir
-#         @show newdir
-#         mv(dir, newdir)
+#         @show new
+#         mv(dir, new)
+#     end
+# end
+
+# let _sweepdir = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/test"
+#     dirs = sort(readdir(glob"Job-*", _sweepdir); by = jobnum)
+#     for dir in dirs
+#         @eval homedir() = $dir
+#         @info basename(dir)
+#         cleanup_bbopt()
+#         @eval homedir() = "/project/st-arausch-1/jcd1994/code"
 #     end
 # end
 
