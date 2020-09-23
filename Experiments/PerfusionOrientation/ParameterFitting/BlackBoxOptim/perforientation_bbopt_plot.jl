@@ -232,4 +232,12 @@ plot_sweepsummary(jobdirs)
 #     end
 # end
 
+# let _dir = sweepdir()
+#     for j in sort([37,38])
+#         flds = readdir(Glob.GlobMatch("Job-$(j)_*/*-worker-*"), _dir) .|> basename
+#         times = (flds .|> t -> DateTime(t[1:25], "yyyy-mm-dd-T-HH-MM-SS-sss")) |> sort
+#         @show j, times[end]
+#     end
+# end
+
 nothing
