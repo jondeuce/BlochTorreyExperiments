@@ -78,7 +78,7 @@ function submit(;
     """)
     " | qsub \\
         -N j-$(JobNum) \\
-        -l walltime=$(JobTimeHours):00:00,select=1:ncpus=32:ompthreads=32:mem=64gb \\
+        -l walltime=$(JobTimeHours):00:00,select=4:ncpus=32:ompthreads=32:mem=64gb \\
         -A st-arausch-1 \\
         -m abe \\
         -j oe \\
@@ -102,15 +102,21 @@ function submit_jobs(;
         params_iter = shuffle(MersenneTwister(0), params_iter)
     end
 
+    # Optionally filter
+    params_iter = filter(params_iter) do (JobNum, (Nmajor, PVSvolume, Dtissue))
+        true
+    end
+
+    # Submit
     job_params = map(params_iter) do (JobNum, (Nmajor, PVSvolume, Dtissue))
         submit(; JobNum, JobTimeHours, OptTime, Nmajor, PVSvolume, Dtissue)
         return JobNum => (; JobTimeHours, OptTime, Nmajor, PVSvolume, Dtissue)
     end
 
-    return sort(Dict(vec(job_params)))
+    return sort(Dict(vec(job_params))), params_iter
 end
 
-job_params = submit_jobs(;
+job_params, params_iter = submit_jobs(;
     ShuffleSubmit = true,
     JobTimeHours = 48,
     OptTime = 45.0,

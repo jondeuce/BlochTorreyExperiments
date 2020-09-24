@@ -9,11 +9,11 @@ using Distributed
 @everywhere import MAT, BSON, BlackBoxOptim, NLopt
 
 # Helpers
-@everywhere @eval homedir() = $(get(ENV, "JOB_DIR", pwd()))
+@everywhere @eval jobdir() = $(get(ENV, "JOB_DIR", pwd()))
 @everywhere @eval maxtime() = $(3600.0 * parse(Float64, get(ENV, "OPT_TIME_HOURS", "0")))
 @everywhere @eval initguessdir() = $(get(ENV, "INIT_GUESS_DIR", ""))
 @everywhere cdall(path) = (cd(path); mxcall(:cd, 0, path); nothing)
-@everywhere cdhome() = cdall(homedir())
+@everywhere cdhome() = cdall(jobdir())
 @everywhere getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
 @everywhere function logger(f, prefix; active = true)
     !active && return f()
@@ -60,11 +60,11 @@ end
         return NaN64 # Only workers should be working
     end
     try
-        logdir = joinpath(homedir(), getnow() * "-worker-$(myid())")
+        logdir = joinpath(jobdir(), getnow() * "-worker-$(myid())")
         mkpath(logdir)
         cdall(logdir)
         logger(joinpath(logdir, "Diary")) do
-            ℓ = mxcall(:perforientation_bbopt_caller, 1, convert(Vector{Float64}, x), homedir()) |> Float64
+            ℓ = mxcall(:perforientation_bbopt_caller, 1, convert(Vector{Float64}, x), jobdir()) |> Float64
             println("loss = $ℓ")
             return ℓ
         end
@@ -74,12 +74,12 @@ end
 end
 
 @everywhere maybefire(file) = (isf = isfile(file); if isf; mv(file, file * ".fired"; force = true); end; return isf)
-@everywhere cb_bbopt(ctrl::BlackBoxOptim.OptRunController) = maybefire(joinpath(homedir(), "stop")) ? BlackBoxOptim.shutdown_optimizer!(ctrl) : nothing
-@everywhere cb_nlopt(args...) = maybefire(joinpath(homedir(), "stop")) ? throw(NLopt.ForcedStop()) : nothing
+@everywhere cb_bbopt(ctrl::BlackBoxOptim.OptRunController) = maybefire(joinpath(jobdir(), "stop")) ? BlackBoxOptim.shutdown_optimizer!(ctrl) : nothing
+@everywhere cb_nlopt(args...) = maybefire(joinpath(jobdir(), "stop")) ? throw(NLopt.ForcedStop()) : nothing
 
 # Initial solve using global optimizer
 function bbopt()
-    params = MAT.matread(joinpath(homedir(), "Params0.mat"))["Params0"]
+    params = MAT.matread(joinpath(jobdir(), "Params0.mat"))["Params0"]
     bounds = vec(tuple.(params["lb"], params["ub"]))
 
     #= toy problem
@@ -98,12 +98,12 @@ function bbopt()
     ))
 
     # Save results
-    MAT.matwrite(joinpath(homedir(), "BBOptResults.mat"), Dict(
+    MAT.matwrite(joinpath(jobdir(), "BBOptResults.mat"), Dict(
         "x" => deepcopy(best_candidate(res)),
         "loss" => best_fitness(res),
     ))
 
-    BSON.bson(joinpath(homedir(), "BBOptResults.bson"), Dict(
+    BSON.bson(joinpath(jobdir(), "BBOptResults.bson"), Dict(
         "results" => deepcopy(res),
     ))
 
@@ -113,8 +113,8 @@ end
 # Refine solution using local optimizer
 function nlopt()
     lb, ub = let
-        @assert isfile(joinpath(homedir(), "Params0.mat"))
-        params = MAT.matread(joinpath(homedir(), "Params0.mat"))["Params0"]
+        @assert isfile(joinpath(jobdir(), "Params0.mat"))
+        params = MAT.matread(joinpath(jobdir(), "Params0.mat"))["Params0"]
         Float64.(vec(params["lb"])), Float64.(vec(params["ub"]))
     end
     x0 = let
@@ -123,6 +123,7 @@ function nlopt()
         AICc, i = findmin(res["AICc"])
         Float64[res["CA"][i], res["Rmajor"][i], res["MinorExpansion"][i]]
     end
+    x0 = clamp.(x0, lb, ub)
     bounds = tuple.(lb, ub)
 
     #= toy problem
@@ -136,26 +137,32 @@ function nlopt()
     call_f(x) = (cb_nlopt(); return f(x))
 
     function call_f_and_∇f!(x::Vector{Float64}, grad::Vector{Float64})
-        f0 = call_f(x)
         δ = 0.02 .* (ub - lb)
         ê(i) = (e = zeros(length(x)); e[i] = 1.0; e)
-        FD!(i) = grad[i] = (call_f(x + δ[i] * ê(i)) - f0) / δ[i]
-        BD!(i) = grad[i] = (f0 - call_f(x - δ[i] * ê(i))) / δ[i]
-        for (i,xi) in enumerate(x)
-            if lb[i] <= xi - δ[i] <= xi + δ[i] <= ub[i]
-                (rand() > 0.5) ? FD!(i) : BD!(i) # randomly pick FD or BD
-            else
-                (xi + δ[i] <= ub[i]) ? FD!(i) : BD!(i) # lb[i] <= xi - δ[i] is true by defn of δ
-            end
-        end
+        ∇dir(i) = (lb[i] + δ[i] < x[i] < ub[i] - δ[i]) ? rand((:FD, :BD)) : (x[i] < ub[i] - δ[i]) ? :FD : :BD # far from all boundaries --> randomly pick direction; else, choose direction away from nearby boundary
+        xh(dir,he) = (dir === :FD) ? (x + he) : (x - he)
+        ∇(dir,f0,f1,h) = (dir === :FD) ? (f1 - f0)/h : (f0 - f1)/h
+
+        dirs = Symbol[∇dir(i) for i in 1:length(x)]
+        xhs = Vector{Float64}[xh(dirs[i], δ[i] * ê(i)) for i in 1:length(x)]
+        xs = Vector{Float64}[xhs; [copy(x)]]
+        fs = pmap(call_f, xs) |> res -> convert(Vector{Float64}, res)
+        grad .= Float64[∇(dirs[i], fs[end], fs[i], δ[i]) for i in 1:length(x)]
+
         """
-        AICc = $f0
-        Gradient = $grad
+        Loss = $(fs[end])
+        Sample = $(x)
+        Gradient = $(grad)
         """ |> println
-        return f0
+        return fs[end]
     end
 
-    f_nlopt(x::Vector{Float64}, grad::Vector{Float64}) = length(grad) > 0 ? call_f_and_∇f!(x, grad) : call_f(x)
+    f_nlopt(x::Vector{Float64}, grad::Vector{Float64}) = try
+        length(grad) > 0 ? call_f_and_∇f!(x, grad) : call_f(x)
+    catch e
+        !(e isa NLopt.ForcedStop) && println(sprint(showerror, e, catch_backtrace()))
+        rethrow(e)
+    end
 
     opt = NLopt.Opt(:LD_LBFGS, length(bounds))
     opt.min_objective = f_nlopt
@@ -174,12 +181,12 @@ function nlopt()
     """ |> println
 
     # Save results
-    MAT.matwrite(joinpath(homedir(), "NLoptResults.mat"), Dict(
+    MAT.matwrite(joinpath(jobdir(), "NLoptResults.mat"), Dict(
         "x" => copy(minx),
         "loss" => minf,
     ))
 
-    BSON.bson(joinpath(homedir(), "NLoptResults.bson"), Dict(
+    BSON.bson(joinpath(jobdir(), "NLoptResults.bson"), Dict(
         "x" => deepcopy(minx),
         "loss" => deepcopy(minf),
         "ret" => deepcopy(ret),
@@ -208,8 +215,8 @@ end
 function cleanup()
     # Safest to read + re-save results within Matlab to ensure collect handling of class objects, function handles, etc.
     let
-        files = readdir(glob"**/*.mat", homedir()) .|> string
-        outfile = joinpath(homedir(), "AllIterationsResults.mat") |> string
+        files = readdir(glob"**/*.mat", jobdir()) .|> string
+        outfile = joinpath(jobdir(), "AllIterationsResults.mat") |> string
         savetime = @elapsed mat"""
         AllIterationsResults = cell($(length(files)), 1);
         for ii = 1:numel(AllIterationsResults)
@@ -217,25 +224,25 @@ function cleanup()
         end
         save($outfile, 'AllIterationsResults');
         """
-        println("$(basename(homedir())): collecting iteration results... ($(round(savetime, digits = 1)) s)")
+        println("$(basename(jobdir())): collecting iteration results... ($(round(savetime, digits = 1)) s)")
     end
 
     # Zip all iteration results together
     let
-        iterdirs = readdir(glob"*-worker-*", homedir()) .|> string
-        iterfiles = readdir(glob"*-worker-**/*", homedir()) .|> string
-        outfile = joinpath(homedir(), "AllIterationsResults.zip") |> string
+        iterdirs = readdir(glob"*-worker-*", jobdir()) .|> string
+        iterfiles = readdir(glob"*-worker-**/*", jobdir()) .|> string
+        outfile = joinpath(jobdir(), "AllIterationsResults.zip") |> string
         try
             ziptime = @elapsed begin
                 run(`zip -rq $outfile $iterdirs`; wait = true) # zip files
 
-                zipinfo = read(`zipinfo -t $(homedir())/AllIterationsResults.zip`, String) |> chomp
+                zipinfo = read(`zipinfo -t $(jobdir())/AllIterationsResults.zip`, String) |> chomp
                 numfiles = parse(Int, match(r"(\d+) files", zipinfo)[1])
 
                 @assert length(iterfiles) + length(iterdirs) == numfiles # ensure all files accounted for
                 run(`rm -rf $iterdirs`; wait = true)
             end
-            println("$(basename(homedir())): zipping iteration results... ($(round(ziptime, digits = 1)) s)")
+            println("$(basename(jobdir())): zipping iteration results... ($(round(ziptime, digits = 1)) s)")
         catch e
             println(sprint(showerror, e, catch_backtrace()))
         end
@@ -244,7 +251,7 @@ function cleanup()
     return nothing
 end
 
-logger(joinpath(homedir(), "Diary")) do
+logger(joinpath(jobdir(), "Diary")) do
     mxcall(:perforientation_bbopt_init, 0)
     # bbopt()
     nlopt()
