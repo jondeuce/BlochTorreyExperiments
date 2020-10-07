@@ -94,7 +94,7 @@ MaskType = 'PVSAndVasculature'; % 2 in PVS, 1 in Vasc., 0 else ("trinary" mask)
 % Nsteps = 8;
 % StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
 Nsteps = 1;
-StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', true);
+StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
 
 % % ---- Diffusionless ---- %
 % D_Tissue = 0; %[um^2/s]
@@ -133,6 +133,11 @@ SaveResults = true;
 % OptVariables = 'CA_iBVF_aBVF';
 OptVariables = 'CA_Rmajor_MinorExpansion';
 
+% Check for existing geometry
+GeomFileExists = exist('Geom.mat', 'file') == 2;
+GeomLoadExisting = GeomFileExists && (str2double(getenv('GeomLoadExisting')) == 1);
+% GeomLoadExisting = false;
+
 % Fixed Geometry Arguments
 GeomArgs = struct( ...% 'iBVF', iBVF, 'aBVF', aBVF, ... % these are set below
     'VoxelSize', VoxelSize, 'GridSize', GridSize, 'VoxelCenter', VoxelCenter, ...
@@ -152,23 +157,28 @@ switch upper(OptVariables)
     case 'CA_RMAJOR_MINOREXPANSION'
         GeomArgs.ImproveMajorBVF = true;
         GeomArgs.ImproveMinorBVF = true;
-        
+
         % Generate geometry for contraction
         GeomArgs.iBVF = ub(2);
         GeomArgs.aBVF = ub(3);
-        GeomNameValueArgs = struct2arglist(GeomArgs);
-        Geom = Geometry.CylindricalVesselFilledVoxel( GeomNameValueArgs{:} );
-        
+        if GeomLoadExisting
+            Geom = load('Geom.mat');
+            Geom = Geom.Geom;
+        else
+            GeomNameValueArgs = struct2arglist(GeomArgs);
+            Geom = Geometry.CylindricalVesselFilledVoxel( GeomNameValueArgs{:} );
+        end
+
         % Generate new initial guesses and bounds
         getRmajor0 = @(aBVF) sqrt( prod(VoxelSize) * aBVF / ( Nmajor * pi * rayBoxIntersectionLength( VoxelCenter(:), [sind(MajorAngle); 0; cosd(MajorAngle)], VoxelSize(:), VoxelCenter(:) ) ) );
         getSpaceFactor0 = @(iBVF) (Geom.iBVF/iBVF)^(1/2.3); % empirical model: iBVF = iBVF_max * SpaceFactor^(-2.3)
-        
+
         lb_old = lb;
         ub_old = ub;
         lb = [lb_old(1), getRmajor0(lb_old(3)), getSpaceFactor0(ub_old(2))];
         x0 = [x0(1),     getRmajor0(x0(3)),     getSpaceFactor0(x0(2))];
         ub = [ub_old(1), getRmajor0(ub_old(3)), getSpaceFactor0(lb_old(2))];
-        
+
     otherwise
         error('''OptVariables'' must be ''CA_iBVF_aBVF'' or ''CA_Rmajor_MinorExpansion''');
 end
@@ -196,10 +206,10 @@ ObjFunMaker = @(x,Geom) perforientation_objfun(x, alpha_range, dR2_Data, [], Wei
 save('ObjFunMaker.mat', 'ObjFunMaker', '-v7');
 
 % Save resulting workspace
-if ~isempty(Geom)
+if ~(isempty(Geom) || GeomLoadExisting)
     % Clear anonymous functions which close over `Geom` for saving
     clear getRmajor0 getSpaceFactor0
-    
+
     % Compress `Geom` for saving
     Geom = Compress(Geom);
     save('Geom.mat', 'Geom', '-v7');

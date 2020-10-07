@@ -19,7 +19,7 @@ function submit(;
         Dtissue::Float64,
     )
     # Make output folder
-    InitGuessSweepDir = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-16-dynamic"
+    InitGuessSweepDir = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-10-06-nlopt-v2"
     SweepDir = pwd()
     JobDir = joinpath(SweepDir, "Job-$(JobNum)_Dtissue-$(Dtissue)_Nmajor-$(Nmajor)_PVSvolume-$(PVSvolume)")
     mkpath(JobDir)
@@ -56,29 +56,30 @@ function submit(;
     export Dtissue=$(Dtissue)
     export PVSvolume=$(PVSvolume)
     export Nmajor=$(Nmajor)
+    export GeomLoadExisting=1
 
     # Submit job
-    echo "
-    $(raw"""
-    #!/bin/bash
-    module load gcc/5.4.0 # for matlab
-    module load intel-mkl/2019.3.199
-    module load openmpi/3.1.4
-    module load python/3.7.3
-    module load matlab/R2019b
-    cd ${JOB_DIR}
+    echo "$(
+        raw"""
+        #!/bin/bash
+        module load gcc/5.4.0 # for matlab
+        module load intel-mkl/2019.3.199
+        module load openmpi/3.1.4
+        module load python/3.7.3
+        module load matlab/R2019b
+        cd ${JOB_DIR}
 
-    date
-    time ${JULIA_BINDIR}/julia \
-        --startup-file=no \
-        --history-file=no \
-        --machine-file=${PBS_NODEFILE} \
-        ${JULIA_SCRIPT}
-    date
-    """)
-    " | qsub \\
+        date
+        time ${JULIA_BINDIR}/julia \
+            --startup-file=no \
+            --history-file=no \
+            --machine-file=${PBS_NODEFILE} \
+            ${JULIA_SCRIPT}
+        date
+        """
+    )" | qsub \\
         -N j-$(JobNum) \\
-        -l walltime=$(JobTimeHours):00:00,select=4:ncpus=32:ompthreads=32:mem=64gb \\
+        -l walltime=$(JobTimeHours):00:00,select=1:ncpus=40:ompthreads=40:mem=64gb \\
         -A st-arausch-1 \\
         -m abe \\
         -j oe \\
@@ -119,7 +120,7 @@ end
 job_params, params_iter = submit_jobs(;
     ShuffleSubmit = true,
     JobTimeHours = 48,
-    OptTime = 45.0,
+    OptTime = 40.0,
     Nmajor_all = 1:6,
     PVSvolume_all = [0.0, 0.5, 1.0, 2.0],
     Dtissue_all = [2.0, 3.0, 0.0],

@@ -10,16 +10,17 @@ pyplot(size = (1000,750))
 homedir() = "/project/st-arausch-1/jcd1994/code"
 # sweepdir() = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-11"
 # sweepdir() = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-16-static"
-sweepdir() = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-16-dynamic"
+# sweepdir() = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-16-dynamic"
+sweepdir() = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-23-nlopt"
 saveplot(name) = p -> (foreach(ext -> savefig(p, name * ext), [".png", ".pdf"]); return p)
 
-# jobnum(jobdir) = (s = basename(jobdir); parse(Int, s[6] == '_' ? s[5:5] : s[5:6]))
 jobnum(jobdir) = parse(Int, match(r"Job-(\d+)_", jobdir)[1])
-jobdirs = glob(glob"Job*", sweepdir()) |> dirs -> Dict(jobnum.(dirs) .=> dirs)
+jobdirs(sweepdir = sweepdir()) = glob(glob"Job*", sweepdir) |> dirs -> Dict(jobnum.(dirs) .=> dirs)
 
 mxcall(:addpath, 0, homedir())
 mxcall(:addpath, 0, mxcall(:btpathdef, 1))
 
+unzip(x::AbstractArray) = ntuple(i -> (xj -> xj[i]).(x), length(x[1]))
 rowvcat(xs) = reduce(vcat, permutedims.(vec.(xs)))
 getresult(r, f) = r["Results"][f]
 getresult(r, f1, f2) = r["Results"][f1][f2]
@@ -30,123 +31,107 @@ lossfun(rs, normfun) = lossfun(getresults(rs, "dR2_Data"), getresults(rs, "dR2")
 _nanreduce(f, A, ::Colon) = filter(!isnan, A) |> x -> isempty(x) ? float(eltype(A))(NaN) : f(x)
 _nanreduce(f, A, dims) = mapslices(a -> _nanreduce(f, a, :), A, dims = dims)
 nanreduce(f, A; dims = :) = dropdims(_nanreduce(f, A, dims); dims = dims)
-function nanreduce(f, A::AxisArray; dims::Union{Symbol,NTuple{N,Symbol} where N})
+function nanreduce(f, A::AxisArray; dims::Union{Symbol,NTuple{N,Symbol}}) where {N}
     if dims isa Symbol; dims = (dims,); end
     ax = filter(ax -> AxisArrays.axisname(ax) ∉ dims, AxisArrays.axes(A))
     dims = map(d -> axisdim(A, Axis{d}), dims)
     AxisArray(nanreduce(f, convert(Array, A); dims = dims), ax)
 end
 
-function unzip(x::AbstractArray{<:Tuple})
-    ys = map(xj -> zeros(typeof(xj), size(x)), x[1])
-    for I in eachindex(x), j in 1:length(ys)
-        ys[j][I] = x[I][j]
-    end
-    return ys
-end
-
-function read_and_plot(jobdirs)
-    for (j,jobdir) in sort(jobdirs)
-        @time try
-            if isfile(joinpath(jobdir, "BBOptWorkspace.mat"))
-                if isfile(joinpath(jobdir, "stop.fired"))
-                    @info "Done ---- $(basename(jobdir))"
-                    continue
-                else
-                    if isfile(joinpath(jobdir, "BBOptResults.mat"))
-                        @info "Finished ---- $(basename(jobdir))"
-                    else
-                        @info "Running ---- $(basename(jobdir))"
-                    end
-                end
-            else
-                if isfile(joinpath(jobdir, "PBS-error.txt"))
-                    @info "---- Re-run! ---- $(basename(jobdir))"
-                else
-                    @info "---- Queueing ---- $(basename(jobdir))"
-                end
-                continue
-            end
-
-            cd(jobdir)
-            resfiles = readdir(glob"2020**/*.mat", jobdir)
-            results = matread.(resfiles)
-            times = resfiles .|> dirname .|> basename .|> s -> DateTime(s[1:25], "yyyy-mm-dd-T-HH-MM-SS-sss")
-            losses = lossfun(results, "AICc")
-
-            (length(resfiles) < 5) && continue
-            s(x) = string(round(x; sigdigits = 4))
-
-            plot(
-                plot(;title = basename(jobdir), grid = :none, ticks = :none, showaxis = false),
-                plot(
-                    losses |> y -> scatter(y; ylabel = "AICc", c = :blue, lab = "min = $(s(minimum(y)))\ncurr = $(s(y[end]))"),
-                    (r -> r["Results"]["CA"]).(results) |> y -> scatter(y; ylabel = "CA", c = :red, lab = "curr = $(s(y[end]))"),
-                    (r -> 100 * r["Results"]["iBVF"]).(results) |> y -> scatter(y; ylabel = "iBVF", c = :green, lab = "curr = $(s(y[end]))"),
-                    (r -> 100 * r["Results"]["aBVF"]).(results) |> y -> scatter(y; ylabel = "aBVF", c = :purple, lab = "curr = $(s(y[end]))");
-                ),
-                layout = @layout([a{0.01h}; b{0.99h}]),
-            ) |> saveplot("Losses") |> display
-
-            plot(
-                plot(;title = basename(jobdir), grid = :none, ticks = :none, showaxis = false),
-                plot(map(sortperm(losses)[1:min(12,end)]) do i
-                res = results[i]["Results"]
-                xdata, ydata, fdata = vec.((res["alpha_range"], res["dR2_Data"], res["dR2"]))
-                title = "AICc = $(s(losses[i])), CA = $(s(res["CA"]))\naBVF = $(s(100 * res["aBVF"])), iBVF = $(s(100 * res["iBVF"])), BVF = $(s(100 * (res["aBVF"] + res["iBVF"])))"
-                plot(
-                    xdata, [ydata fdata];
-                    xlab = L"$\alpha$ [degrees]", ylab = L"$\Delta R_2^*$ [Hz]", lab = ["Data" "Fit"], title = title, leg = :bottomright,
-                    lw = 2, titlefontsize = 8, labelfontsize = 8, legendfontsize = 6,
-                )
-                end...),
-                layout = @layout([a{0.01h}; b{0.99h}]),
-            ) |> saveplot("Fits") |> display
-
-            sleep(0.1)
-        finally
-            cd(sweepdir())
-        end
-    end
-end
-read_and_plot(jobdirs)
-
-function save_iterations(jobdirs; force = false)
+function save_iterations(jobdirs = jobdirs(); force = false)
     for (j,jobdir) in sort(jobdirs)
         @info "Starting... $(basename(jobdir))"
         if !force && all(isfile.(joinpath.(jobdir, ["stop.fired", "IterationsResults.mat"])))
             continue
         end
 
-        @time try
-            resfiles = readdir(glob"2020**/*.mat", jobdir)
-            if !isempty(resfiles)
-                cd(jobdir)
-                results = matread.(resfiles)
-
-                d = Dict{String,Any}()
-                d["timestamp"] = resfiles .|> dirname .|> basename .|> s -> DateTime(s[1:25], "yyyy-mm-dd-T-HH-MM-SS-sss") .|> string
-
-                for f in ["iBVF", "aBVF", "CA", "alpha_range", "dR2", "dR2_Data"]
-                    d[f] = getresults(results, f)
-                end
-                ps = getresults(results, "params")
-                d["Rmajor"] = ps[:,2]
-                d["MinorExpansion"] = ps[:,3]
-                d["BVF"] = d["iBVF"] + d["aBVF"]
-
-                for ℓ in ["L2W", "R2w", "AICc"]
-                    d[ℓ] = lossfun(results, ℓ)
-                end
-
-                MAT.matwrite(joinpath(jobdir, "IterationsResults.mat"), deepcopy(d))
+        @time begin
+            iter_files, iter_results = nothing, nothing
+            if isfile(joinpath(jobdir, "AllIterationsResults.mat"))
+                iter_results = MAT.matread(joinpath(jobdir, "AllIterationsResults.mat"))["AllIterationsResults"]
+            else
+                iter_files = readdir(glob"2020**/*.mat", jobdir)
+                !isempty(iter_files) && (iter_results = matread.(iter_files))
             end
-        finally
-            cd(sweepdir())
+            isnothing(iter_results) && continue
+
+            d = Dict{String,Any}()
+            d["timestamp"] = isnothing(iter_files) ? "" :
+                iter_files .|> dirname .|> basename .|> s -> DateTime(s[1:25], "yyyy-mm-dd-T-HH-MM-SS-sss") .|> string
+            for f in ["iBVF", "aBVF", "CA", "alpha_range", "dR2", "dR2_Data"]
+                d[f] = getresults(iter_results, f)
+            end
+            d["BVF"] = d["iBVF"] + d["aBVF"]
+            ps = getresults(iter_results, "params")
+            d["Rmajor"] = ps[:,2]
+            d["MinorExpansion"] = ps[:,3]
+            for ℓ in ["L2W", "R2w", "AICc"]
+                d[ℓ] = lossfun(iter_results, ℓ)
+            end
+
+            MAT.matwrite(joinpath(jobdir, "IterationsResults.mat"), deepcopy(d))
         end
     end
 end
-save_iterations(jobdirs; force = false)
+save_iterations(force = true)
+
+function read_and_plot(jobdirs = jobdirs())
+    function _read_and_plot(jobdir)
+        res = matread(joinpath(jobdir, "IterationsResults.mat"))
+        s(x) = string(round(x; sigdigits = 4))
+
+        plot(
+            plot(;title = basename(jobdir), grid = :none, ticks = :none, showaxis = false),
+            plot(
+                res["AICc"] |> y -> scatter(y; ylabel = "AICc", c = :blue, lab = "min = $(s(minimum(y)))\ncurr = $(s(y[end]))"),
+                res["CA"] |> y -> scatter(y; ylabel = "CA", c = :red, lab = "curr = $(s(y[end]))"),
+                100 * res["iBVF"] |> y -> scatter(y; ylabel = "iBVF", c = :green, lab = "curr = $(s(y[end]))"),
+                100 * res["aBVF"] |> y -> scatter(y; ylabel = "aBVF", c = :purple, lab = "curr = $(s(y[end]))");
+            ),
+            layout = @layout([a{0.01h}; b{0.99h}]),
+        ) |> saveplot(joinpath(jobdir, "Losses")) |> display
+
+        plot(
+            plot(;title = basename(jobdir), grid = :none, ticks = :none, showaxis = false),
+            plot(map(sortperm(res["AICc"])[1:min(12,end)]) do i
+            xdata, ydata, fdata = vec.((res["alpha_range"][i,:], res["dR2_Data"][i,:], res["dR2"][i,:]))
+            title = "AICc = $(s(res["AICc"][i])), CA = $(s(res["CA"][i]))\naBVF = $(s(100 * res["aBVF"][i])), iBVF = $(s(100 * res["iBVF"][i])), BVF = $(s(100 * (res["aBVF"][i] + res["iBVF"][i])))"
+            plot(
+                xdata, [ydata fdata];
+                xlab = L"$\alpha$ [degrees]", ylab = L"$\Delta R_2^*$ [Hz]", lab = ["Data" "Fit"], title = title, leg = :bottomright,
+                lw = 2, titlefontsize = 8, labelfontsize = 8, legendfontsize = 6,
+            )
+            end...),
+            layout = @layout([a{0.01h}; b{0.99h}]),
+        ) |> saveplot(joinpath(jobdir, "Fits")) |> display
+    end
+
+    for (j,jobdir) in sort(jobdirs)
+        if all(isfile.(joinpath.(jobdir, ("Geom.mat", "BBOptWorkspace.mat"))))
+            if isfile(joinpath(jobdir, "stop.fired"))
+                @info "Done ---- $(basename(jobdir))"
+                continue
+            else
+                if all(isfile.(joinpath.(jobdir, "AllIterationsResults" .* (".mat", ".zip"))))
+                    @info "Finished ---- $(basename(jobdir))"
+                else
+                    @info "Running ---- $(basename(jobdir))"
+                end
+            end
+        else
+            if any(isfile.(joinpath.(jobdir, "PBS-" .* ("error", "output") .* ".txt")))
+                @info "---- Re-run! ---- $(basename(jobdir))"
+            else
+                @info "---- Queueing ---- $(basename(jobdir))"
+            end
+            continue
+        end
+
+        @time _read_and_plot(jobdir)
+        sleep(0.1)
+    end
+end
+read_and_plot()
 
 function plot_jobfit(jobdir; nplots = 4)
     res = MAT.matread(joinpath(jobdir, "IterationsResults.mat"))
@@ -166,23 +151,21 @@ function plot_jobfit(jobdir; nplots = 4)
         layout = @layout([a{0.01h}; b{0.99h}]),
     ) |> saveplot(joinpath(sweepdir(), "ModelFits." * basename(jobdir))) |> display
 end
-# plot_jobfit.(readdir(glob"Job-40_*", sweepdir()))
+# plot_jobfit.(readdir(glob"Job-34_*", sweepdir()))
 
-function plot_sweepsummary(jobdirs)
-    jobnums, resfiles, sweepfiles = Int[], String[], String[]
-    for (j,jobdir) in sort(jobdirs)
+function plot_sweepsummary(jobdirs = jobdirs())
+    job_outputs = map(collect(sort(jobdirs))) do (j,jobdir)
         resfile = joinpath(jobdir, "IterationsResults.mat")
         sweepfile = joinpath(jobdir, "SweepSettings.mat")
         if isfile(resfile) && isfile(sweepfile)
-            push!(jobnums, j)
-            push!(resfiles, resfile)
-            push!(sweepfiles, sweepfile)
+            (results = matread(resfile), params = matread(sweepfile))
+        else
+            nothing
         end
     end
-    results = matread.(resfiles)
-    params = matread.(sweepfiles)
-    isort = sortperm(params; by = p -> (p["Dtissue"], p["PVSvolume"], Int(p["Nmajor"])))
-    results, params = results[isort], params[isort]
+    job_outputs = filter(!isnothing, job_outputs)
+    job_outputs = sort(job_outputs; by = o -> (o.params["Dtissue"], o.params["PVSvolume"], Int(o.params["Nmajor"])))
+    results, params = unzip(job_outputs)
 
     Dtissue_all, PVSvolume_all, Nmajor_all = (p -> p["Dtissue"]).(params), (p -> p["PVSvolume"]).(params), (p -> Int(p["Nmajor"])).(params)
     Dtissue, PVSvolume, Nmajor = sort(unique(Dtissue_all)), sort(unique(PVSvolume_all)), sort(unique(Nmajor_all))
@@ -203,32 +186,23 @@ function plot_sweepsummary(jobdirs)
         plot(Nmajor, nanreduce(minimum, data; dims = :PVSvolume)'; xlab = "Nmajor",    ylab = "AICc", title = "Minimum over PVSvolume", label = ("Dtissue = " .* string.(Dtissue')),     line = (2, :dash, _get(allcolors, Dtissue')),   marker = (5, _get(allshapes, Dtissue'), _get(allcolors, Dtissue'))),
     ) |> saveplot(joinpath(sweepdir(), "PerfOrientResultsSummary")) |> display
 end
-plot_sweepsummary(jobdirs)
+plot_sweepsummary()
 
-# foreach(readdir(sweepdir())) do dir
-#     if startswith(basename(dir), "Job-") && isempty(readdir(glob"2020-*-worker-*", dir))
-#         @show(basename(dir))
+# let _sweepdir = sweepdir()
+#     jobdirs = glob(glob"Job*", _sweepdir) |> dirs -> Dict(jobnum.(dirs) .=> dirs)
+#     for (j,dir) in sort(jobdirs)
+#         (j > 48) && break
+#         @eval jobdir() = $dir
+#         @info basename(dir)
+#         cleanup()
 #     end
 # end
 
 # let
-#     offset = 48
-#     sweepsetdir = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/2020-09-16-static"
-#     for dir in sort(readdir(glob"Job*", sweepsetdir); by = jobnum)
-#         new = joinpath(sweepsetdir, "Job-$(jobnum(dir)+offset)" * basename(dir)[end-34:end])
-#         @show dir
-#         @show new
-#         mv(dir, new)
-#     end
-# end
-
-# let _sweepdir = "/project/st-arausch-1/jcd1994/GRE-DSC-PVS-Orientation2020Fall/test"
-#     dirs = sort(readdir(glob"Job-*", _sweepdir); by = jobnum)
-#     for dir in dirs
-#         @eval homedir() = $dir
-#         @info basename(dir)
-#         cleanup_bbopt()
-#         @eval homedir() = "/project/st-arausch-1/jcd1994/code"
+#     for (j,dir) in sort(jobdirs)
+#         if isempty(readdir(glob"*-worker-*", dir)) #isfile(joinpath(dir, "AllIterationsResults.zip")) && isfile(joinpath(dir, "AllIterationsResults.mat"))
+#             @info j, dir
+#         end
 #     end
 # end
 
