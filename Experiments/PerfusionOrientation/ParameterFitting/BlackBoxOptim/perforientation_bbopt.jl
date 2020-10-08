@@ -16,7 +16,7 @@ using Distributed
 @everywhere cdhome() = cdall(jobdir())
 @everywhere getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
 @everywhere function logger(f, prefix; active = true)
-    !active && return f()
+    !active && return f()::Float64
     local ret = nothing
     open(prefix * ".log", "a") do log
         open(prefix * ".out", "a") do out
@@ -24,7 +24,7 @@ using Distributed
                 with_logger(SimpleLogger(log)) do
                     redirect_stdout(out) do
                         redirect_stderr(err) do
-                            ret = f()
+                            ret = f()::Float64
                         end
                     end
                 end
@@ -41,7 +41,7 @@ end
     reponame = "BlochTorreyExperiments-" * repobranch |> string
     cdall(btpath)
     mat"""
-    disp('Hello from Matlab (worker #$(myid()))');
+    fprintf('Hello from Matlab (worker #%d)\\n', $(myid()));
     cd($btpath);
     addpath($btpath);
     addpath(btpathdef);
@@ -63,10 +63,10 @@ end
         logdir = joinpath(jobdir(), getnow() * "-worker-$(myid())")
         mkpath(logdir)
         cdall(logdir)
-        logger(joinpath(logdir, "Diary")) do
+        logger(joinpath(logdir, "Diary"); active = true) do
             ℓ = mxcall(:perforientation_bbopt_caller, 1, convert(Vector{Float64}, x), jobdir()) |> Float64
             println("loss = $ℓ")
-            return ℓ
+            return ℓ::Float64
         end
     finally
         cdhome()
@@ -84,7 +84,7 @@ function bbopt()
 
     #= toy problem
     bounds = tuple.(-ones(5), ones(5))
-    local f(x) = (ℓ = sum(abs2, x); @show(ℓ); sleep(1.0); return ℓ)
+    local f(x)::Float64 = (ℓ = sum(abs2, x); @show(ℓ); sleep(1.0); return ℓ)
     =#
 
     res = bboptimize(bbsetup(
@@ -112,6 +112,8 @@ end
 
 # Refine solution using local optimizer
 function nlopt()
+    #= Real problem
+    =#
     lb, ub = let
         @assert isfile(joinpath(jobdir(), "Params0.mat"))
         params = MAT.matread(joinpath(jobdir(), "Params0.mat"))["Params0"]
@@ -127,27 +129,29 @@ function nlopt()
     bounds = tuple.(lb, ub)
 
     #= toy problem
-    local f(x) = (sleep(0.1); return sum(x.^4))
+    local f(x)::Float64 = mat"""fprintf('worker = %d\\n', $(myid())); sum($(x).^4)"""
     x0 = randn(3)
     lb = fill(-2 * maximum(abs, x0), 3)
     ub = fill(+2 * maximum(abs, x0), 3)
     bounds = tuple.(lb, ub)
     =#
 
-    call_f(x) = (cb_nlopt(); return f(x))
-
-    function call_f_and_∇f!(x::Vector{Float64}, grad::Vector{Float64})
+    function f_and_∇f!(x::Vector{Float64}, grad::Vector{Float64})
         δ = 0.02 .* (ub - lb)
-        ê(i) = (e = zeros(length(x)); e[i] = 1.0; e)
-        ∇dir(i) = (lb[i] + δ[i] < x[i] < ub[i] - δ[i]) ? rand((:FD, :BD)) : (x[i] < ub[i] - δ[i]) ? :FD : :BD # far from all boundaries --> randomly pick direction; else, choose direction away from nearby boundary
-        xh(dir,he) = (dir === :FD) ? (x + he) : (x - he)
-        ∇(dir,f0,f1,h) = (dir === :FD) ? (f1 - f0)/h : (f0 - f1)/h
+        ê(i)::Vector{Float64}       = (e = zeros(length(x)); e[i] = 1.0; e)
+        ∇dir(i)::Symbol             = (lb[i] + δ[i] < x[i] < ub[i] - δ[i]) ? rand((:FD, :BD)) : (x[i] < ub[i] - δ[i]) ? :FD : :BD # far from all boundaries --> randomly pick direction; else, choose direction away from nearby boundary
+        xh(dir,he)::Vector{Float64} = (dir === :FD) ? (x + he) : (x - he)
+        ∇(dir,f0,f1,h)::Float64     = (dir === :FD) ? (f1 - f0)/h : (f0 - f1)/h
 
-        dirs = Symbol[∇dir(i) for i in 1:length(x)]
-        xhs = Vector{Float64}[xh(dirs[i], δ[i] * ê(i)) for i in 1:length(x)]
-        xs = Vector{Float64}[xhs; [copy(x)]]
-        fs = pmap(call_f, xs) |> res -> convert(Vector{Float64}, res)
-        grad .= Float64[∇(dirs[i], fs[end], fs[i], δ[i]) for i in 1:length(x)]
+        dirs = map(∇dir, 1:length(x)) # finite diff directions
+        xs = map(i -> xh(dirs[i], δ[i] * ê(i)), 1:length(x)) # perturbed xh = x+h*ei (one per dimension)
+        push!(xs, copy(x)) # all xs = perturbed xh + original x
+        fs = pmap(xs) do _x # call f on xs in parallel: fs[i] = f(x+h*ei) and fs[end] = f(x)
+            cb_nlopt()
+            f(_x)
+        end
+        map!(i -> ∇(dirs[i], fs[end], fs[i], δ[i]), grad, 1:length(x)) # update `grad`
+        # @assert length(dirs) == length(grad) == length(x) && length(xs) == length(x)+1
 
         """
         Loss = $(fs[end])
@@ -158,7 +162,12 @@ function nlopt()
     end
 
     f_nlopt(x::Vector{Float64}, grad::Vector{Float64}) = try
-        length(grad) > 0 ? call_f_and_∇f!(x, grad) : call_f(x)
+        if length(grad) > 0
+            f_and_∇f!(x, grad)
+        else
+            cb_nlopt()
+            f(x)
+        end
     catch e
         !(e isa NLopt.ForcedStop) && println(sprint(showerror, e, catch_backtrace()))
         rethrow(e)
@@ -251,7 +260,7 @@ function cleanup()
     return nothing
 end
 
-logger(joinpath(jobdir(), "Diary")) do
+logger(joinpath(jobdir(), "Diary"); active = true) do
     mxcall(:perforientation_bbopt_init, 0)
     # bbopt()
     nlopt()

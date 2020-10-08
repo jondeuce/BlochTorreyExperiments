@@ -79,7 +79,7 @@ function submit(;
         """
     )" | qsub \\
         -N j-$(JobNum) \\
-        -l walltime=$(JobTimeHours):00:00,select=1:ncpus=40:ompthreads=40:mem=64gb \\
+        -l walltime=$(JobTimeHours):00:00,select=4:ncpus=32:ompthreads=32:mem=64gb \\
         -A st-arausch-1 \\
         -m abe \\
         -j oe \\
@@ -120,7 +120,7 @@ end
 job_params, params_iter = submit_jobs(;
     ShuffleSubmit = true,
     JobTimeHours = 48,
-    OptTime = 40.0,
+    OptTime = 42.0,
     Nmajor_all = 1:6,
     PVSvolume_all = [0.0, 0.5, 1.0, 2.0],
     Dtissue_all = [2.0, 3.0, 0.0],
