@@ -4,8 +4,6 @@ Pkg.instantiate()
 
 using Glob, ReadableRegex, Random, MAT
 
-bash(str) = run(`bash -c $str`)
-
 ####
 #### Submitting jobs
 ####
@@ -37,56 +35,73 @@ function submit(;
 
     # Submit job
     @info "Submitting job #$(JobNum)"
-    """
-    # Julia/project settings
-    export JULIA_BINDIR="/home/jcd1994/julia-1.5.1/bin"
-    # export JULIA_DEPOT_PATH="/scratch/st-arausch-1/jcd1994/.julia:" # https://github.com/JuliaLang/julia/issues/34918#issuecomment-593001758
-    export JULIA_DEPOT_PATH="/scratch/st-arausch-1/jcd1994/.julia"
-    export JULIA_PROJECT=$(@__DIR__)
-    export JULIA_SCRIPT=$(joinpath(@__DIR__, "perforientation_bbopt.jl"))
-    export JULIA_NUM_THREADS=1024
-
-    # Job settings
-    export OPT_TIME_HOURS=$(OptTime)
-    export SWEEP_DIR=$(SweepDir)
-    export JOB_DIR=$(JobDir)
-    export INIT_GUESS_DIR=$(joinpath(InitGuessSweepDir, basename(JobDir)))
-
-    # Sweep settings
-    export Dtissue=$(Dtissue)
-    export PVSvolume=$(PVSvolume)
-    export Nmajor=$(Nmajor)
-    export GeomLoadExisting=1
-
-    # Submit job
-    echo "$(
-        raw"""
+    pbsfile = joinpath(JobDir, "scripts", "jobfile.pbs")
+    open(pbsfile; write = true) do io
+        """
         #!/bin/bash
+        #PBS -l walltime=$(JobTimeHours):00:00,select=4:ncpus=32:ompthreads=32:mem=64gb
+        #PBS -N j-$(JobNum)
+        #PBS -A st-arausch-1
+        #PBS -m abe
+        #PBS -j oe
+        #PBS -o $(joinpath(JobDir, "PBS-output.txt"))
+        #PBS -e $(joinpath(JobDir, "PBS-error.txt"))
+        #PBS -V
+
         module load gcc/5.4.0 # for matlab
         module load intel-mkl/2019.3.199
         module load openmpi/3.1.4
         module load python/3.7.3
         module load matlab/R2019b
-        cd ${JOB_DIR}
 
-        date
+        # Julia/project settings
+        export JULIA_BINDIR="/home/jcd1994/julia-1.5.1/bin"
+        # export JULIA_DEPOT_PATH="/scratch/st-arausch-1/jcd1994/.julia:" # https://github.com/JuliaLang/julia/issues/34918#issuecomment-593001758
+        export JULIA_DEPOT_PATH="/scratch/st-arausch-1/jcd1994/.julia"
+        export JULIA_PROJECT=$(@__DIR__)
+        export JULIA_SCRIPT=$(joinpath(@__DIR__, "perforientation_bbopt.jl"))
+        export JULIA_NUM_THREADS=1024
+
+        # Job settings
+        export OPT_TIME_HOURS=$(OptTime)
+        export SWEEP_DIR=$(SweepDir)
+        export JOB_DIR=$(JobDir)
+        export INIT_GUESS_DIR=$(joinpath(InitGuessSweepDir, basename(JobDir)))
+        cd $(JobDir)
+
+        # Sweep settings
+        export Dtissue=$(Dtissue)
+        export PVSvolume=$(PVSvolume)
+        export Nmajor=$(Nmajor)
+        export GeomLoadExisting=0
+        """ |> s -> println(io, s)
+
+        raw"""
+        echo ------------------------------------------------------
+        date; echo 'Job is running on node(s):'; cat ${PBS_NODEFILE}
+        echo ------------------------------------------------------
+        echo PBS: qsub is running on ${PBS_O_HOST}
+        echo PBS: originating queue is ${PBS_O_QUEUE}
+        echo PBS: executing queue is ${PBS_QUEUE}
+        echo PBS: working directory is ${PBS_O_WORKDIR}
+        echo PBS: execution mode is ${PBS_ENVIRONMENT}
+        echo PBS: job identifier is ${PBS_JOBID}
+        echo PBS: job name is ${PBS_JOBNAME}
+        echo PBS: node file is ${PBS_NODEFILE}
+        echo PBS: current home directory is ${PBS_O_HOME}
+        echo PBS: PATH = ${PBS_O_PATH}
+        echo ------------------------------------------------------
         time ${JULIA_BINDIR}/julia \
             --startup-file=no \
             --history-file=no \
             --machine-file=${PBS_NODEFILE} \
             ${JULIA_SCRIPT}
+        echo ------------------------------------------------------
         date
-        """
-    )" | qsub \\
-        -N j-$(JobNum) \\
-        -l walltime=$(JobTimeHours):00:00,select=4:ncpus=32:ompthreads=32:mem=64gb \\
-        -A st-arausch-1 \\
-        -m abe \\
-        -j oe \\
-        -o $(joinpath(JobDir, "PBS-output.txt")) \\
-        -e $(joinpath(JobDir, "PBS-error.txt")) \\
-        -V
-    """ |> bash
+        echo ------------------------------------------------------
+        """ |> s -> println(io, s)
+    end
+    run(`qsub $pbsfile`)
 end
 
 function submit_jobs(;
@@ -154,6 +169,24 @@ function capture_jobinfo()
     end
     filter(!isnothing, jobs)
 end
+
+function monitor_jobinfo()
+    jobinfo = sort(capture_jobinfo(); by = d -> d.jobnum)
+    jobinfo_nums = Set(map(d -> d.jobnum, jobinfo))
+    jobdirs = readdir(glob"Job-*_*", pwd())
+    jobdir_num(jobdir) = parse(Int, match(r"Job-(\d+)_", jobdir)[1])
+    jobdir_map = Dict{Int,String}(jobdir_num.(jobdirs) .=> jobdirs)
+    jobs_to_check = intersect(
+        setdiff(1:length(jobdirs), jobinfo_nums),
+        filter(j -> !isfile(joinpath(jobdir_map[j], "stop.fired")), 1:length(jobdirs)),
+    )
+
+    @info "Total:    $(length(jobdirs))"
+    @info "Status:   $(mapreduce(d -> d.status == "R", +, jobinfo)) R, $(mapreduce(d -> d.status == "Q", +, jobinfo)) Q, $(mapreduce(d -> d.status ∉ ("Q","R"), +, jobinfo)) other"
+    @info "Finished: $(length(readdir(glob"**/stop.fired", pwd())))"
+    @info "Check:    $(jobs_to_check)"
+end
+# while true; monitor_jobinfo(); sleep(60.0); end
 
 function ensure_submit(todo = Set{Int}())
     while !isempty(todo)

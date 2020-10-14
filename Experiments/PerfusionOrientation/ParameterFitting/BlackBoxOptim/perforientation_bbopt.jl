@@ -16,7 +16,7 @@ using Distributed
 @everywhere cdhome() = cdall(jobdir())
 @everywhere getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
 @everywhere function logger(f, prefix; active = true)
-    !active && return f()::Float64
+    !active && return f()
     local ret = nothing
     open(prefix * ".log", "a") do log
         open(prefix * ".out", "a") do out
@@ -24,7 +24,7 @@ using Distributed
                 with_logger(SimpleLogger(log)) do
                     redirect_stdout(out) do
                         redirect_stderr(err) do
-                            ret = f()::Float64
+                            ret = f()
                         end
                     end
                 end
@@ -54,8 +54,12 @@ end
 end
 @everywhere init_mx_workers()
 
+# Compile mex-files (only once before running all jobs)
+@everywhere compile_blochtorreyop() = mxcall(:build_all_blochtorreyop, 0)
+# compile_blochtorreyop() #TODO
+
 # Optimization
-@everywhere function f(x::AbstractVector{Float64})
+@everywhere function f(x::Vector{Float64})
     if myid() ∉ workers()
         return NaN64 # Only workers should be working
     end
@@ -66,7 +70,7 @@ end
         logger(joinpath(logdir, "Diary"); active = true) do
             ℓ = mxcall(:perforientation_bbopt_caller, 1, convert(Vector{Float64}, x), jobdir()) |> Float64
             println("loss = $ℓ")
-            return ℓ::Float64
+            return ℓ
         end
     finally
         cdhome()
@@ -84,7 +88,7 @@ function bbopt()
 
     #= toy problem
     bounds = tuple.(-ones(5), ones(5))
-    local f(x)::Float64 = (ℓ = sum(abs2, x); @show(ℓ); sleep(1.0); return ℓ)
+    local f(x) = (ℓ = sum(abs2, x); @show(ℓ); sleep(1.0); return ℓ)
     =#
 
     res = bboptimize(bbsetup(
@@ -129,7 +133,7 @@ function nlopt()
     bounds = tuple.(lb, ub)
 
     #= toy problem
-    local f(x)::Float64 = mat"""fprintf('worker = %d\\n', $(myid())); sum($(x).^4)"""
+    local f(x) = mat"""fprintf('worker = %d\\n', $(myid())); sum($(x).^4)"""
     x0 = randn(3)
     lb = fill(-2 * maximum(abs, x0), 3)
     ub = fill(+2 * maximum(abs, x0), 3)
@@ -146,10 +150,7 @@ function nlopt()
         dirs = map(∇dir, 1:length(x)) # finite diff directions
         xs = map(i -> xh(dirs[i], δ[i] * ê(i)), 1:length(x)) # perturbed xh = x+h*ei (one per dimension)
         push!(xs, copy(x)) # all xs = perturbed xh + original x
-        fs = pmap(xs) do _x # call f on xs in parallel: fs[i] = f(x+h*ei) and fs[end] = f(x)
-            cb_nlopt()
-            f(_x)
-        end
+        fs = pmap(f, xs) # call f.(xs) in parallel: fs[i] = f(x+h*ei) and fs[end] = f(x)
         map!(i -> ∇(dirs[i], fs[end], fs[i], δ[i]), grad, 1:length(x)) # update `grad`
         # @assert length(dirs) == length(grad) == length(x) && length(xs) == length(x)+1
 
@@ -162,12 +163,8 @@ function nlopt()
     end
 
     f_nlopt(x::Vector{Float64}, grad::Vector{Float64}) = try
-        if length(grad) > 0
-            f_and_∇f!(x, grad)
-        else
-            cb_nlopt()
-            f(x)
-        end
+        cb_nlopt()
+        length(grad) > 0 ? f_and_∇f!(x, grad) : f(x)
     catch e
         !(e isa NLopt.ForcedStop) && println(sprint(showerror, e, catch_backtrace()))
         rethrow(e)
