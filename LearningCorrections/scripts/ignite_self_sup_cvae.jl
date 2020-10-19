@@ -113,6 +113,40 @@ wandb_logger = Ignite.init_wandb_logger(settings)
 !isnothing(wandb_logger) && (settings["data"]["out"] = wandb.run.dir)
 Ignite.save_and_print(settings; outpath = settings["data"]["out"], filename = "settings.toml")
 
+t = let n = 48, nθ = 5, k = 1, nz = 4, sz = 16, head = 8, hdim = 256, nhidden = 2, skip = false
+    t = Transformers.Stack(
+        Transformers.@nntopo(
+            (X,θ,Z) : # Inputs: uncorrected signal, model params, latent variables
+            X => X : # Reshape input signal
+            X => pe : # Get positional embedding
+            (X, pe) => E : # Add positional embedding
+            E => H : # Transformer encoder
+            H => H : # Flatten H
+            (H,θ,Z) => HθZ : # Concatenate encoded signal with parameters
+            HθZ => μZ # Embed into CVAE latent space
+        ),
+        X -> reshape(X, 1, size(X)...),
+        Transformers.Basic.PositionEmbedding(sz, n; trainable = true),
+        (X, pe) -> pe .+ X,
+        Flux.Chain([Transformers.Basic.Transformer(sz, head, hdim) for i = 1:nhidden]...),
+        Flux.flatten,
+        vcat,
+        MMDLearning.MLP(sz*n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity; skip = skip),
+    )
+    Flux.params(t) |> ps -> map(x -> @info((typeof(x), size(x))), ps)
+    Transformers.Stacks.print_topo(t.topo)
+    let b = 10
+        X = randn(Float32, n, b)
+        θ = randn(Float32, nθ, b)
+        Z = randn(Float32, k, b)
+        @show size(t(X, θ, Z))
+    end
+    MMDLearning.model_summary(Flux.Chain(t.models...))
+    t
+end;
+
+error("--- here ---")
+
 # Initialize generator + discriminator + kernel
 function make_models(phys::PhysicsModel{Float32}, models = Dict{String, Any}(), derived = Dict{String, Any}())
     n   = nsignal(phys) # input signal length
