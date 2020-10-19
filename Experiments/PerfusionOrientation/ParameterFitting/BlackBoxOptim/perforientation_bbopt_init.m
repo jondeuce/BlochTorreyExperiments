@@ -4,13 +4,13 @@
 % saverepostatus('BlochTorreyExperiments-active')
 
 %Save a copy of this script in the directory of the caller
-backupscript  = sprintf('%s__%s.m', datestr(now,30), mfilename);
-currentscript = strcat(mfilename('fullpath'), '.m');
-copyfile(currentscript, backupscript);
+% backupscript  = sprintf('%s__%s.m', datestr(now,30), mfilename);
+% currentscript = strcat(mfilename('fullpath'), '.m');
+% copyfile(currentscript, backupscript);
 
 % ---- Angles to simulate ---- %
 % alpha_range = [2.5, 47.5, 87.5];
-% alpha_range = 2.5:5.0:87.5;
+alpha_range = 2.5:5.0:87.5;
 % alpha_range = 22.5:5.0:87.5;
 % alpha_range = 7.5:10.0:87.5;
 % alpha_range = 17.5:10.0:87.5;
@@ -20,7 +20,7 @@ copyfile(currentscript, backupscript);
 % alpha_range = [2.5, 17.5, 42.5, 67.5, 87.5];
 % alpha_range = [2.5, 22.5, 42.5, 62.5, 87.5];
 % alpha_range = [2.5, 12.5, 22.5, 37.5, 57.5, 77.5, 87.5];
-alpha_range = [2.5, 17.5, 27.5, 42.5, 57.5, 77.5, 87.5];
+% alpha_range = [2.5, 17.5, 27.5, 42.5, 57.5, 77.5, 87.5];
 % alpha_range = [2.5, 12.5, 22.5, 32.5, 47.5, 57.5, 67.5, 77.5, 87.5];
 % alpha_range = [2.5, 17.5, 27.5, 37.5, 47.5, 57.5, 67.5, 77.5, 82.5, 87.5];
 
@@ -46,9 +46,10 @@ x0 = [CA0, iBVF0, aBVF0];
 type = 'GRE';
 [alpha_range, dR2_Data, TE, VoxelSize, VoxelCenter, GridSize, BinCounts] = get_GRE_data(alpha_range);
 % TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [150,150,150];
-TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
+% TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [250,250,250];
+% TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [350,350,350];
 % TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [400,400,400];
-% TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [500,500,500];
+TE = 40e-3; VoxelSize = [1750,1750,1750]; VoxelCenter = [0,0,0]; GridSize = [500,500,500];
 % TE = 40e-3; VoxelSize = [1750,1750,4000]; VoxelCenter = [0,0,0]; GridSize = [350,350,800];
 Weights = sqrt(BinCounts); % BinCounts;
 Weights = Weights / sum(vec(Weights));
@@ -74,7 +75,7 @@ Rminor_mu = 6.0; % Mean vessel size from Shen et al. (MRM 2012 https://onlinelib
 Rminor_sig = 0.0;
 % Rminor_mu = 13.7; % Jochimsen et al. (Neuroimage 2010 https://www.sciencedirect.com/science/article/pii/S1053811910002053)
 % Rminor_sig = 2.1;
-Rmedium_thresh = 0.0; % Minor vessels with radii > Rmedium_thresh are surrounded by VRS
+Rmedium_thresh = Inf; % Minor vessels with radii > Rmedium_thresh are surrounded by VRS
 
 % ---- With Diffusion ---- %
 % D_Tissue = 3000; %[um^2/s]
@@ -94,7 +95,7 @@ MaskType = 'PVSAndVasculature'; % 2 in PVS, 1 in Vasc., 0 else ("trinary" mask)
 % Nsteps = 8;
 % StepperArgs = struct('Stepper', 'BTSplitStepper', 'Order', 2);
 Nsteps = 1;
-StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', true);
+StepperArgs = struct('Stepper', 'ExpmvStepper', 'prec', 'half', 'full_term', false, 'prnt', false);
 
 % % ---- Diffusionless ---- %
 % D_Tissue = 0; %[um^2/s]
@@ -133,6 +134,11 @@ SaveResults = true;
 % OptVariables = 'CA_iBVF_aBVF';
 OptVariables = 'CA_Rmajor_MinorExpansion';
 
+% Check for existing geometry
+GeomFileExists = exist('Geom.mat', 'file') == 2;
+GeomLoadExisting = GeomFileExists && (str2double(getenv('GeomLoadExisting')) == 1);
+% GeomLoadExisting = false;
+
 % Fixed Geometry Arguments
 GeomArgs = struct( ...% 'iBVF', iBVF, 'aBVF', aBVF, ... % these are set below
     'VoxelSize', VoxelSize, 'GridSize', GridSize, 'VoxelCenter', VoxelCenter, ...
@@ -152,23 +158,28 @@ switch upper(OptVariables)
     case 'CA_RMAJOR_MINOREXPANSION'
         GeomArgs.ImproveMajorBVF = true;
         GeomArgs.ImproveMinorBVF = true;
-        
+
         % Generate geometry for contraction
         GeomArgs.iBVF = ub(2);
         GeomArgs.aBVF = ub(3);
-        GeomNameValueArgs = struct2arglist(GeomArgs);
-        Geom = Geometry.CylindricalVesselFilledVoxel( GeomNameValueArgs{:} );
-        
+        if GeomLoadExisting
+            Geom = load('Geom.mat');
+            Geom = Geom.Geom;
+        else
+            GeomNameValueArgs = struct2arglist(GeomArgs);
+            Geom = Geometry.CylindricalVesselFilledVoxel( GeomNameValueArgs{:} );
+        end
+
         % Generate new initial guesses and bounds
         getRmajor0 = @(aBVF) sqrt( prod(VoxelSize) * aBVF / ( Nmajor * pi * rayBoxIntersectionLength( VoxelCenter(:), [sind(MajorAngle); 0; cosd(MajorAngle)], VoxelSize(:), VoxelCenter(:) ) ) );
         getSpaceFactor0 = @(iBVF) (Geom.iBVF/iBVF)^(1/2.3); % empirical model: iBVF = iBVF_max * SpaceFactor^(-2.3)
-        
+
         lb_old = lb;
         ub_old = ub;
         lb = [lb_old(1), getRmajor0(lb_old(3)), getSpaceFactor0(ub_old(2))];
         x0 = [x0(1),     getRmajor0(x0(3)),     getSpaceFactor0(x0(2))];
         ub = [ub_old(1), getRmajor0(ub_old(3)), getSpaceFactor0(lb_old(2))];
-        
+
     otherwise
         error('''OptVariables'' must be ''CA_iBVF_aBVF'' or ''CA_Rmajor_MinorExpansion''');
 end
@@ -196,10 +207,10 @@ ObjFunMaker = @(x,Geom) perforientation_objfun(x, alpha_range, dR2_Data, [], Wei
 save('ObjFunMaker.mat', 'ObjFunMaker', '-v7');
 
 % Save resulting workspace
-if ~isempty(Geom)
+if ~(isempty(Geom) || GeomLoadExisting)
     % Clear anonymous functions which close over `Geom` for saving
     clear getRmajor0 getSpaceFactor0
-    
+
     % Compress `Geom` for saving
     Geom = Compress(Geom);
     save('Geom.mat', 'Geom', '-v7');

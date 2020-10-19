@@ -1,18 +1,10 @@
-function setbtpath( type, varargin )
+function setbtpath( type, savebtpath, varargin )
 %SETBTPATH Set BlochTorreyExperiments and BlochTorreyResults path, e.g.
 % setbtpath home/coopar7/master
 
-if nargin == 0
-    type = '.'; % use master branch in current folder
-end
-
-default_remove_list = ignoredfolders;
-
-if nargin < 2
-    remove_list = default_remove_list;
-else
-    remove_list = varargin;
-end
+if nargin < 3; remove_list = ignoredfolders; else; remove_list = varargin; end
+if nargin < 2; savebtpath = true; end
+if nargin < 1; type = '.'; end % use master branch in current folder
 
 switch upper(type)
     case 'UBCITAR' % ubcitar/jdoucette server path
@@ -78,7 +70,9 @@ end
 cleanpath(remove_list{:});
 
 cd(btroot);
-savepath([btroot, 'btpathdef.m']);
+if savebtpath
+    savepath([btroot, 'btpathdef.m']);
+end
 
 end
 
