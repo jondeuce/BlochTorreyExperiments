@@ -293,7 +293,7 @@ use activation `σhid` and the last layer uses activation `σout`.
 """
 function MLP(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout = identity; skip = false, dropout = nothing)
     maybedropout(l) = !isnothing(dropout) ? Flux.Chain(l, Flux.Dropout(dropout)) : l
-    maybeskip(l) = skip ? Flux.SkipConnection(flattenchain(l), +) : l
+    maybeskip(l) = skip ? Flux.Chain(Flux.SkipConnection(flattenchain(l), +), Flux.LayerNorm(Dhid)) : l
     Flux.Chain(
         Flux.Dense(sz[1], Dhid, σhid) |> maybedropout,
         [Flux.Dense(Dhid, Dhid, σhid) |> maybedropout |> maybeskip for _ in 1:Nhid]...,
@@ -550,6 +550,39 @@ function _model_summary(io::IO, model::Flux.SkipConnection, depth::Int = 0; kwar
     print(io, _getindent(depth) * ")")
 end
 
+# Transformers.NNTopo
+function _model_summary(io::IO, model::Transformers.Stacks.NNTopo, depth::Int = 0; kwargs...)
+    # Workaround (https://github.com/chengchingwen/Transformers.jl/pull/32)
+    topo_print = let original_stdout = stdout
+        read_pipe, write_pipe = redirect_stdout()
+        try
+            show(model)
+        finally
+            close(write_pipe)
+            redirect_stdout(original_stdout)
+        end
+        read(read_pipe, String)
+    end
+    topo_print = _getindent(depth) * topo_print
+    topo_print = replace(topo_print, "\t" => _getindent(1))
+    topo_print = replace(topo_print, "end\n" => "end")
+    topo_print = replace(topo_print, "\n" => "\n" * _getindent(depth))
+    print(io, topo_print)
+end
+
+# Transformers.Stack
+function _model_summary(io::IO, model::Transformers.Stack, depth::Int = 0; kwargs...)
+    println(io, _getindent(depth) * "Stack(")
+    _model_summary(io, model.topo, depth + 1)
+    println(io, ",")
+    for (d,layer) in enumerate(model.models)
+        # println(io, _getindent(depth + 1) * "model[$d]:")
+        _model_summary(io, layer, depth + 1; kwargs...)
+        (d < length(model.models)) ? println(io, ",") : println(io, "")
+    end
+    print(io, _getindent(depth) * ")")
+end
+
 # GlobalFeatureFusion
 function _model_summary(io::IO, model::GlobalFeatureFusion, depth::Int = 0; kwargs...)
     println(io, _getindent(depth) * "GlobalFeatureFusion(")
@@ -590,15 +623,11 @@ end
 # Functions
 function _model_summary(io::IO, model::Function, depth::Int = 0; kwargs...)
     print(io, _getindent(depth) * "@λ ")
-    buf = IOBuffer()
-    show(buf, model)
-    print(io, String(take!(buf)))
+    show(io, model)
 end
 
 # Fallback method
 function _model_summary(io::IO, model, depth::Int = 0; kwargs...)
     print(io, _getindent(depth))
-    buf = IOBuffer()
-    show(buf, model)
-    print(io, String(take!(buf)))
+    show(io, model)
 end
