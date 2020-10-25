@@ -33,12 +33,12 @@ rand_similar(::CUDA.CuArray{T}, sz...) where {T} = Zygote.ignore(() -> CUDA.rand
 @inline pow2(x) = x*x
 
 # Map over dictionary values
-map_dict(f, d::AbstractDict{String,Any}) = Dict{String,Any}(map(((k,v),) -> k => f(v), collect(d)))
+map_dict(f, d::Dict{K,V}) where {K,V} = Dict{K,V}(map(((k,v),) -> k => f(v), collect(d)))
 
 # Differentiable summing of dictionary values
-sum_dict(d::Dict{Symbol,T}) where {T} = sum(values(d))
+sum_dict(d::Dict{K,V}) where {K,V} = sum(values(d))
 
-Zygote.@adjoint function sum_dict(d::Dict{Symbol,T}) where {T}
+Zygote.@adjoint function sum_dict(d::Dict{K,V}) where {K,V}
     sum_dict(d), function (Δ)
         grad = Zygote.grad_mut(__context__, d)
         for k in keys(d)

@@ -70,6 +70,42 @@ _besseli1i0m1(x::Real) = _besselix(1, x) / _besselix(0, x) - 1
 _besseli2i0(x::Real) = _besselix(2, x) / _besselix(0, x)
 _laguerre½(x::Real) = (x < 0 ? one(x) : exp(x)) * ((1 - x) * _besselix(0, -x/2) - x * _besselix(1, -x/2)) # besselix(ν, ±x/2) = Iν(±x/2) * exp(-|±x/2|) = Iν(-x/2) * exp(∓x/2)
 
+#### CUDA-friendly native julia Besselix functions
+
+@inline function _besselix0_cuda(x::Float32)
+    ax = abs(x)
+    if ax < 3.75f0
+        y = (x / 3.75f0)^2
+        out = (1.0f0 + y * (3.5156229f0 + y * (3.0899424f0 + y * (1.2067492f0 + y * (0.2659732f0 + y * (0.360768f-1 + y * 0.45813f-2))))))
+        out *= exp(-ax)
+    else
+        y = 3.75f0 / ax
+        out = (0.39894228f0 + y * (0.1328592f-1 + y * (0.225319f-2 + y * (-0.157565f-2 + y * (0.916281f-2 + y * (-0.2057706f-1 + y * (0.2635537f-1 + y * (-0.1647633f-1 + y * 0.392377f-2))))))))
+        out /= sqrt(ax)
+    end
+    return out
+end
+@inline _besselix0_cuda(x::T) where {T} = convert(T, _besselix0_cuda(Float32(x)))
+@inline _logbesseli0_cuda(x::Real) = log(_besselix0_cuda(x)) + abs(x) # since log(besselix(ν, x)) = log(Iν(x)) - |x|
+
+function _besselix1_cuda(x::Float32)
+    ax = abs(x)
+    if ax < 3.75f0
+        y = (x / 3.75f0)^2
+        out = ax * (0.5f0 + y * (0.87890594f0 + y * (0.51498869f0 + y * (0.15084934f0 + y * (0.2658733f-1 + y * (0.301532f-2 + y * 0.32411f-3))))))
+    else
+        y = 3.75f0 / ax
+        out = 0.2282967f-1 + y * (-0.2895312f-1 + y * (0.1787654f-1-y * 0.420059f-2))
+        out = 0.39894228f0 + y * (-0.3988024f-1 + y * (-0.362018f-2 + y * (0.163801f-2 + y * (-0.1031555f-1 + y * out))))
+        out /= sqrt(ax)
+    end
+    return x < 0 ? -out : out
+end
+@inline _besselix1_cuda(x::T) where {T} = convert(T, _besselix1_cuda(Float32(x)))
+@inline _logbesseli1_cuda(x::Real) = log(_besselix1_cuda(x)) + abs(x) # since log(besselix(ν, x)) = log(Iν(x)) - |x|
+
+@inline _rician_logpdf_cuda(x::Real, ν::Real, σ::Real) = (ϵ = eps(float(typeof(x))); σ2 = σ*σ; log(x/σ2 + ϵ) + _logbesseli0_cuda(x*ν/σ2) - (x*x + ν*ν)/2σ2)
+
 #### Statistics
 @inline Distributions.mean(d::Rician) = d.σ * sqrt(pi/2) * _laguerre½(-d.ν^2 / 2d.σ^2)
 # @inline Distributions.mode(d::Rician) = ?
