@@ -526,7 +526,7 @@ function update_callback!(
 
         if hasclosedform(phys)
             # Evaluate error in recovered θ if closed form is known
-            theta_err = mean(θerror(phys, θ[:,i_fit], θfit); dims = 2) |> vec |> copy
+            Xhat_theta_err = mean(θerror(phys, θ[:,i_fit], θfit); dims = 2) |> vec |> copy
             @pack! metrics = theta_err
         end
     end
@@ -543,6 +543,7 @@ end
 
 function plot_gan_loss(logger, cb_state, phys; window = 100, lrdroprate = typemax(Int), lrdrop = 1.0, showplot = false)
     @timeit "gan loss plot" try
+        !all(c -> c ∈ propertynames(logger), (:epoch, :dataset, :Gloss, :Dloss, :D_Y, :D_G_X)) && return
         dfp = logger[logger.dataset .=== :val, :]
         epoch = dfp.epoch[end]
         dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, dfp)
@@ -658,17 +659,17 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
         epoch = dfp.epoch[end]
         dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, dfp)
         df_inf = filter(dfp) do r
-            !ismissing(r.Xhat_rmse) && !ismissing(r.Xhat_logL) && !(hasclosedform(phys) && ismissing(r.theta_err))
+            !ismissing(r.Xhat_rmse) && !ismissing(r.Xhat_logL) && !ismissing(r.Xhat_theta_err)
         end
 
         if !isempty(dfp) && !isempty(df_inf)
-            @unpack Xθfit, Yfit, Yθfit = cb_state
+            @unpack Xθfit, Yfit, Xθ, Y = cb_state
             @unpack all_Xhat_logL, all_Xhat_rmse = cb_state["metrics"]
             p = plot(
                 plot(
                     hasclosedform(phys) ?
-                        plot(hcat(Yθfit[:,end÷2], Xθfit[:,end÷2]); c = [:blue :red], lab = [L"$Y(\hat{\theta})$ fit" L"$X(\hat{\theta})$ fit"]) :
-                        plot(hcat( Yfit[:,end÷2], Xθfit[:,end÷2]); c = [:blue :red], lab = [L"Data $Y$" L"$X(\hat{\theta})$ fit"]),
+                        plot(hcat(   Y[:,end÷2],    Xθ[:,end÷2]); c = [:blue :red], lab = [L"$Y(\hat{\theta})$ fit" L"$X(\hat{\theta})$ fit"]) :
+                        plot(hcat(Yfit[:,end÷2], Xθfit[:,end÷2]); c = [:blue :red], lab = [L"Data $Y$" L"$X(\hat{\theta})$ fit"]),
                     sticks(sort(all_Xhat_rmse[sample(1:end, min(128,end))]); m = (:circle,4), lab = "rmse: fits"),
                     sticks(sort(all_Xhat_logL[sample(1:end, min(128,end))]); m = (:circle,4), lab = "-logL: fits"),
                     layout = @layout([a{0.25h}; b{0.375h}; c{0.375h}]),
@@ -676,8 +677,8 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
                 let
                     _subplots = Any[]
                     if hasclosedform(phys)
-                        prmse = plot(dfp.epoch, dfp.rmse; title = "min rmse = $(s(minimum(dfp.rmse)))", label = L"rmse: $Y(\hat{\theta}) - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$", xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
-                        pθerr = plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.theta_err)); title = "min max error = $(s(minimum(maximum.(df_inf.theta_err))))", label = permutedims(θlabels(phys)), xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
+                        prmse = plot(dfp.epoch, dfp.Yhat_rmse_true; title = "min rmse = $(s(minimum(dfp.Yhat_rmse_true)))", label = L"rmse: $Y(\hat{\theta}) - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$", xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
+                        pθerr = plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.Xhat_theta_err)); title = "min max error = $(s(minimum(maximum.(df_inf.Xhat_theta_err))))", label = permutedims(θlabels(phys)), xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
                         append!(_subplots, [prmse, pθerr])
                     end
 

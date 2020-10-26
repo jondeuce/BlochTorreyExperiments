@@ -3,7 +3,6 @@
 ####
 
 using MMDLearning
-using BangBang #TODO
 using PyCall
 pyplot(size=(800,600))
 Ignite.init()
@@ -31,7 +30,7 @@ const settings = TOML.parse("""
     [train]
         timeout     = 1e9 #TODO 10800.0
         epochs      = 1000_000
-        batchsize   = 2048 #256 #512 #1024 #4096
+        batchsize   = 1024 #256 #512 #1024 #2048 #4096
         MMDCVAErate = 1   # Train combined MMD+CVAE loss every `MMDCVAErate` epochs
         CVAErate    = 0   # Train CVAE loss every `CVAErate` iterations
         MMDrate     = 0   # Train MMD loss every `MMDrate` epochs
@@ -43,12 +42,12 @@ const settings = TOML.parse("""
         kernelrate  = 0   # Train kernel every `kernelrate` iterations
         kernelsteps = 1   # Gradient updates per kernel train
         [train.augment]
-            gradient      = false # Gradient of input signal (1D central difference)
-            laplacian     = false # Laplacian of input signal (1D second order)
+            gradient      = true  # Gradient of input signal (1D central difference)
+            laplacian     = true  # Laplacian of input signal (1D second order)
             encoderspace  = false # Discriminate encoder space representations
             residuals     = false # Discriminate residual vectors
             fftcat        = false # Fourier transform of input signal, concatenating real/imag
-            fftsplit      = true  # Fourier transform of input signal, treating real/imag separately
+            fftsplit      = false # Fourier transform of input signal, treating real/imag separately
         [train.transform]
             flipsignals   = true  # Randomly reverse signals
             Dchunk        = 112   # Discriminator looks at random chunks of size `Dchunk` (0 uses whole signal)
@@ -79,7 +78,7 @@ const settings = TOML.parse("""
 
     [arch]
         physics = "$(get(ENV, "JL_PHYS_MODEL", "toy"))" # "toy" or "mri"
-        nlatent = 1 # number of latent variables Z
+        nlatent = 2 # number of latent variables Z
         zdim    = 8 # embedding dimension of z
         hdim    = 256 # size of hidden layers
         nhidden = 4 # number of hidden layers
@@ -283,7 +282,7 @@ const phys = initialize!(
     nval = settings["data"]["nval"]::Int,
 )
 const models, derived = make_models(phys)
-# const models, derived = make_models(phys, map_dict(to32, deepcopy(BSON.load("/home/jdoucette/Documents/code/wandb/tmp/output/ignite-cvae-2020-10-24-T-15-48-22-393/current-models.bson")["models"])))
+# const models, derived = make_models(phys, map_dict(to32, deepcopy(BSON.load("/home/jdoucette/Documents/code/wandb/tmp/output/ignite-cvae-2020-10-25-T-15-21-11-298/current-models.bson")["models"])))
 const optimizers = Dict{String,Any}(
     "cvae"    => Flux.ADAM(settings["opt"]["cvae"]["lrrel"]    / settings["train"]["batchsize"]),
     "genatr"  => Flux.ADAM(settings["opt"]["genatr"]["lrrel"]  / settings["train"]["batchsize"]),
@@ -297,7 +296,6 @@ MMDLearning.model_summary(models, joinpath(settings["data"]["out"], "model-summa
 ####
 
 @inline split_theta_latent(θZ::AbstractMatrix) = size(θZ,1) == ntheta(phys) ? (θZ, similar(θZ,0,size(θZ,2))) : (θZ[1:ntheta(phys),:], θZ[ntheta(phys)+1:end,:])
-@inline sampleθprior_similar(Y, n = size(Y,2)) = rand_similar(Y, ntheta(phys), n) .* (todevice(θupper(phys)) .- todevice(θlower(phys))) .+ todevice(θlower(phys)) #TODO
 
 function InvertY(Y)
     μr = models["enc1"](Y)
@@ -315,7 +313,7 @@ end
 
 function sampleθZ(Y; recover_θ = true, recover_Z = true)
     nθ, nz = ntheta(phys)::Int, settings["arch"]["nlatent"]::Int
-    θprior() = sampleθprior_similar(Y, size(Y,2))
+    θprior() = sampleθprior_similar(phys, Y, size(Y,2))
     Zprior() = randn_similar(Y, nz, size(Y,2))
     if recover_θ || recover_Z
         θhat, Zhat = InvertY(Y)
@@ -415,8 +413,14 @@ function MMDlosses(Y)
     ν, ϵ = rician_params(derived["ricegen"], X, Z)
     X̂ = add_noise_instance(derived["ricegen"], ν, ϵ)
 
-    X̂s = augmentations(X̂, nothing)
-    Ys = augmentations(Y, nothing)
+    # TODO
+    X̄ = nothing
+    if settings["train"]["augment"]["residuals"]::Bool
+        X̄ = Zygote.@ignore sampleX̂(Y; recover_θ = true, recover_Z = true)
+    end
+
+    X̂s = augmentations(X̂, X̄)
+    Ys = augmentations(Y, X̄)
     ℓ  = map(MMDloss, X̂s, Ys)
 
     λ_ϵ = eltype(Y)(settings["opt"]["mmd"]["lambda_eps"]::Float64)
@@ -473,33 +477,40 @@ end
 #### MAP
 ####
 
-function MAP(Y; miniter = 1, maxiter = 100, alpha = 0.05, verbose = false)
-    function MAPsample!(μθ = nothing, i = 1)
-        if isnothing(μθ)
-            μθ, Z = sampleθZ(Y; recover_θ = true, recover_Z = true)
-        else
+function MAP(Y::AbstractMatrix{T}; miniter = 10, maxiter = 100, alpha = 0.01, verbose = false) where {T}
+    function MAPsample(last_state = nothing, i = 1)
+        if isnothing(last_state)
             θ, Z = sampleθZ(Y; recover_θ = true, recover_Z = true)
-            T = eltype(Y)
-            μθ .= T(1/i) .* θ .+ T((i-1)/i) .* μθ
+        else
+            θi, Z = sampleθZ(Y; recover_θ = true, recover_Z = true)
+            θ = T(1/i) .* θi .+ T(1-1/i) .* last_state.θ
         end
-        X = signal_model(phys, μθ)
-        ν, ϵ = rician_params(derived["ricegen"], X, Z)
+        X = signal_model(phys, θ)
+        δ, ϵ = correction_and_noiselevel(derived["ricegen"], X, Z)
+        ν = add_correction(derived["ricegen"], X, δ)
         ℓ = DataConsistency(Y, ν, ϵ; dims = 1)
-        return (; ℓ, X, μθ, Z)
+        return (; θ, Z, X, δ, ϵ, ν, ℓ)
+    end
+    function MAPupdate!(state, last_state)
+        m = last_state.ℓ .< state.ℓ
+        for k in keys(state)
+            v, v_last = getfield.((state, last_state), k)
+            v .= ifelse.(m, v_last, v)
+        end
+        return state
     end
     function MAPinner()
-        @unpack ℓ, μθ = MAPsample!()
-        n = length(ℓ)
-        μlast, σlast = mean_and_std(ℓ)
-        verbose && @info 1, μlast, σlast
+        state = MAPsample()
+        verbose && @info 1, mean_and_std(state.ℓ)
         for i in 2:maxiter
-            ℓ .= min.(ℓ, MAPsample!(μθ, i).ℓ)
-            μ, σ = mean_and_std(ℓ)
-            verbose && @info i, μ, σ
-            (i >= miniter) && (μlast - μ < alpha * σ / √n) && break
-            μlast, σlast = μ, σ
+            last_state = state
+            state = MAPupdate!(MAPsample(), last_state)
+            t = HypothesisTests.UnequalVarianceTTest(map(x -> x |> Flux.cpu |> vec |> Vector{Float64}, (state.ℓ, last_state.ℓ))...)
+            p = HypothesisTests.pvalue(t)
+            verbose && @info i, mean_and_std(state.ℓ), p
+            (i >= miniter) && (p > 1 - alpha) && break
         end
-        return ℓ
+        return state
     end
     MAPinner()
 end
@@ -630,6 +641,32 @@ function train_step(engine, batch)
     return deepcopy(outputs)
 end
 
+function fit_metrics(Ytrue, θtrue, Ztrue, Wtrue)
+    νtrue = ϵtrue = rmse_true = logL_true = missing
+    if hasclosedform(phys) && !isnothing(Wtrue)
+        νtrue = signal_model(ClosedForm(phys), θtrue, nothing, Wtrue) # noiseless true signal
+        ϵtrue = noiselevel(ClosedForm(phys), θtrue, Wtrue) # noise level
+        Ytrue = add_noise_instance(phys, νtrue, ϵtrue) # noisey true signal
+        rmse_true = sqrt(mean(abs2, Ytrue - add_noise_instance(phys, νtrue, ϵtrue)))
+        logL_true = mean(DataConsistency(Ytrue, νtrue, ϵtrue; dims = 1))
+    end
+
+    @unpack θ, Z, X, δ, ϵ, ν, ℓ = MAP(Ytrue)
+    X̂ = add_noise_instance(derived["ricegen"], ν, ϵ)
+
+    all_rmse = sqrt.(mean(abs2, Ytrue .- X̂; dims = 1)) |> Flux.cpu |> vec |> copy
+    all_logL = ℓ |> Flux.cpu |> vec |> copy
+    rmse, logL = mean(all_rmse), mean(all_logL)
+    theta_err = 100 .* mean(abs, θtrue .- θ; dims = 2) ./ (todevice(θupper(phys)) .- todevice(θlower(phys))) |> Flux.cpu |> vec |> copy
+    Z_err = isnothing(Ztrue) ? missing : mean(abs, Ztrue .- Z; dims = 2) |> Flux.cpu |> vec |> copy
+
+    metrics = (; rmse_true, logL_true, all_rmse, all_logL, rmse, logL, theta_err, Z_err)
+    cache_cb_args = (Ytrue, θ, Z, X, δ, ϵ, ν, X̂, νtrue)
+    # cache_cb_args = (; θ, Z, X, δ, ν, ϵ, X̂, Ytrue, θtrue, Ztrue, νtrue, ϵtrue) #TODO renaming...
+
+    return metrics, cache_cb_args
+end
+
 function compute_metrics(engine, batch; dataset)
     @timeit "compute metrics" CUDA.@sync begin
         # Update callback state
@@ -646,12 +683,9 @@ function compute_metrics(engine, batch; dataset)
 
         # Invert Y and make Xs
         Y, = Ignite.array.(batch) .|> todevice
+        X, θ, Z = sampleXθZ(Y; recover_θ = true, recover_Z = true)
+        X̂ = sampleX̂(X, Z)
         Nbatch = size(Y,2)
-        θ, Z = InvertY(Y)
-        X = signal_model(phys, θ)
-        δG0, σG = correction_and_noiselevel(derived["ricegen"], X, Z)
-        μG0 = add_correction(derived["ricegen"], X, δG0)
-        X̂ = add_noise_instance(derived["ricegen"], μG0, σG)
 
         let
             ℓ_CVAE = CVAElosses(Y; recover_Z = true)
@@ -677,14 +711,12 @@ function compute_metrics(engine, batch; dataset)
                 Gloss = mean(log.(1 .- d_g_x .+ ϵ))
                 D_Y   = mean(d_y)
                 D_G_X = mean(d_g_x)
-            else
-                Gloss = Dloss = D_Y = D_G_X = missing
+                @pack! log_metrics = Gloss, Dloss, D_Y, D_G_X
             end
-            @pack! log_metrics = Gloss, Dloss, D_Y, D_G_X
         end
 
         # Cache cb state variables using naming convention
-        function cache_cb_state!(Y, θ, Z, Xθ, δθ, ϵθ, Xθδ, Xθhat, Yθ, Yθhat; suf::String)
+        function cache_cb_state!(Y, θ, Z, Xθ, δθ, ϵθ, Xθδ, Xθhat, Yθ; suf::String)
             cb_state["Y"     * suf] = Y     |> Flux.cpu
             cb_state["θ"     * suf] = θ     |> Flux.cpu
             cb_state["Z"     * suf] = Z     |> Flux.cpu
@@ -694,44 +726,30 @@ function compute_metrics(engine, batch; dataset)
             cb_state["Xθδ"   * suf] = Xθδ   |> Flux.cpu
             cb_state["Xθhat" * suf] = Xθhat |> Flux.cpu
             cb_state["Yθ"    * suf] = Yθ    |> Flux.cpu
-            cb_state["Yθhat" * suf] = Yθhat |> Flux.cpu
             return cb_state
         end
 
-        # Cache values for evaluating CVAE performance for recovering Y
-        let
-            Yθ = hasclosedform(phys) ? signal_model(ClosedForm(phys), θ) : missing
-            Yθhat = hasclosedform(phys) ? signal_model(ClosedForm(phys), θ, noiselevel(ClosedForm(phys), θ, Z)) : missing
-            cache_cb_state!(Y, θ, Z, X, δG0, σG, μG0, X̂, Yθ, Yθhat; suf = "")
-
-            all_Yhat_rmse = sqrt.(mean(abs2, Y .- X̂; dims = 1)) |> Flux.cpu |> vec
-            all_Yhat_logL = MAP(Y) |> Flux.cpu |> vec #TODO DataConsistency(Y, μG0, σG; dims = 1) |> Flux.cpu |> vec
-            Yhat_rmse = mean(all_Yhat_rmse)
-            Yhat_logL = mean(all_Yhat_logL)
-            @pack! cb_state["metrics"] = all_Yhat_rmse, all_Yhat_logL
-            @pack! log_metrics = Yhat_rmse, Yhat_logL
+        # Cache values for evaluating CVAE performance for estimating parameters of Y
+        hasclosedform(phys) && let
+            W = sampleWprior_similar(phys, Y, size(Y, 2)) # Sample hidden latent variables
+            Y_metrics, Y_cache_cb_args = fit_metrics(nothing, θ, nothing, W)
+            cache_cb_state!(Y_cache_cb_args...; suf = "")
+            cb_state["metrics"]["all_Yhat_rmse"] = Y_metrics.all_rmse
+            cb_state["metrics"]["all_Yhat_logL"] = Y_metrics.all_logL
+            for (k,v) in pairs(Y_metrics)
+                (k ∉ (:all_rmse, :all_logL)) && !ismissing(v) && (log_metrics[Symbol(:Yhat_, k)] = v)
+            end
         end
 
         # Cache values for evaluating CVAE performance for estimating parameters of X̂
         let
-            θfit, Zfit = sampleθZ(X̂; recover_θ = true, recover_Z = true)
-            Xθfit = signal_model(phys, θfit)
-            δθfit, ϵθfit = correction_and_noiselevel(derived["ricegen"], Xθfit, Zfit)
-            Xθδfit = add_correction(derived["ricegen"], Xθfit, δθfit)
-            Xθhatfit = add_noise_instance(derived["ricegen"], Xθδfit, ϵθfit)
-            Yθfit = hasclosedform(phys) ? signal_model(ClosedForm(phys), θfit) : missing
-            Yθhatfit = hasclosedform(phys) ? signal_model(ClosedForm(phys), θfit, noiselevel(ClosedForm(phys), θfit, Zfit)) : missing
-            cache_cb_state!(X̂, θfit, Zfit, Xθfit, δθfit, ϵθfit, Xθδfit, Xθhatfit, Yθfit, Yθhatfit; suf = "fit") #TODO X̂ or Y?
-
-            rmse = hasclosedform(phys) ? sqrt(mean(abs2, Yθfit - Xθδfit)) : missing
-            all_Xhat_rmse = sqrt.(mean(abs2, X̂ .- Xθhatfit; dims = 1)) |> Flux.cpu |> vec
-            all_Xhat_logL = MAP(X̂) |> Flux.cpu |> vec #TODO DataConsistency(X̂, Xθδfit, ϵθfit; dims = 1) |> Flux.cpu |> vec
-            Xhat_rmse = mean(all_Xhat_rmse)
-            Xhat_logL = mean(all_Xhat_logL)
-            theta_err = 100 .* mean(abs, (θ .- θfit) ./ (todevice(θupper(phys)) .- todevice(θlower(phys))); dims = 2) |> Flux.cpu |> vec |> copy
-            Z_err = mean(abs, Z .- Zfit; dims = 2) |> Flux.cpu |> vec |> copy
-            @pack! cb_state["metrics"] = all_Xhat_rmse, all_Xhat_logL
-            @pack! log_metrics = Xhat_rmse, Xhat_logL, theta_err, Z_err, rmse
+            X̂_metrics, X̂_cache_cb_args = fit_metrics(X̂, θ, Z, nothing)
+            cache_cb_state!(X̂_cache_cb_args...; suf = "fit")
+            cb_state["metrics"]["all_Xhat_rmse"] = X̂_metrics.all_rmse
+            cb_state["metrics"]["all_Xhat_logL"] = X̂_metrics.all_logL
+            for (k,v) in pairs(X̂_metrics)
+                (k ∉ (:all_rmse, :all_logL)) && !ismissing(v) && (log_metrics[Symbol(:Xhat_, k)] = v)
+            end
         end
 
         # Update logger dataframe
@@ -758,7 +776,7 @@ function makeplots(;showplot = false)
         function plot_epsilon_inner(; start, stop, zlen = 256, levels = 50)
             n, nθ, nz = nsignal(phys)::Int, ntheta(phys)::Int, settings["arch"]["nlatent"]::Int
             Y = sampleY(phys, zlen * nz; dataset = :train) |> to32
-            θ = sampleθprior_similar(Y, zlen * nz)
+            θ = sampleθprior_similar(phys, Y, zlen * nz)
             X = signal_model(phys, θ)
             Z = repeat(randn_similar(Y, nz, 1), 1, zlen, nz)
             for i in 1:nz

@@ -48,12 +48,21 @@ Flux.@functor LatentVectorRicianNoiseCorrector
 ninput(::Type{R}) where {R<:LatentVectorRicianNoiseCorrector} = nlatent(R)
 noutput(::Type{R}) where {R<:LatentVectorRicianNoiseCorrector} = nsignal(R)
 
-# Concrete methods to extract δ and ϵ
+# Helper functions
 @inline _maybe_vcat(X, Z = nothing) = isnothing(Z) ? X : vcat(X,Z)
-@inline split_delta_epsilon(δ_logϵ) = δ_logϵ[1:end÷2, :], exp.(δ_logϵ[end÷2+1:end, :]) .+ sqrt(eps(eltype(δ_logϵ)))
-correction_and_noiselevel(G::VectorRicianCorrector, X, Z = nothing) = split_delta_epsilon(G.G(_maybe_vcat(X,Z)))
+@inline _split_delta_epsilon(δ_logϵ) = δ_logϵ[1:end÷2, :], exp.(δ_logϵ[end÷2+1:end, :]) .+ sqrt(eps(eltype(δ_logϵ)))
+@inline function _add_rician_noise_instance(X, ϵ = nothing, ninstances = nothing)
+    isnothing(ϵ) && return X
+    ϵsize = isnothing(ninstances) ? size(X) : (size(X)..., ninstances)
+    ϵR = ϵ .* randn_similar(X, ϵsize)
+    ϵI = ϵ .* randn_similar(X, ϵsize)
+    return @. sqrt((X + ϵR)^2 + ϵI^2)
+end
+
+# Concrete methods to extract δ and ϵ
+correction_and_noiselevel(G::VectorRicianCorrector, X, Z = nothing) = _split_delta_epsilon(G.G(_maybe_vcat(X,Z)))
 correction_and_noiselevel(G::FixedNoiseVectorRicianCorrector, X, Z = nothing) = G.G(_maybe_vcat(X,Z)), G.ϵ0
-correction_and_noiselevel(G::LatentVectorRicianCorrector, X, Z) = split_delta_epsilon(G.G(Z))
+correction_and_noiselevel(G::LatentVectorRicianCorrector, X, Z) = _split_delta_epsilon(G.G(Z))
 correction_and_noiselevel(G::LatentVectorRicianNoiseCorrector, X, Z) = zero(X), exp.(G.G(Z)) .+ sqrt(eps(eltype(Z)))
 
 # Derived convenience functions
@@ -62,13 +71,7 @@ noiselevel(G::RicianCorrector, X, Z = nothing) = correction_and_noiselevel(G, X,
 corrected_signal_instance(G::RicianCorrector, X, Z = nothing) = corrected_signal_instance(G, X, correction_and_noiselevel(G, X, Z)...)
 corrected_signal_instance(G::RicianCorrector, X, δ, ϵ) = add_noise_instance(G, add_correction(G, X, δ), ϵ)
 add_correction(G::RicianCorrector, X, δ) = @. abs(X + δ) #@. max(X + δ, 0)
-function add_noise_instance(G::RicianCorrector, X, ϵ, ninstances = nothing)
-    ϵsize = isnothing(ninstances) ? size(X) : (size(X)..., ninstances)
-    ϵR = ϵ .* randn_similar(X, ϵsize)
-    ϵI = ϵ .* randn_similar(X, ϵsize)
-    Xϵ = @. sqrt((X + ϵR)^2 + ϵI^2)
-    return Xϵ
-end
+add_noise_instance(G::RicianCorrector, X, ϵ, ninstances = nothing) = _add_rician_noise_instance(X, ϵ, ninstances)
 function rician_params(G::RicianCorrector, X, Z = nothing)
     δ, ϵ = correction_and_noiselevel(G, X, Z)
     ν, σ = add_correction(G, X, δ), ϵ
@@ -97,8 +100,10 @@ ntheta(c::ClosedForm) = ntheta(physicsmodel(c))
 nsignal(c::ClosedForm) = nsignal(physicsmodel(c))
 Base.eltype(::MaybeClosedForm{T}) where {T} = T
 Base.eltype(::Type{<:MaybeClosedForm{T}}) where {T} = T
-function sampleZprior end
+function sampleWprior end
+function sampleWprior_similar end
 function sampleθprior end
+function sampleθprior_similar end
 function sampleθ end
 function signal_model end
 function noiselevel end
@@ -115,6 +120,8 @@ sampleY(p::MaybeClosedForm, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol
 
 abstract type AbstractToyModel{T,isfinite} <: PhysicsModel{T} end
 
+const MaybeClosedFormAbstractToyModel{T,isfinite} = Union{<:AbstractToyModel{T,isfinite}, <:ClosedForm{<:AbstractToyModel{T,isfinite}}}
+
 function initialize!(p::AbstractToyModel{T,isfinite}; ntrain::Int, ntest::Int, nval::Int, seed::Int = 0) where {T,isfinite}
     rng = Random.seed!(seed)
     for (d, n) in [(:train, ntrain), (:test, ntest), (:val, nval)]
@@ -125,13 +132,19 @@ function initialize!(p::AbstractToyModel{T,isfinite}; ntrain::Int, ntest::Int, n
             empty!(p.θ)
             empty!(p.X)
         end
-        θ, Z = sampleθprior(p, n), sampleZprior(p, n)
-        ϵ = noiselevel(ClosedForm(p), θ, Z)
-        p.Y[d] = signal_model(ClosedForm(p), θ, ϵ, Z)
+        θ, W = sampleθprior(p, n), sampleWprior(p, n)
+        ϵ = noiselevel(ClosedForm(p), θ, W)
+        p.Y[d] = signal_model(ClosedForm(p), θ, ϵ, W)
     end
     Random.seed!(rng)
     return p
 end
+
+# X-sampler deliberately does not take W as argument; W is supposed to be hidden from the outside. Use signal_model directly to pass W
+sampleX(p::AbstractToyModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleX(p, sampleθ(physicsmodel(p), n, ϵ; dataset), ϵ)
+sampleX(p::MaybeClosedFormAbstractToyModel, θ, ϵ = nothing) = signal_model(p, θ, ϵ)
+
+#### Toy exponentially decaying model with sinusoidally modulated amplitude
 
 @with_kw struct ToyModel{T,isfinite} <: AbstractToyModel{T,isfinite}
     ϵ0::T = 0.01
@@ -154,29 +167,25 @@ beta(::ClosedFormToyModel) = 2
 θupper(::ToyModel{T}) where {T} = T[1/T(32), T(π)/2, 1/T(2), 1/T(4),  T(128)]
 θerror(p::ToyModel, θ, θhat) = 100 .* abs.((θ .- θhat)) ./ (θupper(p) .- θlower(p))
 
-sampleZprior(p::ToyModel, n::Union{Int, Symbol}) = nothing
+sampleWprior(p::ToyModel, n::Union{Int, Symbol}) = nothing
 
 sampleθprior(p::ToyModel{T}, n::Union{Int, Symbol}) where {T} = θlower(p) .+ (θupper(p) .- θlower(p)) .* rand(T, ntheta(p), n)
 sampleθ(p::ToyModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleθprior(p, n)
 
-sampleX(p::ToyModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleX(p, sampleθ(physicsmodel(p), n, ϵ; dataset), ϵ)
-sampleX(p::MaybeClosedFormToyModel, θ, ϵ = nothing) = signal_model(p, θ, ϵ, nothing)
+noiselevel(c::ClosedFormToyModel, θ = nothing, W = nothing) = physicsmodel(c).ϵ0
+add_noise_instance(p::MaybeClosedFormToyModel, X, ϵ, ninstances = nothing) = _add_rician_noise_instance(X, ϵ, ninstances)
 
-noiselevel(c::ClosedFormToyModel, θ = nothing, Z = nothing) = physicsmodel(c).ϵ0
-
-function signal_model(p::MaybeClosedFormToyModel, θ::AbstractVecOrMat, ϵ = nothing, Z = nothing)
+function signal_model(p::MaybeClosedFormToyModel, θ::AbstractVecOrMat, ϵ = nothing, W = nothing)
     n = nsignal(p)
     β = beta(p)
     t = 0:n-1
     f, ϕ, a₀, a₁, τ = θ[1:1,:], θ[2:2,:], θ[3:3,:], θ[4:4,:], θ[5:5,:]
-    y = @. (a₀ + a₁ * sin(2*(π*f)*t - ϕ)^β) * exp(-t/τ)
-    if !isnothing(ϵ)
-        ϵR = ϵ .* randn_similar(θ, n, size(θ,2))
-        ϵI = ϵ .* randn_similar(θ, n, size(θ,2))
-        y = @. sqrt((y + ϵR)^2 + ϵI^2)
-    end
-    return y
+    X = @. (a₀ + a₁ * sin(2*(π*f)*t - ϕ)^β) * exp(-t/τ)
+    X = add_noise_instance(p, X, ϵ)
+    return X
 end
+
+#### Toy cosine model with latent variable controlling noise amplitude
 
 @with_kw struct ToyCosineModel{T,isfinite} <: AbstractToyModel{T,isfinite}
     ϵbd::NTuple{2,T} = (0.01, 0.1)
@@ -197,27 +206,23 @@ hasclosedform(::ToyCosineModel) = true
 θupper(::ToyCosineModel{T}) where {T} = T[T(1/32), T(π/2), T(1)]
 θerror(p::ToyCosineModel, θ, θhat) = 100 .* abs.((θ .- θhat)) ./ (θupper(p) .- θlower(p))
 
-sampleZprior(p::ToyCosineModel{T}, n::Union{Int, Symbol}) where {T} = rand(T, nlatent(p), n)
+sampleWprior(p::ToyCosineModel{T}, n::Union{Int, Symbol}) where {T} = rand(T, nlatent(p), n)
+sampleWprior_similar(p::ToyCosineModel, Y, n::Union{Int, Symbol} = size(Y,2)) = rand_similar(Y, nlatent(p), n)
 
-sampleθprior(p::ToyCosineModel{T}, n::Union{Int, Symbol}) where {T} = θlower(p) .+ (θupper(p) .- θlower(p)) .* rand(T, ntheta(p), n)
+sampleθprior(p::ToyCosineModel{T}, n::Union{Int, Symbol}) where {T} = rand(T, ntheta(p), n) .* (θupper(p) .- θlower(p)) .+ θlower(p)
+sampleθprior_similar(p::ToyCosineModel, Y, n::Union{Int, Symbol} = size(Y,2)) = rand_similar(Y, ntheta(p), n) .* (todevice(θupper(p)) .- todevice(θlower(p))) .+ todevice(θlower(p))
 sampleθ(p::ToyCosineModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleθprior(p, n)
 
-sampleX(p::ToyCosineModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleX(p, sampleθ(physicsmodel(p), n, ϵ; dataset), ϵ)
-sampleX(p::MaybeClosedFormToyCosineModel, θ, ϵ = nothing) = signal_model(p, θ, ϵ, nothing)
+noiselevel(c::ClosedFormToyCosineModel, θ = nothing, W = nothing) = ((lo,hi) = physicsmodel(c).ϵbd; return @. lo + W * (hi - lo))
+add_noise_instance(p::MaybeClosedFormToyCosineModel, X, ϵ, ninstances = nothing) = _add_rician_noise_instance(X, ϵ, ninstances)
 
-noiselevel(c::ClosedFormToyCosineModel, θ = nothing, Z = nothing) = ((lo,hi) = physicsmodel(c).ϵbd; return @. lo + Z * (hi - lo))
-
-function signal_model(p::MaybeClosedFormToyCosineModel, θ::AbstractVecOrMat, ϵ = nothing, Z = nothing)
+function signal_model(p::MaybeClosedFormToyCosineModel, θ::AbstractVecOrMat, ϵ = nothing, W = nothing)
     n = nsignal(p)
     t = 0:n-1
     f, ϕ, a₀ = θ[1:1,:], θ[2:2,:], θ[3:3,:]
-    y = @. 1 + a₀ * cos(2*(π*f)*t - ϕ)
-    if !isnothing(ϵ)
-        ϵR = ϵ .* randn_similar(θ, n, size(θ,2))
-        ϵI = ϵ .* randn_similar(θ, n, size(θ,2))
-        y = @. sqrt((y + ϵR)^2 + ϵI^2)
-    end
-    return y
+    X = @. 1 + a₀ * cos(2*(π*f)*t - ϕ)
+    X = add_noise_instance(p, X, ϵ)
+    return X
 end
 
 ####

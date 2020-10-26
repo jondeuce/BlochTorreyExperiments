@@ -2,8 +2,8 @@ module MMDLearning
 
 using Reexport
 @reexport using LinearAlgebra, Statistics, Random, Dates, Printf
-@reexport using StatsBase, SpecialFunctions, Distributions, DataFrames, TimerOutputs, BenchmarkTools
-@reexport using FFTW, Parameters, EllipsisNotation, LegibleLambdas, LaTeXStrings
+@reexport using StatsBase, Distributions, DataFrames, SpecialFunctions, FFTW, TimerOutputs, BenchmarkTools
+@reexport using Parameters, BangBang, EllipsisNotation, LegibleLambdas, LaTeXStrings
 @reexport using StatsPlots
 
 @reexport using LoopVectorization, Tullio
@@ -32,7 +32,8 @@ export PhysicsModel, ClosedForm, ToyModel
 export randn_similar, rand_similar
 export physicsmodel, hasclosedform, initialize!, nsignal, nlatent, ninput, noutput, ntheta, signal_model
 export θbounds, θlower, θupper, θlabels, θerror
-export sampleθprior, sampleθ, sampleX, sampleY
+export sampleθprior, sampleθprior_similar, sampleWprior, sampleWprior_similar
+export sampleθ, sampleX, sampleY
 export initialize_callback, update_callback!
 
 ####
