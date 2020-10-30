@@ -202,7 +202,7 @@ function train_hybrid_gan_model(;
                         @timeit "sampleY" Ytrain = sampleY(phys, m; dataset = :train)
                         atleastonestep = false
                         for _ in 1:kernelsteps
-                            success = train_kernel_bandwidth_flux!(models["logsigma"], X̂train, Ytrain; kernelloss = kernelloss, kernellr = kernellr, bwbounds = bwbounds) # timed internally
+                            success = train_kernel!(models["logsigma"], X̂train, Ytrain; kernelloss = kernelloss, kernellr = kernellr, bwbounds = bwbounds) # timed internally
                             !success && break
                             atleastonestep = true
                         end

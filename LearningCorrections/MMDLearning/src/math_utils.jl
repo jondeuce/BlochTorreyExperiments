@@ -286,3 +286,65 @@ let m = Flux.f64(m), xy = Flux.f64(test_data)
     gradcheck((m,xy...) -> H_LIGOCVAE(m, xy...), m, xy...)
 end;
 =#
+
+####
+#### Histogram
+####
+
+function fast_hist_1D(y, edges; normalize = nothing)
+    @assert !isempty(y) && length(edges) >= 2
+    _y = sort!(copy(y))
+    @assert _y[1] >= edges[1]
+    h = Histogram((edges,), zeros(Int, length(edges)-1), :left)
+    j = 1
+    @inbounds for i = 1:length(_y)
+        _yi = _y[i]
+        while _yi >= edges[j+1]
+            j += 1
+            (j+1 > length(edges)) && return h
+        end
+        h.weights[j] += 1
+    end
+    !isnothing(normalize) && (h = Plots.normalize(h, mode = normalize))
+    return h
+end
+
+function fast_hist_1D(y, edges::AbstractRange; normalize = nothing)
+    @assert length(edges) >= 2
+    lo, hi, dx, n = first(edges), last(edges), step(edges), length(edges)
+    h = Histogram((edges,), zeros(Int, n-1), :left)
+    @inbounds for (i, yi) in enumerate(y)
+        j = div(yi - lo, dx, RoundDown) + 1 |> Int
+        (1 <= j <= n-1) && (h.weights[j] += 1)
+    end
+    !isnothing(normalize) && (h = Plots.normalize(h, mode = normalize))
+    return h
+end
+
+function _fast_hist_test()
+    _make_hist(x, edges) = fit(Histogram, x, UnitWeights{Float64}(length(x)), edges; closed = :left)
+    for _ in 1:100
+        n = rand(1:10)
+        x = 100 .* rand(n)
+        edges = rand(Bool) ? [0.0; sort(100 .* rand(n))] : (rand(1:10) : rand(1:10) : 100-rand(1:10))
+        try
+            @assert fast_hist_1D(x, edges) == _make_hist(x, edges)
+        catch e
+            if e isa InterruptException
+                break
+            else
+                fast_hist_1D(x, edges).weights' |> x -> (display(x); display((first(x), last(x), sum(x))))
+                _make_hist(x, edges).weights' |> x -> (display(x); display((first(x), last(x), sum(x))))
+                rethrow(e)
+            end
+        end
+    end
+
+    x = rand(10^6)
+    for ne in 2 .^ (4:10)
+        edges = range(0, 1; length = ne)
+        @info "range (ne = $ne)"; @btime fast_hist_1D($x, $edges)
+        @info "array (ne = $ne)"; @btime fast_hist_1D($x, $(collect(edges)))
+        @info "plots (ne = $ne)"; @btime $_make_hist($x, $edges)
+    end
+end

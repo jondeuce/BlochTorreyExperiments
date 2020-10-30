@@ -121,7 +121,7 @@ D_Y_loss(Y) = models["D"](Y) # discrim on real data
 D_G_X_loss(X) = models["D"](corrected_signal_instance(ricegen, X)) # discrim on genatr data
 Dloss(X,Y) = -mean(log.(D_Y_loss(Y)) .+ log.(1 .- D_G_X_loss(X)))
 Gloss(X) = mean(log.(1 .- D_G_X_loss(X)))
-MMDloss(X,Y) = size(Y,2) * mmd(MMDLearning.ExponentialKernel(models["logsigma"]), corrected_signal_instance(ricegen, X), Y) # m*MMD^2 on genatr data
+MMDloss(X,Y) = size(Y,2) * mmd(MMDLearning.DeepExponentialKernel(models["logsigma"]), corrected_signal_instance(ricegen, X), Y) # m*MMD^2 on genatr data
 
 # Global state
 const logger = DataFrame(
@@ -177,7 +177,7 @@ function train_step(engine, batch)
                 @timeit "MMD kernel" begin
                     @timeit "sample G(X)" X̂train = corrected_signal_instance(ricegen, Xtrain)
                     for _ in 1:kernelsteps
-                        success = train_kernel_bandwidth_flux!(models["logsigma"], X̂train, Ytrain;
+                        success = train_kernel!(models["logsigma"], X̂train, Ytrain;
                             kernelloss = settings["opt"]["k"]["loss"], kernellr = settings["opt"]["k"]["lr"], bwbounds = settings["arch"]["kernel"]["bwbounds"]) # timed internally
                         !success && break
                     end

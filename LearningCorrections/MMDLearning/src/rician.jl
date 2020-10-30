@@ -72,27 +72,24 @@ _laguerre½(x::Real) = (x < 0 ? one(x) : exp(x)) * ((1 - x) * _besselix(0, -x/2)
 
 #### CUDA-friendly native julia Besselix functions
 
-@inline function _besselix0_cuda(x::Float32)
+@inline function _besselix0_cuda(x)
     ax = abs(x)
     if ax < 3.75f0
         y = (x / 3.75f0)^2
-        out = (1.0f0 + y * (3.5156229f0 + y * (3.0899424f0 + y * (1.2067492f0 + y * (0.2659732f0 + y * (0.360768f-1 + y * 0.45813f-2))))))
-        out *= exp(-ax)
+        out = exp(-ax) * (1.0f0 + y * (3.5156229f0 + y * (3.0899424f0 + y * (1.2067492f0 + y * (0.2659732f0 + y * (0.360768f-1 + y * 0.45813f-2))))))
     else
         y = 3.75f0 / ax
-        out = (0.39894228f0 + y * (0.1328592f-1 + y * (0.225319f-2 + y * (-0.157565f-2 + y * (0.916281f-2 + y * (-0.2057706f-1 + y * (0.2635537f-1 + y * (-0.1647633f-1 + y * 0.392377f-2))))))))
-        out /= sqrt(ax)
+        out = (0.39894228f0 + y * (0.1328592f-1 + y * (0.225319f-2 + y * (-0.157565f-2 + y * (0.916281f-2 + y * (-0.2057706f-1 + y * (0.2635537f-1 + y * (-0.1647633f-1 + y * 0.392377f-2)))))))) / sqrt(ax)
     end
     return out
 end
-@inline _besselix0_cuda(x::T) where {T} = convert(T, _besselix0_cuda(Float32(x)))
-@inline _logbesseli0_cuda(x::Real) = log(_besselix0_cuda(x)) + abs(x) # since log(besselix(ν, x)) = log(Iν(x)) - |x|
+@inline _logbesseli0_cuda(x) = log(_besselix0_cuda(x)) + abs(x) # since log(besselix(ν, x)) = log(Iν(x)) - |x|
 
-function _besselix1_cuda(x::Float32)
+function _besselix1_cuda(x)
     ax = abs(x)
     if ax < 3.75f0
         y = (x / 3.75f0)^2
-        out = ax * (0.5f0 + y * (0.87890594f0 + y * (0.51498869f0 + y * (0.15084934f0 + y * (0.2658733f-1 + y * (0.301532f-2 + y * 0.32411f-3))))))
+        out = exp(-ax) * ax * (0.5f0 + y * (0.87890594f0 + y * (0.51498869f0 + y * (0.15084934f0 + y * (0.2658733f-1 + y * (0.301532f-2 + y * 0.32411f-3))))))
     else
         y = 3.75f0 / ax
         out = 0.2282967f-1 + y * (-0.2895312f-1 + y * (0.1787654f-1-y * 0.420059f-2))
@@ -101,10 +98,52 @@ function _besselix1_cuda(x::Float32)
     end
     return x < 0 ? -out : out
 end
-@inline _besselix1_cuda(x::T) where {T} = convert(T, _besselix1_cuda(Float32(x)))
-@inline _logbesseli1_cuda(x::Real) = log(_besselix1_cuda(x)) + abs(x) # since log(besselix(ν, x)) = log(Iν(x)) - |x|
+@inline _logbesseli1_cuda(x) = log(_besselix1_cuda(x)) + abs(x) # since log(besselix(ν, x)) = log(Iν(x)) - |x|
 
-@inline _rician_logpdf_cuda(x::Real, ν::Real, σ::Real) = (ϵ = eps(float(typeof(x))); σ2 = σ*σ; log(x/σ2 + ϵ) + _logbesseli0_cuda(x*ν/σ2) - (x*x + ν*ν)/2σ2)
+@inline _laguerre½_cuda(x) = (x < 0 ? one(x) : exp(x)) * ((1 - x) * _besselix0_cuda(-x/2) - x * _besselix1_cuda(-x/2))
+@inline _rician_mean_cuda(ν, σ) = (tmp = σ * _laguerre½_cuda(-ν^2 / 2σ^2); μ = sqrt(oftype(tmp, π)/2) * tmp; return μ)
+@inline _rician_logpdf_cuda(x, ν, σ) = _logbesseli0_cuda(x*ν/σ^2) - (x^2 + ν^2)/(2*σ^2) + log(x/σ^2)
+
+# Define chain rule (Zygote > v"0.4.20" reads ChainRules directly)
+ChainRules.@scalar_rule(
+    _rician_logpdf_cuda(x, ν, σ),
+    @setup(c = inv(σ^2), z = c*x*ν, r = _besselix1_cuda(z) / _besselix0_cuda(z)),
+    (c * (ν * r - x) + (1/x), c * (x * r - ν), (-2 * ν * x * r - 2 * σ^2 + x^2 + ν^2) / σ^3), # assumes strictly positive values
+)
+
+# Zygote.@adjoint function _rician_logpdf_cuda(x, ν, σ)
+#     return _rician_logpdf_cuda(x, ν, σ), function (Δ)
+#         c = inv(σ^2)
+#         z = c*x*ν
+#         r = _besselix1_cuda(z) / _besselix0_cuda(z)
+#         ∂x = (c * (ν * r - x) + (1/x)) * Δ
+#         ∂ν = (c * (x * r - ν)) * Δ
+#         ∂σ = ((-2 * ν * x * r - 2 * σ^2 + x^2 + ν^2) / σ^3) * Δ
+#         return (∂x, ∂ν, ∂σ)
+#     end
+# end
+
+#=
+let
+    for T in [Float32]
+        vals = [one(T); T.(0.01 .+ exp.(randn(1)))]
+        for x in vals, ν in vals, σ in vals
+            fx = _x -> MMDLearning._rician_logpdf_cuda(_x, ν, σ)
+            fν = _ν -> MMDLearning._rician_logpdf_cuda(x, _ν, σ)
+            fσ = _σ -> MMDLearning._rician_logpdf_cuda(x, ν, _σ)
+            for (lab, f) in [(:x, fx), (:ν, fν), (:σ, fσ)]
+                δ_fd  = ChainRulesTestUtils.FiniteDifferences.central_fdm(5,1)(f, x)
+                # δ_fwd = ForwardDiff.derivative(f, x)
+                δ_rev = Zygote.gradient(f, x)[1]
+                @info lab, (δ_fd-δ_rev), δ_fd, δ_rev
+                # @assert δ_fd  ≈ δ_fwd atol = 0 rtol = sqrt(eps(T))
+                # @assert δ_fd  ≈ δ_rev atol = 0 rtol = sqrt(eps(T))
+                # @assert δ_fwd ≈ δ_rev atol = 0 rtol = 10*eps(T)
+            end
+        end
+    end
+end
+=#
 
 #### Statistics
 @inline Distributions.mean(d::Rician) = d.σ * sqrt(pi/2) * _laguerre½(-d.ν^2 / 2d.σ^2)

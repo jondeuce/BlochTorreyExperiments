@@ -8,13 +8,17 @@ struct FunctionKernel{T,F} <: MMDKernel{T}
     f::F
     FunctionKernel{T}(f) where {T} = new{T,typeof(f)}(f)
 end
+Flux.functor(::Type{<:FunctionKernel{T}}, k) where {T} = (k.f,), k -> FunctionKernel{T}(k)
 (k::FunctionKernel)(Δ) = k.f(Δ)
 
-struct ExponentialKernel{T,N,A<:AbstractArray{T,N}} <: MMDKernel{T}
+struct DeepExponentialKernel{T,N,A<:AbstractArray{T,N},F} <: MMDKernel{T}
     logσ::A
-    ExponentialKernel(logσ::AbstractArray) = new{eltype(logσ),ndims(logσ),typeof(logσ)}(logσ)
+    phi::F
+    DeepExponentialKernel(logσ::AbstractArray, phi = identity) = new{eltype(logσ),ndims(logσ),typeof(logσ),typeof(phi)}(logσ, phi)
 end
-logbandwidths(k::ExponentialKernel) = k.logσ
+Flux.@functor DeepExponentialKernel
+logbandwidths(k::DeepExponentialKernel) = k.logσ
+featuremap(k::DeepExponentialKernel) = k.phi
 
 struct MMDResults{T}
     m::T
@@ -86,6 +90,17 @@ function mmd_and_mmdvar(res::MMDVarResults)
 end
 
 mmdvar(res::MMDVarResults) = mmd_and_mmdvar(res)[2]
+
+function tstat(k::MMDKernel, X, Y, isillposed = nothing)
+    # Avoiding div by zero/negative:
+    #   m^2 * MMDvar >= ϵ  -->  m * MMDσ >= √ϵ
+    MMDsq, MMDvar = mmd_and_mmdvar(k, X, Y)
+    m = size(X,2)
+    ϵ = eps(typeof(MMDvar))
+    t = m*MMDsq / √max(m^2*MMDvar, ϵ)
+    !isnothing(isillposed) && Zygote.@ignore(isillposed[] = m^2*MMDvar < ϵ) #TODO: MMDsq < 0 --> ill-posed?
+    return t
+end
 
 ####
 #### Generic MMD using buffer matrices
@@ -280,9 +295,9 @@ end
 #### MMD using sums of exponential kernels
 ####
 
-mmd(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmd(mmd_flux_u_statistic(mmd_flux_kernel_matrices(logbandwidths(k), X, Y, Val(false))...))
-mmdvar(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmdvar(mmdvar_flux_u_statistic(mmd_flux_kernel_matrices(logbandwidths(k), X, Y, Val(false))...))
-mmd_and_mmdvar(k::ExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmd_and_mmdvar(mmdvar_flux_u_statistic(mmd_flux_kernel_matrices(logbandwidths(k), X, Y, Val(false))...))
+mmd(k::DeepExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmd(mmd_flux_u_statistic(mmd_flux_kernel_matrices(k.logσ, k.phi(X), k.phi(Y), Val(false))...))
+mmdvar(k::DeepExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmdvar(mmdvar_flux_u_statistic(mmd_flux_kernel_matrices(k.logσ, k.phi(X), k.phi(Y), Val(false))...))
+mmd_and_mmdvar(k::DeepExponentialKernel, X::AbstractMatrix, Y::AbstractMatrix) = mmd_and_mmdvar(mmdvar_flux_u_statistic(mmd_flux_kernel_matrices(k.logσ, k.phi(X), k.phi(Y), Val(false))...))
 
 function mmd_flux_u_statistic(Kxx, Kyy, Kxy)
     @assert size(Kxx) == size(Kyy) == size(Kxy)
@@ -320,7 +335,6 @@ function mmdvar_flux_u_statistic(Kxx, Kyy, Kxy)
     return MMDVarResults{Tk}(m, K̃xx_F2, K̃yy_F2, Kxy_F2, e_K̃xx_e, e_K̃yy_e, e_Kxy_e, e_K̃xy_e, K̃xx_e_F2, K̃yy_e_F2, Kxy_e_F2, Kyx_e_F2, e_K̃xx_Kxy_e, e_K̃yy_Kyx_e)
 end
 
-
 # Speed testing of mmd_flux_kernel_matrices
 function _bench_mmd_and_mmdvar_cpu_vs_gpu(;T = Float32, n = 128, m = 2048)
     @assert CUDA.functional()
@@ -332,7 +346,7 @@ function _bench_mmd_and_mmdvar_cpu_vs_gpu(;T = Float32, n = 128, m = 2048)
     for nchan in [n,1], nbw in [32,1], f in [mmdvar, mmd]
         @show f, n, m, nbw, nchan
         logσ, logσc = (nchan > 1 ? randn(T, nbw, nchan) : randn(T, nbw)) |> cpu_and_gpu
-        k, kc = (logσ, logσc) .|> ExponentialKernel
+        k, kc = (logσ, logσc) .|> DeepExponentialKernel
 
         @assert _isapprox(@show(f(k,X,Y)), @show(f(kc,Xc,Yc)))
 
@@ -1454,7 +1468,7 @@ end
 ####
 #### Combinatorial bandwidth opt
 ####
-function combinatorial_kernel_opt(k::ExponentialKernel, X, Y, σbucket; batchsize::Int, nsamples::Int, maxiters::Int, replace::Bool = true, verbose::Bool = false, pthresh = 1/batchsize)
+function combinatorial_kernel_opt(k::DeepExponentialKernel, X, Y, σbucket; batchsize::Int, nsamples::Int, maxiters::Int, replace::Bool = true, verbose::Bool = false, pthresh = 1/batchsize)
     mmdsamples(knew) = map(1:nsamples) do _
         Xm, Ym = sample_columns(X, batchsize), sample_columns(Y, batchsize)
         batchsize * mmd(knew, Xm, Ym)
@@ -1464,7 +1478,7 @@ function combinatorial_kernel_opt(k::ExponentialKernel, X, Y, σbucket; batchsiz
     for i in 1:maxiters
         inds = sample(eachindex(σbucket), length(logbandwidths(kbest)); replace)
         σnew = reshape(σbucket[inds], size(logbandwidths(kbest)))
-        knew = ExponentialKernel(σnew)
+        knew = DeepExponentialKernel(σnew)
         mmdnew = mmdsamples(knew)
         t = HypothesisTests.UnequalVarianceTTest(Float64.(mmdnew), Float64.(mmdbest))
         p = HypothesisTests.pvalue(t)
@@ -1506,119 +1520,32 @@ end
 #### Kernel bandwidth opt
 ####
 
-function tstat(logσ::Real, X, Y)
-    m = size(X,2)
-    σ = exp(logσ)
-    γ = inv(2σ^2)
-    k(Δ) = exp(-γ*Δ)
-    MMDsq  = m * mmd(k, X, Y)
-    MMDvar = m^2 * mmdvar(k, X, Y)
-    ϵ = eps(typeof(MMDvar))
-    t = MMDsq / √max(MMDvar, ϵ) # avoid division by zero/negative
-    return t
-end
-∇tstat(logσ::Real, args...; kwargs...) = ForwardDiff.derivative(logσ -> tstat(logσ, args...; kwargs...), logσ)
-
-function tstat_flux(logσ::AbstractArray, X, Y, isillposed = nothing)
-    # Avoiding div by zero/negative:
-    #   m^2 * MMDvar >= ϵ  -->  m * MMDσ >= √ϵ
-    MMDsq, MMDvar = mmd_and_mmdvar_flux(logσ, X, Y)
-    m = size(X,2)
-    ϵ = eps(typeof(MMDvar))
-    t = m*MMDsq / √max(m^2*MMDvar, ϵ)
-    if !isnothing(isillposed)
-        isillposed[] = (MMDsq < 0) || (m^2*MMDvar < ϵ)
-    end
-    return t
-end
-
-function ∇tstat_flux(logσ::AbstractArray, args...; kwargs...)
-    if length(logσ) <= 16
-        ForwardDiff.gradient(logσ -> tstat_flux(logσ, args...; kwargs...), logσ)
-    else
-        Zygote.gradient(logσ -> tstat_flux(logσ, args...; kwargs...), logσ)[1]
-    end
-end
-
-∇tstat_flux_fwddiff(logσ::AbstractArray, args...; kwargs...) = ForwardDiff.gradient(logσ -> tstat_flux(logσ, args...; kwargs...), logσ)
-∇tstat_flux_zygote(logσ::AbstractArray, args...; kwargs...) = Zygote.gradient(logσ -> tstat_flux(logσ, args...; kwargs...), logσ)[1]
-
-function kernel_bandwidth_loss_flux(logσ::AbstractArray, X, Y, ::Val{losstype}, isillposed = nothing) where {losstype}
-    if losstype === :mmd
-        !isnothing(isillposed) && (isillposed[] = false)
-        return mmd_flux(logσ, X, Y)
-    elseif losstype === :tstatistic
-        return tstat_flux(logσ, X, Y, isillposed)
-    else
-        error("Loss type must be :mmd or :tstatistic")
-    end
-end
-
-function train_kernel_bandwidth_flux!(logσ::AbstractArray, X, Y; kernelloss::String, kernellr = 0.01, bwbounds = nothing)
+function train_kernel!(k::MMDKernel{T}, X, Y, opt, Y2 = nothing; kernelloss::String, kernelsteps::Int, restrict! = nothing, verbose::Bool = false) where {T}
     # Kernel is trained with new optimizer for each X, Y; loss jumps too wildly
-    opt = Flux.ADAM(kernellr)
     isillposed = Ref(false)
-    losstype = Val(Symbol(kernelloss))
-    loss(_logσ) = kernel_bandwidth_loss_flux(_logσ, X, Y, losstype, isillposed)
+    tstat_loss() = -tstat(k, X, Y, isillposed) # maximize tstat(X,Y)
+    mmd_loss() = -mmd(k, X, Y) # maximize mmd(X,Y)
+    mmd_diff_loss() = mmd(k, Y, Y2) - mmd(k, X, Y) # minimize mmd(Y1,Y2), maximize mmd(X,Y1)
+    loss =
+        (kernelloss == "mmd") ? mmd_loss :
+        (kernelloss == "tstatistic") ? tstat_loss :
+        (kernelloss == "mmd_diff") ? mmd_diff_loss :
+        error("Unknown kernel loss: $kernelloss")
 
-    # Training should not be performed using t-statistic loss function if MMD^2 < 0 or Var[MMD^2] < 0
-    @timeit "forward" ℓ, back = Zygote.pullback(loss, logσ)
-    if !isillposed[]
-        @timeit "reverse" ∇ℓ = back(one(eltype(logσ)))[1]
-        Flux.Optimise.update!(opt, logσ, ∇ℓ)
-        if !isnothing(bwbounds)
-            clamp!(logσ, bwbounds...)
-        end
+    # Training should not be performed using t-statistic loss function if isillposed[] == true
+    ps = Flux.params(k)
+    for i in 1:kernelsteps
+        @timeit "forward" ℓ, back = Zygote.pullback(loss, ps)
+        verbose && @info i, -ℓ, isillposed[]
+        isillposed[] && break
+
+        @timeit "reverse" ∇ℓ = back(one(T))
+        Flux.Optimise.update!(opt, ps, ∇ℓ)
+
+        !isnothing(restrict!) && restrict!(k)
     end
 
     # Let caller know if training was applied
     success = !isillposed[]
     return success
-end
-
-#= (∇)mmd_(flux_)bandwidth_loss speed + consistency testing
-for m in [32,64,128,256,512], nsigma in [16], a in [2.0]
-    logsigma = rand(nsigma)
-    X, Y = randn(2,m), a.*randn(2,m)
-    
-    if nsigma == 1
-        t1 = tstat(logsigma, X, Y)
-        t2 = tstat_flux(logsigma, X, Y)
-        # @show t1, t2
-        # @show t1-t2
-        @assert t1≈t2
-    end
-
-    g1 = nsigma == 1 ? ∇tstat(logsigma, X, Y) : nothing
-    g2 = ∇tstat_flux_fwddiff(logsigma, X, Y)
-    g3 = ∇tstat_flux_zygote(logsigma, X, Y)
-    # @show g1, g2, g3
-    # @show g1-g2, g2-g3
-    @assert (nsigma != 1 || g1≈g2) && g2≈g3
-
-    # @btime tstat($logsigma, $X, $Y)
-    # @btime tstat_flux($logsigma, $X, $Y)
-
-    @show m, nsigma
-    (nsigma == 1) && @btime ∇tstat($logsigma, $X, $Y)
-    @btime ∇tstat_flux_fwddiff($logsigma, $X, $Y)
-    @btime ∇tstat_flux_zygote($logsigma, $X, $Y)
-end
-=#
-
-function tstat_bandwidth_bruteopt(sampleX, sampleY, bounds; nsigma = 100, nevals = 100)
-    # work = mmd_work(sampleX(), sampleY())
-    function f(logσ)
-        σ = exp(logσ)
-        γ = inv(2*σ^2)
-        k = Δ -> exp(-γ*Δ)
-        X, Y = sampleX(), sampleY()
-        mmds = [mmd(k, sampleX(), sampleY()) for _ in 1:nevals]
-        MMDsq = mean(mmds)
-        MMDvar = var(mmds)
-        σ = √MMDvar
-        MMDsq / σ
-    end
-    logσ = range(bounds[1], bounds[2]; length = nsigma)
-    return logσ, [f(logσ) for logσ in logσ]
 end

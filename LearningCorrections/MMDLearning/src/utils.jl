@@ -575,17 +575,23 @@ function plot_rician_model(logger, cb_state, phys; bandwidths = nothing, showplo
     @timeit "model plot" try
         @unpack δθ, ϵθ = cb_state
         _subplots = []
-        push!(_subplots, plot(
-            plot(mean(δθ; dims = 2); yerr = std(δθ; dims = 2), label = L"signal correction $g_\delta(X)$", c = :red, title = "model outputs vs. data channel"),
-            plot(mean(ϵθ; dims = 2); yerr = std(ϵθ; dims = 2), label = L"noise amplitude $\exp(g_\epsilon(X))$", c = :blue);
-            layout = (2,1),
-        ))
+        push!(_subplots,
+            plot(
+                plot(mean(δθ; dims = 2); yerr = std(δθ; dims = 2), label = L"signal correction $g_\delta(X)$", c = :red, title = "model outputs vs. data channel"),
+                plot(mean(ϵθ; dims = 2); yerr = std(ϵθ; dims = 2), label = L"noise amplitude $\exp(g_\epsilon(X))$", c = :blue);
+                layout = (2,1),
+            )
+        )
+        bandwidth_plot(logσ::AbstractVector) = bandwidth_plot(permutedims(logσ))
+        bandwidth_plot(logσ::AbstractMatrix) = size(logσ,1) == 1 ?
+            scatter(1:length(logσ), vec(logσ); label = "logσ", title = "logσ") :
+            plot(logσ; leg = :none, marker = (1,:circle), title = "logσ vs. data channel")
         if !isnothing(bandwidths)
-            if (bandwidths isa AbstractVector) || (bandwidths isa AbstractMatrix && size(bandwidths,1) == 1)
-                push!(_subplots, scatter(1:length(bandwidths), vec(bandwidths); label = "logσ", title = "logσ"))
-            else
-                push!(_subplots, plot(bandwidths; leg = :none, title = "logσ vs. data channel"))
-            end
+            push!(_subplots,
+                eltype(bandwidths) <: AbstractArray ?
+                    plot(bandwidth_plot.(bandwidths)...; layout = (length(bandwidths), 1)) :
+                    plot(bandwidths)
+            )
         end
         p = plot(_subplots...)
         showplot && !isnothing(p) && display(p)

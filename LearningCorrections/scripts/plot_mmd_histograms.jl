@@ -177,43 +177,6 @@ _dhist(h1::Histogram, h2::Histogram, f::Symbol) =
     f === :chi_squared ? mapreduce((Pi,Qi) -> Pi + Qi == 0 ? 0 : (Pi - Qi)^2 / (2 * (Pi + Qi)), +, h1.weights, h2.weights) :
     error("Unknown histogram metric: $f")
 
-function _make_hist_fast(y, edges)
-    @assert !isempty(y) && length(edges) >= 2
-    _y = sort!(copy(y))
-    @assert _y[1] >= edges[1]
-    h = Histogram((edges,), zeros(Int, length(edges)-1), :left)
-    j = 1
-    @inbounds for i = 1:length(_y)
-        _yi = _y[i]
-        while _yi >= edges[j+1]
-            j += 1
-            (j+1 > length(edges)) && return h
-        end
-        h.weights[j] += 1
-    end
-    return h
-end
-
-#= TODO _make_hist_fast test
-let count = 1
-    try
-        while true
-            n = rand(1:10)
-            x = rand(n)
-            edges = [0.0; sort(rand(n))]
-            @assert _make_hist_fast(x, edges) == _make_hist(x, edges)
-            count += 1
-        end
-    catch e
-        if e isa InterruptException
-            @show count
-        else
-            rethrow(e)
-        end
-    end
-end
-=#
-
 ####
 #### Run NNLS on Y, Xhat, etc.
 ####
@@ -283,12 +246,12 @@ print("processing whole signal histograms:")
     binwidth = ceil(Int, mean(vec(Xs["data"]["Y"])) / (50 * Y_RES))
     edges = Y_EDGES[1:binwidth:end]
     h = whole_signal_hists
-    h["Y"] = _make_hist_fast(vec(Xs["data"]["Y"]), edges)
+    h["Y"] = fast_hist_1D(vec(Xs["data"]["Y"]), edges)
     for Xmle in ["X", "Xeps0"]
-        h[Xmle] = _make_hist_fast(vec(Xs["mle"][Xmle]), edges)
+        h[Xmle] = fast_hist_1D(vec(Xs["mle"][Xmle]), edges)
     end
     for G in GENERATOR_NAMES, Xgen in ["Xhat"]
-        h[G] = _make_hist_fast(vec(Xs[G][Xgen]), edges)
+        h[G] = fast_hist_1D(vec(Xs[G][Xgen]), edges)
     end
 end;
 
@@ -297,12 +260,12 @@ print("processing signal histograms by echo:")
     binwidth = ceil(Int, mean(Xs["data"]["Y"][j,:]) / (50 * Y_RES))
     edges = Y_EDGES[1:binwidth:end]
     h = signal_hists_by_echo[j]
-    h["Y"] = _make_hist_fast(Xs["data"]["Y"][j,:], edges)
+    h["Y"] = fast_hist_1D(Xs["data"]["Y"][j,:], edges)
     for Xmle in ["X", "Xeps0"]
-        h[Xmle] = _make_hist_fast(Xs["mle"][Xmle][j,:], edges)
+        h[Xmle] = fast_hist_1D(Xs["mle"][Xmle][j,:], edges)
     end
     for G in GENERATOR_NAMES, Xgen in ["Xhat"]
-        h[G] = _make_hist_fast(Xs[G][Xgen][j,:], edges)
+        h[G] = fast_hist_1D(Xs[G][Xgen][j,:], edges)
     end
 end;
 
@@ -551,7 +514,7 @@ function hist_distance_loop(
     global Y_RES, Y_EDGES
     binwidth = ceil(Int, mean(vec(Y)) / (50 * Y_RES))
     edges = Y_EDGES[1:binwidth:end]
-    hY = _make_hist_fast(vec(Y), edges)
+    hY = fast_hist_1D(vec(Y), edges)
 
     df_print = DataFrame()
     for row in eachrow(sort(df, :signal_fit_logL))
@@ -561,7 +524,7 @@ function hist_distance_loop(
         for mtype in ["current", "best"]
             G = deepcopy(BSON.load(joinpath(results_dir, row.folder, "$mtype-model.bson"))["G"])
             X̂ = corrected_signal_instance(G, X)
-            hX̂ = _make_hist_fast(vec(X̂), edges)
+            hX̂ = fast_hist_1D(vec(X̂), edges)
             ds = (
                 Cityblock = _dhist(hX̂, hY, Cityblock()),
                 Euclidean = _dhist(hX̂, hY, Euclidean()),

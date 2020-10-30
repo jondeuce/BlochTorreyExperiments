@@ -128,6 +128,8 @@ Non-trainable central-difference layer which convolves the stencil [-1, 0, 1]
 along the first dimension of `d x b` inputs, producing `(d-2) x b` outputs.
 """
 CentralDifference() = constant_filter(reshape(Float32[-1.0, 0.0, 1.0], 3, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
+ForwardDifferemce() = constant_filter(reshape(Float32[1.0, -1.0], 2, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
+BackwardDifferemce() = constant_filter(reshape(Float32[-1.0, 1.0], 2, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
 
 """
 Laplacian()
