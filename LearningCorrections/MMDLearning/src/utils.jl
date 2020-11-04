@@ -60,14 +60,13 @@ end
 # previously: saveplots(savefolder, prefix, suffix, plothandles)
 function saveplots(plothandles::AbstractDict; savefolder, prefix = "", suffix = "", ext = ".png")
     !isdir(savefolder) && mkpath(savefolder)
-    try
-        for (name, p) in plothandles
-            if !isnothing(p)
-                savefig(p, joinpath(savefolder, "$(prefix)$(name)$(suffix)$(ext)"))
-            end
+    for (name, p) in plothandles
+        isnothing(p) && continue
+        try
+            savefig(p, joinpath(savefolder, prefix * string(name) * suffix * ext))
+        catch e
+            handleinterrupt(e; msg = "Error saving plot ($name)")
         end
-    catch e
-        handleinterrupt(e; msg = "Error saving plots")
     end
 end
 
@@ -601,26 +600,35 @@ function plot_rician_model(logger, cb_state, phys; bandwidths = nothing, showplo
     end
 end
 
-function plot_rician_signals(logger, cb_state, phys; showplot = false)
+function plot_rician_signals(logger, cb_state, phys; showplot = false, nsignals = 4)
     @timeit "signal plot" try
-        @unpack Xθ, Xθhat, δθ, Yθ = cb_state
-        nθplot = 4 # number of θ sets to draw for plotting simulated signals
-        θplotidx = sample(1:size(Xθ,2), nθplot; replace = false)
-        p = if hasclosedform(phys)
-            plot(
-                [plot(hcat(Yθ[:,j], Xθhat[:,j]); c = [:blue :red], lab = [L"Goal $Y$" L"\hat{X} \sim G(X)"]) for j in θplotidx]...,
-                [plot(hcat(Yθ[:,j] - Xθ[:,j], δθ[:,j]); c = [:blue :red], lab = [L"Goal $Y - X$" L"$g_\delta(X)$"]) for j in θplotidx]...,
-                [plot(Yθ[:,j] - Xθ[:,j] - δθ[:,j]; lab = L"$Y - |X + g_\delta(X)|$") for j in θplotidx]...;
-                layout = (3, nθplot),
-            )
-        else
-            plot(
-                [plot(hcat(Xθ[:,j], Xθhat[:,j]); c = [:blue :red], lab = [L"$X$" L"\hat{X} \sim G(X)"]) for j in θplotidx]...,
-                [plot(Xθhat[:,j] - Xθ[:,j]; c = :red, lab = L"$\hat{X} - X$") for j in θplotidx]...,
-                [plot(δθ[:,j]; lab = L"$g_\delta(X)$") for j in θplotidx]...;
-                layout = (3, nθplot),
-            )
-        end
+        @unpack Y, Xθ, Xθhat, δθ, Yθ = cb_state
+        Yplot = hasclosedform(phys) ? Yθ : Y
+        θplotidx = sample(1:size(Xθ,2), nsignals; replace = false)
+        p = plot(
+            [plot(hcat(Yplot[:,j], Xθhat[:,j]); c = [:blue :red], lab = [L"$Y$" L"\hat{X} \sim G(X(\hat{\theta}))"]) for j in θplotidx]...,
+            [plot(hcat(Yplot[:,j] - Xθ[:,j], δθ[:,j]); c = [:blue :red], lab = [L"$Y - X(\hat{\theta})$" L"$g_\delta(X(\hat{\theta}))$"]) for j in θplotidx]...,
+            [plot(Yplot[:,j] - Xθ[:,j] - δθ[:,j]; lab = L"$Y - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$") for j in θplotidx]...;
+            layout = (3, nsignals),
+        )
+        showplot && !isnothing(p) && display(p)
+        return p
+    catch e
+        handleinterrupt(e; msg = "Error making Rician signal plot")
+    end
+end
+
+function plot_rician_model_fits(logger, cb_state, phys; showplot = false)
+    @timeit "signal plot" try
+        @unpack Yfit, Xθfit, Xθhatfit, δθfit = cb_state
+        nsignals = 4 # number of θ sets to draw for plotting simulated signals
+        θplotidx = sample(1:size(Xθfit,2), nsignals; replace = false)
+        p = plot(
+            [plot(hcat(Yfit[:,j], Xθhatfit[:,j]); c = [:blue :red], lab = [L"$\hat{X}$" L"\hat{X} \sim G(X(\hat{\theta}))"]) for j in θplotidx]...,
+            [plot(hcat(Yfit[:,j] - Xθfit[:,j], δθfit[:,j]); c = [:blue :red], lab = [L"$\hat{X} - X(\hat{\theta})$" L"$g_\delta(X(\hat{\theta}))$"]) for j in θplotidx]...,
+            [plot(Yfit[:,j] - Xθfit[:,j] - δθfit[:,j]; lab = L"$\hat{X} - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$") for j in θplotidx]...;
+            layout = (3, nsignals),
+        )
         showplot && !isnothing(p) && display(p)
         return p
     catch e
@@ -665,17 +673,18 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
         epoch = dfp.epoch[end]
         dfp = filter(r -> max(1, min(epoch-window, window)) <= r.epoch, dfp)
         df_inf = filter(dfp) do r
-            !ismissing(r.Xhat_rmse) && !ismissing(r.Xhat_logL) && !ismissing(r.Xhat_theta_err)
+            !ismissing(r.Xhat_rmse) && !ismissing(r.Xhat_logL) && (
+                hasclosedform(phys) ?
+                    (!ismissing(r.Yhat_rmse_true) && !ismissing(r.Yhat_theta_err)) :
+                    (!ismissing(r.Yhat_rmse) && !ismissing(r.Xhat_theta_err)))
         end
 
         if !isempty(dfp) && !isempty(df_inf)
-            @unpack Xθfit, Yfit, Xθ, Y = cb_state
             @unpack all_Xhat_logL, all_Xhat_rmse = cb_state["metrics"]
+            @unpack Xθ, Y = cb_state
             p = plot(
                 plot(
-                    hasclosedform(phys) ?
-                        plot(hcat(   Y[:,end÷2],    Xθ[:,end÷2]); c = [:blue :red], lab = [L"$Y(\hat{\theta})$ fit" L"$X(\hat{\theta})$ fit"]) :
-                        plot(hcat(Yfit[:,end÷2], Xθfit[:,end÷2]); c = [:blue :red], lab = [L"Data $Y$" L"$X(\hat{\theta})$ fit"]),
+                    plot(hcat(Y[:,end÷2], Xθ[:,end÷2]); c = [:blue :red], lab = [L"$Y(\hat{\theta})$ fit" L"$X(\hat{\theta})$ fit"]),
                     sticks(sort(all_Xhat_rmse[sample(1:end, min(128,end))]); m = (:circle,4), lab = "rmse: fits"),
                     sticks(sort(all_Xhat_logL[sample(1:end, min(128,end))]); m = (:circle,4), lab = "-logL: fits"),
                     layout = @layout([a{0.25h}; b{0.375h}; c{0.375h}]),
@@ -683,19 +692,24 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
                 let
                     _subplots = Any[]
                     if hasclosedform(phys)
-                        prmse = plot(dfp.epoch, dfp.Yhat_rmse_true; title = "min rmse = $(s(minimum(dfp.Yhat_rmse_true)))", label = L"rmse: $Y(\hat{\theta}) - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$", xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
-                        pθerr = plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.Xhat_theta_err)); title = "min max error = $(s(minimum(maximum.(df_inf.Xhat_theta_err))))", label = permutedims(θlabels(phys)), xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
-                        append!(_subplots, [prmse, pθerr])
+                        plogL = plot(df_inf.epoch, df_inf.Yhat_logL_true; title = L"$\hat{\theta}(Y)$: min = %$(s(minimum(df_inf.Yhat_logL_true)))", label = L"logL: $Y(\hat{\theta}) - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$", xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
+                        pθerr = plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.Yhat_theta_err)); title = L"$\hat{\theta}(Y)$: min max = %$(s(minimum(maximum.(df_inf.Yhat_theta_err))))", label = permutedims(θlabels(phys)), xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
+                        append!(_subplots, [plogL, pθerr])
+                    else
+                        plogL = plot(df_inf.epoch, df_inf.Yhat_logL; title = L"$\hat{\theta}(Y)$: min = %$(s(minimum(df_inf.Yhat_logL)))", label = L"logL: $Y(\hat{\theta}) - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$", xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
+                        pθerr = plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.Xhat_theta_err)); title = L"$\hat{\theta}(\hat{X})$: min max = %$(s(minimum(maximum.(df_inf.Xhat_theta_err))))", label = permutedims(θlabels(phys)), xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
+                        append!(_subplots, [plogL, pθerr])
                     end
 
-                    rmselab, logLlab = L"rmse: $Y - \hat{X}(\hat{\theta})$", L"-logL: $Y - \hat{X}(\hat{\theta})$"
                     if false #TODO MRI model
                         rmselab *= "\nrmse prior: $(round(mean(phys.valfits.rmse); sigdigits = 4))"
                         logLlab *= "\n-logL prior: $(round(mean(phys.valfits.loss); sigdigits = 4))"
                     end
-                    prmse = plot(df_inf.epoch, df_inf.Xhat_rmse; title = "min rmse = $(s(minimum(df_inf.Xhat_rmse)))", lab = rmselab, xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
-                    plogL = plot(df_inf.epoch, df_inf.Xhat_logL; title = "min -logL = $(s(minimum(df_inf.Xhat_logL)))", lab = logLlab, xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO ylims = (-Inf, min(-100, maximum(df_inf.Xhat_logL)))), xformatter = s
-                    append!(_subplots, [prmse, plogL])
+                    logLlab = L"-logL: $\hat{X} - \hat{X}(\hat{\theta})$"
+                    rmselab = [L"rmse: $\hat{X} - \hat{X}(\hat{\theta})$" L"rmse: $Y - \hat{X}(\hat{\theta})$"]
+                    plogL = plot(df_inf.epoch, df_inf.Xhat_logL; title = "min = $(s(minimum(df_inf.Xhat_logL)))", lab = logLlab, xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO ylims = (-Inf, min(-100, maximum(df_inf.Xhat_logL)))), xformatter = s
+                    prmse = plot(df_inf.epoch, [df_inf.Xhat_rmse df_inf.Yhat_rmse]; title = "min = $(s(minimum(df_inf.Xhat_rmse))), $(s(minimum(df_inf.Yhat_rmse)))", lab = rmselab, xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
+                    append!(_subplots, [plogL, prmse])
 
                     plot(_subplots...)
                 end;
@@ -709,25 +723,6 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
         return p
     catch e
         handleinterrupt(e; msg = "Error making θ inference plot")
-    end
-end
-
-function plot_vae_rician_signals(logger, cb_state, phys; showplot = false)
-    @timeit "signal plot" try
-        @unpack Y, Xθ, Xθhat, δθ, Yθ = cb_state
-        nθplot = 4 # number of θ sets to draw for plotting simulated signals
-        θplotidx = sample(1:size(Xθ,2), nθplot; replace = false)
-        p = plot(
-            [plot(hcat(Y[:,j], Xθhat[:,j]); c = [:blue :red], lab = [L"$Y$" L"\hat{X} \sim G(X)"]) for j in θplotidx]...,
-            [plot(hcat(Y[:,j] - Xθ[:,j], δθ[:,j]); c = [:blue :red], lab = [L"$Y - X$" L"$g_\delta(X)$"]) for j in θplotidx]...,
-            [plot(Y[:,j] - Xθ[:,j] - δθ[:,j]; lab = L"$Y - |X + g_\delta(X)|$") for j in θplotidx]...;
-            # [plot(Y[:,j] - max.(Xθ[:,j] .+ δθ[:,j], 0); lab = L"$Y - max(X + g_\delta(X), 0)$") for j in θplotidx]...;
-            layout = (3, nθplot),
-        )
-        showplot && !isnothing(p) && display(p)
-        return p
-    catch e
-        handleinterrupt(e; msg = "Error making Rician signal plot")
     end
 end
 

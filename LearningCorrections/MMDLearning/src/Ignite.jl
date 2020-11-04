@@ -5,7 +5,7 @@ import ..TOML
 import ..Flux
 import ..CUDA
 
-export to32, to64, todevice, @j2p
+export to32, to64, todevice, to_similar, @j2p
 
 const JL_CUDA_FUNCTIONAL = Ref(false)
 const JL_CUDA_DEVICE     = Ref(-1)
@@ -15,6 +15,10 @@ const JL_WANDB_LOGGER    = Ref(false)
 todevice(x) = Flux.cpu(x)
 to32(x) = x |> Flux.f32 |> todevice
 to64(x) = x |> Flux.f64 |> todevice
+
+to_similar(x::AbstractArray, y) = to_similar(typeof(x), y)
+to_similar(::Type{<:AbstractArray}, y) = Flux.cpu(y)
+to_similar(::Type{<:CUDA.CuArray}, y) = Flux.gpu(y)
 
 function init()
     JL_CUDA_FUNCTIONAL[] = get(ENV, "JL_DISABLE_GPU", "0") != "1" && CUDA.functional()

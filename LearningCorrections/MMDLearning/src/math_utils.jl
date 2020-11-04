@@ -2,20 +2,24 @@
 #### Math utils
 ####
 
-randn_similar(::AbstractArray{T}, sz...) where {T} = Base.randn(T, sz...)
-randn_similar(::CUDA.CuArray{T}, sz...) where {T} = Zygote.ignore(() -> CUDA.randn(T, sz...))
-rand_similar(::AbstractArray{T}, sz...) where {T} = Base.rand(T, sz...)
-rand_similar(::CUDA.CuArray{T}, sz...) where {T} = Zygote.ignore(() -> CUDA.rand(T, sz...))
+# rand_similar and randn_similar
+for f in [:rand, :randn]
+    f_sim = Symbol(f, :_similar)
+    @eval $f_sim(x::AbstractArray, sz...) = $f_sim(typeof(x), sz...)
+    @eval $f_sim(::Type{<:AbstractArray{T}}, sz...) where {T} = Base.$f(T, sz...) # fallback
+    @eval $f_sim(::Type{<:CUDA.CuArray{T}}, sz...) where {T} = Zygote.ignore(() -> CUDA.$f(T, sz...)) # gpu version
+end    
 
 # Apply function `f` along dimension 1 of `x` by first flattening `x` into a matrix
 @inline apply_dim1(f, x::AbstractMatrix) = f(x)
 @inline apply_dim1(f, x::AbstractArray) = (y = f(reshape(x, size(x,1), :)); return reshape(y, size(y,1), Base.tail(size(x))...))
+@inline apply_dim1(f, xs::AbstractArray...) = (ys = f(map(x -> reshape(x, size(x,1), :), xs)...); return map((y, xtail) -> reshape(y, size(y,1), xtail...), ys, Base.tail.(size.(xs))))
 
 # Split `x` in half along first dimension
 @inline split_dim1(x::AbstractArray) = (x[1:end÷2, ..], x[end÷2+1:end, ..])
 
 # Split array into mean/standard deviation
-@inline std_thresh(::AbstractArray{T}) where {T} = sqrt(eps(T))
+@inline std_thresh(::AbstractArray{T}) where {T} = eps(T)
 @inline split_mean_std(μ::AbstractArray) = split_dim1(μ)
 @inline split_mean_exp_std(μ::AbstractArray) = ((μ0, logσ) = split_dim1(μ); return (μ0, exp.(logσ) .+ std_thresh(logσ)))
 @inline split_mean_softplus_std(μ::AbstractArray) = ((μ0, invσ) = split_dim1(μ); return (μ0, Flux.softplus.(invσ) .+ std_thresh(invσ)))
@@ -28,6 +32,10 @@ rand_similar(::CUDA.CuArray{T}, sz...) where {T} = Zygote.ignore(() -> CUDA.rand
 
 # Compile time constant log(2π)
 @inline log2π(::Type{T}) where {T} = log(2*T(π))
+
+# One element
+@inline one_element(x) = one_element(typeof(x))
+@inline one_element(::Type{<:AbstractArray{T}}) where {T} = one{T}
 
 # TODO: Tracker was much faster differentiating pow2.(x) than x.^2 - check for Zygote?
 @inline pow2(x) = x*x
@@ -85,6 +93,12 @@ log10range(a, b; length = 10) = 10 .^ range(log10(a), log10(b); length = length)
 """
 unitsum(x; dims = :) = x ./ sum(x; dims = dims)
 unitsum!(x; dims = :) = x ./= sum(x; dims = dims)
+
+"""
+    unitmean(x; dims = :) = x ./ mean(x; dims = dims)
+"""
+unitmean(x; dims = :) = x ./ mean(x; dims = dims)
+unitmean!(x; dims = :) = x ./= mean(x; dims = dims)
 
 """
     snr(x, n)

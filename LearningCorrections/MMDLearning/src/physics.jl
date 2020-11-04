@@ -2,49 +2,62 @@
 #### Rician correctors
 ####
 
-abstract type RicianCorrector{n,nz,isnorm} end
+abstract type RicianCorrector{n,nz} end
 
+corrector(R::RicianCorrector) = R
+generator(R::RicianCorrector) = R.G
 nsignal(::Type{<:RicianCorrector{n}}) where {n} = n
-nsignal(R::RicianCorrector) = nsignal(typeof(R))
+nsignal(R::RicianCorrector) = nsignal(typeof(corrector(R)))
 nlatent(::Type{<:RicianCorrector{n,nz}}) where {n,nz} = nz
-nlatent(R::RicianCorrector) = nlatent(typeof(R))
-isnormalized(::Type{<:RicianCorrector{n,nz,isnorm}}) where {n,nz,isnorm} = isnorm
-isnormalized(R::RicianCorrector) = isnormalized(typeof(R))
-ninput(R::RicianCorrector) = ninput(typeof(R))
-noutput(R::RicianCorrector) = noutput(typeof(R))
+nlatent(R::RicianCorrector) = nlatent(typeof(corrector(R)))
+ninput(R::RicianCorrector) = ninput(typeof(corrector(R)))
+noutput(R::RicianCorrector) = noutput(typeof(corrector(R)))
+
+# Normalized rician corrector
+@with_kw struct NormalizedRicianCorrector{n, nz, Rtype <: RicianCorrector{n,nz}, Ntype, Stype} <: RicianCorrector{n,nz}
+    R::Rtype
+    normalizer::Ntype
+    noisescale::Stype
+    NormalizedRicianCorrector(R::Rtype, nrm, scal) where {n, nz, Rtype <: RicianCorrector{n,nz}} = new{n, nz, Rtype, typeof(nrm), typeof(scal)}(R, nrm, scal)
+end
+
+const MaybeNormalizedRicianCorrector{n,nz} = Union{<:RicianCorrector{n,nz}, NormalizedRicianCorrector{n,nz}}
+
+corrector(R::NormalizedRicianCorrector) = R.R
+generator(R::NormalizedRicianCorrector) = R.R.G
 
 # G : [X; Z] ∈ 𝐑^(n+k) -> [δ; logϵ] ∈ 𝐑^2n
-@with_kw struct VectorRicianCorrector{n,nz,isnorm,Gtype} <: RicianCorrector{n,nz,isnorm}
+@with_kw struct VectorRicianCorrector{n,nz,Gtype} <: RicianCorrector{n,nz}
     G::Gtype
-    VectorRicianCorrector{n,nz,isnorm}(G) where {n,nz,isnorm} = new{n,nz,isnorm,typeof(G)}(G)
+    VectorRicianCorrector{n,nz}(G) where {n,nz} = new{n,nz,typeof(G)}(G)
 end
 Flux.@functor VectorRicianCorrector
 ninput(::Type{R}) where {R<:VectorRicianCorrector} = nsignal(R) + nlatent(R)
 noutput(::Type{R}) where {R<:VectorRicianCorrector} = 2 * nsignal(R)
 
 # G : [X; Z] ∈ 𝐑^(n+k) -> δ ∈ 𝐑^n with fixed noise ϵ0 ∈ 𝐑 or ϵ0 ∈ 𝐑^n
-@with_kw struct FixedNoiseVectorRicianCorrector{n,nz,isnorm,T,Gtype} <: RicianCorrector{n,nz,isnorm}
+@with_kw struct FixedNoiseVectorRicianCorrector{n,nz,T,Gtype} <: RicianCorrector{n,nz}
     G::Gtype
     ϵ0::T
-    FixedNoiseVectorRicianCorrector{n,nz,isnorm}(G,ϵ0) where {n,nz,isnorm} = new{n,nz,isnorm,typeof(ϵ0),typeof(G)}(G,ϵ0)
+    FixedNoiseVectorRicianCorrector{n,nz}(G,ϵ0) where {n,nz} = new{n,nz,typeof(ϵ0),typeof(G)}(G,ϵ0)
 end
 Flux.@functor FixedNoiseVectorRicianCorrector
 ninput(::Type{R}) where {R<:FixedNoiseVectorRicianCorrector} = nsignal(R) + nlatent(R)
 noutput(::Type{R}) where {R<:FixedNoiseVectorRicianCorrector} = nsignal(R)
 
 # G : Z ∈ 𝐑^k -> [δ; logϵ] ∈ 𝐑^2n
-@with_kw struct LatentVectorRicianCorrector{n,nz,isnorm,Gtype} <: RicianCorrector{n,nz,isnorm}
+@with_kw struct LatentVectorRicianCorrector{n,nz,Gtype} <: RicianCorrector{n,nz}
     G::Gtype
-    LatentVectorRicianCorrector{n,nz,isnorm}(G) where {n,nz,isnorm} = new{n,nz,isnorm,typeof(G)}(G)
+    LatentVectorRicianCorrector{n,nz}(G) where {n,nz} = new{n,nz,typeof(G)}(G)
 end
 Flux.@functor LatentVectorRicianCorrector
 ninput(::Type{R}) where {R<:LatentVectorRicianCorrector} = nlatent(R)
 noutput(::Type{R}) where {R<:LatentVectorRicianCorrector} = 2 * nsignal(R)
 
 # G : Z ∈ 𝐑^k -> logϵ ∈ 𝐑^n with fixed δ = 0
-@with_kw struct LatentVectorRicianNoiseCorrector{n,nz,isnorm,Gtype} <: RicianCorrector{n,nz,isnorm}
+@with_kw struct LatentVectorRicianNoiseCorrector{n,nz,Gtype} <: RicianCorrector{n,nz}
     G::Gtype
-    LatentVectorRicianNoiseCorrector{n,nz,isnorm}(G) where {n,nz,isnorm} = new{n,nz,isnorm,typeof(G)}(G)
+    LatentVectorRicianNoiseCorrector{n,nz}(G) where {n,nz} = new{n,nz,typeof(G)}(G)
 end
 Flux.@functor LatentVectorRicianNoiseCorrector
 ninput(::Type{R}) where {R<:LatentVectorRicianNoiseCorrector} = nlatent(R)
@@ -53,29 +66,36 @@ noutput(::Type{R}) where {R<:LatentVectorRicianNoiseCorrector} = nsignal(R)
 # Helper functions
 @inline _maybe_vcat(X, Z = nothing) = isnothing(Z) ? X : vcat(X,Z)
 @inline _split_delta_epsilon(δ_logϵ) = δ_logϵ[1:end÷2, :], exp.(δ_logϵ[end÷2+1:end, :]) .+ sqrt(eps(eltype(δ_logϵ)))
-@inline function _add_rician_noise_instance(X, ϵ = nothing, ninstances = nothing; normalize = false)
+@inline function _add_rician_noise_instance(X, ϵ = nothing, ninstances = nothing)
     isnothing(ϵ) && return X
     ϵsize = isnothing(ninstances) ? size(X) : (size(X)..., ninstances)
     ϵR = ϵ .* randn_similar(X, ϵsize)
     ϵI = ϵ .* randn_similar(X, ϵsize)
     X̂ = @. sqrt((X + ϵR)^2 + ϵI^2)
-    normalize && (X̂ = unitsum(X̂; dims = 1))
     return X̂
 end
 
 # Concrete methods to extract δ and ϵ
-correction_and_noiselevel(G::VectorRicianCorrector, X, Z = nothing) = _split_delta_epsilon(G.G(_maybe_vcat(X,Z)))
-correction_and_noiselevel(G::FixedNoiseVectorRicianCorrector, X, Z = nothing) = G.G(_maybe_vcat(X,Z)), G.ϵ0
-correction_and_noiselevel(G::LatentVectorRicianCorrector, X, Z) = _split_delta_epsilon(G.G(Z))
-correction_and_noiselevel(G::LatentVectorRicianNoiseCorrector, X, Z) = zero(X), exp.(G.G(Z)) .+ sqrt(eps(eltype(Z)))
+correction_and_noiselevel(G::NormalizedRicianCorrector, args...) = correction_and_noiselevel(corrector(G), args...)
+correction_and_noiselevel(G::VectorRicianCorrector, X, Z = nothing) = _split_delta_epsilon(generator(G)(_maybe_vcat(X,Z)))
+correction_and_noiselevel(G::FixedNoiseVectorRicianCorrector, X, Z = nothing) = generator(G)(_maybe_vcat(X,Z)), G.ϵ0
+correction_and_noiselevel(G::LatentVectorRicianCorrector, X, Z) = _split_delta_epsilon(generator(G)(Z))
+correction_and_noiselevel(G::LatentVectorRicianNoiseCorrector, X, Z) = zero(X), exp.(generator(G)(Z)) .+ sqrt(eps(eltype(Z)))
 
 # Derived convenience functions
 correction(G::RicianCorrector, X, Z = nothing) = correction_and_noiselevel(G, X, Z)[1]
 noiselevel(G::RicianCorrector, X, Z = nothing) = correction_and_noiselevel(G, X, Z)[2]
 corrected_signal_instance(G::RicianCorrector, X, Z = nothing) = corrected_signal_instance(G, X, correction_and_noiselevel(G, X, Z)...)
 corrected_signal_instance(G::RicianCorrector, X, δ, ϵ) = add_noise_instance(G, add_correction(G, X, δ), ϵ)
-add_correction(G::RicianCorrector, X, δ) = @. abs(X + δ) #@. max(X + δ, 0)
-add_noise_instance(G::RicianCorrector, X, ϵ, ninstances = nothing) = _add_rician_noise_instance(X, ϵ, ninstances; normalize = isnormalized(G))
+add_correction(G::RicianCorrector, X, δ) = @. abs(X + δ)
+add_noise_instance(G::RicianCorrector, X, ϵ, ninstances = nothing) = _add_rician_noise_instance(X, ϵ, ninstances)
+function add_noise_instance(G::NormalizedRicianCorrector, X, ϵ, ninstances = nothing)
+    # Input data is assumed properly normalized; add noise relative to noise scale, then normalize X̂
+    !isnothing(ϵ) && (ϵ = ϵ .* G.noisescale(X))
+    X̂ = add_noise_instance(corrector(G), X, ϵ, ninstances)
+    X̂ = X̂ ./ G.normalizer(X̂)
+    return X̂
+end
 function rician_params(G::RicianCorrector, X, Z = nothing)
     δ, ϵ = correction_and_noiselevel(G, X, Z)
     ν, σ = add_correction(G, X, δ), ϵ
@@ -86,52 +106,60 @@ end
 #### Physics model interface
 ####
 
-abstract type PhysicsModel{T} end
+abstract type PhysicsModel{T,isfinite} end
 
 struct ClosedForm{P<:PhysicsModel}
     p::P
 end
 
-const MaybeClosedForm{T} = Union{<:PhysicsModel{T}, <:ClosedForm{<:PhysicsModel{T}}}
+const MaybeClosedForm{T,isfinite} = Union{<:PhysicsModel{T,isfinite}, <:ClosedForm{<:PhysicsModel{T,isfinite}}}
 
 # Abstract interface
 hasclosedform(p::PhysicsModel) = false # fallback
 physicsmodel(p::PhysicsModel) = p
 physicsmodel(c::ClosedForm) = c.p
-θbounds(p::PhysicsModel) = tuple.(θlower(p), θupper(p))
-θbounds(c::ClosedForm) = θbounds(physicsmodel(c))
-ntheta(c::ClosedForm) = ntheta(physicsmodel(c))
-nsignal(c::ClosedForm) = nsignal(physicsmodel(c))
-Base.eltype(::MaybeClosedForm{T}) where {T} = T
+Base.eltype(c::MaybeClosedForm) = Base.eltype(typeof(c))
+Base.isfinite(c::MaybeClosedForm) = Base.isfinite(typeof(c))
 Base.eltype(::Type{<:MaybeClosedForm{T}}) where {T} = T
+Base.isfinite(::Type{<:MaybeClosedForm{T,isfinite}}) where {T,isfinite} = isfinite
+function ntheta end
+function nsignal end
 function sampleWprior end
-function sampleWprior_similar end
 function sampleθprior end
-function sampleθprior_similar end
 function sampleθ end
+function θlower end
+function θupper end
 function signal_model end
 function noiselevel end
 
 # Default samplers for models with data stored in `θ`, `X`, `Y` fields
 _sample_data(d::Dict, n::Union{Int, Symbol}; dataset::Symbol) = n === :all ? d[dataset] : sample_columns(d[dataset], n)
-sampleθ(p::MaybeClosedForm, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = _sample_data(physicsmodel(p).θ, n; dataset)
+sampleθ(p::MaybeClosedForm, n::Union{Int, Symbol};              dataset::Symbol) = _sample_data(physicsmodel(p).θ, n; dataset)
 sampleX(p::MaybeClosedForm, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = _sample_data(physicsmodel(p).X, n; dataset)
 sampleY(p::MaybeClosedForm, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = _sample_data(physicsmodel(p).Y, n; dataset)
 
+sampleθ(p::PhysicsModel{T,false}, n::Union{Int, Symbol}; dataset::Symbol) where {T} = sampleθprior(p, n) # default to sampling θ on cpu from prior for infinite models
+sampleθprior(p::PhysicsModel{T}, n::Union{Int, Symbol}) where {T} = sampleθprior(p, Matrix{T}, n) # default to sampling θ on cpu
+sampleθprior(p::PhysicsModel, Y::AbstractArray, n::Union{Int, Symbol} = size(Y,2)) = sampleθprior(p, typeof(Y), n) # θ type is similar to Y type
+
+θbounds(p::PhysicsModel) = tuple.(θlower(p), θupper(p))
+θerror(p::PhysicsModel, θtrue, θfit) = 100 .* todevice(θtrue .- θfit) ./ todevice(θupper(p) .- θlower(p)) # default error metric is elementwise percentage relative to prior width
+
 ####
-#### Toy problems
+#### Abstact toy problem interface
 ####
 
-abstract type AbstractToyModel{T,isfinite} <: PhysicsModel{T} end
+abstract type AbstractToyModel{T,isfinite} <: PhysicsModel{T,isfinite} end
 
-const MaybeClosedFormAbstractToyModel{T,isfinite} = Union{<:AbstractToyModel{T,isfinite}, <:ClosedForm{<:AbstractToyModel{T,isfinite}}}
+const ClosedFormAbstractToyModel{T,isfinite} = ClosedForm{<:AbstractToyModel{T,isfinite}}
+const MaybeClosedFormAbstractToyModel{T,isfinite} = Union{<:AbstractToyModel{T,isfinite}, <:ClosedFormAbstractToyModel{T,isfinite}}
 
 function initialize!(p::AbstractToyModel{T,isfinite}; ntrain::Int, ntest::Int, nval::Int, seed::Int = 0) where {T,isfinite}
     rng = Random.seed!(seed)
     for (d, n) in [(:train, ntrain), (:test, ntest), (:val, nval)]
         isfinite ? (p.θ[d] = sampleθprior(p, n)) : empty!(p.θ)
         isfinite ? (p.X[d] = signal_model(p, p.θ[d])) : empty!(p.X)
-        θ, W = sampleθprior(p, n), sampleWprior(p, n)
+        θ, W = sampleθprior(p, n), sampleWprior(ClosedForm(p), n)
         ν, ϵ = rician_params(ClosedForm(p), θ, W)
         p.Y[d] = add_noise_instance(p, ν, ϵ)
     end
@@ -140,10 +168,16 @@ function initialize!(p::AbstractToyModel{T,isfinite}; ntrain::Int, ntest::Int, n
 end
 
 # X-sampler deliberately does not take W as argument; W is supposed to be hidden from the outside. Use signal_model directly to pass W
-sampleX(p::AbstractToyModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleX(p, sampleθ(physicsmodel(p), n, ϵ; dataset), ϵ)
+sampleX(p::AbstractToyModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleX(p, sampleθ(physicsmodel(p), n; dataset), ϵ)
 sampleX(p::MaybeClosedFormAbstractToyModel, θ, ϵ = nothing) = signal_model(p, θ, ϵ)
 
+# Fallback prior samplers
+sampleWprior(c::ClosedFormAbstractToyModel{T}, n::Union{Int, Symbol}) where {T} = sampleWprior(c, Matrix{T}, n)
+sampleWprior(c::ClosedFormAbstractToyModel{T}, Y::AbstractArray{T}, n::Union{Int, Symbol} = size(Y,2)) where {T} = sampleWprior(c, typeof(Y), n)
+
+####
 #### Toy exponentially decaying model with sinusoidally modulated amplitude
+####
 
 @with_kw struct ToyModel{T,isfinite} <: AbstractToyModel{T,isfinite}
     ϵ0::T = 0.01
@@ -164,12 +198,9 @@ beta(::ClosedFormToyModel) = 2
 θlabels(::ToyModel) = [L"f", L"\phi", L"a_0", L"a_1", L"\tau"]
 θlower(::ToyModel{T}) where {T} = T[1/T(64), T(0),   1/T(4), 1/T(10), T(16) ]
 θupper(::ToyModel{T}) where {T} = T[1/T(32), T(π)/2, 1/T(2), 1/T(4),  T(128)]
-θerror(p::ToyModel, θ, θhat) = 100 .* abs.((θ .- θhat)) ./ (θupper(p) .- θlower(p))
 
-sampleWprior(p::ToyModel, n::Union{Int, Symbol}) = nothing
-
-sampleθprior(p::ToyModel{T}, n::Union{Int, Symbol}) where {T} = θlower(p) .+ (θupper(p) .- θlower(p)) .* rand(T, ntheta(p), n)
-sampleθ(p::ToyModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleθprior(p, n)
+sampleWprior(c::ClosedFormToyModel{T}, ::Type{A}, n::Union{Int, Symbol}) where {T, A <: AbstractArray{T}} = nothing
+sampleθprior(p::ToyModel{T}, ::Type{A}, n::Union{Int, Symbol}) where {T, A <: AbstractArray{T}} = rand_similar(A, ntheta(p), n) .* (to_similar(A, θupper(p)) .- to_similar(A, θlower(p))) .+ to_similar(A, θlower(p))
 
 noiselevel(c::ClosedFormToyModel, θ = nothing, W = nothing) = physicsmodel(c).ϵ0
 add_noise_instance(p::MaybeClosedFormToyModel, X, ϵ, ninstances = nothing) = _add_rician_noise_instance(X, ϵ, ninstances)
@@ -180,13 +211,15 @@ function signal_model(p::MaybeClosedFormToyModel, θ::AbstractVecOrMat, ϵ = not
     t = 0:n-1
     f, ϕ, a₀, a₁, τ = θ[1:1,:], θ[2:2,:], θ[3:3,:], θ[4:4,:], θ[5:5,:]
     X = @. (a₀ + a₁ * sin(2*(π*f)*t - ϕ)^β) * exp(-t/τ)
-    X = add_noise_instance(p, X, ϵ)
-    return X
+    X̂ = add_noise_instance(p, X, ϵ)
+    return X̂
 end
 
-rician_params(c::ClosedFormToyModel, θ = nothing, W = nothing) = signal_model(c, θ, nothing, W), noiselevel(c, θ, W)
+rician_params(c::ClosedFormToyModel, θ, W = nothing) = signal_model(c, θ, nothing, W), noiselevel(c, θ, W)
 
+####
 #### Toy cosine model with latent variable controlling noise amplitude
+####
 
 @with_kw struct ToyCosineModel{T,isfinite} <: AbstractToyModel{T,isfinite}
     ϵbd::NTuple{2,T} = (0.01, 0.1)
@@ -205,14 +238,9 @@ hasclosedform(::ToyCosineModel) = true
 θlabels(::ToyCosineModel) = [L"f", L"\phi", L"a_0"]
 θlower(::ToyCosineModel{T}) where {T} = T[T(1/64), T(0),   T(1/2)]
 θupper(::ToyCosineModel{T}) where {T} = T[T(1/32), T(π/2), T(1)]
-θerror(p::ToyCosineModel, θ, θhat) = 100 .* abs.((θ .- θhat)) ./ (θupper(p) .- θlower(p))
 
-sampleWprior(p::ToyCosineModel{T}, n::Union{Int, Symbol}) where {T} = rand(T, nlatent(p), n)
-sampleWprior_similar(p::ToyCosineModel, Y, n::Union{Int, Symbol} = size(Y,2)) = rand_similar(Y, nlatent(p), n)
-
-sampleθprior(p::ToyCosineModel{T}, n::Union{Int, Symbol}) where {T} = rand(T, ntheta(p), n) .* (θupper(p) .- θlower(p)) .+ θlower(p)
-sampleθprior_similar(p::ToyCosineModel, Y, n::Union{Int, Symbol} = size(Y,2)) = rand_similar(Y, ntheta(p), n) .* (todevice(θupper(p)) .- todevice(θlower(p))) .+ todevice(θlower(p))
-sampleθ(p::ToyCosineModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleθprior(p, n)
+sampleWprior(c::ClosedFormToyCosineModel{T}, ::Type{A}, n::Union{Int, Symbol}) where {T, A <: AbstractArray{T}} = rand_similar(A, nlatent(physicsmodel(c)), n)
+sampleθprior(p::ToyCosineModel{T}, ::Type{A}, n::Union{Int, Symbol}) where {T, A <: AbstractArray{T}} = rand_similar(A, ntheta(p), n) .* (to_similar(A, θupper(p)) .- to_similar(A, θlower(p))) .+ to_similar(A, θlower(p))
 
 noiselevel(c::ClosedFormToyCosineModel, θ = nothing, W = nothing) = ((lo,hi) = physicsmodel(c).ϵbd; return @. lo + W * (hi - lo))
 add_noise_instance(p::MaybeClosedFormToyCosineModel, X, ϵ, ninstances = nothing) = _add_rician_noise_instance(X, ϵ, ninstances)
@@ -222,19 +250,20 @@ function signal_model(p::MaybeClosedFormToyCosineModel, θ::AbstractVecOrMat, ϵ
     t = 0:n-1
     f, ϕ, a₀ = θ[1:1,:], θ[2:2,:], θ[3:3,:]
     X = @. 1 + a₀ * cos(2*(π*f)*t - ϕ)
-    X = add_noise_instance(p, X, ϵ)
-    return X
+    X̂ = add_noise_instance(p, X, ϵ)
+    return X̂
 end
 
-rician_params(c::ClosedFormToyCosineModel, θ = nothing, W = nothing) = signal_model(c, θ, nothing, W), noiselevel(c, θ, W)
+rician_params(c::ClosedFormToyCosineModel, θ, W = nothing) = signal_model(c, θ, nothing, W), noiselevel(c, θ, W)
 
-#### Toy EPG signal model with latent variable controlling noise amplitude
+####
+#### Biexponential EPG signal models
+####
 
-abstract type AbstractEPGModel{T,isfinite} <: AbstractToyModel{T,isfinite} end
+abstract type AbstractToyEPGModel{T,isfinite} <: AbstractToyModel{T,isfinite} end
 
-const MaybeClosedFormAbstractEPGModel{T,isfinite} = Union{<:AbstractEPGModel{T,isfinite}, <:ClosedForm{<:AbstractEPGModel{T,isfinite}}}
-
-@with_kw struct ToyEPGModel{T,isfinite} <: AbstractEPGModel{T,isfinite}
+# Toy EPG model with latent variable controlling noise amplitude
+@with_kw struct ToyEPGModel{T,isfinite} <: AbstractToyEPGModel{T,isfinite}
     n::Int = 48 # number of echoes
     T1::T = 1.0 # T1 relaxation (s)
     refcon::T = 180.0 # Refocusing pulse control angle (deg)
@@ -245,79 +274,302 @@ const MaybeClosedFormAbstractEPGModel{T,isfinite} = Union{<:AbstractEPGModel{T,i
     X::Dict{Symbol,Matrix{T}} = Dict()
     Y::Dict{Symbol,Matrix{T}} = Dict()
 end
+
+# EPG model using image data
+@with_kw struct EPGModel{T,isfinite} <: PhysicsModel{T,isfinite}
+    n::Int = 48 # number of echoes
+    T1::T = 1.0 # T1 relaxation (s)
+    refcon::T = 180.0 # Refocusing pulse control angle (deg)
+    TE::T = 8e-3 # T2 echo spacing (s)
+    T2bd::NTuple{2,T} = (TE, 1.0) # min/max allowable T2
+    image::Dict{Symbol,AbstractArray} = Dict()
+    θ::Dict{Symbol,Matrix{T}} = Dict()
+    X::Dict{Symbol,Matrix{T}} = Dict()
+    Y::Dict{Symbol,Matrix{T}} = Dict()
+end
+
+function initialize!(p::EPGModel{T,isfinite}; imagepath::String, seed::Int = 0) where {T,isfinite}
+    rng = Random.seed!(seed)
+
+    # Load image, keeping signals which correspond to thetas
+    p.image[:data] = DECAES.load_image(imagepath) # load 4D MatrixSize x nTE image
+    I = findall(>(0), p.image[:data][:,:,:,1]) # image is assumed to be masked; filter by positive first echo magnitude
+    I = shuffle!(MersenneTwister(seed), I) # shuffle indices before splitting to train/test/val
+    p.image[:train_indices] = I[            1 : 2*(end÷4)] # first half for training
+    p.image[:test_indices]  = I[2*(end÷4) + 1 : 3*(end÷4)] # third quarter held out for testing
+    p.image[:val_indices]   = I[3*(end÷4) + 1 : end] # fourth quarter for validation
+
+    for d in (:train, :test, :val)
+        i = p.image[Symbol(d, :_indices)]
+        p.Y[d] = convert(Matrix{T}, permutedims(p.image[:data][i,:])) # convert to nTE x nSamples Matrix
+        p.Y[d] ./= maximum(p.Y[d]; dims = 1) #p.Y[d][1:1,:] #TODO: normalize by mean? sum? maximum? first echo?
+        isfinite ? (p.θ[d] = sampleθprior(p, length(i))) : empty!(p.θ)
+        isfinite ? (p.X[d] = signal_model(p, p.θ[d])) : empty!(p.X)
+    end
+
+    Random.seed!(rng)
+    return p
+end
+
 const ClosedFormToyEPGModel{T,isfinite} = ClosedForm{ToyEPGModel{T,isfinite}}
 const MaybeClosedFormToyEPGModel{T,isfinite} = Union{ToyEPGModel{T,isfinite}, ClosedFormToyEPGModel{T,isfinite}}
 
-ntheta(p::ToyEPGModel) = 4
-nsignal(p::ToyEPGModel) = p.n
+const BiexpEPGModel{T,isfinite} = Union{<:ToyEPGModel{T,isfinite}, <:EPGModel{T,isfinite}}
+const ClosedFormBiexpEPGModel{T,isfinite} = ClosedFormToyEPGModel{T,isfinite} # EPGModel has no closed form
+const MaybeClosedFormBiexpEPGModel{T,isfinite} = Union{<:BiexpEPGModel{T,isfinite}, <:ClosedFormBiexpEPGModel{T,isfinite}}
+
+ntheta(p::BiexpEPGModel) = 4
+nsignal(p::BiexpEPGModel) = p.n
+
 nlatent(p::ToyEPGModel) = 1
+nlatent(p::EPGModel) = 0
 hasclosedform(p::ToyEPGModel) = true
+hasclosedform(p::EPGModel) = false
 
-θlabels(::ToyEPGModel) = [L"\alpha", L"\eta", L"\bar{T}", L"\tau"]
-θlower(p::ToyEPGModel{T}) where {T} = T[T(120), T(0), T(p.T2bd[1]), T(0)]
-θupper(p::ToyEPGModel{T}) where {T} = T[T(180), T(1), T(p.T2bd[2]), T(1)]
-θerror(p::ToyEPGModel, θ, θhat) = 100 .* abs.((θ .- θhat)) ./ (θupper(p) .- θlower(p))
+θlabels(::BiexpEPGModel) = [L"\alpha", L"\eta", L"\bar{T}", L"\tau"]
+θlower(p::BiexpEPGModel{T}) where {T} = T[T(50),  T(0), T(p.T2bd[1]), T(0)]
+θupper(p::BiexpEPGModel{T}) where {T} = T[T(180), T(1), T(p.T2bd[2]), T(log(p.T2bd[2] / p.T2bd[1]))]
 
-sampleWprior(p::ToyEPGModel{T}, n::Union{Int, Symbol}) where {T} = rand(T, nlatent(p), n)
-sampleWprior_similar(p::ToyEPGModel, Y, n::Union{Int, Symbol} = size(Y,2)) = rand_similar(Y, nlatent(p), n)
+function sampleθprior(p::BiexpEPGModel{T}, ::Type{A}, n::Union{Int, Symbol}) where {T, A <: AbstractArray{T}}
+    αlo, ηlo, T̄lo, τlo = θlower(p)
+    αhi, ηhi, T̄hi, τhi = θupper(p)
+    α = αlo .+ (αhi .- αlo) .* sqrt.(rand_similar(A, 1, n)) # triangular distbn on (αlo, αhi)
+    η = ηlo .+ (ηhi .- ηlo) .* rand_similar(A, 1, n) # uniform distbn on (0, 1)
+    T̄ = exp.(log.(T̄lo) .+ (log.(T̄hi) .- log.(T̄lo)) .* rand_similar(A, 1, n)) # log-uniform distbn on (T̄lo, T̄hi)
+    τ = τlo .+ (τhi .- τlo) .* rand_similar(A, 1, n) # uniform distbn on (τlo, τhi); makes T2/T1 ~ 1 more likely than T2/T1 ~ maximimal
+    return vcat(α, η, T̄, τ)
+end
 
-sampleθprior(p::ToyEPGModel{T}, n::Union{Int, Symbol}) where {T} = rand(T, ntheta(p), n) .* (θupper(p) .- θlower(p)) .+ θlower(p)
-sampleθprior_similar(p::ToyEPGModel, Y, n::Union{Int, Symbol} = size(Y,2)) = rand_similar(Y, ntheta(p), n) .* (todevice(θupper(p)) .- todevice(θlower(p))) .+ todevice(θlower(p))
-sampleθ(p::ToyEPGModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleθprior(p, n)
+#### Toy EPG model
 
-add_noise_instance(p::MaybeClosedFormToyEPGModel, X, ϵ, ninstances = nothing) = _add_rician_noise_instance(X, ϵ, ninstances; normalize = true)
+sampleWprior(c::ClosedFormToyEPGModel{T}, ::Type{A}, n::Union{Int, Symbol}) where {T, A <: AbstractArray{T}} = rand_similar(A, nlatent(physicsmodel(c)), n)
 
-function rician_params(c::ClosedFormToyEPGModel{T}, θ = nothing, W = nothing) where{T}
+function signal_model(p::MaybeClosedFormToyEPGModel, θ::AbstractVecOrMat, ϵ = nothing, W = nothing)
+    X, _ = rician_params(ClosedForm(p), θ, W)
+    X̂ = add_noise_instance(p, X, ϵ)
+    return X̂
+end
+
+function rician_params(c::ClosedFormToyEPGModel{T}, θ, W = nothing) where {T}
     p = physicsmodel(c)
-    α, η, T̄, τ = θ[1,:], θ[2,:], θ[3,:], θ[4,:]
-    ξ = 1 .- η .* (1 .- τ)
-    logT₋, logT₊ = log(p.T2bd[1]), log(p.T2bd[2])
-    logT2long = ((ξ,T̄) -> (ξ <= eps(T)) ? log(T̄) : (log(T̄) - (1-ξ) * logT₋) / ξ).(ξ, T̄)
-    logT2short = logT₋ .+ τ .* (logT2long .- logT₋)
-    alpha, Ashort, Along = α, η, 1 .- η
-    X = unitsum(_signal_model(p, alpha, exp.(logT2short), exp.(logT2long), Ashort, Along); dims = 1) # signal normalized to unit sum
+    X = _signal_model(p, θ)
     ϵ = isnothing(W) ? nothing : X[1:1,:] .* (p.ϵbd[1] .+ W .* (p.ϵbd[2] .- p.ϵbd[1])) # noise with amplitude relative to first echo
     return X, ϵ
 end
 
-function signal_model(p::MaybeClosedFormToyEPGModel, θ::AbstractVecOrMat, ϵ = nothing, W = nothing)
-    X, _ϵ = rician_params(ClosedForm(p), θ, W)
-    isnothing(ϵ) && (ϵ = _ϵ)
-    X = add_noise_instance(p, X, ϵ)
+noiselevel(c::ClosedFormToyEPGModel, θ = nothing, W = nothing) = rician_params(c, θ, W)[2]
+
+#### TODO: MRI data EPG model
+
+function signal_model(p::EPGModel, θ::AbstractVecOrMat, ϵ = nothing)
+    X = _signal_model(p, θ)
+    X̂ = add_noise_instance(p, X, ϵ)
+    return X̂
+end
+
+#### Common biexponential EPG model methods
+
+function add_noise_instance(p::MaybeClosedFormBiexpEPGModel, X, ϵ, ninstances = nothing)
+    X̂ = _add_rician_noise_instance(X, ϵ, ninstances)
+    return X̂ ./ maximum(X̂; dims = 1) #X̂[1:1,:] #TODO: normalize by mean? sum? maximum? first echo?
+end
+
+function _signal_model(c::MaybeClosedFormBiexpEPGModel, θ::AbstractMatrix)
+    α, η, T̄, τ = θ[1,:], θ[2,:], θ[3,:], θ[4,:]
+    alpha, Ashort, Along = α, η, 1 .- η
+    T2short = @. T̄ * exp(-Along * τ)
+    T2long = @. T̄ * exp(Ashort * τ)
+    X = _signal_model(c, alpha, T2short, T2long, Ashort, Along)
+    X = X ./ maximum(X; dims = 1) #X[1:1,:] #TODO: normalize by mean? sum? maximum? first echo?
     return X
 end
 
-noiselevel(c::ClosedFormToyEPGModel, θ = nothing, W = nothing) = rician_params(c, θ, W)[2]
+# CPU version is actually faster than the GPU kernel below... DECAES is just too fast (for typical batch sizes of ~1024, anyways)
+_signal_model(c::MaybeClosedFormBiexpEPGModel, alpha::CUDA.CuVector, T2short::CUDA.CuVector, T2long::CUDA.CuVector, Ashort::CUDA.CuVector, Along::CUDA.CuVector) = Flux.gpu(_signal_model(c, map(Flux.cpu, (alpha, T2short, T2long, Ashort, Along))...))
 
 function _signal_model(
-        c::MaybeClosedFormAbstractEPGModel{T},
+        c::MaybeClosedFormBiexpEPGModel{T},
         alpha::AbstractVector,
         T2short::AbstractVector,
         T2long::AbstractVector,
         Ashort::AbstractVector,
-        Along::AbstractVector
-    ) where {T}
+        Along::AbstractVector,
+        ::Val{ETL} = Val(nsignal(c)),
+    ) where {T,ETL}
 
     @assert length(alpha) == length(T2short) == length(T2long) == length(Ashort) == length(Along)
 
     p = physicsmodel(c)
-    nTE, nsamples = nsignal(p), length(T2short)
-    epg_work = DECAES.EPGdecaycurve_work(T, nTE)
-    signal = zeros(T, nTE)
-    buf = zeros(T, nTE)
-    X = zeros(T, nTE, nsamples)
+    TE, T1, refcon = Float64(p.TE), Float64(p.T1), Float64(p.refcon)
+    epg_works1 = [DECAES.EPGdecaycurve_work(Float64, ETL) for _ in 1:Threads.nthreads()]
+    epg_works2 = [DECAES.EPGdecaycurve_work(Float64, ETL) for _ in 1:Threads.nthreads()]
+    nsamples = length(alpha)
+    X = zeros(Float64, ETL, nsamples)
 
-    @inbounds for j in 1:nsamples
-        α, T21, T22, A1, A2 = alpha[j], T2short[j], T2long[j], Ashort[j], Along[j]
-        S = @views X[:,j]
-        S  .= A1 .* DECAES.EPGdecaycurve!(epg_work, α, p.TE, T21, p.T1, p.refcon) # short component
-        S .+= A2 .* DECAES.EPGdecaycurve!(epg_work, α, p.TE, T22, p.T1, p.refcon) # long component
+    Threads.@threads for j in 1:nsamples
+        @inbounds begin
+            α, T21, T22, A1, A2 = Float64(alpha[j]), Float64(T2short[j]), Float64(T2long[j]), Float64(Ashort[j]), Float64(Along[j])
+            epg_work1, epg_work2 = epg_works1[Threads.threadid()], epg_works2[Threads.threadid()]
+            dc1 = DECAES.EPGdecaycurve!(epg_work1, α, TE, T21, T1, refcon) # short component
+            dc2 = DECAES.EPGdecaycurve!(epg_work2, α, TE, T22, T1, refcon) # long component
+            for i in 1:ETL
+                X[i,j] = A1 * dc1[i] + A2 * dc2[i]
+            end
+        end
     end
 
-    return X
+    return convert(Matrix{T}, X)
 end
 
-_signal_model(p::AbstractEPGModel, args::CUDA.CuArray...) = _signal_model(p, map(Flux.cpu, args)...) |> Flux.gpu
+function _signal_model_cuda(c::MaybeClosedFormBiexpEPGModel, alpha::CUDA.CuVector, T2short::CUDA.CuVector, T2long::CUDA.CuVector, Ashort::CUDA.CuVector, Along::CUDA.CuVector)
+    @unpack TE, T1, refcon = physicsmodel(c)
+    return Ashort' .* DECAES.EPGdecaycurve(nsignal(c), alpha, TE, T2short, T1, refcon) .+
+            Along' .* DECAES.EPGdecaycurve(nsignal(c), alpha, TE, T2long,  T1, refcon)
+end
+
+function DECAES.EPGdecaycurve(
+        ETL::Int,
+        flip_angles::CUDA.CuVector{T},
+        TE::T,
+        T2times::CUDA.CuVector{T},
+        T1::T,
+        refcon::T,
+    ) where {T}
+
+    @assert length(flip_angles) == length(T2times)
+    nsamples = length(flip_angles)
+
+    function epg_kernel!(decay_curve, Mz, flip_angles, T2times)
+        J = CUDA.threadIdx().x + (CUDA.blockIdx().x-1) * CUDA.blockDim().x
+        @inbounds if J <= nsamples
+            @inbounds α, T2 = flip_angles[J], T2times[J]
+
+            # Precompute compute element flip matrices and other intermediate variables
+            E2, E1, E2_half = exp(-TE/T2), exp(-TE/T1), exp(-(TE/2)/T2)
+            α2 = α * (refcon/180)
+            s_α, c_α, s_½α_sq, c_½α_sq, s_α_½ = sind(α2), cosd(α2), sind(α2/2)^2, cosd(α2/2)^2, sind(α2)/2
+
+            # Initialize magnetization phase state vector (MPSV)
+            M0 = E2_half * sind(α/2) # initial population
+            M1x, M1y, M1z = M0 * cosd(α/2)^2, M0 * sind(α/2)^2, im * (-M0 * sind(α)/2) # first echo population
+            @inbounds decay_curve[1,J] = E2_half * M1y # first echo amplitude
+
+            # Apply first relaxation matrix iteration on non-zero states
+            @inbounds begin
+                Mz[1,J] = E2 * M1y
+                Mz[2,J] = 0
+                Mz[3,J] = E1 * M1z
+                Mz[4,J] = E2 * M1x
+                Mz[5,J] = 0
+                Mz[6,J] = 0
+            end
+
+            @inbounds for i = 2:ETL
+                # Perform the flip for all states
+                @inbounds for j in 1:3:3i-2
+                    Vmx, Vmy, Vmz = Mz[j,J], Mz[j+1,J], Mz[j+2,J]
+                    ms_α_Vtmp  = s_α * im * (Vmz)
+                    s_α_½_Vtmp = s_α_½ * im * (Vmy - Vmx)
+                    Mz[j,J]   = c_½α_sq * Vmx + (s_½α_sq * Vmy - ms_α_Vtmp)
+                    Mz[j+1,J] = s_½α_sq * Vmx + (c_½α_sq * Vmy +  ms_α_Vtmp)
+                    Mz[j+2,J] = c_α * Vmz + s_α_½_Vtmp
+                end
+
+                # Zero out next elements
+                @inbounds if i+1 < ETL
+                    j = 3i+1
+                    Mz[j,J]   = 0
+                    Mz[j+1,J] = 0
+                    Mz[j+2,J] = 0
+                end
+
+                # Record the magnitude of the population of F1* as the echo amplitude, allowing for relaxation
+                decay_curve[i,J] = E2_half * sqrt(abs2(Mz[2,J]))
+
+                # Allow time evolution of magnetization between pulses
+                @inbounds if i < ETL
+                    mprev = Mz[1,J]
+                    Mz[1,J] = E2 * Mz[2,J] # F1* --> F1
+                    for j in 2:3:3i-1
+                        m1, m2, m3 = Mz[j+1,J], Mz[j+2,J], Mz[j+3,J]
+                        mtmp  = m2
+                        m0    = E2 * m3     # F(n)* --> F(n-1)*
+                        m1   *= E1          # Z(n)  --> Z(n)
+                        m2    = E2 * mprev  # F(n)  --> F(n+1)
+                        mprev = mtmp
+                        Mz[j,J], Mz[j+1,J], Mz[j+2,J] = m0, m1, m2
+                    end
+                end
+            end
+        end
+    end
+
+    function configurator(kernel)
+        # See: https://github.com/JuliaGPU/CUDA.jl/blob/463a41295bfede5125c584e6be9c51a4b9074e12/examples/pairwise.jl#L88
+        config = CUDA.launch_configuration(kernel.fun)
+        threads = min(nextpow(2, nsamples), config.threads)
+        blocks = div(nsamples, threads, RoundUp)
+        return (threads=threads, blocks=blocks)
+    end
+
+    dc = CUDA.zeros(T, ETL, nsamples)
+    mz = CUDA.zeros(Complex{T}, 3*ETL, nsamples)
+    CUDA.@cuda name="EPGdecaycurve!" config=configurator epg_kernel!(dc, mz, flip_angles, T2times)
+
+    return dc
+end
+
+function _EPGdecaycurve_test(; nsamples = 1024, ETL = 48)
+    flip_angles = 180f0 .+ (180f0 .- 50f0) .* CUDA.rand(Float32, nsamples)
+    T2_times  = 10f-3 .+ (80f-3 .- 10f-3) .* CUDA.rand(Float32, nsamples)
+    TE, T1, refcon = 8f-3, 1f0, 180f0
+
+    gpufun(flip_angles, T2_times) = DECAES.EPGdecaycurve(ETL, flip_angles, TE, T2_times, T1, refcon)
+
+    function cpufun(flip_angles::Vector{T}, T2_times::Vector{T}, ::Val{ETL}) where {T,ETL}
+        S = zeros(Float64, ETL, nsamples)
+        epg_works = [DECAES.EPGdecaycurve_work(Float64, ETL) for _ in 1:Threads.nthreads()]
+        Threads.@threads for j in 1:nsamples
+            @inbounds epg_work = epg_works[Threads.threadid()]
+            @inbounds decay_curve = DECAES.EPGdecaycurve!(epg_work, Float64(flip_angles[j]), Float64(TE), Float64(T2_times[j]), Float64(T1), Float64(refcon))
+            @inbounds for i in 1:ETL
+                S[i,j] = decay_curve[i]
+            end
+        end
+        return convert(Matrix{T}, S)
+    end
+
+    S1 = gpufun(flip_angles, T2_times)
+    S2 = cpufun(map(Flux.cpu, (flip_angles, T2_times))..., Val(ETL))
+    @assert Flux.cpu(S1) ≈ S2
+
+    flip_angles_cpu, T2_times_cpu = map(Flux.cpu, (flip_angles, T2_times))
+    @btime CUDA.@sync $gpufun($flip_angles, $T2_times) # gpu timing
+    @btime $cpufun($flip_angles_cpu, $T2_times_cpu, Val($ETL)) # cpu timing
+    @btime CUDA.@sync Flux.gpu($cpufun(map(Flux.cpu, ($flip_angles, $T2_times))..., Val($ETL))) # gpu-to-cpu-to-gpu timing
+
+    nothing
+end
+
+function _signal_model_test(; nsamples = 1024)
+    p        = initialize!(ToyEPGModel{Float32,true}(); ntrain = 1, ntest = 1, nval = 1)
+    alpha    = 180.0f0 .+ (180f0 .- 50f0) .* CUDA.rand(Float32, nsamples)
+    T2short  = 10f-3 .+ (80f-3 .- 10f-3) .* CUDA.rand(Float32, nsamples)
+    T2long   = 10f-3 .+ (80f-3 .- 10f-3) .* CUDA.rand(Float32, nsamples)
+    Ashort   = 0.1f0 .+ (0.9f0 .- 0.1f0) .* CUDA.rand(Float32, nsamples)
+    Along    = 0.1f0 .+ (0.9f0 .- 0.1f0) .* CUDA.rand(Float32, nsamples)
+
+    S1 = _signal_model_cuda(p, alpha, T2short, T2long, Ashort, Along)
+    S2 = _signal_model(p, map(Flux.cpu, (alpha, T2short, T2long, Ashort, Along))...)
+    @assert Flux.cpu(S1) ≈ S2
+
+    cpu_args = map(Flux.cpu, (alpha, T2short, T2long, Ashort, Along))
+    @btime CUDA.@sync _signal_model_cuda($p, $alpha, $T2short, $T2long, $Ashort, $Along)
+    @btime _signal_model($p, $(cpu_args)...)
+    @btime CUDA.@sync Flux.gpu(_signal_model($p, map(Flux.cpu, ($alpha, $T2short, $T2long, $Ashort, $Along))...))
+
+    nothing
+end
 
 ####
 #### Signal model
