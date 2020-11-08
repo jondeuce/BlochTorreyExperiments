@@ -142,7 +142,8 @@ sampleθ(p::PhysicsModel{T,false}, n::Union{Int, Symbol}; dataset::Symbol) where
 sampleθprior(p::PhysicsModel{T}, n::Union{Int, Symbol}) where {T} = sampleθprior(p, Matrix{T}, n) # default to sampling θ on cpu
 sampleθprior(p::PhysicsModel, Y::AbstractArray, n::Union{Int, Symbol} = size(Y,2)) = sampleθprior(p, typeof(Y), n) # θ type is similar to Y type
 
-θbounds(p::PhysicsModel) = tuple.(θlower(p), θupper(p))
+θcanonical(p::PhysicsModel, θ) = θ # fallback
+θbounds(p::PhysicsModel) = tuple.(θlower(p), θupper(p)) # fallback
 θerror(p::PhysicsModel, θtrue, θfit) = 100 .* todevice(θtrue .- θfit) ./ todevice(θupper(p) .- θlower(p)) # default error metric is elementwise percentage relative to prior width
 
 ####
@@ -196,6 +197,7 @@ beta(::ToyModel) = 4
 beta(::ClosedFormToyModel) = 2
 
 θlabels(::ToyModel) = [L"f", L"\phi", L"a_0", L"a_1", L"\tau"]
+θasciilabels(::ToyModel) = ["freq", "phase", "a0", "a1", "tau"]
 θlower(::ToyModel{T}) where {T} = T[1/T(64), T(0),   1/T(4), 1/T(10), T(16) ]
 θupper(::ToyModel{T}) where {T} = T[1/T(32), T(π)/2, 1/T(2), 1/T(4),  T(128)]
 
@@ -236,6 +238,7 @@ nlatent(::ToyCosineModel) = 1
 hasclosedform(::ToyCosineModel) = true
 
 θlabels(::ToyCosineModel) = [L"f", L"\phi", L"a_0"]
+θasciilabels(::ToyCosineModel) = ["freq", "phase", "a0"]
 θlower(::ToyCosineModel{T}) where {T} = T[T(1/64), T(0),   T(1/2)]
 θupper(::ToyCosineModel{T}) where {T} = T[T(1/32), T(π/2), T(1)]
 
@@ -326,18 +329,29 @@ nlatent(p::EPGModel) = 0
 hasclosedform(p::ToyEPGModel) = true
 hasclosedform(p::EPGModel) = false
 
-θlabels(::BiexpEPGModel) = [L"\alpha", L"\eta", L"\bar{T}", L"\tau"]
-θlower(p::BiexpEPGModel{T}) where {T} = T[T(50),  T(0), T(p.T2bd[1]), T(0)]
-θupper(p::BiexpEPGModel{T}) where {T} = T[T(180), T(1), T(p.T2bd[2]), T(log(p.T2bd[2] / p.T2bd[1]))]
+θlabels(::BiexpEPGModel) = [L"\alpha", L"\eta", L"\delta_1", L"\delta_2"] #L"\bar{T}", L"\tau"]
+θasciilabels(::BiexpEPGModel) = ["alpha", "eta", "delta1", "delta2"] #"T2bar", "tau"]
+θlower(p::BiexpEPGModel{T}) where {T} = T[T(50),  T(0), T(0), T(0)] # T̄: T(p.T2bd[1]), τ: T(0)
+θupper(p::BiexpEPGModel{T}) where {T} = T[T(180), T(1), T(1), T(1)] # T̄: T(p.T2bd[2]), τ: T(log(p.T2bd[2] / p.T2bd[1]))
 
 function sampleθprior(p::BiexpEPGModel{T}, ::Type{A}, n::Union{Int, Symbol}) where {T, A <: AbstractArray{T}}
-    αlo, ηlo, T̄lo, τlo = θlower(p)
-    αhi, ηhi, T̄hi, τhi = θupper(p)
+    # # parameterize by alpha, short amplitude, geometric mean T2, and logT2 - logT1 difference
+    # αlo, ηlo, T̄lo, τlo = θlower(p)
+    # αhi, ηhi, T̄hi, τhi = θupper(p)
+    # α = αlo .+ (αhi .- αlo) .* sqrt.(rand_similar(A, 1, n)) # triangular distbn on (αlo, αhi)
+    # η = ηlo .+ (ηhi .- ηlo) .* rand_similar(A, 1, n) # uniform distbn on (0, 1)
+    # T̄ = exp.(log.(T̄lo) .+ (log.(T̄hi) .- log.(T̄lo)) .* rand_similar(A, 1, n)) # log-uniform distbn on (T̄lo, T̄hi)
+    # τ = τlo .+ (τhi .- τlo) .* rand_similar(A, 1, n) # uniform distbn on (τlo, τhi); makes T2/T1 ~ 1 more likely than T2/T1 ~ maximimal
+    # return vcat(α, η, T̄, τ)
+
+    # parameterize by alpha, short amplitude, relative T2 long and T2 short δs
+    αlo, ηlo, δ1lo, δ2lo = θlower(p)
+    αhi, ηhi, δ1hi, δ2hi = θupper(p)
     α = αlo .+ (αhi .- αlo) .* sqrt.(rand_similar(A, 1, n)) # triangular distbn on (αlo, αhi)
-    η = ηlo .+ (ηhi .- ηlo) .* rand_similar(A, 1, n) # uniform distbn on (0, 1)
-    T̄ = exp.(log.(T̄lo) .+ (log.(T̄hi) .- log.(T̄lo)) .* rand_similar(A, 1, n)) # log-uniform distbn on (T̄lo, T̄hi)
-    τ = τlo .+ (τhi .- τlo) .* rand_similar(A, 1, n) # uniform distbn on (τlo, τhi); makes T2/T1 ~ 1 more likely than T2/T1 ~ maximimal
-    return vcat(α, η, T̄, τ)
+    η = rand_similar(A, 1, n) # uniform distbn on (0, 1)
+    δ1 = rand_similar(A, 1, n) # uniform distbn on (0, 1)
+    δ2 = rand_similar(A, 1, n) # uniform distbn on (0, 1)
+    return vcat(α, η, δ1, δ2)
 end
 
 #### Toy EPG model
@@ -359,7 +373,7 @@ end
 
 noiselevel(c::ClosedFormToyEPGModel, θ = nothing, W = nothing) = rician_params(c, θ, W)[2]
 
-#### TODO: MRI data EPG model
+#### MRI data EPG model
 
 function signal_model(p::EPGModel, θ::AbstractVecOrMat, ϵ = nothing)
     X = _signal_model(p, θ)
@@ -374,12 +388,25 @@ function add_noise_instance(p::MaybeClosedFormBiexpEPGModel, X, ϵ, ninstances =
     return X̂ ./ maximum(X̂; dims = 1) #X̂[1:1,:] #TODO: normalize by mean? sum? maximum? first echo?
 end
 
-function _signal_model(c::MaybeClosedFormBiexpEPGModel, θ::AbstractMatrix)
-    α, η, T̄, τ = θ[1,:], θ[2,:], θ[3,:], θ[4,:]
+function θcanonical(c::MaybeClosedFormBiexpEPGModel, θ::AbstractMatrix)
+    # # parameterize by alpha, short amplitude, geometric mean T2, and logT2 - logT1 difference
+    # α, η, T̄, τ = θ[1,:], θ[2,:], θ[3,:], θ[4,:]
+    # alpha, Ashort, Along = α, η, 1 .- η
+    # T2short = @. T̄ * exp(-Along * τ)
+    # T2long = @. T̄ * exp(Ashort * τ)
+
+    # parameterize by alpha, short amplitude, relative T2 long and T2 short δs
+    α, η, δ1, δ2 = θ[1,:], θ[2,:], θ[3,:], θ[4,:]
+    logT2lo, logT2hi = eltype(θ).(log.(physicsmodel(c).T2bd))
     alpha, Ashort, Along = α, η, 1 .- η
-    T2short = @. T̄ * exp(-Along * τ)
-    T2long = @. T̄ * exp(Ashort * τ)
-    X = _signal_model(c, alpha, T2short, T2long, Ashort, Along)
+    T2short = @. exp(logT2lo + (logT2hi - logT2lo) * δ1)
+    T2long = @. exp(logT2lo + (logT2hi - logT2lo) * (δ1 + δ2 * (1 - δ1)))
+
+    return alpha, T2short, T2long, Ashort, Along
+end
+
+function _signal_model(c::MaybeClosedFormBiexpEPGModel, θ::AbstractMatrix)
+    X = _signal_model(c, θcanonical(c, θ)...)
     X = X ./ maximum(X; dims = 1) #X[1:1,:] #TODO: normalize by mean? sum? maximum? first echo?
     return X
 end

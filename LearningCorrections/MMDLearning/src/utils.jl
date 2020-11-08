@@ -684,20 +684,20 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
             @unpack Xθ, Y = cb_state
             p = plot(
                 plot(
-                    plot(hcat(Y[:,end÷2], Xθ[:,end÷2]); c = [:blue :red], lab = [L"$Y(\hat{\theta})$ fit" L"$X(\hat{\theta})$ fit"]),
-                    sticks(sort(all_Xhat_rmse[sample(1:end, min(128,end))]); m = (:circle,4), lab = "rmse: fits"),
-                    sticks(sort(all_Xhat_logL[sample(1:end, min(128,end))]); m = (:circle,4), lab = "-logL: fits"),
+                    plot(hcat(Y[:,end÷2], Xθ[:,end÷2]); c = [:blue :red], lab = [L"Y data" L"$X(\hat{\theta})$ fit"]),
+                    sticks(sort(all_Xhat_rmse[sample(1:end, min(128,end))]); m = (:circle,4), lab = "rmse"),
+                    sticks(sort(all_Xhat_logL[sample(1:end, min(128,end))]); m = (:circle,4), lab = "-logL"),
                     layout = @layout([a{0.25h}; b{0.375h}; c{0.375h}]),
                 ),
                 let
                     _subplots = Any[]
                     if hasclosedform(phys)
-                        plogL = plot(df_inf.epoch, df_inf.Yhat_logL_true; title = L"$\hat{\theta}(Y)$: min = %$(s(minimum(df_inf.Yhat_logL_true)))", label = L"logL: $Y(\hat{\theta}) - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$", xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
-                        pθerr = plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.Yhat_theta_err)); title = L"$\hat{\theta}(Y)$: min max = %$(s(minimum(maximum.(df_inf.Yhat_theta_err))))", label = permutedims(θlabels(phys)), xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
+                        plogL = plot(df_inf.epoch, df_inf.Yhat_logL_true; title = L"True $-logL(Y)$: min = %$(s(minimum(df_inf.Yhat_logL_true)))", label = L"-logL(Y)", xscale = ifelse(epoch < 10*window, :identity, :log10)) # $Y(\hat{\theta}) - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$
+                        pθerr = plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.Yhat_theta_err)); title = L"$\hat{\theta}(Y)$: min max = %$(s(minimum(maximum.(df_inf.Yhat_theta_err))))", label = permutedims(θlabels(phys)), xscale = ifelse(epoch < 10*window, :identity, :log10))
                         append!(_subplots, [plogL, pθerr])
                     else
-                        plogL = plot(df_inf.epoch, df_inf.Yhat_logL; title = L"$\hat{\theta}(Y)$: min = %$(s(minimum(df_inf.Yhat_logL)))", label = L"logL: $Y(\hat{\theta}) - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$", xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
-                        pθerr = plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.Xhat_theta_err)); title = L"$\hat{\theta}(\hat{X})$: min max = %$(s(minimum(maximum.(df_inf.Xhat_theta_err))))", label = permutedims(θlabels(phys)), xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
+                        plogL = plot(df_inf.epoch, df_inf.Yhat_logL; title = L"$-logL(Y)$: min = %$(s(minimum(df_inf.Yhat_logL)))", label = L"-logL(Y)", xscale = ifelse(epoch < 10*window, :identity, :log10)) # $Y(\hat{\theta}) - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$
+                        pθerr = plot(df_inf.epoch, permutedims(reduce(hcat, df_inf.Xhat_theta_err)); title = L"$\hat{\theta}(\hat{X})$: min max = %$(s(minimum(maximum.(df_inf.Xhat_theta_err))))", label = permutedims(θlabels(phys)), xscale = ifelse(epoch < 10*window, :identity, :log10))
                         append!(_subplots, [plogL, pθerr])
                     end
 
@@ -705,10 +705,10 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
                         rmselab *= "\nrmse prior: $(round(mean(phys.valfits.rmse); sigdigits = 4))"
                         logLlab *= "\n-logL prior: $(round(mean(phys.valfits.loss); sigdigits = 4))"
                     end
-                    logLlab = L"-logL: $\hat{X} - \hat{X}(\hat{\theta})$"
-                    rmselab = [L"rmse: $\hat{X} - \hat{X}(\hat{\theta})$" L"rmse: $Y - \hat{X}(\hat{\theta})$"]
-                    plogL = plot(df_inf.epoch, df_inf.Xhat_logL; title = "min = $(s(minimum(df_inf.Xhat_logL)))", lab = logLlab, xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO ylims = (-Inf, min(-100, maximum(df_inf.Xhat_logL)))), xformatter = s
-                    prmse = plot(df_inf.epoch, [df_inf.Xhat_rmse df_inf.Yhat_rmse]; title = "min = $(s(minimum(df_inf.Xhat_rmse))), $(s(minimum(df_inf.Yhat_rmse)))", lab = rmselab, xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
+                    logLlab = [L"-logL(\hat{X})" L"-logL(Y)"]
+                    rmselab = [L"rmse(\hat{X})" L"rmse(Y)"] # \hat{X}(\hat{\theta})
+                    plogL = plot(df_inf.epoch, [df_inf.Xhat_logL df_inf.Yhat_logL]; title = "min = $(s(minimum(df_inf.Xhat_logL))), $(s(minimum(df_inf.Yhat_logL)))", lab = logLlab, xscale = ifelse(epoch < 10*window, :identity, :log10))
+                    prmse = plot(df_inf.epoch, [df_inf.Xhat_rmse df_inf.Yhat_rmse]; title = "min = $(s(minimum(df_inf.Xhat_rmse))), $(s(minimum(df_inf.Yhat_rmse)))", lab = rmselab, xscale = ifelse(epoch < 10*window, :identity, :log10))
                     append!(_subplots, [plogL, prmse])
 
                     plot(_subplots...)
