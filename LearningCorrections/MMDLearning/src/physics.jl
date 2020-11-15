@@ -143,6 +143,8 @@ sampleθprior(p::PhysicsModel{T}, n::Union{Int, Symbol}) where {T} = sampleθpri
 sampleθprior(p::PhysicsModel, Y::AbstractArray, n::Union{Int, Symbol} = size(Y,2)) = sampleθprior(p, typeof(Y), n) # θ type is similar to Y type
 
 θcanonical(p::PhysicsModel, θ) = θ # fallback
+θcanonicalunits(p::PhysicsModel, θ) = θunits(θ) # fallback
+θcanonicallabels(p::PhysicsModel, θ) = θlabels(θ) # fallback
 θbounds(p::PhysicsModel) = tuple.(θlower(p), θupper(p)) # fallback
 θerror(p::PhysicsModel, θtrue, θfit) = 100 .* todevice(θtrue .- θfit) ./ todevice(θupper(p) .- θlower(p)) # default error metric is elementwise percentage relative to prior width
 
@@ -164,7 +166,18 @@ function initialize!(p::AbstractToyModel{T,isfinite}; ntrain::Int, ntest::Int, n
         ν, ϵ = rician_params(ClosedForm(p), θ, W)
         p.Y[d] = add_noise_instance(p, ν, ϵ)
     end
+    signal_histograms!(p)
     Random.seed!(rng)
+    return p
+end
+
+function signal_histograms!(p::PhysicsModel; nbins = 100, normalize = nothing)
+    p.meta[:histograms] = Dict{Symbol, Any}()
+    p.meta[:histograms][:train] = signal_histograms(p.Y[:train]; edges = nothing, nbins, normalize)
+    train_edges = Dict([k => v.edges[1] for (k,v) in p.meta[:histograms][:train]])
+    for dataset in (:val, :test)
+        p.meta[:histograms][dataset] = signal_histograms(p.Y[dataset]; edges = train_edges, nbins = nothing, normalize)
+    end
     return p
 end
 
@@ -185,6 +198,7 @@ sampleWprior(c::ClosedFormAbstractToyModel{T}, Y::AbstractArray{T}, n::Union{Int
     θ::Dict{Symbol,Matrix{T}} = Dict()
     X::Dict{Symbol,Matrix{T}} = Dict()
     Y::Dict{Symbol,Matrix{T}} = Dict()
+    meta::Dict{Symbol,Any} = Dict()
 end
 const ClosedFormToyModel{T,isfinite} = ClosedForm{ToyModel{T,isfinite}}
 const MaybeClosedFormToyModel{T,isfinite} = Union{ToyModel{T,isfinite}, ClosedFormToyModel{T,isfinite}}
@@ -198,6 +212,7 @@ beta(::ClosedFormToyModel) = 2
 
 θlabels(::ToyModel) = [L"f", L"\phi", L"a_0", L"a_1", L"\tau"]
 θasciilabels(::ToyModel) = ["freq", "phase", "a0", "a1", "tau"]
+θunits(::ToyModel) = ["Hz", "rad", "a.u.", "a.u.", "s"]
 θlower(::ToyModel{T}) where {T} = T[1/T(64), T(0),   1/T(4), 1/T(10), T(16) ]
 θupper(::ToyModel{T}) where {T} = T[1/T(32), T(π)/2, 1/T(2), 1/T(4),  T(128)]
 
@@ -228,6 +243,7 @@ rician_params(c::ClosedFormToyModel, θ, W = nothing) = signal_model(c, θ, noth
     θ::Dict{Symbol,Matrix{T}} = Dict()
     X::Dict{Symbol,Matrix{T}} = Dict()
     Y::Dict{Symbol,Matrix{T}} = Dict()
+    meta::Dict{Symbol,Any} = Dict()
 end
 const ClosedFormToyCosineModel{T,isfinite} = ClosedForm{ToyCosineModel{T,isfinite}}
 const MaybeClosedFormToyCosineModel{T,isfinite} = Union{ToyCosineModel{T,isfinite}, ClosedFormToyCosineModel{T,isfinite}}
@@ -239,6 +255,7 @@ hasclosedform(::ToyCosineModel) = true
 
 θlabels(::ToyCosineModel) = [L"f", L"\phi", L"a_0"]
 θasciilabels(::ToyCosineModel) = ["freq", "phase", "a0"]
+θunits(::ToyCosineModel) = ["Hz", "rad", "a.u."]
 θlower(::ToyCosineModel{T}) where {T} = T[T(1/64), T(0),   T(1/2)]
 θupper(::ToyCosineModel{T}) where {T} = T[T(1/32), T(π/2), T(1)]
 
@@ -276,6 +293,7 @@ abstract type AbstractToyEPGModel{T,isfinite} <: AbstractToyModel{T,isfinite} en
     θ::Dict{Symbol,Matrix{T}} = Dict()
     X::Dict{Symbol,Matrix{T}} = Dict()
     Y::Dict{Symbol,Matrix{T}} = Dict()
+    meta::Dict{Symbol,Any} = Dict()
 end
 
 # EPG model using image data
@@ -289,30 +307,83 @@ end
     θ::Dict{Symbol,Matrix{T}} = Dict()
     X::Dict{Symbol,Matrix{T}} = Dict()
     Y::Dict{Symbol,Matrix{T}} = Dict()
+    meta::Dict{Symbol,Any} = Dict()
 end
 
 function initialize!(p::EPGModel{T,isfinite}; imagepath::String, seed::Int = 0) where {T,isfinite}
     rng = Random.seed!(seed)
+    p.image[:data] = convert(Array{T}, DECAES.load_image(imagepath, Val(4))) # load 4D MatrixSize x nTE image
 
-    # Load image, keeping signals which correspond to thetas
-    p.image[:data] = DECAES.load_image(imagepath) # load 4D MatrixSize x nTE image
-    I = findall(>(0), p.image[:data][:,:,:,1]) # image is assumed to be masked; filter by positive first echo magnitude
-    I = shuffle!(MersenneTwister(seed), I) # shuffle indices before splitting to train/test/val
-    p.image[:train_indices] = I[            1 : 2*(end÷4)] # first half for training
-    p.image[:test_indices]  = I[2*(end÷4) + 1 : 3*(end÷4)] # third quarter held out for testing
-    p.image[:val_indices]   = I[3*(end÷4) + 1 : end] # fourth quarter for validation
+    Imask    = findall(>(0), p.image[:data][..,1]) # image is assumed to be masked; filter out non-positive first echo signals
+    Inonmask = findall(<=(0), p.image[:data][..,1]) # compliment of mask indices
+    Ishuffle = shuffle(MersenneTwister(seed), Imask) # shuffle indices before splitting to train/test/val
+
+    p.image[:data][Inonmask, :] .= NaN # set signals outside of mask to NaN
+    p.image[:data] ./= maximum(p.image[:data]; dims = 4) # p.image[:data][1:1,..] #TODO: normalize by mean? sum? maximum? first echo?
+
+    p.image[:mask_indices]  = Imask # non-shuffled mask indices
+    p.image[:train_indices] = Ishuffle[            1 : 2*(end÷4)] # first half for training
+    p.image[:test_indices]  = Ishuffle[2*(end÷4) + 1 : 3*(end÷4)] # third quarter held out for testing
+    p.image[:val_indices]   = Ishuffle[3*(end÷4) + 1 : end] # fourth quarter for validation
 
     for d in (:train, :test, :val)
         i = p.image[Symbol(d, :_indices)]
         p.Y[d] = convert(Matrix{T}, permutedims(p.image[:data][i,:])) # convert to nTE x nSamples Matrix
-        p.Y[d] ./= maximum(p.Y[d]; dims = 1) #p.Y[d][1:1,:] #TODO: normalize by mean? sum? maximum? first echo?
         isfinite ? (p.θ[d] = sampleθprior(p, length(i))) : empty!(p.θ)
         isfinite ? (p.X[d] = signal_model(p, p.θ[d])) : empty!(p.X)
     end
+    signal_histograms!(p)
+    # t2_distributions!(p)
 
     Random.seed!(rng)
     return p
 end
+
+function t2_distributions!(p::EPGModel)
+    p.meta[:decaes] = Dict{Symbol, Any}()
+    p.meta[:decaes][:t2mapopts] = DECAES.T2mapOptions{Float64}(
+        MatrixSize       = size(p.image[:data])[1:3],
+        nTE              = size(p.image[:data])[4],
+        TE               = p.TE,
+        T1               = p.T1,
+        T2Range          = p.T2bd,
+        nT2              = 40,
+        Threshold        = 0.0,
+        Chi2Factor       = 1.02,
+        RefConAngle      = p.refcon,
+        MinRefAngle      = 50.0,
+        nRefAnglesMin    = 8,
+        nRefAngles       = 8,
+        Reg              = "chi2",
+        SaveResidualNorm = true,
+        SaveDecayCurve   = true,
+        SaveRegParam     = true,
+        Silent           = true,
+    )
+    p.meta[:decaes][:t2partopts] = DECAES.T2partOptions{Float64}(
+        MatrixSize = size(p.image[:data])[1:3],
+        nT2        = p.meta[:decaes][:t2mapopts].nT2,
+        T2Range    = p.meta[:decaes][:t2mapopts].T2Range,
+        SPWin      = (prevfloat(p.meta[:decaes][:t2mapopts].T2Range[1]), 40e-3),
+        MPWin      = (nextfloat(40e-3), nextfloat(p.meta[:decaes][:t2mapopts].T2Range[2])),
+        Silent     = true,
+    )
+    p.meta[:decaes][:t2maps], p.meta[:decaes][:t2dist], p.meta[:decaes][:t2parts] = (Dict{Symbol,Any}() for _ in 1:3)
+    p.meta[:decaes][:t2maps][:Y], p.meta[:decaes][:t2dist][:Y] = DECAES.T2mapSEcorr(convert(Array{Float64}, p.image[:data]), p.meta[:decaes][:t2mapopts])
+    p.meta[:decaes][:t2parts][:Y] = DECAES.T2partSEcorr(p.meta[:decaes][:t2dist][:Y], p.meta[:decaes][:t2partopts])
+    return p
+end
+
+function t2_distributions!(p::EPGModel, X::P) where {P <: Pair{Symbol, <:AbstractTensor4D}}
+    Xname, Xdata = X
+    t2mapopts = DECAES.T2mapOptions(p.meta[:decaes][:t2mapopts], MatrixSize = size(Xdata)[1:3])
+    t2partopts = DECAES.T2partOptions(p.meta[:decaes][:t2partopts], MatrixSize = size(Xdata)[1:3])
+    p.meta[:decaes][:t2maps][Xname], p.meta[:decaes][:t2dist][Xname] = DECAES.T2mapSEcorr(convert(Array{Float64,4}, Xdata), t2mapopts)
+    p.meta[:decaes][:t2parts][Xname] = DECAES.T2partSEcorr(p.meta[:decaes][:t2dist][Xname], t2partopts)
+    return p
+end
+t2_distributions!(p::EPGModel, X::P) where {P <: Pair{Symbol, <:AbstractMatrix}} = t2_distributions!(p, X[1] => reshape(permutedims(X[2]), size(X[2],2), 1, 1, size(X[2],1)))
+t2_distributions!(p::EPGModel, Xs::Dict{Symbol, Any}) = (for (k,v) in Xs; t2_distributions!(p, k => v); end; return p)
 
 const ClosedFormToyEPGModel{T,isfinite} = ClosedForm{ToyEPGModel{T,isfinite}}
 const MaybeClosedFormToyEPGModel{T,isfinite} = Union{ToyEPGModel{T,isfinite}, ClosedFormToyEPGModel{T,isfinite}}
@@ -329,22 +400,16 @@ nlatent(p::EPGModel) = 0
 hasclosedform(p::ToyEPGModel) = true
 hasclosedform(p::EPGModel) = false
 
-θlabels(::BiexpEPGModel) = [L"\alpha", L"\eta", L"\delta_1", L"\delta_2"] #L"\bar{T}", L"\tau"]
-θasciilabels(::BiexpEPGModel) = ["alpha", "eta", "delta1", "delta2"] #"T2bar", "tau"]
+θlabels(::BiexpEPGModel) = [L"\alpha", L"\eta", L"\delta_1", L"\delta_2"]
+θasciilabels(::BiexpEPGModel) = ["alpha", "eta", "delta1", "delta2"]
+θunits(::BiexpEPGModel) = ["deg", "a.u.", "a.u.", "a.u."]
+θcanonicalunits(::BiexpEPGModel) = ["deg", "s", "s", "a.u.", "a.u."]
+θcanonicallabels(::BiexpEPGModel) = [L"\alpha", L"T_{2,short}", L"T_{2,long}", L"A_{2,short}", L"A_{2,long}"]
 θlower(p::BiexpEPGModel{T}) where {T} = T[T(50),  T(0), T(0), T(0)] # T̄: T(p.T2bd[1]), τ: T(0)
 θupper(p::BiexpEPGModel{T}) where {T} = T[T(180), T(1), T(1), T(1)] # T̄: T(p.T2bd[2]), τ: T(log(p.T2bd[2] / p.T2bd[1]))
 
 function sampleθprior(p::BiexpEPGModel{T}, ::Type{A}, n::Union{Int, Symbol}) where {T, A <: AbstractArray{T}}
-    # # parameterize by alpha, short amplitude, geometric mean T2, and logT2 - logT1 difference
-    # αlo, ηlo, T̄lo, τlo = θlower(p)
-    # αhi, ηhi, T̄hi, τhi = θupper(p)
-    # α = αlo .+ (αhi .- αlo) .* sqrt.(rand_similar(A, 1, n)) # triangular distbn on (αlo, αhi)
-    # η = ηlo .+ (ηhi .- ηlo) .* rand_similar(A, 1, n) # uniform distbn on (0, 1)
-    # T̄ = exp.(log.(T̄lo) .+ (log.(T̄hi) .- log.(T̄lo)) .* rand_similar(A, 1, n)) # log-uniform distbn on (T̄lo, T̄hi)
-    # τ = τlo .+ (τhi .- τlo) .* rand_similar(A, 1, n) # uniform distbn on (τlo, τhi); makes T2/T1 ~ 1 more likely than T2/T1 ~ maximimal
-    # return vcat(α, η, T̄, τ)
-
-    # parameterize by alpha, short amplitude, relative T2 long and T2 short δs
+    # Parameterize by alpha, short amplitude, relative T2 long and T2 short δs
     αlo, ηlo, δ1lo, δ2lo = θlower(p)
     αhi, ηhi, δ1hi, δ2hi = θupper(p)
     α = αlo .+ (αhi .- αlo) .* sqrt.(rand_similar(A, 1, n)) # triangular distbn on (αlo, αhi)
@@ -352,6 +417,16 @@ function sampleθprior(p::BiexpEPGModel{T}, ::Type{A}, n::Union{Int, Symbol}) wh
     δ1 = rand_similar(A, 1, n) # uniform distbn on (0, 1)
     δ2 = rand_similar(A, 1, n) # uniform distbn on (0, 1)
     return vcat(α, η, δ1, δ2)
+end
+
+function θcanonical(c::MaybeClosedFormBiexpEPGModel, θ::AbstractVecOrMat)
+    # Parameterize by alpha, short amplitude, relative T2 long and T2 short δs
+    α, η, δ1, δ2 = θ[1,:], θ[2,:], θ[3,:], θ[4,:]
+    logT2lo, logT2hi = eltype(θ).(log.(physicsmodel(c).T2bd))
+    alpha, Ashort, Along = α, η, 1 .- η
+    T2short = @. exp(logT2lo + (logT2hi - logT2lo) * δ1)
+    T2long = @. exp(logT2lo + (logT2hi - logT2lo) * (δ1 + δ2 * (1 - δ1)))
+    return alpha, T2short, T2long, Ashort, Along
 end
 
 #### Toy EPG model
@@ -388,24 +463,7 @@ function add_noise_instance(p::MaybeClosedFormBiexpEPGModel, X, ϵ, ninstances =
     return X̂ ./ maximum(X̂; dims = 1) #X̂[1:1,:] #TODO: normalize by mean? sum? maximum? first echo?
 end
 
-function θcanonical(c::MaybeClosedFormBiexpEPGModel, θ::AbstractMatrix)
-    # # parameterize by alpha, short amplitude, geometric mean T2, and logT2 - logT1 difference
-    # α, η, T̄, τ = θ[1,:], θ[2,:], θ[3,:], θ[4,:]
-    # alpha, Ashort, Along = α, η, 1 .- η
-    # T2short = @. T̄ * exp(-Along * τ)
-    # T2long = @. T̄ * exp(Ashort * τ)
-
-    # parameterize by alpha, short amplitude, relative T2 long and T2 short δs
-    α, η, δ1, δ2 = θ[1,:], θ[2,:], θ[3,:], θ[4,:]
-    logT2lo, logT2hi = eltype(θ).(log.(physicsmodel(c).T2bd))
-    alpha, Ashort, Along = α, η, 1 .- η
-    T2short = @. exp(logT2lo + (logT2hi - logT2lo) * δ1)
-    T2long = @. exp(logT2lo + (logT2hi - logT2lo) * (δ1 + δ2 * (1 - δ1)))
-
-    return alpha, T2short, T2long, Ashort, Along
-end
-
-function _signal_model(c::MaybeClosedFormBiexpEPGModel, θ::AbstractMatrix)
+function _signal_model(c::MaybeClosedFormBiexpEPGModel, θ::AbstractVecOrMat)
     X = _signal_model(c, θcanonical(c, θ)...)
     X = X ./ maximum(X; dims = 1) #X[1:1,:] #TODO: normalize by mean? sum? maximum? first echo?
     return X
@@ -433,15 +491,24 @@ function _signal_model(
     nsamples = length(alpha)
     X = zeros(Float64, ETL, nsamples)
 
-    Threads.@threads for j in 1:nsamples
-        @inbounds begin
-            α, T21, T22, A1, A2 = Float64(alpha[j]), Float64(T2short[j]), Float64(T2long[j]), Float64(Ashort[j]), Float64(Along[j])
-            epg_work1, epg_work2 = epg_works1[Threads.threadid()], epg_works2[Threads.threadid()]
-            dc1 = DECAES.EPGdecaycurve!(epg_work1, α, TE, T21, T1, refcon) # short component
-            dc2 = DECAES.EPGdecaycurve!(epg_work2, α, TE, T22, T1, refcon) # long component
-            for i in 1:ETL
-                X[i,j] = A1 * dc1[i] + A2 * dc2[i]
-            end
+    _signal_model_work(j) = @inbounds begin
+        α, T21, T22, A1, A2 = Float64(alpha[j]), Float64(T2short[j]), Float64(T2long[j]), Float64(Ashort[j]), Float64(Along[j])
+        epg_work1, epg_work2 = epg_works1[Threads.threadid()], epg_works2[Threads.threadid()]
+        dc1 = DECAES.EPGdecaycurve!(epg_work1, α, TE, T21, T1, refcon) # short component
+        dc2 = DECAES.EPGdecaycurve!(epg_work2, α, TE, T22, T1, refcon) # long component
+        for i in 1:ETL
+            X[i,j] = A1 * dc1[i] + A2 * dc2[i]
+        end
+    end
+
+    # TODO: handle base case more cleanly...
+    if nsamples < 128
+        for j in 1:nsamples
+            _signal_model_work(j)
+        end
+    else
+        Threads.@threads for j in 1:nsamples
+            _signal_model_work(j)
         end
     end
 

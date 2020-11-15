@@ -3,12 +3,15 @@
 ####
 
 # rand_similar and randn_similar
-for f in [:rand, :randn]
-    f_sim = Symbol(f, :_similar)
-    @eval $f_sim(x::AbstractArray, sz...) = $f_sim(typeof(x), sz...)
-    @eval $f_sim(::Type{<:AbstractArray{T}}, sz...) where {T} = Base.$f(T, sz...) # fallback
-    @eval $f_sim(::Type{<:CUDA.CuArray{T}}, sz...) where {T} = Zygote.ignore(() -> CUDA.$f(T, sz...)) # gpu version
+for f in [:zeros, :ones, :rand, :randn]
+    f_similar = Symbol(f, :_similar)
+    @eval $f_similar(x::AbstractArray, sz...) = $f_similar(typeof(x), sz...)
+    @eval $f_similar(::Type{<:AbstractArray{T}}, sz...) where {T} = Zygote.ignore(() -> Base.$f(T, sz...)) # fallback
+    @eval $f_similar(::Type{<:CUDA.CuArray{T}}, sz...) where {T} = Zygote.ignore(() -> CUDA.$f(T, sz...)) # CUDA
 end    
+
+normalized_range(N::Int) = N <= 1 ? zeros(N) : √(3*(N-1)/(N+1)) |> a -> range(-a,a,length=N) |> collect # mean zero and (uncorrected) std one
+uniform_range(N::Int) = N <= 1 ? zeros(N) : range(-1,1,length=N) |> collect
 
 # Apply function `f` along dimension 1 of `x` by first flattening `x` into a matrix
 @inline apply_dim1(f, x::AbstractMatrix) = f(x)
@@ -300,65 +303,3 @@ let m = Flux.f64(m), xy = Flux.f64(test_data)
     gradcheck((m,xy...) -> H_LIGOCVAE(m, xy...), m, xy...)
 end;
 =#
-
-####
-#### Histogram
-####
-
-function fast_hist_1D(y, edges; normalize = nothing)
-    @assert !isempty(y) && length(edges) >= 2
-    _y = sort!(copy(y))
-    @assert _y[1] >= edges[1]
-    h = Histogram((edges,), zeros(Int, length(edges)-1), :left)
-    j = 1
-    @inbounds for i = 1:length(_y)
-        _yi = _y[i]
-        while _yi >= edges[j+1]
-            j += 1
-            (j+1 > length(edges)) && return h
-        end
-        h.weights[j] += 1
-    end
-    !isnothing(normalize) && (h = Plots.normalize(h, mode = normalize))
-    return h
-end
-
-function fast_hist_1D(y, edges::AbstractRange; normalize = nothing)
-    @assert length(edges) >= 2
-    lo, hi, dx, n = first(edges), last(edges), step(edges), length(edges)
-    h = Histogram((edges,), zeros(Int, n-1), :left)
-    @inbounds for (i, yi) in enumerate(y)
-        j = div(yi - lo, dx, RoundDown) + 1 |> Int
-        (1 <= j <= n-1) && (h.weights[j] += 1)
-    end
-    !isnothing(normalize) && (h = Plots.normalize(h, mode = normalize))
-    return h
-end
-
-function _fast_hist_test()
-    _make_hist(x, edges) = fit(Histogram, x, UnitWeights{Float64}(length(x)), edges; closed = :left)
-    for _ in 1:100
-        n = rand(1:10)
-        x = 100 .* rand(n)
-        edges = rand(Bool) ? [0.0; sort(100 .* rand(n))] : (rand(1:10) : rand(1:10) : 100-rand(1:10))
-        try
-            @assert fast_hist_1D(x, edges) == _make_hist(x, edges)
-        catch e
-            if e isa InterruptException
-                break
-            else
-                fast_hist_1D(x, edges).weights' |> x -> (display(x); display((first(x), last(x), sum(x))))
-                _make_hist(x, edges).weights' |> x -> (display(x); display((first(x), last(x), sum(x))))
-                rethrow(e)
-            end
-        end
-    end
-
-    x = rand(10^6)
-    for ne in 2 .^ (4:10)
-        edges = range(0, 1; length = ne)
-        @info "range (ne = $ne)"; @btime fast_hist_1D($x, $edges)
-        @info "array (ne = $ne)"; @btime fast_hist_1D($x, $(collect(edges)))
-        @info "plots (ne = $ne)"; @btime $_make_hist($x, $edges)
-    end
-end

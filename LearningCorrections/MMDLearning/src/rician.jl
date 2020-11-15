@@ -72,7 +72,7 @@ _laguerre½(x::Real) = (x < 0 ? one(x) : exp(x)) * ((1 - x) * _besselix(0, -x/2)
 
 #### CUDA-friendly native julia Besselix functions
 
-@inline function _besselix0_cuda(x)
+@inline function _besselix0_cuda_unsafe(x)
     ax = abs(x)
     if ax < 3.75f0
         y = (x / 3.75f0)^2
@@ -83,9 +83,9 @@ _laguerre½(x::Real) = (x < 0 ? one(x) : exp(x)) * ((1 - x) * _besselix(0, -x/2)
     end
     return out
 end
-@inline _logbesseli0_cuda(x) = log(_besselix0_cuda(x)) + abs(x) # since log(besselix(ν, x)) = log(Iν(x)) - |x|
+@inline _logbesseli0_cuda_unsafe(x) = log(_besselix0_cuda_unsafe(x)) + abs(x) # since log(besselix(ν, x)) = log(Iν(x)) - |x|
 
-function _besselix1_cuda(x)
+function _besselix1_cuda_unsafe(x)
     ax = abs(x)
     if ax < 3.75f0
         y = (x / 3.75f0)^2
@@ -98,39 +98,30 @@ function _besselix1_cuda(x)
     end
     return x < 0 ? -out : out
 end
-@inline _logbesseli1_cuda(x) = log(_besselix1_cuda(x)) + abs(x) # since log(besselix(ν, x)) = log(Iν(x)) - |x|
+@inline _logbesseli1_cuda_unsafe(x) = log(_besselix1_cuda_unsafe(x)) + abs(x) # since log(besselix(ν, x)) = log(Iν(x)) - |x|
 
-@inline _laguerre½_cuda(x) = (x < 0 ? one(x) : exp(x)) * ((1 - x) * _besselix0_cuda(-x/2) - x * _besselix1_cuda(-x/2))
-@inline _rician_mean_cuda(ν, σ) = (tmp = σ * _laguerre½_cuda(-ν^2 / 2σ^2); μ = sqrt(oftype(tmp, π)/2) * tmp; return μ)
-@inline _rician_logpdf_cuda(x, ν, σ) = _logbesseli0_cuda(x*ν/σ^2) - (x^2 + ν^2)/(2*σ^2) + log(x/σ^2)
+@inline _laguerre½_cuda_unsafe(x) = (x < 0 ? one(x) : exp(x)) * ((1 - x) * _besselix0_cuda_unsafe(-x/2) - x * _besselix1_cuda_unsafe(-x/2))
+@inline _rician_mean_cuda_unsafe(ν, σ) = (tmp = σ * _laguerre½_cuda_unsafe(-ν^2 / 2σ^2); μ = sqrt(oftype(tmp, π)/2) * tmp; return μ)
+@inline _rician_logpdf_cuda_unsafe(x, ν, σ) = _logbesseli0_cuda_unsafe(x*ν/σ^2) - (x^2 + ν^2)/(2*σ^2) + log(x/σ^2)
+
+@inline _rician_mean_cuda(ν, σ) = (ϵ = eps(typeof(ν)); return _rician_mean_cuda_unsafe(max(ν,ϵ), max(σ,ϵ)))
+@inline _rician_logpdf_cuda(x, ν, σ) = (ϵ = eps(typeof(x)); return _rician_logpdf_cuda_unsafe(max(x,ϵ), max(ν,ϵ), max(σ,ϵ)))
 
 # Define chain rule (Zygote > v"0.4.20" reads ChainRules directly)
 ChainRules.@scalar_rule(
-    _rician_logpdf_cuda(x, ν, σ),
-    @setup(c = inv(σ^2), z = c*x*ν, r = _besselix1_cuda(z) / _besselix0_cuda(z)),
+    _rician_logpdf_cuda_unsafe(x, ν, σ),
+    @setup(c = inv(σ^2), z = c*x*ν, r = _besselix1_cuda_unsafe(z) / _besselix0_cuda_unsafe(z)),
     (c * (ν * r - x) + (1/x), c * (x * r - ν), (-2 * ν * x * r - 2 * σ^2 + x^2 + ν^2) / σ^3), # assumes strictly positive values
 )
-
-# Zygote.@adjoint function _rician_logpdf_cuda(x, ν, σ)
-#     return _rician_logpdf_cuda(x, ν, σ), function (Δ)
-#         c = inv(σ^2)
-#         z = c*x*ν
-#         r = _besselix1_cuda(z) / _besselix0_cuda(z)
-#         ∂x = (c * (ν * r - x) + (1/x)) * Δ
-#         ∂ν = (c * (x * r - ν)) * Δ
-#         ∂σ = ((-2 * ν * x * r - 2 * σ^2 + x^2 + ν^2) / σ^3) * Δ
-#         return (∂x, ∂ν, ∂σ)
-#     end
-# end
 
 #=
 let
     for T in [Float32]
         vals = [one(T); T.(0.01 .+ exp.(randn(1)))]
         for x in vals, ν in vals, σ in vals
-            fx = _x -> MMDLearning._rician_logpdf_cuda(_x, ν, σ)
-            fν = _ν -> MMDLearning._rician_logpdf_cuda(x, _ν, σ)
-            fσ = _σ -> MMDLearning._rician_logpdf_cuda(x, ν, _σ)
+            fx = _x -> MMDLearning._rician_logpdf_cuda_unsafe(_x, ν, σ)
+            fν = _ν -> MMDLearning._rician_logpdf_cuda_unsafe(x, _ν, σ)
+            fσ = _σ -> MMDLearning._rician_logpdf_cuda_unsafe(x, ν, _σ)
             for (lab, f) in [(:x, fx), (:ν, fν), (:σ, fσ)]
                 δ_fd  = ChainRulesTestUtils.FiniteDifferences.central_fdm(5,1)(f, x)
                 # δ_fwd = ForwardDiff.derivative(f, x)
@@ -383,7 +374,7 @@ let
     # ∇ν = (logpdf(Rician(ν + δ, σ), x) - logpdf(Rician(ν - δ, σ), x)) / 2δ
     # ∇σ = (logpdf(Rician(ν, σ + δ), x) - logpdf(Rician(ν, σ - δ), x)) / 2δ
     ∇ν = FiniteDifferences.central_fdm(3,1)(_ν -> logpdf(Rician(_ν, σ), x), ν)
-    ∇σ = FiniteDifferences.central_fdm(3,1)(_σ -> logpdf(Rician(ν, _σ), x), σ)    
+    ∇σ = FiniteDifferences.central_fdm(3,1)(_σ -> logpdf(Rician(ν, _σ), x), σ)
     ∇δ = (∇ν = ∇ν, ∇σ = ∇σ)
     display(∇); display(values(∇δ))
     display(map((x,y) -> (x-y)/y, values(∇δ), values(∇)))

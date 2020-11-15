@@ -346,10 +346,10 @@ uuid = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
 version = "1.16.4"
 
 [[EarCut_jll]]
-deps = ["Libdl", "Pkg"]
-git-tree-sha1 = "eabac56550a7d7e0be499125673fbff560eb8b20"
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
+git-tree-sha1 = "92d8f9f208637e8d2d28c664051a00569c01493d"
 uuid = "5ae413db-bbd1-5e63-b57d-d24a61df00f5"
-version = "2.1.5+0"
+version = "2.1.5+1"
 
 [[EllipsisNotation]]
 git-tree-sha1 = "18ee049accec8763be17a933737c1dd0fdf8673a"
@@ -731,7 +731,7 @@ uuid = "d8e11817-5142-5d16-987a-aa16d5891078"
 version = "0.4.6"
 
 [[MMDLearning]]
-deps = ["ArgParse", "BSON", "BangBang", "BenchmarkTools", "BlackBoxOptim", "ChainRules", "DECAES", "DataFrames", "DataStructures", "Dates", "Distributions", "DrWatson", "EllipsisNotation", "FFTW", "Flux", "ForwardDiff", "HypothesisTests", "LaTeXStrings", "LegibleLambdas", "LinearAlgebra", "LoopVectorization", "MAT", "NNlib", "Optim", "Parameters", "Pkg", "Printf", "Random", "Reexport", "Setfield", "SpecialFunctions", "Statistics", "StatsBase", "StatsPlots", "TimerOutputs", "Transformers", "Tullio", "UnsafeArrays", "Zygote"]
+deps = ["ArgParse", "BSON", "BangBang", "BenchmarkTools", "BlackBoxOptim", "ChainRules", "DECAES", "DataFrames", "DataStructures", "Dates", "Distributions", "DrWatson", "EllipsisNotation", "FFTW", "FiniteDiff", "Flux", "ForwardDiff", "HypothesisTests", "LaTeXStrings", "LegibleLambdas", "LinearAlgebra", "LoopVectorization", "MAT", "NLopt", "NNlib", "Optim", "Parameters", "Pkg", "Printf", "PyPlot", "Random", "Reexport", "Setfield", "SpecialFunctions", "Statistics", "StatsBase", "StatsPlots", "TimerOutputs", "Transformers", "Tullio", "UnsafeArrays", "Zygote"]
 path = "MMDLearning"
 uuid = "032358f6-e4b1-47a4-bb61-f69598110e2e"
 version = "0.1.0"

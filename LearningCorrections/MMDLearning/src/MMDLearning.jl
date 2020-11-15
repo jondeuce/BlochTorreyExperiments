@@ -10,8 +10,8 @@ using Reexport
 import UnsafeArrays
 using UnsafeArrays: uview, uviews, @uviews
 
-import Pkg.TOML, BSON, DrWatson, Flux, Flux.CUDA, NNlib, Zygote, ChainRules, Transformers, BlackBoxOptim, Optim, ForwardDiff, DECAES, HypothesisTests
-export     TOML, BSON, DrWatson, Flux,      CUDA, NNlib, Zygote, ChainRules, Transformers, BlackBoxOptim, Optim, ForwardDiff, DECAES, HypothesisTests
+import Pkg.TOML, BSON, DrWatson, Flux, Flux.CUDA, NNlib, Zygote, ChainRules, Transformers, BlackBoxOptim, Optim, NLopt, FiniteDiff, ForwardDiff, DECAES, HypothesisTests
+export     TOML, BSON, DrWatson, Flux,      CUDA, NNlib, Zygote, ChainRules, Transformers, BlackBoxOptim, Optim, NLopt, FiniteDiff, ForwardDiff, DECAES, HypothesisTests
 using DrWatson: @dict, @ntuple, @pack!, @unpack
 export @dict, @ntuple, @pack!, @unpack
 
@@ -29,20 +29,39 @@ export Rician, RicianCorrector, NormalizedRicianCorrector, VectorRicianCorrector
 export correction, noiselevel, correction_and_noiselevel, corrected_signal_instance, add_correction, add_noise_instance, rician_params
 
 export PhysicsModel, ClosedForm, ToyModel
-export randn_similar, rand_similar
+export zeros_similar, ones_similar, randn_similar, rand_similar
 export physicsmodel, hasclosedform, initialize!, nsignal, nlatent, ninput, noutput, ntheta, signal_model
 export θbounds, θlower, θupper, θlabels, θasciilabels, θerror
 export sampleθprior, sampleWprior
 export sampleθ, sampleX, sampleY
 export initialize_callback, update_callback!
 
+export CVAE, KLDivUnitNormal, KLDivergence, EvidenceLowerBound, KL_and_ELBO
+export θZposterior_sampler, sampleθZposterior, θZ_sampler
+export sampleθZ, sampleXθZ, sampleX̂θZ, sampleX̂
+
 ####
 #### Global aliases
 ####
 const AbstractTensor3D{T} = AbstractArray{T,3}
+const AbstractTensor4D{T} = AbstractArray{T,4}
 const CuTensor3D{T} = CUDA.CuArray{T,3}
+const CuTensor4D{T} = CUDA.CuArray{T,4}
 
-export AbstractTensor3D, CuTensor3D
+export AbstractTensor3D, AbstractTensor4D, CuTensor3D, CuTensor4D
+
+####
+#### PyPlot
+####
+
+import PyPlot
+const plt = PyPlot
+const rcParams = plt.PyDict(plt.matplotlib."rcParams")
+
+rcParams["font.size"] = 10
+rcParams["text.usetex"] = false
+
+export PyPlot, plt, rcParams
 
 ####
 #### Includes
@@ -55,6 +74,7 @@ include("mmd.jl")
 include("physics.jl")
 include("utils.jl")
 include("layers.jl")
+include("mmdcvae.jl")
 include("models.jl")
 
 include("Ignite.jl")

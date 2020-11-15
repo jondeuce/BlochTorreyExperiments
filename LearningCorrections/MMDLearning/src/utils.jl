@@ -757,3 +757,581 @@ function plot_all_logger_losses(logger, cb_state, phys;
         handleinterrupt(e; msg = "Error making Rician signal plot")
     end
 end
+
+####
+#### Histogram
+####
+
+function fast_hist_1D(y, edges; normalize = nothing)
+    @assert !isempty(y) && length(edges) >= 2
+    _y = sort!(copy(y))
+    @assert _y[1] >= edges[1]
+    h = Histogram((edges,), zeros(Int, length(edges)-1), :left)
+    j = 1
+    @inbounds for i = 1:length(_y)
+        _yi = _y[i]
+        while _yi >= edges[j+1]
+            j += 1
+            (j+1 > length(edges)) && return h
+        end
+        h.weights[j] += 1
+    end
+    !isnothing(normalize) && (h = Plots.normalize(h, mode = normalize))
+    return h
+end
+
+function fast_hist_1D(y, edges::AbstractRange; normalize = nothing)
+    @assert length(edges) >= 2
+    lo, hi, dx, n = first(edges), last(edges), step(edges), length(edges)
+    h = Histogram((edges,), zeros(Int, n-1), :left)
+    @inbounds for (i, yi) in enumerate(y)
+        j = div(yi - lo, dx, RoundDown) + 1 |> Int
+        (1 <= j <= n-1) && (h.weights[j] += 1)
+    end
+    !isnothing(normalize) && (h = Plots.normalize(h, mode = normalize))
+    return h
+end
+
+function _fast_hist_test()
+    _make_hist(x, edges) = fit(Histogram, x, UnitWeights{Float64}(length(x)), edges; closed = :left)
+    for _ in 1:100
+        n = rand(1:10)
+        x = 100 .* rand(n)
+        edges = rand(Bool) ? [0.0; sort(100 .* rand(n))] : (rand(1:10) : rand(1:10) : 100-rand(1:10))
+        try
+            @assert fast_hist_1D(x, edges) == _make_hist(x, edges)
+        catch e
+            if e isa InterruptException
+                break
+            else
+                fast_hist_1D(x, edges).weights' |> x -> (display(x); display((first(x), last(x), sum(x))))
+                _make_hist(x, edges).weights' |> x -> (display(x); display((first(x), last(x), sum(x))))
+                rethrow(e)
+            end
+        end
+    end
+
+    x = rand(10^6)
+    for ne in 2 .^ (4:10)
+        edges = range(0, 1; length = ne)
+        @info "range (ne = $ne)"; @btime fast_hist_1D($x, $edges)
+        @info "array (ne = $ne)"; @btime fast_hist_1D($x, $(collect(edges)))
+        @info "plots (ne = $ne)"; @btime $_make_hist($x, $edges)
+    end
+end
+
+_ChiSquared(Pi::T, Qi::T) where {T} = ifelse(Pi + Qi <= eps(T), zero(T), (Pi - Qi)^2 / (2 * (Pi + Qi)))
+_KLDivergence(Pi::T, Qi::T) where {T} = ifelse(Pi <= eps(T) || Qi <= eps(T), zero(T), Pi * log(Pi / Qi))
+ChiSquared(P::Histogram, Q::Histogram) = sum(_ChiSquared.(MMDLearning.unitsum(P.weights), MMDLearning.unitsum(Q.weights)))
+KLDivergence(P::Histogram, Q::Histogram) = sum(_KLDivergence.(MMDLearning.unitsum(P.weights), MMDLearning.unitsum(Q.weights)))
+CityBlock(P::Histogram, Q::Histogram) = sum(abs, MMDLearning.unitsum(P.weights) .- MMDLearning.unitsum(Q.weights))
+Euclidean(P::Histogram, Q::Histogram) = sqrt(sum(abs2, MMDLearning.unitsum(P.weights) .- MMDLearning.unitsum(Q.weights)))
+
+function signal_histograms(Y::AbstractMatrix; nbins = nothing, edges = nothing, normalize = nothing)
+    make_edges(x) = ((lo,hi) = extrema(vec(x)); mid = median(vec(x)); length = ceil(Int, (hi - lo) * nbins / max(hi - mid, mid - lo)); return range(lo, hi; length))
+    hists = Dict{Int, Histogram}()
+    hists[0] = fast_hist_1D(vec(Y), isnothing(edges) ? make_edges(Y) : edges[0]; normalize)
+    for i in 1:size(Y,1)
+        hists[i] = fast_hist_1D(Y[i,:], isnothing(edges) ? make_edges(Y[i,:]) : edges[i]; normalize)
+    end
+    return hists
+end
+
+####
+#### Evaluating MRI model
+####
+
+function pyheatmap(
+        imdata::AbstractMatrix;
+        formatter = nothing,
+        filename = nothing,
+        clim = nothing,
+        cticks = nothing,
+        title = nothing,
+        savetypes = [".png", ".pdf"]
+    )
+
+    plt.figure(figsize = (8.0, 8.0), dpi = 150.0)
+    plt.set_cmap("plasma")
+    fig, ax = plt.subplots()
+    img = ax.imshow(imdata, aspect = "equal", interpolation = "nearest")
+    plt.title(title)
+    ax.set_axis_off()
+
+    (formatter isa Function) && (formatter = plt.matplotlib.ticker.FuncFormatter(formatter))
+    cbar = fig.colorbar(img, ticks = cticks, format = formatter, aspect = 40)
+    cbar.ax.tick_params(labelsize = 10)
+
+    !isnothing(clim) && img.set_clim(clim...)
+    !isnothing(filename) && foreach(ext -> plt.savefig(filename * ext, bbox_inches = "tight", dpi = 150.0), savetypes)
+    plt.close("all")
+
+    return nothing
+end
+
+# Soft cutoff function for MWF calculation
+soft_cutoff(x::T, x0::T = T(40e-3), w::T = T(10e-3)) where {T} = Flux.σ(-(x-x0)/w)
+
+# Compute discrete CDF
+discrete_cdf(x) = (t = sort(x; dims = 2); c = cumsum(t; dims = 2) ./ sum(t; dims = 2); return permutedims.((t, c))) # return (t[1:12:end, :]', c[1:12:end, :]')
+
+# Unzip array of structs into struct of arrays
+unzip(a) = map(x -> getfield.(a, x), fieldnames(eltype(a)))
+
+function bin_sorted(X, Y; binsize::Int)
+    X_sorted, Y_sorted = unzip(sort(collect(zip(X, Y)); by = first))
+    X_binned, Y_binned = unzip(map(is -> (mean(X_sorted[is]), mean(Y_sorted[is])), Iterators.partition(1:length(X), binsize)))
+    return X_binned, Y_binned
+end
+
+function bin_edges(X, Y, edges)
+    X_binned, Y_binned = map(1:length(edges)-1) do i
+        Is = @. edges[i] <= X <= edges[i+1]
+        mean(X[Is]), mean(Y[Is])
+    end |> unzip
+    return X_binned, Y_binned
+end
+
+function eval_mri_model(
+        phys::BiexpEPGModel,
+        models,
+        derived;
+        zslices = 24:24,
+        naverage = 10,
+        savefolder = ".",
+        savetypes = [".png"],
+        force_decaes = false,
+        force_histograms = false,
+        posterior_mode = :maxlikelihood,
+    )
+
+    DATASET = :test
+
+    inverter(Ysamples; kwargs...) = posterior_state(derived["ricegen"], derived["cvae"], phys, Ysamples; verbose = true, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
+    saveplot(p, name, folder = savefolder) = map(suf -> savefig(p, joinpath(mkpath(folder), name * suf)), savetypes)
+
+    flat_test(x) = flat_indices(x, phys.image[Symbol(DATASET, :_indices)])
+    flat_train(x) = flat_indices(x, phys.image[:train_indices])
+    flat_indices(x, indices) =
+        x isa AbstractMatrix ? (@assert(size(x,2) == length(indices)); return x) : # matrix with length(indices) columns
+        x isa AbstractTensor4D ?
+            (size(x)[1:3] == (length(indices), 1, 1)) ? permutedims(reshape(x, :, size(x,4))) : # flattened 4D array with first three dimensions (length(indices), 1, 1)
+            (size(x)[1:3] == size(phys.image[:data])[1:3]) ? permutedims(x[indices,:]) : # 4D array with first three dimensions equal to image size
+            error("4D array has wrong shape") :
+        error("x must be an $AbstractMatrix or an $AbstractTensor4D")
+
+    flat_image_to_flat_test(x) = flat_image_to_flat_indices(x, phys.image[Symbol(DATASET, :_indices)])
+    flat_image_to_flat_train(x) = flat_image_to_flat_indices(x, phys.image[:train_indices])
+    function flat_image_to_flat_indices(x, indices)
+        _x = similar(x, size(x,1), size(phys.image[:data])[1:3]...)
+        _x[:, phys.image[:mask_indices]] = x
+        return _x[:, indices]
+    end
+
+    # Compute decaes on the image data if necessary
+    if !haskey(phys.meta, :decaes)
+        @info "Recomputing T2 distribution for image data..."
+        @time t2_distributions!(phys)
+    end
+
+    mle_image_state = let
+        mle_path = "/home/jdoucette/Documents/code/MWI-MMD-CVAE/BC-AI-Showcase/mle-results-image-data/mle-image-mask-results-final-2020-11-12-T-20-52-08-298.mat"
+        mle_results = DECAES.MAT.matread(mle_path)
+        θ = mle_results["theta"] |> to32
+        ϵ = reshape(exp.(mle_results["epsilon"] |> to32), 1, :) #TODO: should save as "logepsilon"
+        ℓ = reshape(mle_results["loss"] |> to32, 1, :) # negative log-likelihood loss
+        X = signal_model(phys, θ)
+        ν, δ, Z = X, nothing, nothing
+        Y = add_noise_instance(phys, X, ϵ)
+        (; Y, θ, Z, X, δ, ϵ, ν, ℓ)
+    end
+
+    let
+        Y_test = phys.Y[DATASET] |> to32
+        Y_train = phys.Y[:train] |> to32
+        Y_train_edges = Dict([k => v.edges[1] for (k,v) in phys.meta[:histograms][:train]])
+        cvae_image_state = inverter(Y_test; maxiter = 1, mode = posterior_mode)
+
+        # Compute decaes on the image data if necessary
+        Xs = Dict{Symbol,Dict{Symbol,Any}}()
+        Xs[:Y_test]    = Dict(:label => L"Y_{TEST}",       :colour => :grey,   :data => Y_test)
+        Xs[:Y_train]   = Dict(:label => L"Y_{TRAIN}",      :colour => :black,  :data => Y_train)
+        Xs[:Yhat_mle]  = Dict(:label => L"\hat{Y}_{MLE}",  :colour => :red,    :data => flat_image_to_flat_test(mle_image_state.Y))
+        Xs[:Yhat_cvae] = Dict(:label => L"\hat{Y}_{CVAE}", :colour => :blue,   :data => add_noise_instance(derived["ricegen"], cvae_image_state.ν, cvae_image_state.ϵ))
+        Xs[:X_decaes]  = Dict(:label => L"X_{DECAES}",     :colour => :orange, :data => flat_test(phys.meta[:decaes][:t2maps][:Y]["decaycurve"]))
+        Xs[:X_mle]     = Dict(:label => L"X_{MLE}",        :colour => :green,  :data => flat_image_to_flat_test(mle_image_state.ν))
+        Xs[:X_cvae]    = Dict(:label => L"X_{CVAE}",       :colour => :purple, :data => cvae_image_state.ν)
+
+        commonkwargs = Dict{Symbol,Any}(
+            :titlefontsize => 16, :labelfontsize => 14, :xtickfontsize => 12, :ytickfontsize => 12, :legendfontsize => 11,
+            :legend => :topright,
+        )
+
+        for (key, X) in Xs
+            get!(phys.meta[:histograms], :inference, Dict{Symbol, Any}())
+            X[:hist] =
+                key === :Y_test ? phys.meta[:histograms][DATASET] :
+                key === :Y_train ? phys.meta[:histograms][:train] :
+                (force_histograms || !haskey(phys.meta[:histograms][:inference], key)) ?
+                    let
+                        @info "Computing signal histogram for $(key) data..."
+                        @time signal_histograms(Flux.cpu(X[:data]); edges = Y_train_edges, nbins = nothing)
+                    end :
+                    phys.meta[:histograms][:inference][key]
+
+            X[:t2dist] =
+                key === :Y_test ? flat_test(phys.meta[:decaes][:t2dist][:Y]) :
+                key === :Y_train ? flat_train(phys.meta[:decaes][:t2dist][:Y]) :
+                key === :X_decaes ? flat_test(phys.meta[:decaes][:t2dist][:Y]) : # decaes signal gives identical t2 distbn by definition, as it consists purely of EPG basis functions
+                let
+                    if (force_decaes || !haskey(phys.meta[:decaes][:t2maps], key))
+                        @info "Computing T2 distribution for $(key) data..."
+                        @time t2_distributions!(phys, key => convert(Matrix{Float64}, X[:data]))
+                    end
+                    flat_test(phys.meta[:decaes][:t2dist][key])
+                end
+
+            phys.meta[:histograms][:inference][key] = X[:hist] # update phys metadata
+        end
+
+        @info "Plotting histogram distances compared to $DATASET data..." # Compare histogram distances for each echo and across all-signal for test data and simulated data
+        phist = @time plot(
+            map(collect(pairs((; ChiSquared, KLDivergence, CityBlock, Euclidean)))) do (distname, dist)
+                echoes = 0:nsignal(phys)
+                Xplots = [X for (k,X) in Xs if k !== :Y_test]
+                logdists = mapreduce(hcat, Xplots) do X
+                    (i -> log10(dist(X[:hist][i], Xs[:Y_test][:hist][i]))).(echoes)
+                end
+                plot(
+                    echoes, logdists;
+                    label = permutedims(getindex.(Xplots, :label)) .* map(x -> L" ($d_0$ = %$(round(x; sigdigits = 3)))", logdists[1:1,:]),
+                    line = (2, permutedims(getindex.(Xplots, :colour))), title = string(distname),
+                    commonkwargs...,
+                )
+            end...
+        )
+        saveplot(phist, "signal-hist-distances")
+
+        @info "Plotting T2 distributions compared to $DATASET data..."
+        pt2dist = @time let
+            # Xplots = [X for (k,X) in Xs if k !== :X_decaes]
+            Xplots = [Xs[k] for k ∈ (:Y_test, :Y_train, :Yhat_mle, :Yhat_cvae)] #TODO
+            T2dists = mapreduce(X -> mean(X[:t2dist]; dims = 2), hcat, Xplots)
+            plot(
+                1000 .* phys.meta[:decaes][:t2maps][:Y]["t2times"], T2dists;
+                label = permutedims(getindex.(Xplots, :label)),
+                line = (2, permutedims(getindex.(Xplots, :colour))),
+                xscale = :log10,
+                xlabel = L"$T_2$ [ms]",
+                ylabel = L"$T_2$ Amplitude [a.u.]",
+                # title = L"$T_2$-distributions", #TODO
+                commonkwargs...,
+            )
+        end
+        saveplot(pt2dist, "decaes-T2-distbn")
+
+        @info "Plotting T2 distribution differences compared to $DATASET data..."
+        pt2diff = @time let
+            # Xplots = [X for (k,X) in Xs if k ∉ (:X_decaes, :Y_test)]
+            Xplots = [Xs[k] for k ∈ (:Y_train, :Yhat_mle, :Yhat_cvae)] #TODO
+            T2diffs = mapreduce(X -> mean(X[:t2dist]; dims = 2) .- mean(Xs[:Y_test][:t2dist]; dims = 2), hcat, Xplots)
+            logL2 = log10.(sum(abs2, T2diffs; dims = 1))
+            plot(
+                1000 .* phys.meta[:decaes][:t2maps][:Y]["t2times"], T2diffs;
+                label = permutedims(getindex.(Xplots, :label)) .* L" $-$ " .* Xs[:Y_test][:label], # .* map(x -> L" ($\log_{10}\ell_2$ = %$(round(x; sigdigits = 3)))", logL2), #TODO
+                line = (2, permutedims(getindex.(Xplots, :colour))),
+                ylim = (-0.06, 0.1), #TODO
+                xscale = :log10,
+                xlabel = L"$T_2$ [ms]",
+                # ylabel = L"$T_2$ Amplitude [a.u.]", #TODO
+                # title = L"$T_2$-distribution Differences", #TODO
+                commonkwargs...,
+            )
+        end
+        saveplot(pt2diff, "decaes-T2-distbn-diff")
+
+        @info "Plotting signal distributions compared to $DATASET data..."
+        psignaldist = @time let
+            # Xplots = [X for (k,X) in Xs if k !== :X_decaes]
+            Xplots = [Xs[k] for k ∈ (:Y_test, :Y_train, :Yhat_mle, :Yhat_cvae)] #TODO
+            p = plot(;
+                xlabel = "Signal magnitude [a.u.]",
+                ylabel = "Density [a.u.]",
+                commonkwargs...
+            )
+            for X in Xplots
+                plot!(p, normalize(X[:hist][0]); alpha = 0.1, label = X[:label], line = (2, X[:colour]))
+            end
+            p
+        end
+        saveplot(psignaldist, "decaes-signal-distbn")
+
+        @info "Plotting signal distribution differences compared to $DATASET data..."
+        psignaldiff = @time let
+            # Xplots = [X for (k,X) in Xs if k ∉ (:X_decaes, :Y_test)]
+            Xplots = [Xs[k] for k ∈ (:Y_train, :Yhat_mle, :Yhat_cvae)] #TODO
+            histdiffs = mapreduce(X -> unitsum(X[:hist][0].weights) .- unitsum(Xs[:Y_test][:hist][0].weights), hcat, Xplots)
+            plot(
+                Xs[:Y_test][:hist][0].edges[1][2:end], histdiffs;
+                label = permutedims(getindex.(Xplots, :label)) .* L" $-$ " .* Xs[:Y_test][:label],
+                series = :steppost, line = (2, permutedims(getindex.(Xplots, :colour))),
+                xlabel = "Signal magnitude [a.u.]",
+                ylim = (-0.002, 0.0035), #TODO
+                # ylabel = "Density [a.u.]", #TODO
+                commonkwargs...,
+            )
+        end
+        saveplot(psignaldiff, "decaes-signal-distbn-diff")
+
+        saveplot(plot(pt2dist, pt2diff; layout = (1,2)), "decaes-T2-distbn-and-diff")
+        saveplot(plot(psignaldist, psignaldiff, pt2dist, pt2diff; layout = (2,2)), "decaes-distbn-ensemble")
+
+        @info "Plotting signal distributions compared to $DATASET data..." # Compare per-echo and all-signal cdf's of test data and simulated data
+        pcdf = plot(; commonkwargs...)
+        @time for X in [X for (k,X) in Xs if k ∈ (:Y_test, :Yhat_cvae)]
+            plot!(pcdf, discrete_cdf(Flux.cpu(X[:data]))...; line = (1, X[:colour]), legend = :none)
+            plot!(pcdf, discrete_cdf(reshape(Flux.cpu(X[:data]),1,:))...; line = (1, X[:colour]), legend = :none)
+        end
+        saveplot(pcdf, "signal-cdf-compare")
+    end
+
+    function θ_derived(θ)
+        alpha, eta, delta1, delta2 = θ[1,:], θ[2,:], θ[3,:], θ[4,:]
+        _, T2short, T2long, Ashort, Along = θcanonical(phys, θ)
+        mwf = @. Ashort * soft_cutoff(T2short) + Along * soft_cutoff(T2long)
+        logT2short, logT2long = log.(T2short), log.(T2long)
+        logT2bar = @. Ashort * logT2short + Along * logT2long
+        T2short, T2long, T2bar = exp.(logT2short), exp.(logT2long), exp.(logT2bar)
+        map(x -> convert(Vector{Float64}, x), (; alpha, eta, delta1, delta2, Ashort, Along, logT2short, logT2long, logT2bar, T2short, T2long, T2bar, mwf))
+    end
+
+    function infer_θ_derived(Y)
+        @info "Computing named tuple of θ values, averaging over $naverage samples..."
+        θ = @time map(_ -> θ_derived(inverter(Y; maxiter = 1, mode = posterior_mode).θ), 1:naverage)
+        θ = map((θs...,) -> mean(θs), θ...) # mean over each named tuple field
+    end
+
+    θ_derived_labels = [θlabels(phys); L"A_{short}"; L"A_{long}"; L"\log T_{2,short}"; L"\log T_{2,long}"; L"\log \bar{T}_2"; L"T_{2,short}"; L"T_{2,long}"; L"\bar{T}_2"; L"MWF"]
+    θ_derived_bounds = [θbounds(phys); (0.0, 1.0); (0.0, 1.0); log.(phys.T2bd); log.(phys.T2bd); log.(phys.T2bd); (0.0, 0.1); (0.0, 1.0); (0.0, 0.25); (0.0, 0.4)]
+
+    let
+        sim_data = DECAES.MAT.matread("mle-results-simulated-data/ignite-cvae-2020-11-08-T-10-08-39-544/mle-simulated-mask-data-2020-11-11-T-22-28-30-163.mat")
+        mle_res = DECAES.MAT.matread("mle-results-simulated-data/ignite-cvae-2020-11-08-T-10-08-39-544/mle-simulated-mask-results-final-2020-11-12-T-06-33-50-335.mat")
+
+        Ytrue, X̂true, Xtrue, θtrue, Ztrue = getindex.(Ref(sim_data), ("Y", "Xhat", "X", "theta", "Z"))
+        θtrue_derived = θtrue |> θ_derived
+        θmle_derived = mle_res["theta"] |> θ_derived
+
+        @info "Computing DECAES inference error..."
+        if (force_decaes || !haskey(phys.meta[:decaes][:t2maps], :Yhat_cvae_decaes))
+            @time t2_distributions!(phys, :Yhat_cvae_decaes => convert(Matrix{Float64}, X̂true))
+        end
+        @info 0, :decaes, [
+            L"\alpha" => mean(abs, θtrue_derived.alpha - vec(phys.meta[:decaes][:t2maps][:Yhat_cvae_decaes]["alpha"])),
+            L"\bar{T}_2" => mean(abs, θtrue_derived.T2bar - vec(phys.meta[:decaes][:t2maps][:Yhat_cvae_decaes]["ggm"])),
+            L"T_{2,short}" => mean(abs, filter(!isnan, θtrue_derived.T2short - vec(phys.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["sgm"]))), # T2short is set to NaN if all T2 components within SPWin are zero; be generous with error measurement
+            L"T_{2,long}" => mean(abs, filter(!isnan, θtrue_derived.T2long - vec(phys.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["mgm"]))), # T2long is set to NaN if all T2 components within MPWin are zero; be generous with error measurement
+            L"MWF" => mean(abs, filter(!isnan, θtrue_derived.mwf - vec(phys.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["sfr"]))),
+        ]
+
+        @info "Computing MLE inference error..."
+        @info 0, :mle, [lab =>round(mean(abs, θt - θi); sigdigits = 3) for (lab, θt, θi) in zip(θ_derived_labels, θtrue_derived, θmle_derived)]
+
+        for ((mode, maxiter)) in Iterators.product((:mean,), [1,2,5,10,25])
+            inf_time = @elapsed cvae_state = inverter(X̂true |> to32; maxiter, mode, verbose = false)
+            θcvae_derived = cvae_state.θ |> θ_derived
+            @info maxiter, mode, inf_time, [lab => round(mean(abs, θt - θi); sigdigits = 3) for (lab, θt, θi) in zip(θ_derived_labels, θtrue_derived, θcvae_derived)]
+        end
+    end
+
+    # Heatmaps
+    Y = phys.image[:data][:,:,zslices,:] # (nx, ny, nslice, nTE)
+    Islices = findall(!isnan, Y[..,1]) # entries within Y mask
+    Imaskslices = filter(I -> I[3] ∈ zslices, phys.image[:mask_indices])
+    makemaps(x) = (out = fill(NaN, size(Y)[1:3]); out[Islices] .= Flux.cpu(x); return permutedims(out, (2,1,3)))
+
+    θcvae = infer_θ_derived(permutedims(Y[Islices,:]) |> to32)
+    θmle = θ_derived(flat_image_to_flat_indices(mle_image_state.θ, Imaskslices))
+
+    # DECAES heatmaps
+    @time let
+        θdecaes = (
+            alpha   = (phys.meta[:decaes][:t2maps][:Y]["alpha"], L"\alpha",      (50.0, 180.0)),
+            T2bar   = (phys.meta[:decaes][:t2maps][:Y]["ggm"],   L"\bar{T}_2",   (0.0, 0.25)),
+            T2short = (phys.meta[:decaes][:t2parts][:Y]["sgm"],  L"T_{2,short}", (0.0, 0.1)),
+            T2long  = (phys.meta[:decaes][:t2parts][:Y]["mgm"],  L"T_{2,long}",  (0.0, 1.0)),
+            mwf     = (phys.meta[:decaes][:t2parts][:Y]["sfr"],  L"MWF",         (0.0, 0.4)),
+        )
+        for (θname, (θk, θlabel, θbd)) in pairs(θdecaes), (j,zj) in enumerate(zslices)
+            pyheatmap(permutedims(θk[:,:,zj]); title = θlabel * " (slice $zj)", clim = θbd, filename = joinpath(mkpath(joinpath(savefolder, "decaes")), "$θname-$zj"), savetypes)
+        end
+    end
+
+    # CVAE and MLE heatmaps
+    for (θfolder, θ) ∈ [:cvae => θcvae, :mle => θmle]
+        @info "Plotting heatmap plots for mean θ values..."
+        @time let
+            for (k, ((θname, θk), θlabel, θbd)) in enumerate(zip(pairs(θ), θ_derived_labels, θ_derived_bounds))
+                θmaps = makemaps(θk)
+                for (j,zj) in enumerate(zslices)
+                    pyheatmap(θmaps[:,:,j]; title = θlabel * " (slice $zj)", clim = θbd, filename = joinpath(mkpath(joinpath(savefolder, string(θfolder))), "$θname-$zj"), savetypes)
+                end
+            end
+        end
+
+        @info "Plotting T2-distribution over test data..."
+        @time let
+            T2 = 1000 .* vcat(θ.T2short, θ.T2long)
+            A = vcat(θ.Ashort, θ.Along)
+            p = plot(
+                # bin_edges(T2, A, exp.(range(log.(phys.T2bd)...; length = 100)))...;
+                bin_sorted(T2, A; binsize = 100)...;
+                label = "T2 Distribution", ylabel = "T2 Amplitude [a.u.]", xlabel = "T2 [ms]",
+                xscale = :log10, xlim = 1000 .* phys.T2bd, xticks = 10 .^ (0.5:0.25:3),
+            )
+            saveplot(p, "T2distbn-$(zslices[1])-$(zslices[end])", joinpath(savefolder, string(θfolder)))
+        end
+    end
+end
+
+function mle_mri_model(
+        phys::BiexpEPGModel,
+        models,
+        derived,
+        ::Val{alg}    = Val(:LD_SLSQP), # Rough algorithm ranking: :LD_SLSQP, :LD_CCSAQ, :LD_LBFGS, :LD_AUGLAG, :LD_MMA
+        ::Val{fdtype} = Val(:central);
+        data_source   = :image, # One of :image, :simulated
+        data_subset   = :mask,  # One of :mask, :val, :train, :test
+        batch_size    = 128 * Threads.nthreads(),
+        initial_iter  = 1000,
+    ) where {alg, fdtype}
+
+    @assert data_source ∈ (:image, :simulated)
+    @assert data_subset ∈ (:mask, :val, :train, :test)
+
+    arr64(x::AbstractArray{T,N}) where {T,N} = convert(Array{Float64,N}, x)
+
+    # MLE for whole image of simulated data
+    Y, Yc = let
+        image_ind  = phys.image[Symbol(data_subset, :_indices)]
+        image_data = phys.image[:data][image_ind,:] |> to32 |> permutedims
+        if data_source === :image
+            DECAES.MAT.matwrite("mle-$data_source-$data_subset-data-$(getnow()).mat", Dict{String,Any}("Y" => arr64(image_data)))
+            arr64(image_data), image_data
+        else # data_source === :simulated
+            X, θ, Z = sampleXθZ(derived["cvae"], phys, image_data; recover_θ = true, recover_Z = true)
+            X̂       = sampleX̂(derived["ricegen"], X, Z)
+            DECAES.MAT.matwrite("mle-$data_source-$data_subset-data-$(getnow()).mat", Dict{String,Any}("X" => arr64(X), "theta" => arr64(θ), "Z" => arr64(Z), "Xhat" => arr64(X̂), "Y" => arr64(image_data)))
+            arr64(X̂), X̂
+        end
+    end
+
+    initial_guess = posterior_state(
+        derived["ricegen"],
+        derived["cvae"],
+        phys,
+        Yc;
+        miniter = 1,
+        maxiter = initial_iter,
+        alpha   = 0.0,
+        verbose = true,
+        mode    = :maxlikelihood,
+    )
+    initial_guess = map(arr64, initial_guess)
+
+    function f(x)
+        @inbounds begin
+            work     = work_spaces[Threads.threadid()]
+            work.θ  .= x[1:end-1]
+            work.ϵ[] = exp(x[end])
+            X        = _signal_model(phys, work.θ)
+            Σ        = zero(eltype(x))
+            for i in eachindex(X)
+                Σ   -= _rician_logpdf_cuda(work.Y[i], X[i], work.ϵ[])
+            end
+            return Σ # Rician negative log likelihood
+        end
+    end
+
+    function fg!(x, g)
+        if length(g) > 0
+            FiniteDiff.finite_difference_gradient!(g, f, x, Val{fdtype})
+        end
+        return f(x)
+    end
+
+    logϵlo, logϵhi = log.(extrema(vec(initial_guess.ϵ))) .|> Float64
+    initial_logϵ   = log.(vec(mean(initial_guess.ϵ; dims = 1))) |> arr64
+    lower_bounds   = vcat(θlower(phys), [round(logϵlo, RoundDown)]) |> arr64
+    upper_bounds   = vcat(θupper(phys), [round(logϵhi, RoundUp)]) |> arr64
+
+    work_spaces = map(1:Threads.nthreads()) do _
+        (
+            Y   = zeros(nsignal(phys)),
+            θ   = zeros(ntheta(phys)),
+            ϵ   = Ref(0.0),
+            x0  = zeros(ntheta(phys) + 1),
+            opt = let
+                opt = NLopt.Opt(alg, ntheta(phys) + 1)
+                opt.min_objective = fg!
+                opt.lower_bounds  = lower_bounds
+                opt.upper_bounds  = upper_bounds
+                opt.xtol_abs      = 1e-6
+                opt.ftol_abs      = 1e-6
+                opt.xtol_rel      = 1e-4
+                opt.ftol_rel      = 1e-4
+                opt.maxeval       = 100
+                opt.maxtime       = 1.0
+                opt
+            end,
+        )
+    end
+
+    results = (
+        theta     = fill(NaN, ntheta(phys), size(Y,2)),
+        epsilon   = fill(NaN, size(Y,2)),
+        loss      = fill(NaN, size(Y,2)),
+        numevals  = fill(NaN, size(Y,2)),
+        solvetime = fill(NaN, size(Y,2)),
+    )
+
+    start_time = time()
+    batches = Iterators.partition(1:size(Y,2), batch_size)
+    LinearAlgebra.BLAS.set_num_threads(1) # Prevent BLAS from stealing julia threads
+
+    @time for (batchnum, batch) in enumerate(batches)
+        batchtime = @elapsed Threads.@sync for j in batch
+            Threads.@spawn @inbounds begin
+                work = work_spaces[Threads.threadid()]
+                work.Y              .= Y[:,j]
+                work.x0[1:end-1]    .= initial_guess.θ[:,j]
+                work.x0[end]         = initial_logϵ[j]
+                solvetime            = @elapsed (minf, minx, ret) = NLopt.optimize(work.opt, work.x0)
+                results.theta[:,j]  .= minx[1:end-1]
+                results.epsilon[j]   = minx[end]
+                results.loss[j]      = minf
+                results.numevals[j]  = work.opt.numevals
+                results.solvetime[j] = solvetime
+            end
+        end
+
+        # Checkpoint results
+        elapsed_time   = time() - start_time
+        remaining_time = (elapsed_time / batchnum) * (length(batches) - batchnum)
+        mle_per_second = batch[end] / elapsed_time
+        savetime       = @elapsed DECAES.MAT.matwrite("mle-$data_source-$data_subset-results-checkpoint-$(getnow()).mat", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # checkpoint progress
+        @info "$batchnum / $(length(batches))" *
+            " -- batch: $(DECAES.pretty_time(batchtime))" *
+            " -- elapsed: $(DECAES.pretty_time(elapsed_time))" *
+            " -- remaining: $(DECAES.pretty_time(remaining_time))" *
+            " -- save: $(round(savetime; digits = 2))s" *
+            " -- rate: $(round(mle_per_second; digits = 2))Hz" *
+            " -- initial loss: $(round(mean(initial_guess.ℓ[1,1:batch[end]]); digits = 2))" *
+            " -- loss: $(round(mean(results.loss[1:batch[end]]); digits = 2))"
+    end
+
+    DECAES.MAT.matwrite("mle-$data_source-$data_subset-results-final-$(getnow()).mat", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # save final results
+    LinearAlgebra.BLAS.set_num_threads(Threads.nthreads()) # Reset BLAS threads
+
+    return initial_guess, results
+end

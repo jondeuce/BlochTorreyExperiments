@@ -13,12 +13,12 @@ const JL_ZERO_SUBNORMALS = Ref(true)
 const JL_WANDB_LOGGER    = Ref(false)
 
 todevice(x) = Flux.cpu(x)
-to32(x) = x |> Flux.f32 |> todevice
-to64(x) = x |> Flux.f64 |> todevice
+to32(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float32}, xi) : xi, todevice(x))
+to64(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float64}, xi) : xi, todevice(x))
 
 to_similar(x::AbstractArray, y) = to_similar(typeof(x), y)
-to_similar(::Type{<:AbstractArray}, y) = Flux.cpu(y)
-to_similar(::Type{<:CUDA.CuArray}, y) = Flux.gpu(y)
+to_similar(::Type{<:AbstractArray{T}}, y) where {T} = convert(Array{T}, y)
+to_similar(::Type{<:CUDA.CuArray{T}}, y) where {T} = convert(CUDA.CuArray{T}, y)
 
 function init()
     JL_CUDA_FUNCTIONAL[] = get(ENV, "JL_DISABLE_GPU", "0") != "1" && CUDA.functional()
