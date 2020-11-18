@@ -104,8 +104,8 @@ end
 @inline _rician_mean_cuda_unsafe(ν, σ) = (tmp = σ * _laguerre½_cuda_unsafe(-ν^2 / 2σ^2); μ = sqrt(oftype(tmp, π)/2) * tmp; return μ)
 @inline _rician_logpdf_cuda_unsafe(x, ν, σ) = _logbesseli0_cuda_unsafe(x*ν/σ^2) - (x^2 + ν^2)/(2*σ^2) + log(x/σ^2)
 
-@inline _rician_mean_cuda(ν, σ) = (ϵ = eps(typeof(ν)); return _rician_mean_cuda_unsafe(max(ν,ϵ), max(σ,ϵ)))
-@inline _rician_logpdf_cuda(x, ν, σ) = (ϵ = eps(typeof(x)); return _rician_logpdf_cuda_unsafe(max(x,ϵ), max(ν,ϵ), max(σ,ϵ)))
+@inline _rician_mean_cuda(ν, σ) = (ϵ = eps(typeof(float(ν))); return _rician_mean_cuda_unsafe(max(ν,ϵ), max(σ,ϵ)))
+@inline _rician_logpdf_cuda(x, ν, σ) = (ϵ = eps(typeof(float(x))); return _rician_logpdf_cuda_unsafe(max(x,ϵ), max(ν,ϵ), max(σ,ϵ)))
 
 # Define chain rule (Zygote > v"0.4.20" reads ChainRules directly)
 ChainRules.@scalar_rule(

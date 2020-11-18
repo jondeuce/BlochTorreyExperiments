@@ -5,7 +5,7 @@ import ..TOML
 import ..Flux
 import ..CUDA
 
-export to32, to64, todevice, to_similar, @j2p
+export todevice, to32, to64, @j2p
 
 const JL_CUDA_FUNCTIONAL = Ref(false)
 const JL_CUDA_DEVICE     = Ref(-1)
@@ -15,10 +15,6 @@ const JL_WANDB_LOGGER    = Ref(false)
 todevice(x) = Flux.cpu(x)
 to32(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float32}, xi) : xi, todevice(x))
 to64(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float64}, xi) : xi, todevice(x))
-
-to_similar(x::AbstractArray, y) = to_similar(typeof(x), y)
-to_similar(::Type{<:AbstractArray{T}}, y) where {T} = convert(Array{T}, y)
-to_similar(::Type{<:CUDA.CuArray{T}}, y) where {T} = convert(CUDA.CuArray{T}, y)
 
 function init()
     JL_CUDA_FUNCTIONAL[] = get(ENV, "JL_DISABLE_GPU", "0") != "1" && CUDA.functional()
@@ -174,11 +170,13 @@ nestedaccess(d::AbstractDict, args...) = isempty(args) ? d : nestedaccess(d[firs
 nestedaccess(d) = d
 
 # Save and print settings file
-function save_and_print(settings::AbstractDict; outpath, filename)
-    @assert endswith(filename, ".toml")
-    !isdir(outpath) && mkpath(outpath)
-    open(joinpath(outpath, filename); write = true) do io
-        TOML.print(io, settings)
+function save_and_print(settings::AbstractDict; filename = nothing)
+    if !isnothing(filename)
+        @assert endswith(filename, ".toml")
+        mkpath(dirname(filename))
+        open(filename; write = true) do io
+            TOML.print(io, settings)
+        end
     end
     TOML.print(stdout, settings)
     return settings

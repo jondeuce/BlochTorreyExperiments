@@ -14,8 +14,6 @@ function make_mmd_cvae_models(phys::PhysicsModel{Float32}, settings::Dict{String
     get!(models, "genatr") do
         hdim = settings["arch"]["genatr"]["hdim"]::Int
         nhidden = settings["arch"]["genatr"]["nhidden"]::Int
-        skip = settings["arch"]["genatr"]["skip"]::Bool
-        layernorm = settings["arch"]["genatr"]["layernorm"]::Bool
         leakyslope = settings["arch"]["genatr"]["leakyslope"]::Float64
         maxcorr = settings["arch"]["genatr"]["maxcorr"]::Float64
         noisebounds = settings["arch"]["genatr"]["noisebounds"]::Vector{Float64}
@@ -27,47 +25,43 @@ function make_mmd_cvae_models(phys::PhysicsModel{Float32}, settings::Dict{String
             RiceGenType <: LatentVectorRicianNoiseCorrector ? MMDLearning.CatScale([(noisebounds...,)], [n]) :
             error("Unsupported corrector type: $RiceGenType")
 
-        # Generic nin => nout MLP with output scaling
-        Flux.Chain(
-            MMDLearning.MLP(nin => nout, nhidden, hdim, σinner, tanh; skip, layernorm)...,
-            OutputScale,
-        ) |> to32
-
-        # #TODO: only works for LatentVectorRicianNoiseCorrector
-        # @assert nin == k == nlatent(RiceGenType) && nout == n
+        # # Generic nin => nout MLP with output scaling
         # Flux.Chain(
-        #     # position encoding
-        #     Z -> vcat(Z, zeros_similar(Z, 1, size(Z,2))),   # [k x b] -> [(k+1) x b]
-        #     Z -> repeat(Z, n, 1),                           # [(k+1) x b] -> [(k+1)*n x b]
-        #     NotTrainable(Flux.Diagonal(ones((k+1)*n), vec(vcat(zeros(k, n), uniform_range(n)')))),
-        #     Z -> reshape(Z, k+1, :),                        # [(k+1)*n x b] -> [(k+1) x n*b]
-        #     # position-wise mlp
-        #     MMDLearning.MLP(k+1 => 1, nhidden, hdim, σinner, tanh; skip, layernorm)..., # [(k+1) x n*b] -> [1 x n*b]
-        #     # output scaling
-        #     Z -> reshape(Z, n, :),                          # [1 x n*b] -> [n x b]
+        #     MMDLearning.MLP(nin => nout, nhidden, hdim, σinner, tanh)...,
         #     OutputScale,
         # ) |> to32
+
+        #TODO: only works for LatentVectorRicianNoiseCorrector
+        @assert nin == k == nlatent(RiceGenType) && nout == n
+        Flux.Chain(
+            # position encoding
+            Z -> vcat(Z, zeros_similar(Z, 1, size(Z,2))),   # [k x b] -> [(k+1) x b]
+            Z -> repeat(Z, n, 1),                           # [(k+1) x b] -> [(k+1)*n x b]
+            NotTrainable(Flux.Diagonal(ones((k+1)*n), vec(vcat(zeros(k, n), uniform_range(n)')))),
+            Z -> reshape(Z, k+1, :),                        # [(k+1)*n x b] -> [(k+1) x n*b]
+            # position-wise mlp
+            MMDLearning.MLP(k+1 => 1, nhidden, hdim, σinner, tanh)..., # [(k+1) x n*b] -> [1 x n*b]
+            # output scaling
+            Z -> reshape(Z, n, :),                          # [1 x n*b] -> [n x b]
+            OutputScale,
+        ) |> to32
     end
 
     # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
     get!(derived, "ricegen") do
         R = RiceGenType(models["genatr"])
-        slicefirst(X) = X[1:1,..]
-        maxsignal(X) = maximum(X; dims = 1)
-        meansignal(X) = mean(X; dims = 1)
-        NormalizedRicianCorrector(R, maxsignal, meansignal) #TODO: normalize by mean? sum? maximum? first echo?
+        normalizer = X -> maximum(X; dims = 1) #TODO: normalize by mean? sum? maximum? first echo?
+        noisescale = X -> mean(X; dims = 1) #TODO: relative to mean? nothing?
+        NormalizedRicianCorrector(R, normalizer, noisescale)
     end
 
     # Encoders
     get!(models, "enc1") do
         hdim = settings["arch"]["enc1"]["hdim"]::Int
         nhidden = settings["arch"]["enc1"]["nhidden"]::Int
-        skip = settings["arch"]["enc1"]["skip"]::Bool
-        layernorm = settings["arch"]["enc1"]["layernorm"]::Bool
         psize = settings["arch"]["enc1"]["psize"]::Int
         head = settings["arch"]["enc1"]["head"]::Int
-        MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity; skip, layernorm) |> to32
-        # RESCNN(n => 2*nz, nhidden, hdim, Flux.relu, identity; skip) |> to32
+        MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity) |> to32
         # Transformers.Stack(
         #     Transformers.@nntopo( X : X => H : H => μr ),
         #     TransformerEncoder(; n, psize, head, hdim, nhidden),
@@ -78,12 +72,9 @@ function make_mmd_cvae_models(phys::PhysicsModel{Float32}, settings::Dict{String
     get!(models, "enc2") do
         hdim = settings["arch"]["enc2"]["hdim"]::Int
         nhidden = settings["arch"]["enc2"]["nhidden"]::Int
-        skip = settings["arch"]["enc2"]["skip"]::Bool
-        layernorm = settings["arch"]["enc2"]["layernorm"]::Bool
         psize = settings["arch"]["enc2"]["psize"]::Int
         head = settings["arch"]["enc2"]["head"]::Int
-        MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity; skip, layernorm) |> to32
-        # RESCNN(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity; skip) |> to32
+        MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity) |> to32
         # Transformers.Stack(
         #     Transformers.@nntopo( (X,θ,Z) : X => H : (H,θ,Z) => HθZ : HθZ => μq ),
         #     TransformerEncoder(; n, psize, head, hdim, nhidden),
@@ -96,11 +87,8 @@ function make_mmd_cvae_models(phys::PhysicsModel{Float32}, settings::Dict{String
     get!(models, "dec") do
         hdim = settings["arch"]["dec"]["hdim"]::Int
         nhidden = settings["arch"]["dec"]["nhidden"]::Int
-        skip = settings["arch"]["dec"]["skip"]::Bool
-        layernorm = settings["arch"]["dec"]["layernorm"]::Bool
         Flux.Chain(
-            MMDLearning.MLP(n + nz => 2*(nθ + k), nhidden, hdim, Flux.relu, identity; skip, layernorm)...,
-            # RESCNN(n + nz => 2*(nθ + k), nhidden, hdim, Flux.relu, identity; skip)...,
+            MMDLearning.MLP(n + nz => 2*(nθ + k), nhidden, hdim, Flux.relu, identity)...,
             MMDLearning.CatScale(eltype(θbd)[θbd; (-1, 1)], [ones(Int, nθ); k + nθ + k]),
         ) |> to32
     end
@@ -109,14 +97,11 @@ function make_mmd_cvae_models(phys::PhysicsModel{Float32}, settings::Dict{String
     get!(models, "discrim") do
         hdim = settings["arch"]["discrim"]["hdim"]::Int
         nhidden = settings["arch"]["discrim"]["nhidden"]::Int
-        skip = settings["arch"]["discrim"]["skip"]::Bool
-        layernorm = settings["arch"]["discrim"]["layernorm"]::Bool
         dropout = settings["arch"]["discrim"]["dropout"]::Float64
         chunk = settings["train"]["transform"]["chunk"]::Int
         augsizes = Dict{String,Int}(["gradient" => n-1, "laplacian" => n-2, "encoderspace" => nz, "residuals" => n, "fftcat" => 2*(n÷2 + 1), "fftsplit" => 2*(n÷2 + 1)])
         nin = min(n, chunk) + sum((s -> ifelse(settings["train"]["augment"][s]::Bool, min(augsizes[s], chunk), 0)).(keys(augsizes)))
-        MMDLearning.MLP(nin => 1, nhidden, hdim, Flux.relu, Flux.sigmoid; skip, layernorm, dropout) |> to32
-        # RESCNN(n => 1, nhidden, hdim, Flux.relu, Flux.sigmoid; skip) |> to32
+        MMDLearning.MLP(nin => 1, nhidden, hdim, Flux.relu, Flux.sigmoid; dropout) |> to32
     end
 
     # CVAE
@@ -220,12 +205,12 @@ function mv_normal_parameters(cvae::CVAE, Y, θ, Z)
     return (; μr0, σr, μq0, σq, μx0, σx)
 end
 
-function KL_and_ELBO(cvae::CVAE{n,nθ,k,nz}, Y, θ, Z; recover_Z::Bool) where {n,nθ,k,nz}
+function KL_and_ELBO(cvae::CVAE{n,nθ,k,nz}, Y, θ, Z; marginalize_Z::Bool) where {n,nθ,k,nz}
     @unpack μr0, σr, μq0, σq, μx0, σx = mv_normal_parameters(cvae, Y, θ, Z)
     KLDiv = KLDivergence(μq0, σq, μr0, σr)
-    ELBO = recover_Z ?
-        EvidenceLowerBound(vcat(θ,Z), μx0, σx) :
-        EvidenceLowerBound(θ, μx0[1:nθ,..], σx[1:nθ,..])
+    ELBO = marginalize_Z ?
+        EvidenceLowerBound(θ, μx0[1:nθ,..], σx[1:nθ,..]) :
+        EvidenceLowerBound(vcat(θ,Z), μx0, σx)
     return (; KLDiv, ELBO)
 end
 
@@ -296,7 +281,7 @@ function sampleX̂(rice::RicianCorrector, X, Z, ninstances = nothing)
 end
 
 function NegLogLikelihood(rice::RicianCorrector, Y, μ0, σ)
-    if rice isa MMDLearning.NormalizedRicianCorrector
+    if typeof(rice) <: NormalizedRicianCorrector && !isnothing(rice.normalizer)
         Σμ = rice.normalizer(MMDLearning._rician_mean_cuda.(μ0, σ))
         μ0, σ = (μ0 ./ Σμ), (σ ./ Σμ)
     end

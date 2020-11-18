@@ -2,13 +2,23 @@
 #### Math utils
 ####
 
+arr32(x::AbstractArray{T,N}) where {T,N} = convert(Array{Float32,N}, Flux.cpu(x))
+arr64(x::AbstractArray{T,N}) where {T,N} = convert(Array{Float64,N}, Flux.cpu(x))
+
+arr_similar(x::AbstractArray, y) = arr_similar(typeof(x), y)
+arr_similar(::Type{<:AbstractArray{T}}, y) where {T} = convert(Array{T}, y)
+arr_similar(::Type{<:CUDA.CuArray{T}}, y) where {T} = convert(CUDA.CuArray{T}, y)
+
 # rand_similar and randn_similar
 for f in [:zeros, :ones, :rand, :randn]
     f_similar = Symbol(f, :_similar)
     @eval $f_similar(x::AbstractArray, sz...) = $f_similar(typeof(x), sz...)
     @eval $f_similar(::Type{<:AbstractArray{T}}, sz...) where {T} = Zygote.ignore(() -> Base.$f(T, sz...)) # fallback
     @eval $f_similar(::Type{<:CUDA.CuArray{T}}, sz...) where {T} = Zygote.ignore(() -> CUDA.$f(T, sz...)) # CUDA
-end    
+end
+
+# Soft cutoff function
+soft_cutoff(x, x0, w) = Flux.σ(-(x-x0)/w)
 
 normalized_range(N::Int) = N <= 1 ? zeros(N) : √(3*(N-1)/(N+1)) |> a -> range(-a,a,length=N) |> collect # mean zero and (uncorrected) std one
 uniform_range(N::Int) = N <= 1 ? zeros(N) : range(-1,1,length=N) |> collect

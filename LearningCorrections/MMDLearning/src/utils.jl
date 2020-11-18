@@ -574,13 +574,15 @@ function plot_rician_model(logger, cb_state, phys; bandwidths = nothing, showplo
     @timeit "model plot" try
         @unpack δθ, ϵθ = cb_state
         _subplots = []
-        push!(_subplots,
-            plot(
-                plot(mean(δθ; dims = 2); yerr = std(δθ; dims = 2), label = L"signal correction $g_\delta(X)$", c = :red, title = "model outputs vs. data channel"),
-                plot(mean(ϵθ; dims = 2); yerr = std(ϵθ; dims = 2), label = L"noise amplitude $\exp(g_\epsilon(X))$", c = :blue);
+        let
+            δmid, δlo, δhi = eachrow(δθ) |> δ -> (mean.(δ), quantile.(δ, 0.25), quantile.(δ, 0.75))
+            ϵmid, ϵlo, ϵhi = eachrow(ϵθ) |> ϵ -> (mean.(ϵ), quantile.(ϵ, 0.25), quantile.(ϵ, 0.75))
+            push!(_subplots, plot(
+                plot(δmid; yerr = (δmid - δlo, δhi - δmid), label = L"signal correction $g_\delta(X)$", c = :red, title = "model outputs vs. data channel"),
+                plot(ϵmid; yerr = (ϵmid - ϵlo, ϵhi - ϵmid), label = L"noise amplitude $\exp(g_\epsilon(X))$", c = :blue);
                 layout = (2,1),
-            )
-        )
+            ))
+        end
         bandwidth_plot(logσ::AbstractVector) = bandwidth_plot(permutedims(logσ))
         bandwidth_plot(logσ::AbstractMatrix) = size(logσ,1) == 1 ?
             scatter(1:length(logσ), vec(logσ); label = "logσ", title = "logσ") :
@@ -763,19 +765,37 @@ end
 ####
 
 function fast_hist_1D(y, edges; normalize = nothing)
+    #=
     @assert !isempty(y) && length(edges) >= 2
     _y = sort!(copy(y))
     @assert _y[1] >= edges[1]
     h = Histogram((edges,), zeros(Int, length(edges)-1), :left)
-    j = 1
+    j, done = 1, false
     @inbounds for i = 1:length(_y)
-        _yi = _y[i]
-        while _yi >= edges[j+1]
+        while _y[i] >= edges[j+1]
             j += 1
-            (j+1 > length(edges)) && return h
+            done = (j+1 > length(edges))
+            done && break
         end
+        done && break
         h.weights[j] += 1
     end
+    =#
+
+    # Faster just to call fit(Histogram, ...) in parallel
+    hist(w) = Histogram((copy(edges),), w, :left)
+    hs = [hist(zeros(Int, length(edges)-1)) for _ in 1:Threads.nthreads()]
+    Is = collect(Iterators.partition(1:length(y), div(length(y), Threads.nthreads(), RoundUp)))
+    Threads.@threads for I in Is
+        @inbounds begin
+            yi = view(y, I) # chunk of original y vector
+            hi = hs[Threads.threadid()]
+            hi = fit(Histogram, yi, UnitWeights{Float64}(length(yi)), hi.edges[1]; closed = :left)
+            hs[Threads.threadid()] = hi
+        end
+    end
+    h = hist(sum([hi.weights for hi in hs]))
+
     !isnothing(normalize) && (h = Plots.normalize(h, mode = normalize))
     return h
 end
@@ -783,11 +803,15 @@ end
 function fast_hist_1D(y, edges::AbstractRange; normalize = nothing)
     @assert length(edges) >= 2
     lo, hi, dx, n = first(edges), last(edges), step(edges), length(edges)
-    h = Histogram((edges,), zeros(Int, n-1), :left)
-    @inbounds for (i, yi) in enumerate(y)
-        j = div(yi - lo, dx, RoundDown) + 1 |> Int
-        (1 <= j <= n-1) && (h.weights[j] += 1)
+    hist(w) = Histogram((copy(edges),), w, :left)
+    hs = [hist(zeros(Int, n-1)) for _ in 1:Threads.nthreads()]
+    Threads.@threads for i in eachindex(y)
+        @inbounds begin
+            j = 1 + floor(Int, (y[i] - lo) / dx)
+            (1 <= j <= n-1) && (hs[Threads.threadid()].weights[j] += 1)
+        end
     end
+    h = hist(sum([hi.weights for hi in hs]))
     !isnothing(normalize) && (h = Plots.normalize(h, mode = normalize))
     return h
 end
@@ -795,7 +819,7 @@ end
 function _fast_hist_test()
     _make_hist(x, edges) = fit(Histogram, x, UnitWeights{Float64}(length(x)), edges; closed = :left)
     for _ in 1:100
-        n = rand(1:10)
+        n = rand([1:10; 32; 512; 1024])
         x = 100 .* rand(n)
         edges = rand(Bool) ? [0.0; sort(100 .* rand(n))] : (rand(1:10) : rand(1:10) : 100-rand(1:10))
         try
@@ -811,8 +835,8 @@ function _fast_hist_test()
         end
     end
 
-    x = rand(10^6)
-    for ne in 2 .^ (4:10)
+    x = rand(10^7)
+    for ne in [4, 64, 1024]
         edges = range(0, 1; length = ne)
         @info "range (ne = $ne)"; @btime fast_hist_1D($x, $edges)
         @info "array (ne = $ne)"; @btime fast_hist_1D($x, $(collect(edges)))
@@ -828,7 +852,7 @@ CityBlock(P::Histogram, Q::Histogram) = sum(abs, MMDLearning.unitsum(P.weights) 
 Euclidean(P::Histogram, Q::Histogram) = sqrt(sum(abs2, MMDLearning.unitsum(P.weights) .- MMDLearning.unitsum(Q.weights)))
 
 function signal_histograms(Y::AbstractMatrix; nbins = nothing, edges = nothing, normalize = nothing)
-    make_edges(x) = ((lo,hi) = extrema(vec(x)); mid = median(vec(x)); length = ceil(Int, (hi - lo) * nbins / max(hi - mid, mid - lo)); return range(lo, hi; length))
+    make_edges(x) = ((lo,hi) = extrema(vec(x)); return range(lo, hi; length = nbins)) # mid = median(vec(x)); length = ceil(Int, (hi - lo) * nbins / max(hi - mid, mid - lo))
     hists = Dict{Int, Histogram}()
     hists[0] = fast_hist_1D(vec(Y), isnothing(edges) ? make_edges(Y) : edges[0]; normalize)
     for i in 1:size(Y,1)
@@ -869,9 +893,6 @@ function pyheatmap(
     return nothing
 end
 
-# Soft cutoff function for MWF calculation
-soft_cutoff(x::T, x0::T = T(40e-3), w::T = T(10e-3)) where {T} = Flux.σ(-(x-x0)/w)
-
 # Compute discrete CDF
 discrete_cdf(x) = (t = sort(x; dims = 2); c = cumsum(t; dims = 2) ./ sum(t; dims = 2); return permutedims.((t, c))) # return (t[1:12:end, :]', c[1:12:end, :]')
 
@@ -900,6 +921,8 @@ function eval_mri_model(
         naverage = 10,
         savefolder = ".",
         savetypes = [".png"],
+        mle_image_path = ".",
+        mle_sim_path = ".",
         force_decaes = false,
         force_histograms = false,
         posterior_mode = :maxlikelihood,
@@ -935,11 +958,10 @@ function eval_mri_model(
     end
 
     mle_image_state = let
-        mle_path = "/home/jdoucette/Documents/code/MWI-MMD-CVAE/BC-AI-Showcase/mle-results-image-data/mle-image-mask-results-final-2020-11-12-T-20-52-08-298.mat"
-        mle_results = DECAES.MAT.matread(mle_path)
-        θ = mle_results["theta"] |> to32
-        ϵ = reshape(exp.(mle_results["epsilon"] |> to32), 1, :) #TODO: should save as "logepsilon"
-        ℓ = reshape(mle_results["loss"] |> to32, 1, :) # negative log-likelihood loss
+        mle_image_results = Glob.readdir(Glob.glob"mle-image-mask-results-final-*.mat", mle_image_path) |> only |> DECAES.MAT.matread
+        θ = mle_image_results["theta"] |> to32
+        ϵ = reshape(exp.(mle_image_results["epsilon"] |> to32), 1, :) #TODO: should save as "logepsilon"
+        ℓ = reshape(mle_image_results["loss"] |> to32, 1, :) # negative log-likelihood loss
         X = signal_model(phys, θ)
         ν, δ, Z = X, nothing, nothing
         Y = add_noise_instance(phys, X, ϵ)
@@ -1095,32 +1117,24 @@ function eval_mri_model(
         saveplot(pcdf, "signal-cdf-compare")
     end
 
-    function θ_derived(θ)
-        alpha, eta, delta1, delta2 = θ[1,:], θ[2,:], θ[3,:], θ[4,:]
-        _, T2short, T2long, Ashort, Along = θcanonical(phys, θ)
-        mwf = @. Ashort * soft_cutoff(T2short) + Along * soft_cutoff(T2long)
-        logT2short, logT2long = log.(T2short), log.(T2long)
-        logT2bar = @. Ashort * logT2short + Along * logT2long
-        T2short, T2long, T2bar = exp.(logT2short), exp.(logT2long), exp.(logT2bar)
-        map(x -> convert(Vector{Float64}, x), (; alpha, eta, delta1, delta2, Ashort, Along, logT2short, logT2long, logT2bar, T2short, T2long, T2bar, mwf))
+    function θderived_cpu(θ)
+        # named tuple of misc. parameters of interest derived from θ
+        map(arr64, θderived(phys, θ))
     end
 
-    function infer_θ_derived(Y)
+    function infer_θderived(Y)
         @info "Computing named tuple of θ values, averaging over $naverage samples..."
-        θ = @time map(_ -> θ_derived(inverter(Y; maxiter = 1, mode = posterior_mode).θ), 1:naverage)
+        θ = @time map(_ -> θderived_cpu(inverter(Y; maxiter = 1, mode = posterior_mode).θ), 1:naverage)
         θ = map((θs...,) -> mean(θs), θ...) # mean over each named tuple field
     end
 
-    θ_derived_labels = [θlabels(phys); L"A_{short}"; L"A_{long}"; L"\log T_{2,short}"; L"\log T_{2,long}"; L"\log \bar{T}_2"; L"T_{2,short}"; L"T_{2,long}"; L"\bar{T}_2"; L"MWF"]
-    θ_derived_bounds = [θbounds(phys); (0.0, 1.0); (0.0, 1.0); log.(phys.T2bd); log.(phys.T2bd); log.(phys.T2bd); (0.0, 0.1); (0.0, 1.0); (0.0, 0.25); (0.0, 0.4)]
-
     let
-        sim_data = DECAES.MAT.matread("mle-results-simulated-data/ignite-cvae-2020-11-08-T-10-08-39-544/mle-simulated-mask-data-2020-11-11-T-22-28-30-163.mat")
-        mle_res = DECAES.MAT.matread("mle-results-simulated-data/ignite-cvae-2020-11-08-T-10-08-39-544/mle-simulated-mask-results-final-2020-11-12-T-06-33-50-335.mat")
+        mle_sim_data = Glob.readdir(Glob.glob"mle-simulated-mask-data-*.mat", mle_image_path) |> only |> DECAES.MAT.matread
+        mle_sim_results = Glob.readdir(Glob.glob"mle-simulated-mask-results-final-*.mat", mle_image_path) |> only |> DECAES.MAT.matread
 
-        Ytrue, X̂true, Xtrue, θtrue, Ztrue = getindex.(Ref(sim_data), ("Y", "Xhat", "X", "theta", "Z"))
-        θtrue_derived = θtrue |> θ_derived
-        θmle_derived = mle_res["theta"] |> θ_derived
+        Ytrue, X̂true, Xtrue, θtrue, Ztrue = getindex.(Ref(mle_sim_data), ("Y", "Xhat", "X", "theta", "Z"))
+        θtrue_derived = θtrue |> θderived_cpu
+        θmle_derived = mle_sim_results["theta"] |> θderived_cpu
 
         @info "Computing DECAES inference error..."
         if (force_decaes || !haskey(phys.meta[:decaes][:t2maps], :Yhat_cvae_decaes))
@@ -1135,12 +1149,12 @@ function eval_mri_model(
         ]
 
         @info "Computing MLE inference error..."
-        @info 0, :mle, [lab =>round(mean(abs, θt - θi); sigdigits = 3) for (lab, θt, θi) in zip(θ_derived_labels, θtrue_derived, θmle_derived)]
+        @info 0, :mle, [lab =>round(mean(abs, θt - θi); sigdigits = 3) for (lab, θt, θi) in zip(θderivedlabels(phys), θtrue_derived, θmle_derived)]
 
-        for ((mode, maxiter)) in Iterators.product((:mean,), [1,2,5,10,25])
+        for mode in [:mean], maxiter in [1,2,5]
             inf_time = @elapsed cvae_state = inverter(X̂true |> to32; maxiter, mode, verbose = false)
-            θcvae_derived = cvae_state.θ |> θ_derived
-            @info maxiter, mode, inf_time, [lab => round(mean(abs, θt - θi); sigdigits = 3) for (lab, θt, θi) in zip(θ_derived_labels, θtrue_derived, θcvae_derived)]
+            θcvae_derived = cvae_state.θ |> θderived_cpu
+            @info maxiter, mode, inf_time, [lab => round(mean(abs, θt - θi); sigdigits = 3) for (lab, θt, θi) in zip(θderivedlabels(phys), θtrue_derived, θcvae_derived)]
         end
     end
 
@@ -1150,8 +1164,8 @@ function eval_mri_model(
     Imaskslices = filter(I -> I[3] ∈ zslices, phys.image[:mask_indices])
     makemaps(x) = (out = fill(NaN, size(Y)[1:3]); out[Islices] .= Flux.cpu(x); return permutedims(out, (2,1,3)))
 
-    θcvae = infer_θ_derived(permutedims(Y[Islices,:]) |> to32)
-    θmle = θ_derived(flat_image_to_flat_indices(mle_image_state.θ, Imaskslices))
+    θcvae = infer_θderived(permutedims(Y[Islices,:]) |> to32)
+    θmle = θderived_cpu(flat_image_to_flat_indices(mle_image_state.θ, Imaskslices))
 
     # DECAES heatmaps
     @time let
@@ -1171,7 +1185,7 @@ function eval_mri_model(
     for (θfolder, θ) ∈ [:cvae => θcvae, :mle => θmle]
         @info "Plotting heatmap plots for mean θ values..."
         @time let
-            for (k, ((θname, θk), θlabel, θbd)) in enumerate(zip(pairs(θ), θ_derived_labels, θ_derived_bounds))
+            for (k, ((θname, θk), θlabel, θbd)) in enumerate(zip(pairs(θ), θderivedlabels(phys), θderivedbounds(phys)))
                 θmaps = makemaps(θk)
                 for (j,zj) in enumerate(zslices)
                     pyheatmap(θmaps[:,:,j]; title = θlabel * " (slice $zj)", clim = θbd, filename = joinpath(mkpath(joinpath(savefolder, string(θfolder))), "$θname-$zj"), savetypes)
@@ -1198,33 +1212,37 @@ function mle_mri_model(
         phys::BiexpEPGModel,
         models,
         derived,
-        ::Val{alg}    = Val(:LD_SLSQP), # Rough algorithm ranking: :LD_SLSQP, :LD_CCSAQ, :LD_LBFGS, :LD_AUGLAG, :LD_MMA
+        ::Val{alg}    = Val(:LD_SLSQP), # Rough algorithm ranking: [:LD_SLSQP, :LD_LBFGS, :LD_CCSAQ, :LD_AUGLAG, :LD_MMA] (Note: :LD_LBFGS fails to converge with tolerance looser than ~ 1e-4)
         ::Val{fdtype} = Val(:central);
         data_source   = :image, # One of :image, :simulated
         data_subset   = :mask,  # One of :mask, :val, :train, :test
         batch_size    = 128 * Threads.nthreads(),
-        initial_iter  = 1000,
+        initial_iter  = 10,
+        verbose       = true,
+        checkpoint    = false,
+        dryrun        = false,
+        dryrunsamples = dryrun ? batch_size : nothing,
+        opt_args      = Dict{Symbol,Any}(),
     ) where {alg, fdtype}
 
     @assert data_source ∈ (:image, :simulated)
     @assert data_subset ∈ (:mask, :val, :train, :test)
-
-    arr64(x::AbstractArray{T,N}) where {T,N} = convert(Array{Float64,N}, x)
 
     # MLE for whole image of simulated data
     Y, Yc = let
         image_ind  = phys.image[Symbol(data_subset, :_indices)]
         image_data = phys.image[:data][image_ind,:] |> to32 |> permutedims
         if data_source === :image
-            DECAES.MAT.matwrite("mle-$data_source-$data_subset-data-$(getnow()).mat", Dict{String,Any}("Y" => arr64(image_data)))
+            !dryrun && DECAES.MAT.matwrite("mle-$data_source-$data_subset-data-$(getnow()).mat", Dict{String,Any}("Y" => arr64(image_data)))
             arr64(image_data), image_data
         else # data_source === :simulated
             X, θ, Z = sampleXθZ(derived["cvae"], phys, image_data; recover_θ = true, recover_Z = true)
             X̂       = sampleX̂(derived["ricegen"], X, Z)
-            DECAES.MAT.matwrite("mle-$data_source-$data_subset-data-$(getnow()).mat", Dict{String,Any}("X" => arr64(X), "theta" => arr64(θ), "Z" => arr64(Z), "Xhat" => arr64(X̂), "Y" => arr64(image_data)))
+            !dryrun && DECAES.MAT.matwrite("mle-$data_source-$data_subset-data-$(getnow()).mat", Dict{String,Any}("X" => arr64(X), "theta" => arr64(θ), "Z" => arr64(Z), "Xhat" => arr64(X̂), "Y" => arr64(image_data)))
             arr64(X̂), X̂
         end
     end
+    !isnothing(dryrunsamples) && (I = sample(MersenneTwister(0), 1:size(Y,2), dryrunsamples; replace = dryrunsamples > size(Y,2)); Y = Y[:,I]; Yc = Yc[:,I])
 
     initial_guess = posterior_state(
         derived["ricegen"],
@@ -1234,54 +1252,39 @@ function mle_mri_model(
         miniter = 1,
         maxiter = initial_iter,
         alpha   = 0.0,
-        verbose = true,
+        verbose = verbose,
         mode    = :maxlikelihood,
     )
     initial_guess = map(arr64, initial_guess)
-
-    function f(x)
-        @inbounds begin
-            work     = work_spaces[Threads.threadid()]
-            work.θ  .= x[1:end-1]
-            work.ϵ[] = exp(x[end])
-            X        = _signal_model(phys, work.θ)
-            Σ        = zero(eltype(x))
-            for i in eachindex(X)
-                Σ   -= _rician_logpdf_cuda(work.Y[i], X[i], work.ϵ[])
-            end
-            return Σ # Rician negative log likelihood
-        end
-    end
-
-    function fg!(x, g)
-        if length(g) > 0
-            FiniteDiff.finite_difference_gradient!(g, f, x, Val{fdtype})
-        end
-        return f(x)
-    end
 
     logϵlo, logϵhi = log.(extrema(vec(initial_guess.ϵ))) .|> Float64
     initial_logϵ   = log.(vec(mean(initial_guess.ϵ; dims = 1))) |> arr64
     lower_bounds   = vcat(θlower(phys), [round(logϵlo, RoundDown)]) |> arr64
     upper_bounds   = vcat(θupper(phys), [round(logϵhi, RoundUp)]) |> arr64
 
+    #= TODO
+    if initial_iter == 0
+        initial_guess.θ .= sampleθprior(phys, size(Y,2)) |> arr64
+        initial_logϵ    .= logϵlo .+ (logϵhi - logϵlo) .* rand(size(Y,2)) |> arr64
+    end
+    =#
+
     work_spaces = map(1:Threads.nthreads()) do _
         (
             Y   = zeros(nsignal(phys)),
-            θ   = zeros(ntheta(phys)),
-            ϵ   = Ref(0.0),
             x0  = zeros(ntheta(phys) + 1),
+            epg = BiexpEPGModelWork(phys),
             opt = let
                 opt = NLopt.Opt(alg, ntheta(phys) + 1)
-                opt.min_objective = fg!
                 opt.lower_bounds  = lower_bounds
                 opt.upper_bounds  = upper_bounds
-                opt.xtol_abs      = 1e-6
-                opt.ftol_abs      = 1e-6
-                opt.xtol_rel      = 1e-4
-                opt.ftol_rel      = 1e-4
-                opt.maxeval       = 100
+                opt.xtol_rel      = 1e-8
+                opt.ftol_rel      = 1e-8
+                opt.maxeval       = 250
                 opt.maxtime       = 1.0
+                for (k,v) in opt_args
+                    setproperty!(opt, k, v)
+                end
                 opt
             end,
         )
@@ -1291,9 +1294,44 @@ function mle_mri_model(
         theta     = fill(NaN, ntheta(phys), size(Y,2)),
         epsilon   = fill(NaN, size(Y,2)),
         loss      = fill(NaN, size(Y,2)),
+        retcode   = fill(NaN, size(Y,2)),
         numevals  = fill(NaN, size(Y,2)),
         solvetime = fill(NaN, size(Y,2)),
     )
+
+    function f(work, x::Vector{Float64})
+        @inbounds begin
+            nθ = ntheta(phys)
+            θ  = ntuple(i -> x[i], nθ)
+            ϵ  = exp(x[nθ+1])
+            ψ  = θsignalmodel(phys, θ...)
+            X  = _signal_model_f64(phys, work.epg, ψ)
+            μX = -Inf
+            for i in eachindex(X)
+                μX = max(μX, _rician_mean_cuda(X[i], ϵ)) # Signal normalization factor
+            end
+            ℓ  = 0.0
+            ϵ  = ϵ / μX # Hoist outside loop
+            for i in eachindex(X)
+                ℓ -= _rician_logpdf_cuda(work.Y[i], X[i] / μX, ϵ) # Rician negative log likelihood
+            end
+            return ℓ
+        end
+    end
+
+    function fg!(work, x::Vector{Float64}, g::Vector{Float64})
+        if length(g) > 0
+            simple_fd_gradient!(g, y -> f(work, y), x, lower_bounds, upper_bounds)
+        else
+            f(work, x)
+        end
+    end
+
+    #=
+    work_spaces[1].Y .= rand(nsignal(phys))
+    @info "Timing function..."; @btime( $f( $( work_spaces[1] ), $( (lower_bounds .+ upper_bounds) ./ 2 ) ) ) |> display
+    @info "Timing gradient..."; @btime( $fg!( $( work_spaces[1] ), $( (lower_bounds .+ upper_bounds) ./ 2 ), $( zeros(ntheta(phys) + 1) ) ) ) |> display
+    =#
 
     start_time = time()
     batches = Iterators.partition(1:size(Y,2), batch_size)
@@ -1303,15 +1341,18 @@ function mle_mri_model(
         batchtime = @elapsed Threads.@sync for j in batch
             Threads.@spawn @inbounds begin
                 work = work_spaces[Threads.threadid()]
-                work.Y              .= Y[:,j]
-                work.x0[1:end-1]    .= initial_guess.θ[:,j]
-                work.x0[end]         = initial_logϵ[j]
-                solvetime            = @elapsed (minf, minx, ret) = NLopt.optimize(work.opt, work.x0)
-                results.theta[:,j]  .= minx[1:end-1]
-                results.epsilon[j]   = minx[end]
-                results.loss[j]      = minf
-                results.numevals[j]  = work.opt.numevals
-                results.solvetime[j] = solvetime
+                work.Y                .= Y[:,j]
+                work.x0[1:end-1]      .= initial_guess.θ[:,j]
+                work.x0[end]           = initial_logϵ[j]
+                work.opt.min_objective = (x, g) -> fg!(work, x, g)
+
+                solvetime              = @elapsed (minf, minx, ret) = NLopt.optimize(work.opt, work.x0)
+                results.theta[:,j]    .= minx[1:end-1]
+                results.epsilon[j]     = minx[end]
+                results.loss[j]        = minf
+                results.retcode[j]     = Base.eval(NLopt, ret) |> Int #TODO cleaner way to convert Symbol to enum?
+                results.numevals[j]    = work.opt.numevals
+                results.solvetime[j]   = solvetime
             end
         end
 
@@ -1319,8 +1360,8 @@ function mle_mri_model(
         elapsed_time   = time() - start_time
         remaining_time = (elapsed_time / batchnum) * (length(batches) - batchnum)
         mle_per_second = batch[end] / elapsed_time
-        savetime       = @elapsed DECAES.MAT.matwrite("mle-$data_source-$data_subset-results-checkpoint-$(getnow()).mat", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # checkpoint progress
-        @info "$batchnum / $(length(batches))" *
+        savetime       = @elapsed !dryrun && checkpoint && DECAES.MAT.matwrite("mle-$data_source-$data_subset-results-checkpoint-$(getnow()).mat", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # checkpoint progress
+        verbose && @info "$batchnum / $(length(batches))" *
             " -- batch: $(DECAES.pretty_time(batchtime))" *
             " -- elapsed: $(DECAES.pretty_time(elapsed_time))" *
             " -- remaining: $(DECAES.pretty_time(remaining_time))" *
@@ -1330,8 +1371,37 @@ function mle_mri_model(
             " -- loss: $(round(mean(results.loss[1:batch[end]]); digits = 2))"
     end
 
-    DECAES.MAT.matwrite("mle-$data_source-$data_subset-results-final-$(getnow()).mat", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # save final results
+    !dryrun && DECAES.MAT.matwrite("mle-$data_source-$data_subset-results-final-$(getnow()).mat", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # save final results
     LinearAlgebra.BLAS.set_num_threads(Threads.nthreads()) # Reset BLAS threads
 
     return initial_guess, results
+end
+
+function simple_fd_gradient!(g, f, x, lo, hi)
+    δ = cbrt(eps(float(eltype(x))))
+    f₀ = f(x)
+    @inbounds for i in 1:length(x)
+        x₀ = x[i]
+        if x₀ - δ/2 <= lo[i] # near LHS boundary; use second-order forward: (-3 * f(x) + 4 * f(x + δ/2) - f(x + δ)) / δ
+            x[i] = x₀ + δ/2
+            f₊   = f(x)
+            x[i] = x₀ + δ
+            f₊₊  = f(x)
+            g[i] = (-3f₀ + 4f₊ - f₊₊)/δ
+        elseif x₀ + δ/2 >= hi[i] # near RHS boundary; use second-order backward: (3 * f(x) - 4 * f(x - δ/2) + f(x - δ)) / δ
+            x[i] = x₀ - δ/2
+            f₋   = f(x)
+            x[i] = x₀ - δ
+            f₋₋  = f(x)
+            g[i] = (3f₀ - 4f₋ + f₋₋)/δ
+        else # safely within boundary; use second-order central: (f(x + δ/2) - f(x - δ/2)) / δ
+            x[i] = x₀ - δ/2
+            f₋   = f(x)
+            x[i] = x₀ + δ/2
+            f₊   = f(x)
+            g[i] = (f₊ - f₋)/δ
+        end
+        x[i] = x₀
+    end
+    return f₀
 end
