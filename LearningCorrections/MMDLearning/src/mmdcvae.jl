@@ -99,8 +99,9 @@ function make_mmd_cvae_models(phys::PhysicsModel{Float32}, settings::Dict{String
         nhidden = settings["arch"]["discrim"]["nhidden"]::Int
         dropout = settings["arch"]["discrim"]["dropout"]::Float64
         chunk = settings["train"]["transform"]["chunk"]::Int
-        augsizes = Dict{String,Int}(["gradient" => n-1, "laplacian" => n-2, "encoderspace" => nz, "residuals" => n, "fftcat" => 2*(n÷2 + 1), "fftsplit" => 2*(n÷2 + 1)])
-        nin = min(n, chunk) + sum((s -> ifelse(settings["train"]["augment"][s]::Bool, min(augsizes[s], chunk), 0)).(keys(augsizes)))
+        order = settings["train"]["augment"]["fdcat"]::Int
+        augsizes = Dict{String,Int}(["signal" => n, "gradient" => n-1, "laplacian" => n-2, "encoderspace" => nz, "residuals" => n, "fftcat" => 2*(n÷2 + 1), "fftsplit" => 2*(n÷2 + 1), "fdcat" => sum(n-i for i in 0:order)])
+        nin = sum((s -> ifelse(settings["train"]["augment"][s]::Union{Int,Bool} > 0, min(augsizes[s], chunk), 0)).(keys(augsizes))) #TODO > 0 hack works for both boolean and integer flags
         MMDLearning.MLP(nin => 1, nhidden, hdim, Flux.relu, Flux.sigmoid; dropout) |> to32
     end
 
@@ -110,6 +111,15 @@ function make_mmd_cvae_models(phys::PhysicsModel{Float32}, settings::Dict{String
     # Misc. useful operators
     get!(derived, "forwarddiff") do; MMDLearning.ForwardDifferemce() |> to32 end
     get!(derived, "laplacian") do; MMDLearning.Laplacian() |> to32 end
+    get!(derived, "fdcat") do
+        order = settings["train"]["augment"]["fdcat"]::Int
+        A = I(n) |> Matrix{Float64}
+        FD = LinearAlgebra.diagm(n-1, n, 0 => -ones(n-1), 1 => ones(n-1))
+        A = mapfoldl(vcat, 1:order; init = A) do i
+            A = @views FD[1:end-i+1, 1:end-i+1] * A
+        end
+        NotTrainable(Flux.Dense(A, [0.0])) |> to32
+    end
     get!(derived, "encoderspace") do # non-trainable sampling of encoder signal representations
         NotTrainable(MMDLearning.flattenchain(Flux.Chain(
             models["enc1"],

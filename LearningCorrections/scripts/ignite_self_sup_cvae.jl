@@ -36,11 +36,11 @@ else
     [train]
         timeout     = 1e9 #TODO 10800.0
         epochs      = 1000_000
-        batchsize   = 1024 #256 #512 #1024 #2048 #4096
-        CyclicCVAE  = false # Cyclic consistency loss for CVAE
-        MMDCVAErate = 1     # Train combined MMD+CVAE loss every `MMDCVAErate` epochs
-        CVAErate    = 0     # Train CVAE loss every `CVAErate` iterations
-        MMDrate     = 0     # Train MMD loss every `MMDrate` epochs
+        batchsize   = 1024 #256 #512 #1024 #2048 #3072 #4096
+        PseudoCVAE  = false # Label data signals with pseudolabels from the CVAE
+        MMDCVAErate = 0     # Train combined MMD+CVAE loss every `MMDCVAErate` epochs
+        CVAErate    = 1     # Train CVAE loss every `CVAErate` iterations
+        MMDrate     = 1     # Train MMD loss every `MMDrate` epochs
         GANrate     = 0     # Train GAN losses every `GANrate` iterations
         Dsteps      = 5     # Train GAN losses with `Dsteps` discrim updates per genatr update
         # GANcycle    = 1   # CVAE and GAN take turns training for `GANcycle` consecutive epochs (0 trains both each iteration)
@@ -49,8 +49,10 @@ else
         kernelrate  = 0     # Train kernel every `kernelrate` iterations
         kernelsteps = 0     # Gradient updates per kernel train
         [train.augment]
-            gradient      = true  # Gradient of input signal (1D central difference)
+            signal        = false # Plain input signal
+            gradient      = false # Gradient of input signal (1D central difference)
             laplacian     = false # Laplacian of input signal (1D second order)
+            fdcat         = 2     # Concatenated finite differences up to order `fdcat`
             encoderspace  = false # Discriminate encoder space representations
             residuals     = false # Discriminate residual vectors
             fftcat        = false # Fourier transform of input signal, concatenating real/imag
@@ -80,8 +82,8 @@ else
         [opt.mmd]
             lrrel = "%PARENT%"
             lambda_0        = 100.0 # MMD loss weighting relative to CVAE
-            lambda_eps      = 0.0   # regularize noise amplitude epsilon
-            lambda_deps_dz  = 1.0   # regularize gradient of epsilon w.r.t. latent variables
+            lambda_eps      = 0.0   # Regularize noise amplitude epsilon
+            lambda_deps_dz  = 1.0   # Regularize gradient of epsilon w.r.t. latent variables
         [opt.kernel]
             lrrel = "%PARENT%" # Kernel learning rate 
             loss  = "mmd"      # Kernel loss ("mmd", "tstatistic", or "mmd_diff")
@@ -170,15 +172,17 @@ function augment_and_transform(Xs::AbstractArray...)
 end
 
 function augment(X::AbstractMatrix)
+    X₀   = settings["train"]["augment"]["signal"]::Bool ? X : nothing # Plain signal
     ∇X   = settings["train"]["augment"]["gradient"]::Bool ? derived["forwarddiff"](X) : nothing # Signal gradient
     ∇²X  = settings["train"]["augment"]["laplacian"]::Bool ? derived["laplacian"](X) : nothing # Signal laplacian
+    ∇ⁿX  = settings["train"]["augment"]["fdcat"]::Int > 0 ? derived["fdcat"](X) : nothing # Signal finite differences, concatenated
     Xres = settings["train"]["augment"]["residuals"]::Bool ? X .- Zygote.@ignore(sampleX(derived["cvae"], phys, X; recover_θ = true, recover_Z = true)) : nothing # Residual relative to different sample X̄(θ), θ ~ P(θ|X) (note: Z discarded, recover_Z irrelevant)
     Xenc = settings["train"]["augment"]["encoderspace"]::Bool ? derived["encoderspace"](X) : nothing # Encoder-space signal
     Xfft = settings["train"]["augment"]["fftcat"]::Bool ? vcat(reim(rfft(X,1))...) : nothing # Concatenated real/imag fourier components
     Xrfft, Xifft = settings["train"]["augment"]["fftsplit"]::Bool ? reim(rfft(X,1)) : (nothing, nothing) # Separate real/imag fourier components
 
-    ks = (:signal, :grad, :lap, :res, :enc, :fft, :rfft, :ifft)
-    Xs = [X, ∇X, ∇²X, Xres, Xenc, Xfft, Xrfft, Xifft]
+    ks = (:signal, :grad, :lap, :fd, :res, :enc, :fft, :rfft, :ifft)
+    Xs = [X₀, ∇X, ∇²X, ∇ⁿX, Xres, Xenc, Xfft, Xrfft, Xifft]
     is = (!isnothing).(Xs)
     Xs = NamedTuple{ks[is]}(Xs[is])
 
@@ -332,14 +336,14 @@ function CVAElosses(Y; marginalize_Z)
 
     # Cross-entropy loss function components
     KLDiv, ELBO = KL_and_ELBO(derived["cvae"], X̂, θ, Z; marginalize_Z)
-    
-    ℓ = if !settings["train"]["CyclicCVAE"]::Bool
+
+    ℓ = if !settings["train"]["PseudoCVAE"]::Bool
         (; KLDiv, ELBO)
     else
         # Use inferred params as pseudolabels for Y
-        θY, ZY = Zygote.@ignore sampleθZ(derived["cvae"], phys, Y; recover_θ = true, recover_Z = true) # draw pseudolabels for Y
-        KLDivCycle, ELBOCycle = KL_and_ELBO(derived["cvae"], Y, θY, ZY; marginalize_Z)
-        (; KLDiv, ELBO, KLDivCycle, ELBOCycle)
+        θY, ZY = Zygote.@ignore sampleθZ(derived["cvae"], phys, Y; recover_θ = true, recover_Z = false) # draw pseudo θ labels for Y; Z drawn from prior
+        KLDivPseudo, ELBOPseudo = KL_and_ELBO(derived["cvae"], Y, θY, ZY; marginalize_Z = true) # recover pseudo θ labels only
+        (; KLDiv, ELBO, KLDivPseudo, ELBOPseudo)
     end
 
     return ℓ
