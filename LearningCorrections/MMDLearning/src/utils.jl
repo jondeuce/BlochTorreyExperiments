@@ -1129,8 +1129,8 @@ function eval_mri_model(
     end
 
     let
-        mle_sim_data = Glob.readdir(Glob.glob"mle-simulated-mask-data-*.mat", mle_image_path) |> only |> DECAES.MAT.matread
-        mle_sim_results = Glob.readdir(Glob.glob"mle-simulated-mask-results-final-*.mat", mle_image_path) |> only |> DECAES.MAT.matread
+        mle_sim_data = Glob.readdir(Glob.glob"mle-simulated-mask-data-*.mat", mle_sim_path) |> only |> DECAES.MAT.matread
+        mle_sim_results = Glob.readdir(Glob.glob"mle-simulated-mask-results-final-*.mat", mle_sim_path) |> only |> DECAES.MAT.matread
 
         Ytrue, X̂true, Xtrue, θtrue, Ztrue = getindex.(Ref(mle_sim_data), ("Y", "Xhat", "X", "theta", "Z"))
         θtrue_derived = θtrue |> θderived_cpu
@@ -1211,9 +1211,7 @@ end
 function mle_mri_model(
         phys::BiexpEPGModel,
         models,
-        derived,
-        ::Val{alg}    = Val(:LD_SLSQP), # Rough algorithm ranking: [:LD_SLSQP, :LD_LBFGS, :LD_CCSAQ, :LD_AUGLAG, :LD_MMA] (Note: :LD_LBFGS fails to converge with tolerance looser than ~ 1e-4)
-        ::Val{fdtype} = Val(:central);
+        derived;
         data_source   = :image, # One of :image, :simulated
         data_subset   = :mask,  # One of :mask, :val, :train, :test
         batch_size    = 128 * Threads.nthreads(),
@@ -1222,9 +1220,9 @@ function mle_mri_model(
         checkpoint    = false,
         dryrun        = false,
         dryrunsamples = dryrun ? batch_size : nothing,
+        opt_alg       = :LD_SLSQP, # Rough algorithm ranking: [:LD_SLSQP, :LD_LBFGS, :LD_CCSAQ, :LD_AUGLAG, :LD_MMA] (Note: :LD_LBFGS fails to converge with tolerance looser than ~ 1e-4)
         opt_args      = Dict{Symbol,Any}(),
-    ) where {alg, fdtype}
-
+    )
     @assert data_source ∈ (:image, :simulated)
     @assert data_subset ∈ (:mask, :val, :train, :test)
 
@@ -1377,18 +1375,18 @@ function mle_mri_model(
     return initial_guess, results
 end
 
-function simple_fd_gradient!(g, f, x, lo, hi)
+function simple_fd_gradient!(g, f, x, lo = nothing, hi = nothing)
     δ = cbrt(eps(float(eltype(x))))
     f₀ = f(x)
     @inbounds for i in 1:length(x)
         x₀ = x[i]
-        if x₀ - δ/2 <= lo[i] # near LHS boundary; use second-order forward: (-3 * f(x) + 4 * f(x + δ/2) - f(x + δ)) / δ
+        if !isnothing(lo) && (x₀ - δ/2 <= lo[i]) # near LHS boundary; use second-order forward: (-3 * f(x) + 4 * f(x + δ/2) - f(x + δ)) / δ
             x[i] = x₀ + δ/2
             f₊   = f(x)
             x[i] = x₀ + δ
             f₊₊  = f(x)
             g[i] = (-3f₀ + 4f₊ - f₊₊)/δ
-        elseif x₀ + δ/2 >= hi[i] # near RHS boundary; use second-order backward: (3 * f(x) - 4 * f(x - δ/2) + f(x - δ)) / δ
+        elseif !isnothing(hi) && (x₀ + δ/2 >= hi[i]) # near RHS boundary; use second-order backward: (3 * f(x) - 4 * f(x - δ/2) + f(x - δ)) / δ
             x[i] = x₀ - δ/2
             f₋   = f(x)
             x[i] = x₀ - δ

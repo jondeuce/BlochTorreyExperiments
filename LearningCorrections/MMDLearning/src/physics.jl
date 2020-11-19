@@ -512,16 +512,7 @@ function _signal_model(c::MaybeClosedFormBiexpEPGModel, θ::AbstractVecOrMat)
     return X
 end
 
-function _signal_model(
-        c::MaybeClosedFormBiexpEPGModel{T},
-        alpha::AbstractVector,
-        refcon::AbstractVector,
-        T2short::AbstractVector,
-        T2long::AbstractVector,
-        Ashort::AbstractVector,
-        Along::AbstractVector,
-    ) where {T}
-
+function _signal_model(c::MaybeClosedFormBiexpEPGModel{T}, alpha::AbstractVector, refcon::AbstractVector, T2short::AbstractVector, T2long::AbstractVector, Ashort::AbstractVector, Along::AbstractVector) where {T}
     @assert length(alpha) == length(refcon) == length(T2short) == length(T2long) == length(Ashort) == length(Along)
     nsamples = length(alpha)
     nsignals = nsignal(c)
@@ -529,24 +520,65 @@ function _signal_model(
     work = [BiexpEPGModelWork(c) for _ in 1:Threads.nthreads()]
     X = zeros(Float64, nsignals, nsamples)
 
-    _signal_model_inner(j) = @inbounds begin
-        α, β, T21, T22, A1, A2 = Float64(alpha[j]), Float64(refcon[j]), Float64(T2short[j]), Float64(T2long[j]), Float64(Ashort[j]), Float64(Along[j])
-        w = work[Threads.threadid()]
-        _signal_model_f64!(view(X,:,j), c, w, (α, β, T21, T22, A1, A2))
-    end
-
-    # TODO: handle base case more cleanly...
-    if nsamples < 128
-        for j in 1:nsamples
-            _signal_model_inner(j)
-        end
-    else
-        Threads.@threads for j in 1:nsamples
-            _signal_model_inner(j)
+    DECAES.tforeach(1:nsamples; blocksize = 16) do j
+        @inbounds begin
+            α, β, T21, T22, A1, A2 = Float64(alpha[j]), Float64(refcon[j]), Float64(T2short[j]), Float64(T2long[j]), Float64(Ashort[j]), Float64(Along[j])
+            _signal_model_f64!(view(X,:,j), c, work[Threads.threadid()], (α, β, T21, T22, A1, A2))
         end
     end
 
     return convert(Matrix{T}, X)
+end
+
+Zygote.@adjoint function _signal_model(c::MaybeClosedFormBiexpEPGModel{T}, alpha::AbstractVector, refcon::AbstractVector, T2short::AbstractVector, T2long::AbstractVector, Ashort::AbstractVector, Along::AbstractVector) where {T}
+    @assert length(alpha) == length(refcon) == length(T2short) == length(T2long) == length(Ashort) == length(Along)
+    nsamples = length(alpha)
+    nsignals = nsignal(c)
+
+    #TODO hard-coded 6
+    work = [_signal_model_f64_jacobian_setup(c) for _ in 1:Threads.nthreads()]
+    X = zeros(Float64, nsignals, nsamples)
+    J = zeros(Float64, nsignals, 6, nsamples)
+    out = zeros(Float64, 6, 1, nsamples)
+
+    DECAES.tforeach(1:nsamples; blocksize = 16) do j
+        @inbounds begin
+            f!, res, _, x, gx, cfg = work[Threads.threadid()]
+            x .= (alpha[j], refcon[j], T2short[j], T2long[j], Ashort[j], Along[j]) # Float64 conversion is automatic
+            ForwardDiff.jacobian!(res, f!, view(X,:,j), x, cfg)
+            @views J[:,:,j] .= ForwardDiff.DiffResults.jacobian(res)
+        end
+    end
+
+    return convert(Matrix{T}, X), function (Δ)
+        NNlib.batched_mul!(out, NNlib.BatchedTranspose(J), reshape(Δ, nsignals, 1, nsamples))
+        δ = ntuple(i -> convert(Vector{T}, view(out,i,1,:)), 6)
+        return (nothing, δ...)
+    end
+end
+
+function _signal_model_grad_test(phys::MaybeClosedFormBiexpEPGModel)
+    alpha, refcon, T2short, T2long, Ashort, Along = θsignalmodel(phys, eachrow(sampleθprior(phys, 10))...)
+    args = (alpha, refcon, T2short, T2long, Ashort, Along)
+
+    f = (_args...) -> sum(abs2, _signal_model(phys, _args...))
+    g_zygote = Zygote.gradient(f, args...)
+
+    g_finitediff = map(enumerate(args)) do (i,x)
+        g = similar(x)
+        simple_fd_gradient!(g, _x -> f(ntuple(j -> j == i ? _x : args[j], 6)...), x)
+        return g
+    end
+
+    map(g_zygote, g_finitediff) do g_zyg, g_fd
+        g1, g2 = vec(g_zyg), vec(g_fd)
+        norm(g1 - g2) / norm(g1) |> display
+    end
+
+    @btime $f($alpha, $refcon, $T2short, $T2long, $Ashort, $Along)
+    @btime Zygote.gradient($f, $alpha, $refcon, $T2short, $T2long, $Ashort, $Along)
+
+    return g_zygote, g_finitediff
 end
 
 # CPU version is actually faster than the GPU kernel below... DECAES is just too fast (for typical batch sizes of ~1024, anyways)
@@ -554,33 +586,52 @@ _signal_model(c::MaybeClosedFormBiexpEPGModel, args::CUDA.CuVector...) = Flux.gp
 
 #### CPU DECAES signal model
 
-struct BiexpEPGModelWork{ETL, A <: DECAES.SizedVector{ETL, Float64}, W1 <: DECAES.EPGWork_Vec{Float64, ETL}, W2 <: DECAES.EPGWork_Vec{Float64, ETL}}
-    TE::Float64
-    T1::Float64
+const MaybeDualF64 = Union{Float64, <:ForwardDiff.Dual{Nothing, Float64}}
+
+struct BiexpEPGModelWork{T <: MaybeDualF64, ETL, A <: AbstractVector{T}, W1 <: DECAES.AbstractEPGWorkspace{T,ETL}, W2 <: DECAES.AbstractEPGWorkspace{T,ETL}}
+    TE::T
+    T1::T
     dc::A
     short_work::W1
     long_work::W2
 end
 
-function BiexpEPGModelWork(c::MaybeClosedFormBiexpEPGModel, ::Val{ETL} = Val(nsignal(c))) where {ETL}
-    dc = DECAES.SizedVector{ETL}(zeros(Float64, ETL))
-    short_work = DECAES.EPGdecaycurve_work(Float64, ETL)
-    long_work = DECAES.EPGdecaycurve_work(Float64, ETL)
-    BiexpEPGModelWork(physicsmodel(c).TE |> Float64, physicsmodel(c).T1 |> Float64, dc, short_work, long_work)
+function BiexpEPGModelWork(c::MaybeClosedFormBiexpEPGModel, ::Val{ETL} = Val(nsignal(c)), ::Type{T} = Float64) where {ETL, T <: MaybeDualF64}
+    dc = DECAES.SizedVector{ETL}(zeros(T, ETL))
+    short_work = DECAES.EPGdecaycurve_work(T, ETL)
+    long_work = DECAES.EPGdecaycurve_work(T, ETL)
+    BiexpEPGModelWork(physicsmodel(c).TE |> T, physicsmodel(c).T1 |> T, dc, short_work, long_work)
 end
 
-function _signal_model_f64!(dc::AbstractVector{Float64}, ::MaybeClosedFormBiexpEPGModel, work::BiexpEPGModelWork{ETL,A,W1,W2}, args::NTuple{6,Float64}) where {ETL,A,W1,W2}
+function _signal_model_f64!(dc::AbstractVector{T}, ::MaybeClosedFormBiexpEPGModel, work::BiexpEPGModelWork{T,ETL}, args::NTuple{6,T}) where {T <: MaybeDualF64, ETL}
     @inbounds begin
         alpha, refcon, T2short, T2long, Ashort, Along = args
-        dc1 = DECAES.EPGdecaycurve!(work.short_work, alpha, work.TE, T2short, work.T1, refcon) # short component
-        dc2 = DECAES.EPGdecaycurve!(work.long_work, alpha, work.TE, T2long, work.T1, refcon) # long component
+        o1  = DECAES.EPGOptions{T,ETL}(alpha, work.TE, T2short, work.T1, refcon)
+        o2  = DECAES.EPGOptions{T,ETL}(alpha, work.TE, T2long, work.T1, refcon)
+        dc1 = DECAES.EPGdecaycurve!(work.short_work, o1) # short component
+        dc2 = DECAES.EPGdecaycurve!(work.long_work, o2) # long component
         for i in 1:ETL
             dc[i] = Ashort * dc1[i] + Along * dc2[i]
         end
     end
     return dc
 end
-_signal_model_f64(c::MaybeClosedFormBiexpEPGModel, work::BiexpEPGModelWork{ETL,A,W1,W2}, args::NTuple{6,Float64}) where {ETL,A,W1,W2} = _signal_model_f64!(work.dc, c, work, args)
+_signal_model_f64(c::MaybeClosedFormBiexpEPGModel, work::BiexpEPGModelWork{T,ETL}, args::NTuple{6,<:MaybeDualF64}) where {T, ETL} = _signal_model_f64!(work.dc, c, work, args)
+
+function _signal_model_f64_jacobian_setup(c::MaybeClosedFormBiexpEPGModel)
+    #TODO hard-coded 6
+    _y, _x, _gx = zeros(Float64, nsignal(c)), zeros(Float64, 6), zeros(Float64, 6)
+    res = ForwardDiff.DiffResults.JacobianResult(_y, _x)
+    cfg = ForwardDiff.JacobianConfig(nothing, _y, _x, ForwardDiff.Chunk(_x))
+    fwd_work = BiexpEPGModelWork(c, Val(nsignal(c)), Float64)
+    jac_work = BiexpEPGModelWork(c, Val(nsignal(c)), ForwardDiff.Dual{Nothing,Float64,6})
+    function f!(y, x)
+        work = eltype(y) == Float64 ? fwd_work : jac_work
+        x̄ = ntuple(i -> @inbounds(x[i]), 6)
+        return _signal_model_f64!(y, c, work, x̄)
+    end
+    return f!, res, _y, _x, _gx, cfg
+end
 
 #### GPU DECAES signal model; currently slower than cpu version unless batch size is large (~10000 or more)
 
