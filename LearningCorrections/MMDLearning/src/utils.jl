@@ -930,7 +930,7 @@ function eval_mri_model(
 
     DATASET = :test
 
-    inverter(Ysamples; kwargs...) = posterior_state(derived["ricegen"], derived["cvae"], phys, Ysamples; verbose = true, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
+    inverter(Ysamples; kwargs...) = posterior_state(derived["cvae"], derived["prior"], Ysamples; verbose = true, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
     saveplot(p, name, folder = savefolder) = map(suf -> savefig(p, joinpath(mkpath(folder), name * suf)), savetypes)
 
     flat_test(x) = flat_indices(x, phys.image[Symbol(DATASET, :_indices)])
@@ -958,7 +958,7 @@ function eval_mri_model(
     end
 
     mle_image_state = let
-        mle_image_results = Glob.readdir(Glob.glob"mle-image-mask-results-final-*.mat", mle_image_path) |> only |> DECAES.MAT.matread
+        mle_image_results = Glob.readdir(Glob.glob"mle-image-mask-results-final-*.mat", mle_image_path) |> last |> DECAES.MAT.matread
         θ = mle_image_results["theta"] |> to32
         ϵ = reshape(exp.(mle_image_results["epsilon"] |> to32), 1, :) #TODO: should save as "logepsilon"
         ℓ = reshape(mle_image_results["loss"] |> to32, 1, :) # negative log-likelihood loss
@@ -1129,8 +1129,8 @@ function eval_mri_model(
     end
 
     let
-        mle_sim_data = Glob.readdir(Glob.glob"mle-simulated-mask-data-*.mat", mle_sim_path) |> only |> DECAES.MAT.matread
-        mle_sim_results = Glob.readdir(Glob.glob"mle-simulated-mask-results-final-*.mat", mle_sim_path) |> only |> DECAES.MAT.matread
+        mle_sim_data = Glob.readdir(Glob.glob"mle-simulated-mask-data-*.mat", mle_sim_path) |> last |> DECAES.MAT.matread
+        mle_sim_results = Glob.readdir(Glob.glob"mle-simulated-mask-results-final-*.mat", mle_sim_path) |> last |> DECAES.MAT.matread
 
         Ytrue, X̂true, Xtrue, θtrue, Ztrue = getindex.(Ref(mle_sim_data), ("Y", "Xhat", "X", "theta", "Z"))
         θtrue_derived = θtrue |> θderived_cpu
@@ -1234,7 +1234,7 @@ function mle_mri_model(
             !dryrun && DECAES.MAT.matwrite("mle-$data_source-$data_subset-data-$(getnow()).mat", Dict{String,Any}("Y" => arr64(image_data)))
             arr64(image_data), image_data
         else # data_source === :simulated
-            X, θ, Z = sampleXθZ(derived["cvae"], phys, image_data; recover_θ = true, recover_Z = true)
+            X, θ, Z = sampleXθZ(derived["cvae"], derived["prior"], image_data; posterior_θ = true, posterior_Z = true)
             X̂       = sampleX̂(derived["ricegen"], X, Z)
             !dryrun && DECAES.MAT.matwrite("mle-$data_source-$data_subset-data-$(getnow()).mat", Dict{String,Any}("X" => arr64(X), "theta" => arr64(θ), "Z" => arr64(Z), "Xhat" => arr64(X̂), "Y" => arr64(image_data)))
             arr64(X̂), X̂
@@ -1243,9 +1243,8 @@ function mle_mri_model(
     !isnothing(dryrunsamples) && (I = sample(MersenneTwister(0), 1:size(Y,2), dryrunsamples; replace = dryrunsamples > size(Y,2)); Y = Y[:,I]; Yc = Yc[:,I])
 
     initial_guess = posterior_state(
-        derived["ricegen"],
         derived["cvae"],
-        phys,
+        derived["prior"],
         Yc;
         miniter = 1,
         maxiter = initial_iter,
@@ -1260,7 +1259,7 @@ function mle_mri_model(
     lower_bounds   = vcat(θlower(phys), [round(logϵlo, RoundDown)]) |> arr64
     upper_bounds   = vcat(θupper(phys), [round(logϵhi, RoundUp)]) |> arr64
 
-    #= TODO
+    #= Test random initial guess
     if initial_iter == 0
         initial_guess.θ .= sampleθprior(phys, size(Y,2)) |> arr64
         initial_logϵ    .= logϵlo .+ (logϵhi - logϵlo) .* rand(size(Y,2)) |> arr64
@@ -1273,7 +1272,7 @@ function mle_mri_model(
             x0  = zeros(ntheta(phys) + 1),
             epg = BiexpEPGModelWork(phys),
             opt = let
-                opt = NLopt.Opt(alg, ntheta(phys) + 1)
+                opt = NLopt.Opt(opt_alg, ntheta(phys) + 1)
                 opt.lower_bounds  = lower_bounds
                 opt.upper_bounds  = upper_bounds
                 opt.xtol_rel      = 1e-8
@@ -1325,7 +1324,7 @@ function mle_mri_model(
         end
     end
 
-    #=
+    #= Benchmarking
     work_spaces[1].Y .= rand(nsignal(phys))
     @info "Timing function..."; @btime( $f( $( work_spaces[1] ), $( (lower_bounds .+ upper_bounds) ./ 2 ) ) ) |> display
     @info "Timing gradient..."; @btime( $fg!( $( work_spaces[1] ), $( (lower_bounds .+ upper_bounds) ./ 2 ), $( zeros(ntheta(phys) + 1) ) ) ) |> display

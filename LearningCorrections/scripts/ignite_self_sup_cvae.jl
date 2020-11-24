@@ -40,7 +40,8 @@ else
         PseudoCVAE  = false # Label data signals with pseudolabels from the CVAE
         MMDCVAErate = 0     # Train combined MMD+CVAE loss every `MMDCVAErate` epochs
         CVAErate    = 1     # Train CVAE loss every `CVAErate` iterations
-        MMDrate     = 1     # Train MMD loss every `MMDrate` epochs
+        CVAEsteps   = 1     # Train CVAE losses with `CVAEsteps` updates per iteration
+        MMDrate     = 0     # Train MMD loss every `MMDrate` epochs
         GANrate     = 0     # Train GAN losses every `GANrate` iterations
         Dsteps      = 5     # Train GAN losses with `Dsteps` discrim updates per genatr update
         # GANcycle    = 1   # CVAE and GAN take turns training for `GANcycle` consecutive epochs (0 trains both each iteration)
@@ -48,11 +49,13 @@ else
         # Dheadstart  = 0   # Train discriminator for `Dheadstart` epochs before training generator
         kernelrate  = 0     # Train kernel every `kernelrate` iterations
         kernelsteps = 0     # Gradient updates per kernel train
+        DeepThetaPrior  = false # Learn deep prior
+        DeepLatentPrior = false # Learn deep prior
         [train.augment]
-            signal        = false # Plain input signal
+            signal        = true  # Plain input signal
             gradient      = false # Gradient of input signal (1D central difference)
             laplacian     = false # Laplacian of input signal (1D second order)
-            fdcat         = 2     # Concatenated finite differences up to order `fdcat`
+            fdcat         = 0     # Concatenated finite differences up to order `fdcat`
             encoderspace  = false # Discriminate encoder space representations
             residuals     = false # Discriminate residual vectors
             fftcat        = false # Fourier transform of input signal, concatenating real/imag
@@ -81,15 +84,16 @@ else
             lrrel = "%PARENT%"
         [opt.mmd]
             lrrel = "%PARENT%"
+            gclip = 1.0
             lambda_0        = 100.0 # MMD loss weighting relative to CVAE
             lambda_eps      = 0.0   # Regularize noise amplitude epsilon
-            lambda_deps_dz  = 1.0   # Regularize gradient of epsilon w.r.t. latent variables
+            lambda_deps_dz  = 0.0   # Regularize gradient of epsilon w.r.t. latent variables
         [opt.kernel]
             lrrel = "%PARENT%" # Kernel learning rate 
             loss  = "mmd"      # Kernel loss ("mmd", "tstatistic", or "mmd_diff")
 
     [arch]
-        physics   = "$(get(ENV, "JL_PHYS_MODEL", "toy"))" # "toy" or "mri"
+        physics   = "epg"
         nlatent   = 1   # number of latent variables Z
         zdim      = 12  # embedding dimension of z
         hdim      = 256 # size of hidden layers
@@ -110,21 +114,23 @@ else
             hdim      = "%PARENT%"
             nhidden   = "%PARENT%"
         [arch.genatr]
-            hdim        = 32  #TODO "%PARENT%"
+            ktheta      = 16  # Dimension of domain of theta prior space
+            klatent     = 4   # Dimension of domain of latent prior space
+            hdim        = 64  #TODO "%PARENT%"
             nhidden     = 2   #TODO "%PARENT%"
-            leakyslope  = 0.0 #TODO
-            maxcorr     = $(get(ENV, "JL_PHYS_MODEL", "toy") == "toy" ? 0.1 : 0.025) # correction amplitude
-            noisebounds = $(get(ENV, "JL_PHYS_MODEL", "toy") == "toy" ? [-10.0, 0.0] : [-6.0, -3.0]) # noise amplitude
+            leakyslope  = 0.0
+            maxcorr     = 0.1
+            noisebounds = [-6.0, 0.0]
         [arch.discrim]
             dropout   = 0.1
             hdim      = 0     #TODO "%PARENT%"
             nhidden   = 0     #TODO "%PARENT%"
         [arch.kernel]
-            nbandwidth  = 32    #TODO
-            channelwise = true  #TODO
-            deep        = false #TODO
-            bwbounds    = $(get(ENV, "JL_PHYS_MODEL", "toy") == "toy" ? [-8.0, 4.0] : [-10.0, 4.0]) # bounds for kernel bandwidths (logsigma)
-            clampnoise  = 0.0   #TODO
+            nbandwidth  = 32            #TODO
+            channelwise = true          #TODO
+            deep        = false         #TODO
+            bwbounds    = [-8.0, 4.0]   # Bounds for kernel bandwidths (logsigma)
+            clampnoise  = 0.0           #TODO
     """))
 end
 
@@ -141,11 +147,12 @@ Ignite.save_and_print(settings; filename = !haskey(ENV, "JL_CHECKPOINT_FOLDER") 
 phys = initialize!(MMDLearning.EPGModel{Float32,true}(); seed = 0, imagepath = "/home/jdoucette/Documents/code/MWI-Julia-Paper/Example_48echo_8msTE/data-in/ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.nii.gz")
 models_checkpoint = !haskey(ENV, "JL_CHECKPOINT_FOLDER") ? Dict{String, Any}() : map_dict(to32, deepcopy(BSON.load(joinpath(ENV["JL_CHECKPOINT_FOLDER"], "current-models.bson"))["models"]))
 models, derived = MMDLearning.make_mmd_cvae_models(phys, settings, models_checkpoint)
+make_opt(otype = Flux.ADAM; lr, gclip = 0, wdecay = 0) = (os = Any[otype(lr)]; (gclip > 0) && pushfirst!(os, Flux.ClipValue(gclip)); (wdecay > 0) && push!(os, Flux.WeightDecay(wdecay)); return Flux.Optimiser(os))
 optimizers = Dict{String,Any}(
-    "cvae"    => Flux.ADAM(settings["opt"]["cvae"]["lrrel"]    / settings["train"]["batchsize"]),
-    "genatr"  => Flux.ADAM(settings["opt"]["genatr"]["lrrel"]  / settings["train"]["batchsize"]),
-    "discrim" => Flux.ADAM(settings["opt"]["discrim"]["lrrel"] / settings["train"]["batchsize"]),
-    "mmd"     => Flux.ADAM(settings["opt"]["mmd"]["lrrel"]     / settings["train"]["batchsize"]),
+    "mmd"     => make_opt(lr = settings["opt"]["discrim"]["lrrel"] / settings["train"]["batchsize"], gclip = settings["opt"]["mmd"]["gclip"]),
+    "cvae"    => make_opt(lr = settings["opt"]["cvae"]["lrrel"] / settings["train"]["batchsize"]),
+    "genatr"  => make_opt(lr = settings["opt"]["genatr"]["lrrel"] / settings["train"]["batchsize"]),
+    "discrim" => make_opt(lr = settings["opt"]["discrim"]["lrrel"] / settings["train"]["batchsize"]),
 )
 MMDLearning.model_summary(models, !haskey(ENV, "JL_CHECKPOINT_FOLDER") ? joinpath(settings["data"]["out"], "model-summary.txt") : nothing)
 
@@ -176,7 +183,7 @@ function augment(X::AbstractMatrix)
     ∇X   = settings["train"]["augment"]["gradient"]::Bool ? derived["forwarddiff"](X) : nothing # Signal gradient
     ∇²X  = settings["train"]["augment"]["laplacian"]::Bool ? derived["laplacian"](X) : nothing # Signal laplacian
     ∇ⁿX  = settings["train"]["augment"]["fdcat"]::Int > 0 ? derived["fdcat"](X) : nothing # Signal finite differences, concatenated
-    Xres = settings["train"]["augment"]["residuals"]::Bool ? X .- Zygote.@ignore(sampleX(derived["cvae"], phys, X; recover_θ = true, recover_Z = true)) : nothing # Residual relative to different sample X̄(θ), θ ~ P(θ|X) (note: Z discarded, recover_Z irrelevant)
+    Xres = settings["train"]["augment"]["residuals"]::Bool ? X .- Zygote.@ignore(sampleX(derived["cvae"], derived["prior"], X; posterior_θ = true, posterior_Z = true)) : nothing # Residual relative to different sample X̄(θ), θ ~ P(θ|X) (note: Z discarded, posterior_Z irrelevant)
     Xenc = settings["train"]["augment"]["encoderspace"]::Bool ? derived["encoderspace"](X) : nothing # Encoder-space signal
     Xfft = settings["train"]["augment"]["fftcat"]::Bool ? vcat(reim(rfft(X,1))...) : nothing # Concatenated real/imag fourier components
     Xrfft, Xifft = settings["train"]["augment"]["fftsplit"]::Bool ? reim(rfft(X,1)) : (nothing, nothing) # Separate real/imag fourier components
@@ -251,7 +258,7 @@ end
 function get_kernel_opt(key)
     # Initialize optimizer, if necessary
     get!(optimizers, "kernel_$key") do
-        Flux.ADAM(settings["opt"]["kernel"]["lrrel"] / settings["train"]["batchsize"])
+        make_opt(lr = settings["opt"]["kernel"]["lrrel"] / settings["train"]["batchsize"])
     end
     return optimizers["kernel_$key"]
 end
@@ -296,8 +303,15 @@ MMDloss(k, X::AbstractTensor3D, Y::AbstractMatrix) = mean(map(i -> MMDloss(k, X[
 
 # Maximum mean discrepency (m*MMD^2) loss
 function MMDlosses(Y)
-    # Sample θ,Z from CVAE posterior, differentiating only through generator corrections `sampleX̂`
-    X, θ, Z = Zygote.@ignore sampleXθZ(derived["cvae"], phys, Y; recover_θ = true, recover_Z = false) # learn to map whole Z domain via `recover_Z = false`
+    if settings["train"]["DeepThetaPrior"]::Bool && settings["train"]["DeepLatentPrior"]::Bool
+        X, θ, Z = sampleXθZ(derived["cvae"], derived["prior"], Y; posterior_θ = false, posterior_Z = false) # sample θ and Z from the learned deep priors, differentiating through the sampling process and the physics model
+    else
+        Z = settings["train"]["DeepLatentPrior"]::Bool ? sampleZprior(derived["prior"], Y) : Zygote.@ignore(sampleZprior(derived["prior"], Y)) # differentiate through deep Z prior, else ignore
+        θ = settings["train"]["DeepThetaPrior"]::Bool ? sampleθprior(derived["prior"], Y) : Zygote.@ignore(sampleθZ(derived["cvae"], derived["prior"], Y; posterior_θ = true, posterior_Z = true)[1]) # use CVAE posterior for θ prior; Z is ignored w/ `posterior_Z` arbitrary
+        X = settings["train"]["DeepThetaPrior"]::Bool ? signal_model(phys, θ) : Zygote.@ignore(signal_model(phys, θ)) # differentiate through physics model if learning deep θ prior, else ignore
+    end
+
+    # Differentiate through generator corrections `sampleX̂`
     nX̂ = settings["train"]["transform"]["nsamples"]::Int |> n -> ifelse(n > 1, n, nothing)
     ν, ϵ = rician_params(derived["ricegen"], X, Z)
     X̂ = add_noise_instance(derived["ricegen"], ν, ϵ, nX̂)
@@ -327,12 +341,8 @@ end
 
 # Conditional variational autoencoder losses
 function CVAElosses(Y; marginalize_Z)
-    # # Sample θ,Z from priors, differentiating through generator corrections on the encoder 2 side only
-    # X, θ, Z = Zygote.@ignore sampleXθZ(derived["cvae"], phys, Y; recover_θ = false, recover_Z = false) # sample θ and Z priors
-    # X̂ = sampleX̂(derived["ricegen"], X, Z) # Note: must dropgrad on encoder 1 input
-
     # Sample X̂,θ,Z from priors
-    X̂, θ, Z = Zygote.@ignore sampleX̂θZ(derived["ricegen"], derived["cvae"], phys, Y; recover_θ = false, recover_Z = false) # sample θ and Z priors
+    X̂, θ, Z = Zygote.@ignore sampleX̂θZ(derived["cvae"], derived["prior"], Y; posterior_θ = false, posterior_Z = false) # sample θ and Z priors
 
     # Cross-entropy loss function components
     KLDiv, ELBO = KL_and_ELBO(derived["cvae"], X̂, θ, Z; marginalize_Z)
@@ -341,8 +351,8 @@ function CVAElosses(Y; marginalize_Z)
         (; KLDiv, ELBO)
     else
         # Use inferred params as pseudolabels for Y
-        θY, ZY = Zygote.@ignore sampleθZ(derived["cvae"], phys, Y; recover_θ = true, recover_Z = false) # draw pseudo θ labels for Y; Z drawn from prior
-        KLDivPseudo, ELBOPseudo = KL_and_ELBO(derived["cvae"], Y, θY, ZY; marginalize_Z = true) # recover pseudo θ labels only
+        θY, ZY = Zygote.@ignore sampleθZ(derived["cvae"], derived["prior"], Y; posterior_θ = true, posterior_Z = true) # draw pseudo θ and Z labels for Y
+        KLDivPseudo, ELBOPseudo = KL_and_ELBO(derived["cvae"], Y, θY, ZY; marginalize_Z) # recover pseudo θ and Z labels
         (; KLDiv, ELBO, KLDivPseudo, ELBOPseudo)
     end
 
@@ -381,7 +391,8 @@ function train_step(engine, batch)
 
         # Train Self MMD CVAE loss
         train_MMDCVAE && @timeit "mmd + cvae" CUDA.@sync let
-            ps = Flux.params(models["genatr"], models["enc1"], models["enc2"], models["dec"])
+            deeppriors = [models["theta_prior"], models["latent_prior"]][[settings["train"]["DeepThetaPrior"]::Bool, settings["train"]["DeepLatentPrior"]::Bool]]
+            ps = Flux.params(models["enc1"], models["enc2"], models["dec"], models["genatr"], deeppriors...)
             λ_0 = eltype(Ytrain)(settings["opt"]["mmd"]["lambda_0"]::Float64)
             @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(ps) do
                 mmd = sum(MMDlosses(Ytrain))
@@ -396,16 +407,19 @@ function train_step(engine, batch)
         # Train CVAE loss
         train_CVAE && @timeit "cvae" CUDA.@sync let
             ps = Flux.params(models["enc1"], models["enc2"], models["dec"])
-            @timeit "forward"   CUDA.@sync ℓ, back = Zygote.pullback(() -> sum(CVAElosses(Ytrain; marginalize_Z = false)), ps)
-            @timeit "reverse"   CUDA.@sync gs = back(one(eltype(phys)))
-            @timeit "update!"   CUDA.@sync Flux.Optimise.update!(optimizers["cvae"], ps, gs)
-            outputs["CVAE"] = ℓ
+            for _ in 1:settings["train"]["CVAEsteps"]
+                @timeit "forward"   CUDA.@sync ℓ, back = Zygote.pullback(() -> sum(CVAElosses(Ytrain; marginalize_Z = false)), ps)
+                @timeit "reverse"   CUDA.@sync gs = back(one(eltype(phys)))
+                @timeit "update!"   CUDA.@sync Flux.Optimise.update!(optimizers["cvae"], ps, gs)
+                outputs["CVAE"] = ℓ
+            end
         end
 
         # Train MMD loss
         train_MMD && @timeit "mmd" CUDA.@sync let
             @timeit "genatr" CUDA.@sync let
-                ps = Flux.params(models["genatr"])
+                deeppriors = [models["theta_prior"], models["latent_prior"]][[settings["train"]["DeepThetaPrior"]::Bool, settings["train"]["DeepLatentPrior"]::Bool]]
+                ps = Flux.params(models["genatr"], deeppriors...)
                 @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(() -> sum(MMDlosses(Ytrain)), ps)
                 @timeit "reverse" CUDA.@sync gs = back(one(eltype(phys)))
                 @timeit "update!" CUDA.@sync Flux.Optimise.update!(optimizers["mmd"], ps, gs)
@@ -415,7 +429,7 @@ function train_step(engine, batch)
 
         # Train GAN loss
         train_GAN && @timeit "gan" CUDA.@sync let
-            @timeit "sampleXθZ" CUDA.@sync Xtrain, θtrain, Ztrain = sampleXθZ(derived["cvae"], phys, Ytrain; recover_θ = true, recover_Z = false) # learn to map whole Z domain via `recover_Z = false`
+            @timeit "sampleXθZ" CUDA.@sync Xtrain, θtrain, Ztrain = sampleXθZ(derived["cvae"], derived["prior"], Ytrain; posterior_θ = true, posterior_Z = false) # learn to map whole Z domain via `posterior_Z = false`
             train_discrim && @timeit "discrim" CUDA.@sync let
                 ps = Flux.params(models["discrim"])
                 for _ in 1:settings["train"]["Dsteps"]
@@ -426,7 +440,8 @@ function train_step(engine, batch)
                 end
             end
             train_genatr && @timeit "genatr" CUDA.@sync let
-                ps = Flux.params(models["genatr"])
+                deeppriors = [models["theta_prior"], models["latent_prior"]][[settings["train"]["DeepThetaPrior"]::Bool, settings["train"]["DeepLatentPrior"]::Bool]]
+                ps = Flux.params(models["genatr"], deeppriors...)
                 @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(() -> sum(Gloss(Xtrain, Ztrain)), ps)
                 @timeit "reverse" CUDA.@sync gs = back(one(eltype(phys)))
                 @timeit "update!" CUDA.@sync Flux.Optimise.update!(optimizers["genatr"], ps, gs)
@@ -442,7 +457,7 @@ function train_step(engine, batch)
             opts = (get_kernel_opt(aug) for aug in aug_types) # unique optimizer per augmentation
             kernels = (get_mmd_kernel(aug, size(Y,1)) for (aug, Y) in zip(aug_types, aug_Ytrains)) # unique kernel per augmentation
             for _ in 1:settings["train"]["kernelsteps"]::Int
-                @timeit "sample G(X)" X̂train = sampleX̂(derived["ricegen"], derived["cvae"], phys, Ytrain; recover_θ = true, recover_Z = false) # # sample unique X̂ per step (TODO: recover_Z = true? or recover_Z = false to force learning of whole Z domain?)
+                @timeit "sample G(X)" X̂train = sampleX̂(derived["cvae"], derived["prior"], Ytrain; posterior_θ = true, posterior_Z = false) # # sample unique X̂ per step (TODO: posterior_Z = true? or posterior_Z = false to force learning of whole Z domain?)
                 @timeit "sample Y2" Ytrain2 = sampleY(phys, settings["train"]["batchsize"]::Int; dataset = :train) |> to32 # draw another Y sample
                 aug_X̂trains, aug_Ytrains2 = augment_and_transform(X̂train, Ytrain2) .|> values # augment data + simulated data
                 for (aug, kernel, aug_X̂train, aug_Ytrain, aug_Ytrain2, opt) in zip(aug_types, kernels, aug_X̂trains, aug_Ytrains, aug_Ytrains2, opts)
@@ -453,29 +468,6 @@ function train_step(engine, batch)
                 end
             end
         end
-
-        # # CVAE and GAN take turns training for `GANcycle` consecutive epochs
-        # GANcycle = settings["train"]["GANcycle"]::Int
-        # train_CVAE = (GANcycle == 0) || iseven(div(engine.state.epoch-1, GANcycle))
-        # train_GAN  = (GANcycle == 0) || !train_CVAE
-        # train_discrim = true
-        # train_genatr = true
-
-        # # `Dcycle` epochs of discrim only, followed by `Dcycle` epochs of CVAE and GAN together
-        # Dcycle = settings["train"]["Dcycle"]::Int
-        # if Dcycle != 0 && iseven(div(engine.state.epoch-1, Dcycle))
-        #     train_CVAE = false
-        #     train_GAN  = true
-        #     train_discrim = true
-        #     train_genatr = false
-        # else
-        #     # Train CVAE every iteration, GAN every `GANrate` iterations
-        #     train_CVAE = true
-        #     train_GAN  = mod(engine.state.iteration-1, settings["train"]["GANrate"]::Int) == 0
-        #     train_discrim = true
-        #     # train_genatr = true
-        #     train_genatr = engine.state.epoch >= settings["train"]["Dheadstart"]::Int
-        # end
     end
 
     return deepcopy(outputs)
@@ -491,7 +483,7 @@ function fit_metrics(Ytrue, θtrue, Ztrue, Wtrue)
     end
 
     @unpack θ, Z, X, δ, ϵ, ν, ℓ = MMDLearning.posterior_state(
-        derived["ricegen"], derived["cvae"], phys, Ytrue;
+        derived["cvae"], derived["prior"], Ytrue;
         miniter = 1, maxiter = 1, alpha = 0.0, verbose = false, mode = :maxlikelihood,
     )
     X̂ = add_noise_instance(derived["ricegen"], ν, ϵ)
@@ -534,7 +526,7 @@ function compute_metrics(engine, batch; dataset)
 
         # Invert Y and make Xs
         Y, = Ignite.array.(batch) .|> todevice
-        X, θ, Z = sampleXθZ(derived["cvae"], phys, Y; recover_θ = true, recover_Z = true)
+        X, θ, Z = sampleXθZ(derived["cvae"], derived["prior"], Y; posterior_θ = true, posterior_Z = true)
         X̂ = sampleX̂(derived["ricegen"], X, Z)
         Nbatch = size(Y,2)
 
@@ -606,18 +598,16 @@ function compute_metrics(engine, batch; dataset)
 end
 
 function makeplots(;showplot = false)
-    function plot_epsilon(; knots = (-5.0, 5.0), seriestype = :line, showplot = false)
+    function plot_epsilon(; knots = (-1.0, 1.0), seriestype = :line, showplot = false)
         function plot_epsilon_inner(; start, stop, zlen = 256, levels = 50)
+            #TODO fixed knots, start, stop
             n, nθ, nz = nsignal(phys)::Int, ntheta(phys)::Int, nlatent(derived["ricegen"])::Int
             Y = sampleY(phys, zlen * nz; dataset = :train) |> to32
-            θ = sampleθprior(phys, Y, zlen * nz)
-            X = signal_model(phys, θ)
-            Z = repeat(randn_similar(Y, nz, 1), 1, zlen, nz)
-            for i in 1:nz
-                Z[i,:,i] .= range(start, stop; length = zlen)
-            end
-            log10ϵ = rician_params(derived["ricegen"], X, reshape(Z, nz, :))[2] |> ϵ -> reshape(ϵ, :, zlen, nz) |> ϵ -> log10.(ϵ)
-            Y, θ, X, Z, log10ϵ = Flux.cpu.((Y, θ, X, Z, log10ϵ))
+            X, _, Z = sampleXθZ(derived["cvae"], derived["prior"], Y; posterior_θ = true, posterior_Z = false)
+            Z = Z[:,1] |> Flux.cpu |> z -> repeat(z, 1, zlen, nz) |> z -> (foreach(i -> z[i,:,i] .= range(start, stop; length = zlen), 1:nz); z)
+            _, ϵ = rician_params(derived["ricegen"], X, reshape(Z, nz, :) |> Flux.gpu)
+            (size(ϵ,1) == 1) && (ϵ = repeat(ϵ, n, 1))
+            log10ϵ = log10.(reshape(ϵ, :, zlen, nz)) |> Flux.cpu
             ps = map(1:nz) do i
                 zlabs = nz == 1 ? "" : latexstring(" (" * join(map(j -> L"$Z_%$(j)$ = %$(round(Z[1,1,j]; digits = 2))", setdiff(1:nz, i)), ", ") * ")")
                 kwcommon = (; leg = :none, colorbar = :right, color = cgrad(:cividis), xlabel = L"$t$", title = L"$\log_{10}\epsilon$ vs. $t$ and $Z_{%$(i)}$%$(zlabs)")
@@ -639,17 +629,39 @@ function makeplots(;showplot = false)
         return p
     end
 
+    function plot_priors(;showplot = false)
+        θ = sampleθprior(derived["prior"], 10000) |> Flux.cpu
+        Z = sampleZprior(derived["prior"], 10000) |> Flux.cpu
+        pθs = [histogram(θ[i,:]; nbins = 100, label = θlabels(phys)[i], xlim = θbounds(phys)[i]) for i in 1:size(θ,1)]
+        pZs = [histogram(Z[i,:]; nbins = 100, label = L"Z_%$i") for i in 1:size(Z,1)] #TODO
+        p = plot(pθs..., pZs...)
+        if showplot; display(p); end
+        return p
+    end
+
+    function plot_posteriors(;showplot = false)
+        Y = sampleY(phys, 10000; dataset = :train) |> to32
+        θ, Z = sampleθZ(derived["cvae"], derived["prior"], Y; posterior_θ = true, posterior_Z = true) .|> Flux.cpu
+        pθs = [histogram(θ[i,:]; nbins = 100, label = θlabels(phys)[i], xlim = θbounds(phys)[i]) for i in 1:size(θ,1)]
+        pZs = [histogram(Z[i,:]; nbins = 100, label = L"Z_%$i") for i in 1:size(Z,1)] #TODO
+        p = plot(pθs..., pZs...)
+        if showplot; display(p); end
+        return p
+    end
+
     try
         Dict{Symbol, Any}(
-            :ricemodel    => MMDLearning.plot_rician_model(logger, cb_state, phys; showplot = showplot, bandwidths = (filter(((k,v),) -> startswith(k, "logsigma"), collect(models)) |> logσs -> isempty(logσs) ? nothing : (x->Flux.cpu(permutedims(x[2]))).(logσs))),
-            :signals      => MMDLearning.plot_rician_signals(logger, cb_state, phys; showplot = showplot),
-            :signalmodels => MMDLearning.plot_rician_model_fits(logger, cb_state, phys; showplot = showplot),
-            :infer        => MMDLearning.plot_rician_inference(logger, cb_state, phys; showplot = showplot),
-            :ganloss      => MMDLearning.plot_gan_loss(logger, cb_state, phys; showplot = showplot, lrdroprate = settings["opt"]["lrrate"], lrdrop = settings["opt"]["lrdrop"]),
-            :vallosses    => MMDLearning.plot_all_logger_losses(logger, cb_state, phys; dataset = :val, showplot = showplot),
-            :trainlosses  => MMDLearning.plot_all_logger_losses(logger, cb_state, phys; dataset = :train, showplot = showplot),
-            :epsline      => plot_epsilon(; showplot = showplot, seriestype = :line), #TODO
-            :epscontour   => plot_epsilon(; showplot = showplot, seriestype = :contour), #TODO
+            :ricemodel    => MMDLearning.plot_rician_model(logger, cb_state, phys; showplot, bandwidths = (filter(((k,v),) -> startswith(k, "logsigma"), collect(models)) |> logσs -> isempty(logσs) ? nothing : (x->Flux.cpu(permutedims(x[2]))).(logσs))),
+            :signals      => MMDLearning.plot_rician_signals(logger, cb_state, phys; showplot),
+            :signalmodels => MMDLearning.plot_rician_model_fits(logger, cb_state, phys; showplot),
+            :infer        => MMDLearning.plot_rician_inference(logger, cb_state, phys; showplot),
+            :ganloss      => MMDLearning.plot_gan_loss(logger, cb_state, phys; showplot, lrdroprate = settings["opt"]["lrrate"], lrdrop = settings["opt"]["lrdrop"]),
+            :vallosses    => MMDLearning.plot_all_logger_losses(logger, cb_state, phys; showplot, dataset = :val),
+            :trainlosses  => MMDLearning.plot_all_logger_losses(logger, cb_state, phys; showplot, dataset = :train),
+            :epsline      => plot_epsilon(; showplot, seriestype = :line), #TODO
+            :epscontour   => plot_epsilon(; showplot, seriestype = :contour), #TODO
+            :priors       => plot_priors(; showplot), #TODO
+            :posteriors   => plot_posteriors(; showplot), #TODO
         )
     catch e
         handleinterrupt(e; msg = "Error plotting")

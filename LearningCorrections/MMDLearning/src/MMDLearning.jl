@@ -25,14 +25,14 @@ export mmd, mmdvar, mmd_and_mmdvar, tstat_flux, kernel_loss, train_kernel!
 export mmd_perm_test_power, mmd_perm_test_power_plot, fast_hist_1D
 
 export NotTrainable, DenseResize, Scale
-export Rician, RicianCorrector, NormalizedRicianCorrector, VectorRicianCorrector, FixedNoiseVectorRicianCorrector, LatentVectorRicianCorrector, LatentVectorRicianNoiseCorrector
+export Rician, RicianCorrector, NormalizedRicianCorrector, VectorRicianCorrector, FixedNoiseVectorRicianCorrector, LatentVectorRicianCorrector, LatentVectorRicianNoiseCorrector, LatentScalarRicianNoiseCorrector
 export correction, noiselevel, correction_and_noiselevel, corrected_signal_instance, add_correction, add_noise_instance, rician_params
 
 export PhysicsModel, ClosedForm, ToyModel
-export zeros_similar, ones_similar, randn_similar, rand_similar
+export arr_similar, arr32, arr64, zeros_similar, ones_similar, randn_similar, rand_similar
 export physicsmodel, hasclosedform, initialize!, nsignal, nlatent, ninput, noutput, ntheta, signal_model
 export θbounds, θlower, θupper, θlabels, θasciilabels, θerror
-export sampleθprior, sampleWprior
+export sampleθprior, sampleZprior, sampleWprior
 export sampleθ, sampleX, sampleY
 export initialize_callback, update_callback!
 

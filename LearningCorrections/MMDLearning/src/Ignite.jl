@@ -131,14 +131,15 @@ end
 function droplr_file_event(optimizers::AbstractDict{<:AbstractString,Any}; file::AbstractString, lrrate::Int, lrdrop, lrthresh)
     pred(engine) = engine.state.epoch > 1 && mod(engine.state.epoch-1, lrrate) == 0
     file_event(pred; file = file) do engine
-        for (name, opt) in optimizers
-            new_eta = max(opt.eta / lrdrop, lrthresh)
+        for (name, opt) in optimizers, o in opt
+            !hasfield(typeof(o), :eta) && continue
+            new_eta = max(o.eta / lrdrop, lrthresh)
             if new_eta > lrthresh
                 @info "$(engine.state.epoch): Dropping $name optimizer learning rate to $new_eta"
             else
                 @info "$(engine.state.epoch): Learning rate reached minimum value $lrthresh for $name optimizer"
             end
-            opt.eta = new_eta
+            o.eta = new_eta
         end
     end
 end

@@ -2,12 +2,17 @@
 #### Math utils
 ####
 
-arr32(x::AbstractArray{T,N}) where {T,N} = convert(Array{Float32,N}, Flux.cpu(x))
-arr64(x::AbstractArray{T,N}) where {T,N} = convert(Array{Float64,N}, Flux.cpu(x))
+arr_similar(x::AbstractArray, y::AbstractArray) = arr_similar(typeof(x), y)
+arr_similar(::Type{<:AbstractArray{T}}, y::AbstractArray) where {T} = convert(Array{T}, y)
+arr_similar(::Type{<:AbstractArray{T}}, y::CUDA.CuArray{T}) where {T} = convert(Array{T}, y) #TODO: CuArray -> Array works directly if eltypes are equal
+arr_similar(::Type{<:AbstractArray{T1}}, y::CUDA.CuArray{T2}) where {T1,T2} = convert(Array{T1}, y |> Flux.cpu) #TODO: CuArray -> Array falls back to scalar indexing with unequal eltypes
+arr_similar(::Type{<:CUDA.CuArray{T1}}, y::CUDA.CuArray{T2}) where {T1,T2} = convert(CUDA.CuArray{T1}, y) #TODO: Needed for disambiguation
+arr_similar(::Type{<:CUDA.CuArray{T}}, y::AbstractArray) where {T} = convert(CUDA.CuArray{T}, y)
+Zygote.@adjoint arr_similar(::Type{Tx}, y::Ty) where {Tx <: AbstractArray, Ty <: AbstractArray} = arr_similar(Tx, y), Δ -> (nothing, arr_similar(Ty, Δ)) # preserve input type on backward pass
 
-arr_similar(x::AbstractArray, y) = arr_similar(typeof(x), y)
-arr_similar(::Type{<:AbstractArray{T}}, y) where {T} = convert(Array{T}, y)
-arr_similar(::Type{<:CUDA.CuArray{T}}, y) where {T} = convert(CUDA.CuArray{T}, y)
+arr32(x::AbstractArray) = arr_similar(Array{Float32}, x)
+arr64(x::AbstractArray) = arr_similar(Array{Float64}, x)
+
 
 # rand_similar and randn_similar
 for f in [:zeros, :ones, :rand, :randn]
@@ -16,6 +21,9 @@ for f in [:zeros, :ones, :rand, :randn]
     @eval $f_similar(::Type{<:AbstractArray{T}}, sz...) where {T} = Zygote.ignore(() -> Base.$f(T, sz...)) # fallback
     @eval $f_similar(::Type{<:CUDA.CuArray{T}}, sz...) where {T} = Zygote.ignore(() -> CUDA.$f(T, sz...)) # CUDA
 end
+
+#TODO: `acosd` gets coerced to Float64 by Zygote on reverse pass; file bug?
+_acosd_cuda(x::AbstractArray{T}) where {T} = clamp.(T(57.29577951308232) .* acos.(x), T(0.0), T(180.0)) # 180/π ≈ 57.29577951308232
 
 # Soft cutoff function
 soft_cutoff(x, x0, w) = Flux.σ(-(x-x0)/w)

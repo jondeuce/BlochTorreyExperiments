@@ -1493,29 +1493,6 @@ function combinatorial_kernel_opt(k::DeepExponentialKernel, X, Y, σbucket; batc
     return kbest
 end
 
-#=
-    let
-        Ytrain = sampleY(phys, 1024; dataset = :train) |> todevice
-        X̂train, θtrain, Ztrain = sampleX̂θZ(Ytrain; recover_θ = false, recover_Z = false) #.|> todevice
-        ℓ_CVAE = CVAElosses(X̂train, θtrain, Ztrain; recover_Z = true)
-        ℓ_CVAE[:CVAEloss] = sum_dict(ℓ_CVAE)
-        display(ℓ_CVAE)
-
-        Xtrain, θtrain, Ztrain = sampleXθZ(Ytrain; recover_θ = true, recover_Z = false) #.|> todevice #TODO recover_Z?
-        ℓ_MMD = MMDlosses(Xtrain, Ytrain, Ztrain)
-        display(ℓ_MMD)
-    end;
-
-    let
-        Ytrain = sampleY(phys, :all; dataset = :train) |> todevice
-        X̂train = sampleX̂(Ytrain; recover_θ = true, recover_Z = true)
-        MMDLearning.combinatorial_kernel_opt(
-            derived["kernel"], X̂train, Ytrain, (collect(range(-10.0, 5.0; length = 51)) |> to32 |> todevice), #copy(logbandwidths(derived["kernel"])),
-            batchsize = 2048, nsamples = 100, maxiters = 100, replace = true, verbose = true,
-        )
-    end
-=#
-
 ####
 #### Kernel bandwidth opt
 ####

@@ -63,6 +63,15 @@ Flux.@functor LatentVectorRicianNoiseCorrector
 ninput(::Type{R}) where {R<:LatentVectorRicianNoiseCorrector} = nlatent(R)
 noutput(::Type{R}) where {R<:LatentVectorRicianNoiseCorrector} = nsignal(R)
 
+# G : Z ∈ 𝐑^k -> logϵ ∈ 𝐑 with fixed δ = 0
+@with_kw struct LatentScalarRicianNoiseCorrector{n,nz,Gtype} <: RicianCorrector{n,nz}
+    G::Gtype
+    LatentScalarRicianNoiseCorrector{n,nz}(G) where {n,nz} = new{n,nz,typeof(G)}(G)
+end
+Flux.@functor LatentScalarRicianNoiseCorrector
+ninput(::Type{R}) where {R<:LatentScalarRicianNoiseCorrector} = nlatent(R)
+noutput(::Type{R}) where {R<:LatentScalarRicianNoiseCorrector} = 1
+
 # Helper functions
 @inline _maybe_vcat(X, Z = nothing) = isnothing(Z) ? X : vcat(X,Z)
 @inline _split_delta_epsilon(δ_logϵ) = δ_logϵ[1:end÷2, :], exp.(δ_logϵ[end÷2+1:end, :]) .+ sqrt(eps(eltype(δ_logϵ)))
@@ -80,7 +89,8 @@ correction_and_noiselevel(G::NormalizedRicianCorrector, args...) = correction_an
 correction_and_noiselevel(G::VectorRicianCorrector, X, Z = nothing) = _split_delta_epsilon(generator(G)(_maybe_vcat(X,Z)))
 correction_and_noiselevel(G::FixedNoiseVectorRicianCorrector, X, Z = nothing) = generator(G)(_maybe_vcat(X,Z)), G.ϵ0
 correction_and_noiselevel(G::LatentVectorRicianCorrector, X, Z) = _split_delta_epsilon(generator(G)(Z))
-correction_and_noiselevel(G::LatentVectorRicianNoiseCorrector, X, Z) = zero(X), exp.(generator(G)(Z)) .+ sqrt(eps(eltype(Z)))
+correction_and_noiselevel(G::LatentVectorRicianNoiseCorrector, X, Z) = zero(X), exp.(generator(G)(Z)) .+ sqrt(eps(eltype(X)))
+correction_and_noiselevel(G::LatentScalarRicianNoiseCorrector, X, Z) = zero(X), exp.(generator(G)(Z)) .* ones_similar(X, nsignal(G)) .+ sqrt(eps(eltype(X)))
 
 # Derived convenience functions
 correction(G::RicianCorrector, X, Z = nothing) = correction_and_noiselevel(G, X, Z)[1]
@@ -402,11 +412,11 @@ nlatent(p::EPGModel) = 0
 hasclosedform(p::ToyEPGModel) = true
 hasclosedform(p::EPGModel) = false
 
-θlabels(::BiexpEPGModel) = [L"\cos\alpha", L"\cos\beta", L"\eta", L"\delta_1", L"\delta_2"]
-θasciilabels(::BiexpEPGModel) = ["cosalpha", "cosrefcon", "eta", "delta1", "delta2"]
-θunits(::BiexpEPGModel) = ["cos(deg)", "cos(deg)", "a.u.", "a.u.", "a.u."]
-θlower(::BiexpEPGModel{T}) where {T} = T[T(-1.0), T(-1.0), T(0.0), T(0.0), T(0.0)]
-θupper(::BiexpEPGModel{T}) where {T} = T[T( 0.5), T( 0.0), T(1.0), T(1.0), T(1.0)]
+θlabels(::BiexpEPGModel) = [L"\alpha", L"\beta", L"\eta", L"\delta_1", L"\delta_2"]
+θasciilabels(::BiexpEPGModel) = ["alpha", "refcon", "eta", "delta1", "delta2"]
+θunits(::BiexpEPGModel) = ["deg", "deg", "a.u.", "a.u.", "a.u."]
+θlower(::BiexpEPGModel{T}) where {T} = T[T( 90.0), T( 90.0), T(0.0), T(0.0), T(0.0)]
+θupper(::BiexpEPGModel{T}) where {T} = T[T(180.0), T(180.0), T(1.0), T(1.0), T(1.0)]
 
 function sampleθprior(p::BiexpEPGModel{T}, ::Type{A}, n::Union{Int, Symbol}) where {T, A <: AbstractArray{T}}
     # # Parameterize by alpha, short amplitude, relative T2 long and T2 short δs
@@ -420,25 +430,27 @@ function sampleθprior(p::BiexpEPGModel{T}, ::Type{A}, n::Union{Int, Symbol}) wh
     # η  = ((x,y) -> y < T(1/2) ? x : sqrt(x)).(rand_similar(A, 1, n), rand_similar(A, 1, n)) # union of uniform and triangular distbns on (0, 1)
     # δ1 = ((x,y) -> y < T(1/2) ? x : sqrt(x/4)).(rand_similar(A, 1, n), rand_similar(A, 1, n)) # union of uniform on (0, 1) and triangular distbns on (0, 1/2)
     # δ2 = rand_similar(A, 1, n) # uniform distbn on (0, 1)
-    # Parameterize by alpha, short amplitude, relative T2 long and T2 short δs
-    cosαlo, cosβlo, ηlo, δ1lo, δ2lo = θlower(p)
-    cosαhi, cosβhi, ηhi, δ1hi, δ2hi = θupper(p)
-    cosα = cosαlo .+ (cosαhi .- cosαlo) .* (x -> (exp(3x)-1)/(exp(T(3))-1)).(rand_similar(A, 1, n)) # concave triangular distbn on (cosαlo, cosαhi); encourages less near cosαlo, more near cosαhi
-    cosβ = cosβlo .+ (cosβhi .- cosβlo) .* (x -> (exp(3x)-1)/(exp(T(3))-1)).(rand_similar(A, 1, n)) # concave triangular distbn on (cosβlo, cosβhi); encourages less near cosβlo, more near cosβhi
+    # cosα = cosαlo .+ (cosαhi .- cosαlo) .* (x -> (exp(3x)-1)/(exp(T(3))-1)).(rand_similar(A, 1, n)) # concave triangular distbn on (cosαlo, cosαhi); encourages less near cosαlo, more near cosαhi
+    # cosβ = cosβlo .+ (cosβhi .- cosβlo) .* (x -> (exp(3x)-1)/(exp(T(3))-1)).(rand_similar(A, 1, n)) # concave triangular distbn on (cosβlo, cosβhi); encourages less near cosβlo, more near cosβhi
     # cosα = cosαlo .+ (cosαhi .- cosαlo) .* (x -> 1-sqrt(x)).(rand_similar(A, 1, n)) # flipped triangular distbn on (cosαlo, cosαhi); more near cosαlo, less near cosαhi
     # cosβ = cosβlo .+ (cosβhi .- cosβlo) .* (x -> 1-sqrt(x)).(rand_similar(A, 1, n)) # flipped triangular distbn on (cosβlo, cosβhi); more near cosβlo, less near cosβhi
+    # Parameterize by alpha, refcon, short amplitude, relative T2 long and T2 short δs
+    αlo, βlo, ηlo, δ1lo, δ2lo = θlower(p)
+    αhi, βhi, ηhi, δ1hi, δ2hi = θupper(p)
+    α  = αlo .+ (αhi .- αlo) .* (x -> (1-exp(-3x))/(1-exp(T(-3)))).(rand_similar(A, 1, n)) # concave triangular distbn on (αlo, αhi); encourages less near αlo, more near αhi
+    β  = βlo .+ (βhi .- βlo) .* (x -> (1-exp(-3x))/(1-exp(T(-3)))).(rand_similar(A, 1, n)) # concave triangular distbn on (βlo, βhi); encourages less near βlo, more near βhi
     η  = ((x,y) -> y < T(1/2) ? x : sqrt(x)).(rand_similar(A, 1, n), rand_similar(A, 1, n)) # union of uniform and triangular distbns on (0, 1)
     δ1 = ((x,y) -> y < T(1/2) ? x : sqrt(x/4)).(rand_similar(A, 1, n), rand_similar(A, 1, n)) # union of uniform on (0, 1) and triangular distbns on (0, 1/2)
     δ2 = rand_similar(A, 1, n) # uniform distbn on (0, 1)
-    return vcat(cosα, cosβ, η, δ1, δ2)
+    return vcat(α, β, η, δ1, δ2)
 end
 
 θsignalmodel(c::MaybeClosedFormBiexpEPGModel, θ::AbstractVecOrMat) = θsignalmodel(c, ntuple(i -> θ[i,:], ntheta(c))...)
 
-function θsignalmodel(c::MaybeClosedFormBiexpEPGModel, cosα, cosβ, η, δ1, δ2)
-    # Parameterize by alpha, short amplitude, relative T2 long and T2 short δs
+function θsignalmodel(c::MaybeClosedFormBiexpEPGModel, α, β, η, δ1, δ2)
+    # Parameterize by alpha, refcon, short amplitude, relative T2 long and T2 short δs
     logT2lo, logT2hi = log.(physicsmodel(c).T2bd)
-    alpha, refcon = acosd.(cosα), acosd.(cosβ)
+    alpha, refcon = α, β
     Ashort, Along = η, 1 .- η
     T2short = @. exp(logT2lo + (logT2hi - logT2lo) * δ1)
     T2long = @. exp(logT2lo + (logT2hi - logT2lo) * (δ1 + δ2 * (1 - δ1)))
@@ -451,26 +463,26 @@ function θderived(
         SPcutoff::T = T(40e-3),
         SPwidth::T = T(10e-3),
     ) where {T}
-    cosalpha, cosrefcon, eta, delta1, delta2 = θ[1,:], θ[2,:], θ[3,:], θ[4,:], θ[5,:]
-    alpha, refcon, T2short, T2long, Ashort, Along = θsignalmodel(c, θ)
+    alpha, refcon, eta, delta1, delta2 = θ[1,:], θ[2,:], θ[3,:], θ[4,:], θ[5,:]
+    _, _, T2short, T2long, Ashort, Along = θsignalmodel(c, θ)
     logT2short, logT2long = log.(T2short), log.(T2long)
     logT2bar = @. Ashort * logT2short + Along * logT2long
     T2bar = @. exp(logT2bar)
     mwf = @. Ashort * soft_cutoff(T2short, SPcutoff, SPwidth) + Along * soft_cutoff(T2long, SPcutoff, SPwidth)
     return (;
-        cosalpha, cosrefcon, eta, delta1, delta2, # inference domain params
-        alpha, refcon, T2short, T2long, Ashort, Along, # signal model params
+        alpha, refcon, eta, delta1, delta2, # inference domain params
+        T2short, T2long, Ashort, Along, # signal model params (without repeated alpha, refcon)
         logT2short, logT2long, logT2bar, T2bar, mwf, # misc. derived params
     )
 end
 
 θsignalmodelunits(::BiexpEPGModel) = ["deg", "deg", "s", "s", "a.u.", "a.u."]
 θsignalmodellabels(::BiexpEPGModel) = [L"\alpha", L"\beta", L"T_{2,short}", L"T_{2,long}", L"A_{short}", L"A_{long}"]
-θsignalmodelbounds(p::BiexpEPGModel) = [[reverse(acosd.(θbounds(p)[i])) for i in 1:2]..., (0.0, 1.0), p.T2bd, (0.0, 0.1), (0.0, 1.0)]
+θsignalmodelbounds(p::BiexpEPGModel) = [[θbounds(p)[i] for i in 1:2]..., (0.0, 1.0), p.T2bd, (0.0, 0.1), (0.0, 1.0)]
 
-θderivedunits(p::BiexpEPGModel) = [θunits(p); θsignalmodelunits(p); "log(s)"; "log(s)"; "log(s)"; "s"; "a.u."]
-θderivedlabels(p::BiexpEPGModel) = [θlabels(p); θsignalmodellabels(p); L"\log T_{2,short}"; L"\log T_{2,long}"; L"\log \bar{T}_2"; L"\bar{T}_2"; L"MWF"]
-θderivedbounds(p::BiexpEPGModel) = [θbounds(p); θsignalmodelbounds(p); log.(p.T2bd); log.(p.T2bd); log.(p.T2bd); (0.0, 0.25); (0.0, 0.4)]
+θderivedunits(p::BiexpEPGModel) = [θunits(p); θsignalmodelunits(p)[3:end]; "log(s)"; "log(s)"; "log(s)"; "s"; "a.u."]
+θderivedlabels(p::BiexpEPGModel) = [θlabels(p); θsignalmodellabels(p)[3:end]; L"\log T_{2,short}"; L"\log T_{2,long}"; L"\log \bar{T}_2"; L"\bar{T}_2"; L"MWF"]
+θderivedbounds(p::BiexpEPGModel) = [θbounds(p); θsignalmodelbounds(p)[3:end]; log.(p.T2bd); log.(p.T2bd); log.(p.T2bd); (0.0, 0.25); (0.0, 0.4)]
 
 #### Toy EPG model
 
@@ -512,48 +524,49 @@ function _signal_model(c::MaybeClosedFormBiexpEPGModel, θ::AbstractVecOrMat)
     return X
 end
 
-function _signal_model(c::MaybeClosedFormBiexpEPGModel{T}, alpha::AbstractVector, refcon::AbstractVector, T2short::AbstractVector, T2long::AbstractVector, Ashort::AbstractVector, Along::AbstractVector) where {T}
-    @assert length(alpha) == length(refcon) == length(T2short) == length(T2long) == length(Ashort) == length(Along)
-    nsamples = length(alpha)
-    nsignals = nsignal(c)
+# Faster to compute forward/reverse pass on the CPU and convert back to GPU after... DECAES is just too fast (for typical batch sizes of ~1024, anyways)
 
-    work = [BiexpEPGModelWork(c) for _ in 1:Threads.nthreads()]
+_signal_model(c::MaybeClosedFormBiexpEPGModel{T}, args::AbstractVector{T}...) where {T} = arr_similar(Matrix{T}, _signal_model_f64(c, map(arr64, args)...))
+_signal_model(c::MaybeClosedFormBiexpEPGModel{T}, args::CUDA.CuVector{T}...) where {T} = arr_similar(CUDA.CuMatrix{T}, _signal_model_f64(c, map(arr64, args)...))
+
+function _signal_model_f64(c::MaybeClosedFormBiexpEPGModel, alpha::AbstractVector{Float64}, refcon::AbstractVector{Float64}, T2short::AbstractVector{Float64}, T2long::AbstractVector{Float64}, Ashort::AbstractVector{Float64}, Along::AbstractVector{Float64})
+    args = (alpha, refcon, T2short, T2long, Ashort, Along)
+    @assert all(==(length(args[1])), length.(args))
+
+    nsignals, nsamples = nsignal(c), length(args[1])
     X = zeros(Float64, nsignals, nsamples)
-
+    work = [BiexpEPGModelWork(c) for _ in 1:Threads.nthreads()]
     DECAES.tforeach(1:nsamples; blocksize = 16) do j
         @inbounds begin
-            α, β, T21, T22, A1, A2 = Float64(alpha[j]), Float64(refcon[j]), Float64(T2short[j]), Float64(T2long[j]), Float64(Ashort[j]), Float64(Along[j])
-            _signal_model_f64!(view(X,:,j), c, work[Threads.threadid()], (α, β, T21, T22, A1, A2))
+            _signal_model_f64!(view(X,:,j), c, work[Threads.threadid()], ntuple(i -> args[i][j], 6))
         end
     end
 
-    return convert(Matrix{T}, X)
+    return X
 end
 
-Zygote.@adjoint function _signal_model(c::MaybeClosedFormBiexpEPGModel{T}, alpha::AbstractVector, refcon::AbstractVector, T2short::AbstractVector, T2long::AbstractVector, Ashort::AbstractVector, Along::AbstractVector) where {T}
-    @assert length(alpha) == length(refcon) == length(T2short) == length(T2long) == length(Ashort) == length(Along)
-    nsamples = length(alpha)
-    nsignals = nsignal(c)
+Zygote.@adjoint function _signal_model_f64(c::MaybeClosedFormBiexpEPGModel, alpha::AbstractVector{Float64}, refcon::AbstractVector{Float64}, T2short::AbstractVector{Float64}, T2long::AbstractVector{Float64}, Ashort::AbstractVector{Float64}, Along::AbstractVector{Float64})
+    args = (alpha, refcon, T2short, T2long, Ashort, Along)
+    @assert all(==(length(args[1])), length.(args))
 
     #TODO hard-coded 6
-    work = [_signal_model_f64_jacobian_setup(c) for _ in 1:Threads.nthreads()]
+    nsignals, nsamples = nsignal(c), length(args[1])
     X = zeros(Float64, nsignals, nsamples)
     J = zeros(Float64, nsignals, 6, nsamples)
     out = zeros(Float64, 6, 1, nsamples)
-
+    work = [_signal_model_f64_jacobian_setup(c) for _ in 1:Threads.nthreads()]
     DECAES.tforeach(1:nsamples; blocksize = 16) do j
         @inbounds begin
             f!, res, _, x, gx, cfg = work[Threads.threadid()]
-            x .= (alpha[j], refcon[j], T2short[j], T2long[j], Ashort[j], Along[j]) # Float64 conversion is automatic
-            ForwardDiff.jacobian!(res, f!, view(X,:,j), x, cfg)
+            for i in 1:6; x[i] = args[i][j]; end
+            @views ForwardDiff.jacobian!(res, f!, X[:,j], x, cfg)
             @views J[:,:,j] .= ForwardDiff.DiffResults.jacobian(res)
         end
     end
 
-    return convert(Matrix{T}, X), function (Δ)
-        NNlib.batched_mul!(out, NNlib.BatchedTranspose(J), reshape(Δ, nsignals, 1, nsamples))
-        δ = ntuple(i -> convert(Vector{T}, view(out,i,1,:)), 6)
-        return (nothing, δ...)
+    return X, function (Δ)
+        NNlib.batched_mul!(out, NNlib.BatchedTranspose(J), reshape(arr64(Δ), nsignals, 1, nsamples))
+        return (nothing, view(out,1,1,:), view(out,2,1,:), view(out,3,1,:), view(out,4,1,:), view(out,5,1,:), view(out,6,1,:))
     end
 end
 
@@ -580,9 +593,6 @@ function _signal_model_grad_test(phys::MaybeClosedFormBiexpEPGModel)
 
     return g_zygote, g_finitediff
 end
-
-# CPU version is actually faster than the GPU kernel below... DECAES is just too fast (for typical batch sizes of ~1024, anyways)
-_signal_model(c::MaybeClosedFormBiexpEPGModel, args::CUDA.CuVector...) = Flux.gpu(_signal_model(c, map(arr64, args)...))
 
 #### CPU DECAES signal model
 

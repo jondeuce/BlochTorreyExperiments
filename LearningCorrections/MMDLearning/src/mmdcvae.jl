@@ -5,46 +5,71 @@ function make_mmd_cvae_models(phys::PhysicsModel{Float32}, settings::Dict{String
     θbd = θbounds(phys)
     k   = settings["arch"]["nlatent"]::Int # number of latent variables Z
     nz  = settings["arch"]["zdim"]::Int # embedding dimension
+    δ   = settings["arch"]["genatr"]["maxcorr"]::Float64
+    σbd = settings["arch"]["genatr"]["noisebounds"]::Vector{Float64} |> bd -> (bd...,)::NTuple{2,Float64}
 
-    RiceGenType = LatentVectorRicianNoiseCorrector{n,k}
+    #TODO: only works for Latent(*)Corrector family
+    RiceGenType = LatentScalarRicianNoiseCorrector{n,k}
+    # RiceGenType = LatentVectorRicianNoiseCorrector{n,k}
     # RiceGenType = LatentVectorRicianCorrector{n,k}
     # RiceGenType = VectorRicianCorrector{n,k}
 
-    # Rician generator. First `n` elements for `δX` scaled to (-δ, δ), second `n` elements for `logϵ` scaled to (noisebounds[1], noisebounds[2])
-    get!(models, "genatr") do
+    OutputScale = let
+        RiceGenType <: Union{<:VectorRicianCorrector, <:LatentVectorRicianCorrector} ? MMDLearning.CatScale([(-δ, δ), σbd], [n,n]) :
+        RiceGenType <: FixedNoiseVectorRicianCorrector ? MMDLearning.CatScale([(-δ, δ)], [n]) :
+        RiceGenType <: LatentVectorRicianNoiseCorrector ? MMDLearning.CatScale([σbd], [n]) :
+        RiceGenType <: LatentScalarRicianNoiseCorrector ? MMDLearning.CatScale([σbd], [1]) :
+        error("Unsupported corrector type: $RiceGenType")
+    end
+
+    # Physics model input variables prior
+    get!(models, "theta_prior") do
         hdim = settings["arch"]["genatr"]["hdim"]::Int
+        ktheta = settings["arch"]["genatr"]["ktheta"]::Int
         nhidden = settings["arch"]["genatr"]["nhidden"]::Int
         leakyslope = settings["arch"]["genatr"]["leakyslope"]::Float64
-        maxcorr = settings["arch"]["genatr"]["maxcorr"]::Float64
-        noisebounds = settings["arch"]["genatr"]["noisebounds"]::Vector{Float64}
-        nin, nout = ninput(RiceGenType), noutput(RiceGenType)
         σinner = leakyslope == 0 ? Flux.relu : eltype(phys)(leakyslope) |> a -> (x -> Flux.leakyrelu(x, a))
-        OutputScale =
-            RiceGenType <: Union{<:VectorRicianCorrector, <:LatentVectorRicianCorrector} ? MMDLearning.CatScale([(-maxcorr, maxcorr), (noisebounds...,)], [n,n]) :
-            RiceGenType <: FixedNoiseVectorRicianCorrector ? MMDLearning.CatScale([(-maxcorr, maxcorr)], [n]) :
-            RiceGenType <: LatentVectorRicianNoiseCorrector ? MMDLearning.CatScale([(noisebounds...,)], [n]) :
-            error("Unsupported corrector type: $RiceGenType")
+        Flux.Chain(
+            MMDLearning.MLP(ktheta => nθ, nhidden, hdim, σinner, tanh)...,
+            MMDLearning.CatScale(θbd, ones(Int, nθ)),
+        ) |> to32
+    end
 
-        # # Generic nin => nout MLP with output scaling
+    # Latent variable prior
+    get!(models, "latent_prior") do
+        hdim = settings["arch"]["genatr"]["hdim"]::Int
+        klatent = settings["arch"]["genatr"]["klatent"]::Int
+        nhidden = settings["arch"]["genatr"]["nhidden"]::Int
+        leakyslope = settings["arch"]["genatr"]["leakyslope"]::Float64
+        σinner = leakyslope == 0 ? Flux.relu : eltype(phys)(leakyslope) |> a -> (x -> Flux.leakyrelu(x, a))
+        Flux.Chain(
+            MMDLearning.MLP(klatent => k, nhidden, hdim, σinner, tanh)...,
+            deepcopy(OutputScale),
+        ) |> to32
+    end
+
+    # Rician generator mapping Z variables from prior space to Rician parameter space
+    get!(models, "genatr") do
+        if k == 1
+            return Flux.Chain(identity) # Latent space outputs noise level directly
+        else
+            error("nlatent = $k not implemented")
+        end
+
+        # #TODO: only works for LatentVectorRicianNoiseCorrector
+        # @assert nin == k == nlatent(RiceGenType) && nout == n
         # Flux.Chain(
-        #     MMDLearning.MLP(nin => nout, nhidden, hdim, σinner, tanh)...,
+        #     # position encoding
+        #     Z -> vcat(Z, zeros_similar(Z, 1, size(Z,2))),   # [k x b] -> [(k+1) x b]
+        #     Z -> repeat(Z, n, 1),                           # [(k+1) x b] -> [(k+1)*n x b]
+        #     NotTrainable(Flux.Diagonal(ones((k+1)*n), vec(vcat(zeros(k, n), uniform_range(n)')))),
+        #     Z -> reshape(Z, k+1, :),                        # [(k+1)*n x b] -> [(k+1) x n*b]
+        #     # position-wise mlp
+        #     MMDLearning.MLP(k+1 => 1, nhidden, hdim, σinner, tanh)..., # [(k+1) x n*b] -> [1 x n*b]
+        #     # output scaling
+        #     Z -> reshape(Z, n, :),                          # [1 x n*b] -> [n x b]
         #     OutputScale,
         # ) |> to32
-
-        #TODO: only works for LatentVectorRicianNoiseCorrector
-        @assert nin == k == nlatent(RiceGenType) && nout == n
-        Flux.Chain(
-            # position encoding
-            Z -> vcat(Z, zeros_similar(Z, 1, size(Z,2))),   # [k x b] -> [(k+1) x b]
-            Z -> repeat(Z, n, 1),                           # [(k+1) x b] -> [(k+1)*n x b]
-            NotTrainable(Flux.Diagonal(ones((k+1)*n), vec(vcat(zeros(k, n), uniform_range(n)')))),
-            Z -> reshape(Z, k+1, :),                        # [(k+1)*n x b] -> [(k+1) x n*b]
-            # position-wise mlp
-            MMDLearning.MLP(k+1 => 1, nhidden, hdim, σinner, tanh)..., # [(k+1) x n*b] -> [1 x n*b]
-            # output scaling
-            Z -> reshape(Z, n, :),                          # [1 x n*b] -> [n x b]
-            OutputScale,
-        ) |> to32
     end
 
     # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
@@ -53,6 +78,23 @@ function make_mmd_cvae_models(phys::PhysicsModel{Float32}, settings::Dict{String
         normalizer = X -> maximum(X; dims = 1) #TODO: normalize by mean? sum? maximum? first echo?
         noisescale = X -> mean(X; dims = 1) #TODO: relative to mean? nothing?
         NormalizedRicianCorrector(R, normalizer, noisescale)
+    end
+
+    # Deep prior by physics model
+    get!(derived, "prior") do
+        default_θprior(x) = sampleθprior(phys, typeof(x), size(x,2))
+        # default_Zprior(x) = randn_similar(x, k, size(x,2))
+        default_Zprior(x) = ((lo,hi) = eltype(x).(σbd); return lo .+ (hi .- lo) .* rand_similar(x, k, size(x,2)))
+        deepθprior = get!(settings["train"], "DeepThetaPrior", false)::Bool
+        deepZprior = get!(settings["train"], "DeepLatentPrior", false)::Bool
+        ktheta = get!(settings["arch"]["genatr"], "ktheta", 0)::Int
+        klatent = get!(settings["arch"]["genatr"], "klatent", 0)::Int
+        DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(
+            phys,
+            derived["ricegen"],
+            !deepθprior || ktheta == 0 ? default_θprior : models["theta_prior"],
+            !deepZprior || klatent == 0 ? default_Zprior : models["latent_prior"],
+        )
     end
 
     # Encoders
@@ -99,7 +141,7 @@ function make_mmd_cvae_models(phys::PhysicsModel{Float32}, settings::Dict{String
         nhidden = settings["arch"]["discrim"]["nhidden"]::Int
         dropout = settings["arch"]["discrim"]["dropout"]::Float64
         chunk = settings["train"]["transform"]["chunk"]::Int
-        order = settings["train"]["augment"]["fdcat"]::Int
+        order = get!(settings["train"]["augment"], "fdcat", 0)::Int #TODO
         augsizes = Dict{String,Int}(["signal" => n, "gradient" => n-1, "laplacian" => n-2, "encoderspace" => nz, "residuals" => n, "fftcat" => 2*(n÷2 + 1), "fftsplit" => 2*(n÷2 + 1), "fdcat" => sum(n-i for i in 0:order)])
         nin = sum((s -> ifelse(settings["train"]["augment"][s]::Union{Int,Bool} > 0, min(augsizes[s], chunk), 0)).(keys(augsizes))) #TODO > 0 hack works for both boolean and integer flags
         MMDLearning.MLP(nin => 1, nhidden, hdim, Flux.relu, Flux.sigmoid; dropout) |> to32
@@ -112,7 +154,7 @@ function make_mmd_cvae_models(phys::PhysicsModel{Float32}, settings::Dict{String
     get!(derived, "forwarddiff") do; MMDLearning.ForwardDifferemce() |> to32 end
     get!(derived, "laplacian") do; MMDLearning.Laplacian() |> to32 end
     get!(derived, "fdcat") do
-        order = settings["train"]["augment"]["fdcat"]::Int
+        order = get!(settings["train"]["augment"], "fdcat", 0)::Int #TODO
         A = I(n) |> Matrix{Float64}
         FD = LinearAlgebra.diagm(n-1, n, 0 => -ones(n-1), 1 => ones(n-1))
         A = mapfoldl(vcat, 1:order; init = A) do i
@@ -121,7 +163,7 @@ function make_mmd_cvae_models(phys::PhysicsModel{Float32}, settings::Dict{String
         NotTrainable(Flux.Dense(A, [0.0])) |> to32
     end
     get!(derived, "encoderspace") do # non-trainable sampling of encoder signal representations
-        NotTrainable(MMDLearning.flattenchain(Flux.Chain(
+        NotTrainable(flattenchain(Flux.Chain(
             models["enc1"],
             MMDLearning.split_mean_softplus_std,
             MMDLearning.sample_mv_normal,
@@ -224,66 +266,119 @@ function KL_and_ELBO(cvae::CVAE{n,nθ,k,nz}, Y, θ, Z; marginalize_Z::Bool) wher
     return (; KLDiv, ELBO)
 end
 
-function θZposterior_sampler(cvae::CVAE, Y)
+function sampleθZ_setup(cvae::CVAE, Y)
     μr = cvae.E1(Y)
-    μr0, σr = split_mean_softplus_std(μr) # constant over posterior samples
-    function θZposterior_sampler_inner()
-        zr = sample_mv_normal(μr0, σr)
-        μx = cvae.D(vcat(Y,zr))
-        μx0, σx = split_mean_softplus_std(μx)
-        x = sample_mv_normal(μx0, σx)
-        θ, Z = split_theta_latent(cvae, x)
-        return θ, Z
-    end
+    μr0, σr = split_mean_softplus_std(μr)
+    return μr0, σr
+end
+
+sampleθZposterior(cvae::CVAE, Y) = sampleθZposterior(cvae, Y, sampleθZ_setup(cvae, Y)...)
+
+function sampleθZposterior(cvae::CVAE, Y, μr0, σr)
+    zr = sample_mv_normal(μr0, σr)
+    μx = cvae.D(vcat(Y,zr))
+    μx0, σx = split_mean_softplus_std(μx)
+    x = sample_mv_normal(μx0, σx)
+    θ, Z = split_theta_latent(cvae, x)
+    return θ, Z
+end
+
+function θZposterior_sampler(cvae::CVAE, Y)
+    μr0, σr = sampleθZ_setup(cvae, Y) # constant over posterior samples
+    θZposterior_sampler_inner() = sampleθZposterior(cvae, Y, μr0, σr)
     return θZposterior_sampler_inner
 end
 
-sampleθZposterior(cvae::CVAE, Y) = θZposterior_sampler(cvae, Y)()
-
 ####
+#### Deep prior
+####
+
+"""
+Deep prior for learning to θ distribution, wrapping (parameterized) functions `θprior` and `Zprior`
+
+    θprior : R^kθ -> R^nθ
+    Zprior : R^kZ -> R^nZ
+
+which generates samples θ ~ θprior(θ), Z ~ Zprior(Z) via the transformation of `kθ` and `kZ` implicitly
+sampled latent variables, respectively. These θ parameterize physics models, e.g. phys : R^nθ -> R^n,
+and Z parameterize latent variable Rician models.
+"""
+struct DeepPriorRicianPhysicsModel{T,kθ,kZ,P<:PhysicsModel{T},R<:RicianCorrector,Fθ,FZ}
+    phys   :: P
+    rice   :: R
+    θprior :: Fθ
+    Zprior :: FZ
+    DeepPriorRicianPhysicsModel{T,kθ,kZ}(phys::P, rice::R, θprior::Fθ, Zprior::FZ) where {T,kθ,kZ,P,R,Fθ,FZ} = new{T,kθ,kZ,P,R,Fθ,FZ}(phys, rice, θprior, Zprior)
+end
+Flux.@functor DeepPriorRicianPhysicsModel
+Flux.trainable(prior::DeepPriorRicianPhysicsModel) = (prior.θprior, prior.Zprior)
+Base.show(io::IO, prior::DeepPriorRicianPhysicsModel) = model_summary(io, Dict("θprior" => prior.θprior, "θprior" => prior.θprior))
+
+sampleθprior(prior::DeepPriorRicianPhysicsModel{T}, n::Int) where {T} = sampleθprior(prior, CUDA.CuMatrix{T}, n) # default to sampling θ on the gpu
+sampleθprior(prior::DeepPriorRicianPhysicsModel, Y::AbstractArray, n::Int = size(Y,2)) = sampleθprior(prior, typeof(Y), n) # θ type is similar to Y type
+sampleθprior(prior::DeepPriorRicianPhysicsModel{T,kθ,kZ}, ::Type{A}, n::Int) where {T, kθ, kZ, A <: AbstractArray{T}} = prior.θprior(randn_similar(A, kθ, n)) # sample from distribution
+
+sampleZprior(prior::DeepPriorRicianPhysicsModel{T}, n::Int) where {T} = sampleZprior(prior, CUDA.CuMatrix{T}, n) # default to sampling Z on the gpu
+sampleZprior(prior::DeepPriorRicianPhysicsModel, Y::AbstractArray, n::Int = size(Y,2)) = sampleZprior(prior, typeof(Y), n) # Z type is similar to Y type
+sampleZprior(prior::DeepPriorRicianPhysicsModel{T,kθ,kZ}, ::Type{A}, n::Int) where {T, kθ, kZ, A <: AbstractArray{T}} = prior.Zprior(randn_similar(A, kZ, n)) # sample from distribution
+
 #### PhysicsModel + CVAE methods
-####
 
-function θZ_sampler(cvae::CVAE, phys::PhysicsModel, Y; recover_θ = true, recover_Z = true)
-    θZposterior_sampler_instance = θZposterior_sampler(cvae, Y)
-    θprior() = sampleθprior(phys, Y, size(Y,2))
-    Zprior() = randn_similar(Y, nlatent(cvae), size(Y,2))
-    θclamp(θ) = clamp.(θ, todevice(θlower(phys)), todevice(θupper(phys)))
-    function θZ_sampler_inner()
-        if recover_θ || recover_Z
-            θhat, Zhat = θZposterior_sampler_instance()
-            θhat = θclamp(θhat)
-            θ = recover_θ ? θhat : θprior()
-            Z = recover_Z ? Zhat : Zprior()
-            θ, Z
-        else
-            θprior(), Zprior()
-        end
+function sampleθZ(cvae::CVAE, prior::DeepPriorRicianPhysicsModel, Y::AbstractVecOrMat; posterior_θ = true, posterior_Z = true)
+    if posterior_θ || posterior_Z
+        return sampleθZ(cvae, prior, Y, sampleθZ_setup(cvae, Y)...; posterior_θ, posterior_Z)
+    else
+        θ = sampleθprior(prior, Y, size(Y,2))
+        Z = sampleZprior(prior, Y, size(Y,2))
+        return θ, Z
     end
+end
+
+function sampleθZ(cvae::CVAE, prior::DeepPriorRicianPhysicsModel, Y::AbstractVecOrMat, μr0, σr; posterior_θ = true, posterior_Z = true)
+    if posterior_θ || posterior_Z
+        θhat, Zhat = sampleθZposterior(cvae, Y, μr0, σr)
+        θhat = clamp.(θhat, todevice(θlower(prior.phys)), todevice(θupper(prior.phys)))
+        θ = posterior_θ ? θhat : sampleθprior(prior, Y, size(Y,2))
+        Z = posterior_Z ? Zhat : sampleZprior(prior, Y, size(Y,2))
+        θ, Z
+    else
+        θ = sampleθprior(prior, Y, size(Y,2))
+        Z = sampleZprior(prior, Y, size(Y,2))
+        return θ, Z
+    end
+end
+
+function θZ_sampler(cvae::CVAE, prior::DeepPriorRicianPhysicsModel, Y::AbstractVecOrMat; posterior_θ = true, posterior_Z = true)
+    μr0, σr = sampleθZ_setup(cvae, Y) # constant over posterior samples
+    θZ_sampler_inner() = sampleθZ(cvae, prior, Y, μr0, σr; posterior_θ, posterior_Z)
     return θZ_sampler_inner
 end
 
-sampleθZ(cvae::CVAE, phys::PhysicsModel, Y; kwargs...) = θZ_sampler(cvae, phys, Y; kwargs...)()
-
-function sampleXθZ(cvae::CVAE, phys::PhysicsModel, Y; kwargs...)
-    @timeit "sampleθZ"     θ, Z = sampleθZ(cvae, phys, Y; kwargs...)
-    @timeit "signal_model" X = signal_model(phys, θ)
+function sampleXθZ(cvae::CVAE, prior::DeepPriorRicianPhysicsModel, Y::AbstractVecOrMat; kwargs...)
+    #TODO: can't differentiate through @timeit "sampleθZ"
+    #TODO: can't differentiate through @timeit "signal_model"
+    θ, Z = sampleθZ(cvae, prior, Y; kwargs...)
+    X = signal_model(prior.phys, θ)
     return X, θ, Z
 end
 
-sampleX(cvae::CVAE, phys::PhysicsModel, Y; kwargs...) = sampleXθZ(cvae, phys, Y; kwargs...)[1]
+sampleX(cvae::CVAE, prior::DeepPriorRicianPhysicsModel, Y::AbstractVecOrMat; kwargs...) = sampleXθZ(cvae, prior, Y; kwargs...)[1]
 
-####
 #### RicianCorrector + PhysicsModel + CVAE methods
-####
 
-function sampleX̂θZ(rice::RicianCorrector, cvae::CVAE, phys::PhysicsModel, Y; kwargs...)
-    @timeit "sampleXθZ" X, θ, Z = sampleXθZ(cvae, phys, Y; kwargs...)
-    @timeit "sampleX̂"   X̂ = sampleX̂(rice, X, Z)
+function sampleX̂θZ(cvae::CVAE, prior::DeepPriorRicianPhysicsModel, Y::AbstractVecOrMat; kwargs...)
+    #TODO: can't differentiate through @timeit "sampleXθZ"
+    #TODO: can't differentiate through @timeit "sampleX̂"
+    X, θ, Z = sampleXθZ(cvae, prior, Y; kwargs...)
+    X̂ = sampleX̂(prior.rice, X, Z)
     return X̂, θ, Z
 end
 
-sampleX̂(rice::RicianCorrector, cvae::CVAE, phys::PhysicsModel, Y; kwargs...) = sampleX̂θZ(rice, cvae, phys, Y; kwargs...)[1]
+sampleX̂(cvae::CVAE, prior::DeepPriorRicianPhysicsModel, Y::AbstractVecOrMat; kwargs...) = sampleX̂θZ(cvae, prior, Y; kwargs...)[1]
+
+####
+#### Rician posterior state
+####
 
 function sampleX̂(rice::RicianCorrector, X, Z, ninstances = nothing)
     ν, ϵ = rician_params(rice, X, Z)
@@ -298,18 +393,17 @@ function NegLogLikelihood(rice::RicianCorrector, Y, μ0, σ)
     -sum(MMDLearning._rician_logpdf_cuda.(Y, μ0, σ); dims = 1) # Rician negative log likelihood
 end
 
-function make_state(rice::RicianCorrector, phys::PhysicsModel, Y::AbstractMatrix, θ::AbstractMatrix, Z::AbstractMatrix)
-    X = signal_model(phys, θ)
-    δ, ϵ = correction_and_noiselevel(rice, X, Z)
-    ν = add_correction(rice, X, δ)
-    ℓ = reshape(NegLogLikelihood(rice, Y, ν, ϵ), 1, :)
+function make_state(prior::DeepPriorRicianPhysicsModel, Y::AbstractMatrix, θ::AbstractMatrix, Z::AbstractMatrix)
+    X = signal_model(prior.phys, θ)
+    δ, ϵ = correction_and_noiselevel(prior.rice, X, Z)
+    ν = add_correction(prior.rice, X, δ)
+    ℓ = reshape(NegLogLikelihood(prior.rice, Y, ν, ϵ), 1, :)
     return (; Y, θ, Z, X, δ, ϵ, ν, ℓ)
 end
 
 function posterior_state(
-        rice::RicianCorrector,
         cvae::CVAE,
-        phys::PhysicsModel,
+        prior::DeepPriorRicianPhysicsModel,
         Y::AbstractMatrix{T};
         miniter = 5,
         maxiter = 100,
@@ -318,7 +412,7 @@ function posterior_state(
         verbose = false
     ) where {T}
 
-    θZ_sampler_instance = θZ_sampler(cvae, phys, Y; recover_θ = true, recover_Z = true)
+    θZ_sampler_instance = θZ_sampler(cvae, prior, Y; posterior_θ = true, posterior_Z = true)
 
     function update(last_state, i)
         θnew, Znew = θZ_sampler_instance()
@@ -328,9 +422,9 @@ function posterior_state(
         if mode === :mean
             θnew = isnothing(last_state) ? θnew : T(1/i) .* θnew .+ T(1-1/i) .* θlast
             Znew = isnothing(last_state) ? Znew : T(1/i) .* Znew .+ T(1-1/i) .* Zlast
-            new_state = make_state(rice, phys, Y, θnew, Znew)
+            new_state = make_state(prior, Y, θnew, Znew)
         elseif mode === :maxlikelihood
-            new_state = make_state(rice, phys, Y, θnew, Znew)
+            new_state = make_state(prior, Y, θnew, Znew)
             if !isnothing(last_state)
                 mask = new_state.ℓ .< last_state.ℓ
                 new_state = map(new_state, last_state) do new, last
