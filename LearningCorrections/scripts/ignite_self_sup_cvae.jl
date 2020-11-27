@@ -37,24 +37,21 @@ else
         timeout     = 1e9 #TODO 10800.0
         epochs      = 1000_000
         batchsize   = 1024 #256 #512 #1024 #2048 #3072 #4096
-        PseudoCVAE  = false # Label data signals with pseudolabels from the CVAE
         MMDCVAErate = 0     # Train combined MMD+CVAE loss every `MMDCVAErate` epochs
-        CVAErate    = 1     # Train CVAE loss every `CVAErate` iterations
-        CVAEsteps   = 1     # Train CVAE losses with `CVAEsteps` updates per iteration
-        MMDrate     = 0     # Train MMD loss every `MMDrate` epochs
+        CVAErate    = 1      # Train CVAE loss every `CVAErate` iterations
+        CVAEsteps   = 1      # Train CVAE losses with `CVAEsteps` updates per iteration
+        CVAEmask    = 32     # Randomly mask cvae training signals up to `CVAEmask` echoes (<=0 performs no masking)
+        MMDrate     = 0      # Train MMD loss every `MMDrate` epochs
         GANrate     = 0     # Train GAN losses every `GANrate` iterations
         Dsteps      = 5     # Train GAN losses with `Dsteps` discrim updates per genatr update
-        # GANcycle    = 1   # CVAE and GAN take turns training for `GANcycle` consecutive epochs (0 trains both each iteration)
-        # Dcycle      = 0   # Train for `Dcycle` epochs of discrim only, followed by `Dcycle` epochs of CVAE and GAN together
-        # Dheadstart  = 0   # Train discriminator for `Dheadstart` epochs before training generator
         kernelrate  = 0     # Train kernel every `kernelrate` iterations
         kernelsteps = 0     # Gradient updates per kernel train
-        DeepThetaPrior  = false # Learn deep prior
-        DeepLatentPrior = false # Learn deep prior
+        DeepThetaPrior  = false  # Learn deep prior
+        DeepLatentPrior = false  # Learn deep prior
         [train.augment]
-            signal        = true  # Plain input signal
-            gradient      = false # Gradient of input signal (1D central difference)
-            laplacian     = false # Laplacian of input signal (1D second order)
+            signal        = true   # Plain input signal
+            gradient      = false  # Gradient of input signal (1D central difference)
+            laplacian     = false  # Laplacian of input signal (1D second order)
             fdcat         = 0     # Concatenated finite differences up to order `fdcat`
             encoderspace  = false # Discriminate encoder space representations
             residuals     = false # Discriminate residual vectors
@@ -78,6 +75,7 @@ else
         lrrate   = 999_999 # Drop learning rate by factor `lrdrop` every `lrrate` epochs
         [opt.cvae]
             lrrel = "%PARENT%"
+            lambda_pseudo = 0.0 # Weighting of pseudo label loss
         [opt.genatr]
             lrrel = "%PARENT%" #TODO: 0.01 train generator more slowly
         [opt.discrim]
@@ -101,30 +99,27 @@ else
         skip      = false # skip connection
         layernorm = false # layer normalization following dense layer
         [arch.enc1]
-            psize     = 32
-            head      = 4
             hdim      = "%PARENT%"
             nhidden   = "%PARENT%"
         [arch.enc2]
-            psize     = 32
-            head      = 4
             hdim      = "%PARENT%"
             nhidden   = "%PARENT%"
         [arch.dec]
             hdim      = "%PARENT%"
             nhidden   = "%PARENT%"
         [arch.genatr]
-            ktheta      = 16  # Dimension of domain of theta prior space
-            klatent     = 4   # Dimension of domain of latent prior space
-            hdim        = 64  #TODO "%PARENT%"
-            nhidden     = 2   #TODO "%PARENT%"
+            hdim        = 64   #TODO "%PARENT%"
+            nhidden     = 2    #TODO "%PARENT%"
+            ktheta      = 16   #TODO Dimension of domain of theta prior space
+            klatent     = 4    #TODO Dimension of domain of latent prior space
+            prior_mix   = 0.0   #TODO Mix learned deep prior with `prior_mix` fraction of default prior for robustness
             leakyslope  = 0.0
             maxcorr     = 0.1
-            noisebounds = [-6.0, 0.0]
+            noisebounds = [-6.0, 0.0] #TODO
         [arch.discrim]
-            dropout   = 0.1
             hdim      = 0     #TODO "%PARENT%"
             nhidden   = 0     #TODO "%PARENT%"
+            dropout   = 0.1
         [arch.kernel]
             nbandwidth  = 32            #TODO
             channelwise = true          #TODO
@@ -320,13 +315,13 @@ function MMDlosses(Y)
     ks = Zygote.@ignore NamedTuple{keys(X̂s)}(get_mmd_kernel.(keys(X̂s), size.(values(X̂s),1)))
     ℓ  = map(MMDloss, ks, X̂s, Ys)
 
-    λ_ϵ = eltype(Y)(settings["opt"]["mmd"]["lambda_eps"]::Float64)
+    λ_ϵ = Zygote.@ignore eltype(Y)(get!(settings["opt"]["mmd"], "lambda_eps", 0.0)::Float64)
     if λ_ϵ > 0
         R = λ_ϵ * noiselevel_regularization(ϵ, Val(:L1grad))
         ℓ = push!!(ℓ, :reg_eps => R)
     end
 
-    λ_∂ϵ∂Z = eltype(Y)(settings["opt"]["mmd"]["lambda_deps_dz"]::Float64)
+    λ_∂ϵ∂Z = Zygote.@ignore eltype(Y)(get!(settings["opt"]["mmd"], "lambda_deps_dz", 0.0)::Float64)
     if λ_∂ϵ∂Z > 0
         R = λ_∂ϵ∂Z * noiselevel_gradient_regularization(ϵ, Z, Val(:L2diff))
         ℓ = push!!(ℓ, :reg_Z => R)
@@ -339,21 +334,38 @@ end
 #### CVAE
 ####
 
+function apply_signal_mask(Y; mincutoff::Int = 0)
+    if !(1 <= mincutoff < size(Y,1))
+        return Y
+    else
+        # Randomly mask Y such that only first `rand(mincutoff:size(Y,1))` signals are kept
+        Irows   = Zygote.@ignore arr_similar(Y, collect(1:size(Y,1)))
+        Icutoff = Zygote.@ignore arr_similar(Y, collect(rand(mincutoff:size(Y,1), 1, size(Y,2))))
+        mask    = Zygote.@ignore arr_similar(Y, Irows .<= Icutoff)
+        return Y .* mask
+    end
+end
+
 # Conditional variational autoencoder losses
 function CVAElosses(Y; marginalize_Z)
+    λ_pseudo  = Zygote.@ignore eltype(Y)(get!(settings["opt"]["cvae"], "lambda_pseudo", 0.0)::Float64)
+    mincutoff = Zygote.@ignore get!(settings["train"], "CVAEmask", 0)::Int
+
     # Sample X̂,θ,Z from priors
-    X̂, θ, Z = Zygote.@ignore sampleX̂θZ(derived["cvae"], derived["prior"], Y; posterior_θ = false, posterior_Z = false) # sample θ and Z priors
+    X̂, θ, Z = Zygote.@ignore sampleX̂θZ(derived["cvae"], derived["cvae_prior"], Y; posterior_θ = false, posterior_Z = false) # sample θ and Z priors
 
     # Cross-entropy loss function components
-    KLDiv, ELBO = KL_and_ELBO(derived["cvae"], X̂, θ, Z; marginalize_Z)
+    X̂masked = apply_signal_mask(X̂; mincutoff)
+    KLDiv, ELBO = KL_and_ELBO(derived["cvae"], X̂masked, θ, Z; marginalize_Z, mincutoff)
 
-    ℓ = if !settings["train"]["PseudoCVAE"]::Bool
+    ℓ = if λ_pseudo == 0
         (; KLDiv, ELBO)
     else
         # Use inferred params as pseudolabels for Y
-        θY, ZY = Zygote.@ignore sampleθZ(derived["cvae"], derived["prior"], Y; posterior_θ = true, posterior_Z = true) # draw pseudo θ and Z labels for Y
-        KLDivPseudo, ELBOPseudo = KL_and_ELBO(derived["cvae"], Y, θY, ZY; marginalize_Z) # recover pseudo θ and Z labels
-        (; KLDiv, ELBO, KLDivPseudo, ELBOPseudo)
+        θY, ZY = Zygote.@ignore sampleθZ(derived["cvae"], derived["cvae_prior"], Y; posterior_θ = true, posterior_Z = true) # draw pseudo θ and Z labels for Y
+        Ymasked = apply_signal_mask(Y; mincutoff)
+        KLDivY, ELBOY = KL_and_ELBO(derived["cvae"], Ymasked, θY, ZY; marginalize_Z, mincutoff) # recover pseudo θ and Z labels
+        (; KLDiv, ELBO, KLDivPseudo = λ_pseudo * KLDivY, ELBOPseudo = λ_pseudo * ELBOY)
     end
 
     return ℓ
@@ -393,7 +405,7 @@ function train_step(engine, batch)
         train_MMDCVAE && @timeit "mmd + cvae" CUDA.@sync let
             deeppriors = [models["theta_prior"], models["latent_prior"]][[settings["train"]["DeepThetaPrior"]::Bool, settings["train"]["DeepLatentPrior"]::Bool]]
             ps = Flux.params(models["enc1"], models["enc2"], models["dec"], models["genatr"], deeppriors...)
-            λ_0 = eltype(Ytrain)(settings["opt"]["mmd"]["lambda_0"]::Float64)
+            λ_0 = eltype(Ytrain)(get!(settings["opt"]["mmd"], "lambda_0", 0.0)::Float64)
             @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(ps) do
                 mmd = sum(MMDlosses(Ytrain))
                 cvae = sum(CVAElosses(Ytrain; marginalize_Z = false))
@@ -540,7 +552,7 @@ function compute_metrics(engine, batch; dataset)
             ℓ_MMD = push!!(ℓ_MMD, :MMD => sum(ℓ_MMD))
             accum!(ℓ_MMD)
 
-            λ_0 = eltype(Y)(settings["opt"]["mmd"]["lambda_0"]::Float64)
+            λ_0 = eltype(Y)(get!(settings["opt"]["mmd"], "lambda_0", 0.0)::Float64)
             loss = ℓ_CVAE.CVAE + λ_0 * ℓ_MMD.MMD
             Zreg = sum(abs2, Z; dims = 2) / (2*Nbatch) |> Flux.cpu
             Zdiv = [KLDivUnitNormal(mean_and_std(Z[i,:])...) for i in 1:size(Z,1)] |> Flux.cpu
@@ -629,9 +641,7 @@ function makeplots(;showplot = false)
         return p
     end
 
-    function plot_priors(;showplot = false)
-        θ = sampleθprior(derived["prior"], 10000) |> Flux.cpu
-        Z = sampleZprior(derived["prior"], 10000) |> Flux.cpu
+    function plot_θZ_histograms(θ, Z; showplot = false)
         pθs = [histogram(θ[i,:]; nbins = 100, label = θlabels(phys)[i], xlim = θbounds(phys)[i]) for i in 1:size(θ,1)]
         pZs = [histogram(Z[i,:]; nbins = 100, label = L"Z_%$i") for i in 1:size(Z,1)] #TODO
         p = plot(pθs..., pZs...)
@@ -639,14 +649,22 @@ function makeplots(;showplot = false)
         return p
     end
 
+    function plot_priors(;showplot = false)
+        θ = sampleθprior(derived["prior"], 10000) |> Flux.cpu
+        Z = sampleZprior(derived["prior"], 10000) |> Flux.cpu
+        plot_θZ_histograms(θ, Z; showplot)
+    end
+
+    function plot_cvaepriors(;showplot = false)
+        θ = sampleθprior(derived["cvae_prior"], 10000) |> Flux.cpu
+        Z = sampleZprior(derived["cvae_prior"], 10000) |> Flux.cpu
+        plot_θZ_histograms(θ, Z; showplot)
+    end
+
     function plot_posteriors(;showplot = false)
         Y = sampleY(phys, 10000; dataset = :train) |> to32
         θ, Z = sampleθZ(derived["cvae"], derived["prior"], Y; posterior_θ = true, posterior_Z = true) .|> Flux.cpu
-        pθs = [histogram(θ[i,:]; nbins = 100, label = θlabels(phys)[i], xlim = θbounds(phys)[i]) for i in 1:size(θ,1)]
-        pZs = [histogram(Z[i,:]; nbins = 100, label = L"Z_%$i") for i in 1:size(Z,1)] #TODO
-        p = plot(pθs..., pZs...)
-        if showplot; display(p); end
-        return p
+        plot_θZ_histograms(θ, Z; showplot)
     end
 
     try
@@ -661,6 +679,7 @@ function makeplots(;showplot = false)
             :epsline      => plot_epsilon(; showplot, seriestype = :line), #TODO
             :epscontour   => plot_epsilon(; showplot, seriestype = :contour), #TODO
             :priors       => plot_priors(; showplot), #TODO
+            :cvaepriors   => plot_cvaepriors(; showplot), #TODO
             :posteriors   => plot_posteriors(; showplot), #TODO
         )
     catch e

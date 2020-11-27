@@ -225,7 +225,7 @@ function make_plot_errs_cb(state, filename = nothing; labelnames = "")
             min_epoch = max(1, min(state[end, :epoch] - window, window))
             df = state[(state.dataset .== dataset) .& (min_epoch .<= state.epoch), :]
 
-            commonkw = (xscale = :log10, xticks = log10ticks(df[1, :epoch], df[end, :epoch]), xrotation = 75.0, lw = 3, titlefontsize = 8, tickfontsize = 6, legend = :best, legendfontsize = 6) #TODO xformatter = s
+            commonkw = (xscale = :log10, xticks = log10ticks(df[1, :epoch], df[end, :epoch]), xrotation = 75.0, lw = 3, titlefontsize = 8, tickfontsize = 6, legend = :best, legendfontsize = 6)
             logspacing!(dfp) = isempty(dfp) ? dfp : unique(round.(Int, 10.0 .^ range(log10.(dfp.epoch[[1,end]])...; length = 10000))) |> I -> length(I) ≥ 5000 ? deleterows!(dfp, findall(!in(I), dfp.epoch)) : dfp
 
             dfp = logspacing!(dropmissing(df[!, [:epoch, :loss]]))
@@ -309,7 +309,7 @@ function make_plot_ligocvae_losses_cb(state, filename = nothing)
                     dfp = logspacing!(dropmissing(state[(state.dataset .== dataset) .& (min_epoch .<= state.epoch), [:epoch, :ELBO, :KL, :loss]]))
                     p = plot()
                     if !isempty(dfp)
-                        commonkw = (xaxis = (:log10, log10ticks(dfp[1, :epoch], dfp[end, :epoch])), xrotation = 60.0, legend = :best, lw = 3) #TODO xformatter = s
+                        commonkw = (xaxis = (:log10, log10ticks(dfp[1, :epoch], dfp[end, :epoch])), xrotation = 60.0, legend = :best, lw = 3)
                         pKL   = plot(dfp.epoch, dfp.KL;   title =   "KL vs. epoch ($dataset): max = $(round(maximum(dfp.KL);   sigdigits = 4))", lab = "KL",   c = :orange, commonkw...)
                         pELBO = plot(dfp.epoch, dfp.ELBO; title = "ELBO vs. epoch ($dataset): min = $(round(minimum(dfp.ELBO); sigdigits = 4))", lab = "ELBO", c = :blue,   commonkw...)
                         pH    = plot(dfp.epoch, dfp.loss; title =    "H vs. epoch ($dataset): min = $(round(minimum(dfp.loss); sigdigits = 4))", lab = "loss", c = :green,  commonkw...)
@@ -557,7 +557,7 @@ function plot_gan_loss(logger, cb_state, phys; window = 100, lrdroprate = typema
             ]
             (epoch >= lrdroprate) && map(ps) do p
                 plot!(p, lrdroprate : lrdroprate : epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)", seriestype = :vline)
-                plot!(p; xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
+                plot!(p; xscale = ifelse(epoch < 10*window, :identity, :log10))
             end
             p = plot(ps...)
         else
@@ -655,7 +655,7 @@ function plot_mmd_losses(logger, cb_state, phys; window = 100, lrdroprate = type
             p4 = plot(dfp.epoch, dfp.P_alpha; label = "P_α", title = "median P_α = $(s(median(dfp.P_alpha)))", ylim = (0,1))
             foreach([p1,p2,p3,p4]) do p
                 (epoch >= lrdroprate) && vline!(p, lrdroprate : lrdroprate : epoch; line = (1, :dot), label = "lr drop ($(lrdrop)X)")
-                plot!(p; xscale = ifelse(epoch < 10*window, :identity, :log10)) #TODO xformatter = s
+                plot!(p; xscale = ifelse(epoch < 10*window, :identity, :log10))
             end
             p = plot(p1, p2, p3, p4)
         else
@@ -926,14 +926,14 @@ function eval_mri_model(
         force_decaes = false,
         force_histograms = false,
         posterior_mode = :maxlikelihood,
+        quiet = false,
+        dataset = :val, # :val or (for final model comparison) :test
     )
 
-    DATASET = :test
-
-    inverter(Ysamples; kwargs...) = posterior_state(derived["cvae"], derived["prior"], Ysamples; verbose = true, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
+    inverter(Ysamples; kwargs...) = posterior_state(derived["cvae"], derived["prior"], Ysamples; verbose = !quiet, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
     saveplot(p, name, folder = savefolder) = map(suf -> savefig(p, joinpath(mkpath(folder), name * suf)), savetypes)
 
-    flat_test(x) = flat_indices(x, phys.image[Symbol(DATASET, :_indices)])
+    flat_test(x) = flat_indices(x, phys.image[Symbol(dataset, :_indices)])
     flat_train(x) = flat_indices(x, phys.image[:train_indices])
     flat_indices(x, indices) =
         x isa AbstractMatrix ? (@assert(size(x,2) == length(indices)); return x) : # matrix with length(indices) columns
@@ -943,7 +943,7 @@ function eval_mri_model(
             error("4D array has wrong shape") :
         error("x must be an $AbstractMatrix or an $AbstractTensor4D")
 
-    flat_image_to_flat_test(x) = flat_image_to_flat_indices(x, phys.image[Symbol(DATASET, :_indices)])
+    flat_image_to_flat_test(x) = flat_image_to_flat_indices(x, phys.image[Symbol(dataset, :_indices)])
     flat_image_to_flat_train(x) = flat_image_to_flat_indices(x, phys.image[:train_indices])
     function flat_image_to_flat_indices(x, indices)
         _x = similar(x, size(x,1), size(phys.image[:data])[1:3]...)
@@ -969,7 +969,7 @@ function eval_mri_model(
     end
 
     let
-        Y_test = phys.Y[DATASET] |> to32
+        Y_test = phys.Y[dataset] |> to32
         Y_train = phys.Y[:train] |> to32
         Y_train_edges = Dict([k => v.edges[1] for (k,v) in phys.meta[:histograms][:train]])
         cvae_image_state = inverter(Y_test; maxiter = 1, mode = posterior_mode)
@@ -985,14 +985,15 @@ function eval_mri_model(
         Xs[:X_cvae]    = Dict(:label => L"X_{CVAE}",       :colour => :purple, :data => cvae_image_state.ν)
 
         commonkwargs = Dict{Symbol,Any}(
-            :titlefontsize => 16, :labelfontsize => 14, :xtickfontsize => 12, :ytickfontsize => 12, :legendfontsize => 11,
+            # :titlefontsize => 16, :labelfontsize => 14, :xtickfontsize => 12, :ytickfontsize => 12, :legendfontsize => 11,
+            :titlefontsize => 10, :labelfontsize => 10, :xtickfontsize => 10, :ytickfontsize => 10, :legendfontsize => 10, #TODO
             :legend => :topright,
         )
 
         for (key, X) in Xs
             get!(phys.meta[:histograms], :inference, Dict{Symbol, Any}())
             X[:hist] =
-                key === :Y_test ? phys.meta[:histograms][DATASET] :
+                key === :Y_test ? phys.meta[:histograms][dataset] :
                 key === :Y_train ? phys.meta[:histograms][:train] :
                 (force_histograms || !haskey(phys.meta[:histograms][:inference], key)) ?
                     let
@@ -1016,10 +1017,10 @@ function eval_mri_model(
             phys.meta[:histograms][:inference][key] = X[:hist] # update phys metadata
         end
 
-        @info "Plotting histogram distances compared to $DATASET data..." # Compare histogram distances for each echo and across all-signal for test data and simulated data
+        @info "Plotting histogram distances compared to $dataset data..." # Compare histogram distances for each echo and across all-signal for test data and simulated data
         phist = @time plot(
             map(collect(pairs((; ChiSquared, KLDivergence, CityBlock, Euclidean)))) do (distname, dist)
-                echoes = 0:nsignal(phys)
+                echoes = 0:size(phys.image[:data],4)
                 Xplots = [X for (k,X) in Xs if k !== :Y_test]
                 logdists = mapreduce(hcat, Xplots) do X
                     (i -> log10(dist(X[:hist][i], Xs[:Y_test][:hist][i]))).(echoes)
@@ -1030,14 +1031,15 @@ function eval_mri_model(
                     line = (2, permutedims(getindex.(Xplots, :colour))), title = string(distname),
                     commonkwargs...,
                 )
-            end...
+            end...;
+            commonkwargs...,
         )
         saveplot(phist, "signal-hist-distances")
 
-        @info "Plotting T2 distributions compared to $DATASET data..."
+        @info "Plotting T2 distributions compared to $dataset data..."
         pt2dist = @time let
-            # Xplots = [X for (k,X) in Xs if k !== :X_decaes]
-            Xplots = [Xs[k] for k ∈ (:Y_test, :Y_train, :Yhat_mle, :Yhat_cvae)] #TODO
+            Xplots = [X for (k,X) in Xs if k !== :X_decaes]
+            # Xplots = [Xs[k] for k ∈ (:Y_test, :Y_train, :Yhat_mle, :Yhat_cvae)] #TODO
             T2dists = mapreduce(X -> mean(X[:t2dist]; dims = 2), hcat, Xplots)
             plot(
                 1000 .* phys.meta[:decaes][:t2maps][:Y]["t2times"], T2dists;
@@ -1046,52 +1048,52 @@ function eval_mri_model(
                 xscale = :log10,
                 xlabel = L"$T_2$ [ms]",
                 ylabel = L"$T_2$ Amplitude [a.u.]",
-                # title = L"$T_2$-distributions", #TODO
+                # title = L"$T_2$-distributions",
                 commonkwargs...,
             )
         end
         saveplot(pt2dist, "decaes-T2-distbn")
 
-        @info "Plotting T2 distribution differences compared to $DATASET data..."
+        @info "Plotting T2 distribution differences compared to $dataset data..."
         pt2diff = @time let
-            # Xplots = [X for (k,X) in Xs if k ∉ (:X_decaes, :Y_test)]
-            Xplots = [Xs[k] for k ∈ (:Y_train, :Yhat_mle, :Yhat_cvae)] #TODO
+            Xplots = [X for (k,X) in Xs if k ∉ (:X_decaes, :Y_test)]
+            # Xplots = [Xs[k] for k ∈ (:Y_train, :Yhat_mle, :Yhat_cvae)] #TODO
             T2diffs = mapreduce(X -> mean(X[:t2dist]; dims = 2) .- mean(Xs[:Y_test][:t2dist]; dims = 2), hcat, Xplots)
             logL2 = log10.(sum(abs2, T2diffs; dims = 1))
             plot(
                 1000 .* phys.meta[:decaes][:t2maps][:Y]["t2times"], T2diffs;
-                label = permutedims(getindex.(Xplots, :label)) .* L" $-$ " .* Xs[:Y_test][:label], # .* map(x -> L" ($\log_{10}\ell_2$ = %$(round(x; sigdigits = 3)))", logL2), #TODO
+                label = permutedims(getindex.(Xplots, :label)) .* L" $-$ " .* Xs[:Y_test][:label] .* map(x -> L" ($\log_{10}\ell_2$ = %$(round(x; sigdigits = 3)))", logL2), #TODO
                 line = (2, permutedims(getindex.(Xplots, :colour))),
                 ylim = (-0.06, 0.1), #TODO
                 xscale = :log10,
                 xlabel = L"$T_2$ [ms]",
                 # ylabel = L"$T_2$ Amplitude [a.u.]", #TODO
-                # title = L"$T_2$-distribution Differences", #TODO
+                # title = L"$T_2$-distribution Differences",
                 commonkwargs...,
             )
         end
         saveplot(pt2diff, "decaes-T2-distbn-diff")
 
-        @info "Plotting signal distributions compared to $DATASET data..."
+        @info "Plotting signal distributions compared to $dataset data..."
         psignaldist = @time let
-            # Xplots = [X for (k,X) in Xs if k !== :X_decaes]
-            Xplots = [Xs[k] for k ∈ (:Y_test, :Y_train, :Yhat_mle, :Yhat_cvae)] #TODO
+            Xplots = [X for (k,X) in Xs if k !== :X_decaes]
+            # Xplots = [Xs[k] for k ∈ (:Y_test, :Y_train, :Yhat_mle, :Yhat_cvae)] #TODO
             p = plot(;
                 xlabel = "Signal magnitude [a.u.]",
                 ylabel = "Density [a.u.]",
                 commonkwargs...
             )
             for X in Xplots
-                plot!(p, normalize(X[:hist][0]); alpha = 0.1, label = X[:label], line = (2, X[:colour]))
+                plot!(p, normalize(X[:hist][0]); alpha = 0.1, label = X[:label], line = (2, X[:colour]), commonkwargs...)
             end
             p
         end
         saveplot(psignaldist, "decaes-signal-distbn")
 
-        @info "Plotting signal distribution differences compared to $DATASET data..."
+        @info "Plotting signal distribution differences compared to $dataset data..."
         psignaldiff = @time let
-            # Xplots = [X for (k,X) in Xs if k ∉ (:X_decaes, :Y_test)]
-            Xplots = [Xs[k] for k ∈ (:Y_train, :Yhat_mle, :Yhat_cvae)] #TODO
+            Xplots = [X for (k,X) in Xs if k ∉ (:X_decaes, :Y_test)]
+            # Xplots = [Xs[k] for k ∈ (:Y_train, :Yhat_mle, :Yhat_cvae)] #TODO
             histdiffs = mapreduce(X -> unitsum(X[:hist][0].weights) .- unitsum(Xs[:Y_test][:hist][0].weights), hcat, Xplots)
             plot(
                 Xs[:Y_test][:hist][0].edges[1][2:end], histdiffs;
@@ -1105,14 +1107,14 @@ function eval_mri_model(
         end
         saveplot(psignaldiff, "decaes-signal-distbn-diff")
 
-        saveplot(plot(pt2dist, pt2diff; layout = (1,2)), "decaes-T2-distbn-and-diff")
-        saveplot(plot(psignaldist, psignaldiff, pt2dist, pt2diff; layout = (2,2)), "decaes-distbn-ensemble")
+        saveplot(plot(pt2dist, pt2diff; layout = (1,2), commonkwargs...), "decaes-T2-distbn-and-diff")
+        saveplot(plot(psignaldist, psignaldiff, pt2dist, pt2diff; layout = (2,2), commonkwargs...), "decaes-distbn-ensemble")
 
-        @info "Plotting signal distributions compared to $DATASET data..." # Compare per-echo and all-signal cdf's of test data and simulated data
+        @info "Plotting signal distributions compared to $dataset data..." # Compare per-echo and all-signal cdf's of test data and simulated data
         pcdf = plot(; commonkwargs...)
         @time for X in [X for (k,X) in Xs if k ∈ (:Y_test, :Yhat_cvae)]
-            plot!(pcdf, discrete_cdf(Flux.cpu(X[:data]))...; line = (1, X[:colour]), legend = :none)
-            plot!(pcdf, discrete_cdf(reshape(Flux.cpu(X[:data]),1,:))...; line = (1, X[:colour]), legend = :none)
+            plot!(pcdf, discrete_cdf(Flux.cpu(X[:data]))...; line = (1, X[:colour]), legend = :none, commonkwargs...)
+            plot!(pcdf, discrete_cdf(reshape(Flux.cpu(X[:data]),1,:))...; line = (1, X[:colour]), legend = :none, commonkwargs...)
         end
         saveplot(pcdf, "signal-cdf-compare")
     end
@@ -1143,8 +1145,8 @@ function eval_mri_model(
         @info 0, :decaes, [
             L"\alpha" => mean(abs, θtrue_derived.alpha - vec(phys.meta[:decaes][:t2maps][:Yhat_cvae_decaes]["alpha"])),
             L"\bar{T}_2" => mean(abs, θtrue_derived.T2bar - vec(phys.meta[:decaes][:t2maps][:Yhat_cvae_decaes]["ggm"])),
-            L"T_{2,short}" => mean(abs, filter(!isnan, θtrue_derived.T2short - vec(phys.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["sgm"]))), # T2short is set to NaN if all T2 components within SPWin are zero; be generous with error measurement
-            L"T_{2,long}" => mean(abs, filter(!isnan, θtrue_derived.T2long - vec(phys.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["mgm"]))), # T2long is set to NaN if all T2 components within MPWin are zero; be generous with error measurement
+            L"T_{2,SGM}" => mean(abs, filter(!isnan, θtrue_derived.T2sgm - vec(phys.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["sgm"]))), # "sgm" is set to NaN if all T2 components within SPWin are zero; be generous with error measurement
+            L"T_{2,MGM}" => mean(abs, filter(!isnan, θtrue_derived.T2mgm - vec(phys.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["mgm"]))), # "mgm" is set to NaN if all T2 components within MPWin are zero; be generous with error measurement
             L"MWF" => mean(abs, filter(!isnan, θtrue_derived.mwf - vec(phys.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["sfr"]))),
         ]
 
@@ -1170,11 +1172,11 @@ function eval_mri_model(
     # DECAES heatmaps
     @time let
         θdecaes = (
-            alpha   = (phys.meta[:decaes][:t2maps][:Y]["alpha"], L"\alpha",      (50.0, 180.0)),
-            T2bar   = (phys.meta[:decaes][:t2maps][:Y]["ggm"],   L"\bar{T}_2",   (0.0, 0.25)),
-            T2short = (phys.meta[:decaes][:t2parts][:Y]["sgm"],  L"T_{2,short}", (0.0, 0.1)),
-            T2long  = (phys.meta[:decaes][:t2parts][:Y]["mgm"],  L"T_{2,long}",  (0.0, 1.0)),
-            mwf     = (phys.meta[:decaes][:t2parts][:Y]["sfr"],  L"MWF",         (0.0, 0.4)),
+            alpha   = (phys.meta[:decaes][:t2maps][:Y]["alpha"], L"\alpha",     (50.0, 180.0)),
+            T2bar   = (phys.meta[:decaes][:t2maps][:Y]["ggm"],   L"\bar{T}_2",  (0.0, 0.25)),
+            T2sgm   = (phys.meta[:decaes][:t2parts][:Y]["sgm"],  L"T_{2,SGM}",  (0.0, 0.1)),
+            T2mgm   = (phys.meta[:decaes][:t2parts][:Y]["mgm"],  L"T_{2,MGM}",  (0.0, 1.0)),
+            mwf     = (phys.meta[:decaes][:t2parts][:Y]["sfr"],  L"MWF",        (0.0, 0.4)),
         )
         for (θname, (θk, θlabel, θbd)) in pairs(θdecaes), (j,zj) in enumerate(zslices)
             pyheatmap(permutedims(θk[:,:,zj]); title = θlabel * " (slice $zj)", clim = θbd, filename = joinpath(mkpath(joinpath(savefolder, "decaes")), "$θname-$zj"), savetypes)
@@ -1256,8 +1258,8 @@ function mle_mri_model(
 
     logϵlo, logϵhi = log.(extrema(vec(initial_guess.ϵ))) .|> Float64
     initial_logϵ   = log.(vec(mean(initial_guess.ϵ; dims = 1))) |> arr64
-    lower_bounds   = vcat(θlower(phys), [round(logϵlo, RoundDown)]) |> arr64
-    upper_bounds   = vcat(θupper(phys), [round(logϵhi, RoundUp)]) |> arr64
+    lower_bounds   = [θlower(phys); logϵlo] |> arr64
+    upper_bounds   = [θupper(phys); logϵhi] |> arr64
 
     #= Test random initial guess
     if initial_iter == 0

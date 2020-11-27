@@ -25,8 +25,22 @@ end
 #TODO: `acosd` gets coerced to Float64 by Zygote on reverse pass; file bug?
 _acosd_cuda(x::AbstractArray{T}) where {T} = clamp.(T(57.29577951308232) .* acos.(x), T(0.0), T(180.0)) # 180/π ≈ 57.29577951308232
 
-# Soft cutoff function
-soft_cutoff(x, x0, w) = Flux.σ(-(x-x0)/w)
+# Soft cutoff at `x = x0` with scale `w`. `f` is a sigmoidal function with unit scale which *increases* from 0 to 1 near `x = 0`
+soft_cutoff(f, x::AbstractArray, x0, w) = f(@. (x0 - x) / w)
+soft_cutoff(x::AbstractArray, x0, w) = soft_cutoff(sigmoid_weights_fun, x, x0, w) # fallback
+
+# Erf scaled such that f(0) = 0.5, f(-1) = k, and f(1) = 1-k
+function sigmoid_weights_fun(x::AbstractArray{T}, k::Number = T(0.1)) where {T}
+    σ = abs(erfinv(1 - 2k))
+    y = @. (1 + erf(σ * x)) / 2
+end
+function sigmoid_weights_fun(x::CUDA.CuArray{T}, k::Number = T(0.1)) where {T}
+    σ = abs(erfinv(1 - 2k))
+    y = @. (1 + CUDA.erf(σ * x)) / 2 #TODO: need to explicitly call CUDA.erf here... bug?
+end
+
+# Mix two functions
+sample_union(f1, f2, p1, x::AbstractMatrix{T}) where {T} = p1 == 1 ? f1(x) : p1 == 0 ? f2(x) : ifelse.(rand_similar(x, 1, size(x,2)) .< T(p1), f1(x), f2(x))
 
 normalized_range(N::Int) = N <= 1 ? zeros(N) : √(3*(N-1)/(N+1)) |> a -> range(-a,a,length=N) |> collect # mean zero and (uncorrected) std one
 uniform_range(N::Int) = N <= 1 ? zeros(N) : range(-1,1,length=N) |> collect
@@ -86,7 +100,6 @@ end
     ex = [:(tup[$i]) for i in 1:N if mask[i]]
     return :(($(ex...),))
 end
-
 
 # Smoothed version of max(x,e) for fixed e > 0
 smoothmax(x,e) = e + e * Flux.softplus((x-e) / e)

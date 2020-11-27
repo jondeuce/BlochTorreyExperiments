@@ -314,7 +314,7 @@ end
     T1::T = 1.0 # T1 relaxation (s)
     refcon::T = 180.0 # Refocusing pulse control angle (deg)
     TE::T = 8e-3 # T2 echo spacing (s)
-    T2bd::NTuple{2,T} = (TE, 1.0) # min/max allowable T2
+    T2bd::NTuple{2,T} = (TE, 1.0) #TODO 125*TE for generalization # min/max allowable T2
     image::Dict{Symbol,AbstractArray} = Dict()
     θ::Dict{Symbol,Matrix{T}} = Dict()
     X::Dict{Symbol,Matrix{T}} = Dict()
@@ -378,6 +378,7 @@ function t2_distributions!(p::EPGModel)
         T2Range    = p.meta[:decaes][:t2mapopts].T2Range,
         SPWin      = (prevfloat(p.meta[:decaes][:t2mapopts].T2Range[1]), 40e-3),
         MPWin      = (nextfloat(40e-3), nextfloat(p.meta[:decaes][:t2mapopts].T2Range[2])),
+        Sigmoid    = 20e-3, # soft cut-off
         Silent     = true,
     )
     p.meta[:decaes][:t2maps], p.meta[:decaes][:t2dist], p.meta[:decaes][:t2parts] = (Dict{Symbol,Any}() for _ in 1:3)
@@ -461,28 +462,31 @@ function θderived(
         c::MaybeClosedFormBiexpEPGModel,
         θ::AbstractVecOrMat{T};
         SPcutoff::T = T(40e-3),
-        SPwidth::T = T(10e-3),
+        SPwidth::T = T(20e-3),
     ) where {T}
-    alpha, refcon, eta, delta1, delta2 = θ[1,:], θ[2,:], θ[3,:], θ[4,:], θ[5,:]
+    alpha, refcon, eta, delta1, delta2 = ntuple(i -> θ[i,:], ntheta(c))
     _, _, T2short, T2long, Ashort, Along = θsignalmodel(c, θ)
     logT2short, logT2long = log.(T2short), log.(T2long)
-    logT2bar = @. Ashort * logT2short + Along * logT2long
-    T2bar = @. exp(logT2bar)
-    mwf = @. Ashort * soft_cutoff(T2short, SPcutoff, SPwidth) + Along * soft_cutoff(T2long, SPcutoff, SPwidth)
+    logT2bar = @. (Ashort * logT2short + Along * logT2long) / (Ashort + Along) # log of geometric mean weighted by Ashort, Along
+    T2bar = @. exp(logT2bar) # geometric mean weighted by Ashort, Along
+    wshort, wlong = soft_cutoff(T2short, SPcutoff, SPwidth), soft_cutoff(T2long, SPcutoff, SPwidth)
+    mwf = @. wshort * Ashort + wlong * Along
+    T2sgm = @. exp((wshort * Ashort * logT2short + wlong * Along * logT2long) / (wshort * Ashort + wlong * Along)) # geometric mean weighted by wshort * Ashort, wlong * Along
+    T2mgm = @. exp(((1 - wshort) * Ashort * logT2short + (1 - wlong) * Along * logT2long) / ((1 - wshort) * Ashort + (1 - wlong) * Along)) # geometric mean weighted by (1 - wshort) * Ashort, (1 - wlong) * Along
     return (;
         alpha, refcon, eta, delta1, delta2, # inference domain params
         T2short, T2long, Ashort, Along, # signal model params (without repeated alpha, refcon)
-        logT2short, logT2long, logT2bar, T2bar, mwf, # misc. derived params
+        logT2short, logT2long, logT2bar, T2bar, T2sgm, T2mgm, mwf, # misc. derived params
     )
 end
 
 θsignalmodelunits(::BiexpEPGModel) = ["deg", "deg", "s", "s", "a.u.", "a.u."]
 θsignalmodellabels(::BiexpEPGModel) = [L"\alpha", L"\beta", L"T_{2,short}", L"T_{2,long}", L"A_{short}", L"A_{long}"]
-θsignalmodelbounds(p::BiexpEPGModel) = [[θbounds(p)[i] for i in 1:2]..., (0.0, 1.0), p.T2bd, (0.0, 0.1), (0.0, 1.0)]
+θsignalmodelbounds(p::BiexpEPGModel{T}) where {T} = NTuple{2,T}[θbounds(p)[1], θbounds(p)[2], (p.T2bd[1], T(0.1)), p.T2bd, (T(0.0), T(1.0)), (T(0.0), T(1.0))]
 
-θderivedunits(p::BiexpEPGModel) = [θunits(p); θsignalmodelunits(p)[3:end]; "log(s)"; "log(s)"; "log(s)"; "s"; "a.u."]
-θderivedlabels(p::BiexpEPGModel) = [θlabels(p); θsignalmodellabels(p)[3:end]; L"\log T_{2,short}"; L"\log T_{2,long}"; L"\log \bar{T}_2"; L"\bar{T}_2"; L"MWF"]
-θderivedbounds(p::BiexpEPGModel) = [θbounds(p); θsignalmodelbounds(p)[3:end]; log.(p.T2bd); log.(p.T2bd); log.(p.T2bd); (0.0, 0.25); (0.0, 0.4)]
+θderivedunits(p::BiexpEPGModel) = [θunits(p); θsignalmodelunits(p)[3:end]; "log(s)"; "log(s)"; "log(s)"; "s"; "s"; "s"; "a.u."]
+θderivedlabels(p::BiexpEPGModel) = [θlabels(p); θsignalmodellabels(p)[3:end]; L"\log T_{2,short}"; L"\log T_{2,long}"; L"\log \bar{T}_2"; L"\bar{T}_2"; L"T_{2,SGM}"; L"T_{2,MGM}"; L"MWF"]
+θderivedbounds(p::BiexpEPGModel{T}) where {T} = NTuple{2,T}[θbounds(p); θsignalmodelbounds(p)[3:end]; log.(p.T2bd); log.(p.T2bd); log.(p.T2bd); (p.T2bd[1], T(0.25)); (p.T2bd[1], T(0.1)); (p.T2bd[1], T(0.25)); (T(0.0), T(0.4))]
 
 #### Toy EPG model
 

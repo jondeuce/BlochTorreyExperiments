@@ -22,30 +22,26 @@ function make_mmd_cvae_models(phys::PhysicsModel{Float32}, settings::Dict{String
         error("Unsupported corrector type: $RiceGenType")
     end
 
-    # Physics model input variables prior
-    get!(models, "theta_prior") do
+    # Priors for physics model and latent variables
+    let
         hdim = settings["arch"]["genatr"]["hdim"]::Int
         ktheta = settings["arch"]["genatr"]["ktheta"]::Int
-        nhidden = settings["arch"]["genatr"]["nhidden"]::Int
-        leakyslope = settings["arch"]["genatr"]["leakyslope"]::Float64
-        σinner = leakyslope == 0 ? Flux.relu : eltype(phys)(leakyslope) |> a -> (x -> Flux.leakyrelu(x, a))
-        Flux.Chain(
-            MMDLearning.MLP(ktheta => nθ, nhidden, hdim, σinner, tanh)...,
-            MMDLearning.CatScale(θbd, ones(Int, nθ)),
-        ) |> to32
-    end
-
-    # Latent variable prior
-    get!(models, "latent_prior") do
-        hdim = settings["arch"]["genatr"]["hdim"]::Int
         klatent = settings["arch"]["genatr"]["klatent"]::Int
         nhidden = settings["arch"]["genatr"]["nhidden"]::Int
         leakyslope = settings["arch"]["genatr"]["leakyslope"]::Float64
         σinner = leakyslope == 0 ? Flux.relu : eltype(phys)(leakyslope) |> a -> (x -> Flux.leakyrelu(x, a))
-        Flux.Chain(
-            MMDLearning.MLP(klatent => k, nhidden, hdim, σinner, tanh)...,
-            deepcopy(OutputScale),
-        ) |> to32
+        get!(models, "theta_prior") do
+            Flux.Chain(
+                MMDLearning.MLP(ktheta => nθ, nhidden, hdim, σinner, tanh)...,
+                MMDLearning.CatScale(θbd, ones(Int, nθ)),
+            ) |> to32
+        end
+        get!(models, "latent_prior") do
+            Flux.Chain(
+                MMDLearning.MLP(klatent => k, nhidden, hdim, σinner, tanh)...,
+                deepcopy(OutputScale),
+            ) |> to32
+        end
     end
 
     # Rician generator mapping Z variables from prior space to Rician parameter space
@@ -80,21 +76,33 @@ function make_mmd_cvae_models(phys::PhysicsModel{Float32}, settings::Dict{String
         NormalizedRicianCorrector(R, normalizer, noisescale)
     end
 
-    # Deep prior by physics model
-    get!(derived, "prior") do
-        default_θprior(x) = sampleθprior(phys, typeof(x), size(x,2))
-        # default_Zprior(x) = randn_similar(x, k, size(x,2))
-        default_Zprior(x) = ((lo,hi) = eltype(x).(σbd); return lo .+ (hi .- lo) .* rand_similar(x, k, size(x,2)))
+    # Deep prior for data distribution model and for cvae training distribution
+    let
         deepθprior = get!(settings["train"], "DeepThetaPrior", false)::Bool
         deepZprior = get!(settings["train"], "DeepLatentPrior", false)::Bool
         ktheta = get!(settings["arch"]["genatr"], "ktheta", 0)::Int
         klatent = get!(settings["arch"]["genatr"], "klatent", 0)::Int
-        DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(
-            phys,
-            derived["ricegen"],
-            !deepθprior || ktheta == 0 ? default_θprior : models["theta_prior"],
-            !deepZprior || klatent == 0 ? default_Zprior : models["latent_prior"],
-        )
+        prior_mix = get!(settings["arch"]["genatr"], "prior_mix", 0.0)::Float64
+        default_θprior(x) = sampleθprior(phys, typeof(x), size(x,2))
+        default_Zprior(x) = ((lo,hi) = eltype(x).(σbd); return lo .+ (hi .- lo) .* rand_similar(x, k, size(x,2)))
+        # default_Zprior(x) = randn_similar(x, k, size(x,2))
+
+        # Data distribution prior
+        get!(derived, "prior") do
+            DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(
+                phys,
+                derived["ricegen"],
+                !deepθprior || ktheta == 0 ? default_θprior : models["theta_prior"],
+                !deepZprior || klatent == 0 ? default_Zprior : models["latent_prior"],
+            )
+        end
+
+        # CVAE distribution prior; mix (possibly deep) data distribution prior with a fraction `prior_mix` of samples from the default distribution
+        mixed_θprior(x) = sample_union(default_θprior, derived["prior"].θprior, prior_mix, x)
+        mixed_Zprior(x) = sample_union(default_Zprior, derived["prior"].Zprior, prior_mix, x)
+        get!(derived, "cvae_prior") do
+            DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(phys, derived["ricegen"], mixed_θprior, mixed_Zprior)
+        end
     end
 
     # Encoders
@@ -249,16 +257,26 @@ KLDivUnitNormal(μ, σ) = (sum(@. pow2(σ) + pow2(μ) - 2 * log(σ)) - length(μ
 KLDivergence(μq0, σq, μr0, σr) = (sum(@. pow2(σq / σr) + pow2((μr0 - μq0) / σr) - 2 * log(σq / σr)) - length(μq0)) / (2 * size(μq0,2)) # KL-divergence contribution to cross-entropy (Note: sum over dim=1, mean over dim=2)
 EvidenceLowerBound(x, μx0, σx) = (sum(@. pow2((x - μx0) / σx) + 2 * log(σx)) + length(μx0) * log2π(eltype(μx0))) / (2 * size(μx0,2)) # Negative log-likelihood/ELBO contribution to cross-entropy (Note: sum over dim=1, mean over dim=2)
 
+function apply_pad(::CVAE{n}, Y) where {n}
+    if size(Y,1) < n
+        pad = zeros_similar(Y, n - size(Y,1), size(Y)[2:end]...)
+        return vcat(Y, pad)
+    else
+        return Y
+    end
+end
+
 function mv_normal_parameters(cvae::CVAE, Y, θ, Z)
-    μr0, σr = split_mean_softplus_std(cvae.E1(Y))
-    μq0, σq = split_mean_softplus_std(cvae.E2(vcat(Y,θ,Z)))
+    Ypad = apply_pad(cvae, Y)
+    μr0, σr = split_mean_softplus_std(cvae.E1(Ypad))
+    μq0, σq = split_mean_softplus_std(cvae.E2(vcat(Ypad,θ,Z)))
     zq = sample_mv_normal(μq0, σq)
-    μx0, σx = split_mean_softplus_std(cvae.D(vcat(Y,zq)))
+    μx0, σx = split_mean_softplus_std(cvae.D(vcat(Ypad,zq)))
     return (; μr0, σr, μq0, σq, μx0, σx)
 end
 
 function KL_and_ELBO(cvae::CVAE{n,nθ,k,nz}, Y, θ, Z; marginalize_Z::Bool) where {n,nθ,k,nz}
-    @unpack μr0, σr, μq0, σq, μx0, σx = mv_normal_parameters(cvae, Y, θ, Z)
+    @unpack μr0, σr, μq0, σq, μx0, σx = mv_normal_parameters(cvae, apply_pad(cvae, Y), θ, Z)
     KLDiv = KLDivergence(μq0, σq, μr0, σr)
     ELBO = marginalize_Z ?
         EvidenceLowerBound(θ, μx0[1:nθ,..], σx[1:nθ,..]) :
@@ -267,16 +285,18 @@ function KL_and_ELBO(cvae::CVAE{n,nθ,k,nz}, Y, θ, Z; marginalize_Z::Bool) wher
 end
 
 function sampleθZ_setup(cvae::CVAE, Y)
-    μr = cvae.E1(Y)
+    Ypad = apply_pad(cvae, Y)
+    μr = cvae.E1(Ypad)
     μr0, σr = split_mean_softplus_std(μr)
     return μr0, σr
 end
 
-sampleθZposterior(cvae::CVAE, Y) = sampleθZposterior(cvae, Y, sampleθZ_setup(cvae, Y)...)
+sampleθZposterior(cvae::CVAE, Y) = (Ypad = apply_pad(cvae, Y); sampleθZposterior(cvae, Ypad, sampleθZ_setup(cvae, Ypad)...))
 
 function sampleθZposterior(cvae::CVAE, Y, μr0, σr)
+    Ypad = apply_pad(cvae, Y)
     zr = sample_mv_normal(μr0, σr)
-    μx = cvae.D(vcat(Y,zr))
+    μx = cvae.D(vcat(Ypad,zr))
     μx0, σx = split_mean_softplus_std(μx)
     x = sample_mv_normal(μx0, σx)
     θ, Z = split_theta_latent(cvae, x)
@@ -284,8 +304,9 @@ function sampleθZposterior(cvae::CVAE, Y, μr0, σr)
 end
 
 function θZposterior_sampler(cvae::CVAE, Y)
-    μr0, σr = sampleθZ_setup(cvae, Y) # constant over posterior samples
-    θZposterior_sampler_inner() = sampleθZposterior(cvae, Y, μr0, σr)
+    Ypad = apply_pad(cvae, Y)
+    μr0, σr = sampleθZ_setup(cvae, Ypad) # constant over posterior samples
+    θZposterior_sampler_inner() = sampleθZposterior(cvae, Ypad, μr0, σr)
     return θZposterior_sampler_inner
 end
 
