@@ -2,154 +2,42 @@
 #### Setup
 ####
 
-using MMDLearning
-using PyCall
-pyplot(size=(800,600))
-Ignite.init()
+include(joinpath(@__DIR__, "ignite_self_sup_cvae_model.jl"))
 
-# Init python resources
-const torch = pyimport("torch")
-const wandb = pyimport("wandb")
-const ignite = pyimport("ignite")
-const logging = pyimport("logging")
-py"""
-from ignite.contrib.handlers.wandb_logger import *
-"""
+models_checkpoint = Dict{String,Any}()
+# models_checkpoint = !haskey(ENV, "JL_CHECKPOINT_FOLDER") ? Dict{String, Any}() : map_dict(to32, deepcopy(BSON.load(joinpath(ENV["JL_CHECKPOINT_FOLDER"], "current-models.bson"))["models"]))
+# models_checkpoint = map_dict(to32, deepcopy(BSON.load(joinpath("/home/jdoucette/Documents/code/wandb/tmp2/output/ignite-cvae-2020-11-23-T-14-42-36-732", "current-models.bson"))["models"]))
 
-using MMDLearning: map_dict, sum_dict, apply_dim1
-const Events = ignite.engine.Events
+settings = make_settings()
+phys = make_physics(settings)
+models, derived = make_models!(phys, settings, models_checkpoint)
+optimizers = make_optimizers(settings)
+wandb_logger = make_wandb_logger!(settings)
+save_snapshot(settings, models)
 
-# Parse command line arguments into default settings
-settings = if haskey(ENV, "JL_CHECKPOINT_FOLDER")
-    # Load settings from past run
-    TOML.parsefile(joinpath(ENV["JL_CHECKPOINT_FOLDER"], "settings.toml"))
-else
-    # Load default settings with command line arguments
-    Ignite.parse_command_line!(TOML.parse(
-    """
-    [data]
-        out    = "./output/ignite-cvae-$(MMDLearning.getnow())"
-        ntrain = "auto" # 102_400
-        ntest  = "auto" # 10_240
-        nval   = "auto" # 10_240
+#=
+models_checkpoint = let
+    ENV["JL_CHECKPOINT_FOLDER"] = "/home/jdoucette/Documents/code/wandb/tmp2/output/ignite-cvae-2020-11-22-T-17-43-04-277/"
+    deepprior_checkpoint = map_dict(to32, deepcopy(BSON.load(joinpath(ENV["JL_CHECKPOINT_FOLDER"], "current-models.bson"))["models"]))
 
-    [train]
-        timeout     = 1e9 #TODO 10800.0
-        epochs      = 1000_000
-        batchsize   = 1024 #256 #512 #1024 #2048 #3072 #4096
-        MMDCVAErate = 0     # Train combined MMD+CVAE loss every `MMDCVAErate` epochs
-        CVAErate    = 1      # Train CVAE loss every `CVAErate` iterations
-        CVAEsteps   = 1      # Train CVAE losses with `CVAEsteps` updates per iteration
-        CVAEmask    = 32     # Randomly mask cvae training signals up to `CVAEmask` echoes (<=0 performs no masking)
-        MMDrate     = 0      # Train MMD loss every `MMDrate` epochs
-        GANrate     = 0     # Train GAN losses every `GANrate` iterations
-        Dsteps      = 5     # Train GAN losses with `Dsteps` discrim updates per genatr update
-        kernelrate  = 0     # Train kernel every `kernelrate` iterations
-        kernelsteps = 0     # Gradient updates per kernel train
-        DeepThetaPrior  = false  # Learn deep prior
-        DeepLatentPrior = false  # Learn deep prior
-        [train.augment]
-            signal        = true   # Plain input signal
-            gradient      = false  # Gradient of input signal (1D central difference)
-            laplacian     = false  # Laplacian of input signal (1D second order)
-            fdcat         = 0     # Concatenated finite differences up to order `fdcat`
-            encoderspace  = false # Discriminate encoder space representations
-            residuals     = false # Discriminate residual vectors
-            fftcat        = false # Fourier transform of input signal, concatenating real/imag
-            fftsplit      = false # Fourier transform of input signal, treating real/imag separately
-        [train.transform]
-            flipsignals   = false # Randomly reverse signals
-            chunk         = 0     # Random chunks of size `chunk` (0 uses whole signal)
-            nsamples      = 1     # Average over `nsamples` instances of corrected signals
+    ENV["JL_CHECKPOINT_FOLDER"] = "/home/jdoucette/Documents/code/wandb/tmp2/output/ignite-cvae-2020-11-23-T-14-42-36-732/"
+    cvae_checkpoint = map_dict(to32, deepcopy(BSON.load(joinpath(ENV["JL_CHECKPOINT_FOLDER"], "current-models.bson"))["models"]))
 
-    [eval]
-        valevalperiod   = 300.0
-        trainevalperiod = 600.0
-        saveperiod      = 300.0
-        printperiod     = 300.0
+    delete!(ENV, "JL_CHECKPOINT_FOLDER")
 
-    [opt]
-        lrrel    = 0.03    #0.1  # Learning rate relative to batch size, i.e. lr = lrrel / batchsize
-        lrthresh = 0.0     #1e-6 # Absolute minimum learning rate
-        lrdrop   = 3.16    # Drop learning rate by factor `lrdrop` every `lrrate` epochs
-        lrrate   = 999_999 # Drop learning rate by factor `lrdrop` every `lrrate` epochs
-        [opt.cvae]
-            lrrel = "%PARENT%"
-            lambda_pseudo = 0.0 # Weighting of pseudo label loss
-        [opt.genatr]
-            lrrel = "%PARENT%" #TODO: 0.01 train generator more slowly
-        [opt.discrim]
-            lrrel = "%PARENT%"
-        [opt.mmd]
-            lrrel = "%PARENT%"
-            gclip = 1.0
-            lambda_0        = 100.0 # MMD loss weighting relative to CVAE
-            lambda_eps      = 0.0   # Regularize noise amplitude epsilon
-            lambda_deps_dz  = 0.0   # Regularize gradient of epsilon w.r.t. latent variables
-        [opt.kernel]
-            lrrel = "%PARENT%" # Kernel learning rate 
-            loss  = "mmd"      # Kernel loss ("mmd", "tstatistic", or "mmd_diff")
+    _models_checkpoint = Dict{String,Any}()
+    _models_checkpoint["theta_prior"] = deepcopy(deepprior_checkpoint["theta_prior"])
+    _models_checkpoint["latent_prior"] = Flux.Chain(deepcopy(deepprior_checkpoint["latent_prior"])..., deepcopy(cvae_checkpoint["latent_prior"][end]))
+    _models_checkpoint["genatr"] = deepcopy(cvae_checkpoint["genatr"])
+    _models_checkpoint["enc1"] = deepcopy(cvae_checkpoint["enc1"])
+    _models_checkpoint["enc2"] = deepcopy(cvae_checkpoint["enc2"])
+    _models_checkpoint["dec"] = deepcopy(cvae_checkpoint["dec"])
 
-    [arch]
-        physics   = "epg"
-        nlatent   = 1   # number of latent variables Z
-        zdim      = 12  # embedding dimension of z
-        hdim      = 256 # size of hidden layers
-        nhidden   = 4   # number of hidden layers
-        skip      = false # skip connection
-        layernorm = false # layer normalization following dense layer
-        [arch.enc1]
-            hdim      = "%PARENT%"
-            nhidden   = "%PARENT%"
-        [arch.enc2]
-            hdim      = "%PARENT%"
-            nhidden   = "%PARENT%"
-        [arch.dec]
-            hdim      = "%PARENT%"
-            nhidden   = "%PARENT%"
-        [arch.genatr]
-            hdim        = 64   #TODO "%PARENT%"
-            nhidden     = 2    #TODO "%PARENT%"
-            ktheta      = 16   #TODO Dimension of domain of theta prior space
-            klatent     = 4    #TODO Dimension of domain of latent prior space
-            prior_mix   = 0.0   #TODO Mix learned deep prior with `prior_mix` fraction of default prior for robustness
-            leakyslope  = 0.0
-            maxcorr     = 0.1
-            noisebounds = [-6.0, 0.0] #TODO
-        [arch.discrim]
-            hdim      = 0     #TODO "%PARENT%"
-            nhidden   = 0     #TODO "%PARENT%"
-            dropout   = 0.1
-        [arch.kernel]
-            nbandwidth  = 32            #TODO
-            channelwise = true          #TODO
-            deep        = false         #TODO
-            bwbounds    = [-8.0, 4.0]   # Bounds for kernel bandwidths (logsigma)
-            clampnoise  = 0.0           #TODO
-    """))
+    # deepprior_checkpoint
+    # cvae_checkpoint
+    map_dict(to32, _models_checkpoint)
 end
-
-# Init wandb_logger and save settings
-wandb_logger = Ignite.init_wandb_logger(settings)
-!isnothing(wandb_logger) && (settings["data"]["out"] = wandb.run.dir)
-Ignite.save_and_print(settings; filename = !haskey(ENV, "JL_CHECKPOINT_FOLDER") ? joinpath(settings["data"]["out"], "settings.toml") : nothing)
-
-####
-#### Models
-####
-
-# phys = initialize!(MMDLearning.ToyEPGModel{Float32,true}(); ntrain = settings["data"]["ntrain"]::Int, ntest = settings["data"]["ntest"]::Int, nval = settings["data"]["nval"]::Int)
-phys = initialize!(MMDLearning.EPGModel{Float32,true}(); seed = 0, imagepath = "/home/jdoucette/Documents/code/MWI-Julia-Paper/Example_48echo_8msTE/data-in/ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.nii.gz")
-models_checkpoint = !haskey(ENV, "JL_CHECKPOINT_FOLDER") ? Dict{String, Any}() : map_dict(to32, deepcopy(BSON.load(joinpath(ENV["JL_CHECKPOINT_FOLDER"], "current-models.bson"))["models"]))
-models, derived = MMDLearning.make_mmd_cvae_models(phys, settings, models_checkpoint)
-make_opt(otype = Flux.ADAM; lr, gclip = 0, wdecay = 0) = (os = Any[otype(lr)]; (gclip > 0) && pushfirst!(os, Flux.ClipValue(gclip)); (wdecay > 0) && push!(os, Flux.WeightDecay(wdecay)); return Flux.Optimiser(os))
-optimizers = Dict{String,Any}(
-    "mmd"     => make_opt(lr = settings["opt"]["discrim"]["lrrel"] / settings["train"]["batchsize"], gclip = settings["opt"]["mmd"]["gclip"]),
-    "cvae"    => make_opt(lr = settings["opt"]["cvae"]["lrrel"] / settings["train"]["batchsize"]),
-    "genatr"  => make_opt(lr = settings["opt"]["genatr"]["lrrel"] / settings["train"]["batchsize"]),
-    "discrim" => make_opt(lr = settings["opt"]["discrim"]["lrrel"] / settings["train"]["batchsize"]),
-)
-MMDLearning.model_summary(models, !haskey(ENV, "JL_CHECKPOINT_FOLDER") ? joinpath(settings["data"]["out"], "model-summary.txt") : nothing)
+=#
 
 ####
 #### Augmentations
@@ -253,7 +141,7 @@ end
 function get_kernel_opt(key)
     # Initialize optimizer, if necessary
     get!(optimizers, "kernel_$key") do
-        make_opt(lr = settings["opt"]["kernel"]["lrrel"] / settings["train"]["batchsize"])
+        make_optimizer(lr = settings["opt"]["kernel"]["lrrel"] / settings["train"]["batchsize"])
     end
     return optimizers["kernel_$key"]
 end
@@ -695,6 +583,12 @@ val_evaluator.logger = ignite.utils.setup_logger("val_evaluator")
 
 train_evaluator = ignite.engine.Engine(@j2p (args...) -> compute_metrics(args...; dataset = :train))
 train_evaluator.logger = ignite.utils.setup_logger("train_evaluator")
+
+####
+#### Events
+####
+
+const Events = ignite.engine.Events
 
 # Force terminate
 trainer.add_event_handler(

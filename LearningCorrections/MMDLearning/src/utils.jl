@@ -933,21 +933,21 @@ function eval_mri_model(
     inverter(Ysamples; kwargs...) = posterior_state(derived["cvae"], derived["prior"], Ysamples; verbose = !quiet, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
     saveplot(p, name, folder = savefolder) = map(suf -> savefig(p, joinpath(mkpath(folder), name * suf)), savetypes)
 
-    flat_test(x) = flat_indices(x, phys.image[Symbol(dataset, :_indices)])
-    flat_train(x) = flat_indices(x, phys.image[:train_indices])
+    flat_test(x) = flat_indices(x, phys.images[1].image.indices[dataset])
+    flat_train(x) = flat_indices(x, phys.images[1].image.indices[:train])
     flat_indices(x, indices) =
         x isa AbstractMatrix ? (@assert(size(x,2) == length(indices)); return x) : # matrix with length(indices) columns
         x isa AbstractTensor4D ?
             (size(x)[1:3] == (length(indices), 1, 1)) ? permutedims(reshape(x, :, size(x,4))) : # flattened 4D array with first three dimensions (length(indices), 1, 1)
-            (size(x)[1:3] == size(phys.image[:data])[1:3]) ? permutedims(x[indices,:]) : # 4D array with first three dimensions equal to image size
+            (size(x)[1:3] == size(phys.images[1].image.data)[1:3]) ? permutedims(x[indices,:]) : # 4D array with first three dimensions equal to image size
             error("4D array has wrong shape") :
         error("x must be an $AbstractMatrix or an $AbstractTensor4D")
 
-    flat_image_to_flat_test(x) = flat_image_to_flat_indices(x, phys.image[Symbol(dataset, :_indices)])
-    flat_image_to_flat_train(x) = flat_image_to_flat_indices(x, phys.image[:train_indices])
+    flat_image_to_flat_test(x) = flat_image_to_flat_indices(x, phys.images[1].image.indices[dataset])
+    flat_image_to_flat_train(x) = flat_image_to_flat_indices(x, phys.images[1].image.indices[:train])
     function flat_image_to_flat_indices(x, indices)
-        _x = similar(x, size(x,1), size(phys.image[:data])[1:3]...)
-        _x[:, phys.image[:mask_indices]] = x
+        _x = similar(x, size(x,1), size(phys.images[1].image.data)[1:3]...)
+        _x[:, phys.images[1].image.indices[:mask]] = x
         return _x[:, indices]
     end
 
@@ -1020,7 +1020,7 @@ function eval_mri_model(
         @info "Plotting histogram distances compared to $dataset data..." # Compare histogram distances for each echo and across all-signal for test data and simulated data
         phist = @time plot(
             map(collect(pairs((; ChiSquared, KLDivergence, CityBlock, Euclidean)))) do (distname, dist)
-                echoes = 0:size(phys.image[:data],4)
+                echoes = 0:size(phys.images[1].image.data,4)
                 Xplots = [X for (k,X) in Xs if k !== :Y_test]
                 logdists = mapreduce(hcat, Xplots) do X
                     (i -> log10(dist(X[:hist][i], Xs[:Y_test][:hist][i]))).(echoes)
@@ -1161,9 +1161,9 @@ function eval_mri_model(
     end
 
     # Heatmaps
-    Y = phys.image[:data][:,:,zslices,:] # (nx, ny, nslice, nTE)
+    Y = phys.images[1].image.data[:,:,zslices,:] # (nx, ny, nslice, nTE)
     Islices = findall(!isnan, Y[..,1]) # entries within Y mask
-    Imaskslices = filter(I -> I[3] ∈ zslices, phys.image[:mask_indices])
+    Imaskslices = filter(I -> I[3] ∈ zslices, phys.images[1].image.indices[:mask])
     makemaps(x) = (out = fill(NaN, size(Y)[1:3]); out[Islices] .= Flux.cpu(x); return permutedims(out, (2,1,3)))
 
     θcvae = infer_θderived(permutedims(Y[Islices,:]) |> to32)
@@ -1230,8 +1230,8 @@ function mle_mri_model(
 
     # MLE for whole image of simulated data
     Y, Yc = let
-        image_ind  = phys.image[Symbol(data_subset, :_indices)]
-        image_data = phys.image[:data][image_ind,:] |> to32 |> permutedims
+        image_ind  = phys.images[1].image.indices[data_subset]
+        image_data = phys.images[1].image.data[image_ind,:] |> to32 |> permutedims
         if data_source === :image
             !dryrun && DECAES.MAT.matwrite("mle-$data_source-$data_subset-data-$(getnow()).mat", Dict{String,Any}("Y" => arr64(image_data)))
             arr64(image_data), image_data
@@ -1303,7 +1303,7 @@ function mle_mri_model(
             nθ = ntheta(phys)
             θ  = ntuple(i -> x[i], nθ)
             ϵ  = exp(x[nθ+1])
-            ψ  = θsignalmodel(phys, θ...)
+            ψ  = θmodel(phys, θ...)
             X  = _signal_model_f64(phys, work.epg, ψ)
             μX = -Inf
             for i in eachindex(X)

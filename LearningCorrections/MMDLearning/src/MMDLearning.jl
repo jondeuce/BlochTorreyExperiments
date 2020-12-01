@@ -15,14 +15,10 @@ export     TOML, BSON, Glob, DrWatson, Flux,      CUDA, NNlib, Zygote, ChainRule
 using DrWatson: @dict, @ntuple, @pack!, @unpack
 export @dict, @ntuple, @pack!, @unpack
 
-export load_settings
 export handleinterrupt, saveprogress, saveplots
-# export make_toy_samplers, make_mle_data_samplers
-# export signal_loglikelihood_inference
-# export signal_theta_error, theta_bounds, signal_model, signal_model!, signal_model_work
-# export toy_theta_error, toy_theta_bounds, toy_signal_model, toy_theta_sampler
 export mmd, mmdvar, mmd_and_mmdvar, tstat_flux, kernel_loss, train_kernel!
 export mmd_perm_test_power, mmd_perm_test_power_plot, fast_hist_1D
+export map_dict, sum_dict, apply_dim1
 
 export NotTrainable, DenseResize, Scale
 export Rician, RicianCorrector, NormalizedRicianCorrector, VectorRicianCorrector, FixedNoiseVectorRicianCorrector, LatentVectorRicianCorrector, LatentVectorRicianNoiseCorrector, LatentScalarRicianNoiseCorrector
@@ -51,21 +47,14 @@ const CuTensor4D{T} = CUDA.CuArray{T,4}
 export AbstractTensor3D, AbstractTensor4D, CuTensor3D, CuTensor4D
 
 ####
-#### PyPlot
-####
-
-import PyPlot
-const plt = PyPlot
-const rcParams = plt.PyDict(plt.matplotlib."rcParams")
-
-rcParams["font.size"] = 10
-rcParams["text.usetex"] = false
-
-export PyPlot, plt, rcParams
-
-####
 #### Includes
 ####
+
+include("PyTools.jl")
+@reexport using .PyTools
+
+include("Ignite.jl")
+@reexport using .Ignite
 
 include("rician.jl")
 include("batched_math.jl")
@@ -76,8 +65,5 @@ include("utils.jl")
 include("layers.jl")
 include("mmdcvae.jl")
 include("models.jl")
-
-include("Ignite.jl")
-@reexport using .Ignite
 
 end # module

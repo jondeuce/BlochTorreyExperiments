@@ -1,20 +1,22 @@
 module Ignite
 
 using ArgParse
+using ..PyTools
 import ..TOML
 import ..Flux
 import ..CUDA
 
 export todevice, to32, to64, @j2p
 
+# Default to running on CPU; init() will override to GPU if available
+todevice(x) = Flux.cpu(x)
+to32(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float32}, xi) : xi, todevice(x))
+to64(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float64}, xi) : xi, todevice(x))
+
 const JL_CUDA_FUNCTIONAL = Ref(false)
 const JL_CUDA_DEVICE     = Ref(-1)
 const JL_ZERO_SUBNORMALS = Ref(true)
 const JL_WANDB_LOGGER    = Ref(false)
-
-todevice(x) = Flux.cpu(x)
-to32(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float32}, xi) : xi, todevice(x))
-to64(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float64}, xi) : xi, todevice(x))
 
 function init()
     JL_CUDA_FUNCTIONAL[] = get(ENV, "JL_DISABLE_GPU", "0") != "1" && CUDA.functional()
@@ -41,7 +43,7 @@ end
 
 # Initialize WandBLogger object
 function init_wandb_logger(settings)
-    WandBLogger = Main.ignite.contrib.handlers.wandb_logger.WandBLogger
+    WandBLogger = ignite.contrib.handlers.wandb_logger.WandBLogger
     return JL_WANDB_LOGGER[] ? WandBLogger(config = flatten_dict(settings)) : nothing
 end
 
