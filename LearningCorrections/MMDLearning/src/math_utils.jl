@@ -22,6 +22,10 @@ for f in [:zeros, :ones, :rand, :randn]
     @eval $f_similar(::Type{<:CUDA.CuArray{T}}, sz...) where {T} = Zygote.ignore(() -> CUDA.$f(T, sz...)) # CUDA
 end
 
+fill_similar(x::AbstractArray, v, sz...) = fill_similar(typeof(x), v, sz...)
+fill_similar(::Type{<:AbstractArray{T}}, v, sz...) where {T} = Base.fill(T(v), sz...) # fallback
+fill_similar(::Type{<:CUDA.CuArray{T}}, v, sz...) where {T} = CUDA.fill(T(v), sz...) # CUDA
+
 #TODO: `acosd` gets coerced to Float64 by Zygote on reverse pass; file bug?
 _acosd_cuda(x::AbstractArray{T}) where {T} = clamp.(T(57.29577951308232) .* acos.(x), T(0.0), T(180.0)) # 180/π ≈ 57.29577951308232
 
@@ -31,11 +35,11 @@ soft_cutoff(x::AbstractArray, x0, w) = soft_cutoff(sigmoid_weights_fun, x, x0, w
 
 # Erf scaled such that f(0) = 0.5, f(-1) = k, and f(1) = 1-k
 function sigmoid_weights_fun(x::AbstractArray{T}, k::Number = T(0.1)) where {T}
-    σ = abs(erfinv(1 - 2k))
+    σ = T(abs(erfinv(1 - 2k)))
     y = @. (1 + erf(σ * x)) / 2
 end
 function sigmoid_weights_fun(x::CUDA.CuArray{T}, k::Number = T(0.1)) where {T}
-    σ = abs(erfinv(1 - 2k))
+    σ = T(abs(erfinv(1 - 2k)))
     y = @. (1 + CUDA.erf(σ * x)) / 2 #TODO: need to explicitly call CUDA.erf here... bug?
 end
 
@@ -44,6 +48,10 @@ sample_union(f1, f2, p1, x::AbstractMatrix{T}) where {T} = p1 == 1 ? f1(x) : p1 
 
 normalized_range(N::Int) = N <= 1 ? zeros(N) : √(3*(N-1)/(N+1)) |> a -> range(-a,a,length=N) |> collect # mean zero and (uncorrected) std one
 uniform_range(N::Int) = N <= 1 ? zeros(N) : range(-1,1,length=N) |> collect
+
+@inline clamp_dim1(Y::AbstractArray, X::AbstractArray) = size(X,1) > size(Y,1) ? X[1:size(Y,1), ..] : X
+@inline clamp_dim1(Y::AbstractArray, Xs::AbstractArray...) = clamp_dim1(Y, Xs)
+@inline clamp_dim1(Y::AbstractArray, Xs) = map(X -> clamp_dim1(Y,X), Xs)
 
 # Apply function `f` along dimension 1 of `x` by first flattening `x` into a matrix
 @inline apply_dim1(f, x::AbstractMatrix) = f(x)

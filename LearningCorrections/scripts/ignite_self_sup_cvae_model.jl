@@ -133,13 +133,12 @@ function make_physics(settings)
     #     ntest = settings["data"]["ntest"]::Int,
     #     nval = settings["data"]["nval"]::Int
     # )
-    MMDLearning.initialize!(
-        MMDLearning.EPGModel{Float32,false}();
-        seed = 0,
-        imageinfos = [
-            (TE = 8e-3, refcon = 180e-3, path = "/home/jdoucette/Documents/code/MWI-Data-Catalog/Example_48echo_8msTE/data-in/ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.nii.gz"),
-        ],
-    )
+    imageinfos = [
+        (TE = 8e-3, refcon = 180.0, path = "/home/jdoucette/Documents/code/MWI-Data-Catalog/Example_48echo_8msTE/data-in/ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.nii.gz"),
+        (TE = 7e-3, refcon = 180.0, path = "/home/jdoucette/Documents/code/MWI-Data-Catalog/Example_56echo_7msTE_CPMG/data-in/MW_TRAINING_001_WIP_CPMG56_CS_half_2_1.masked-image.mat"),
+    ]
+    phys = MMDLearning.EPGModel{Float32,false}(n = 64) #TODO
+    MMDLearning.initialize!(phys; imageinfos, seed = 0)
 end
 
 ####
@@ -150,7 +149,9 @@ end
 function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, models = Dict{String, Any}(), derived = Dict{String, Any}())
     n   = nsignal(phys) # input signal length
     nθ  = ntheta(phys) # number of physics variables
+    nθM = nmarginalized(phys) # number of marginalized, i.e. recovered, physics variables
     θbd = θbounds(phys)
+    θMbd= θmarginalized(phys, θbounds(phys))
     k   = settings["arch"]["nlatent"]::Int # number of latent variables Z
     nz  = settings["arch"]["zdim"]::Int # embedding dimension
     δ   = settings["arch"]["genatr"]["maxcorr"]::Float64
@@ -237,7 +238,7 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
 
         # Data distribution prior
         get!(derived, "prior") do
-            DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(
+            MMDLearning.DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(
                 phys,
                 derived["ricegen"],
                 !deepθprior || ktheta == 0 ? default_θprior : models["theta_prior"],
@@ -246,10 +247,10 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
         end
 
         # CVAE distribution prior; mix (possibly deep) data distribution prior with a fraction `prior_mix` of samples from the default distribution
-        mixed_θprior(x) = sample_union(default_θprior, derived["prior"].θprior, prior_mix, x)
-        mixed_Zprior(x) = sample_union(default_Zprior, derived["prior"].Zprior, prior_mix, x)
+        mixed_θprior(x) = MMDLearning.sample_union(default_θprior, derived["prior"].θprior, prior_mix, x)
+        mixed_Zprior(x) = MMDLearning.sample_union(default_Zprior, derived["prior"].Zprior, prior_mix, x)
         get!(derived, "cvae_prior") do
-            DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(phys, derived["ricegen"], mixed_θprior, mixed_Zprior)
+            MMDLearning.DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(phys, derived["ricegen"], mixed_θprior, mixed_Zprior)
         end
     end
 
@@ -257,9 +258,9 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
     get!(models, "enc1") do
         hdim = settings["arch"]["enc1"]["hdim"]::Int
         nhidden = settings["arch"]["enc1"]["nhidden"]::Int
-        psize = settings["arch"]["enc1"]["psize"]::Int
-        head = settings["arch"]["enc1"]["head"]::Int
         MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity) |> to32
+        # psize = settings["arch"]["enc1"]["psize"]::Int
+        # head = settings["arch"]["enc1"]["head"]::Int
         # Transformers.Stack(
         #     Transformers.@nntopo( X : X => H : H => μr ),
         #     TransformerEncoder(; n, psize, head, hdim, nhidden),
@@ -270,9 +271,9 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
     get!(models, "enc2") do
         hdim = settings["arch"]["enc2"]["hdim"]::Int
         nhidden = settings["arch"]["enc2"]["nhidden"]::Int
-        psize = settings["arch"]["enc2"]["psize"]::Int
-        head = settings["arch"]["enc2"]["head"]::Int
         MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity) |> to32
+        # psize = settings["arch"]["enc2"]["psize"]::Int
+        # head = settings["arch"]["enc2"]["head"]::Int
         # Transformers.Stack(
         #     Transformers.@nntopo( (X,θ,Z) : X => H : (H,θ,Z) => HθZ : HθZ => μq ),
         #     TransformerEncoder(; n, psize, head, hdim, nhidden),
@@ -286,8 +287,8 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
         hdim = settings["arch"]["dec"]["hdim"]::Int
         nhidden = settings["arch"]["dec"]["nhidden"]::Int
         Flux.Chain(
-            MMDLearning.MLP(n + nz => 2*(nθ + k), nhidden, hdim, Flux.relu, identity)...,
-            MMDLearning.CatScale(eltype(θbd)[θbd; (-1, 1)], [ones(Int, nθ); k + nθ + k]),
+            MMDLearning.MLP(n + nz => 2*(nθM + k), nhidden, hdim, Flux.relu, identity)...,
+            MMDLearning.CatScale(eltype(θMbd)[θMbd; (-1, 1)], [ones(Int, nθM); k + nθM + k]),
         ) |> to32
     end
 
@@ -304,7 +305,7 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
     end
 
     # CVAE
-    get!(derived, "cvae") do; CVAE{n,nθ,k,nz}(models["enc1"], models["enc2"], models["dec"]) end
+    get!(derived, "cvae") do; CVAE{n,nθ,nθM,k,nz}(models["enc1"], models["enc2"], models["dec"]) end
 
     # Misc. useful operators
     get!(derived, "forwarddiff") do; MMDLearning.ForwardDifferemce() |> to32 end
@@ -319,7 +320,7 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
         NotTrainable(Flux.Dense(A, [0.0])) |> to32
     end
     get!(derived, "encoderspace") do # non-trainable sampling of encoder signal representations
-        NotTrainable(flattenchain(Flux.Chain(
+        NotTrainable(MMDLearning.flattenchain(Flux.Chain(
             models["enc1"],
             MMDLearning.split_mean_softplus_std,
             MMDLearning.sample_mv_normal,
@@ -360,9 +361,15 @@ end
 ####
 
 function save_snapshot(settings, models)
-    settings_filename = !haskey(ENV, "JL_CHECKPOINT_FOLDER") ? joinpath(settings["data"]["out"], "settings.toml") : nothing
-    model_summary_filename = !haskey(ENV, "JL_CHECKPOINT_FOLDER") ? joinpath(settings["data"]["out"], "model-summary.txt") : nothing
-    MMDLearning.model_summary(models, model_summary_filename)
+    if !haskey(ENV, "JL_CHECKPOINT_FOLDER")
+        savepath = mkpath(settings["data"]["out"])
+        settings_filename, summary_filename, model_filename, train_filename = joinpath.(savepath, ("settings.toml", "model-summary.txt", "model.jl", "train.jl"))
+        cp(@__FILE__, model_filename; force = true) # copy this model file into output folder
+        cp(joinpath(@__DIR__, "ignite_self_sup_cvae.jl"), train_filename; force = true) # copy training script into output folder
+    else
+        settings_filename = summary_filename = nothing
+    end
+    MMDLearning.model_summary(models, summary_filename)
     Ignite.save_and_print(settings; filename = settings_filename)
     return nothing
 end

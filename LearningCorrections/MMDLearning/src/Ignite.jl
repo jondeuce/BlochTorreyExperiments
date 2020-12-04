@@ -80,11 +80,6 @@ function wrap_catch_interrupt(f; msg = "")
     end
 end
 
-# Convert row major Torch array to column major Julia array
-reversedims(x::AbstractArray{T,N}) where {T,N} = permutedims(x, ntuple(i -> N-i+1, N))
-array(x) = reversedims(x.detach().cpu().numpy())
-array(x::AbstractArray) = x # fallback for Julia arrays
-
 # Throttle even to run every `period` seconds
 function throttler_event_filter(period = 0.0)
     last_time = Ref(-Inf)

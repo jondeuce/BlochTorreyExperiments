@@ -4,9 +4,10 @@
 
 include(joinpath(@__DIR__, "ignite_self_sup_cvae_model.jl"))
 
-models_checkpoint = Dict{String,Any}()
-# models_checkpoint = !haskey(ENV, "JL_CHECKPOINT_FOLDER") ? Dict{String, Any}() : map_dict(to32, deepcopy(BSON.load(joinpath(ENV["JL_CHECKPOINT_FOLDER"], "current-models.bson"))["models"]))
-# models_checkpoint = map_dict(to32, deepcopy(BSON.load(joinpath("/home/jdoucette/Documents/code/wandb/tmp2/output/ignite-cvae-2020-11-23-T-14-42-36-732", "current-models.bson"))["models"]))
+# ENV["JL_CHECKPOINT_FOLDER"] = settings["data"]["out"]
+
+models_checkpoint = Dict{String, Any}()
+haskey(ENV, "JL_CHECKPOINT_FOLDER") && (models_checkpoint = map_dict(to32, deepcopy(BSON.load(joinpath(ENV["JL_CHECKPOINT_FOLDER"], "current-models.bson"))["models"])))
 
 settings = make_settings()
 phys = make_physics(settings)
@@ -15,29 +16,7 @@ optimizers = make_optimizers(settings)
 wandb_logger = make_wandb_logger!(settings)
 save_snapshot(settings, models)
 
-#=
-models_checkpoint = let
-    ENV["JL_CHECKPOINT_FOLDER"] = "/home/jdoucette/Documents/code/wandb/tmp2/output/ignite-cvae-2020-11-22-T-17-43-04-277/"
-    deepprior_checkpoint = map_dict(to32, deepcopy(BSON.load(joinpath(ENV["JL_CHECKPOINT_FOLDER"], "current-models.bson"))["models"]))
-
-    ENV["JL_CHECKPOINT_FOLDER"] = "/home/jdoucette/Documents/code/wandb/tmp2/output/ignite-cvae-2020-11-23-T-14-42-36-732/"
-    cvae_checkpoint = map_dict(to32, deepcopy(BSON.load(joinpath(ENV["JL_CHECKPOINT_FOLDER"], "current-models.bson"))["models"]))
-
-    delete!(ENV, "JL_CHECKPOINT_FOLDER")
-
-    _models_checkpoint = Dict{String,Any}()
-    _models_checkpoint["theta_prior"] = deepcopy(deepprior_checkpoint["theta_prior"])
-    _models_checkpoint["latent_prior"] = Flux.Chain(deepcopy(deepprior_checkpoint["latent_prior"])..., deepcopy(cvae_checkpoint["latent_prior"][end]))
-    _models_checkpoint["genatr"] = deepcopy(cvae_checkpoint["genatr"])
-    _models_checkpoint["enc1"] = deepcopy(cvae_checkpoint["enc1"])
-    _models_checkpoint["enc2"] = deepcopy(cvae_checkpoint["enc2"])
-    _models_checkpoint["dec"] = deepcopy(cvae_checkpoint["dec"])
-
-    # deepprior_checkpoint
-    # cvae_checkpoint
-    map_dict(to32, _models_checkpoint)
-end
-=#
+delete!(ENV, "JL_CHECKPOINT_FOLDER")
 
 ####
 #### Augmentations
@@ -66,7 +45,7 @@ function augment(X::AbstractMatrix)
     ∇X   = settings["train"]["augment"]["gradient"]::Bool ? derived["forwarddiff"](X) : nothing # Signal gradient
     ∇²X  = settings["train"]["augment"]["laplacian"]::Bool ? derived["laplacian"](X) : nothing # Signal laplacian
     ∇ⁿX  = settings["train"]["augment"]["fdcat"]::Int > 0 ? derived["fdcat"](X) : nothing # Signal finite differences, concatenated
-    Xres = settings["train"]["augment"]["residuals"]::Bool ? X .- Zygote.@ignore(sampleX(derived["cvae"], derived["prior"], X; posterior_θ = true, posterior_Z = true)) : nothing # Residual relative to different sample X̄(θ), θ ~ P(θ|X) (note: Z discarded, posterior_Z irrelevant)
+    Xres = nothing #TODO metadata: settings["train"]["augment"]["residuals"]::Bool ? X .- Zygote.@ignore(sampleXθZ(derived["cvae"], derived["prior"], X; posterior_θ = true, posterior_Z = true))[1] : nothing # Residual relative to different sample X̄(θ), θ ~ P(θ|X) (note: Z discarded, posterior_Z irrelevant)
     Xenc = settings["train"]["augment"]["encoderspace"]::Bool ? derived["encoderspace"](X) : nothing # Encoder-space signal
     Xfft = settings["train"]["augment"]["fftcat"]::Bool ? vcat(reim(rfft(X,1))...) : nothing # Concatenated real/imag fourier components
     Xrfft, Xifft = settings["train"]["augment"]["fftsplit"]::Bool ? reim(rfft(X,1)) : (nothing, nothing) # Separate real/imag fourier components
@@ -185,31 +164,32 @@ MMDloss(k, X::AbstractMatrix, Y::AbstractMatrix) = size(Y,2) * mmd(k, X, Y)
 MMDloss(k, X::AbstractTensor3D, Y::AbstractMatrix) = mean(map(i -> MMDloss(k, X[:,:,i], Y), 1:size(X,3)))
 
 # Maximum mean discrepency (m*MMD^2) loss
-function MMDlosses(Y)
+function MMDlosses(Ymeta::MMDLearning.AbstractMetaDataSignal)
     if settings["train"]["DeepThetaPrior"]::Bool && settings["train"]["DeepLatentPrior"]::Bool
-        X, θ, Z = sampleXθZ(derived["cvae"], derived["prior"], Y; posterior_θ = false, posterior_Z = false) # sample θ and Z from the learned deep priors, differentiating through the sampling process and the physics model
+        X, θ, Z = sampleXθZ(derived["cvae"], derived["prior"], Ymeta; posterior_θ = false, posterior_Z = false) # sample θ and Z from the learned deep priors, differentiating through the sampling process and the physics model
     else
-        Z = settings["train"]["DeepLatentPrior"]::Bool ? sampleZprior(derived["prior"], Y) : Zygote.@ignore(sampleZprior(derived["prior"], Y)) # differentiate through deep Z prior, else ignore
-        θ = settings["train"]["DeepThetaPrior"]::Bool ? sampleθprior(derived["prior"], Y) : Zygote.@ignore(sampleθZ(derived["cvae"], derived["prior"], Y; posterior_θ = true, posterior_Z = true)[1]) # use CVAE posterior for θ prior; Z is ignored w/ `posterior_Z` arbitrary
+        Z = settings["train"]["DeepLatentPrior"]::Bool ? sampleZprior(derived["prior"], signal(Ymeta)) : Zygote.@ignore(sampleZprior(derived["prior"], signal(Ymeta))) # differentiate through deep Z prior, else ignore
+        θ = settings["train"]["DeepThetaPrior"]::Bool ? sampleθprior(derived["prior"], signal(Ymeta)) : Zygote.@ignore(sampleθZ(derived["cvae"], derived["prior"], Ymeta; posterior_θ = true, posterior_Z = true)[1]) # use CVAE posterior for θ prior; Z is ignored w/ `posterior_Z` arbitrary
         X = settings["train"]["DeepThetaPrior"]::Bool ? signal_model(phys, θ) : Zygote.@ignore(signal_model(phys, θ)) # differentiate through physics model if learning deep θ prior, else ignore
     end
 
     # Differentiate through generator corrections `sampleX̂`
     nX̂ = settings["train"]["transform"]["nsamples"]::Int |> n -> ifelse(n > 1, n, nothing)
     ν, ϵ = rician_params(derived["ricegen"], X, Z)
+    ν, ϵ = clamp_dim1(signal(Ymeta), ν, ϵ)
     X̂ = add_noise_instance(derived["ricegen"], ν, ϵ, nX̂)
 
-    X̂s, Ys = augment_and_transform(X̂, Y)
+    X̂s, Ys = augment_and_transform(X̂, signal(Ymeta))
     ks = Zygote.@ignore NamedTuple{keys(X̂s)}(get_mmd_kernel.(keys(X̂s), size.(values(X̂s),1)))
     ℓ  = map(MMDloss, ks, X̂s, Ys)
 
-    λ_ϵ = Zygote.@ignore eltype(Y)(get!(settings["opt"]["mmd"], "lambda_eps", 0.0)::Float64)
+    λ_ϵ = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["mmd"], "lambda_eps", 0.0)::Float64)
     if λ_ϵ > 0
         R = λ_ϵ * noiselevel_regularization(ϵ, Val(:L1grad))
         ℓ = push!!(ℓ, :reg_eps => R)
     end
 
-    λ_∂ϵ∂Z = Zygote.@ignore eltype(Y)(get!(settings["opt"]["mmd"], "lambda_deps_dz", 0.0)::Float64)
+    λ_∂ϵ∂Z = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["mmd"], "lambda_deps_dz", 0.0)::Float64)
     if λ_∂ϵ∂Z > 0
         R = λ_∂ϵ∂Z * noiselevel_gradient_regularization(ϵ, Z, Val(:L2diff))
         ℓ = push!!(ℓ, :reg_Z => R)
@@ -235,24 +215,24 @@ function apply_signal_mask(Y; mincutoff::Int = 0)
 end
 
 # Conditional variational autoencoder losses
-function CVAElosses(Y; marginalize_Z)
-    λ_pseudo  = Zygote.@ignore eltype(Y)(get!(settings["opt"]["cvae"], "lambda_pseudo", 0.0)::Float64)
+function CVAElosses(Ymeta::MMDLearning.AbstractMetaDataSignal; marginalize_Z)
+    λ_pseudo  = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "lambda_pseudo", 0.0)::Float64)
     mincutoff = Zygote.@ignore get!(settings["train"], "CVAEmask", 0)::Int
 
     # Sample X̂,θ,Z from priors
-    X̂, θ, Z = Zygote.@ignore sampleX̂θZ(derived["cvae"], derived["cvae_prior"], Y; posterior_θ = false, posterior_Z = false) # sample θ and Z priors
+    X̂, θ, Z = Zygote.@ignore sampleX̂θZ(derived["cvae"], derived["cvae_prior"], Ymeta; posterior_θ = false, posterior_Z = false) # sample θ and Z priors
 
     # Cross-entropy loss function components
     X̂masked = apply_signal_mask(X̂; mincutoff)
-    KLDiv, ELBO = KL_and_ELBO(derived["cvae"], X̂masked, θ, Z; marginalize_Z, mincutoff)
+    KLDiv, ELBO = KL_and_ELBO(derived["cvae"], X̂masked, θ, Z; marginalize_Z)
 
     ℓ = if λ_pseudo == 0
         (; KLDiv, ELBO)
     else
-        # Use inferred params as pseudolabels for Y
-        θY, ZY = Zygote.@ignore sampleθZ(derived["cvae"], derived["cvae_prior"], Y; posterior_θ = true, posterior_Z = true) # draw pseudo θ and Z labels for Y
-        Ymasked = apply_signal_mask(Y; mincutoff)
-        KLDivY, ELBOY = KL_and_ELBO(derived["cvae"], Ymasked, θY, ZY; marginalize_Z, mincutoff) # recover pseudo θ and Z labels
+        # Use inferred params as pseudolabels for Ymeta
+        θY, ZY = Zygote.@ignore sampleθZ(derived["cvae"], derived["cvae_prior"], Ymeta; posterior_θ = true, posterior_Z = true) # draw pseudo θ and Z labels for Y
+        Ymasked = apply_signal_mask(signal(Ymeta); mincutoff)
+        KLDivY, ELBOY = KL_and_ELBO(derived["cvae"], Ymasked, θY, ZY; marginalize_Z) # recover pseudo θ and Z labels
         (; KLDiv, ELBO, KLDivPseudo = λ_pseudo * KLDivY, ELBOPseudo = λ_pseudo * ELBOY)
     end
 
@@ -272,13 +252,24 @@ const logger = DataFrame(
     :time       => Union{Float64, Missing}[],
 )
 
-make_data_tuples(dataset) = tuple.(copy.(eachcol(sampleY(phys, :all; dataset = dataset))))
-train_loader = torch.utils.data.DataLoader(make_data_tuples(:train); batch_size = settings["train"]["batchsize"], shuffle = true, drop_last = true)
-val_loader = torch.utils.data.DataLoader(make_data_tuples(:val); batch_size = settings["train"]["batchsize"], shuffle = false, drop_last = true) #Note: drop_last=true and batch_size=train_batchsize for MMD (else, batch_size = settings["data"]["nval"] is fine)
+# make_dataset(dataset) = torch.utils.data.TensorDataset(PyTools.array(sampleY(phys, :all; dataset)))
+# train_loader = torch.utils.data.DataLoader(make_dataset(:train); batch_size = settings["train"]["batchsize"], shuffle = true, drop_last = true)
+# val_loader = torch.utils.data.DataLoader(make_dataset(:val); batch_size = settings["train"]["batchsize"], shuffle = false, drop_last = true) #Note: drop_last=true and batch_size=train_batchsize for MMD (else, batch_size = settings["data"]["nval"] is fine)
+
+make_dataset_indices() = torch.utils.data.TensorDataset(PyTools.array(collect(1:settings["train"]["nbatches"])))
+train_loader = torch.utils.data.DataLoader(make_dataset_indices())
+val_loader = torch.utils.data.DataLoader(make_dataset_indices())
+
+function sample_batch(dataset::Symbol; batchsize = settings["train"]["batchsize"])
+    img_idx = rand(1:length(phys.images))
+    img = phys.images[img_idx]
+    Y = MMDLearning.sample_columns(img.partitions[dataset], batchsize; replace = false) |> todevice
+    Ymeta = MMDLearning.MetaCPMGSignal(phys, img, Y)
+    return (; img_idx, img, Y, Ymeta)
+end
 
 function train_step(engine, batch)
-    Ytrain_cpu, = Ignite.array.(batch)
-    Ytrain = Ytrain_cpu |> todevice
+    img_idx, img, Ytrain, Ytrainmeta = sample_batch(:train)
     outputs = Dict{Any,Any}()
 
     @timeit "train batch" CUDA.@sync begin
@@ -295,8 +286,8 @@ function train_step(engine, batch)
             ps = Flux.params(models["enc1"], models["enc2"], models["dec"], models["genatr"], deeppriors...)
             λ_0 = eltype(Ytrain)(get!(settings["opt"]["mmd"], "lambda_0", 0.0)::Float64)
             @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(ps) do
-                mmd = sum(MMDlosses(Ytrain))
-                cvae = sum(CVAElosses(Ytrain; marginalize_Z = false))
+                mmd = sum(MMDlosses(Ytrainmeta))
+                cvae = sum(CVAElosses(Ytrainmeta; marginalize_Z = false))
                 return λ_0 * mmd + cvae
             end
             @timeit "reverse" CUDA.@sync gs = back(one(eltype(phys)))
@@ -308,7 +299,7 @@ function train_step(engine, batch)
         train_CVAE && @timeit "cvae" CUDA.@sync let
             ps = Flux.params(models["enc1"], models["enc2"], models["dec"])
             for _ in 1:settings["train"]["CVAEsteps"]
-                @timeit "forward"   CUDA.@sync ℓ, back = Zygote.pullback(() -> sum(CVAElosses(Ytrain; marginalize_Z = false)), ps)
+                @timeit "forward"   CUDA.@sync ℓ, back = Zygote.pullback(() -> sum(CVAElosses(Ytrainmeta; marginalize_Z = false)), ps)
                 @timeit "reverse"   CUDA.@sync gs = back(one(eltype(phys)))
                 @timeit "update!"   CUDA.@sync Flux.Optimise.update!(optimizers["cvae"], ps, gs)
                 outputs["CVAE"] = ℓ
@@ -320,7 +311,7 @@ function train_step(engine, batch)
             @timeit "genatr" CUDA.@sync let
                 deeppriors = [models["theta_prior"], models["latent_prior"]][[settings["train"]["DeepThetaPrior"]::Bool, settings["train"]["DeepLatentPrior"]::Bool]]
                 ps = Flux.params(models["genatr"], deeppriors...)
-                @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(() -> sum(MMDlosses(Ytrain)), ps)
+                @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(() -> sum(MMDlosses(Ytrainmeta)), ps)
                 @timeit "reverse" CUDA.@sync gs = back(one(eltype(phys)))
                 @timeit "update!" CUDA.@sync Flux.Optimise.update!(optimizers["mmd"], ps, gs)
                 outputs["MMD"] = ℓ
@@ -329,7 +320,7 @@ function train_step(engine, batch)
 
         # Train GAN loss
         train_GAN && @timeit "gan" CUDA.@sync let
-            @timeit "sampleXθZ" CUDA.@sync Xtrain, θtrain, Ztrain = sampleXθZ(derived["cvae"], derived["prior"], Ytrain; posterior_θ = true, posterior_Z = false) # learn to map whole Z domain via `posterior_Z = false`
+            @timeit "sampleXθZ" CUDA.@sync Xtrain, θtrain, Ztrain = sampleXθZ(derived["cvae"], derived["prior"], Ytrainmeta; posterior_θ = true, posterior_Z = false) # learn to map whole Z domain via `posterior_Z = false`
             train_discrim && @timeit "discrim" CUDA.@sync let
                 ps = Flux.params(models["discrim"])
                 for _ in 1:settings["train"]["Dsteps"]
@@ -357,7 +348,7 @@ function train_step(engine, batch)
             opts = (get_kernel_opt(aug) for aug in aug_types) # unique optimizer per augmentation
             kernels = (get_mmd_kernel(aug, size(Y,1)) for (aug, Y) in zip(aug_types, aug_Ytrains)) # unique kernel per augmentation
             for _ in 1:settings["train"]["kernelsteps"]::Int
-                @timeit "sample G(X)" X̂train = sampleX̂(derived["cvae"], derived["prior"], Ytrain; posterior_θ = true, posterior_Z = false) # # sample unique X̂ per step (TODO: posterior_Z = true? or posterior_Z = false to force learning of whole Z domain?)
+                @timeit "sample G(X)" X̂train = sampleX̂(derived["cvae"], derived["prior"], Ytrainmeta; posterior_θ = true, posterior_Z = false) # # sample unique X̂ per step (TODO: posterior_Z = true? or posterior_Z = false to force learning of whole Z domain?)
                 @timeit "sample Y2" Ytrain2 = sampleY(phys, settings["train"]["batchsize"]::Int; dataset = :train) |> to32 # draw another Y sample
                 aug_X̂trains, aug_Ytrains2 = augment_and_transform(X̂train, Ytrain2) .|> values # augment data + simulated data
                 for (aug, kernel, aug_X̂train, aug_Ytrain, aug_Ytrain2, opt) in zip(aug_types, kernels, aug_X̂trains, aug_Ytrains, aug_Ytrains2, opts)
@@ -373,30 +364,31 @@ function train_step(engine, batch)
     return deepcopy(outputs)
 end
 
-function fit_metrics(Ytrue, θtrue, Ztrue, Wtrue)
+function fit_metrics(Ytruemeta, θtrue, Ztrue, Wtrue)
     νtrue = ϵtrue = rmse_true = logL_true = missing
+    #= TODO
     if hasclosedform(phys) && !isnothing(θtrue) && !isnothing(Wtrue)
         νtrue, ϵtrue = rician_params(ClosedForm(phys), θtrue, Wtrue) # noiseless true signal and noise level
         Ytrue = add_noise_instance(phys, νtrue, ϵtrue) # noisey true signal
         rmse_true = sqrt(mean(abs2, Ytrue - νtrue))
         logL_true = mean(MMDLearning.NegLogLikelihood(derived["ricegen"], Ytrue, νtrue, ϵtrue))
     end
+    =#
 
     @unpack θ, Z, X, δ, ϵ, ν, ℓ = MMDLearning.posterior_state(
-        derived["cvae"], derived["prior"], Ytrue;
+        derived["cvae"], derived["prior"], Ytruemeta;
         miniter = 1, maxiter = 1, alpha = 0.0, verbose = false, mode = :maxlikelihood,
     )
     X̂ = add_noise_instance(derived["ricegen"], ν, ϵ)
 
-    all_rmse = sqrt.(mean(abs2, Ytrue .- ν; dims = 1)) |> Flux.cpu |> vec |> copy
+    all_rmse = sqrt.(mean(abs2, signal(Ytruemeta) .- ν; dims = 1)) |> Flux.cpu |> vec |> copy
     all_logL = ℓ |> Flux.cpu |> vec |> copy
     rmse, logL = mean(all_rmse), mean(all_logL)
     theta_err = isnothing(θtrue) ? missing : mean(abs, θerror(phys, θtrue, θ); dims = 2) |> Flux.cpu |> vec |> copy
     Z_err = isnothing(Ztrue) ? missing : mean(abs, Ztrue .- Z; dims = 2) |> Flux.cpu |> vec |> copy
 
     metrics = (; rmse_true, logL_true, all_rmse, all_logL, rmse, logL, theta_err, Z_err)
-    cache_cb_args = (Ytrue, θ, Z, X, δ, ϵ, ν, X̂, νtrue)
-    # cache_cb_args = (; θ, Z, X, δ, ν, ϵ, X̂, Ytrue, θtrue, Ztrue, νtrue, ϵtrue) #TODO renaming...
+    cache_cb_args = (signal(Ytruemeta), θ, Z, X, δ, ϵ, ν, X̂, νtrue)
 
     return metrics, cache_cb_args
 end
@@ -415,8 +407,8 @@ function compute_metrics(engine, batch; dataset)
 
         # Initialize output metrics dictionary
         is_consecutive = !isempty(logger) && (logger.epoch[end] == trainer.state.epoch && logger.iter[end] == trainer.state.iteration && logger.dataset[end] === dataset)
-        accum!(k, v) = !is_consecutive ? (cb_state["all_log_metrics"][dataset][Symbol(k)] = Any[v]) : push!(cb_state["all_log_metrics"][dataset][Symbol(k)], v)
-        accum!(k, v::Histogram) = !is_consecutive ? (cb_state["all_histograms"][dataset][Symbol(k)] = v) : (cb_state["all_histograms"][dataset][Symbol(k)].weights .+= v.weights)
+        accum!(k, v) = (d = cb_state["all_log_metrics"][dataset]; (!is_consecutive || !haskey(d, k)) ? (d[Symbol(k)] = Any[v]) : push!(d[Symbol(k)], v))
+        accum!(k, v::Histogram) = (d = cb_state["all_histograms"][dataset]; (!is_consecutive || !haskey(d, k)) ? (d[Symbol(k)] = v) : (d[Symbol(k)].weights .+= v.weights))
         accum!(iter) = foreach(((k,v),) -> accum!(k, v), collect(pairs(iter)))
 
         cb_state["log_metrics"][:epoch]   = trainer.state.epoch
@@ -425,17 +417,17 @@ function compute_metrics(engine, batch; dataset)
         cb_state["log_metrics"][:time]    = cb_state["curr_time"]
 
         # Invert Y and make Xs
-        Y, = Ignite.array.(batch) .|> todevice
-        X, θ, Z = sampleXθZ(derived["cvae"], derived["prior"], Y; posterior_θ = true, posterior_Z = true)
+        img_idx, img, Y, Ymeta = sample_batch(:val)
+        X, θ, Z = sampleXθZ(derived["cvae"], derived["prior"], Ymeta; posterior_θ = true, posterior_Z = true)
         X̂ = sampleX̂(derived["ricegen"], X, Z)
         Nbatch = size(Y,2)
 
         let
-            ℓ_CVAE = CVAElosses(Y; marginalize_Z = false)
+            ℓ_CVAE = CVAElosses(Ymeta; marginalize_Z = false)
             ℓ_CVAE = push!!(ℓ_CVAE, :CVAE => sum(ℓ_CVAE))
             accum!(ℓ_CVAE)
 
-            ℓ_MMD = MMDlosses(Y)
+            ℓ_MMD = MMDlosses(Ymeta)
             ℓ_MMD = NamedTuple{Symbol.(:MMD_, keys(ℓ_MMD))}(values(ℓ_MMD)) # prefix labels with "MMD_"
             ℓ_MMD = push!!(ℓ_MMD, :MMD => sum(ℓ_MMD))
             accum!(ℓ_MMD)
@@ -459,12 +451,15 @@ function compute_metrics(engine, batch; dataset)
 
         # Cache values for evaluating CVAE performance for estimating parameters of Y
         let
+            #= TODO
             if hasclosedform(phys)
                 W = sampleWprior(ClosedForm(phys), Y, size(Y, 2)) # Sample hidden latent variables
                 Y_metrics, Y_cache_cb_args = fit_metrics(nothing, θ, nothing, W)
             else
                 Y_metrics, Y_cache_cb_args = fit_metrics(Y, nothing, nothing, nothing)
             end
+            =#
+            Y_metrics, Y_cache_cb_args = fit_metrics(Ymeta, nothing, nothing, nothing)
             cache_cb_state!(Y_cache_cb_args...; suf = "")
             cb_state["metrics"]["all_Yhat_rmse"] = Y_metrics.all_rmse
             cb_state["metrics"]["all_Yhat_logL"] = Y_metrics.all_logL
@@ -473,16 +468,18 @@ function compute_metrics(engine, batch; dataset)
 
         # Cache values for evaluating CVAE performance for estimating parameters of X̂
         let
-            X̂_metrics, X̂_cache_cb_args = fit_metrics(X̂, θ, Z, nothing)
+            X̂meta = MMDLearning.MetaCPMGSignal(phys, img, X̂) #TODO
+            X̂_metrics, X̂_cache_cb_args = fit_metrics(X̂meta, θ, Z, nothing)
             cache_cb_state!(X̂_cache_cb_args...; suf = "fit")
             cb_state["metrics"]["all_Xhat_rmse"] = X̂_metrics.all_rmse
             cb_state["metrics"]["all_Xhat_logL"] = X̂_metrics.all_logL
             accum!(Dict(Symbol(:Xhat_, k) => v for (k,v) in pairs(X̂_metrics) if k ∉ (:all_rmse, :all_logL) && !ismissing(v)))
 
-            accum!(:signal, MMDLearning.fast_hist_1D(Flux.cpu(vec(X̂)), phys.meta[:histograms][dataset][0].edges[1]))
-            Dist_L1 = MMDLearning.CityBlock(phys.meta[:histograms][dataset][0], cb_state["all_histograms"][dataset][:signal])
-            Dist_ChiSq = MMDLearning.ChiSquared(phys.meta[:histograms][dataset][0], cb_state["all_histograms"][dataset][:signal])
-            Dist_KLDiv = MMDLearning.KLDivergence(phys.meta[:histograms][dataset][0], cb_state["all_histograms"][dataset][:signal])
+            img_key = Symbol(:img, img_idx)
+            accum!(img_key, MMDLearning.fast_hist_1D(Flux.cpu(vec(X̂)), img.meta[:histograms][dataset][0].edges[1]))
+            Dist_L1 = MMDLearning.CityBlock(img.meta[:histograms][dataset][0], cb_state["all_histograms"][dataset][img_key])
+            Dist_ChiSq = MMDLearning.ChiSquared(img.meta[:histograms][dataset][0], cb_state["all_histograms"][dataset][img_key])
+            Dist_KLDiv = MMDLearning.KLDivergence(img.meta[:histograms][dataset][0], cb_state["all_histograms"][dataset][img_key])
             accum!((; Dist_L1, Dist_ChiSq, Dist_KLDiv))
         end
 
@@ -502,8 +499,8 @@ function makeplots(;showplot = false)
         function plot_epsilon_inner(; start, stop, zlen = 256, levels = 50)
             #TODO fixed knots, start, stop
             n, nθ, nz = nsignal(phys)::Int, ntheta(phys)::Int, nlatent(derived["ricegen"])::Int
-            Y = sampleY(phys, zlen * nz; dataset = :train) |> to32
-            X, _, Z = sampleXθZ(derived["cvae"], derived["prior"], Y; posterior_θ = true, posterior_Z = false)
+            _, _, Y, Ymeta = sample_batch(:val; batchsize = zlen * nz)
+            X, _, Z = sampleXθZ(derived["cvae"], derived["prior"], Ymeta; posterior_θ = true, posterior_Z = false)
             Z = Z[:,1] |> Flux.cpu |> z -> repeat(z, 1, zlen, nz) |> z -> (foreach(i -> z[i,:,i] .= range(start, stop; length = zlen), 1:nz); z)
             _, ϵ = rician_params(derived["ricegen"], X, reshape(Z, nz, :) |> Flux.gpu)
             (size(ϵ,1) == 1) && (ϵ = repeat(ϵ, n, 1))
@@ -550,8 +547,8 @@ function makeplots(;showplot = false)
     end
 
     function plot_posteriors(;showplot = false)
-        Y = sampleY(phys, 10000; dataset = :train) |> to32
-        θ, Z = sampleθZ(derived["cvae"], derived["prior"], Y; posterior_θ = true, posterior_Z = true) .|> Flux.cpu
+        _, _, Y, Ymeta = sample_batch(:val; batchsize = 10000)
+        θ, Z = sampleθZ(derived["cvae"], derived["prior"], Ymeta; posterior_θ = true, posterior_Z = true) .|> Flux.cpu
         plot_θZ_histograms(θ, Z; showplot)
     end
 

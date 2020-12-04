@@ -168,7 +168,7 @@ const ignite = pyimport("ignite")
 
 function train_step(engine, batch)
     @unpack kernelrate, kernelsteps, GANrate, GANsucc, Dsteps = settings["train"]
-    _, Xtrain, Ytrain = Ignite.array.(batch)
+    _, Xtrain, Ytrain = PyTools.array.(batch)
 
     @timeit "train batch" begin
         if settings["arch"]["type"] ∈ ["mmd", "hyb"]
@@ -214,7 +214,7 @@ function eval_metrics(engine, batch)
     @timeit "eval batch" begin
         # Update callback state
         @timeit "update cb state" let
-            cb_state["θ"], cb_state["Xθ"], cb_state["Y"] = Ignite.array.(batch)
+            cb_state["θ"], cb_state["Xθ"], cb_state["Y"] = PyTools.array.(batch)
             if hasclosedform(phys)
                 cb_state["Yθ"] = signal_model(ClosedForm(phys), cb_state["θ"])
                 cb_state["Yθhat"] = signal_model(ClosedForm(phys), cb_state["θ"], noiselevel(ClosedForm(phys)))

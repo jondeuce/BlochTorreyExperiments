@@ -1,8 +1,10 @@
 module PyTools
 
-import ..Plots
-import PyCall, PyPlot, Conda
-export PyCall, PyPlot, Conda
+using ..Reexport
+@reexport using PyCall
+
+import PyPlot, Conda
+export PyPlot, Conda
 
 #### PyPlot
 
@@ -15,23 +17,30 @@ export plt, rcParams
 
 #### ML Tools: Torch, WandB, Ignite, etc.
 
-const torch = PyCall.PyNULL()
-const wandb = PyCall.PyNULL()
-const ignite = PyCall.PyNULL()
-const logging = PyCall.PyNULL()
+const torch = PyNULL()
+const wandb = PyNULL()
+const ignite = PyNULL()
+const logging = PyNULL()
 
 export torch, wandb, ignite, logging
 
 function __init__()
-    copy!(torch, PyCall.pyimport("torch"))
-    copy!(wandb, PyCall.pyimport("wandb"))
-    copy!(ignite, PyCall.pyimport("ignite"))
-    copy!(logging, PyCall.pyimport("logging"))
+    copy!(torch, pyimport("torch"))
+    copy!(wandb, pyimport("wandb"))
+    copy!(ignite, pyimport("ignite"))
+    copy!(logging, pyimport("logging"))
 
-    PyCall.py"""
+    py"""
     from ignite.contrib.handlers.wandb_logger import *
     """
 end
+
+#### Python helpers
+
+# Converting between row major PyTorch `Tensor`s to Julia major Julia `Array`s
+reversedims(x::AbstractArray{T,N}) where {T,N} = permutedims(x, ntuple(i -> N-i+1, N))
+array(x::PyObject) = reversedims(x.detach().cpu().numpy()) # `Tensor` --> `Array`
+array(x::AbstractArray) = torch.Tensor(reversedims(x)) #  # `Array` --> `Tensor`
 
 #### Python modules installation
 

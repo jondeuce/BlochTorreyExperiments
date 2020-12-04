@@ -472,23 +472,45 @@ DenseFeatureFusion(G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,1), σ = Flux.
         ch -> XavierConv(k, ch, σ; pad = (k.-1).÷2), # Default factory for RDB's
         G0, G, C, D, k, σ; kwargs...)
 
-#= Pirate NNlib methods to not warn for Dual number inputs
-    const FloatDual{V} = ForwardDiff.Dual{T,V,N} where {T,N}
-    const MaybeDual{V} = Union{V,<:FloatDual{V}}
-    for front_name in (:conv, :∇conv_data, :∇conv_filter,
-                    :depthwiseconv, :∇depthwiseconv_data, :∇depthwiseconv_filter)
-        @eval begin
-            function NNlib.$(Symbol("$(front_name)!"))(
-                            y::AbstractArray{<:MaybeDual{T},N},
-                            in1::AbstractArray{<:MaybeDual{T},N},
-                            in2::AbstractArray{<:MaybeDual{T},N}, cdims::NNlib.ConvDims;
-                            kwargs...) where {T, N}
-                NNlib.$(Symbol("$(front_name)_direct!"))(y, in1, in2, cdims; kwargs...)
-            end
-        end
-    end
-=#
-    
+"""
+Basic CNN with optional skip connection
+"""
+function RESCNN(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout = identity; skip = false)
+    Flux.Chain(
+        x::AbstractMatrix -> reshape(x, sz[1], 1, 1, size(x,2)),
+        Flux.Conv((3,1), 1=>Dhid, identity; pad = Flux.SamePad()),
+        mapreduce(vcat, 1:Nhid÷2) do _
+            convlayers = [Flux.Conv((3,1), Dhid=>Dhid, σhid; pad = Flux.SamePad()) for _ in 1:2]
+            skip ? [Flux.SkipConnection(Flux.Chain(convlayers...), +)] : convlayers
+        end...,
+        Flux.Conv((1,1), Dhid=>1, identity; pad = Flux.SamePad()),
+        x::AbstractArray{<:Any,4} -> reshape(x, sz[1], size(x,4)),
+        Flux.Dense(sz[1], sz[2], σout),
+    )
+end
+
+"""
+Basic Transformer encoder with learned positional embedding
+"""
+function TransformerEncoder(; n = 48, psize = 16, head = 8, hdim = 256, nhidden = 2)
+    t = Transformers.Stack(
+        Transformers.@nntopo(
+            X : # Input (n × b)
+            X => X : # Reshape (1 × n × b)
+            X => pe : # Positional embedding pe (psize × n)
+            (X, pe) => E : # Add positional embedding (psize × n × b)
+            E => H : # Transformer encoder (psize × n × b)
+            H => H # Flatten output (psize*n × b)
+        ),
+        X -> reshape(X, 1, size(X)...),
+        Transformers.Basic.PositionEmbedding(psize, n; trainable = true),
+        (X, pe) -> X .+ pe,
+        Flux.Chain([Transformers.Basic.Transformer(psize, head, hdim; future = true, act = Flux.relu, pdrop = 0.0) for i = 1:nhidden]...),
+        Flux.flatten,
+    )
+    Flux.fmap(Flux.testmode!, t) # Force dropout layers inactive
+end
+
 """
 Print model/layer
 """
