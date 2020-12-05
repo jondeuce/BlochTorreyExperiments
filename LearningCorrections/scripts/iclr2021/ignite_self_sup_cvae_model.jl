@@ -18,22 +18,23 @@ function default_settings()
     [train]
         timeout     = 1e9 #TODO 10800.0
         epochs      = 1000_000
-        batchsize   = 1024 #256 #512 #1024 #2048 #3072 #4096
+        batchsize   = 1024  #256 #512 #1024 #2048 #3072 #4096
+        nbatches    = 1000  # number of batches per epoch
         MMDCVAErate = 0     # Train combined MMD+CVAE loss every `MMDCVAErate` epochs
         CVAErate    = 1     # Train CVAE loss every `CVAErate` iterations
-        CVAEsteps   = 1     # Train CVAE losses with `CVAEsteps` updates per iteration
+        CVAEsteps   = 10    # Train CVAE losses with `CVAEsteps` updates per iteration
         CVAEmask    = 32    # Randomly mask cvae training signals up to `CVAEmask` echoes (<=0 performs no masking)
-        MMDrate     = 0     # Train MMD loss every `MMDrate` epochs
+        MMDrate     = 1     # Train MMD loss every `MMDrate` epochs
         GANrate     = 0     # Train GAN losses every `GANrate` iterations
         Dsteps      = 5     # Train GAN losses with `Dsteps` discrim updates per genatr update
         kernelrate  = 0     # Train kernel every `kernelrate` iterations
         kernelsteps = 0     # Gradient updates per kernel train
-        DeepThetaPrior  = false # Learn deep prior
+        DeepThetaPrior  = true  # Learn deep prior
         DeepLatentPrior = false # Learn deep prior
         [train.augment]
             signal        = true  # Plain input signal
-            gradient      = false # Gradient of input signal (1D central difference)
-            laplacian     = false # Laplacian of input signal (1D second order)
+            gradient      = true  # Gradient of input signal (1D central difference)
+            laplacian     = true  # Laplacian of input signal (1D second order)
             fdcat         = 0     # Concatenated finite differences up to order `fdcat`
             encoderspace  = false # Discriminate encoder space representations
             residuals     = false # Discriminate residual vectors
@@ -94,7 +95,7 @@ function default_settings()
             nhidden     = 2    #TODO "%PARENT%"
             ktheta      = 16   #TODO Dimension of domain of theta prior space
             klatent     = 4    #TODO Dimension of domain of latent prior space
-            prior_mix   = 0.0  #TODO Mix learned deep prior with `prior_mix` fraction of default prior for robustness
+            prior_mix   = 0.5  #TODO Mix learned deep prior with `prior_mix` fraction of default prior for robustness
             leakyslope  = 0.0
             maxcorr     = 0.1
             noisebounds = [-6.0, 0.0] #TODO
@@ -104,7 +105,7 @@ function default_settings()
             dropout   = 0.1
         [arch.kernel]
             nbandwidth  = 32            #TODO
-            channelwise = true          #TODO
+            channelwise = false         #TODO
             deep        = false         #TODO
             bwbounds    = [-8.0, 4.0]   # Bounds for kernel bandwidths (logsigma)
             clampnoise  = 0.0           #TODO

@@ -1,60 +1,9 @@
 ####
-#### Utils
-####
-
-# Compute discrete CDF
-discrete_cdf(x) = (t = sort(x; dims = 2); c = cumsum(t; dims = 2) ./ sum(t; dims = 2); return permutedims.((t, c))) # return (t[1:12:end, :]', c[1:12:end, :]')
-
-# Unzip array of structs into struct of arrays
-unzip(a) = map(x -> getfield.(a, x), fieldnames(eltype(a)))
-
-function bin_sorted(X, Y; binsize::Int)
-    X_sorted, Y_sorted = unzip(sort(collect(zip(X, Y)); by = first))
-    X_binned, Y_binned = unzip(map(is -> (mean(X_sorted[is]), mean(Y_sorted[is])), Iterators.partition(1:length(X), binsize)))
-end
-
-function bin_edges(X, Y, edges)
-    X_binned, Y_binned = map(1:length(edges)-1) do i
-        Is = @. edges[i] <= X <= edges[i+1]
-        mean(X[Is]), mean(Y[Is])
-    end |> unzip
-end
-
-function simple_fd_gradient!(g, f, x, lo = nothing, hi = nothing)
-    δ = cbrt(eps(float(eltype(x))))
-    f₀ = f(x)
-    @inbounds for i in 1:length(x)
-        x₀ = x[i]
-        if !isnothing(lo) && (x₀ - δ/2 <= lo[i]) # near LHS boundary; use second-order forward: (-3 * f(x) + 4 * f(x + δ/2) - f(x + δ)) / δ
-            x[i] = x₀ + δ/2
-            f₊   = f(x)
-            x[i] = x₀ + δ
-            f₊₊  = f(x)
-            g[i] = (-3f₀ + 4f₊ - f₊₊)/δ
-        elseif !isnothing(hi) && (x₀ + δ/2 >= hi[i]) # near RHS boundary; use second-order backward: (3 * f(x) - 4 * f(x - δ/2) + f(x - δ)) / δ
-            x[i] = x₀ - δ/2
-            f₋   = f(x)
-            x[i] = x₀ - δ
-            f₋₋  = f(x)
-            g[i] = (3f₀ - 4f₋ + f₋₋)/δ
-        else # safely within boundary; use second-order central: (f(x + δ/2) - f(x - δ/2)) / δ
-            x[i] = x₀ - δ/2
-            f₋   = f(x)
-            x[i] = x₀ + δ/2
-            f₊   = f(x)
-            g[i] = (f₊ - f₋)/δ
-        end
-        x[i] = x₀
-    end
-    return f₀
-end
-
-####
 #### MLE inference
 ####
 
 function mle_mri_model(
-        phys::BiexpEPGModel,
+        phys::MMDLearning.BiexpEPGModel,
         models,
         derived;
         data_source   = :image, # One of :image, :simulated
@@ -115,7 +64,7 @@ function mle_mri_model(
         (
             Y   = zeros(nsignal(phys)),
             x0  = zeros(ntheta(phys) + 1),
-            epg = BiexpEPGModelWork(phys),
+            epg = MMDLearning.BiexpEPGModelWork(phys),
             opt = let
                 opt = NLopt.Opt(opt_alg, ntheta(phys) + 1)
                 opt.lower_bounds  = lower_bounds
@@ -220,67 +169,11 @@ function mle_mri_model(
 end
 
 ####
-#### MCMC inference
-####
-
-#=
-Turing.@model turing_signal_model(
-        y,
-        correction_and_noiselevel,
-    ) = begin
-    freq   ~ Uniform(1/64,  1/32)
-    phase  ~ Uniform( 0.0,  pi/2)
-    offset ~ Uniform( 0.25,  0.5)
-    amp    ~ Uniform( 0.1,  0.25)
-    tconst ~ Uniform(16.0, 128.0)
-    # logeps ~ Uniform(-4.0,  -2.0)
-    # epsilon = 10^logeps
-
-    # Compute toy signal model without noise
-    x = toy_signal_model([freq, phase, offset, amp, tconst], nothing, 4)
-    yhat, ϵhat = correction_and_noiselevel(x)
-
-    # Model noise as Rician
-    for i in 1:length(y)
-        # ν, σ = x[i], epsilon
-        ν, σ = yhat[i], ϵhat[i]
-        y[i] ~ Rician(ν, σ)
-    end
-end
-=#
-
-function toy_theta_mcmc_inference(
-        y::AbstractVector,
-        correction_and_noiselevel,
-        callback = (y, chain) -> true,
-    )
-    model = function (x)
-        xhat, ϵhat = correction_and_noiselevel(x)
-        yhat = rand.(Rician.(xhat, ϵhat))
-        return yhat
-    end
-    res = signal_loglikelihood_inference(y, nothing, model)
-    theta0 = best_candidate(res)
-    while true
-        chain = sample(turing_signal_model(y, correction_and_noiselevel), NUTS(), 1000; verbose = true, init_theta = theta0)
-        # chain = psample(turing_signal_model(y, correction_and_noiselevel), NUTS(), 1000, 3; verbose = true, init_theta = theta0)
-        callback(y, chain) && return chain
-    end
-end
-
-function toy_theta_mcmc_inference(Y::AbstractMatrix, args...; kwargs...)
-    tasks = map(1:size(Y,2)) do j
-        Threads.@spawn signal_loglikelihood_inference(Y[:,j], initial_guess, args...; kwargs...)
-    end
-    return map(Threads.fetch, tasks)
-end
-
-####
 #### Model evaluation
 ####
 
 function eval_mri_model(
-        phys::BiexpEPGModel,
+        phys::MMDLearning.BiexpEPGModel,
         models,
         derived;
         zslices = 24:24,
@@ -575,3 +468,65 @@ function eval_mri_model(
         end
     end
 end
+
+####
+#### MCMC inference
+####
+
+#=
+TODO: implement MCMC
+
+#=
+Turing.@model turing_signal_model(
+        y,
+        correction_and_noiselevel,
+    ) = begin
+    freq   ~ Uniform(1/64,  1/32)
+    phase  ~ Uniform( 0.0,  pi/2)
+    offset ~ Uniform( 0.25,  0.5)
+    amp    ~ Uniform( 0.1,  0.25)
+    tconst ~ Uniform(16.0, 128.0)
+    # logeps ~ Uniform(-4.0,  -2.0)
+    # epsilon = 10^logeps
+
+    # Compute toy signal model without noise
+    x = toy_signal_model([freq, phase, offset, amp, tconst], nothing, 4)
+    yhat, ϵhat = correction_and_noiselevel(x)
+
+    # Model noise as Rician
+    for i in 1:length(y)
+        # ν, σ = x[i], epsilon
+        ν, σ = yhat[i], ϵhat[i]
+        y[i] ~ Rician(ν, σ)
+    end
+end
+=#
+
+function toy_theta_mcmc_inference(
+        y::AbstractVector,
+        correction_and_noiselevel,
+        callback = (y, chain) -> true,
+    )
+    model = function (x)
+        xhat, ϵhat = correction_and_noiselevel(x)
+        yhat = rand.(Rician.(xhat, ϵhat))
+        return yhat
+    end
+    res = signal_loglikelihood_inference(y, nothing, model)
+    theta0 = best_candidate(res)
+    while true
+        chain = sample(turing_signal_model(y, correction_and_noiselevel), NUTS(), 1000; verbose = true, init_theta = theta0)
+        # chain = psample(turing_signal_model(y, correction_and_noiselevel), NUTS(), 1000, 3; verbose = true, init_theta = theta0)
+        callback(y, chain) && return chain
+    end
+end
+
+function toy_theta_mcmc_inference(Y::AbstractMatrix, args...; kwargs...)
+    tasks = map(1:size(Y,2)) do j
+        Threads.@spawn signal_loglikelihood_inference(Y[:,j], initial_guess, args...; kwargs...)
+    end
+    return map(Threads.fetch, tasks)
+end
+
+TODO: implement MCMC
+=#

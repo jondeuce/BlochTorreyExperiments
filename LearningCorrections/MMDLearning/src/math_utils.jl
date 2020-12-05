@@ -278,6 +278,53 @@ end
 #### Gradient testing
 ####
 
+# Compute discrete CDF
+discrete_cdf(x) = (t = sort(x; dims = 2); c = cumsum(t; dims = 2) ./ sum(t; dims = 2); return permutedims.((t, c))) # return (t[1:12:end, :]', c[1:12:end, :]')
+
+# Unzip array of structs into struct of arrays
+unzip(a) = map(x -> getfield.(a, x), fieldnames(eltype(a)))
+
+function bin_sorted(X, Y; binsize::Int)
+    X_sorted, Y_sorted = unzip(sort(collect(zip(X, Y)); by = first))
+    X_binned, Y_binned = unzip(map(is -> (mean(X_sorted[is]), mean(Y_sorted[is])), Iterators.partition(1:length(X), binsize)))
+end
+
+function bin_edges(X, Y, edges)
+    X_binned, Y_binned = map(1:length(edges)-1) do i
+        Is = @. edges[i] <= X <= edges[i+1]
+        mean(X[Is]), mean(Y[Is])
+    end |> unzip
+end
+
+function simple_fd_gradient!(g, f, x, lo = nothing, hi = nothing)
+    δ = cbrt(eps(float(eltype(x))))
+    f₀ = f(x)
+    @inbounds for i in 1:length(x)
+        x₀ = x[i]
+        if !isnothing(lo) && (x₀ - δ/2 <= lo[i]) # near LHS boundary; use second-order forward: (-3 * f(x) + 4 * f(x + δ/2) - f(x + δ)) / δ
+            x[i] = x₀ + δ/2
+            f₊   = f(x)
+            x[i] = x₀ + δ
+            f₊₊  = f(x)
+            g[i] = (-3f₀ + 4f₊ - f₊₊)/δ
+        elseif !isnothing(hi) && (x₀ + δ/2 >= hi[i]) # near RHS boundary; use second-order backward: (3 * f(x) - 4 * f(x - δ/2) + f(x - δ)) / δ
+            x[i] = x₀ - δ/2
+            f₋   = f(x)
+            x[i] = x₀ - δ
+            f₋₋  = f(x)
+            g[i] = (3f₀ - 4f₋ + f₋₋)/δ
+        else # safely within boundary; use second-order central: (f(x + δ/2) - f(x - δ/2)) / δ
+            x[i] = x₀ - δ/2
+            f₋   = f(x)
+            x[i] = x₀ + δ/2
+            f₊   = f(x)
+            g[i] = (f₊ - f₋)/δ
+        end
+        x[i] = x₀
+    end
+    return f₀
+end
+
 function ngradient(f, xs::AbstractArray...)
     grads = zero.(xs)
     for (x, Δ) in zip(xs, grads), i in 1:length(x)

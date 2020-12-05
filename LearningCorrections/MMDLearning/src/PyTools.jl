@@ -44,7 +44,7 @@ array(x::AbstractArray) = torch.Tensor(reversedims(x)) #  # `Array` --> `Tensor`
 
 #### Python modules installation
 
-function setup()
+function install()
     # Install pip into conda environment
     Conda.add("pip")
 

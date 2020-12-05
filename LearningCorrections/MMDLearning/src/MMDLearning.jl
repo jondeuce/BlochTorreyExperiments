@@ -17,7 +17,8 @@ export @dict, @ntuple, @pack!, @unpack
 
 export handleinterrupt, saveprogress, saveplots
 export mmd, mmdvar, mmd_and_mmdvar, tstat_flux, kernel_loss, train_kernel!
-export mmd_perm_test_power, mmd_perm_test_power_plot, fast_hist_1D
+export mmd_perm_test_power, mmd_perm_test_power_plot
+export fast_hist_1D, signal_histograms, pyheatmap
 export map_dict, sum_dict, apply_dim1, clamp_dim1
 
 export NotTrainable, DenseResize, Scale
@@ -31,7 +32,6 @@ export nsignal, nlatent, ninput, noutput, ntheta, nmarginalized, nnuissance
 export θbounds, θlower, θupper, θlabels, θasciilabels, θerror, θmarginalized, θnuissance, θmodel
 export sampleθprior, sampleZprior, sampleWprior
 export sampleθ, sampleX, sampleY, sampleYmeta
-export initialize_callback, update_callback!
 
 export CVAE, KLDivUnitNormal, KLDivergence, EvidenceLowerBound, KL_and_ELBO
 export θZposterior_sampler, sampleθZposterior, θZ_sampler
@@ -63,9 +63,7 @@ include("math_utils.jl")
 include("mmd.jl")
 include("physics.jl")
 include("utils.jl")
-include("evaluation.jl")
 include("layers.jl")
 include("mmdcvae.jl")
-include("models.jl")
 
 end # module

@@ -2,27 +2,21 @@
 batchsize(x::AbstractArray)
 
 Returns the length of the last dimension of the data `x`.
-`x` must have dimension of at least 2, otherwise an error is thrown.
 """
-batchsize(x::AbstractVector) = error("x must have dimension of at least 2, but x is a $(typeof(x))")
 batchsize(x::AbstractArray{T,N}) where {T,N} = size(x, N)
 
 """
 channelsize(x::AbstractArray)
 
 Returns the length of the second-last dimension of the data `x`.
-`x` must have dimension of at least 3, otherwise an error is thrown.
 """
-channelsize(x::AbstractVecOrMat) = error("x must have dimension of at least 3, but x is a $(typeof(x))")
-channelsize(x::AbstractArray{T,N}) where {T,N} = size(x, N-1)
+channelsize(x::AbstractArray{T,N}) where {T,N} = N <= 1 ? 1 : size(x, N-1)
 
 """
 heightsize(x::AbstractArray)
 
 Returns the length of the first dimension of the data `x`.
-`x` must have dimension of at least 3, otherwise an error is thrown.
 """
-heightsize(x::AbstractVecOrMat) = error("x must have dimension of at least 3, but x is a $(typeof(x))")
 heightsize(x::AbstractArray) = size(x, 1)
 
 """
@@ -71,12 +65,6 @@ end
 xavier_normal(T::Type, dims...; kwargs...) = xavier_normal(T::Type, dims; kwargs...)
 xavier_normal(args...; kwargs...) = xavier_normal(Float64, args...; kwargs...)
 
-# Override flux defaults
-# Flux.glorot_uniform(dims...) = xavier_uniform(Float64, dims...)
-# Flux.glorot_uniform(T::Type, dims...) = xavier_uniform(T, dims...)
-# Flux.glorot_normal(dims...) = xavier_normal(Float64, dims...)
-# Flux.glorot_normal(T::Type, dims...) = xavier_normal(T, dims...)
-
 """
 wrapchain(layer)
 
@@ -119,7 +107,7 @@ Flux.trainable(l::NotTrainable) = () # no trainable parameters
 Base.show(io::IO, l::NotTrainable) = (print(io, "NotTrainable("); print(io, l.layer); print(io, ")"))
 
 # Helper function for gradient operators
-constant_filter(args...; kwargs...) = NotTrainable(Flux.Chain(ChannelResize(1), Flux.Conv(args...; kwargs...), DenseResize()))
+ConstantFilter(args...; kwargs...) = NotTrainable(Flux.Chain(ChannelResize(1), Flux.Conv(args...; kwargs...), DenseResize()))
 
 """
 CentralDifference()
@@ -127,9 +115,9 @@ CentralDifference()
 Non-trainable central-difference layer which convolves the stencil [-1, 0, 1]
 along the first dimension of `d x b` inputs, producing `(d-2) x b` outputs.
 """
-CentralDifference() = constant_filter(reshape(Float32[-1.0, 0.0, 1.0], 3, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
-ForwardDifferemce() = constant_filter(reshape(Float32[1.0, -1.0], 2, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
-BackwardDifferemce() = constant_filter(reshape(Float32[-1.0, 1.0], 2, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
+CentralDifference() = ConstantFilter(reshape(Float32[-1.0, 0.0, 1.0], 3, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
+ForwardDifferemce() = ConstantFilter(reshape(Float32[1.0, -1.0], 2, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
+BackwardDifferemce() = ConstantFilter(reshape(Float32[-1.0, 1.0], 2, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
 
 """
 Laplacian()
@@ -137,7 +125,7 @@ Laplacian()
 Non-trainable central-difference layer which convolves the stencil [1, -2, 1]
 along the first dimension of `d x b` inputs, producing `(d-2) x b` outputs.
 """
-Laplacian() = constant_filter(reshape(Float32[1.0, -2.0, 1.0], 3, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
+Laplacian() = ConstantFilter(reshape(Float32[1.0, -2.0, 1.0], 3, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
 
 """
 Scale(α = 1, β = zero(α))
