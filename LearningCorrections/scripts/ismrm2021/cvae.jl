@@ -12,7 +12,7 @@ struct CVAE{n,nθ,nθM,k,nz,E1,E2,D}
     CVAE{n,nθ,nθM,k,nz}(enc1::E1, enc2::E2, dec::D) where {n,nθ,nθM,k,nz,E1,E2,D} = new{n,nθ,nθM,k,nz,E1,E2,D}(enc1, enc2, dec)
 end
 Flux.@functor CVAE
-Base.show(io::IO, m::CVAE) = model_summary(io, Dict("E1" => m.E1, "E2" => m.E2, "D" => m.D))
+Base.show(io::IO, m::CVAE) = MMDLearning.model_summary(io, Dict("E1" => m.E1, "E2" => m.E2, "D" => m.D))
 
 nsignal(::CVAE{n,nθ,nθM,k,nz}) where {n,nθ,nθM,k,nz} = n
 ntheta(::CVAE{n,nθ,nθM,k,nz}) where {n,nθ,nθM,k,nz} = nθ
@@ -48,9 +48,9 @@ end
 function mv_normal_parameters(cvae::CVAE, Y, θ, Z)
     Ypad = apply_pad(cvae, Y)
     μr0, σr = split_mean_softplus_std(cvae.E1(Ypad))
-    μq0, σq = split_mean_softplus_std(cvae.E2(vcat(Ypad,θ,Z)))
+    μq0, σq = split_mean_softplus_std(cvae.E2(Ypad,θ,Z))
     zq = sample_mv_normal(μq0, σq)
-    μx0, σx = split_mean_softplus_std(cvae.D(vcat(Ypad,zq)))
+    μx0, σx = split_mean_softplus_std(cvae.D(Ypad,zq))
     return (; μr0, σr, μq0, σq, μx0, σx)
 end
 
@@ -75,7 +75,7 @@ sampleθZposterior(cvae::CVAE, Y) = (Ypad = apply_pad(cvae, Y); sampleθZposteri
 function sampleθZposterior(cvae::CVAE, Y, μr0, σr)
     Ypad = apply_pad(cvae, Y)
     zr = sample_mv_normal(μr0, σr)
-    μx = cvae.D(vcat(Ypad,zr))
+    μx = cvae.D(Ypad,zr)
     μx0, σx = split_mean_softplus_std(μx)
     x = sample_mv_normal(μx0, σx)
     θM, Z = split_marginal_latent(cvae, x)
@@ -112,7 +112,7 @@ struct DeepPriorRicianPhysicsModel{T,kθ,kZ,P<:PhysicsModel{T},R<:RicianCorrecto
 end
 Flux.@functor DeepPriorRicianPhysicsModel
 Flux.trainable(prior::DeepPriorRicianPhysicsModel) = (prior.θprior, prior.Zprior)
-Base.show(io::IO, prior::DeepPriorRicianPhysicsModel) = model_summary(io, Dict("θprior" => prior.θprior, "θprior" => prior.θprior))
+Base.show(io::IO, prior::DeepPriorRicianPhysicsModel) = MMDLearning.model_summary(io, Dict("θprior" => prior.θprior, "θprior" => prior.θprior))
 
 sampleθprior(prior::DeepPriorRicianPhysicsModel{T}, n::Int) where {T} = sampleθprior(prior, CUDA.CuMatrix{T}, n) # default to sampling θ on the gpu
 sampleθprior(prior::DeepPriorRicianPhysicsModel, Y::AbstractArray, n::Int = size(Y,2)) = sampleθprior(prior, typeof(Y), n) # θ type is similar to Y type
@@ -251,14 +251,12 @@ function posterior_state(
         return new_state, p
     end
 
-    @timeit "posterior state" CUDA.@sync begin
-        state, _ = update(nothing, 1)
-        verbose && @info 1, mean_and_std(state.ℓ)
-        for i in 2:maxiter
-            state, p = update(state, i)
-            verbose && @info i, mean_and_std(state.ℓ), p
-            (i >= miniter) && (p > 1 - alpha) && break
-        end
+    state, _ = update(nothing, 1)
+    verbose && @info 1, mean_and_std(state.ℓ)
+    for i in 2:maxiter
+        state, p = update(state, i)
+        verbose && @info i, mean_and_std(state.ℓ), p
+        (i >= miniter) && (p > 1 - alpha) && break
     end
 
     return state

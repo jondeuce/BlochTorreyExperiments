@@ -2,6 +2,21 @@
 #### Setup
 ####
 
+using MMDLearning
+Ignite.init()
+pyplot(size=(800,600))
+
+
+Revise.includet(joinpath(@__DIR__, "physics.jl"))
+Revise.includet(joinpath(@__DIR__, "cvae.jl"))
+Revise.includet(joinpath(@__DIR__, "xformer.jl"))
+Revise.includet(joinpath(@__DIR__, "eval.jl"))
+Revise.includet(joinpath(@__DIR__, "plot.jl"))
+
+####
+#### Settings
+####
+
 function default_settings()
     Ignite.parse_command_line!(TOML.parse(
     """
@@ -124,8 +139,8 @@ end
 ####
 
 function make_physics(settings)
-    # MMDLearning.initialize!(
-    #     MMDLearning.ToyEPGModel{Float32,true}();
+    # initialize!(
+    #     ToyEPGModel{Float32,true}();
     #     ntrain = settings["data"]["ntrain"]::Int,
     #     ntest = settings["data"]["ntest"]::Int,
     #     nval = settings["data"]["nval"]::Int
@@ -134,8 +149,8 @@ function make_physics(settings)
         (TE = 8e-3, refcon = 180.0, path = "/home/jdoucette/Documents/code/MWI-Data-Catalog/Example_48echo_8msTE/data-in/ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.nii.gz"),
         (TE = 7e-3, refcon = 180.0, path = "/home/jdoucette/Documents/code/MWI-Data-Catalog/Example_56echo_7msTE_CPMG/data-in/MW_TRAINING_001_WIP_CPMG56_CS_half_2_1.masked-image.mat"),
     ]
-    phys = MMDLearning.EPGModel{Float32,false}(n = 64) #TODO
-    MMDLearning.initialize!(phys; imageinfos, seed = 0)
+    phys = EPGModel{Float32,false}(n = 64) #TODO
+    initialize!(phys; imageinfos, seed = 0)
 end
 
 ####
@@ -204,7 +219,7 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
         #     # position encoding
         #     Z -> vcat(Z, zeros_similar(Z, 1, size(Z,2))),   # [k x b] -> [(k+1) x b]
         #     Z -> repeat(Z, n, 1),                           # [(k+1) x b] -> [(k+1)*n x b]
-        #     NotTrainable(Flux.Diagonal(ones((k+1)*n), vec(vcat(zeros(k, n), uniform_range(n)')))),
+        #     MMDLearning.NotTrainable(Flux.Diagonal(ones((k+1)*n), vec(vcat(zeros(k, n), uniform_range(n)')))),
         #     Z -> reshape(Z, k+1, :),                        # [(k+1)*n x b] -> [(k+1) x n*b]
         #     # position-wise mlp
         #     MMDLearning.MLP(k+1 => 1, nhidden, hdim, σinner, tanh)..., # [(k+1) x n*b] -> [1 x n*b]
@@ -235,7 +250,7 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
 
         # Data distribution prior
         get!(derived, "prior") do
-            MMDLearning.DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(
+            DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(
                 phys,
                 derived["ricegen"],
                 !deepθprior || ktheta == 0 ? default_θprior : models["theta_prior"],
@@ -247,46 +262,62 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
         mixed_θprior(x) = MMDLearning.sample_union(default_θprior, derived["prior"].θprior, prior_mix, x)
         mixed_Zprior(x) = MMDLearning.sample_union(default_Zprior, derived["prior"].Zprior, prior_mix, x)
         get!(derived, "cvae_prior") do
-            MMDLearning.DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(phys, derived["ricegen"], mixed_θprior, mixed_Zprior)
+            DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(phys, derived["ricegen"], mixed_θprior, mixed_Zprior)
         end
     end
 
+
+    # TODO
+    # xf_kwargs = (psize = 2*nz, chunksize = 2*nz, head = nz, hdim = 256, nhidden = 4)
+    # xf_kwargs = (psize = 2*nz, chunksize = 2*nz, head = nz, hdim = 256, nhidden = 12)
+    # xf_kwargs = (psize = 2*nz, chunksize = 2*nz, head = 2, hdim = 256, nhidden = 2)
+    # xf_kwargs = (psize = 2*nz, chunksize = 2*nz, head = 1, hdim = 256, nhidden = 1)
+    # xf_kwargs = (psize = 2*nz, chunksize = 2*nz, head = 2, hdim = 256, nhidden = 2)
+    xf_kwargs = (psize = 16, chunksize = 16, head = 8, hdim = 256, nhidden = 2)
+
     # Encoders
     get!(models, "enc1") do
-        hdim = settings["arch"]["enc1"]["hdim"]::Int
-        nhidden = settings["arch"]["enc1"]["nhidden"]::Int
-        MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity) |> to32
         # psize = settings["arch"]["enc1"]["psize"]::Int
         # head = settings["arch"]["enc1"]["head"]::Int
-        # Transformers.Stack(
-        #     Transformers.@nntopo( X : X => H : H => μr ),
-        #     TransformerEncoder(; n, psize, head, hdim, nhidden),
-        #     MMDLearning.MLP(psize*n => 2*nz, 0, hdim, Flux.relu, identity),
-        # ) |> to32
+        TransformerEncoder(; nY = n, nθ = 0, nZ = 0, pout = 2*nz, xf_kwargs...) |> to32
+
+        # hdim = settings["arch"]["enc1"]["hdim"]::Int
+        # nhidden = settings["arch"]["enc1"]["nhidden"]::Int
+        # MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity) |> to32
     end
 
     get!(models, "enc2") do
-        hdim = settings["arch"]["enc2"]["hdim"]::Int
-        nhidden = settings["arch"]["enc2"]["nhidden"]::Int
-        MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity) |> to32
         # psize = settings["arch"]["enc2"]["psize"]::Int
         # head = settings["arch"]["enc2"]["head"]::Int
+        TransformerEncoder(; nY = n, nθ = nθ, nZ = k, pout = 2*nz, xf_kwargs...) |> to32
+
+        # hdim = settings["arch"]["enc2"]["hdim"]::Int
+        # nhidden = settings["arch"]["enc2"]["nhidden"]::Int
         # Transformers.Stack(
-        #     Transformers.@nntopo( (X,θ,Z) : X => H : (H,θ,Z) => HθZ : HθZ => μq ),
-        #     TransformerEncoder(; n, psize, head, hdim, nhidden),
+        #     Transformers.@nntopo( (X,θ,Z) : (X,θ,Z) => XθZ : XθZ => μq ),
         #     vcat,
-        #     MMDLearning.MLP(psize*n + nθ + k => 2*nz, 0, hdim, Flux.relu, identity),
+        #     MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity),
         # ) |> to32
     end
 
     # Decoder
     get!(models, "dec") do
-        hdim = settings["arch"]["dec"]["hdim"]::Int
-        nhidden = settings["arch"]["dec"]["nhidden"]::Int
-        Flux.Chain(
-            MMDLearning.MLP(n + nz => 2*(nθM + k), nhidden, hdim, Flux.relu, identity)...,
+        # psize = settings["arch"]["dec"]["psize"]::Int
+        # head = settings["arch"]["dec"]["head"]::Int
+        MLPHead = Flux.Chain(
+            MMDLearning.MLP(xf_kwargs.psize => 2*(nθM + k), 0, xf_kwargs.hdim, Flux.relu, identity),
             MMDLearning.CatScale(eltype(θMbd)[θMbd; (-1, 1)], [ones(Int, nθM); k + nθM + k]),
-        ) |> to32
+        )
+        TransformerEncoder(MLPHead; nY = n, nθ = 0, nZ = nz, xf_kwargs...) |> to32
+
+        # hdim = settings["arch"]["dec"]["hdim"]::Int
+        # nhidden = settings["arch"]["dec"]["nhidden"]::Int
+        # Transformers.Stack(
+        #     Transformers.@nntopo( (Y,zr) : (Y,zr) => Yzr : Yzr => μx : μx => μx ),
+        #     vcat,
+        #     MMDLearning.MLP(n + nz => 2*(nθM + k), nhidden, hdim, Flux.relu, identity),
+        #     MMDLearning.CatScale(eltype(θMbd)[θMbd; (-1, 1)], [ones(Int, nθM); k + nθM + k]),
+        # ) |> to32
     end
 
     # Discriminator
@@ -314,13 +345,13 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
         A = mapfoldl(vcat, 1:order; init = A) do i
             A = @views FD[1:end-i+1, 1:end-i+1] * A
         end
-        NotTrainable(Flux.Dense(A, [0.0])) |> to32
+        MMDLearning.NotTrainable(Flux.Dense(A, [0.0])) |> to32
     end
     get!(derived, "encoderspace") do # non-trainable sampling of encoder signal representations
-        NotTrainable(MMDLearning.flattenchain(Flux.Chain(
+        MMDLearning.NotTrainable(MMDLearning.flattenchain(Flux.Chain(
             models["enc1"],
-            MMDLearning.split_mean_softplus_std,
-            MMDLearning.sample_mv_normal,
+            split_mean_softplus_std,
+            sample_mv_normal,
         )))
     end
 

@@ -15,27 +15,14 @@ export     TOML, BSON, Glob, DrWatson, Flux,      CUDA, NNlib, Zygote, ChainRule
 using DrWatson: @dict, @ntuple, @pack!, @unpack
 export @dict, @ntuple, @pack!, @unpack
 
-export handleinterrupt, saveprogress, saveplots
+export MMDKernel, FunctionKernel, DeepExponentialKernel
 export mmd, mmdvar, mmd_and_mmdvar, tstat_flux, kernel_loss, train_kernel!
 export mmd_perm_test_power, mmd_perm_test_power_plot
 export fast_hist_1D, signal_histograms, pyheatmap
 export map_dict, sum_dict, apply_dim1, clamp_dim1
-
-export NotTrainable, DenseResize, Scale
-export Rician, RicianCorrector, NormalizedRicianCorrector, VectorRicianCorrector, FixedNoiseVectorRicianCorrector, LatentVectorRicianCorrector, LatentVectorRicianNoiseCorrector, LatentScalarRicianNoiseCorrector
-export correction, noiselevel, correction_and_noiselevel, corrected_signal_instance, add_correction, add_noise_instance, rician_params
-
-export PhysicsModel, ClosedForm, ToyModel
+export std_thresh, split_mean_std, split_mean_exp_std, split_mean_softplus_std, sample_mv_normal, log2π, pow2
 export arr_similar, arr32, arr64, zeros_similar, ones_similar, randn_similar, rand_similar, fill_similar
-export physicsmodel, hasclosedform, initialize!, signal_model, signal
-export nsignal, nlatent, ninput, noutput, ntheta, nmarginalized, nnuissance
-export θbounds, θlower, θupper, θlabels, θasciilabels, θerror, θmarginalized, θnuissance, θmodel
-export sampleθprior, sampleZprior, sampleWprior
-export sampleθ, sampleX, sampleY, sampleYmeta
-
-export CVAE, KLDivUnitNormal, KLDivergence, EvidenceLowerBound, KL_and_ELBO
-export θZposterior_sampler, sampleθZposterior, θZ_sampler
-export sampleθZ, sampleXθZ, sampleX̂θZ, sampleX̂
+export handleinterrupt, saveprogress, saveplots
 
 ####
 #### Global aliases
@@ -61,9 +48,7 @@ include("rician.jl")
 include("batched_math.jl")
 include("math_utils.jl")
 include("mmd.jl")
-include("physics.jl")
 include("utils.jl")
 include("layers.jl")
-include("mmdcvae.jl")
 
-end # module
+end # module MMDLearning

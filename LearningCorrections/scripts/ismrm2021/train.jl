@@ -2,13 +2,7 @@
 #### Setup
 ####
 
-using MMDLearning
-Ignite.init()
-pyplot(size=(800,600))
-
-include(joinpath(@__DIR__, "model.jl"))
-include(joinpath(@__DIR__, "eval.jl"))
-include(joinpath(@__DIR__, "plot.jl"))
+Revise.includet(joinpath(@__DIR__, "setup.jl"))
 
 # ENV["JL_CHECKPOINT_FOLDER"] = settings["data"]["out"]
 
@@ -151,7 +145,7 @@ function get_mmd_kernel(key, nchannel)
 
     # MMD kernel wrapper
     get!(derived, "kernel_$key") do
-        MMDLearning.DeepExponentialKernel(
+        DeepExponentialKernel(
             models["logsigma_$key"],
             !deep ?
                 identity :
@@ -170,7 +164,7 @@ MMDloss(k, X::AbstractMatrix, Y::AbstractMatrix) = size(Y,2) * mmd(k, X, Y)
 MMDloss(k, X::AbstractTensor3D, Y::AbstractMatrix) = mean(map(i -> MMDloss(k, X[:,:,i], Y), 1:size(X,3)))
 
 # Maximum mean discrepency (m*MMD^2) loss
-function MMDlosses(Ymeta::MMDLearning.AbstractMetaDataSignal)
+function MMDlosses(Ymeta::AbstractMetaDataSignal)
     if settings["train"]["DeepThetaPrior"]::Bool && settings["train"]["DeepLatentPrior"]::Bool
         X, θ, Z = sampleXθZ(derived["cvae"], derived["prior"], Ymeta; posterior_θ = false, posterior_Z = false) # sample θ and Z from the learned deep priors, differentiating through the sampling process and the physics model
     else
@@ -221,7 +215,7 @@ function apply_signal_mask(Y; mincutoff::Int = 0)
 end
 
 # Conditional variational autoencoder losses
-function CVAElosses(Ymeta::MMDLearning.AbstractMetaDataSignal; marginalize_Z)
+function CVAElosses(Ymeta::AbstractMetaDataSignal; marginalize_Z)
     λ_pseudo  = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "lambda_pseudo", 0.0)::Float64)
     mincutoff = Zygote.@ignore get!(settings["train"], "CVAEmask", 0)::Int
 
@@ -270,7 +264,7 @@ function sample_batch(dataset::Symbol; batchsize = settings["train"]["batchsize"
     img_idx = rand(1:length(phys.images))
     img = phys.images[img_idx]
     Y = MMDLearning.sample_columns(img.partitions[dataset], batchsize; replace = false) |> todevice
-    Ymeta = MMDLearning.MetaCPMGSignal(phys, img, Y)
+    Ymeta = MetaCPMGSignal(phys, img, Y)
     return (; img_idx, img, Y, Ymeta)
 end
 
@@ -278,7 +272,7 @@ function train_step(engine, batch)
     img_idx, img, Ytrain, Ytrainmeta = sample_batch(:train)
     outputs = Dict{Any,Any}()
 
-    @timeit "train batch" CUDA.@sync begin
+    @timeit "train batch" begin #TODO CUDA.@sync
         every(rate) = rate <= 0 ? false : mod(engine.state.iteration-1, rate) == 0
         train_MMDCVAE = every(settings["train"]["MMDCVAErate"]::Int)
         train_CVAE = every(settings["train"]["CVAErate"]::Int)
@@ -287,67 +281,67 @@ function train_step(engine, batch)
         train_k = every(settings["train"]["kernelrate"]::Int)
 
         # Train Self MMD CVAE loss
-        train_MMDCVAE && @timeit "mmd + cvae" CUDA.@sync let
+        train_MMDCVAE && @timeit "mmd + cvae" let #TODO CUDA.@sync
             deeppriors = [models["theta_prior"], models["latent_prior"]][[settings["train"]["DeepThetaPrior"]::Bool, settings["train"]["DeepLatentPrior"]::Bool]]
             ps = Flux.params(models["enc1"], models["enc2"], models["dec"], models["genatr"], deeppriors...)
             λ_0 = eltype(Ytrain)(get!(settings["opt"]["mmd"], "lambda_0", 0.0)::Float64)
-            @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(ps) do
+            @timeit "forward" ℓ, back = Zygote.pullback(ps) do #TODO CUDA.@sync
                 mmd = sum(MMDlosses(Ytrainmeta))
                 cvae = sum(CVAElosses(Ytrainmeta; marginalize_Z = false))
                 return λ_0 * mmd + cvae
             end
-            @timeit "reverse" CUDA.@sync gs = back(one(eltype(phys)))
-            @timeit "update!" CUDA.@sync Flux.Optimise.update!(optimizers["mmd"], ps, gs)
+            @timeit "reverse" gs = back(one(eltype(phys))) #TODO CUDA.@sync
+            @timeit "update!" Flux.Optimise.update!(optimizers["mmd"], ps, gs) #TODO CUDA.@sync
             outputs["loss"] = ℓ
         end
 
         # Train CVAE loss
-        train_CVAE && @timeit "cvae" CUDA.@sync let
+        train_CVAE && @timeit "cvae" let #TODO CUDA.@sync
             ps = Flux.params(models["enc1"], models["enc2"], models["dec"])
             for _ in 1:settings["train"]["CVAEsteps"]
-                @timeit "forward"   CUDA.@sync ℓ, back = Zygote.pullback(() -> sum(CVAElosses(Ytrainmeta; marginalize_Z = false)), ps)
-                @timeit "reverse"   CUDA.@sync gs = back(one(eltype(phys)))
-                @timeit "update!"   CUDA.@sync Flux.Optimise.update!(optimizers["cvae"], ps, gs)
+                @timeit "forward"   ℓ, back = Zygote.pullback(() -> sum(CVAElosses(Ytrainmeta; marginalize_Z = false)), ps) #TODO CUDA.@sync
+                @timeit "reverse"   gs = back(one(eltype(phys))) #TODO CUDA.@sync
+                @timeit "update!"   Flux.Optimise.update!(optimizers["cvae"], ps, gs) #TODO CUDA.@sync
                 outputs["CVAE"] = ℓ
             end
         end
 
         # Train MMD loss
-        train_MMD && @timeit "mmd" CUDA.@sync let
-            @timeit "genatr" CUDA.@sync let
+        train_MMD && @timeit "mmd" let #TODO CUDA.@sync
+            @timeit "genatr" let #TODO CUDA.@sync
                 deeppriors = [models["theta_prior"], models["latent_prior"]][[settings["train"]["DeepThetaPrior"]::Bool, settings["train"]["DeepLatentPrior"]::Bool]]
                 ps = Flux.params(models["genatr"], deeppriors...)
-                @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(() -> sum(MMDlosses(Ytrainmeta)), ps)
-                @timeit "reverse" CUDA.@sync gs = back(one(eltype(phys)))
-                @timeit "update!" CUDA.@sync Flux.Optimise.update!(optimizers["mmd"], ps, gs)
+                @timeit "forward" ℓ, back = Zygote.pullback(() -> sum(MMDlosses(Ytrainmeta)), ps) #TODO CUDA.@sync
+                @timeit "reverse" gs = back(one(eltype(phys))) #TODO CUDA.@sync
+                @timeit "update!" Flux.Optimise.update!(optimizers["mmd"], ps, gs) #TODO CUDA.@sync
                 outputs["MMD"] = ℓ
             end
         end
 
         # Train GAN loss
-        train_GAN && @timeit "gan" CUDA.@sync let
-            @timeit "sampleXθZ" CUDA.@sync Xtrain, θtrain, Ztrain = sampleXθZ(derived["cvae"], derived["prior"], Ytrainmeta; posterior_θ = true, posterior_Z = false) # learn to map whole Z domain via `posterior_Z = false`
-            train_discrim && @timeit "discrim" CUDA.@sync let
+        train_GAN && @timeit "gan" let #TODO CUDA.@sync
+            @timeit "sampleXθZ" Xtrain, θtrain, Ztrain = sampleXθZ(derived["cvae"], derived["prior"], Ytrainmeta; posterior_θ = true, posterior_Z = false) # learn to map whole Z domain via `posterior_Z = false` #TODO CUDA.@sync
+            train_discrim && @timeit "discrim" let #TODO CUDA.@sync
                 ps = Flux.params(models["discrim"])
                 for _ in 1:settings["train"]["Dsteps"]
-                    @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(() -> sum(Dloss(Xtrain, Ytrain, Ztrain)), ps)
-                    @timeit "reverse" CUDA.@sync gs = back(one(eltype(phys)))
-                    @timeit "update!" CUDA.@sync Flux.Optimise.update!(optimizers["discrim"], ps, gs)
+                    @timeit "forward" ℓ, back = Zygote.pullback(() -> sum(Dloss(Xtrain, Ytrain, Ztrain)), ps) #TODO CUDA.@sync
+                    @timeit "reverse" gs = back(one(eltype(phys))) #TODO CUDA.@sync
+                    @timeit "update!" Flux.Optimise.update!(optimizers["discrim"], ps, gs) #TODO CUDA.@sync
                     outputs["Dloss"] = ℓ
                 end
             end
-            train_genatr && @timeit "genatr" CUDA.@sync let
+            train_genatr && @timeit "genatr" let #TODO CUDA.@sync
                 deeppriors = [models["theta_prior"], models["latent_prior"]][[settings["train"]["DeepThetaPrior"]::Bool, settings["train"]["DeepLatentPrior"]::Bool]]
                 ps = Flux.params(models["genatr"], deeppriors...)
-                @timeit "forward" CUDA.@sync ℓ, back = Zygote.pullback(() -> sum(Gloss(Xtrain, Ztrain)), ps)
-                @timeit "reverse" CUDA.@sync gs = back(one(eltype(phys)))
-                @timeit "update!" CUDA.@sync Flux.Optimise.update!(optimizers["genatr"], ps, gs)
+                @timeit "forward" ℓ, back = Zygote.pullback(() -> sum(Gloss(Xtrain, Ztrain)), ps) #TODO CUDA.@sync
+                @timeit "reverse" gs = back(one(eltype(phys))) #TODO CUDA.@sync
+                @timeit "update!" Flux.Optimise.update!(optimizers["genatr"], ps, gs) #TODO CUDA.@sync
                 outputs["Gloss"] = ℓ
             end
         end
 
         # Train MMD kernels
-        train_k && @timeit "kernel" CUDA.@sync let
+        train_k && @timeit "kernel" let #TODO CUDA.@sync
             noisyclamp!(x::AbstractArray{T}, lo, hi, ϵ) where {T} = clamp!(x .+ T(ϵ) .* randn_similar(x, size(x)...), T(lo), T(hi))
             restrict!(k) = noisyclamp!(MMDLearning.logbandwidths(k), -Inf, Inf, settings["arch"]["kernel"]["clampnoise"])
             aug_types, aug_Ytrains = augment_and_transform(Ytrain) |> first |> Y -> (keys(Y), values(Y)) # augment data
@@ -377,11 +371,11 @@ function fit_metrics(Ytruemeta, θtrue, Ztrue, Wtrue)
         νtrue, ϵtrue = rician_params(ClosedForm(phys), θtrue, Wtrue) # noiseless true signal and noise level
         Ytrue = add_noise_instance(phys, νtrue, ϵtrue) # noisey true signal
         rmse_true = sqrt(mean(abs2, Ytrue - νtrue))
-        logL_true = mean(MMDLearning.NegLogLikelihood(derived["ricegen"], Ytrue, νtrue, ϵtrue))
+        logL_true = mean(NegLogLikelihood(derived["ricegen"], Ytrue, νtrue, ϵtrue))
     end
     =#
 
-    @unpack θ, Z, X, δ, ϵ, ν, ℓ = MMDLearning.posterior_state(
+    @timeit "posterior state" @unpack θ, Z, X, δ, ϵ, ν, ℓ = posterior_state(
         derived["cvae"], derived["prior"], Ytruemeta;
         miniter = 1, maxiter = 1, alpha = 0.0, verbose = false, mode = :maxlikelihood,
     )
@@ -400,7 +394,7 @@ function fit_metrics(Ytruemeta, θtrue, Ztrue, Wtrue)
 end
 
 function compute_metrics(engine, batch; dataset)
-    @timeit "compute metrics" CUDA.@sync begin
+    @timeit "compute metrics" begin #TODO CUDA.@sync
         # Update callback state
         get!(cb_state, "start_time", time())
         get!(cb_state, "log_metrics", Dict{Symbol,Any}())
@@ -474,7 +468,7 @@ function compute_metrics(engine, batch; dataset)
 
         # Cache values for evaluating CVAE performance for estimating parameters of X̂
         let
-            X̂meta = MMDLearning.MetaCPMGSignal(phys, img, X̂) #TODO
+            X̂meta = MetaCPMGSignal(phys, img, X̂) #TODO
             X̂_metrics, X̂_cache_cb_args = fit_metrics(X̂meta, θ, Z, nothing)
             cache_cb_state!(X̂_cache_cb_args...; suf = "fit")
             cb_state["metrics"]["all_Xhat_rmse"] = X̂_metrics.all_rmse

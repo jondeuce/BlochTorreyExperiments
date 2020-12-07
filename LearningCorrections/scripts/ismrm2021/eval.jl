@@ -3,7 +3,7 @@
 ####
 
 function mle_mri_model(
-        phys::MMDLearning.BiexpEPGModel,
+        phys::BiexpEPGModel,
         models,
         derived;
         data_source   = :image, # One of :image, :simulated
@@ -64,7 +64,7 @@ function mle_mri_model(
         (
             Y   = zeros(nsignal(phys)),
             x0  = zeros(ntheta(phys) + 1),
-            epg = MMDLearning.BiexpEPGModelWork(phys),
+            epg = BiexpEPGModelWork(phys),
             opt = let
                 opt = NLopt.Opt(opt_alg, ntheta(phys) + 1)
                 opt.lower_bounds  = lower_bounds
@@ -173,7 +173,7 @@ end
 ####
 
 function eval_mri_model(
-        phys::MMDLearning.BiexpEPGModel,
+        phys::BiexpEPGModel,
         models,
         derived;
         zslices = 24:24,

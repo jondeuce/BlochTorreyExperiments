@@ -478,57 +478,39 @@ function RESCNN(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σou
 end
 
 """
-Basic Transformer encoder with learned positional embedding
-"""
-function TransformerEncoder(; n = 48, psize = 16, head = 8, hdim = 256, nhidden = 2)
-    t = Transformers.Stack(
-        Transformers.@nntopo(
-            X : # Input (n × b)
-            X => X : # Reshape (1 × n × b)
-            X => pe : # Positional embedding pe (psize × n)
-            (X, pe) => E : # Add positional embedding (psize × n × b)
-            E => H : # Transformer encoder (psize × n × b)
-            H => H # Flatten output (psize*n × b)
-        ),
-        X -> reshape(X, 1, size(X)...),
-        Transformers.Basic.PositionEmbedding(psize, n; trainable = true),
-        (X, pe) -> X .+ pe,
-        Flux.Chain([Transformers.Basic.Transformer(psize, head, hdim; future = true, act = Flux.relu, pdrop = 0.0) for i = 1:nhidden]...),
-        Flux.flatten,
-    )
-    Flux.fmap(Flux.testmode!, t) # Force dropout layers inactive
-end
-
-"""
 Print model/layer
 """
-function model_summary(io::IO, models::AbstractDict; kwargs...)
+function model_summary(io::IO, models::AbstractDict)
     for (i,(k,m)) in enumerate(models)
         (k != "") && println(io, string(k) * ":")
-        _model_summary(io, m; kwargs...)
+        _model_summary(io, m)
         _model_parameters(io, m)
         (i < length(models)) && println(io, "")
     end
 end
-function model_summary(models::AbstractDict, filename = nothing; kwargs...)
+function model_summary(models::AbstractDict, filename = nothing)
     @info "Model summary..."
     (filename != nothing) && open(filename, "w") do file
-        model_summary(file, models; kwargs...)
+        model_summary(file, models)
     end
-    model_summary(stdout, models; kwargs...)
+    model_summary(stdout, models)
 end
-model_summary(model, filename = nothing; kwargs...) =
-    model_summary(Dict("" => model), filename; kwargs...)
+model_summary(model, filename = nothing) = model_summary(Dict("" => model), filename)
 
 """
 Print model parameters following `_model_summary`
 """
-function _model_parameters(io::IO, model, depth::Int = 0)
+function _model_parameters(io::IO, model; depth::Int = 0)
     if depth == 0
         nparams = mapreduce(length, +, Flux.params(model); init = 0)
         println(io, "\nParameters: $nparams")
     end
 end
+
+"""
+Indenting for layer `depth`
+"""
+_getprefix(depth::Int, pre = "", suf = "") = pre * "    " ^ depth * suf
 
 """
 Recursively print model/layer
@@ -538,35 +520,29 @@ Note: All models implementing `_model_summary` should not end the printing on a 
       following printing. A final newline will be added in the `_model_parameters` function,
       called inside the `model_summary` parent function.
 """
-function _model_summary(io::IO, model::Flux.Chain, depth::Int = 0; skipidentity = false)
-    println(io, _getindent(depth) * "Chain(")
-    for (i,layer) in enumerate(model)
-        if !(skipidentity && layer == identity)
-            _model_summary(io, layer, depth+1; skipidentity = skipidentity)
-            (i < length(model)) ? println(io, ",") : println(io, "")
-        end
+function _model_summary(io::IO, model; depth::Int = 0, pre = "", suf = "")
+    println(io, _getprefix(depth, pre, suf * "$(typeof(model).name)("))
+    fs = fieldnames(typeof(model))
+    for (i,f) in enumerate(fs)
+        _model_summary(io, getfield(model, f); depth = depth + 1, suf = "$f: ")
+        println(io, i < length(fs) ? "," : "")
     end
-    print(io, _getindent(depth) * ")")
+    print(io, _getprefix(depth, pre, ")"))
+end
+
+# Flux.Chain
+function _model_summary(io::IO, model::Flux.Chain; depth::Int = 0, pre = "", suf = "")
+    println(io, _getprefix(depth, pre, suf * "Chain("))
+    for (i,layer) in enumerate(model)
+        _model_summary(io, layer; depth = depth + 1, suf = "$i: ")
+        (i < length(model)) ? println(io, ",") : println(io, "")
+    end
+    print(io, _getprefix(depth, pre, ")"))
     nothing
 end
 
-"""
-Indenting for layer `depth`
-"""
-_getindent(depth::Int) = "    " ^ depth
-
-# SkipConnection
-function _model_summary(io::IO, model::Flux.SkipConnection, depth::Int = 0; kwargs...)
-    println(io, _getindent(depth) * "SkipConnection(")
-    _model_summary(io, model.layers, depth+1; kwargs...)
-    println(io, ",")
-    _model_summary(io, model.connection, depth+1; kwargs...)
-    println(io, "")
-    print(io, _getindent(depth) * ")")
-end
-
 # Transformers.NNTopo
-function _model_summary(io::IO, model::Transformers.Stacks.NNTopo, depth::Int = 0; kwargs...)
+function _model_summary(io::IO, model::Transformers.Stacks.NNTopo; depth::Int = 0, pre = "", suf = "")
     # Workaround (https://github.com/chengchingwen/Transformers.jl/pull/32)
     topo_print = let original_stdout = stdout
         read_pipe, write_pipe = redirect_stdout()
@@ -578,71 +554,37 @@ function _model_summary(io::IO, model::Transformers.Stacks.NNTopo, depth::Int = 
         end
         read(read_pipe, String)
     end
-    topo_print = _getindent(depth) * topo_print
-    topo_print = replace(topo_print, "\t" => _getindent(1))
+    topo_print = _getprefix(depth, pre, suf) * topo_print
+    topo_print = replace(topo_print, "\t" => _getprefix(1, pre, suf))
     topo_print = replace(topo_print, "end\n" => "end")
-    topo_print = replace(topo_print, "\n" => "\n" * _getindent(depth))
+    topo_print = replace(topo_print, "\n" => "\n" * _getprefix(depth, pre, suf))
     print(io, topo_print)
 end
 
 # Transformers.Stack
-function _model_summary(io::IO, model::Transformers.Stack, depth::Int = 0; kwargs...)
-    println(io, _getindent(depth) * "Stack(")
-    _model_summary(io, model.topo, depth + 1)
+function _model_summary(io::IO, model::Transformers.Stack; depth::Int = 0, pre = "", suf = "")
+    println(io, _getprefix(depth, pre, suf * "Stack("))
+    _model_summary(io, model.topo; depth = depth + 1)
     println(io, ",")
-    for (d,layer) in enumerate(model.models)
-        # println(io, _getindent(depth + 1) * "model[$d]:")
-        _model_summary(io, layer, depth + 1; kwargs...)
-        (d < length(model.models)) ? println(io, ",") : println(io, "")
+    for (i,layer) in enumerate(model.models)
+        _model_summary(io, layer; depth = depth + 1, suf = "$i: ")
+        (i < length(model.models)) ? println(io, ",") : println(io, "")
     end
-    print(io, _getindent(depth) * ")")
-end
-
-# GlobalFeatureFusion
-function _model_summary(io::IO, model::GlobalFeatureFusion, depth::Int = 0; kwargs...)
-    println(io, _getindent(depth) * "GlobalFeatureFusion(")
-    _model_summary(io, model.dims, depth+1; kwargs...)
-    println(io, ",")
-    for (d,layer) in enumerate(model.layers)
-        _model_summary(io, layer, depth + 1; kwargs...)
-        (d < length(model.layers)) ? println(io, ",") : println(io, "")
-    end
-    print(io, _getindent(depth) * ")")
-end
-
-# Sumout
-function _model_summary(io::IO, model::Sumout, depth::Int = 0; kwargs...)
-    println(io, _getindent(depth) * "Sumout(")
-    for (i,layer) in enumerate(model.over)
-        _model_summary(io, layer, depth+1; kwargs...)
-        (i < length(model.over)) ? println(io, ",") : println(io, "")
-    end
-    print(io, _getindent(depth) * ")")
-end
-
-# MultiInput
-function _model_summary(io::IO, model::MultiInput, depth::Int = 0; kwargs...)
-    println(io, _getindent(depth) * "MultiInput(")
-    for (i,layer) in enumerate(model.layers)
-        _model_summary(io, layer, depth+1; kwargs...)
-        (i < length(model.layers)) ? println(io, ",") : println(io, "")
-    end
-    print(io, _getindent(depth) * ")")
+    print(io, _getprefix(depth, pre, ")"))
 end
 
 # Arrays
-function _model_summary(io::IO, model::AbstractArray, depth::Int = 0; kwargs...)
-    print(io, _getindent(depth) * "$(typeof(model)) with dimensions $(size(model))")
+function _model_summary(io::IO, model::AbstractArray; depth::Int = 0, pre = "", suf = "")
+    print(io, _getprefix(depth, pre, suf * "size " * string(size(model)) * " " * string(typeof(model))))
+end
+
+# Numbers, Symbols, ...
+function _model_summary(io::IO, model::Union{<:Number, Nothing, Symbol, String}; depth::Int = 0, pre = "", suf = "")
+    print(io, _getprefix(depth, pre, suf * "$model :: $(typeof(model))"))
 end
 
 # Functions
-function _model_summary(io::IO, model::Function, depth::Int = 0; kwargs...)
-    print(io, _getindent(depth) * "@λ ")
-    show(io, model)
-end
-
-# Fallback method
-function _model_summary(io::IO, model, depth::Int = 0; kwargs...)
-    print(io, _getindent(depth))
+function _model_summary(io::IO, model::Function; depth::Int = 0, pre = "", suf = "")
+    print(io, _getprefix(depth, pre, suf * "@λ "))
     show(io, model)
 end
