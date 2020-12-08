@@ -6,7 +6,6 @@ using MMDLearning
 Ignite.init()
 pyplot(size=(800,600))
 
-
 Revise.includet(joinpath(@__DIR__, "physics.jl"))
 Revise.includet(joinpath(@__DIR__, "cvae.jl"))
 Revise.includet(joinpath(@__DIR__, "xformer.jl"))
@@ -17,11 +16,13 @@ Revise.includet(joinpath(@__DIR__, "plot.jl"))
 #### Settings
 ####
 
-function default_settings()
-    Ignite.parse_command_line!(TOML.parse(
+new_savepath() = "./output/ignite-cvae-$(MMDLearning.getnow())"
+
+function new_settings_template()
+    TOML.parse(
     """
     [data]
-        out    = "./output/ignite-cvae-$(MMDLearning.getnow())"
+        out    = "$(new_savepath())"
         ntrain = "auto" # 102_400
         ntest  = "auto" # 10_240
         nval   = "auto" # 10_240
@@ -67,40 +68,42 @@ function default_settings()
         lrthresh = 0.0     #1e-6 # Absolute minimum learning rate
         lrdrop   = 3.16    # Drop learning rate by factor `lrdrop` every `lrrate` epochs
         lrrate   = 999_999 # Drop learning rate by factor `lrdrop` every `lrrate` epochs
+        gclip    = 0.0
+        wdecay   = 1e-6
         [opt.cvae]
-            lrrel = "%PARENT%"
+            INHERIT = "%PARENT%"
             lambda_pseudo = 0.0 # Weighting of pseudo label loss
         [opt.genatr]
-            lrrel = "%PARENT%" #TODO: 0.01 train generator more slowly
+            INHERIT = "%PARENT%" #TODO: 0.01 train generator more slowly
         [opt.discrim]
-            lrrel = "%PARENT%"
+            INHERIT = "%PARENT%"
         [opt.mmd]
-            lrrel = "%PARENT%"
+            INHERIT = "%PARENT%"
             gclip = 1.0
             lambda_0        = 100.0 # MMD loss weighting relative to CVAE
             lambda_eps      = 0.0   # Regularize noise amplitude epsilon
             lambda_deps_dz  = 0.0   # Regularize gradient of epsilon w.r.t. latent variables
         [opt.kernel]
-            lrrel = "%PARENT%" # Kernel learning rate 
-            loss  = "mmd"      # Kernel loss ("mmd", "tstatistic", or "mmd_diff")
+            INHERIT = "%PARENT%" # Kernel learning rate 
+            loss  = "mmd"        # Kernel loss ("mmd", "tstatistic", or "mmd_diff")
 
     [arch]
-        physics   = "epg"
         nlatent   = 1   # number of latent variables Z
         zdim      = 12  # embedding dimension of z
         hdim      = 256 # size of hidden layers
         nhidden   = 4   # number of hidden layers
         skip      = false # skip connection
         layernorm = false # layer normalization following dense layer
+        head      = 2  # number of attention heads
+        psize     = 48 # transformer embedding dimension
+        chunksize = 48 # nshards  == (nsignals - chunksize) ÷ (chunksize - overlap) + 1
+        overlap   = 47 # nsignals == nshards * (chunksize - overlap) + overlap
         [arch.enc1]
-            hdim      = "%PARENT%"
-            nhidden   = "%PARENT%"
+            INHERIT = "%PARENT%"
         [arch.enc2]
-            hdim      = "%PARENT%"
-            nhidden   = "%PARENT%"
+            INHERIT = "%PARENT%"
         [arch.dec]
-            hdim      = "%PARENT%"
-            nhidden   = "%PARENT%"
+            INHERIT = "%PARENT%"
         [arch.genatr]
             hdim        = 64   #TODO "%PARENT%"
             nhidden     = 2    #TODO "%PARENT%"
@@ -120,17 +123,20 @@ function default_settings()
             deep        = false         #TODO
             bwbounds    = [-8.0, 4.0]   # Bounds for kernel bandwidths (logsigma)
             clampnoise  = 0.0           #TODO
-    """))
+    """
+    )
 end
+
+make_default_settings() = Ignite.parse_command_line!(new_settings_template())
 
 # Parse command line arguments into default settings
 function make_settings()
     if haskey(ENV, "JL_CHECKPOINT_FOLDER")
-        # Load settings from past run
-        TOML.parsefile(joinpath(ENV["JL_CHECKPOINT_FOLDER"], "settings.toml"))
+        settings = TOML.parsefile(joinpath(ENV["JL_CHECKPOINT_FOLDER"], "settings.toml"))
+        settings["data"]["out"] = new_savepath()
+        return settings
     else
-        # Load default settings with command line arguments
-        default_settings()
+        make_default_settings()
     end
 end
 
@@ -266,58 +272,43 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
         end
     end
 
-
-    # TODO
-    # xf_kwargs = (psize = 2*nz, chunksize = 2*nz, head = nz, hdim = 256, nhidden = 4)
-    # xf_kwargs = (psize = 2*nz, chunksize = 2*nz, head = nz, hdim = 256, nhidden = 12)
-    # xf_kwargs = (psize = 2*nz, chunksize = 2*nz, head = 2, hdim = 256, nhidden = 2)
-    # xf_kwargs = (psize = 2*nz, chunksize = 2*nz, head = 1, hdim = 256, nhidden = 1)
-    # xf_kwargs = (psize = 2*nz, chunksize = 2*nz, head = 2, hdim = 256, nhidden = 2)
-    xf_kwargs = (psize = 16, chunksize = 16, head = 8, hdim = 256, nhidden = 2)
-
     # Encoders
     get!(models, "enc1") do
-        # psize = settings["arch"]["enc1"]["psize"]::Int
-        # head = settings["arch"]["enc1"]["head"]::Int
-        TransformerEncoder(; nY = n, nθ = 0, nZ = 0, pout = 2*nz, xf_kwargs...) |> to32
-
-        # hdim = settings["arch"]["enc1"]["hdim"]::Int
-        # nhidden = settings["arch"]["enc1"]["nhidden"]::Int
-        # MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity) |> to32
+        @unpack hdim, nhidden, psize, head, chunksize, overlap = settings["arch"]["enc1"]
+        TransformerEncoder(; nsignals = n, ntheta = 0, nlatent = 0, pout = 2*nz, psize, chunksize, overlap, head, hdim, nhidden) |> to32
+        #=
+        MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity) |> to32
+        =#
     end
 
     get!(models, "enc2") do
-        # psize = settings["arch"]["enc2"]["psize"]::Int
-        # head = settings["arch"]["enc2"]["head"]::Int
-        TransformerEncoder(; nY = n, nθ = nθ, nZ = k, pout = 2*nz, xf_kwargs...) |> to32
-
-        # hdim = settings["arch"]["enc2"]["hdim"]::Int
-        # nhidden = settings["arch"]["enc2"]["nhidden"]::Int
-        # Transformers.Stack(
-        #     Transformers.@nntopo( (X,θ,Z) : (X,θ,Z) => XθZ : XθZ => μq ),
-        #     vcat,
-        #     MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity),
-        # ) |> to32
+        @unpack hdim, nhidden, psize, head, chunksize, overlap = settings["arch"]["enc2"]
+        TransformerEncoder(; nsignals = n, ntheta = nθ, nlatent = k, pout = 2*nz, psize, chunksize, overlap, head, hdim, nhidden) |> to32
+        #=
+        Transformers.Stack(
+            Transformers.@nntopo( (X,θ,Z) : (X,θ,Z) => XθZ : XθZ => μq ),
+            vcat,
+            MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity),
+        ) |> to32
+        =#
     end
 
     # Decoder
     get!(models, "dec") do
-        # psize = settings["arch"]["dec"]["psize"]::Int
-        # head = settings["arch"]["dec"]["head"]::Int
+        @unpack hdim, nhidden, psize, head, chunksize, overlap = settings["arch"]["dec"]
         MLPHead = Flux.Chain(
-            MMDLearning.MLP(xf_kwargs.psize => 2*(nθM + k), 0, xf_kwargs.hdim, Flux.relu, identity),
+            MMDLearning.MLP(psize => 2*(nθM + k), 0, hdim, Flux.relu, identity),
             MMDLearning.CatScale(eltype(θMbd)[θMbd; (-1, 1)], [ones(Int, nθM); k + nθM + k]),
         )
-        TransformerEncoder(MLPHead; nY = n, nθ = 0, nZ = nz, xf_kwargs...) |> to32
-
-        # hdim = settings["arch"]["dec"]["hdim"]::Int
-        # nhidden = settings["arch"]["dec"]["nhidden"]::Int
-        # Transformers.Stack(
-        #     Transformers.@nntopo( (Y,zr) : (Y,zr) => Yzr : Yzr => μx : μx => μx ),
-        #     vcat,
-        #     MMDLearning.MLP(n + nz => 2*(nθM + k), nhidden, hdim, Flux.relu, identity),
-        #     MMDLearning.CatScale(eltype(θMbd)[θMbd; (-1, 1)], [ones(Int, nθM); k + nθM + k]),
-        # ) |> to32
+        TransformerEncoder(MLPHead; nsignals = n, ntheta = 0, nlatent = nz, pout = 0, psize, chunksize, overlap, head, hdim, nhidden) |> to32
+        #=
+        Transformers.Stack(
+            Transformers.@nntopo( (Y,zr) : (Y,zr) => Yzr : Yzr => μx : μx => μx ),
+            vcat,
+            MMDLearning.MLP(n + nz => 2*(nθM + k), nhidden, hdim, Flux.relu, identity),
+            MMDLearning.CatScale(eltype(θMbd)[θMbd; (-1, 1)], [ones(Int, nθM); k + nθM + k]),
+        ) |> to32
+        =#
     end
 
     # Discriminator
@@ -358,7 +349,16 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
     return models, derived
 end
 
-function make_optimizer(otype = Flux.ADAM; lr, gclip = 0, wdecay = 0)
+function load_checkpoint()
+    if haskey(ENV, "JL_CHECKPOINT_FOLDER")
+        models_checkpoint = BSON.load(joinpath(ENV["JL_CHECKPOINT_FOLDER"], "current-models.bson"))["models"] |> deepcopy
+        return map_dict(to32, models_checkpoint)
+    else
+        return Dict{String, Any}()
+    end
+end
+
+function make_optimizer(otype = Flux.ADAM; lr = 0.0, gclip = 0.0, wdecay = 0.0)
     os = Any[otype(lr)]
     (gclip > 0) && pushfirst!(os, Flux.ClipValue(gclip))
     (wdecay > 0) && push!(os, Flux.WeightDecay(wdecay))
@@ -366,12 +366,16 @@ function make_optimizer(otype = Flux.ADAM; lr, gclip = 0, wdecay = 0)
 end
 
 function make_optimizers(settings)
-    Dict{String,Any}(
-        "mmd"     => make_optimizer(; lr = settings["opt"]["discrim"]["lrrel"] / settings["train"]["batchsize"], gclip = settings["opt"]["mmd"]["gclip"]),
-        "cvae"    => make_optimizer(; lr = settings["opt"]["cvae"]["lrrel"] / settings["train"]["batchsize"]),
-        "genatr"  => make_optimizer(; lr = settings["opt"]["genatr"]["lrrel"] / settings["train"]["batchsize"]),
-        "discrim" => make_optimizer(; lr = settings["opt"]["discrim"]["lrrel"] / settings["train"]["batchsize"]),
-    )
+    os = Dict{String,Any}()
+    for k in ["mmd", "cvae", "genatr", "discrim"]
+        os[k] = make_optimizer(
+            Flux.ADAM;
+            lr = settings["opt"][k]["lrrel"] / settings["train"]["batchsize"],
+            gclip = settings["opt"][k]["gclip"],
+            wdecay = settings["opt"][k]["wdecay"],
+        )
+    end
+    return os
 end
 
 ####
@@ -388,19 +392,53 @@ end
 #### Snapshot
 ####
 
-function save_snapshot(settings, models)
-    settings_filename = summary_filename = nothing
-    if !haskey(ENV, "JL_CHECKPOINT_FOLDER")
-        savepath = mkpath(settings["data"]["out"])
-        settings_filename = joinpath(savepath, "settings.toml")
-        summary_filename = joinpath(savepath, "model-summary.txt")
-        for file in readdir(Glob.glob"*.jl", @__DIR__)
-            cp(file, joinpath(savepath, basename(file)); force = true)
-        end
+function save_snapshot!(settings, models)
+    savepath = mkpath(settings["data"]["out"])
+    settings_filename = joinpath(savepath, "settings.toml")
+    summary_filename = joinpath(savepath, "model-summary.txt")
+    for file in readdir(Glob.glob"*.jl", @__DIR__)
+        cp(file, joinpath(savepath, basename(file)); force = true)
     end
     MMDLearning.model_summary(models, summary_filename)
     Ignite.save_and_print(settings; filename = settings_filename)
     return nothing
 end
+
+####
+#### Reloading old results
+####
+
+#=
+module Loader
+
+# Avoid tracking changes by aliasing Revise.includet == include
+const Revise = (includet = include,)
+
+include(joinpath(ENV["JL_CHECKPOINT_FOLDER"], "setup.jl"))
+
+# Manually "dispatch" on new type based on type params
+function BSON.constructtype(::Type{T}, Ts) where {T <: Main.SignalEncoder}
+    Ts = map(BSON.normalize_typeparams, Ts)
+    if length(Ts) == 8
+        Loader.SignalEncoder{Ts...}
+    elseif length(Ts) == 4
+        Main.SignalEncoder{Ts...}
+    else
+        error("Incorrect number of parameters for type $T: $Ts")
+    end
+end
+
+# Reconstruct old type -> new type
+function Flux.functor(e::Loader.SignalEncoder{p,cY,mY,nX,nY}) where {p,cY,mY,nX,nY}
+    (e.DX, e.EY, e.E0), function((DX, EY, E0),)
+        shape = (; psize = p, nshards = mY, nfeatures = nX, chunksize = cY, overlap = cY-1)
+        Main.SignalEncoder(DX, EY, E0, shape)
+    end
+end
+
+end # module Loader
+
+import .Loader
+=#
 
 nothing

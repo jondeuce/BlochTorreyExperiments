@@ -2,19 +2,16 @@
 #### Setup
 ####
 
-Revise.includet(joinpath(@__DIR__, "setup.jl"))
-
 # ENV["JL_CHECKPOINT_FOLDER"] = settings["data"]["out"]
 
-models_checkpoint = Dict{String, Any}()
-haskey(ENV, "JL_CHECKPOINT_FOLDER") && (models_checkpoint = map_dict(to32, deepcopy(BSON.load(joinpath(ENV["JL_CHECKPOINT_FOLDER"], "current-models.bson"))["models"])))
+Revise.includet(joinpath(@__DIR__, "setup.jl"))
 
 settings = make_settings()
 phys = make_physics(settings)
-models, derived = make_models!(phys, settings, models_checkpoint)
+models, derived = make_models!(phys, settings, load_checkpoint())
 optimizers = make_optimizers(settings)
 wandb_logger = make_wandb_logger!(settings)
-save_snapshot(settings, models)
+save_snapshot!(settings, models)
 
 delete!(ENV, "JL_CHECKPOINT_FOLDER")
 

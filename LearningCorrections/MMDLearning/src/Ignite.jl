@@ -180,21 +180,60 @@ function save_and_print(settings::AbstractDict; filename = nothing)
     return settings
 end
 
-# Settings parsing
-function parse_command_line!(defaults::AbstractDict{<:AbstractString, Any})
-    # Generate arg parser
-    function _add_arg_table!(parser, def, def_global = def)
-        for (k,v) in def
-            if v isa AbstractDict
-                _add_arg_table!(parser, Dict{String,Any}(k * "." * kin => deepcopy(vin) for (kin, vin) in v), def_global)
-            else
-                # Fields with value "%PARENT%" take default values of their parent field
-                ksplit = String.(split(k, "."))
-                depth = 0
-                while v == "%PARENT%"
-                    depth += 1
-                    v = deepcopy(nestedaccess(def_global, ksplit[begin:end-1-depth]..., ksplit[end]))
+function breadth_first_iterator(tree::AbstractDict)
+    iter = Pair{<:Union{Nothing, <:AbstractDict}, <:AbstractDict}[nothing => tree]
+    oldleafs = 1
+    while true
+        newleafs = 0
+        for i in oldleafs:length(iter)
+            parent, leaf = iter[i]
+            oldleafs += 1
+            for (k,v) in leaf
+                if v isa AbstractDict
+                    push!(iter, leaf => v)
+                    newleafs += 1
                 end
+            end
+        end
+        newleafs == 0 && break
+    end
+    return iter
+end
+
+# Settings parsing
+function parse_command_line!(
+        settings::AbstractDict{<:AbstractString, Any},
+        args = isinteractive() ? String[] : ARGS,
+    )
+
+    # Fields "INHERIT" with value "%PARENT%" specify that all fields from (and only from) the immediate parent
+    # should be copied into the child, unless that key is already present in the child
+    for (parent, leaf) in reverse(breadth_first_iterator(settings))
+        if !isnothing(parent) && haskey(leaf, "INHERIT") && leaf["INHERIT"] == "%PARENT%"
+            for (k,v) in parent
+                (v isa AbstractDict) && continue
+                !haskey(leaf, k) && (leaf[k] = deepcopy(parent[k]))
+            end
+            delete!(leaf, "INHERIT")
+        else
+            continue
+        end
+    end
+
+    # Fields with value "%PARENT%" take default values from the corresponding field of their parent
+    for (parent, leaf) in breadth_first_iterator(settings)
+        isnothing(parent) && continue
+        for (k,v) in leaf
+            (v == "%PARENT%") && (leaf[k] = deepcopy(parent[k]))
+        end
+    end
+
+    # Generate arg parser
+    function populate_arg_table!(parser, leaf_settings, root_settings = leaf_settings)
+        for (k,v) in leaf_settings
+            if v isa AbstractDict
+                populate_arg_table!(parser, Dict{String,Any}(k * "." * kin => deepcopy(vin) for (kin, vin) in v), root_settings)
+            else
                 props = Dict{Symbol,Any}(:default => deepcopy(v))
                 if v isa AbstractVector
                     props[:arg_type] = eltype(v)
@@ -207,17 +246,16 @@ function parse_command_line!(defaults::AbstractDict{<:AbstractString, Any})
         end
         return parser
     end
-    parser = _add_arg_table!(ArgParseSettings(), defaults)
+    parser = populate_arg_table!(ArgParseSettings(), settings, settings)
 
-    # Parse and merge into defaults
-    args = isinteractive() ? String[] : ARGS
-    for (k, v) in parse_args(args, parser)
+    # Parse and merge into settings
+    for (k,v) in parse_args(args, parser)
         ksplit = String.(split(k, "."))
-        din = nestedaccess(defaults, ksplit[begin:end-1]...)
+        din = nestedaccess(settings, ksplit[begin:end-1]...)
         din[ksplit[end]] = deepcopy(v)
     end
 
-    return defaults
+    return settings
 end
 
 end # module
