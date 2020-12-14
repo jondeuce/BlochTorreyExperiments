@@ -103,6 +103,26 @@ function timeout_event_filter(timeout = Inf)
     end
 end
 
+# Run arbitrary user input code
+function user_input_event(Mod = Main)
+    function user_input_event_inner(engine)
+        while true
+            println("Enter valid Julia code:")
+            s = chomp(readline())
+            ret = nothing
+            try
+                ret = Mod.eval(Meta.parse(s))
+            catch e
+                @warn sprint(showerror, e, catch_backtrace())
+            end
+            println("Continue? [Y/n]:")
+            if lowercase(chomp(readline())) == "n"
+                return ret
+            end
+        end
+    end
+end
+
 # Run `f` if `file` is found, or else if predicate `pred(engine)` is true
 function file_event(f, pred = (engine) -> false; file::AbstractString)
     function file_event_inner(engine)
@@ -125,18 +145,37 @@ function terminate_file_event(; file::AbstractString)
     end
 end
 
+walk(o::Flux.Optimise.Optimiser) = mapfoldl(walk, vcat, o; init = Any[])
+walk(o::AbstractArray) = walk(Flux.Optimise.Optimiser(convert(Vector{Any}, vec(o))))
+walk(o) = Any[o]
+
+function update_optimizers!(f!, opts, args...; field::Symbol)
+    for opt in walk(opts)
+        if hasfield(typeof(opt), field)
+            f!(opt, args...) # update optimizer
+        else
+            continue
+        end
+    end
+end
+
+function update_optimizers!(f!, optimizers::AbstractDict{<:AbstractString,Any}, args...; field::Symbol)
+    for (name, opts) in optimizers
+        update_optimizers!(f!, opts, name, args...; field)
+    end
+end
+
 function droplr_file_event(optimizers::AbstractDict{<:AbstractString,Any}; file::AbstractString, lrrate::Int, lrdrop, lrthresh)
     pred(engine) = engine.state.epoch > 1 && mod(engine.state.epoch-1, lrrate) == 0
     file_event(pred; file = file) do engine
-        for (name, opt) in optimizers, o in opt
-            !hasfield(typeof(o), :eta) && continue
-            new_eta = max(o.eta / lrdrop, lrthresh)
+        update_optimizers!(optimizers; field = :eta) do opt, name
+            new_eta = max(opt.eta / lrdrop, lrthresh)
             if new_eta > lrthresh
                 @info "$(engine.state.epoch): Dropping $name optimizer learning rate to $new_eta"
             else
                 @info "$(engine.state.epoch): Learning rate reached minimum value $lrthresh for $name optimizer"
             end
-            o.eta = new_eta
+            opt.eta = new_eta
         end
     end
 end
@@ -181,16 +220,16 @@ function save_and_print(settings::AbstractDict; filename = nothing)
 end
 
 function breadth_first_iterator(tree::AbstractDict)
-    iter = Pair{<:Union{Nothing, <:AbstractDict}, <:AbstractDict}[nothing => tree]
+    iter = Pair{<:Union{Nothing, <:AbstractDict}, <:Pair{<:Union{Nothing, <:AbstractString}, <:AbstractDict}}[nothing => (nothing => tree)]
     oldleafs = 1
     while true
         newleafs = 0
         for i in oldleafs:length(iter)
-            parent, leaf = iter[i]
+            parent, (_, leaf) = iter[i]
             oldleafs += 1
             for (k,v) in leaf
                 if v isa AbstractDict
-                    push!(iter, leaf => v)
+                    push!(iter, leaf => (k => v))
                     newleafs += 1
                 end
             end
@@ -208,8 +247,8 @@ function parse_command_line!(
 
     # Fields "INHERIT" with value "%PARENT%" specify that all fields from (and only from) the immediate parent
     # should be copied into the child, unless that key is already present in the child
-    for (parent, leaf) in reverse(breadth_first_iterator(settings))
-        if !isnothing(parent) && haskey(leaf, "INHERIT") && leaf["INHERIT"] == "%PARENT%"
+    for (parent, (key, leaf)) in reverse(breadth_first_iterator(settings))
+        if !isnothing(parent) && get(leaf, "INHERIT", "") == "%PARENT%"
             for (k,v) in parent
                 (v isa AbstractDict) && continue
                 !haskey(leaf, k) && (leaf[k] = deepcopy(parent[k]))
@@ -221,7 +260,7 @@ function parse_command_line!(
     end
 
     # Fields with value "%PARENT%" take default values from the corresponding field of their parent
-    for (parent, leaf) in breadth_first_iterator(settings)
+    for (parent, (key, leaf)) in breadth_first_iterator(settings)
         isnothing(parent) && continue
         for (k,v) in leaf
             (v == "%PARENT%") && (leaf[k] = deepcopy(parent[k]))

@@ -68,7 +68,7 @@ uniform_range(N::Int) = N <= 1 ? zeros(N) : range(-1,1,length=N) |> collect
 @inline split_mean_softplus_std(μ::AbstractArray) = ((μ0, invσ) = split_dim1(μ); return (μ0, Flux.softplus.(invσ) .+ std_thresh(invσ)))
 
 # Sample multivariate normal
-@inline sample_mv_normal(μ::Tuple) = sample_mv_normal(μ...)
+@inline sample_mv_normal(μ::Union{<:Tuple,<:NamedTuple}) = sample_mv_normal(μ...)
 @inline sample_mv_normal(μ::AbstractMatrix) = sample_mv_normal(split_dim1(μ)...)
 @inline sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ)))
 @inline sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}, nsamples::Int) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ))..., nsamples)

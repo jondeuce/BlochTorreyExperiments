@@ -44,6 +44,19 @@ function saveplots(plothandles::AbstractDict; savefolder, prefix = "", suffix = 
     end
 end
 
+function capture_stdout(f)
+    let original_stdout = stdout
+        read_pipe, write_pipe = redirect_stdout()
+        try
+            f()
+        finally
+            close(write_pipe)
+            redirect_stdout(original_stdout)
+        end
+        read(read_pipe, String)
+    end
+end
+
 ####
 #### Callbacks
 ####

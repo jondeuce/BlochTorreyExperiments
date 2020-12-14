@@ -2,7 +2,241 @@
 #### MLE inference
 ####
 
-function mle_mri_model(
+function mle_biexp_epg_noise_only(
+        X::AbstractVecOrMat,
+        Y::AbstractVecOrMat,
+        initial_ϵ     = nothing,
+        initial_t     = nothing;
+        batch_size    = 128 * Threads.nthreads(),
+        verbose       = true,
+        checkpoint    = false,
+        dryrun        = false,
+        dryrunsamples = dryrun ? batch_size : nothing,
+        opt_alg       = :LD_SLSQP, # Rough algorithm ranking: [:LD_SLSQP, :LD_LBFGS, :LD_CCSAQ, :LD_AUGLAG, :LD_MMA] (Note: :LD_LBFGS fails to converge with tolerance looser than ~ 1e-4)
+        opt_args      = Dict{Symbol,Any}(),
+    )
+
+    !isnothing(dryrunsamples) && (I = sample(MersenneTwister(0), 1:size(Y,2), dryrunsamples; replace = dryrunsamples > size(Y,2)); X = X[:,I]; Y = Y[:,I])
+
+    isnothing(initial_ϵ) && (initial_ϵ = sqrt.(mean(abs2, X .- Y; dims = 1)))
+    isnothing(initial_t) && (initial_t = inv.(maximum(MMDLearning._rician_mean_cuda.(X, initial_ϵ); dims = 1))) # ones_similar(X, 1, size(X,2))
+
+    initial_loss  = -sum(MMDLearning._rician_logpdf_cuda.(Y, initial_t .* X, initial_t .* initial_ϵ); dims = 1)
+    initial_guess = (
+        t = initial_t |> arr64,
+        ϵ = initial_ϵ |> arr64,
+        ℓ = initial_loss |> arr64,
+    )
+    X, Y = (X, Y) .|> arr64
+
+    work_spaces = map(1:Threads.nthreads()) do _
+        (
+            Xj  = zeros(size(X,1)),
+            Yj  = zeros(size(Y,1)),
+            x0  = zeros(2),
+            opt = let
+                opt = NLopt.Opt(opt_alg, 2)
+                opt.xtol_rel      = 1e-8
+                opt.ftol_rel      = 1e-8
+                opt.maxeval       = 250
+                opt.maxtime       = 1.0
+                for (k,v) in opt_args
+                    setproperty!(opt, k, v)
+                end
+                opt
+            end,
+        )
+    end
+
+    results = (
+        logscale   = fill(NaN, size(Y,2)),
+        logepsilon = fill(NaN, size(Y,2)),
+        loss       = fill(NaN, size(Y,2)),
+        retcode    = fill(NaN, size(Y,2)),
+        numevals   = fill(NaN, size(Y,2)),
+        solvetime  = fill(NaN, size(Y,2)),
+    )
+
+    function f(work, x::Vector{Float64})
+        δ₀ = sqrt(eps(Float64))
+        @inbounds begin
+            t  = exp(x[1])
+            ϵ  = exp(x[2])
+            ϵi = max(t * ϵ, δ₀)
+            ℓ  = 0.0
+            for i in eachindex(work.Xj)
+                νi = max(t * work.Xj[i], δ₀)
+                ℓ -= MMDLearning._rician_logpdf_cuda(work.Yj[i], νi, ϵi) # Rician negative log likelihood
+            end
+            return ℓ
+        end
+    end
+
+    function fg!(work, x::Vector{Float64}, g::Vector{Float64})
+        if length(g) > 0
+            MMDLearning.simple_fd_gradient!(g, y -> f(work, y), x)
+        else
+            f(work, x)
+        end
+    end
+
+    #= Benchmarking
+    work_spaces[1].Xj .= X[:,1]
+    work_spaces[1].Yj .= Y[:,1]
+    work_spaces[1].x0 .= log.([initial_guess.t[1]; initial_guess.ϵ[1]])
+    @info "Calling function..."; l = f( work_spaces[1], work_spaces[1].x0 ); @show l
+    @info "Calling gradient..."; g = zeros(2); l = fg!( work_spaces[1], work_spaces[1].x0, g ); @show l, g
+    @info "Timing function..."; @btime( $f( $( work_spaces[1] ), $( work_spaces[1].x0 ) ) )
+    @info "Timing gradient..."; @btime( $fg!( $( work_spaces[1] ), $( work_spaces[1].x0 ), $( g ) ) )
+    =#
+
+    start_time = time()
+    batches = Iterators.partition(1:size(Y,2), batch_size)
+    LinearAlgebra.BLAS.set_num_threads(1) # Prevent BLAS from stealing julia threads
+
+    for (batchnum, batch) in enumerate(batches)
+        batchtime = @elapsed Threads.@sync for j in batch
+            Threads.@spawn @inbounds begin
+                work = work_spaces[Threads.threadid()]
+                work.Xj               .= X[:,j]
+                work.Yj               .= Y[:,j]
+                work.x0[1]             = log(initial_guess.t[j])
+                work.x0[2]             = log(initial_guess.ϵ[j])
+                work.opt.min_objective = (x, g) -> fg!(work, x, g)
+
+                solvetime              = @elapsed (minf, minx, ret) = NLopt.optimize(work.opt, work.x0)
+                results.logscale[j]    = minx[1]
+                results.logepsilon[j]  = minx[2]
+                results.loss[j]        = minf
+                results.retcode[j]     = Base.eval(NLopt, ret) |> Int #TODO cleaner way to convert Symbol to enum?
+                results.numevals[j]    = work.opt.numevals
+                results.solvetime[j]   = solvetime
+            end
+        end
+
+        # Checkpoint results
+        elapsed_time   = time() - start_time
+        remaining_time = (elapsed_time / batchnum) * (length(batches) - batchnum)
+        mle_per_second = batch[end] / elapsed_time
+        savetime       = @elapsed !dryrun && checkpoint && DECAES.MAT.matwrite("mle-$data_source-$data_subset-results-checkpoint-$(getnow()).mat", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # checkpoint progress
+        verbose && @info "$batchnum / $(length(batches))" *
+            " -- batch: $(DECAES.pretty_time(batchtime))" *
+            " -- elapsed: $(DECAES.pretty_time(elapsed_time))" *
+            " -- remaining: $(DECAES.pretty_time(remaining_time))" *
+            " -- save: $(round(savetime; digits = 2))s" *
+            " -- rate: $(round(mle_per_second; digits = 2))Hz" *
+            " -- initial loss: $(round(mean(initial_guess.ℓ[1,1:batch[end]]); digits = 2))" *
+            " -- loss: $(round(mean(results.loss[1:batch[end]]); digits = 2))"
+    end
+
+    !dryrun && DECAES.MAT.matwrite("mle-$data_source-$data_subset-results-final-$(getnow()).mat", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # save final results
+    LinearAlgebra.BLAS.set_num_threads(Threads.nthreads()) # Reset BLAS threads
+
+    return initial_guess, results
+end
+
+function _test_mle_biexp_epg_noise_only(phys::BiexpEPGModel, derived; nsamples = 10240)
+    θ = sampleθprior(derived["prior"], nsamples)
+    Z = sampleZprior(derived["prior"], nsamples)
+    X = signal_model(phys, θ)
+    X̂ = sampleX̂(derived["ricegen"], X, Z) #TODO
+    init, res = mle_biexp_epg_noise_only(X, X̂;
+        verbose       = true,
+        checkpoint    = false,
+        dryrun        = true,
+        dryrunsamples = nsamples,
+    )
+
+    let
+        ν, ϵ = rician_params(derived["ricegen"], X, Z)
+        X̂_2 = add_noise_instance(derived["ricegen"], X, ϵ)
+        # vcat(exp.(Z) .* derived["ricegen"].noisescale(X), ϵ) |> display
+        NegLogLikelihood(derived["ricegen"], X̂, ν, ϵ) |> display
+        NegLogLikelihood(derived["ricegen"], X̂, ν, ϵ) |> mean |> display
+        NegLogLikelihood(derived["ricegen"], X̂_2, ν, ϵ) |> display
+        NegLogLikelihood(derived["ricegen"], X̂_2, ν, ϵ) |> mean |> display
+    end
+
+    println("initial log epsilon:")
+    display(log.(init.ϵ))
+    println("final log epsilon:")
+    display(res.logepsilon')
+    println("true log epsilon:")
+    Z1 = Z; # display(Z1) # logϵ = log(exp(Z) * scale(X)) = Z + log(scale(X))
+    Z2 = Z .- log.(derived["ricegen"].noisescale(X)); # display(Z2) # logϵ = log(exp(Z) * scale(X)) = Z + log(scale(X))
+    Z3 = Z .+ log.(derived["ricegen"].noisescale(X)); # display(Z3) # logϵ = log(exp(Z) * scale(X)) = Z + log(scale(X))
+    display(vcat(Z1, Z2, Z3))
+    display(mean(abs.(arr_similar(Z, res.logepsilon') .- vcat(Z1, Z2, Z3)); dims = 2))
+    println("")
+
+    println("initial log scale:")
+    display(log.(init.t))
+    println("final log scale:")
+    display(res.logscale')
+    println("")
+
+    println("initial loss:")
+    display(init.ℓ)
+    println("final loss:")
+    display(res.loss')
+    println("")
+
+    println("return codes:")
+    display(res.retcode')
+
+    return @ntuple(θ, Z, X, X̂, init, res)
+end
+
+function _test_noiselevel()
+let
+    prior = derived["prior"]
+    G = prior.rice
+    θ = sampleθprior(prior, 10240)
+    Z = sampleZprior(prior, 10240)
+    X = signal_model(phys, θ)
+    let
+        ν, ϵ = rician_params(G, X, Z)
+        X̂ = add_noise_instance(G, X, ϵ)
+        # vcat(exp.(Z) .* G.noisescale(X), ϵ) |> display
+        NegLogLikelihood(G, X̂, ν, ϵ) |> display
+        NegLogLikelihood(G, X̂, ν, ϵ) |> mean |> display
+    end
+    let
+        δ, ϵ = correction_and_noiselevel(G, X, Z)
+        ν = add_correction(G, X, δ)
+        X̂ = add_noise_instance(G, X, ϵ)
+        # vcat(exp.(Z) .* G.noisescale(X), ϵ) |> display
+        reshape(NegLogLikelihood(G, X̂, ν, ϵ), 1, :) |> display
+        reshape(NegLogLikelihood(G, X̂, ν, ϵ), 1, :) |> mean |> display
+    end
+    let
+        ν, ϵ = rician_params(G, X, Z)
+        X̂ = add_noise_instance(G, X, ϵ)
+        X̂meta = MetaCPMGSignal(phys, phys.images[1], X̂)
+        fit_state = fit_cvae(X̂meta; marginalize_Z = false)
+        display(vcat(Z, fit_state.Z))
+        Z1, Z2, Z3 = fit_state.Z, fit_state.Z .- log.(G.noisescale(X)), fit_state.Z .+ log.(G.noisescale(X))
+        ϵ1, ϵ2, ϵ3 = exp.(Z1), exp.(Z2), exp.(Z3)
+        vcat(
+            quantile(abs.(Z1 .- Z) |> vec |> arr64, 0.1:0.1:0.9)',
+            quantile(abs.(Z2 .- Z) |> vec |> arr64, 0.1:0.1:0.9)',
+            quantile(abs.(Z3 .- Z) |> vec |> arr64, 0.1:0.1:0.9)',
+        ) |> display
+        vcat(
+            reshape(NegLogLikelihood(G, X̂, ν, ϵ1), 1, :),
+            reshape(NegLogLikelihood(G, X̂, ν, ϵ2), 1, :),
+            reshape(NegLogLikelihood(G, X̂, ν, ϵ3), 1, :),
+        ) |> display
+        reshape(NegLogLikelihood(G, X̂, ν, ϵ1), 1, :) |> mean |> display
+        reshape(NegLogLikelihood(G, X̂, ν, ϵ2), 1, :) |> mean |> display
+        reshape(NegLogLikelihood(G, X̂, ν, ϵ3), 1, :) |> mean |> display
+        display(vcat(fit_state.ℓ))
+        display(mean(fit_state.ℓ))
+    end
+end;
+end
+
+function mle_biexp_epg(
         phys::BiexpEPGModel,
         models,
         derived;
@@ -82,12 +316,12 @@ function mle_mri_model(
     end
 
     results = (
-        theta     = fill(NaN, ntheta(phys), size(Y,2)),
-        epsilon   = fill(NaN, size(Y,2)),
-        loss      = fill(NaN, size(Y,2)),
-        retcode   = fill(NaN, size(Y,2)),
-        numevals  = fill(NaN, size(Y,2)),
-        solvetime = fill(NaN, size(Y,2)),
+        theta      = fill(NaN, ntheta(phys), size(Y,2)),
+        logepsilon = fill(NaN, size(Y,2)),
+        loss       = fill(NaN, size(Y,2)),
+        retcode    = fill(NaN, size(Y,2)),
+        numevals   = fill(NaN, size(Y,2)),
+        solvetime  = fill(NaN, size(Y,2)),
     )
 
     function f(work, x::Vector{Float64})
@@ -99,12 +333,12 @@ function mle_mri_model(
             X  = _signal_model_f64(phys, work.epg, ψ)
             μX = -Inf
             for i in eachindex(X)
-                μX = max(μX, _rician_mean_cuda(X[i], ϵ)) # Signal normalization factor
+                μX = max(μX, MMDLearning._rician_mean_cuda(X[i], ϵ)) # Signal normalization factor
             end
             ℓ  = 0.0
             ϵ  = ϵ / μX # Hoist outside loop
             for i in eachindex(X)
-                ℓ -= _rician_logpdf_cuda(work.Y[i], X[i] / μX, ϵ) # Rician negative log likelihood
+                ℓ -= MMDLearning._rician_logpdf_cuda(work.Y[i], X[i] / μX, ϵ) # Rician negative log likelihood
             end
             return ℓ
         end
@@ -112,7 +346,7 @@ function mle_mri_model(
 
     function fg!(work, x::Vector{Float64}, g::Vector{Float64})
         if length(g) > 0
-            simple_fd_gradient!(g, y -> f(work, y), x, lower_bounds, upper_bounds)
+            MMDLearning.simple_fd_gradient!(g, y -> f(work, y), x, lower_bounds, upper_bounds)
         else
             f(work, x)
         end
@@ -128,7 +362,7 @@ function mle_mri_model(
     batches = Iterators.partition(1:size(Y,2), batch_size)
     LinearAlgebra.BLAS.set_num_threads(1) # Prevent BLAS from stealing julia threads
 
-    @time for (batchnum, batch) in enumerate(batches)
+    for (batchnum, batch) in enumerate(batches)
         batchtime = @elapsed Threads.@sync for j in batch
             Threads.@spawn @inbounds begin
                 work = work_spaces[Threads.threadid()]
@@ -139,7 +373,7 @@ function mle_mri_model(
 
                 solvetime              = @elapsed (minf, minx, ret) = NLopt.optimize(work.opt, work.x0)
                 results.theta[:,j]    .= minx[1:end-1]
-                results.epsilon[j]     = minx[end]
+                results.logepsilon[j]     = minx[end]
                 results.loss[j]        = minf
                 results.retcode[j]     = Base.eval(NLopt, ret) |> Int #TODO cleaner way to convert Symbol to enum?
                 results.numevals[j]    = work.opt.numevals
@@ -219,7 +453,7 @@ function eval_mri_model(
     mle_image_state = let
         mle_image_results = Glob.readdir(Glob.glob"mle-image-mask-results-final-*.mat", mle_image_path) |> last |> DECAES.MAT.matread
         θ = mle_image_results["theta"] |> to32
-        ϵ = reshape(exp.(mle_image_results["epsilon"] |> to32), 1, :) #TODO: should save as "logepsilon"
+        ϵ = reshape(exp.(mle_image_results["logepsilon"] |> to32), 1, :)
         ℓ = reshape(mle_image_results["loss"] |> to32, 1, :) # negative log-likelihood loss
         X = signal_model(phys, θ)
         ν, δ, Z = X, nothing, nothing

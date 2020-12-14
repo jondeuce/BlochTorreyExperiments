@@ -1,10 +1,130 @@
 ####
+#### Settings
+####
+
+Revise.includet(joinpath(@__DIR__, "setup.jl"))
+
+new_settings_template() = TOML.parse(
+"""
+[data]
+    out    = "$(new_savepath())"
+    ntrain = "auto" # 102_400
+    ntest  = "auto" # 10_240
+    nval   = "auto" # 10_240
+
+[train]
+    timeout     = 1e9 #TODO 10800.0
+    epochs      = 1000_000
+    batchsize   = 256   #256 #512 #1024 #2048 #3072 #4096
+    nbatches    = 100   # number of batches per epoch
+    MMDCVAErate = 0     # Train combined MMD+CVAE loss every `MMDCVAErate` epochs
+    CVAErate    = 1     # Train CVAE loss every `CVAErate` iterations
+    CVAEsteps   = 1     # Train CVAE losses with `CVAEsteps` updates per iteration
+    CVAEmask    = 32    # Randomly mask cvae training signals up to `CVAEmask` echoes (<=0 performs no masking)
+    MMDrate     = 0     # Train MMD loss every `MMDrate` epochs
+    GANrate     = 0     # Train GAN losses every `GANrate` iterations
+    Dsteps      = 5     # Train GAN losses with `Dsteps` discrim updates per genatr update
+    kernelrate  = 0     # Train kernel every `kernelrate` iterations
+    kernelsteps = 0     # Gradient updates per kernel train
+    DeepThetaPrior  = false # Learn deep prior
+    DeepLatentPrior = false # Learn deep prior
+    [train.augment]
+        signal        = true  # Plain input signal
+        gradient      = false # Gradient of input signal (1D central difference)
+        laplacian     = false # Laplacian of input signal (1D second order)
+        fdcat         = 0     # Concatenated finite differences up to order `fdcat`
+        encoderspace  = false # Discriminate encoder space representations
+        residuals     = false # Discriminate residual vectors
+        fftcat        = false # Fourier transform of input signal, concatenating real/imag
+        fftsplit      = false # Fourier transform of input signal, treating real/imag separately
+    [train.transform]
+        flipsignals   = false # Randomly reverse signals
+        chunk         = 0     # Random chunks of size `chunk` (0 uses whole signal)
+        nsamples      = 1     # Average over `nsamples` instances of corrected signals
+
+[eval]
+    batchsize       = 10240 # batch size for evaluation
+    nbatches        = 2     # number of eval batches
+    valevalperiod   = 120.0
+    trainevalperiod = 120.0
+    printperiod     = 120.0
+    saveperiod      = 600.0
+
+[opt]
+    lr       = 1e-4    # Initial learning rate
+    lrrel    = 0.0     # Initial learning rate relative to batch size, i.e. lr = lrrel / batchsize
+    lrthresh = 0.0     #1e-6 # Absolute minimum learning rate
+    lrdrop   = 3.16    # Drop learning rate by factor `lrdrop` every `lrrate` epochs
+    lrrate   = 999_999 # Drop learning rate by factor `lrdrop` every `lrrate` epochs
+    lrwarmup = 1000    # Linear learning rate warmup period (iterations, not epochs)
+    gclip    = 0.0     # Gradient clipping
+    wdecay   = 0.0     # Weight decay
+    [opt.cvae]
+        INHERIT = "%PARENT%"
+        lambda_vae_reg = 1.0 # Weighting of vae decoder regularization loss
+        lambda_pseudo  = 0.0 # Weighting of pseudo label loss
+    [opt.genatr]
+        INHERIT = "%PARENT%" #TODO: 0.01 train generator more slowly
+    [opt.discrim]
+        INHERIT = "%PARENT%"
+    [opt.mmd]
+        INHERIT = "%PARENT%"
+        gclip = 1.0
+        lambda_0        = 0.0 # MMD loss weighting relative to CVAE
+        lambda_eps      = 0.0   # Regularize noise amplitude epsilon
+        lambda_deps_dz  = 0.0   # Regularize gradient of epsilon w.r.t. latent variables
+    [opt.kernel]
+        INHERIT = "%PARENT%" # Kernel learning rate 
+        loss  = "mmd"        # Kernel loss ("mmd", "tstatistic", or "mmd_diff")
+
+[arch]
+    nlatent   = 1   # number of latent variables Z
+    zdim      = 12  # embedding dimension of z
+    hdim      = 256 # size of hidden layers
+    skip      = false # skip connection
+    layernorm = false # layer normalization following dense layer
+    nhidden   = 4   # number of hidden layers
+    head      = 4   # number of attention heads
+    psize     = 128 # transformer input size
+    hsize     = 32  # hidden size of multihead attention (hsize == psize ÷ head keeps num. params constant w.r.t head)
+    nshards   = 8   # number of signal projection shards
+    chunksize = 0   # nshards  == (nsignals - chunksize) ÷ (chunksize - overlap) + 1
+    overlap   = 0   # nsignals == nshards * (chunksize - overlap) + overlap
+    [arch.enc1]
+        INHERIT = "%PARENT%"
+    [arch.enc2]
+        INHERIT = "%PARENT%"
+    [arch.dec]
+        INHERIT = "%PARENT%"
+    [arch.vae_dec]
+        INHERIT = "%PARENT%"
+    [arch.genatr]
+        hdim        = 64   #TODO "%PARENT%"
+        nhidden     = 2    #TODO "%PARENT%"
+        ktheta      = 16   #TODO Dimension of domain of theta prior space
+        klatent     = 4    #TODO Dimension of domain of latent prior space
+        prior_mix   = 0.5  #TODO Mix learned deep prior with `prior_mix` fraction of default prior for robustness
+        leakyslope  = 0.0
+        maxcorr     = 0.1
+        noisebounds = [-6.0, 0.0] #TODO
+    [arch.discrim]
+        hdim      = 0     #TODO "%PARENT%"
+        nhidden   = 0     #TODO "%PARENT%"
+        dropout   = 0.1
+    [arch.kernel]
+        nbandwidth  = 32            #TODO
+        channelwise = false         #TODO
+        deep        = false         #TODO
+        bwbounds    = [-8.0, 4.0]   # Bounds for kernel bandwidths (logsigma)
+        clampnoise  = 0.0           #TODO
+"""
+)
+
+####
 #### Setup
 ####
 
 # ENV["JL_CHECKPOINT_FOLDER"] = settings["data"]["out"]
-
-Revise.includet(joinpath(@__DIR__, "setup.jl"))
 
 settings = make_settings()
 phys = make_physics(settings)
@@ -117,7 +237,7 @@ end
 function get_kernel_opt(key)
     # Initialize optimizer, if necessary
     get!(optimizers, "kernel_$key") do
-        make_optimizer(lr = settings["opt"]["kernel"]["lrrel"] / settings["train"]["batchsize"])
+        make_optimizer(lr = initial_learning_rate!(settings, "kernel"))
     end
     return optimizers["kernel_$key"]
 end
@@ -199,39 +319,54 @@ end
 #### CVAE
 ####
 
+function make_signal_mask(Y; mincutoff::Int = 0)
+    # Random mask such that only first `rand(mincutoff:size(Y,1))` signals are kept
+    Irows   = Zygote.@ignore arr_similar(Y, collect(1:size(Y,1)))
+    Icutoff = Zygote.@ignore arr_similar(Y, collect(rand(mincutoff:size(Y,1), 1, size(Y,2))))
+    mask    = Zygote.@ignore arr_similar(Y, Irows .<= Icutoff)
+    return mask
+end
+
 function apply_signal_mask(Y; mincutoff::Int = 0)
-    if !(1 <= mincutoff < size(Y,1))
-        return Y
-    else
-        # Randomly mask Y such that only first `rand(mincutoff:size(Y,1))` signals are kept
-        Irows   = Zygote.@ignore arr_similar(Y, collect(1:size(Y,1)))
-        Icutoff = Zygote.@ignore arr_similar(Y, collect(rand(mincutoff:size(Y,1), 1, size(Y,2))))
-        mask    = Zygote.@ignore arr_similar(Y, Irows .<= Icutoff)
-        return Y .* mask
-    end
+    # Randomly mask Y such that only first `rand(mincutoff:size(Y,1))` signals are kept
+    return Y .* make_signal_mask(Y; mincutoff)
 end
 
 # Conditional variational autoencoder losses
 function CVAElosses(Ymeta::AbstractMetaDataSignal; marginalize_Z)
+    λ_vae_reg = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "lambda_vae_reg", 0.0)::Float64)
     λ_pseudo  = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "lambda_pseudo", 0.0)::Float64)
     mincutoff = Zygote.@ignore get!(settings["train"], "CVAEmask", 0)::Int
 
     # Sample X̂,θ,Z from priors
-    X̂, θ, Z = Zygote.@ignore sampleX̂θZ(derived["cvae"], derived["cvae_prior"], Ymeta; posterior_θ = false, posterior_Z = false) # sample θ and Z priors
+    θ = Zygote.@ignore sampleθprior(derived["cvae_prior"], signal(Ymeta))
+    Z = Zygote.@ignore sampleZprior(derived["cvae_prior"], signal(Ymeta))
+    X = Zygote.@ignore signal_model(phys, θ)
+    X̂ = Zygote.@ignore sampleX̂(derived["ricegen"], X, Z)
 
     # Cross-entropy loss function components
-    X̂masked = apply_signal_mask(X̂; mincutoff)
+    mask    = make_signal_mask(X̂; mincutoff)
+    X̂masked = mask .* X̂
     KLDiv, ELBO = KL_and_ELBO(derived["cvae"], X̂masked, θ, Z; marginalize_Z)
 
-    ℓ = if λ_pseudo == 0
+    ℓ = if λ_vae_reg == 0
         (; KLDiv, ELBO)
     else
-        # Use inferred params as pseudolabels for Ymeta
-        θY, ZY = Zygote.@ignore sampleθZ(derived["cvae"], derived["cvae_prior"], Ymeta; posterior_θ = true, posterior_Z = true) # draw pseudo θ and Z labels for Y
-        Ymasked = apply_signal_mask(signal(Ymeta); mincutoff)
-        KLDivY, ELBOY = KL_and_ELBO(derived["cvae"], Ymasked, θY, ZY; marginalize_Z) # recover pseudo θ and Z labels
-        (; KLDiv, ELBO, KLDivPseudo = λ_pseudo * KLDivY, ELBOPseudo = λ_pseudo * ELBOY)
+        Ymasked = mask .* apply_pad(derived["cvae"], signal(Ymeta))
+        zr_X̂    = sample_mv_normal(mv_normal_parameters(derived["cvae"], X̂masked))
+        zr_Y    = sample_mv_normal(mv_normal_parameters(derived["cvae"], Ymasked))
+        X̂_dec   = mask .* models["vae_dec"](zr_X̂)
+        Y_dec   = mask .* models["vae_dec"](zr_Y)
+        VAEReg  = λ_vae_reg * (sum(abs, X̂masked .- X̂_dec) + sum(abs, Ymasked .- Y_dec)) / size(Ymasked, 2)
+        (; KLDiv, ELBO, VAEReg)
     end
+
+    #= Use inferred params as pseudolabels for Ymeta
+    θY, ZY = Zygote.@ignore sampleθZ(derived["cvae"], derived["cvae_prior"], Ymeta; posterior_θ = true, posterior_Z = true) # draw pseudo θ and Z labels for Y
+    Ymasked = apply_signal_mask(signal(Ymeta); mincutoff)
+    KLDivY, ELBOY = KL_and_ELBO(derived["cvae"], Ymasked, θY, ZY; marginalize_Z) # recover pseudo θ and Z labels
+    (; KLDiv, ELBO, KLDivPseudo = λ_pseudo * KLDivY, ELBOPseudo = λ_pseudo * ELBOY)
+    =#
 
     return ℓ
 end
@@ -241,8 +376,8 @@ end
 ####
 
 # Global state
-const cb_state = Dict{String,Any}()
-const logger = DataFrame(
+cb_state = Dict{String,Any}()
+logger = DataFrame(
     :epoch      => Int[], # mandatory field
     :iter       => Int[], # mandatory field
     :dataset    => Symbol[], # mandatory field
@@ -251,22 +386,22 @@ const logger = DataFrame(
 
 # make_dataset(dataset) = torch.utils.data.TensorDataset(PyTools.array(sampleY(phys, :all; dataset)))
 # train_loader = torch.utils.data.DataLoader(make_dataset(:train); batch_size = settings["train"]["batchsize"], shuffle = true, drop_last = true)
-# val_loader = torch.utils.data.DataLoader(make_dataset(:val); batch_size = settings["train"]["batchsize"], shuffle = false, drop_last = true) #Note: drop_last=true and batch_size=train_batchsize for MMD (else, batch_size = settings["data"]["nval"] is fine)
+# val_eval_loader = torch.utils.data.DataLoader(make_dataset(:val); batch_size = settings["train"]["batchsize"], shuffle = false, drop_last = true) #Note: drop_last=true and batch_size=train_batchsize for MMD (else, batch_size = settings["data"]["nval"] is fine)
 
-make_dataset_indices() = torch.utils.data.TensorDataset(PyTools.array(collect(1:settings["train"]["nbatches"])))
-train_loader = torch.utils.data.DataLoader(make_dataset_indices())
-val_loader = torch.utils.data.DataLoader(make_dataset_indices())
+make_dataset_indices(n) = torch.utils.data.TensorDataset(PyTools.array(collect(1:n)))
+train_loader = torch.utils.data.DataLoader(make_dataset_indices(settings["train"]["nbatches"]))
+val_eval_loader = torch.utils.data.DataLoader(make_dataset_indices(settings["eval"]["nbatches"]))
+train_eval_loader = torch.utils.data.DataLoader(make_dataset_indices(settings["eval"]["nbatches"]))
 
-function sample_batch(dataset::Symbol; batchsize = settings["train"]["batchsize"])
-    img_idx = rand(1:length(phys.images))
-    img = phys.images[img_idx]
+function sample_batch(dataset::Symbol; batchsize::Int, img_idx::Int = 0)
+    img = phys.images[img_idx > 0 ? img_idx : rand(1:length(phys.images))]
     Y = MMDLearning.sample_columns(img.partitions[dataset], batchsize; replace = false) |> todevice
     Ymeta = MetaCPMGSignal(phys, img, Y)
     return (; img_idx, img, Y, Ymeta)
 end
 
 function train_step(engine, batch)
-    img_idx, img, Ytrain, Ytrainmeta = sample_batch(:train)
+    img_idx, img, Ytrain, Ytrainmeta = sample_batch(:train; batchsize = settings["train"]["batchsize"])
     outputs = Dict{Any,Any}()
 
     @timeit "train batch" begin #TODO CUDA.@sync
@@ -284,7 +419,7 @@ function train_step(engine, batch)
             λ_0 = eltype(Ytrain)(get!(settings["opt"]["mmd"], "lambda_0", 0.0)::Float64)
             @timeit "forward" ℓ, back = Zygote.pullback(ps) do #TODO CUDA.@sync
                 mmd = sum(MMDlosses(Ytrainmeta))
-                cvae = sum(CVAElosses(Ytrainmeta; marginalize_Z = false))
+                cvae = sum(CVAElosses(Ytrainmeta; marginalize_Z = false)) #TODO marginalize_Z
                 return λ_0 * mmd + cvae
             end
             @timeit "reverse" gs = back(one(eltype(phys))) #TODO CUDA.@sync
@@ -294,9 +429,10 @@ function train_step(engine, batch)
 
         # Train CVAE loss
         train_CVAE && @timeit "cvae" let #TODO CUDA.@sync
-            ps = Flux.params(models["enc1"], models["enc2"], models["dec"])
+            # ps = Flux.params(models["enc1"], models["enc2"], models["dec"])
+            ps = Flux.params(models["enc1"], models["enc2"], models["dec"], models["vae_dec"]) #TODO
             for _ in 1:settings["train"]["CVAEsteps"]
-                @timeit "forward"   ℓ, back = Zygote.pullback(() -> sum(CVAElosses(Ytrainmeta; marginalize_Z = false)), ps) #TODO CUDA.@sync
+                @timeit "forward"   ℓ, back = Zygote.pullback(() -> sum(CVAElosses(Ytrainmeta; marginalize_Z = false)), ps) #TODO CUDA.@sync #TODO marginalize_Z
                 @timeit "reverse"   gs = back(one(eltype(phys))) #TODO CUDA.@sync
                 @timeit "update!"   Flux.Optimise.update!(optimizers["cvae"], ps, gs) #TODO CUDA.@sync
                 outputs["CVAE"] = ℓ
@@ -361,31 +497,60 @@ function train_step(engine, batch)
     return deepcopy(outputs)
 end
 
-function fit_metrics(Ytruemeta, θtrue, Ztrue, Wtrue)
-    νtrue = ϵtrue = rmse_true = logL_true = missing
+function fit_cvae(Ymeta; marginalize_Z)
+    # CVAE posterior state
+    @timeit "posterior state" @unpack θ, Z, X, δ, ϵ, ν, ℓ = posterior_state(
+        derived["cvae"], derived["prior"], Ymeta;
+        miniter = 1, maxiter = 1, alpha = 0.0, verbose = false, mode = :maxlikelihood,
+    )
+
+    mle_init, mle_res = nothing, nothing
+    if false #TODO marginalize_Z
+        # If Z is marginalized over, fit noise directly via MLE
+        @timeit "mle noise fit" begin
+            mle_init, mle_res = mle_biexp_epg_noise_only(ν, signal(Ymeta); verbose = true, batch_size = size(signal(Ymeta), 2), checkpoint = false, dryrun = true, dryrunsamples = nothing)
+            ℓ .= arr_similar(ν, mle_res.loss)'
+            ϵ .= arr_similar(ν, mle_res.logepsilon)' .|> exp
+            # Z .= 0 #TODO marginalize_Z # Z is filled with garbage
+            X̂ = add_noise_instance(derived["ricegen"], ν, ϵ)
+        end
+    else
+        # Add noise (Z-dependent, i.e. ϵ = ϵ(Z))
+        X̂ = add_noise_instance(derived["ricegen"], ν, ϵ)
+    end
+
+    return (; Y = signal(Ymeta), X̂, θ, Z, X, δ, ϵ, ν, ℓ, mle_init, mle_res)
+end
+
+
+function fit_metrics(Ymeta, Ymeta_fit_state, θtrue, Ztrue, Wtrue)
     #= TODO
+    if hasclosedform(phys)
+        W = sampleWprior(ClosedForm(phys), Y, size(Y, 2)) # Sample hidden latent variables
+        Y_metrics, Y_cache_cb_args = fit_metrics(nothing, θ, nothing, W)
+    else
+        Y_metrics, Y_cache_cb_args = fit_metrics(Y, nothing, nothing, nothing)
+    end
+    =#
+    #= TODO
+    νtrue = ϵtrue = rmse_true = logL_true = missing
     if hasclosedform(phys) && !isnothing(θtrue) && !isnothing(Wtrue)
         νtrue, ϵtrue = rician_params(ClosedForm(phys), θtrue, Wtrue) # noiseless true signal and noise level
-        Ytrue = add_noise_instance(phys, νtrue, ϵtrue) # noisey true signal
+        Ytrue = add_noise_instance(phys, νtrue, ϵtrue) # noisy true signal
         rmse_true = sqrt(mean(abs2, Ytrue - νtrue))
         logL_true = mean(NegLogLikelihood(derived["ricegen"], Ytrue, νtrue, ϵtrue))
     end
     =#
 
-    @timeit "posterior state" @unpack θ, Z, X, δ, ϵ, ν, ℓ = posterior_state(
-        derived["cvae"], derived["prior"], Ytruemeta;
-        miniter = 1, maxiter = 1, alpha = 0.0, verbose = false, mode = :maxlikelihood,
-    )
-    X̂ = add_noise_instance(derived["ricegen"], ν, ϵ)
-
-    all_rmse = sqrt.(mean(abs2, signal(Ytruemeta) .- ν; dims = 1)) |> Flux.cpu |> vec |> copy
+    @unpack X̂, θ, Z, X, δ, ϵ, ν, ℓ = Ymeta_fit_state
+    all_rmse = sqrt.(mean(abs2, signal(Ymeta) .- ν; dims = 1)) |> Flux.cpu |> vec |> copy
     all_logL = ℓ |> Flux.cpu |> vec |> copy
     rmse, logL = mean(all_rmse), mean(all_logL)
     theta_err = isnothing(θtrue) ? missing : mean(abs, θerror(phys, θtrue, θ); dims = 2) |> Flux.cpu |> vec |> copy
     Z_err = isnothing(Ztrue) ? missing : mean(abs, Ztrue .- Z; dims = 2) |> Flux.cpu |> vec |> copy
 
-    metrics = (; rmse_true, logL_true, all_rmse, all_logL, rmse, logL, theta_err, Z_err)
-    cache_cb_args = (signal(Ytruemeta), θ, Z, X, δ, ϵ, ν, X̂, νtrue)
+    metrics = (; all_rmse, all_logL, rmse, logL, theta_err, Z_err, rmse_true = missing, logL_true = missing)
+    cache_cb_args = (signal(Ymeta), θ, Z, X, δ, ϵ, ν, X̂, missing) # νtrue
 
     return metrics, cache_cb_args
 end
@@ -414,29 +579,28 @@ function compute_metrics(engine, batch; dataset)
         cb_state["log_metrics"][:time]    = cb_state["curr_time"]
 
         # Invert Y and make Xs
-        img_idx, img, Y, Ymeta = sample_batch(:val)
-        X, θ, Z = sampleXθZ(derived["cvae"], derived["prior"], Ymeta; posterior_θ = true, posterior_Z = true)
-        X̂ = sampleX̂(derived["ricegen"], X, Z)
-        Nbatch = size(Y,2)
+        img_idx, img, Y, Ymeta = sample_batch(:val; batchsize = settings["eval"]["batchsize"], img_idx = mod1(engine.state.iteration, length(phys.images)))
+        Y_fit_state = fit_cvae(Ymeta; marginalize_Z = false) #TODO marginalize_Z
+        X̂meta = MetaCPMGSignal(phys, img, Y_fit_state.X̂)
+        X̂_fit_state = fit_cvae(X̂meta; marginalize_Z = false) #TODO marginalize_Z
 
         let
-            ℓ_CVAE = CVAElosses(Ymeta; marginalize_Z = false)
+            ℓ_CVAE = CVAElosses(Ymeta; marginalize_Z = false) #TODO marginalize_Z
             ℓ_CVAE = push!!(ℓ_CVAE, :CVAE => sum(ℓ_CVAE))
             accum!(ℓ_CVAE)
 
-            ℓ_MMD = MMDlosses(Ymeta)
+            Nbatch = size(Y,2)
+            ℓ_MMD = MMDlosses(Ymeta[:, 1:min(Nbatch, 1024)])
             ℓ_MMD = NamedTuple{Symbol.(:MMD_, keys(ℓ_MMD))}(values(ℓ_MMD)) # prefix labels with "MMD_"
             ℓ_MMD = push!!(ℓ_MMD, :MMD => sum(ℓ_MMD))
             accum!(ℓ_MMD)
 
             λ_0 = eltype(Y)(get!(settings["opt"]["mmd"], "lambda_0", 0.0)::Float64)
             loss = ℓ_CVAE.CVAE + λ_0 * ℓ_MMD.MMD
-            Zreg = sum(abs2, Z; dims = 2) / (2*Nbatch) |> Flux.cpu
-            Zdiv = [KLDivUnitNormal(mean_and_std(Z[i,:])...) for i in 1:size(Z,1)] |> Flux.cpu
-            accum!((; loss, Zreg, Zdiv))
+            accum!((; loss))
 
             if settings["train"]["GANrate"]::Int > 0
-                ℓ_GAN = Dloss(X,Y,Z)
+                ℓ_GAN = Dloss(Y_fit_state.X, Y, Y_fit_state.Z)
                 ℓ_GAN = push!!(ℓ_GAN, :Dloss => sum(ℓ_GAN))
                 ℓ_GAN = push!!(ℓ_GAN, :Gloss => -ℓ_GAN.D_G_X)
                 accum!(ℓ_GAN)
@@ -448,15 +612,7 @@ function compute_metrics(engine, batch; dataset)
 
         # Cache values for evaluating CVAE performance for estimating parameters of Y
         let
-            #= TODO
-            if hasclosedform(phys)
-                W = sampleWprior(ClosedForm(phys), Y, size(Y, 2)) # Sample hidden latent variables
-                Y_metrics, Y_cache_cb_args = fit_metrics(nothing, θ, nothing, W)
-            else
-                Y_metrics, Y_cache_cb_args = fit_metrics(Y, nothing, nothing, nothing)
-            end
-            =#
-            Y_metrics, Y_cache_cb_args = fit_metrics(Ymeta, nothing, nothing, nothing)
+            Y_metrics, Y_cache_cb_args = fit_metrics(Ymeta, Y_fit_state, nothing, nothing, nothing)
             cache_cb_state!(Y_cache_cb_args...; suf = "")
             cb_state["metrics"]["all_Yhat_rmse"] = Y_metrics.all_rmse
             cb_state["metrics"]["all_Yhat_logL"] = Y_metrics.all_logL
@@ -465,15 +621,14 @@ function compute_metrics(engine, batch; dataset)
 
         # Cache values for evaluating CVAE performance for estimating parameters of X̂
         let
-            X̂meta = MetaCPMGSignal(phys, img, X̂) #TODO
-            X̂_metrics, X̂_cache_cb_args = fit_metrics(X̂meta, θ, Z, nothing)
+            X̂_metrics, X̂_cache_cb_args = fit_metrics(X̂meta, X̂_fit_state, Y_fit_state.θ, Y_fit_state.Z, nothing)
             cache_cb_state!(X̂_cache_cb_args...; suf = "fit")
             cb_state["metrics"]["all_Xhat_rmse"] = X̂_metrics.all_rmse
             cb_state["metrics"]["all_Xhat_logL"] = X̂_metrics.all_logL
             accum!(Dict(Symbol(:Xhat_, k) => v for (k,v) in pairs(X̂_metrics) if k ∉ (:all_rmse, :all_logL) && !ismissing(v)))
 
             img_key = Symbol(:img, img_idx)
-            accum!(img_key, MMDLearning.fast_hist_1D(Flux.cpu(vec(X̂)), img.meta[:histograms][dataset][0].edges[1]))
+            accum!(img_key, MMDLearning.fast_hist_1D(Flux.cpu(vec(Y_fit_state.X̂)), img.meta[:histograms][dataset][0].edges[1]))
             Dist_L1 = MMDLearning.CityBlock(img.meta[:histograms][dataset][0], cb_state["all_histograms"][dataset][img_key])
             Dist_ChiSq = MMDLearning.ChiSquared(img.meta[:histograms][dataset][0], cb_state["all_histograms"][dataset][img_key])
             Dist_KLDiv = MMDLearning.KLDivergence(img.meta[:histograms][dataset][0], cb_state["all_histograms"][dataset][img_key])
@@ -525,7 +680,7 @@ train_evaluator.logger = ignite.utils.setup_logger("train_evaluator")
 #### Events
 ####
 
-const Events = ignite.engine.Events
+Events = ignite.engine.Events
 
 # Force terminate
 trainer.add_event_handler(
@@ -545,11 +700,11 @@ trainer.add_event_handler(
 # Compute callback metrics
 trainer.add_event_handler(
     Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.throttler_event_filter(settings["eval"]["valevalperiod"])),
-    @j2p (engine) -> val_evaluator.run(val_loader)
+    @j2p (engine) -> val_evaluator.run(val_eval_loader)
 )
 trainer.add_event_handler(
     Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.throttler_event_filter(settings["eval"]["trainevalperiod"])),
-    @j2p (engine) -> train_evaluator.run(train_loader)
+    @j2p (engine) -> train_evaluator.run(train_eval_loader)
 )
 
 # Checkpoint current model + logger + make plots
@@ -568,13 +723,28 @@ trainer.add_event_handler(
 trainer.add_event_handler(
     Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.throttler_event_filter(settings["eval"]["saveperiod"])),
     @j2p function (engine)
-        losses = logger.Yhat_logL[logger.dataset .=== :val] |> skipmissing |> collect
+        loss_metric = :CVAE # :Yhat_logL
+        losses = logger[logger.dataset .=== :val, loss_metric] |> skipmissing |> collect
         if !isempty(losses) && (length(losses) == 1 || losses[end] < minimum(losses[1:end-1]))
             @timeit "save best progress" let models = map_dict(Flux.cpu, models)
                 @timeit "save best model" saveprogress(@dict(models, logger); savefolder = settings["data"]["out"], prefix = "best-")
                 @timeit "make best plots" plothandles = makeplots()
                 @timeit "save best plots" saveplots(plothandles; savefolder = settings["data"]["out"], prefix = "best-")
             end
+        end
+    end
+)
+
+# Linear warmup
+trainer.add_event_handler(
+    Events.STARTED | Events.ITERATION_COMPLETED,
+    @j2p function (engine)
+        update_optimizers!(optimizers; field = :eta) do opt, name
+            lr_warmup = settings["opt"][name]["lrwarmup"]
+            lr_initial = initial_learning_rate!(settings, name)
+            !(engine.state.iteration <= lr_warmup > 0) && return
+            new_eta = range(lr_initial / lr_warmup, lr_initial; length = lr_warmup + 1)[engine.state.iteration + 1]
+            opt.eta = new_eta
         end
     end
 )
@@ -590,13 +760,33 @@ trainer.add_event_handler(
     )
 )
 
+# User input
+trainer.add_event_handler(
+    Events.EPOCH_COMPLETED,
+    @j2p(Ignite.file_event(Ignite.user_input_event(); file = joinpath(settings["data"]["out"], "user"))),
+)
+# Ignite.update_optimizers!((opt,name) -> @show(name, opt.eta), optimizers; field = :eta)
+
 # Print TimerOutputs timings
 trainer.add_event_handler(
     Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.throttler_event_filter(settings["eval"]["printperiod"])),
     @j2p function (engine)
-        show(stdout, TimerOutputs.get_defaulttimer()); println("\n")
-        show(stdout, last(logger[!,[names(logger)[1:4]; sort(names(logger)[5:end])]], 10)); println("\n")
+        @info sprint() do io
+            println(io, "Log folder: $(settings["data"]["out"])"); println(io, "\n")
+            show(io, TimerOutputs.get_defaulttimer()); println(io, "\n")
+            show(io, last(logger[!,[names(logger)[1:4]; sort(names(logger)[5:end])]], 10)); println(io, "\n")
+        end
         (engine.state.epoch == 1) && TimerOutputs.reset_timer!() # throw out compilation timings
+    end
+)
+
+# Reset loging/timer/etc.
+trainer.add_event_handler(
+    Events.EPOCH_COMPLETED,
+    @j2p Ignite.file_event(file = joinpath(settings["data"]["out"], "reset")) do engine
+        TimerOutputs.reset_timer!()
+        empty!(cb_state)
+        empty!(logger)
     end
 )
 

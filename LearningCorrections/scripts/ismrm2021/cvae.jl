@@ -45,6 +45,13 @@ function apply_pad(::CVAE{n}, Y) where {n}
     end
 end
 
+function mv_normal_parameters(cvae::CVAE, Y)
+    Ypad = apply_pad(cvae, Y)
+    μr = cvae.E1(Ypad)
+    μr0, σr = split_mean_softplus_std(μr)
+    return (; μr0, σr)
+end
+
 function mv_normal_parameters(cvae::CVAE, Y, θ, Z)
     Ypad = apply_pad(cvae, Y)
     μr0, σr = split_mean_softplus_std(cvae.E1(Ypad))
@@ -63,14 +70,7 @@ function KL_and_ELBO(cvae::CVAE{n,nθ,nθM,k,nz}, Y, θ, Z; marginalize_Z::Bool)
     return (; KLDiv, ELBO)
 end
 
-function sampleθZ_setup(cvae::CVAE, Y)
-    Ypad = apply_pad(cvae, Y)
-    μr = cvae.E1(Ypad)
-    μr0, σr = split_mean_softplus_std(μr)
-    return μr0, σr
-end
-
-sampleθZposterior(cvae::CVAE, Y) = (Ypad = apply_pad(cvae, Y); sampleθZposterior(cvae, Ypad, sampleθZ_setup(cvae, Ypad)...))
+sampleθZposterior(cvae::CVAE, Y) = (Ypad = apply_pad(cvae, Y); sampleθZposterior(cvae, Ypad, mv_normal_parameters(cvae, Ypad)...))
 
 function sampleθZposterior(cvae::CVAE, Y, μr0, σr)
     Ypad = apply_pad(cvae, Y)
@@ -84,7 +84,7 @@ end
 
 function θZposterior_sampler(cvae::CVAE, Y)
     Ypad = apply_pad(cvae, Y)
-    μr0, σr = sampleθZ_setup(cvae, Ypad) # constant over posterior samples
+    @unpack μr0, σr = mv_normal_parameters(cvae, Ypad) # constant over posterior samples
     θZposterior_sampler_inner() = sampleθZposterior(cvae, Ypad, μr0, σr)
     return θZposterior_sampler_inner
 end
@@ -126,7 +126,7 @@ sampleZprior(prior::DeepPriorRicianPhysicsModel{T,kθ,kZ}, ::Type{A}, n::Int) wh
 
 function sampleθZ(cvae::CVAE, prior::DeepPriorRicianPhysicsModel, Ymeta::AbstractMetaDataSignal; posterior_θ = true, posterior_Z = true)
     if posterior_θ || posterior_Z
-        return sampleθZ(cvae, prior, Ymeta, sampleθZ_setup(cvae, signal(Ymeta))...; posterior_θ, posterior_Z)
+        return sampleθZ(cvae, prior, Ymeta, mv_normal_parameters(cvae, signal(Ymeta))...; posterior_θ, posterior_Z)
     else
         θ = sampleθprior(prior, signal(Ymeta))
         Z = sampleZprior(prior, signal(Ymeta))
@@ -153,7 +153,7 @@ function sampleθZ(cvae::CVAE, prior::DeepPriorRicianPhysicsModel, Ymeta::Abstra
 end
 
 function θZ_sampler(cvae::CVAE, prior::DeepPriorRicianPhysicsModel, Ymeta::AbstractMetaDataSignal; posterior_θ = true, posterior_Z = true)
-    μr0, σr = sampleθZ_setup(cvae, signal(Ymeta)) # constant over posterior samples
+    @unpack μr0, σr = mv_normal_parameters(cvae, signal(Ymeta)) # constant over posterior samples
     θZ_sampler_inner() = sampleθZ(cvae, prior, Ymeta, μr0, σr; posterior_θ, posterior_Z)
     return θZ_sampler_inner
 end

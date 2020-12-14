@@ -85,23 +85,26 @@ noutput(::Type{R}) where {R<:LatentScalarRicianNoiseCorrector} = 1
 end
 
 # Concrete methods to extract δ and ϵ
-correction_and_noiselevel(G::NormalizedRicianCorrector, args...) = correction_and_noiselevel(corrector(G), args...)
 correction_and_noiselevel(G::VectorRicianCorrector, X, Z = nothing) = _split_delta_epsilon(generator(G)(_maybe_vcat(X,Z)))
 correction_and_noiselevel(G::FixedNoiseVectorRicianCorrector, X, Z = nothing) = generator(G)(_maybe_vcat(X,Z)), G.ϵ0
 correction_and_noiselevel(G::LatentVectorRicianCorrector, X, Z) = _split_delta_epsilon(generator(G)(Z))
 correction_and_noiselevel(G::LatentVectorRicianNoiseCorrector, X, Z) = zero(X), exp.(generator(G)(Z)) .+ sqrt(eps(eltype(X)))
 correction_and_noiselevel(G::LatentScalarRicianNoiseCorrector, X, Z) = zero(X), exp.(generator(G)(Z)) .* ones_similar(X, nsignal(G)) .+ sqrt(eps(eltype(X)))
+function correction_and_noiselevel(G::NormalizedRicianCorrector, X, Z = nothing)
+    δ, ϵ = correction_and_noiselevel(corrector(G), X, Z)
+    !isnothing(ϵ) && !isnothing(G.noisescale) && (ϵ = ϵ .* G.noisescale(X))
+    return δ, ϵ
+end
 
 # Derived convenience functions
 correction(G::RicianCorrector, X, Z = nothing) = correction_and_noiselevel(G, X, Z)[1]
 noiselevel(G::RicianCorrector, X, Z = nothing) = correction_and_noiselevel(G, X, Z)[2]
 corrected_signal_instance(G::RicianCorrector, X, Z = nothing) = corrected_signal_instance(G, X, correction_and_noiselevel(G, X, Z)...)
 corrected_signal_instance(G::RicianCorrector, X, δ, ϵ) = add_noise_instance(G, add_correction(G, X, δ), ϵ)
-add_correction(G::RicianCorrector, X, δ) = @. abs(X + δ)
-add_noise_instance(G::RicianCorrector, X, ϵ, ninstances = nothing) = _add_rician_noise_instance(X, ϵ, ninstances)
+add_correction(::RicianCorrector, X, δ) = @. abs(X + δ)
+add_noise_instance(::RicianCorrector, X, ϵ, ninstances = nothing) = _add_rician_noise_instance(X, ϵ, ninstances)
 function add_noise_instance(G::NormalizedRicianCorrector, X, ϵ, ninstances = nothing)
-    # Input data is assumed properly normalized; add noise relative to noise scale, then normalize X̂
-    !isnothing(ϵ) && !isnothing(G.noisescale) && (ϵ = ϵ .* G.noisescale(X))
+    # X is assumed properly normalized, and ϵ is assumed relative to G.noisescale (i.e. output from correction_and_noiselevel); just add noise, then normalize X̂
     X̂ = add_noise_instance(corrector(G), X, ϵ, ninstances)
     !isnothing(G.normalizer) && (X̂ = X̂ ./ G.normalizer(X̂))
     return X̂
@@ -190,8 +193,9 @@ nsignal(Ymeta::AbstractMetaDataSignal) = size(signal(Ymeta), 1) # fallback
 # Default wrapper type
 struct MetaSignal{T, P <: PhysicsModel{T}, A <: AbstractArray{T}} <: AbstractMetaDataSignal{T}
     Y::A
-    MetaSignal(::P, Y::A) where {T, P <: PhysicsModel{T}, A <: AbstractArray{T}} = new{T,P,A}(Y)
 end
+MetaSignal(::P, Y::A) where {T, P <: PhysicsModel{T}, A <: AbstractArray{T}} = MetaSignal{T,P,A}(Y)
+Base.getindex(Ymeta::MetaSignal{T,P}, i...) where {T,P} = (Ynew = getindex(Ymeta.Y, i...); MetaSignal{T,P,typeof(Ynew)}(Ynew))
 
 ####
 #### Abstact toy problem interface
@@ -486,8 +490,10 @@ const MaybeClosedFormBiexpEPGModel{T,isfinite} = Union{<:BiexpEPGModel{T,isfinit
 struct MetaCPMGSignal{T, P <: BiexpEPGModel{T}, I <: CPMGImage{T}, A <: AbstractArray{T}} <: AbstractMetaDataSignal{T}
     img::I
     Y::A
-    MetaCPMGSignal(::P, img::I, Y::A) where {T, P <: BiexpEPGModel{T}, I <: CPMGImage{T}, A <: AbstractArray{T}} = new{T,P,I,A}(img, Y)
 end
+MetaCPMGSignal(::P, img::I, Y::A) where {T, P <: BiexpEPGModel{T}, I <: CPMGImage{T}, A <: AbstractArray{T}} = MetaCPMGSignal{T,P,I,A}(img, Y)
+Base.getindex(Ymeta::MetaCPMGSignal{T,P,I}, i...) where {T,P,I} = (Ynew = getindex(Ymeta.Y, i...); MetaCPMGSignal{T,P,I,typeof(Ynew)}(Ymeta.img, Ynew))
+
 θnuissance(Ymeta::MetaCPMGSignal) = fill_similar(signal(Ymeta), T1time(Ymeta.img) / echotime(Ymeta.img), 1, size(signal(Ymeta))[2:end]...)
 
 nsignal(p::BiexpEPGModel) = p.n

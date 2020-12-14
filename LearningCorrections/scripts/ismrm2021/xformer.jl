@@ -1,4 +1,49 @@
 """
+    LinearProjection(in::Int, out::Int)
+"""
+struct LinearProjection{W}
+    W :: W
+end
+Flux.@functor LinearProjection
+LinearProjection(in::Int, out::Int) = LinearProjection(Flux.glorot_uniform(out, in))
+(e::LinearProjection)(x) = e.W * x
+
+"""
+    SignalProjector(; psize::Int, chunksize::Int, overlap::Int, nfeatures::Int, nsignals::Int)
+"""
+struct SignalProjector{PX, PY, E0, S}
+    PX :: PX
+    PY :: PY
+    E0 :: E0
+    shape :: S
+end
+Flux.@functor SignalProjector
+Flux.trainable(e::SignalProjector) = (e.PX, e.PY, e.E0)
+Base.show(io::IO, ::SignalProjector) = print(io, "SignalProjector()")
+
+function SignalProjector(; psize::Int, nshards::Int, nfeatures::Int, nsignals::Int)
+    PX = nfeatures <= 0 ? nothing : Flux.Chain(LinearProjection(nfeatures, psize), X -> reshape(X, psize, 1, :))
+    PY = Flux.Chain(LinearProjection(nsignals, psize * nshards), Y -> reshape(Y, psize, nshards, :))
+    E0 = Flux.glorot_uniform(psize, 1 + nshards + ifelse(nfeatures > 0, 1, 0))
+    shape = (; psize, nshards, nfeatures, nsignals)
+    SignalProjector(PX, PY, E0, shape)
+end
+
+function (e::SignalProjector)(Y::AbstractMatrix, X::Union{Nothing, <:AbstractMatrix} = nothing)
+    Zclass = zeros_similar(Y, e.shape.psize, 1, size(Y,2))
+    Yenc = e.PY(Y) # [nY x b] -> [p x mY x b]
+    Z0 = if !isnothing(X)
+        Xenc = e.PX(X) # [nX x b] -> [p x 1 x b]
+        hcat(Zclass, Yenc, Xenc) # [p x (1 + mY + 1) x b]
+    else
+        hcat(Zclass, Yenc) # [p x (1 + mY) x b]
+    end
+    return Z0 .+ e.E0
+end
+(e::SignalProjector)(Y::AbstractVector) = dropdims(e(reshape(Y, length(Y), 1), nothing); dims = 3)
+(e::SignalProjector)(Y::AbstractVector, X::AbstractVector) = dropdims(e(reshape(Y, length(Y), 1), reshape(X, length(X), 1)); dims = 3)
+
+"""
     SignalEncoder(; psize::Int, chunksize::Int, overlap::Int, nfeatures::Int, nsignals::Int)
 """
 struct SignalEncoder{DX <: AbstractArray, EY <: AbstractArray, E0<: AbstractArray, S}
@@ -12,9 +57,6 @@ Flux.trainable(e::SignalEncoder) = (e.DX, e.EY, e.E0)
 Base.show(io::IO, ::SignalEncoder) = print(io, "SignalEncoder()")
 
 function SignalEncoder(; psize::Int, chunksize::Int, overlap::Int, nfeatures::Int, nsignals::Int)
-    @show psize, chunksize, overlap, nfeatures, nsignals
-    @show nsignals - chunksize
-    @show chunksize - overlap
     nshards = (nsignals - chunksize) ÷ (chunksize - overlap) + 1
     @assert nsignals == nshards * (chunksize - overlap) + overlap
     DX = Flux.glorot_uniform(psize, nfeatures)
@@ -47,15 +89,15 @@ Basic Transformer encoder with learned positional embedding
 """
 function TransformerEncoder(
         MLPHead = nothing;
-        head::Int, hdim::Int, nhidden::Int,
-        pout::Int, psize::Int, chunksize::Int, overlap::Int,
+        head::Int, hsize::Int, hdim::Int, nhidden::Int,
+        pout::Int, psize::Int, nshards::Int, chunksize::Int, overlap::Int,
         nsignals::Int, ntheta::Int, nlatent::Int
     )
 
     topology = if ntheta == 0 && nlatent == 0
         Transformers.@nntopo(
             Y : # Input (nY × b)
-            Y => E : # SignalEncoder (psize × _ × b)
+            Y => E : # SignalProjector (psize × _ × b)
             E => H : # Transformer encoder (psize × _ × b)
             H => A : # Extract "class" token activations (psize × b)
             A => C # MLP head mapping "class" embedding to output (pout x b)
@@ -63,7 +105,7 @@ function TransformerEncoder(
     elseif ntheta == 0 || nlatent == 0
         Transformers.@nntopo(
             (Y,X) : # Inputs (nY × b), (mX x b)
-            (Y,X) => E : # SignalEncoder (psize × _ × b)
+            (Y,X) => E : # SignalProjector (psize × _ × b)
             E => H : # Transformer encoder (psize × _ × b)
             H => A : # Extract "class" token activations (psize × b)
             A => C # MLP head mapping "class" embedding to output (pout x b)
@@ -72,7 +114,7 @@ function TransformerEncoder(
         Transformers.@nntopo(
             (Y,θ,Z) : # Inputs (nY × b), (nθ x b), (nZ x b)
             (θ,Z) => X : # Concatenate θ,Z inputs (nY × b), (mX x b)
-            (Y,X) => E : # SignalEncoder (psize × _ × b)
+            (Y,X) => E : # SignalProjector (psize × _ × b)
             E => H : # Transformer encoder (psize × _ × b)
             H => A : # Extract "class" token activations (psize × b)
             A => C # MLP head mapping "class" embedding to output (pout x b)
@@ -82,9 +124,10 @@ function TransformerEncoder(
     xf = Transformers.Stack(
         topology,
         (ntheta != 0 && nlatent != 0 ? [vcat] : [])...,
-        SignalEncoder(; psize, chunksize, overlap, nsignals, nfeatures = ntheta + nlatent),
+        # SignalEncoder(; psize, chunksize, overlap, nsignals, nfeatures = ntheta + nlatent),
+        SignalProjector(; psize, nshards, nsignals, nfeatures = ntheta + nlatent),
         Flux.Chain(map(1:nhidden) do _
-            Transformers.Basic.Transformer(psize, head, hdim; future = true, act = Flux.relu, pdrop = 0.0)
+            Transformers.Basic.Transformer(psize, head, hsize, hdim; future = true, act = Flux.relu, pdrop = 0.0)
         end...),
         H -> H[:, 1, :],
         (isnothing(MLPHead) ? MMDLearning.MLP(psize => pout, 0, hdim, Flux.relu, identity) : MLPHead),

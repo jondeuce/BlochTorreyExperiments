@@ -18,125 +18,16 @@ Revise.includet(joinpath(@__DIR__, "plot.jl"))
 
 new_savepath() = "./output/ignite-cvae-$(MMDLearning.getnow())"
 
-function new_settings_template()
-    TOML.parse(
-    """
-    [data]
-        out    = "$(new_savepath())"
-        ntrain = "auto" # 102_400
-        ntest  = "auto" # 10_240
-        nval   = "auto" # 10_240
-
-    [train]
-        timeout     = 1e9 #TODO 10800.0
-        epochs      = 1000_000
-        batchsize   = 1024  #256 #512 #1024 #2048 #3072 #4096
-        nbatches    = 1000  # number of batches per epoch
-        MMDCVAErate = 0     # Train combined MMD+CVAE loss every `MMDCVAErate` epochs
-        CVAErate    = 1     # Train CVAE loss every `CVAErate` iterations
-        CVAEsteps   = 1     # Train CVAE losses with `CVAEsteps` updates per iteration
-        CVAEmask    = 32    # Randomly mask cvae training signals up to `CVAEmask` echoes (<=0 performs no masking)
-        MMDrate     = 0     # Train MMD loss every `MMDrate` epochs
-        GANrate     = 0     # Train GAN losses every `GANrate` iterations
-        Dsteps      = 5     # Train GAN losses with `Dsteps` discrim updates per genatr update
-        kernelrate  = 0     # Train kernel every `kernelrate` iterations
-        kernelsteps = 0     # Gradient updates per kernel train
-        DeepThetaPrior  = false # Learn deep prior
-        DeepLatentPrior = false # Learn deep prior
-        [train.augment]
-            signal        = true  # Plain input signal
-            gradient      = false # Gradient of input signal (1D central difference)
-            laplacian     = false # Laplacian of input signal (1D second order)
-            fdcat         = 0     # Concatenated finite differences up to order `fdcat`
-            encoderspace  = false # Discriminate encoder space representations
-            residuals     = false # Discriminate residual vectors
-            fftcat        = false # Fourier transform of input signal, concatenating real/imag
-            fftsplit      = false # Fourier transform of input signal, treating real/imag separately
-        [train.transform]
-            flipsignals   = false # Randomly reverse signals
-            chunk         = 0     # Random chunks of size `chunk` (0 uses whole signal)
-            nsamples      = 1     # Average over `nsamples` instances of corrected signals
-
-    [eval]
-        valevalperiod   = 300.0
-        trainevalperiod = 600.0
-        saveperiod      = 300.0
-        printperiod     = 300.0
-
-    [opt]
-        lrrel    = 0.03    #0.1  # Learning rate relative to batch size, i.e. lr = lrrel / batchsize
-        lrthresh = 0.0     #1e-6 # Absolute minimum learning rate
-        lrdrop   = 3.16    # Drop learning rate by factor `lrdrop` every `lrrate` epochs
-        lrrate   = 999_999 # Drop learning rate by factor `lrdrop` every `lrrate` epochs
-        gclip    = 0.0
-        wdecay   = 1e-6
-        [opt.cvae]
-            INHERIT = "%PARENT%"
-            lambda_pseudo = 0.0 # Weighting of pseudo label loss
-        [opt.genatr]
-            INHERIT = "%PARENT%" #TODO: 0.01 train generator more slowly
-        [opt.discrim]
-            INHERIT = "%PARENT%"
-        [opt.mmd]
-            INHERIT = "%PARENT%"
-            gclip = 1.0
-            lambda_0        = 100.0 # MMD loss weighting relative to CVAE
-            lambda_eps      = 0.0   # Regularize noise amplitude epsilon
-            lambda_deps_dz  = 0.0   # Regularize gradient of epsilon w.r.t. latent variables
-        [opt.kernel]
-            INHERIT = "%PARENT%" # Kernel learning rate 
-            loss  = "mmd"        # Kernel loss ("mmd", "tstatistic", or "mmd_diff")
-
-    [arch]
-        nlatent   = 1   # number of latent variables Z
-        zdim      = 12  # embedding dimension of z
-        hdim      = 256 # size of hidden layers
-        nhidden   = 4   # number of hidden layers
-        skip      = false # skip connection
-        layernorm = false # layer normalization following dense layer
-        head      = 2  # number of attention heads
-        psize     = 48 # transformer embedding dimension
-        chunksize = 48 # nshards  == (nsignals - chunksize) ÷ (chunksize - overlap) + 1
-        overlap   = 47 # nsignals == nshards * (chunksize - overlap) + overlap
-        [arch.enc1]
-            INHERIT = "%PARENT%"
-        [arch.enc2]
-            INHERIT = "%PARENT%"
-        [arch.dec]
-            INHERIT = "%PARENT%"
-        [arch.genatr]
-            hdim        = 64   #TODO "%PARENT%"
-            nhidden     = 2    #TODO "%PARENT%"
-            ktheta      = 16   #TODO Dimension of domain of theta prior space
-            klatent     = 4    #TODO Dimension of domain of latent prior space
-            prior_mix   = 0.5  #TODO Mix learned deep prior with `prior_mix` fraction of default prior for robustness
-            leakyslope  = 0.0
-            maxcorr     = 0.1
-            noisebounds = [-6.0, 0.0] #TODO
-        [arch.discrim]
-            hdim      = 0     #TODO "%PARENT%"
-            nhidden   = 0     #TODO "%PARENT%"
-            dropout   = 0.1
-        [arch.kernel]
-            nbandwidth  = 32            #TODO
-            channelwise = false         #TODO
-            deep        = false         #TODO
-            bwbounds    = [-8.0, 4.0]   # Bounds for kernel bandwidths (logsigma)
-            clampnoise  = 0.0           #TODO
-    """
-    )
-end
-
-make_default_settings() = Ignite.parse_command_line!(new_settings_template())
+make_default_settings(args...) = Ignite.parse_command_line!(new_settings_template(), args...)
 
 # Parse command line arguments into default settings
-function make_settings()
+function make_settings(args...)
     if haskey(ENV, "JL_CHECKPOINT_FOLDER")
         settings = TOML.parsefile(joinpath(ENV["JL_CHECKPOINT_FOLDER"], "settings.toml"))
         settings["data"]["out"] = new_savepath()
         return settings
     else
-        make_default_settings()
+        make_default_settings(args...)
     end
 end
 
@@ -274,16 +165,16 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
 
     # Encoders
     get!(models, "enc1") do
-        @unpack hdim, nhidden, psize, head, chunksize, overlap = settings["arch"]["enc1"]
-        TransformerEncoder(; nsignals = n, ntheta = 0, nlatent = 0, pout = 2*nz, psize, chunksize, overlap, head, hdim, nhidden) |> to32
+        @unpack hdim, nhidden, psize, head, hsize, nshards, chunksize, overlap = settings["arch"]["enc1"]
+        TransformerEncoder(; nsignals = n, ntheta = 0, nlatent = 0, pout = 2*nz, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
         #=
         MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity) |> to32
         =#
     end
 
     get!(models, "enc2") do
-        @unpack hdim, nhidden, psize, head, chunksize, overlap = settings["arch"]["enc2"]
-        TransformerEncoder(; nsignals = n, ntheta = nθ, nlatent = k, pout = 2*nz, psize, chunksize, overlap, head, hdim, nhidden) |> to32
+        @unpack hdim, nhidden, psize, head, hsize, nshards, chunksize, overlap = settings["arch"]["enc2"]
+        TransformerEncoder(; nsignals = n, ntheta = nθ, nlatent = k, pout = 2*nz, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
         #=
         Transformers.Stack(
             Transformers.@nntopo( (X,θ,Z) : (X,θ,Z) => XθZ : XθZ => μq ),
@@ -295,12 +186,12 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
 
     # Decoder
     get!(models, "dec") do
-        @unpack hdim, nhidden, psize, head, chunksize, overlap = settings["arch"]["dec"]
+        @unpack hdim, nhidden, psize, head, hsize, nshards, chunksize, overlap = settings["arch"]["dec"]
         MLPHead = Flux.Chain(
-            MMDLearning.MLP(psize => 2*(nθM + k), 0, hdim, Flux.relu, identity),
+            MMDLearning.MLP(psize => 2*(nθM + k), 0, hdim, Flux.relu, identity)...,
             MMDLearning.CatScale(eltype(θMbd)[θMbd; (-1, 1)], [ones(Int, nθM); k + nθM + k]),
         )
-        TransformerEncoder(MLPHead; nsignals = n, ntheta = 0, nlatent = nz, pout = 0, psize, chunksize, overlap, head, hdim, nhidden) |> to32
+        TransformerEncoder(MLPHead; nsignals = n, ntheta = 0, nlatent = nz, pout = 0, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
         #=
         Transformers.Stack(
             Transformers.@nntopo( (Y,zr) : (Y,zr) => Yzr : Yzr => μx : μx => μx ),
@@ -309,6 +200,15 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
             MMDLearning.CatScale(eltype(θMbd)[θMbd; (-1, 1)], [ones(Int, nθM); k + nθM + k]),
         ) |> to32
         =#
+    end
+
+    # Variational decoder regularizer
+    get!(models, "vae_dec") do
+        @unpack hdim, nhidden = settings["arch"]["vae_dec"]
+        Flux.Chain(
+            MMDLearning.MLP(nz => n, nhidden, hdim, Flux.relu, Flux.softplus)...,
+            X -> X ./ maximum(X; dims = 1),
+        ) |> to32
     end
 
     # Discriminator
@@ -367,15 +267,23 @@ end
 
 function make_optimizers(settings)
     os = Dict{String,Any}()
-    for k in ["mmd", "cvae", "genatr", "discrim"]
-        os[k] = make_optimizer(
+    for name in ["mmd", "cvae", "genatr", "discrim"]
+        os[name] = make_optimizer(
             Flux.ADAM;
-            lr = settings["opt"][k]["lrrel"] / settings["train"]["batchsize"],
-            gclip = settings["opt"][k]["gclip"],
-            wdecay = settings["opt"][k]["wdecay"],
+            lr = initial_learning_rate!(settings, name),
+            gclip = settings["opt"][name]["gclip"],
+            wdecay = settings["opt"][name]["wdecay"],
         )
     end
     return os
+end
+
+function initial_learning_rate!(settings, optname)
+    lr = get!(settings["opt"][optname], "lr", 0.0)
+    lrrel = get!(settings["opt"][optname], "lrrel", 0.0)
+    batchsize = settings["train"]["batchsize"]
+    @assert (lr > 0) ⊻ (lrrel > 0)
+    return lr > 0 ? lr : lrrel / batchsize
 end
 
 ####
