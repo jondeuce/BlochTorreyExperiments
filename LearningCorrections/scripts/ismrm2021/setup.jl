@@ -35,19 +35,21 @@ end
 #### Physics
 ####
 
-function make_physics(settings)
+function make_physics(settings; image_infos = nothing)
     # initialize!(
     #     ToyEPGModel{Float32,true}();
     #     ntrain = settings["data"]["ntrain"]::Int,
     #     ntest = settings["data"]["ntest"]::Int,
     #     nval = settings["data"]["nval"]::Int
     # )
-    imageinfos = [
-        (TE = 8e-3, refcon = 180.0, path = "/home/jdoucette/Documents/code/MWI-Data-Catalog/Example_48echo_8msTE/data-in/ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.nii.gz"),
-        (TE = 7e-3, refcon = 180.0, path = "/home/jdoucette/Documents/code/MWI-Data-Catalog/Example_56echo_7msTE_CPMG/data-in/MW_TRAINING_001_WIP_CPMG56_CS_half_2_1.masked-image.mat"),
-    ]
+    if isnothing(image_infos)
+        image_infos = [
+            (TE = 8e-3, refcon = 180.0, path = "/home/jdoucette/Documents/code/MWI-Data-Catalog/Example_48echo_8msTE/data-in/ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.nii.gz"),
+            (TE = 7e-3, refcon = 180.0, path = "/home/jdoucette/Documents/code/MWI-Data-Catalog/Example_56echo_7msTE_CPMG/data-in/MW_TRAINING_001_WIP_CPMG56_CS_half_2_1.masked-image.mat"),
+        ]
+    end
     phys = EPGModel{Float32,false}(n = 64) #TODO
-    initialize!(phys; imageinfos, seed = 0)
+    initialize!(phys; image_infos, seed = 0)
 end
 
 ####

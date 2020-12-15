@@ -460,9 +460,9 @@ sampleθ(p::EPGModel, n::Union{Int, Symbol};              dataset::Symbol) = err
 sampleX(p::EPGModel, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = error("sampleX not supported for EPGmodel")
 sampleY(p::EPGModel, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = _sample_data(rand(p.images).partitions, n; dataset)
 
-function initialize!(p::EPGModel{T,isfinite}; imageinfos::AbstractVector{<:NamedTuple}, seed::Int) where {T,isfinite}
+function initialize!(p::EPGModel{T,isfinite}; image_infos::AbstractVector{<:NamedTuple}, seed::Int) where {T,isfinite}
     @assert !isfinite #TODO
-    for info in imageinfos
+    for info in image_infos
         image = CPMGImage(info; seed)
         # t2_distributions!(image) #TODO
         push!(p.images, image)

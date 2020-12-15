@@ -6,25 +6,39 @@ function mle_biexp_epg_noise_only(
         X::AbstractVecOrMat,
         Y::AbstractVecOrMat,
         initial_ϵ     = nothing,
-        initial_t     = nothing;
+        initial_s     = nothing;
         batch_size    = 128 * Threads.nthreads(),
         verbose       = true,
         checkpoint    = false,
         dryrun        = false,
-        dryrunsamples = dryrun ? batch_size : nothing,
+        dryrunsamples = nothing,
+        dryrunshuffle = true,
+        savefolder    = nothing,
         opt_alg       = :LD_SLSQP, # Rough algorithm ranking: [:LD_SLSQP, :LD_LBFGS, :LD_CCSAQ, :LD_AUGLAG, :LD_MMA] (Note: :LD_LBFGS fails to converge with tolerance looser than ~ 1e-4)
         opt_args      = Dict{Symbol,Any}(),
     )
+    @assert dryrun || !isnothing(savefolder)
+    matsavetime = MMDLearning.getnow()
+    matsave(filename, data) = DECAES.MAT.matwrite(joinpath(mkpath(savefolder), filename * "-" * matsavetime * ".mat"), data)
 
-    !isnothing(dryrunsamples) && (I = sample(MersenneTwister(0), 1:size(Y,2), dryrunsamples; replace = dryrunsamples > size(Y,2)); X = X[:,I]; Y = Y[:,I])
+    dryrun && !isnothing(dryrunsamples) && let
+        I = dryrunshuffle ?
+            sample(MersenneTwister(0), 1:size(Y,2), dryrunsamples; replace = dryrunsamples > size(Y,2)) :
+            1:min(size(Y,2), dryrunsamples)
+        X = X[:,I]
+        Y = Y[:,I]
+        !isnothing(initial_ϵ) && (initial_ϵ = initial_ϵ[:,I])
+        !isnothing(initial_s) && (initial_s = initial_s[:,I])
+    end
 
     isnothing(initial_ϵ) && (initial_ϵ = sqrt.(mean(abs2, X .- Y; dims = 1)))
-    isnothing(initial_t) && (initial_t = inv.(maximum(MMDLearning._rician_mean_cuda.(X, initial_ϵ); dims = 1))) # ones_similar(X, 1, size(X,2))
+    isnothing(initial_s) && (initial_s = inv.(maximum(MMDLearning._rician_mean_cuda.(X, initial_ϵ); dims = 1))) # ones_similar(X, 1, size(X,2))
+    @assert size(X) == size(Y) && size(initial_ϵ) == size(initial_s) == (1, size(X,2))
 
-    initial_loss  = -sum(MMDLearning._rician_logpdf_cuda.(Y, initial_t .* X, initial_t .* initial_ϵ); dims = 1)
+    initial_loss  = -sum(MMDLearning._rician_logpdf_cuda.(Y, initial_s .* X, initial_s .* initial_ϵ); dims = 1)
     initial_guess = (
-        t = initial_t |> arr64,
         ϵ = initial_ϵ |> arr64,
+        s = initial_s |> arr64,
         ℓ = initial_loss |> arr64,
     )
     X, Y = (X, Y) .|> arr64
@@ -49,8 +63,8 @@ function mle_biexp_epg_noise_only(
     end
 
     results = (
-        logscale   = fill(NaN, size(Y,2)),
         logepsilon = fill(NaN, size(Y,2)),
+        logscale   = fill(NaN, size(Y,2)),
         loss       = fill(NaN, size(Y,2)),
         retcode    = fill(NaN, size(Y,2)),
         numevals   = fill(NaN, size(Y,2)),
@@ -60,12 +74,12 @@ function mle_biexp_epg_noise_only(
     function f(work, x::Vector{Float64})
         δ₀ = sqrt(eps(Float64))
         @inbounds begin
-            t  = exp(x[1])
-            ϵ  = exp(x[2])
-            ϵi = max(t * ϵ, δ₀)
+            ϵ  = exp(x[1])
+            s  = exp(x[2])
+            ϵi = max(s * ϵ, δ₀)
             ℓ  = 0.0
             for i in eachindex(work.Xj)
-                νi = max(t * work.Xj[i], δ₀)
+                νi = max(s * work.Xj[i], δ₀)
                 ℓ -= MMDLearning._rician_logpdf_cuda(work.Yj[i], νi, ϵi) # Rician negative log likelihood
             end
             return ℓ
@@ -83,7 +97,7 @@ function mle_biexp_epg_noise_only(
     #= Benchmarking
     work_spaces[1].Xj .= X[:,1]
     work_spaces[1].Yj .= Y[:,1]
-    work_spaces[1].x0 .= log.([initial_guess.t[1]; initial_guess.ϵ[1]])
+    work_spaces[1].x0 .= log.(vcat(initial_guess.ϵ[1:1,1], initial_guess.s[1:1,1]))
     @info "Calling function..."; l = f( work_spaces[1], work_spaces[1].x0 ); @show l
     @info "Calling gradient..."; g = zeros(2); l = fg!( work_spaces[1], work_spaces[1].x0, g ); @show l, g
     @info "Timing function..."; @btime( $f( $( work_spaces[1] ), $( work_spaces[1].x0 ) ) )
@@ -100,13 +114,13 @@ function mle_biexp_epg_noise_only(
                 work = work_spaces[Threads.threadid()]
                 work.Xj               .= X[:,j]
                 work.Yj               .= Y[:,j]
-                work.x0[1]             = log(initial_guess.t[j])
-                work.x0[2]             = log(initial_guess.ϵ[j])
+                work.x0[1]             = log(initial_guess.ϵ[1,j])
+                work.x0[2]             = log(initial_guess.s[1,j])
                 work.opt.min_objective = (x, g) -> fg!(work, x, g)
 
                 solvetime              = @elapsed (minf, minx, ret) = NLopt.optimize(work.opt, work.x0)
-                results.logscale[j]    = minx[1]
-                results.logepsilon[j]  = minx[2]
+                results.logepsilon[j]  = minx[1]
+                results.logscale[j]    = minx[2]
                 results.loss[j]        = minf
                 results.retcode[j]     = Base.eval(NLopt, ret) |> Int #TODO cleaner way to convert Symbol to enum?
                 results.numevals[j]    = work.opt.numevals
@@ -118,7 +132,7 @@ function mle_biexp_epg_noise_only(
         elapsed_time   = time() - start_time
         remaining_time = (elapsed_time / batchnum) * (length(batches) - batchnum)
         mle_per_second = batch[end] / elapsed_time
-        savetime       = @elapsed !dryrun && checkpoint && DECAES.MAT.matwrite("mle-$data_source-$data_subset-results-checkpoint-$(getnow()).mat", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # checkpoint progress
+        savetime       = @elapsed !dryrun && checkpoint && matsave("mle-$data_source-$data_subset-results-checkpoint", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # checkpoint progress
         verbose && @info "$batchnum / $(length(batches))" *
             " -- batch: $(DECAES.pretty_time(batchtime))" *
             " -- elapsed: $(DECAES.pretty_time(elapsed_time))" *
@@ -129,66 +143,49 @@ function mle_biexp_epg_noise_only(
             " -- loss: $(round(mean(results.loss[1:batch[end]]); digits = 2))"
     end
 
-    !dryrun && DECAES.MAT.matwrite("mle-$data_source-$data_subset-results-final-$(getnow()).mat", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # save final results
+    !dryrun && matsave("mle-$data_source-$data_subset-results-final", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # save final results
     LinearAlgebra.BLAS.set_num_threads(Threads.nthreads()) # Reset BLAS threads
 
     return initial_guess, results
 end
 
-function _test_mle_biexp_epg_noise_only(phys::BiexpEPGModel, derived; nsamples = 10240)
+function _test_mle_biexp_epg_noise_only(phys::BiexpEPGModel, derived; nsamples = 10240, init_epsilon = false)
     θ = sampleθprior(derived["prior"], nsamples)
     Z = sampleZprior(derived["prior"], nsamples)
     X = signal_model(phys, θ)
     X̂ = sampleX̂(derived["ricegen"], X, Z) #TODO
-    init, res = mle_biexp_epg_noise_only(X, X̂;
+
+    initial_ϵ = init_epsilon ?
+        rician_params(derived["ricegen"], X, Z)[2][1:1,:] : # use true answer as initial guess (for sanity check)
+        sqrt.(mean(abs2, X .- X̂; dims = 1))
+    initial_s = inv.(maximum(MMDLearning._rician_mean_cuda.(X, initial_ϵ); dims = 1)) # ones_similar(X, 1, size(X,2))
+
+    init, res = mle_biexp_epg_noise_only(
+        X, X̂, initial_ϵ, initial_s;
         verbose       = true,
         checkpoint    = false,
         dryrun        = true,
         dryrunsamples = nsamples,
+        dryrunshuffle = false,
     )
 
-    let
-        ν, ϵ = rician_params(derived["ricegen"], X, Z)
-        X̂_2 = add_noise_instance(derived["ricegen"], X, ϵ)
-        # vcat(exp.(Z) .* derived["ricegen"].noisescale(X), ϵ) |> display
-        NegLogLikelihood(derived["ricegen"], X̂, ν, ϵ) |> display
-        NegLogLikelihood(derived["ricegen"], X̂, ν, ϵ) |> mean |> display
-        NegLogLikelihood(derived["ricegen"], X̂_2, ν, ϵ) |> display
-        NegLogLikelihood(derived["ricegen"], X̂_2, ν, ϵ) |> mean |> display
-    end
-
-    println("initial log epsilon:")
-    display(log.(init.ϵ))
-    println("final log epsilon:")
-    display(res.logepsilon')
-    println("true log epsilon:")
-    Z1 = Z; # display(Z1) # logϵ = log(exp(Z) * scale(X)) = Z + log(scale(X))
-    Z2 = Z .- log.(derived["ricegen"].noisescale(X)); # display(Z2) # logϵ = log(exp(Z) * scale(X)) = Z + log(scale(X))
-    Z3 = Z .+ log.(derived["ricegen"].noisescale(X)); # display(Z3) # logϵ = log(exp(Z) * scale(X)) = Z + log(scale(X))
-    display(vcat(Z1, Z2, Z3))
-    display(mean(abs.(arr_similar(Z, res.logepsilon') .- vcat(Z1, Z2, Z3)); dims = 2))
+    ϵ_true = Z .+ log.(derived["ricegen"].noisescale(X)); # logϵ = log(exp(Z) * scale(X)) = Z + log(scale(X))
+    println("initial log epsilon:"); display(log.(init.ϵ))
+    println("final log epsilon:"); display(res.logepsilon')
+    println("true log epsilon:"); display(ϵ_true); display(mean(abs, arr_similar(ϵ_true, res.logepsilon') .- ϵ_true))
     println("")
-
-    println("initial log scale:")
-    display(log.(init.t))
-    println("final log scale:")
-    display(res.logscale')
+    println("initial log scale:"); display(log.(init.s))
+    println("final log scale:"); display(res.logscale')
     println("")
-
-    println("initial loss:")
-    display(init.ℓ)
-    println("final loss:")
-    display(res.loss')
+    println("initial loss:"); display(init.ℓ)
+    println("final loss:"); display(res.loss')
     println("")
-
-    println("return codes:")
-    display(res.retcode')
+    println("return codes:"); display(res.retcode')
 
     return @ntuple(θ, Z, X, X̂, init, res)
 end
 
 function _test_noiselevel()
-let
     prior = derived["prior"]
     G = prior.rice
     θ = sampleθprior(prior, 10240)
@@ -212,7 +209,7 @@ let
     let
         ν, ϵ = rician_params(G, X, Z)
         X̂ = add_noise_instance(G, X, ϵ)
-        X̂meta = MetaCPMGSignal(phys, phys.images[1], X̂)
+        X̂meta = MetaCPMGSignal(phys, img, X̂)
         fit_state = fit_cvae(X̂meta; marginalize_Z = false)
         display(vcat(Z, fit_state.Z))
         Z1, Z2, Z3 = fit_state.Z, fit_state.Z .- log.(G.noisescale(X)), fit_state.Z .+ log.(G.noisescale(X))
@@ -233,13 +230,13 @@ let
         display(vcat(fit_state.ℓ))
         display(mean(fit_state.ℓ))
     end
-end;
 end
 
 function mle_biexp_epg(
         phys::BiexpEPGModel,
         models,
-        derived;
+        derived,
+        img::CPMGImage;
         data_source   = :image, # One of :image, :simulated
         data_subset   = :mask,  # One of :mask, :val, :train, :test
         batch_size    = 128 * Threads.nthreads(),
@@ -247,57 +244,101 @@ function mle_biexp_epg(
         verbose       = true,
         checkpoint    = false,
         dryrun        = false,
-        dryrunsamples = dryrun ? batch_size : nothing,
+        dryrunsamples = batch_size,
+        dryrunshuffle = true,
+        savefolder    = nothing,
         opt_alg       = :LD_SLSQP, # Rough algorithm ranking: [:LD_SLSQP, :LD_LBFGS, :LD_CCSAQ, :LD_AUGLAG, :LD_MMA] (Note: :LD_LBFGS fails to converge with tolerance looser than ~ 1e-4)
         opt_args      = Dict{Symbol,Any}(),
     )
     @assert data_source ∈ (:image, :simulated)
     @assert data_subset ∈ (:mask, :val, :train, :test)
+    @assert dryrun || !isnothing(savefolder)
+    matsavetime = MMDLearning.getnow()
+    matsave(filename, data) = DECAES.MAT.matwrite(joinpath(mkpath(savefolder), filename * "-" * matsavetime * ".mat"), data)
 
     # MLE for whole image of simulated data
-    Y, Yc = let
-        image_ind  = phys.images[1].indices[data_subset]
-        image_data = phys.images[1].data[image_ind,:] |> to32 |> permutedims
+    Y, Ymeta = let
+        image_ind  = img.indices[data_subset]
+        image_data = img.data[image_ind,:] |> to32 |> permutedims
         if data_source === :image
-            !dryrun && DECAES.MAT.matwrite("mle-$data_source-$data_subset-data-$(getnow()).mat", Dict{String,Any}("Y" => arr64(image_data)))
-            arr64(image_data), image_data
+            !dryrun && matsave("mle-$data_source-$data_subset-data", Dict{String,Any}("Y" => arr64(image_data)))
+            arr64(image_data), MetaCPMGSignal(phys, img, image_data)
         else # data_source === :simulated
             X, θ, Z = sampleXθZ(derived["cvae"], derived["prior"], image_data; posterior_θ = true, posterior_Z = true)
             X̂       = sampleX̂(derived["ricegen"], X, Z)
-            !dryrun && DECAES.MAT.matwrite("mle-$data_source-$data_subset-data-$(getnow()).mat", Dict{String,Any}("X" => arr64(X), "theta" => arr64(θ), "Z" => arr64(Z), "Xhat" => arr64(X̂), "Y" => arr64(image_data)))
-            arr64(X̂), X̂
+            !dryrun && matsave("mle-$data_source-$data_subset-data", Dict{String,Any}("X" => arr64(X), "theta" => arr64(θ), "Z" => arr64(Z), "Xhat" => arr64(X̂), "Y" => arr64(image_data)))
+            arr64(X̂), MetaCPMGSignal(phys, img, X̂)
         end
     end
-    !isnothing(dryrunsamples) && (I = sample(MersenneTwister(0), 1:size(Y,2), dryrunsamples; replace = dryrunsamples > size(Y,2)); Y = Y[:,I]; Yc = Yc[:,I])
 
-    initial_guess = posterior_state(
-        derived["cvae"],
-        derived["prior"],
-        Yc;
-        miniter = 1,
-        maxiter = initial_iter,
-        alpha   = 0.0,
-        verbose = verbose,
-        mode    = :maxlikelihood,
-    )
-    initial_guess = map(arr64, initial_guess)
-
-    logϵlo, logϵhi = log.(extrema(vec(initial_guess.ϵ))) .|> Float64
-    initial_logϵ   = log.(vec(mean(initial_guess.ϵ; dims = 1))) |> arr64
-    lower_bounds   = [θlower(phys); logϵlo] |> arr64
-    upper_bounds   = [θupper(phys); logϵhi] |> arr64
-
-    #= Test random initial guess
-    if initial_iter == 0
-        initial_guess.θ .= sampleθprior(phys, size(Y,2)) |> arr64
-        initial_logϵ    .= logϵlo .+ (logϵhi - logϵlo) .* rand(size(Y,2)) |> arr64
+    dryrun && !isnothing(dryrunsamples) && let
+        I = dryrunshuffle ?
+            sample(MersenneTwister(0), 1:size(Y,2), dryrunsamples; replace = dryrunsamples > size(Y,2)) :
+            1:min(size(Y,2), dryrunsamples)
+        Y = Y[:,I]
+        Ymeta = MetaCPMGSignal(phys, img, signal(Ymeta)[:,I])
     end
-    =#
+
+    initial_guess = mapreduce(
+            (x,y) -> map(hcat, x, y),
+            enumerate(Iterators.partition(1:size(Y,2), batch_size)),
+        ) do (batchnum, batch)
+        posterior_state(
+            derived["cvae"],
+            derived["prior"],
+            Ymeta[:,batch];
+            miniter = 1,
+            maxiter = initial_iter,
+            alpha   = 0.0,
+            verbose = verbose,
+            mode    = :maxlikelihood,
+        )
+    end
+    initial_logϵ = log.(mean(initial_guess.ϵ; dims = 1))
+    initial_logs = .-log.(maximum(MMDLearning._rician_mean_cuda.(_signal_model(phys, θmodel(phys, initial_guess.θ)...), exp.(initial_logϵ)); dims = 1))
+
+    initial_guess = map(arr64, initial_guess)
+    initial_logϵ, initial_logs = map(arr64, (initial_logϵ, initial_logs))
+
+    lower_bounds  = [θmarginalized(phys, θlower(phys)); -Inf; -Inf] |> arr64
+    upper_bounds  = [θmarginalized(phys, θupper(phys)); +Inf; +Inf] |> arr64
+
+    function θ_to_x(work, θ::Union{<:AbstractVector{Float64},<:NTuple{<:Any,Float64}})
+        @inbounds begin
+            @unpack logτ0, logτ1, logτ0′, logτ1′ = work
+            α, β, η, δ1, δ2 = θ[1], θ[2], θ[3], θ[4], θ[5]
+            t   = 1e-12
+            δ1′ = clamp(logτ0 + (logτ1 - logτ0) * δ1, logτ0′ + t, logτ1′ - t)
+            δ2′ = clamp(logτ0 + (logτ1 - logτ0) * (δ1 + δ2 * (1 - δ1)), logτ0′ + t, logτ1′ - t)
+            z1  = (δ1′ - logτ0′) / (logτ1′ - logτ0′)
+            z2  = ((δ2′ - logτ0′) / (logτ1′ - logτ0′) - z1) / (1 - z1)
+            return α, β, η, z1, z2
+        end
+    end
+
+    function x_to_θ(work, x::Union{<:AbstractVector{Float64},<:NTuple{<:Any,Float64}})
+        @inbounds begin
+            @unpack logτ0, logτ1, logτ0′, logτ1′, δ0 = work
+            α, β, η, z1, z2 = x[1], x[2], x[3], x[4], x[5]
+            δ1 = ((logτ0′ - logτ0) + (logτ1′ - logτ0′) * z1) / (logτ1 - logτ0)
+            δ2 = (((logτ0′ - logτ0) + (logτ1′ - logτ0′) * (z1 + z2 * (1 - z1))) / (logτ1 - logτ0) - δ1) / (1 - δ1)
+            return α, β, η, δ1, δ2, δ0
+        end
+    end
 
     work_spaces = map(1:Threads.nthreads()) do _
+        @unpack T1bd, TEbd, T2bd = phys
+        logτ1lo, logτ1hi = log(T1bd[1] / TEbd[2]), log(T1bd[2] / TEbd[1])
+        logτ2lo, logτ2hi = log(T2bd[1] / TEbd[2]), log(T2bd[2] / TEbd[1])
+        TE, T1 = echotime(img), T1time(img)
         (
-            Y   = zeros(nsignal(phys)),
-            x0  = zeros(ntheta(phys) + 1),
+            Y   = zeros(nsignal(img)) |> arr64,
+            x0  = zeros(ntheta(phys) + 1) |> arr64,
+            logτ0  = logτ2lo |> Float64,
+            logτ1  = logτ2hi |> Float64,
+            logτ0′ = log(T2bd[1] / TE) |> Float64,
+            logτ1′ = log(T2bd[2] / TE) |> Float64,
+            δ0  = (log(T1 / TE) - logτ1lo) / (logτ1hi - logτ1lo) |> Float64,
             epg = BiexpEPGModelWork(phys),
             opt = let
                 opt = NLopt.Opt(opt_alg, ntheta(phys) + 1)
@@ -318,6 +359,7 @@ function mle_biexp_epg(
     results = (
         theta      = fill(NaN, ntheta(phys), size(Y,2)),
         logepsilon = fill(NaN, size(Y,2)),
+        logscale   = fill(NaN, size(Y,2)),
         loss       = fill(NaN, size(Y,2)),
         retcode    = fill(NaN, size(Y,2)),
         numevals   = fill(NaN, size(Y,2)),
@@ -326,19 +368,16 @@ function mle_biexp_epg(
 
     function f(work, x::Vector{Float64})
         @inbounds begin
-            nθ = ntheta(phys)
-            θ  = ntuple(i -> x[i], nθ)
-            ϵ  = exp(x[nθ+1])
-            ψ  = θmodel(phys, θ...)
+            l  = sqrt(eps(Float64))
+            θ  = x_to_θ(work, x) # θ = α, β, η, δ1, δ2, δ0
+            ϵ  = exp(x[end-1])
+            s  = exp(x[end])
+            ψ  = θmodel(phys, θ...) # ψ = alpha, refcon, T2short, T2long, Ashort, Along, T1, TE
             X  = _signal_model_f64(phys, work.epg, ψ)
-            μX = -Inf
-            for i in eachindex(X)
-                μX = max(μX, MMDLearning._rician_mean_cuda(X[i], ϵ)) # Signal normalization factor
-            end
             ℓ  = 0.0
-            ϵ  = ϵ / μX # Hoist outside loop
-            for i in eachindex(X)
-                ℓ -= MMDLearning._rician_logpdf_cuda(work.Y[i], X[i] / μX, ϵ) # Rician negative log likelihood
+            for i in eachindex(work.Y)
+                νi = max(s * X[i], l)
+                ℓ -= MMDLearning._rician_logpdf_cuda(work.Y[i], νi, ϵ) # Rician negative log likelihood
             end
             return ℓ
         end
@@ -367,13 +406,17 @@ function mle_biexp_epg(
             Threads.@spawn @inbounds begin
                 work = work_spaces[Threads.threadid()]
                 work.Y                .= Y[:,j]
-                work.x0[1:end-1]      .= initial_guess.θ[:,j]
-                work.x0[end]           = initial_logϵ[j]
+                work.x0[1:end-2]      .= θ_to_x(work, view(initial_guess.θ, :, j))
+                work.x0[end-1]         = initial_logϵ[j]
+                work.x0[end]           = initial_logs[j]
                 work.opt.min_objective = (x, g) -> fg!(work, x, g)
 
+                initial_guess.ℓ[j] = f(work, work.x0) #TODO
+
                 solvetime              = @elapsed (minf, minx, ret) = NLopt.optimize(work.opt, work.x0)
-                results.theta[:,j]    .= minx[1:end-1]
-                results.logepsilon[j]     = minx[end]
+                results.theta[:,j]    .= x_to_θ(work, minx)
+                results.logepsilon[j]  = minx[end-1]
+                results.logscale[j]    = minx[end]
                 results.loss[j]        = minf
                 results.retcode[j]     = Base.eval(NLopt, ret) |> Int #TODO cleaner way to convert Symbol to enum?
                 results.numevals[j]    = work.opt.numevals
@@ -385,7 +428,7 @@ function mle_biexp_epg(
         elapsed_time   = time() - start_time
         remaining_time = (elapsed_time / batchnum) * (length(batches) - batchnum)
         mle_per_second = batch[end] / elapsed_time
-        savetime       = @elapsed !dryrun && checkpoint && DECAES.MAT.matwrite("mle-$data_source-$data_subset-results-checkpoint-$(getnow()).mat", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # checkpoint progress
+        savetime       = @elapsed !dryrun && checkpoint && matsave("mle-$data_source-$data_subset-results-checkpoint", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # checkpoint progress
         verbose && @info "$batchnum / $(length(batches))" *
             " -- batch: $(DECAES.pretty_time(batchtime))" *
             " -- elapsed: $(DECAES.pretty_time(elapsed_time))" *
@@ -396,10 +439,36 @@ function mle_biexp_epg(
             " -- loss: $(round(mean(results.loss[1:batch[end]]); digits = 2))"
     end
 
-    !dryrun && DECAES.MAT.matwrite("mle-$data_source-$data_subset-results-final-$(getnow()).mat", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # save final results
+    !dryrun && matsave("mle-$data_source-$data_subset-results-final", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # save final results
     LinearAlgebra.BLAS.set_num_threads(Threads.nthreads()) # Reset BLAS threads
 
     return initial_guess, results
+end
+
+function _test_mle_biexp_epg(phys::BiexpEPGModel, derived, img::CPMGImage; nsamples = 10240)
+    init, res = mle_biexp_epg(
+        phys,
+        nothing,
+        derived,
+        img;
+        verbose       = true,
+        checkpoint    = false,
+        dryrun        = true,
+        dryrunsamples = nsamples,
+        dryrunshuffle = false,
+    )
+
+    println("initial log epsilon:"); display(log.(init.ϵ[1:1,:]))
+    println("final log epsilon:"); display(res.logepsilon')
+    println("")
+    println("final log scale:"); display(res.logscale')
+    println("")
+    println("initial loss:"); display(init.ℓ)
+    println("final loss:"); display(res.loss')
+    println("")
+    println("return codes:"); display(res.retcode')
+
+    return init, res
 end
 
 ####
@@ -409,13 +478,14 @@ end
 function eval_mri_model(
         phys::BiexpEPGModel,
         models,
-        derived;
+        derived,
+        img::CPMGImage;
         zslices = 24:24,
         naverage = 10,
-        savefolder = ".",
+        savefolder = nothing,
         savetypes = [".png"],
-        mle_image_path = ".",
-        mle_sim_path = ".",
+        mle_image_path = nothing,
+        mle_sim_path = nothing,
         force_decaes = false,
         force_histograms = false,
         posterior_mode = :maxlikelihood,
@@ -423,24 +493,26 @@ function eval_mri_model(
         dataset = :val, # :val or (for final model comparison) :test
     )
 
-    inverter(Ysamples; kwargs...) = posterior_state(derived["cvae"], derived["prior"], Ysamples; verbose = !quiet, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
+    inverter(Ymeta; kwargs...) = mapreduce((x,y) -> map(hcat, x, y), enumerate(Iterators.partition(1:size(Y,2), batch_size))) do (batchnum, batch)
+        posterior_state(derived["cvae"], derived["prior"], Ymeta[:,batch]; verbose = !quiet, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
+    end
     saveplot(p, name, folder = savefolder) = map(suf -> savefig(p, joinpath(mkpath(folder), name * suf)), savetypes)
 
-    flat_test(x) = flat_indices(x, phys.images[1].indices[dataset])
-    flat_train(x) = flat_indices(x, phys.images[1].indices[:train])
+    flat_test(x) = flat_indices(x, img.indices[dataset])
+    flat_train(x) = flat_indices(x, img.indices[:train])
     flat_indices(x, indices) =
         x isa AbstractMatrix ? (@assert(size(x,2) == length(indices)); return x) : # matrix with length(indices) columns
         x isa AbstractTensor4D ?
             (size(x)[1:3] == (length(indices), 1, 1)) ? permutedims(reshape(x, :, size(x,4))) : # flattened 4D array with first three dimensions (length(indices), 1, 1)
-            (size(x)[1:3] == size(phys.images[1].data)[1:3]) ? permutedims(x[indices,:]) : # 4D array with first three dimensions equal to image size
+            (size(x)[1:3] == size(img.data)[1:3]) ? permutedims(x[indices,:]) : # 4D array with first three dimensions equal to image size
             error("4D array has wrong shape") :
         error("x must be an $AbstractMatrix or an $AbstractTensor4D")
 
-    flat_image_to_flat_test(x) = flat_image_to_flat_indices(x, phys.images[1].indices[dataset])
-    flat_image_to_flat_train(x) = flat_image_to_flat_indices(x, phys.images[1].indices[:train])
+    flat_image_to_flat_test(x) = flat_image_to_flat_indices(x, img.indices[dataset])
+    flat_image_to_flat_train(x) = flat_image_to_flat_indices(x, img.indices[:train])
     function flat_image_to_flat_indices(x, indices)
-        _x = similar(x, size(x,1), size(phys.images[1].data)[1:3]...)
-        _x[:, phys.images[1].indices[:mask]] = x
+        _x = similar(x, size(x,1), size(img.data)[1:3]...)
+        _x[:, img.indices[:mask]] = x
         return _x[:, indices]
     end
 
@@ -513,7 +585,7 @@ function eval_mri_model(
         @info "Plotting histogram distances compared to $dataset data..." # Compare histogram distances for each echo and across all-signal for test data and simulated data
         phist = @time plot(
             map(collect(pairs((; ChiSquared, KLDivergence, CityBlock, Euclidean)))) do (distname, dist)
-                echoes = 0:size(phys.images[1].data,4)
+                echoes = 0:size(img.data,4)
                 Xplots = [X for (k,X) in Xs if k !== :Y_test]
                 logdists = mapreduce(hcat, Xplots) do X
                     (i -> log10(dist(X[:hist][i], Xs[:Y_test][:hist][i]))).(echoes)
@@ -654,9 +726,9 @@ function eval_mri_model(
     end
 
     # Heatmaps
-    Y = phys.images[1].data[:,:,zslices,:] # (nx, ny, nslice, nTE)
+    Y = img.data[:,:,zslices,:] # (nx, ny, nslice, nTE)
     Islices = findall(!isnan, Y[..,1]) # entries within Y mask
-    Imaskslices = filter(I -> I[3] ∈ zslices, phys.images[1].indices[:mask])
+    Imaskslices = filter(I -> I[3] ∈ zslices, img.indices[:mask])
     makemaps(x) = (out = fill(NaN, size(Y)[1:3]); out[Islices] .= Flux.cpu(x); return permutedims(out, (2,1,3)))
 
     θcvae = infer_θderived(permutedims(Y[Islices,:]) |> to32)
