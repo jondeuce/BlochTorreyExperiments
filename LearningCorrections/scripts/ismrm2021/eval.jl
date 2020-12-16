@@ -256,32 +256,9 @@ function mle_biexp_epg(
     matsavetime = MMDLearning.getnow()
     matsave(filename, data) = DECAES.MAT.matwrite(joinpath(mkpath(savefolder), filename * "-" * matsavetime * ".mat"), data)
 
-    # MLE for whole image of simulated data
-    Y, Ymeta = let
-        image_ind  = img.indices[data_subset]
-        image_data = img.data[image_ind,:] |> to32 |> permutedims
-        if data_source === :image
-            !dryrun && matsave("mle-$data_source-$data_subset-data", Dict{String,Any}("Y" => arr64(image_data)))
-            arr64(image_data), MetaCPMGSignal(phys, img, image_data)
-        else # data_source === :simulated
-            X, θ, Z = sampleXθZ(derived["cvae"], derived["prior"], image_data; posterior_θ = true, posterior_Z = true)
-            X̂       = sampleX̂(derived["ricegen"], X, Z)
-            !dryrun && matsave("mle-$data_source-$data_subset-data", Dict{String,Any}("X" => arr64(X), "theta" => arr64(θ), "Z" => arr64(Z), "Xhat" => arr64(X̂), "Y" => arr64(image_data)))
-            arr64(X̂), MetaCPMGSignal(phys, img, X̂)
-        end
-    end
-
-    dryrun && !isnothing(dryrunsamples) && let
-        I = dryrunshuffle ?
-            sample(MersenneTwister(0), 1:size(Y,2), dryrunsamples; replace = dryrunsamples > size(Y,2)) :
-            1:min(size(Y,2), dryrunsamples)
-        Y = Y[:,I]
-        Ymeta = MetaCPMGSignal(phys, img, signal(Ymeta)[:,I])
-    end
-
-    initial_guess = mapreduce(
+    batched_posterior_state(Ymeta) = mapreduce(
             (x,y) -> map(hcat, x, y),
-            enumerate(Iterators.partition(1:size(Y,2), batch_size)),
+            enumerate(Iterators.partition(1:size(signal(Ymeta),2), batch_size)),
         ) do (batchnum, batch)
         posterior_state(
             derived["cvae"],
@@ -290,15 +267,37 @@ function mle_biexp_epg(
             miniter = 1,
             maxiter = initial_iter,
             alpha   = 0.0,
-            verbose = verbose,
+            verbose = false,
             mode    = :maxlikelihood,
         )
     end
-    initial_logϵ = log.(mean(initial_guess.ϵ; dims = 1))
-    initial_logs = .-log.(maximum(MMDLearning._rician_mean_cuda.(_signal_model(phys, θmodel(phys, initial_guess.θ)...), exp.(initial_logϵ)); dims = 1))
 
+    # MLE for whole image of simulated data
+    Y, Ymeta = let
+        image_indices = img.indices[data_subset]
+        if dryrun && !isnothing(dryrunsamples)
+            I = dryrunshuffle ?
+                sample(MersenneTwister(0), 1:length(image_indices), dryrunsamples; replace = dryrunsamples > length(image_indices)) :
+                1:min(length(image_indices), dryrunsamples)
+            image_indices = image_indices[I]
+        end
+        image_data = img.data[image_indices, :] |> to32 |> permutedims
+
+        if data_source === :image
+            !dryrun && matsave("mle-$data_source-$data_subset-data", Dict{String,Any}("Y" => arr64(image_data)))
+            arr64(image_data), MetaCPMGSignal(phys, img, image_data)
+        else # data_source === :simulated
+            mock_image_state = batched_posterior_state(MetaCPMGSignal(phys, img, image_data))
+            mock_image_data  = sampleX̂(derived["ricegen"], mock_image_state.X, mock_image_state.Z)
+            !dryrun && matsave("mle-$data_source-$data_subset-data", Dict{String,Any}("X" => arr64(mock_image_state.X), "theta" => arr64(mock_image_state.θ), "Z" => arr64(mock_image_state.Z), "Xhat" => arr64(mock_image_data), "Y" => arr64(image_data)))
+            arr64(mock_image_data), MetaCPMGSignal(phys, img, mock_image_data)
+        end
+    end
+
+    initial_guess = batched_posterior_state(Ymeta)
+    initial_guess = setindex!!(initial_guess, exp.(mean(log.(initial_guess.ϵ); dims = 1)), :ϵ)
+    initial_guess = setindex!!(initial_guess, inv.(maximum(MMDLearning._rician_mean_cuda.(initial_guess.X, initial_guess.ϵ); dims = 1)), :s)
     initial_guess = map(arr64, initial_guess)
-    initial_logϵ, initial_logs = map(arr64, (initial_logϵ, initial_logs))
 
     lower_bounds  = [θmarginalized(phys, θlower(phys)); -Inf; -Inf] |> arr64
     upper_bounds  = [θmarginalized(phys, θupper(phys)); +Inf; +Inf] |> arr64
@@ -327,21 +326,18 @@ function mle_biexp_epg(
     end
 
     work_spaces = map(1:Threads.nthreads()) do _
-        @unpack T1bd, TEbd, T2bd = phys
-        logτ1lo, logτ1hi = log(T1bd[1] / TEbd[2]), log(T1bd[2] / TEbd[1])
-        logτ2lo, logτ2hi = log(T2bd[1] / TEbd[2]), log(T2bd[2] / TEbd[1])
-        TE, T1 = echotime(img), T1time(img)
+        @unpack TEbd, T2bd = phys
         (
             Y   = zeros(nsignal(img)) |> arr64,
-            x0  = zeros(ntheta(phys) + 1) |> arr64,
-            logτ0  = logτ2lo |> Float64,
-            logτ1  = logτ2hi |> Float64,
-            logτ0′ = log(T2bd[1] / TE) |> Float64,
-            logτ1′ = log(T2bd[2] / TE) |> Float64,
-            δ0  = (log(T1 / TE) - logτ1lo) / (logτ1hi - logτ1lo) |> Float64,
+            x0  = zeros(nmarginalized(phys) + 2) |> arr64,
+            logτ0  = log(T2bd[1] / TEbd[2]) |> Float64,
+            logτ1  = log(T2bd[2] / TEbd[1]) |> Float64,
+            logτ0′ = log(T2bd[1] / echotime(img)) |> Float64,
+            logτ1′ = log(T2bd[2] / echotime(img)) |> Float64,
+            δ0  = initial_guess.θ[end,1] |> Float64,
             epg = BiexpEPGModelWork(phys),
             opt = let
-                opt = NLopt.Opt(opt_alg, ntheta(phys) + 1)
+                opt = NLopt.Opt(opt_alg, nmarginalized(phys) + 2)
                 opt.lower_bounds  = lower_bounds
                 opt.upper_bounds  = upper_bounds
                 opt.xtol_rel      = 1e-8
@@ -374,10 +370,16 @@ function mle_biexp_epg(
             s  = exp(x[end])
             ψ  = θmodel(phys, θ...) # ψ = alpha, refcon, T2short, T2long, Ashort, Along, T1, TE
             X  = _signal_model_f64(phys, work.epg, ψ)
+            sX = 0.0
+            @simd for i in eachindex(X)
+                sX = max(X[i], sX)
+            end
+            sX = s / sX # normalize X to maximum 1 and scale by s
+            ϵi = max(s * ϵ, l) # hoist outside loop
             ℓ  = 0.0
-            for i in eachindex(work.Y)
-                νi = max(s * X[i], l)
-                ℓ -= MMDLearning._rician_logpdf_cuda(work.Y[i], νi, ϵ) # Rician negative log likelihood
+            @simd for i in eachindex(work.Y)
+                νi = max(sX * X[i], l)
+                ℓ -= MMDLearning._rician_logpdf_cuda(work.Y[i], νi, ϵi) # Rician negative log likelihood
             end
             return ℓ
         end
@@ -407,11 +409,11 @@ function mle_biexp_epg(
                 work = work_spaces[Threads.threadid()]
                 work.Y                .= Y[:,j]
                 work.x0[1:end-2]      .= θ_to_x(work, view(initial_guess.θ, :, j))
-                work.x0[end-1]         = initial_logϵ[j]
-                work.x0[end]           = initial_logs[j]
+                work.x0[end-1]         = log(initial_guess.ϵ[j])
+                work.x0[end]           = log(initial_guess.s[j])
                 work.opt.min_objective = (x, g) -> fg!(work, x, g)
 
-                initial_guess.ℓ[j] = f(work, work.x0) #TODO
+                initial_guess.ℓ[j] = f(work, work.x0) #TODO: can save a small amount of time by deleting this, but probably worth it, since previous ℓ[j] is an approximation from posterior_state
 
                 solvetime              = @elapsed (minf, minx, ret) = NLopt.optimize(work.opt, work.x0)
                 results.theta[:,j]    .= x_to_θ(work, minx)
@@ -445,7 +447,7 @@ function mle_biexp_epg(
     return initial_guess, results
 end
 
-function _test_mle_biexp_epg(phys::BiexpEPGModel, derived, img::CPMGImage; nsamples = 10240)
+function _test_mle_biexp_epg(phys::BiexpEPGModel, derived, img::CPMGImage; dryrunsamples = 10240, kwargs...)
     init, res = mle_biexp_epg(
         phys,
         nothing,
@@ -454,17 +456,25 @@ function _test_mle_biexp_epg(phys::BiexpEPGModel, derived, img::CPMGImage; nsamp
         verbose       = true,
         checkpoint    = false,
         dryrun        = true,
-        dryrunsamples = nsamples,
+        dryrunsamples = dryrunsamples,
         dryrunshuffle = false,
+        kwargs...,
     )
 
+    println("initial theta:"); display(init.θ)
+    println("final theta:"); display(res.theta)
+    println("mean abs diff:"); display(mean(abs, init.θ .- res.theta; dims = 2))
     println("initial log epsilon:"); display(log.(init.ϵ[1:1,:]))
     println("final log epsilon:"); display(res.logepsilon')
+    println("mean abs diff:"); display(mean(abs, log.(init.ϵ[1:1,:]) .- res.logepsilon'))
     println("")
+    println("initial log scale:"); display(log.(init.s[1:1,:]))
     println("final log scale:"); display(res.logscale')
+    println("mean abs diff:"); display(mean(abs, log.(init.s[1:1,:]) .- res.logscale'))
     println("")
     println("initial loss:"); display(init.ℓ)
     println("final loss:"); display(res.loss')
+    println("mean abs diff:"); display(mean(abs, init.ℓ .- res.loss'))
     println("")
     println("return codes:"); display(res.retcode')
 
@@ -486,6 +496,7 @@ function eval_mri_model(
         savetypes = [".png"],
         mle_image_path = nothing,
         mle_sim_path = nothing,
+        batch_size = nothing,
         force_decaes = false,
         force_histograms = false,
         posterior_mode = :maxlikelihood,
@@ -493,8 +504,8 @@ function eval_mri_model(
         dataset = :val, # :val or (for final model comparison) :test
     )
 
-    inverter(Ymeta; kwargs...) = mapreduce((x,y) -> map(hcat, x, y), enumerate(Iterators.partition(1:size(Y,2), batch_size))) do (batchnum, batch)
-        posterior_state(derived["cvae"], derived["prior"], Ymeta[:,batch]; verbose = !quiet, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
+    inverter(Y; kwargs...) = mapreduce((x,y) -> map(hcat, x, y), enumerate(Iterators.partition(1:size(Y,2), batch_size))) do (batchnum, batch)
+        posterior_state(derived["cvae"], derived["prior"], MetaCPMGSignal(phys, img, Y[:,batch]); verbose = !quiet, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
     end
     saveplot(p, name, folder = savefolder) = map(suf -> savefig(p, joinpath(mkpath(folder), name * suf)), savetypes)
 
@@ -517,26 +528,26 @@ function eval_mri_model(
     end
 
     # Compute decaes on the image data if necessary
-    if !haskey(phys.meta, :decaes)
+    if !haskey(img.meta, :decaes)
         @info "Recomputing T2 distribution for image data..."
-        @time t2_distributions!(phys)
+        @time t2_distributions!(img)
     end
 
     mle_image_state = let
-        mle_image_results = Glob.readdir(Glob.glob"mle-image-mask-results-final-*.mat", mle_image_path) |> last |> DECAES.MAT.matread
+        mle_image_results = Glob.readdir(Glob.glob"mle-image-mask-results-final-*.mat", mle_image_path) |> only |> DECAES.MAT.matread
         θ = mle_image_results["theta"] |> to32
         ϵ = reshape(exp.(mle_image_results["logepsilon"] |> to32), 1, :)
         ℓ = reshape(mle_image_results["loss"] |> to32, 1, :) # negative log-likelihood loss
-        X = signal_model(phys, θ)
+        X = signal_model(phys, θ)[1:nsignal(img), :]
         ν, δ, Z = X, nothing, nothing
         Y = add_noise_instance(phys, X, ϵ)
         (; Y, θ, Z, X, δ, ϵ, ν, ℓ)
     end
 
     let
-        Y_test = phys.Y[dataset] |> to32
-        Y_train = phys.Y[:train] |> to32
-        Y_train_edges = Dict([k => v.edges[1] for (k,v) in phys.meta[:histograms][:train]])
+        Y_test = img.partitions[dataset] |> to32
+        Y_train = img.partitions[:train] |> to32
+        Y_train_edges = Dict([k => v.edges[1] for (k,v) in img.meta[:histograms][:train]])
         cvae_image_state = inverter(Y_test; maxiter = 1, mode = posterior_mode)
 
         # Compute decaes on the image data if necessary
@@ -545,7 +556,7 @@ function eval_mri_model(
         Xs[:Y_train]   = Dict(:label => L"Y_{TRAIN}",      :colour => :black,  :data => Y_train)
         Xs[:Yhat_mle]  = Dict(:label => L"\hat{Y}_{MLE}",  :colour => :red,    :data => flat_image_to_flat_test(mle_image_state.Y))
         Xs[:Yhat_cvae] = Dict(:label => L"\hat{Y}_{CVAE}", :colour => :blue,   :data => add_noise_instance(derived["ricegen"], cvae_image_state.ν, cvae_image_state.ϵ))
-        Xs[:X_decaes]  = Dict(:label => L"X_{DECAES}",     :colour => :orange, :data => flat_test(phys.meta[:decaes][:t2maps][:Y]["decaycurve"]))
+        Xs[:X_decaes]  = Dict(:label => L"X_{DECAES}",     :colour => :orange, :data => flat_test(img.meta[:decaes][:t2maps][:Y]["decaycurve"]))
         Xs[:X_mle]     = Dict(:label => L"X_{MLE}",        :colour => :green,  :data => flat_image_to_flat_test(mle_image_state.ν))
         Xs[:X_cvae]    = Dict(:label => L"X_{CVAE}",       :colour => :purple, :data => cvae_image_state.ν)
 
@@ -556,35 +567,35 @@ function eval_mri_model(
         )
 
         for (key, X) in Xs
-            get!(phys.meta[:histograms], :inference, Dict{Symbol, Any}())
+            get!(img.meta[:histograms], :inference, Dict{Symbol, Any}())
             X[:hist] =
-                key === :Y_test ? phys.meta[:histograms][dataset] :
-                key === :Y_train ? phys.meta[:histograms][:train] :
-                (force_histograms || !haskey(phys.meta[:histograms][:inference], key)) ?
+                key === :Y_test ? img.meta[:histograms][dataset] :
+                key === :Y_train ? img.meta[:histograms][:train] :
+                (force_histograms || !haskey(img.meta[:histograms][:inference], key)) ?
                     let
                         @info "Computing signal histogram for $(key) data..."
                         @time signal_histograms(Flux.cpu(X[:data]); edges = Y_train_edges, nbins = nothing)
                     end :
-                    phys.meta[:histograms][:inference][key]
+                    img.meta[:histograms][:inference][key]
 
             X[:t2dist] =
-                key === :Y_test ? flat_test(phys.meta[:decaes][:t2dist][:Y]) :
-                key === :Y_train ? flat_train(phys.meta[:decaes][:t2dist][:Y]) :
-                key === :X_decaes ? flat_test(phys.meta[:decaes][:t2dist][:Y]) : # decaes signal gives identical t2 distbn by definition, as it consists purely of EPG basis functions
+                key === :Y_test ? flat_test(img.meta[:decaes][:t2dist][:Y]) :
+                key === :Y_train ? flat_train(img.meta[:decaes][:t2dist][:Y]) :
+                key === :X_decaes ? flat_test(img.meta[:decaes][:t2dist][:Y]) : # decaes signal gives identical t2 distbn by definition, as it consists purely of EPG basis functions
                 let
-                    if (force_decaes || !haskey(phys.meta[:decaes][:t2maps], key))
+                    if (force_decaes || !haskey(img.meta[:decaes][:t2maps], key))
                         @info "Computing T2 distribution for $(key) data..."
-                        @time t2_distributions!(phys, key => convert(Matrix{Float64}, X[:data]))
+                        @time t2_distributions!(img, key => convert(Matrix{Float64}, X[:data]))
                     end
-                    flat_test(phys.meta[:decaes][:t2dist][key])
+                    flat_test(img.meta[:decaes][:t2dist][key])
                 end
 
-            phys.meta[:histograms][:inference][key] = X[:hist] # update phys metadata
+            img.meta[:histograms][:inference][key] = X[:hist] # update img metadata
         end
 
         @info "Plotting histogram distances compared to $dataset data..." # Compare histogram distances for each echo and across all-signal for test data and simulated data
         phist = @time plot(
-            map(collect(pairs((; ChiSquared, KLDivergence, CityBlock, Euclidean)))) do (distname, dist)
+            map(collect(pairs((; MMDLearning.ChiSquared, MMDLearning.KLDivergence, MMDLearning.CityBlock, MMDLearning.Euclidean)))) do (distname, dist)
                 echoes = 0:size(img.data,4)
                 Xplots = [X for (k,X) in Xs if k !== :Y_test]
                 logdists = mapreduce(hcat, Xplots) do X
@@ -607,7 +618,7 @@ function eval_mri_model(
             # Xplots = [Xs[k] for k ∈ (:Y_test, :Y_train, :Yhat_mle, :Yhat_cvae)] #TODO
             T2dists = mapreduce(X -> mean(X[:t2dist]; dims = 2), hcat, Xplots)
             plot(
-                1000 .* phys.meta[:decaes][:t2maps][:Y]["t2times"], T2dists;
+                1000 .* img.meta[:decaes][:t2maps][:Y]["t2times"], T2dists;
                 label = permutedims(getindex.(Xplots, :label)),
                 line = (2, permutedims(getindex.(Xplots, :colour))),
                 xscale = :log10,
@@ -626,7 +637,7 @@ function eval_mri_model(
             T2diffs = mapreduce(X -> mean(X[:t2dist]; dims = 2) .- mean(Xs[:Y_test][:t2dist]; dims = 2), hcat, Xplots)
             logL2 = log10.(sum(abs2, T2diffs; dims = 1))
             plot(
-                1000 .* phys.meta[:decaes][:t2maps][:Y]["t2times"], T2diffs;
+                1000 .* img.meta[:decaes][:t2maps][:Y]["t2times"], T2diffs;
                 label = permutedims(getindex.(Xplots, :label)) .* L" $-$ " .* Xs[:Y_test][:label] .* map(x -> L" ($\log_{10}\ell_2$ = %$(round(x; sigdigits = 3)))", logL2), #TODO
                 line = (2, permutedims(getindex.(Xplots, :colour))),
                 ylim = (-0.06, 0.1), #TODO
@@ -659,7 +670,7 @@ function eval_mri_model(
         psignaldiff = @time let
             Xplots = [X for (k,X) in Xs if k ∉ (:X_decaes, :Y_test)]
             # Xplots = [Xs[k] for k ∈ (:Y_train, :Yhat_mle, :Yhat_cvae)] #TODO
-            histdiffs = mapreduce(X -> unitsum(X[:hist][0].weights) .- unitsum(Xs[:Y_test][:hist][0].weights), hcat, Xplots)
+            histdiffs = mapreduce(X -> MMDLearning.unitsum(X[:hist][0].weights) .- MMDLearning.unitsum(Xs[:Y_test][:hist][0].weights), hcat, Xplots)
             plot(
                 Xs[:Y_test][:hist][0].edges[1][2:end], histdiffs;
                 label = permutedims(getindex.(Xplots, :label)) .* L" $-$ " .* Xs[:Y_test][:label],
@@ -678,15 +689,15 @@ function eval_mri_model(
         @info "Plotting signal distributions compared to $dataset data..." # Compare per-echo and all-signal cdf's of test data and simulated data
         pcdf = plot(; commonkwargs...)
         @time for X in [X for (k,X) in Xs if k ∈ (:Y_test, :Yhat_cvae)]
-            plot!(pcdf, discrete_cdf(Flux.cpu(X[:data]))...; line = (1, X[:colour]), legend = :none, commonkwargs...)
-            plot!(pcdf, discrete_cdf(reshape(Flux.cpu(X[:data]),1,:))...; line = (1, X[:colour]), legend = :none, commonkwargs...)
+            plot!(pcdf, MMDLearning.discrete_cdf(Flux.cpu(X[:data]))...; line = (1, X[:colour]), legend = :none, commonkwargs...)
+            plot!(pcdf, MMDLearning.discrete_cdf(reshape(Flux.cpu(X[:data]),1,:))...; line = (1, X[:colour]), legend = :none, commonkwargs...)
         end
         saveplot(pcdf, "signal-cdf-compare")
     end
 
     function θderived_cpu(θ)
         # named tuple of misc. parameters of interest derived from θ
-        map(arr64, θderived(phys, θ))
+        map(arr64, θderived(phys, img, θ))
     end
 
     function infer_θderived(Y)
@@ -695,24 +706,25 @@ function eval_mri_model(
         θ = map((θs...,) -> mean(θs), θ...) # mean over each named tuple field
     end
 
+    #=
     let
-        mle_sim_data = Glob.readdir(Glob.glob"mle-simulated-mask-data-*.mat", mle_sim_path) |> last |> DECAES.MAT.matread
-        mle_sim_results = Glob.readdir(Glob.glob"mle-simulated-mask-results-final-*.mat", mle_sim_path) |> last |> DECAES.MAT.matread
+        mle_sim_data = Glob.readdir(Glob.glob"mle-simulated-mask-data-*.mat", mle_sim_path) |> only |> DECAES.MAT.matread
+        mle_sim_results = Glob.readdir(Glob.glob"mle-simulated-mask-results-final-*.mat", mle_sim_path) |> only |> DECAES.MAT.matread
 
         Ytrue, X̂true, Xtrue, θtrue, Ztrue = getindex.(Ref(mle_sim_data), ("Y", "Xhat", "X", "theta", "Z"))
         θtrue_derived = θtrue |> θderived_cpu
         θmle_derived = mle_sim_results["theta"] |> θderived_cpu
 
         @info "Computing DECAES inference error..."
-        if (force_decaes || !haskey(phys.meta[:decaes][:t2maps], :Yhat_cvae_decaes))
-            @time t2_distributions!(phys, :Yhat_cvae_decaes => convert(Matrix{Float64}, X̂true))
+        if (force_decaes || !haskey(img.meta[:decaes][:t2maps], :Yhat_cvae_decaes))
+            @time t2_distributions!(img, :Yhat_cvae_decaes => convert(Matrix{Float64}, X̂true))
         end
         @info 0, :decaes, [
-            L"\alpha" => mean(abs, θtrue_derived.alpha - vec(phys.meta[:decaes][:t2maps][:Yhat_cvae_decaes]["alpha"])),
-            L"\bar{T}_2" => mean(abs, θtrue_derived.T2bar - vec(phys.meta[:decaes][:t2maps][:Yhat_cvae_decaes]["ggm"])),
-            L"T_{2,SGM}" => mean(abs, filter(!isnan, θtrue_derived.T2sgm - vec(phys.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["sgm"]))), # "sgm" is set to NaN if all T2 components within SPWin are zero; be generous with error measurement
-            L"T_{2,MGM}" => mean(abs, filter(!isnan, θtrue_derived.T2mgm - vec(phys.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["mgm"]))), # "mgm" is set to NaN if all T2 components within MPWin are zero; be generous with error measurement
-            L"MWF" => mean(abs, filter(!isnan, θtrue_derived.mwf - vec(phys.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["sfr"]))),
+            L"\alpha" => mean(abs, θtrue_derived.alpha - vec(img.meta[:decaes][:t2maps][:Yhat_cvae_decaes]["alpha"])),
+            L"\bar{T}_2" => mean(abs, θtrue_derived.T2bar - vec(img.meta[:decaes][:t2maps][:Yhat_cvae_decaes]["ggm"])),
+            L"T_{2,SGM}" => mean(abs, filter(!isnan, θtrue_derived.T2sgm - vec(img.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["sgm"]))), # "sgm" is set to NaN if all T2 components within SPWin are zero; be generous with error measurement
+            L"T_{2,MGM}" => mean(abs, filter(!isnan, θtrue_derived.T2mgm - vec(img.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["mgm"]))), # "mgm" is set to NaN if all T2 components within MPWin are zero; be generous with error measurement
+            L"MWF" => mean(abs, filter(!isnan, θtrue_derived.mwf - vec(img.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["sfr"]))),
         ]
 
         @info "Computing MLE inference error..."
@@ -724,6 +736,7 @@ function eval_mri_model(
             @info maxiter, mode, inf_time, [lab => round(mean(abs, θt - θi); sigdigits = 3) for (lab, θt, θi) in zip(θderivedlabels(phys), θtrue_derived, θcvae_derived)]
         end
     end
+    =#
 
     # Heatmaps
     Y = img.data[:,:,zslices,:] # (nx, ny, nslice, nTE)
@@ -737,11 +750,11 @@ function eval_mri_model(
     # DECAES heatmaps
     @time let
         θdecaes = (
-            alpha   = (phys.meta[:decaes][:t2maps][:Y]["alpha"], L"\alpha",     (50.0, 180.0)),
-            T2bar   = (phys.meta[:decaes][:t2maps][:Y]["ggm"],   L"\bar{T}_2",  (0.0, 0.25)),
-            T2sgm   = (phys.meta[:decaes][:t2parts][:Y]["sgm"],  L"T_{2,SGM}",  (0.0, 0.1)),
-            T2mgm   = (phys.meta[:decaes][:t2parts][:Y]["mgm"],  L"T_{2,MGM}",  (0.0, 1.0)),
-            mwf     = (phys.meta[:decaes][:t2parts][:Y]["sfr"],  L"MWF",        (0.0, 0.4)),
+            alpha   = (img.meta[:decaes][:t2maps][:Y]["alpha"], L"\alpha",     (50.0, 180.0)),
+            T2bar   = (img.meta[:decaes][:t2maps][:Y]["ggm"],   L"\bar{T}_2",  (0.0, 0.25)),
+            T2sgm   = (img.meta[:decaes][:t2parts][:Y]["sgm"],  L"T_{2,SGM}",  (0.0, 0.1)),
+            T2mgm   = (img.meta[:decaes][:t2parts][:Y]["mgm"],  L"T_{2,MGM}",  (0.0, 1.0)),
+            mwf     = (img.meta[:decaes][:t2parts][:Y]["sfr"],  L"MWF",        (0.0, 0.4)),
         )
         for (θname, (θk, θlabel, θbd)) in pairs(θdecaes), (j,zj) in enumerate(zslices)
             pyheatmap(permutedims(θk[:,:,zj]); title = θlabel * " (slice $zj)", clim = θbd, filename = joinpath(mkpath(joinpath(savefolder, "decaes")), "$θname-$zj"), savetypes)
@@ -765,8 +778,8 @@ function eval_mri_model(
             T2 = 1000 .* vcat(θ.T2short, θ.T2long)
             A = vcat(θ.Ashort, θ.Along)
             p = plot(
-                # bin_edges(T2, A, exp.(range(log.(phys.T2bd)...; length = 100)))...;
-                bin_sorted(T2, A; binsize = 100)...;
+                # MMDLearning.bin_edges(T2, A, exp.(range(log.(phys.T2bd)...; length = 100)))...;
+                MMDLearning.bin_sorted(T2, A; binsize = 100)...;
                 label = "T2 Distribution", ylabel = "T2 Amplitude [a.u.]", xlabel = "T2 [ms]",
                 xscale = :log10, xlim = 1000 .* phys.T2bd, xticks = 10 .^ (0.5:0.25:3),
             )

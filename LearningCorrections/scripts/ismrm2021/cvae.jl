@@ -141,7 +141,7 @@ function sampleθZ(cvae::CVAE, prior::DeepPriorRicianPhysicsModel, Ymeta::Abstra
         θ = if posterior_θ
             θMlo = arr_similar(θMhat, θmarginalized(prior.phys, θlower(prior.phys)))
             θMhi = arr_similar(θMhat, θmarginalized(prior.phys, θupper(prior.phys)))
-            vcat(clamp.(θMhat, θMlo, θMhi), θnuissance(Ymeta))
+            vcat(clamp.(θMhat, θMlo, θMhi), θnuissance(prior.phys, Ymeta))
         else
             sampleθprior(prior, signal(Ymeta))
         end

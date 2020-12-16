@@ -494,7 +494,13 @@ end
 MetaCPMGSignal(::P, img::I, Y::A) where {T, P <: BiexpEPGModel{T}, I <: CPMGImage{T}, A <: AbstractArray{T}} = MetaCPMGSignal{T,P,I,A}(img, Y)
 Base.getindex(Ymeta::MetaCPMGSignal{T,P,I}, i...) where {T,P,I} = (Ynew = getindex(Ymeta.Y, i...); MetaCPMGSignal{T,P,I,typeof(Ynew)}(Ymeta.img, Ynew))
 
-θnuissance(Ymeta::MetaCPMGSignal) = fill_similar(signal(Ymeta), T1time(Ymeta.img) / echotime(Ymeta.img), 1, size(signal(Ymeta))[2:end]...)
+function θnuissance(p::BiexpEPGModel, Ymeta::MetaCPMGSignal)
+    @unpack T1bd, TEbd = p
+    logτ1lo, logτ1hi = log(T1bd[1] / TEbd[2]), log(T1bd[2] / TEbd[1])
+    TE, T1 = echotime(Ymeta.img), T1time(Ymeta.img)
+    δ0 = (log(T1 / TE) - logτ1lo) / (logτ1hi - logτ1lo) |> eltype(signal(Ymeta))
+    fill_similar(signal(Ymeta), δ0, 1, size(signal(Ymeta))[2:end]...)
+end
 
 nsignal(p::BiexpEPGModel) = p.n
 ntheta(p::BiexpEPGModel) = 6
@@ -559,16 +565,18 @@ end
 
 function θderived(
         c::MaybeClosedFormBiexpEPGModel,
-        θ::AbstractVecOrMat{T};
+        θ::AbstractVecOrMat{T},
+        img::CPMGImage{T},
         SPcutoff::T = T(40e-3),
         SPwidth::T = T(20e-3),
     ) where {T}
     alpha, refcon, eta, delta1, delta2, delta0 = ntuple(i -> θ[i,:], ntheta(physicsmodel(c)))
     _, _, T2short, T2long, Ashort, Along, _, _ = θmodel(c, θ)
+    T2short, T2long = echotime(img) .* T2short, echotime(img) .* T2long # model params are unitless; convert to img timescale
     logT2short, logT2long = log.(T2short), log.(T2long)
     logT2bar = @. (Ashort * logT2short + Along * logT2long) / (Ashort + Along) # log of geometric mean weighted by Ashort, Along
     T2bar = @. exp(logT2bar) # geometric mean weighted by Ashort, Along
-    wshort, wlong = soft_cutoff(T2short, SPcutoff, SPwidth), soft_cutoff(T2long, SPcutoff, SPwidth)
+    wshort, wlong = MMDLearning.soft_cutoff(T2short, SPcutoff, SPwidth), MMDLearning.soft_cutoff(T2long, SPcutoff, SPwidth)
     mwf = @. wshort * Ashort + wlong * Along
     T2sgm = @. exp((wshort * Ashort * logT2short + wlong * Along * logT2long) / (wshort * Ashort + wlong * Along)) # geometric mean weighted by wshort * Ashort, wlong * Along
     T2mgm = @. exp(((1 - wshort) * Ashort * logT2short + (1 - wlong) * Along * logT2long) / ((1 - wshort) * Ashort + (1 - wlong) * Along)) # geometric mean weighted by (1 - wshort) * Ashort, (1 - wlong) * Along
