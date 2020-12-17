@@ -127,6 +127,13 @@ new_settings_template() = TOML.parse(
 # ENV["JL_CHECKPOINT_FOLDER"] = settings["data"]["out"]
 
 settings = make_settings()
+
+# for (parent, (key, leaf)) in Ignite.breadth_first_iterator(settings), (k,v) in leaf
+#    (k == "lr") && (leaf[k] = 1e-4)
+#    (k == "lrwarmup") && (leaf[k] = 10000)
+#    (k == "wdecay") && (leaf[k] = 0.0)
+# end
+
 phys = make_physics(settings)
 models, derived = make_models!(phys, settings, load_checkpoint())
 optimizers = make_optimizers(settings)
@@ -521,7 +528,6 @@ function fit_cvae(Ymeta; marginalize_Z)
 
     return (; Y = signal(Ymeta), X̂, θ, Z, X, δ, ϵ, ν, ℓ, mle_init, mle_res)
 end
-
 
 function fit_metrics(Ymeta, Ymeta_fit_state, θtrue, Ztrue, Wtrue)
     #= TODO

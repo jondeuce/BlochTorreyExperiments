@@ -186,22 +186,45 @@ function pyheatmap(
         clim = nothing,
         cticks = nothing,
         title = nothing,
+        cropnan = true,
+        aspect = nothing,
+        interpolation = "nearest",
+        extent = nothing, # [left, right, bottom, top]
+        axis = nothing,
+        xlabel = nothing,
+        ylabel = nothing,
+        figsize = (5.0, 8.0),
+        dpi = 150.0,
         savetypes = [".png", ".pdf"]
     )
 
-    plt.figure(figsize = (8.0, 8.0), dpi = 150.0)
+    if cropnan
+        xi = .!all(isnan, imdata; dims = 2)
+        xj = .!all(isnan, imdata; dims = 1)
+        imdata = !any(xi) || !any(xj) ? [NaN] : imdata[findfirst(vec(xi)) : findlast(vec(xi)), findfirst(vec(xj)) : findlast(vec(xj))]
+    end
+
+    plt.figure(; figsize, dpi)
     plt.set_cmap("plasma")
     fig, ax = plt.subplots()
-    img = ax.imshow(imdata, aspect = "equal", interpolation = "nearest")
+    img = ax.imshow(imdata; aspect, interpolation, extent)
     plt.title(title)
-    ax.set_axis_off()
+    if axis === :off
+        ax.set_axis_off()
+    end
+    if !isnothing(aspect)
+        ext = ax.get_images()[1].get_extent()
+        ax.set_aspect(abs((ext[2]-ext[1]) / (ext[4]-ext[3])) * aspect)
+    end
+    !isnothing(xlabel) && (plt.xlabel(xlabel))
+    !isnothing(ylabel) && (plt.ylabel(ylabel))
 
     (formatter isa Function) && (formatter = plt.matplotlib.ticker.FuncFormatter(formatter))
     cbar = fig.colorbar(img, ticks = cticks, format = formatter, aspect = 40)
     cbar.ax.tick_params(labelsize = 10)
 
     !isnothing(clim) && img.set_clim(clim...)
-    !isnothing(filename) && foreach(ext -> plt.savefig(filename * ext, bbox_inches = "tight", dpi = 150.0), savetypes)
+    !isnothing(filename) && foreach(ext -> plt.savefig(filename * ext; bbox_inches = "tight", dpi), savetypes)
     plt.close("all")
 
     return nothing

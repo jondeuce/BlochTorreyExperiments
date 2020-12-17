@@ -565,8 +565,8 @@ end
 
 function θderived(
         c::MaybeClosedFormBiexpEPGModel,
-        θ::AbstractVecOrMat{T},
         img::CPMGImage{T},
+        θ::AbstractVecOrMat{T},
         SPcutoff::T = T(40e-3),
         SPwidth::T = T(20e-3),
     ) where {T}
@@ -577,9 +577,9 @@ function θderived(
     logT2bar = @. (Ashort * logT2short + Along * logT2long) / (Ashort + Along) # log of geometric mean weighted by Ashort, Along
     T2bar = @. exp(logT2bar) # geometric mean weighted by Ashort, Along
     wshort, wlong = MMDLearning.soft_cutoff(T2short, SPcutoff, SPwidth), MMDLearning.soft_cutoff(T2long, SPcutoff, SPwidth)
-    mwf = @. wshort * Ashort + wlong * Along
-    T2sgm = @. exp((wshort * Ashort * logT2short + wlong * Along * logT2long) / (wshort * Ashort + wlong * Along)) # geometric mean weighted by wshort * Ashort, wlong * Along
-    T2mgm = @. exp(((1 - wshort) * Ashort * logT2short + (1 - wlong) * Along * logT2long) / ((1 - wshort) * Ashort + (1 - wlong) * Along)) # geometric mean weighted by (1 - wshort) * Ashort, (1 - wlong) * Along
+    mwf = @. 100 * (wshort * Ashort + wlong * Along) / (Ashort + Along)
+    T2sgm = @. exp(wshort * Ashort * logT2short + wlong * Along * logT2long) * exp(-(wshort * Ashort + wlong * Along)) # geometric mean weighted by wshort * Ashort, wlong * Along
+    T2mgm = @. exp((1 - wshort) * Ashort * logT2short + (1 - wlong) * Along * logT2long) * exp(-((1 - wshort) * Ashort + (1 - wlong) * Along)) # geometric mean weighted by (1 - wshort) * Ashort, (1 - wlong) * Along
     return (;
         alpha, refcon, eta, delta1, delta2, delta0, # inference domain params
         T2short, T2long, Ashort, Along, # signal model params (without repeated alpha, refcon)
@@ -591,9 +591,9 @@ end
 θmodellabels(::BiexpEPGModel) = [L"\alpha", L"\beta", L"T_{2,short}", L"T_{2,long}", L"A_{short}", L"A_{long}", L"T_1", L"TE"]
 θmodelbounds(p::BiexpEPGModel{T}) where {T} = NTuple{2,T}[θbounds(p)[1], θbounds(p)[2], (p.T2bd[1], T(0.1)), p.T2bd, (T(0.0), T(1.0)), (T(0.0), T(1.0)), p.T1bd, p.TEbd]
 
-θderivedunits(p::BiexpEPGModel) = [θunits(p); θmodelunits(p)[3:end-2]; "log(s)"; "log(s)"; "log(s)"; "s"; "s"; "s"; "a.u."]
+θderivedunits(p::BiexpEPGModel) = [θunits(p); θmodelunits(p)[3:end-2]; "log(s)"; "log(s)"; "log(s)"; "s"; "s"; "s"; "%"]
 θderivedlabels(p::BiexpEPGModel) = [θlabels(p); θmodellabels(p)[3:end-2]; L"\log T_{2,short}"; L"\log T_{2,long}"; L"\log \bar{T}_2"; L"\bar{T}_2"; L"T_{2,SGM}"; L"T_{2,MGM}"; L"MWF"]
-θderivedbounds(p::BiexpEPGModel{T}) where {T} = NTuple{2,T}[θbounds(p); θmodelbounds(p)[3:end-2]; log.(p.T2bd); log.(p.T2bd); log.(p.T2bd); (p.T2bd[1], T(0.25)); (p.T2bd[1], T(0.1)); (p.T2bd[1], T(0.25)); (T(0.0), T(0.4))]
+θderivedbounds(p::BiexpEPGModel{T}) where {T} = NTuple{2,T}[θbounds(p); θmodelbounds(p)[3:end-2]; log.(p.T2bd); log.(p.T2bd); log.(p.T2bd); (p.T2bd[1], T(0.25)); (p.T2bd[1], T(0.1)); p.T2bd; (T(0.0), T(40.0))]
 
 #### Toy EPG model
 

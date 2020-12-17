@@ -13,7 +13,6 @@ Zygote.@adjoint arr_similar(::Type{Tx}, y::Ty) where {Tx <: AbstractArray, Ty <:
 arr32(x::AbstractArray) = arr_similar(Array{Float32}, x)
 arr64(x::AbstractArray) = arr_similar(Array{Float64}, x)
 
-
 # rand_similar and randn_similar
 for f in [:zeros, :ones, :rand, :randn]
     f_similar = Symbol(f, :_similar)

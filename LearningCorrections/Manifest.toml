@@ -842,7 +842,7 @@ uuid = "d8e11817-5142-5d16-987a-aa16d5891078"
 version = "0.4.6"
 
 [[MMDLearning]]
-deps = ["ArgParse", "BSON", "BangBang", "BenchmarkTools", "BlackBoxOptim", "ChainRules", "Conda", "DECAES", "DataFrames", "DataStructures", "Dates", "Distributions", "DrWatson", "EllipsisNotation", "FFTW", "FiniteDiff", "Flux", "ForwardDiff", "Glob", "HypothesisTests", "LaTeXStrings", "LegibleLambdas", "LinearAlgebra", "LoopVectorization", "MAT", "NLopt", "NNlib", "Optim", "Parameters", "Pkg", "Printf", "PyCall", "PyPlot", "Random", "Reexport", "Setfield", "SparseDiffTools", "SpecialFunctions", "Statistics", "StatsBase", "StatsPlots", "TimerOutputs", "Transformers", "Tullio", "UnsafeArrays", "Zygote"]
+deps = ["ArgParse", "BSON", "BangBang", "BenchmarkTools", "BlackBoxOptim", "ChainRules", "Conda", "DECAES", "DataFrames", "DataStructures", "Dates", "Distributions", "DrWatson", "EllipsisNotation", "FFTW", "FiniteDiff", "Flux", "ForwardDiff", "Glob", "HypothesisTests", "LaTeXStrings", "LegibleLambdas", "LinearAlgebra", "LoopVectorization", "MAT", "NLopt", "NNlib", "Optim", "Parameters", "Pkg", "PrettyTables", "Printf", "PyCall", "PyPlot", "Random", "Reexport", "Setfield", "SparseDiffTools", "SpecialFunctions", "Statistics", "StatsBase", "StatsPlots", "TimerOutputs", "Transformers", "Tullio", "UnsafeArrays", "Zygote"]
 path = "MMDLearning"
 uuid = "032358f6-e4b1-47a4-bb61-f69598110e2e"
 version = "0.1.0"

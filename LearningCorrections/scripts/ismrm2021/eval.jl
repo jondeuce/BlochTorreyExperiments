@@ -490,7 +490,8 @@ function eval_mri_model(
         models,
         derived,
         img::CPMGImage;
-        zslices = 24:24,
+        slices = 24:24,
+        slicedim = 3,
         naverage = 10,
         savefolder = nothing,
         savetypes = [".png"],
@@ -505,7 +506,7 @@ function eval_mri_model(
     )
 
     inverter(Y; kwargs...) = mapreduce((x,y) -> map(hcat, x, y), enumerate(Iterators.partition(1:size(Y,2), batch_size))) do (batchnum, batch)
-        posterior_state(derived["cvae"], derived["prior"], MetaCPMGSignal(phys, img, Y[:,batch]); verbose = !quiet, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
+        posterior_state(derived["cvae"], derived["prior"], MetaCPMGSignal(phys, img, Y[:,batch]); verbose = false, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
     end
     saveplot(p, name, folder = savefolder) = map(suf -> savefig(p, joinpath(mkpath(folder), name * suf)), savetypes)
 
@@ -595,7 +596,7 @@ function eval_mri_model(
 
         @info "Plotting histogram distances compared to $dataset data..." # Compare histogram distances for each echo and across all-signal for test data and simulated data
         phist = @time plot(
-            map(collect(pairs((; MMDLearning.ChiSquared, MMDLearning.KLDivergence, MMDLearning.CityBlock, MMDLearning.Euclidean)))) do (distname, dist)
+            map(collect(pairs((; MMDLearning.ChiSquared, MMDLearning.CityBlock, MMDLearning.Euclidean)))) do (distname, dist) # MMDLearning.KLDivergence
                 echoes = 0:size(img.data,4)
                 Xplots = [X for (k,X) in Xs if k !== :Y_test]
                 logdists = mapreduce(hcat, Xplots) do X
@@ -697,7 +698,7 @@ function eval_mri_model(
 
     function θderived_cpu(θ)
         # named tuple of misc. parameters of interest derived from θ
-        map(arr64, θderived(phys, img, θ))
+        map(arr64, θderived(phys, img, θ |> to32))
     end
 
     function infer_θderived(Y)
@@ -706,7 +707,60 @@ function eval_mri_model(
         θ = map((θs...,) -> mean(θs), θ...) # mean over each named tuple field
     end
 
-    #=
+    # Heatmaps
+    let
+        get_slice(x, sj) = slicedim == 1 ? x[sj,..] : slicedim == 2 ? x[:,sj,..] : x[:,:,sj,..]
+        orient_slice(x) = slicedim == 1 ? x : slicedim == 2 ? x[end:-1:1,:] : permutedims(x)
+        Y = get_slice(img.data, slices) # (nx, ny, nslice, nTE)
+        Islices = findall(!isnan, Y[..,1]) # entries within Y mask
+        Imaskslices = filter(I -> I[slicedim] ∈ slices, img.indices[:mask])
+        fill_maps(x) = (out = fill(NaN, size(Y)[1:3]); out[Islices] .= Flux.cpu(x); return out)
+
+        θcvae = infer_θderived(permutedims(Y[Islices,:]) |> to32)
+        θmle = θderived_cpu(flat_image_to_flat_indices(mle_image_state.θ, Imaskslices))
+
+        # DECAES heatmaps
+        @time let
+            θdecaes = (
+                alpha   = (img.meta[:decaes][:t2maps][:Y]["alpha"],       L"\alpha",    (50.0, 180.0)),
+                T2bar   = (img.meta[:decaes][:t2maps][:Y]["ggm"],         L"\bar{T}_2", (0.0, 0.25)),
+                T2sgm   = (img.meta[:decaes][:t2parts][:Y]["sgm"],        L"T_{2,SGM}", (0.0, 0.1)),
+                T2mgm   = (img.meta[:decaes][:t2parts][:Y]["mgm"],        L"T_{2,MGM}", (0.0, 1.0)),
+                mwf     = (100 .* img.meta[:decaes][:t2parts][:Y]["sfr"], L"MWF",       (0.0, 40.0)),
+            )
+            for (θname, (θk, θlabel, θbd)) in pairs(θdecaes), (j,sj) in enumerate(slices)
+                pyheatmap(orient_slice(get_slice(θk, sj)); title = θlabel * " (slice $sj)", clim = θbd, axis = :off, aspect = 4/3, filename = joinpath(mkpath(joinpath(savefolder, "decaes")), "$θname-$sj"), savetypes)
+            end
+        end
+
+        # CVAE and MLE heatmaps
+        for (θfolder, θ) ∈ [:cvae => θcvae, :mle => θmle]
+            @info "Plotting heatmap plots for mean θ values..."
+            @time let
+                for (k, ((θname, θk), θlabel, θbd)) in enumerate(zip(pairs(θ), θderivedlabels(phys), θderivedbounds(phys)))
+                    θmaps = fill_maps(θk)
+                    for (j,sj) in enumerate(slices)
+                        pyheatmap(orient_slice(get_slice(θmaps, j)); title = θlabel * " (slice $sj)", clim = θbd, axis = :off, aspect = 4/3, filename = joinpath(mkpath(joinpath(savefolder, string(θfolder))), "$θname-$sj"), savetypes)
+                    end
+                end
+            end
+
+            @info "Plotting T2-distribution over test data..."
+            @time let
+                T2 = 1000 .* vcat(θ.T2short, θ.T2long)
+                A = vcat(θ.Ashort, θ.Along)
+                p = plot(
+                    # MMDLearning.bin_edges(T2, A, exp.(range(log.(phys.T2bd)...; length = 100)))...;
+                    MMDLearning.bin_sorted(T2, A; binsize = 100)...;
+                    label = "T2 Distribution", ylabel = "T2 Amplitude [a.u.]", xlabel = "T2 [ms]",
+                    xscale = :log10, xlim = 1000 .* phys.T2bd, xticks = 10 .^ (0.5:0.25:3),
+                )
+                saveplot(p, "T2distbn-$(slices[1])-$(slices[end])", joinpath(savefolder, string(θfolder)))
+            end
+        end
+    end
+
+    # Error tables
     let
         mle_sim_data = Glob.readdir(Glob.glob"mle-simulated-mask-data-*.mat", mle_sim_path) |> only |> DECAES.MAT.matread
         mle_sim_results = Glob.readdir(Glob.glob"mle-simulated-mask-results-final-*.mat", mle_sim_path) |> only |> DECAES.MAT.matread
@@ -715,77 +769,212 @@ function eval_mri_model(
         θtrue_derived = θtrue |> θderived_cpu
         θmle_derived = mle_sim_results["theta"] |> θderived_cpu
 
+        all_errors = Any[]
+        all_row_labels = [θderivedlabels(phys); "Time"]
+        all_row_units  = [θderivedunits(phys); "min"]
+
         @info "Computing DECAES inference error..."
+        decaes_errors = Dict{AbstractString, Float64}(all_row_labels .=> NaN)
         if (force_decaes || !haskey(img.meta[:decaes][:t2maps], :Yhat_cvae_decaes))
-            @time t2_distributions!(img, :Yhat_cvae_decaes => convert(Matrix{Float64}, X̂true))
+            decaes_errors["Time"]  = @elapsed t2_distributions!(img, :Yhat_cvae_decaes => convert(Matrix{Float64}, X̂true))
+            decaes_errors["Time"] /= 60 # convert sec => min
         end
-        @info 0, :decaes, [
-            L"\alpha" => mean(abs, θtrue_derived.alpha - vec(img.meta[:decaes][:t2maps][:Yhat_cvae_decaes]["alpha"])),
-            L"\bar{T}_2" => mean(abs, θtrue_derived.T2bar - vec(img.meta[:decaes][:t2maps][:Yhat_cvae_decaes]["ggm"])),
-            L"T_{2,SGM}" => mean(abs, filter(!isnan, θtrue_derived.T2sgm - vec(img.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["sgm"]))), # "sgm" is set to NaN if all T2 components within SPWin are zero; be generous with error measurement
-            L"T_{2,MGM}" => mean(abs, filter(!isnan, θtrue_derived.T2mgm - vec(img.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["mgm"]))), # "mgm" is set to NaN if all T2 components within MPWin are zero; be generous with error measurement
-            L"MWF" => mean(abs, filter(!isnan, θtrue_derived.mwf - vec(img.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["sfr"]))),
-        ]
+        decaes_errors[L"\alpha"] = mean(abs, θtrue_derived.alpha - vec(img.meta[:decaes][:t2maps][:Yhat_cvae_decaes]["alpha"]))
+        decaes_errors[L"\bar{T}_2"] = mean(abs, θtrue_derived.T2bar - vec(img.meta[:decaes][:t2maps][:Yhat_cvae_decaes]["ggm"]))
+        decaes_errors[L"T_{2,SGM}"] = mean(abs, filter(!isnan, θtrue_derived.T2sgm - vec(img.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["sgm"]))) # "sgm" is set to NaN if all T2 components within SPWin are zero; be generous with error measurement
+        decaes_errors[L"T_{2,MGM}"] = mean(abs, filter(!isnan, θtrue_derived.T2mgm - vec(img.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["mgm"]))) # "mgm" is set to NaN if all T2 components within MPWin are zero; be generous with error measurement
+        decaes_errors[L"MWF"] = mean(abs, filter(!isnan, θtrue_derived.mwf - 100 .* vec(img.meta[:decaes][:t2parts][:Yhat_cvae_decaes]["sfr"])))
+        push!(all_errors, "DECAES" => decaes_errors)
 
         @info "Computing MLE inference error..."
-        @info 0, :mle, [lab =>round(mean(abs, θt - θi); sigdigits = 3) for (lab, θt, θi) in zip(θderivedlabels(phys), θtrue_derived, θmle_derived)]
+        mle_errors = Dict{AbstractString, Float64}(all_row_labels .=> NaN)
+        mle_errors["Time"] = sum(mle_sim_results["solvetime"]) / (60 * 36) # convert to min and divide by total threads
+        for (lab, θt, θi) in zip(θderivedlabels(phys), θtrue_derived, θmle_derived)
+            mle_errors[lab] = mean(abs, filter(!isnan, θt .- θi))
+        end
+        push!(all_errors, "MLE" => mle_errors)
 
         for mode in [:mean], maxiter in [1,2,5]
-            inf_time = @elapsed cvae_state = inverter(X̂true |> to32; maxiter, mode, verbose = false)
+            maxiter_lab = "$maxiter sample" * ifelse(maxiter > 1, "s", "")
+            @info "Compute CVAE inference error ($maxiter_lab)..."
+            cvae_errors = Dict{AbstractString, Float64}(all_row_labels .=> NaN)
+            cvae_errors["Time"]  = @elapsed cvae_state = inverter(X̂true |> to32; maxiter, mode)
+            cvae_errors["Time"] /= 60 # convert sec => min
             θcvae_derived = cvae_state.θ |> θderived_cpu
-            @info maxiter, mode, inf_time, [lab => round(mean(abs, θt - θi); sigdigits = 3) for (lab, θt, θi) in zip(θderivedlabels(phys), θtrue_derived, θcvae_derived)]
-        end
-    end
-    =#
-
-    # Heatmaps
-    Y = img.data[:,:,zslices,:] # (nx, ny, nslice, nTE)
-    Islices = findall(!isnan, Y[..,1]) # entries within Y mask
-    Imaskslices = filter(I -> I[3] ∈ zslices, img.indices[:mask])
-    makemaps(x) = (out = fill(NaN, size(Y)[1:3]); out[Islices] .= Flux.cpu(x); return permutedims(out, (2,1,3)))
-
-    θcvae = infer_θderived(permutedims(Y[Islices,:]) |> to32)
-    θmle = θderived_cpu(flat_image_to_flat_indices(mle_image_state.θ, Imaskslices))
-
-    # DECAES heatmaps
-    @time let
-        θdecaes = (
-            alpha   = (img.meta[:decaes][:t2maps][:Y]["alpha"], L"\alpha",     (50.0, 180.0)),
-            T2bar   = (img.meta[:decaes][:t2maps][:Y]["ggm"],   L"\bar{T}_2",  (0.0, 0.25)),
-            T2sgm   = (img.meta[:decaes][:t2parts][:Y]["sgm"],  L"T_{2,SGM}",  (0.0, 0.1)),
-            T2mgm   = (img.meta[:decaes][:t2parts][:Y]["mgm"],  L"T_{2,MGM}",  (0.0, 1.0)),
-            mwf     = (img.meta[:decaes][:t2parts][:Y]["sfr"],  L"MWF",        (0.0, 0.4)),
-        )
-        for (θname, (θk, θlabel, θbd)) in pairs(θdecaes), (j,zj) in enumerate(zslices)
-            pyheatmap(permutedims(θk[:,:,zj]); title = θlabel * " (slice $zj)", clim = θbd, filename = joinpath(mkpath(joinpath(savefolder, "decaes")), "$θname-$zj"), savetypes)
-        end
-    end
-
-    # CVAE and MLE heatmaps
-    for (θfolder, θ) ∈ [:cvae => θcvae, :mle => θmle]
-        @info "Plotting heatmap plots for mean θ values..."
-        @time let
-            for (k, ((θname, θk), θlabel, θbd)) in enumerate(zip(pairs(θ), θderivedlabels(phys), θderivedbounds(phys)))
-                θmaps = makemaps(θk)
-                for (j,zj) in enumerate(zslices)
-                    pyheatmap(θmaps[:,:,j]; title = θlabel * " (slice $zj)", clim = θbd, filename = joinpath(mkpath(joinpath(savefolder, string(θfolder))), "$θname-$zj"), savetypes)
-                end
+            for (lab, θt, θi) in zip(θderivedlabels(phys), θtrue_derived, θcvae_derived)
+                cvae_errors[lab] = mean(abs, filter(!isnan, θt .- θi))
             end
+            push!(all_errors, "CVAE ($maxiter_lab)" => cvae_errors)
         end
 
-        @info "Plotting T2-distribution over test data..."
-        @time let
-            T2 = 1000 .* vcat(θ.T2short, θ.T2long)
-            A = vcat(θ.Ashort, θ.Along)
-            p = plot(
-                # MMDLearning.bin_edges(T2, A, exp.(range(log.(phys.T2bd)...; length = 100)))...;
-                MMDLearning.bin_sorted(T2, A; binsize = 100)...;
-                label = "T2 Distribution", ylabel = "T2 Amplitude [a.u.]", xlabel = "T2 [ms]",
-                xscale = :log10, xlim = 1000 .* phys.T2bd, xticks = 10 .^ (0.5:0.25:3),
-            )
-            saveplot(p, "T2distbn-$(zslices[1])-$(zslices[end])", joinpath(savefolder, string(θfolder)))
+        label_s_to_ms(unit) = ifelse(unit == "s", "ms", unit)
+        value_s_to_ms(val, unit) = ifelse(unit == "s", 1000*val, val)
+        table_header = [name for (name, _) in all_errors]
+        table_row_names = all_row_labels .* " [" .* label_s_to_ms.(all_row_units) .* "]"
+        table_data = [value_s_to_ms(err[row], unit) for (row, unit) in zip(all_row_labels, all_row_units), (_, err) in all_errors]
+
+        default_pretty_table(stdout, table_data, table_header, table_row_names; backend = :text)
+        for (backend, filename) in [(:text, "errors.txt"), (:latex, "errors.tex")]
+            open(io -> default_pretty_table(io, table_data, table_header, table_row_names; backend), joinpath(savefolder, filename); write = true)
         end
     end
+end
+
+function default_pretty_table(io, data, header, row_names; backend = :text, kwargs...)
+    is_minimum = (data,i,j) -> !isnan(data[i,j]) && data[i,j] ≈ minimum(filter(!isnan, data[i,:]))
+    hl = if backend === :text
+        PrettyTables.Highlighter(is_minimum, foreground = :blue, bold = true)
+    else
+        PrettyTables.LatexHighlighter(is_minimum, ["color{blue}", "textbf"])
+    end
+    PrettyTables.pretty_table(io, data, header; backend, row_names, highlighters = (hl,), formatters = (v,i,j) -> round(v, sigdigits = 3), body_hlines = [size(data,1)-1], kwargs...)
+end
+
+####
+#### Peak separation
+####
+
+function peak_separation(
+        phys::BiexpEPGModel,
+        models,
+        derived,
+        img::CPMGImage;
+        cvae_iters = 10,
+        savefolder = nothing,
+        savetypes = [".png"],
+    )
+
+    nT2, nSNR = 100, 100
+    settings = let
+        T2ratio  = repeat(range(1.5, 4.0; length = nT2), 1, nSNR)
+        T2mean   = fill(50e-3, nT2, nSNR)
+        SNR      = repeat(range(40.0, 100.0; length = nSNR) |> permutedims, nT2, 1)
+        epsilon  = 10.0.^(.-SNR./20)
+        alpha    = 150.0 .+ 30 .* rand(nT2, nSNR)
+        refcon   = fill(180.0, nT2, nSNR) # 150.0 .+ 30 .* rand(nT2, nSNR)
+        T2short  = T2mean ./ sqrt.(T2ratio)
+        T2long   = T2mean .* sqrt.(T2ratio)
+        Ashort   = 0.1 .+ 0.3 .* rand(nT2, nSNR)
+        Along    = 1.0 .- Ashort
+        T1       = fill(Float64(T1time(img)), nT2, nSNR)
+        TE       = fill(Float64(echotime(img)), nT2, nSNR)
+        (; T2ratio, T2mean, SNR, epsilon, alpha, refcon, T2short, T2long, Ashort, Along, T1, TE)
+    end
+
+    args = vec.((settings.alpha, settings.refcon, settings.T2short, settings.T2long, settings.Ashort, settings.Along, settings.T1, settings.TE))
+    X = _signal_model_f64(phys, args...)[1:nsignal(img), :]
+    X = X ./ maximum(X; dims = 1)
+    X̂ = add_noise_instance(phys, X, vec(settings.epsilon)')
+    X̂meta = MetaCPMGSignal(phys, img, X̂ |> to32)
+
+    function cvae_inference_state(Ymeta)
+        state = posterior_state(
+            derived["cvae"],
+            derived["prior"],
+            Ymeta;
+            miniter = cvae_iters,
+            maxiter = cvae_iters,
+            alpha   = 0.0,
+            verbose = false,
+            mode    = :maxlikelihood,
+        )
+        (; θ = θderived(phys, img, state.θ))
+    end
+
+    function decaes_inference_state(Ymeta)
+        Ydecaes = permutedims(reshape(signal(Ymeta), size(signal(Ymeta))..., 1, 1), (2,3,4,1)) # nTE x nbatch -> nbatch x 1 x 1 x nTE
+        t2mapopts = DECAES.T2mapOptions(img.t2mapopts, MatrixSize = size(Ydecaes)[1:3])
+        t2partopts = DECAES.T2partOptions(img.t2partopts, MatrixSize = size(Ydecaes)[1:3])
+        t2maps, t2dist = DECAES.T2mapSEcorr(Ydecaes |> arr64, t2mapopts)
+        t2parts = DECAES.T2partSEcorr(t2dist, t2partopts) # size(t2dist) = nbatch x 1 x 1 x nT2
+        (; t2maps, t2dist, t2parts)
+    end
+
+    cvae_results = let
+        @unpack θ = cvae_inference_state(X̂meta)
+        (; T2short = arr64(reshape(θ.T2short, nT2, nSNR)), T2long = arr64(reshape(θ.T2long, nT2, nSNR)))
+    end
+
+    #### T2 peaks plots
+
+    decaes_results = let
+        @unpack t2maps, t2dist, t2parts = decaes_inference_state(X̂meta)
+        T2short, T2long = zeros(nT2, nSNR), zeros(nT2, nSNR)
+        # iperm = zeros(Int, size(t2dist, 4))
+        # for i in 1:size(t2dist, 1)
+        #     sortperm!(iperm, view(t2dist, i, 1, 1, :); rev = true)
+        #     T21 = t2maps["t2times"][iperm[1]]
+        #     T22 = t2maps["t2times"][iperm[2]]
+        #     T2short[i], T2long[i] = min(T21, T22), max(T21, T22)
+        # end
+        icutoff = findlast(t2maps["t2times"] .<= settings.T2mean[1])
+        for i in 1:size(t2dist, 1)
+            T2short[i] = t2maps["t2times"][findmax(@views t2dist[i,1,1,1:icutoff])[2]]
+            T2long[i]  = t2maps["t2times"][icutoff + findmax(@views t2dist[i,1,1,icutoff+1:end])[2]]
+        end
+        (; T2short, T2long)
+    end
+
+    for T2field in (:T2short, :T2long), (name, results) in [(:cvae, cvae_results), (:decaes, decaes_results)]
+        err = 1000 .* abs.(getfield(settings, T2field) .- getfield(results, T2field))
+        filename = joinpath(mkpath(savefolder), "t2peaks-$name-$T2field")
+        pyheatmap(
+            err;
+            title = "$T2field error vs. $T2field and SNR",
+            clim = (0.0, 15.0),
+            aspect = 1.0,
+            extent = [settings.SNR[1,[1,end]]..., 1000 .* getfield(settings, T2field)[[end,1],1]...], # [left, right, bottom, top]
+            xlabel = "SNR",
+            ylabel = "$T2field = T2mean $(T2field === :T2long ? "*" : "/") T2ratio [ms]",
+            filename,
+            savetypes,
+        )
+    end
+
+    # T2 distribution plots
+    let
+        i, j = 30, 50
+        X̂meta = MetaCPMGSignal(phys, img, repeat(reshape(X̂, :, nT2, nSNR)[:,i,j], 1, 1000) |> to32)
+        cvae_θ = cvae_inference_state(X̂meta).θ
+        @unpack t2maps, t2dist, t2parts = decaes_inference_state(X̂meta[:,1:1])
+
+        saveplot(p, name) = map(suf -> savefig(p, joinpath(mkpath(savefolder), name * suf)), savetypes)
+        T2short_lab, T2long_lab, SNR_lab = map(x->round(x;digits=1), (1000 * settings.T2short[i,j], 1000 * settings.T2long[i,j], settings.SNR[i,j]))
+        let
+            T2 = 1000 .* vcat(cvae_θ.T2short, cvae_θ.T2long) |> vec |> arr64
+            A = vcat(cvae_θ.Ashort, cvae_θ.Along) |> vec |> arr64
+            p = sticks(
+                T2, A;
+                label = L"$T_2$ Distribution", ylabel = L"$T_2$ Amplitude [a.u.]", xlabel = L"$T_2$ [ms]",
+                title = L"$T_{2,short}$ = %$(T2short_lab) ms, $T_{2,long}$ = %$(T2long_lab) ms, SNR = %$(SNR_lab)",
+                # xscale = :log10, xlim = 1000 .* (10e-3, 100e-3), xticks = 10 .^ (1.0:0.25:2.0),
+                xscale = :identity, xlim = 1000 .* (10e-3, 100e-3), xticks = 10:10:100,
+                titlefontsize = 14, labelfontsize = 12, xtickfontsize = 12, ytickfontsize = 12, legendfontsize = 10, #TODO
+                marker = (:black, :circle, 1),
+                formatter = x -> round(x, digits = 1),
+            )
+            vline!(p, 1000 .* [settings.T2short[i,j], settings.T2long[i,j]]; label = L"True $T_2$", lw = 3)
+            vline!(p, 1000 .* [mean(cvae_θ.T2short), mean(cvae_θ.T2long)]; label = L"Recovered $T_2$", lw = 3)
+            saveplot(p, "t2peaks-cvae-samples")
+        end
+        let
+            p = plot(
+                1000 .* t2maps["t2times"], t2dist[1,1,1,:];
+                label = L"$T_2$ Distribution", ylabel = L"$T_2$ Amplitude [a.u.]", xlabel = L"$T_2$ [ms]",
+                title = L"$T_{2,short}$ = %$(T2short_lab) ms, $T_{2,long}$ = %$(T2long_lab) ms, SNR = %$(SNR_lab)",
+                # xscale = :log10, xlim = 1000 .* (10e-3, 100e-3), xticks = 10 .^ (1.0:0.25:2.0),
+                xscale = :identity, xlim = 1000 .* (10e-3, 100e-3), xticks = 10:10:100,
+                titlefontsize = 14, labelfontsize = 12, xtickfontsize = 12, ytickfontsize = 12, legendfontsize = 10, #TODO
+                marker = (:black, :circle, 3), line = (:blue, 3),
+                formatter = x -> round(x, digits = 1),
+            )
+            vline!(p, 1000 .* [settings.T2short[i,j], settings.T2long[i,j]]; label = L"True $T_2$", lw = 3)
+            vline!(p, 1000 .* [decaes_results.T2short[i,j], decaes_results.T2long[i,j]]; label = L"Recovered $T_2$", lw = 3)
+            saveplot(p, "t2peaks-decaes-samples")
+        end
+    end
+
+    return (; settings, cvae_results, decaes_results)
 end
 
 ####
