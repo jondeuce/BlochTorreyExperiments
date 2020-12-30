@@ -745,7 +745,7 @@ trainer.add_event_handler(
 trainer.add_event_handler(
     Events.STARTED | Events.ITERATION_COMPLETED,
     @j2p function (engine)
-        update_optimizers!(optimizers; field = :eta) do opt, name
+        Ignite.update_optimizers!(optimizers; field = :eta) do opt, name
             lr_warmup = settings["opt"][name]["lrwarmup"]
             lr_initial = initial_learning_rate!(settings, name)
             !(engine.state.iteration <= lr_warmup > 0) && return
@@ -771,7 +771,6 @@ trainer.add_event_handler(
     Events.EPOCH_COMPLETED,
     @j2p(Ignite.file_event(Ignite.user_input_event(); file = joinpath(settings["data"]["out"], "user"))),
 )
-# Ignite.update_optimizers!((opt,name) -> @show(name, opt.eta), optimizers; field = :eta)
 
 # Print TimerOutputs timings
 trainer.add_event_handler(

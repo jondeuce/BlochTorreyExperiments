@@ -405,9 +405,9 @@ version = "1.2.4"
 
 [[FFTW_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
-git-tree-sha1 = "f10c3009373a2d5c4349b8a2932d8accb892892d"
+git-tree-sha1 = "5a0d4b6a22a34d17d53543bd124f4b08ed78e8b0"
 uuid = "f5851436-0d7a-5f13-b9de-f02708fd171a"
-version = "3.3.9+6"
+version = "3.3.9+7"
 
 [[FileIO]]
 deps = ["Pkg"]
@@ -1399,7 +1399,9 @@ version = "0.9.5"
 
 [[Transformers]]
 deps = ["AbstractTrees", "Adapt", "BSON", "BytePairEncoding", "CUDA", "DataDeps", "DataStructures", "Dates", "DelimitedFiles", "Flux", "Functors", "HTTP", "InternedStrings", "JSON", "LightXML", "LinearAlgebra", "MacroTools", "Markdown", "Pickle", "Pkg", "Random", "Requires", "SHA", "Statistics", "Unicode", "WordTokenizers", "ZipFile", "ZygoteRules"]
-path = "/home/jdoucette/.julia/dev/Transformers"
+git-tree-sha1 = "097eca56681068830693cdedc407e3e445e14209"
+repo-rev = "origin/compathelper/new_version/2020-11-19-02-13-43-487-209548422"
+repo-url = "https://github.com/chengchingwen/Transformers.jl.git"
 uuid = "21ca0261-441d-5938-ace7-c90938fde4d4"
 version = "0.1.7"
 

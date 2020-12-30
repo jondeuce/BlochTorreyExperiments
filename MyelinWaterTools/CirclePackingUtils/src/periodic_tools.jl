@@ -81,8 +81,8 @@ function periodic_scale_to_threshold(cs::Vector{C}, bdry::Rectangle{2}, distthre
     # Compute minimum possible α which satisifes distthresh
     min_alpha(c1, c2) = (radius(c1) + radius(c2) + distthresh) / norm(origin(c1) - origin(c2))
     all_cs = periodic_circles(cs, bdry)
-    α_min = maximum(@inbounds min_alpha(all_cs[i], all_cs[j]) for i in 2:length(all_cs) for j in 1:i-1)
-    
+    α_min = maximum(@inbounds(min_alpha(all_cs[i], all_cs[j])) for i in 2:length(all_cs) for j in 1:i-1)
+
     # Expand initial circles once to α_min to ensure non-overlapping circles
     α = α_min
     cs, bdry = expand_geom(α_min, cs, bdry)
