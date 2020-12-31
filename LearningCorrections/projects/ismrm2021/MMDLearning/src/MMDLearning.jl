@@ -10,17 +10,19 @@ using Reexport
 import UnsafeArrays
 using UnsafeArrays: uview, uviews, @uviews
 
-import Pkg.TOML, BSON, Glob, PrettyTables, DrWatson, Flux, Flux.CUDA, NNlib, Zygote, ChainRules, Transformers, BlackBoxOptim, Optim, NLopt, FiniteDiff, ForwardDiff, SparseDiffTools, DECAES, HypothesisTests
-export     TOML, BSON, Glob, PrettyTables, DrWatson, Flux,      CUDA, NNlib, Zygote, ChainRules, Transformers, BlackBoxOptim, Optim, NLopt, FiniteDiff, ForwardDiff, SparseDiffTools, DECAES, HypothesisTests
+import Pkg.TOML, BSON, Glob, PrettyTables, DrWatson, Flux, Flux.CUDA, NNlib, Zygote, ChainRules, Transformers, BlackBoxOptim, Optim, NLopt, FiniteDifferences, ForwardDiff, SparseDiffTools, DECAES, HypothesisTests
+export     TOML, BSON, Glob, PrettyTables, DrWatson, Flux,      CUDA, NNlib, Zygote, ChainRules, Transformers, BlackBoxOptim, Optim, NLopt, FiniteDifferences, ForwardDiff, SparseDiffTools, DECAES, HypothesisTests
 using DrWatson: @dict, @ntuple, @pack!, @unpack
 export @dict, @ntuple, @pack!, @unpack
+using Distributions: log2π
+export log2π
 
 export MMDKernel, FunctionKernel, DeepExponentialKernel
 export mmd, mmdvar, mmd_and_mmdvar, tstat_flux, kernel_loss, train_kernel!
 export mmd_perm_test_power, mmd_perm_test_power_plot
 export fast_hist_1D, signal_histograms, pyheatmap
 export map_dict, sum_dict, apply_dim1, clamp_dim1
-export std_thresh, split_mean_std, split_mean_exp_std, split_mean_softplus_std, sample_mv_normal, log2π, pow2
+export std_thresh, split_mean_std, split_mean_exp_std, split_mean_softplus_std, sample_mv_normal, pow2
 export arr_similar, arr32, arr64, zeros_similar, ones_similar, randn_similar, rand_similar, fill_similar
 export handleinterrupt, saveprogress, saveplots
 

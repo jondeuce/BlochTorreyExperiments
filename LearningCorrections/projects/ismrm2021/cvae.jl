@@ -32,9 +32,27 @@ split_marginal_latent(::CVAE{n,nθ,nθM,k,nz}, x::AbstractMatrix) where {n,nθ,n
 #### CVAE methods
 ####
 
-KLDivUnitNormal(μ, σ) = (sum(@. pow2(σ) + pow2(μ) - 2 * log(σ)) - length(μ)) / (2 * size(μ,2)) # KL-divergence between approximation posterior and N(0, 1) prior (Note: sum over dim=1, mean over dim=2)
-KLDivergence(μq0, σq, μr0, σr) = (sum(@. pow2(σq / σr) + pow2((μr0 - μq0) / σr) - 2 * log(σq / σr)) - length(μq0)) / (2 * size(μq0,2)) # KL-divergence contribution to cross-entropy (Note: sum over dim=1, mean over dim=2)
-EvidenceLowerBound(x, μx0, σx) = (sum(@. pow2((x - μx0) / σx) + 2 * log(σx)) + length(μx0) * log2π(eltype(μx0))) / (2 * size(μx0,2)) # Negative log-likelihood/ELBO contribution to cross-entropy (Note: sum over dim=1, mean over dim=2)
+_KLDivUnitNormal_Kernel(μ, σ) = (σ^2 + μ^2 - 1) / 2  - log(σ)
+_KLDivergence_Kernel(μq0, σq, μr0, σr) = ((σq / σr)^2 + ((μr0 - μq0) / σr)^2 - 1) / 2 - log(σq / σr)
+_EvidenceLowerBound_Kernel(x, μx0, σx) = (((x - μx0) / σx)^2 + log2π) / 2 + log(σx)
+
+Zygote.@adjoint _KLDivUnitNormal_Kernel(μ, σ) = _KLDivUnitNormal_Kernel(μ, σ), Δ -> (Δ * μ, Δ * (σ - inv(σ)))
+Zygote.@adjoint _KLDivergence_Kernel(μq0, σq, μr0, σr) = _KLDivergence_Kernel(μq0, σq, μr0, σr), Δ -> (Δ * (μq0 - μr0) / σr^2, Δ * (σq / σr - σr / σq) / σr, Δ * (μr0 - μq0) / σr^2, Δ * (σr^2 - (μr0 - μq0)^2 - σq^2) / σr^3)
+Zygote.@adjoint _EvidenceLowerBound_Kernel(x, μx0, σx) = _EvidenceLowerBound_Kernel(x, μx0, σx), Δ -> (Δ * (x - μx0) / σx^2, Δ * (μx0 - x) / σx^2, Δ * (σx^2 - (x - μx0)^2) / σx^3)
+
+_cap(x) = min(x, 1000) # threshold x from above
+KLDivUnitNormal(μ, σ) = sum(_cap.(_KLDivUnitNormal_Kernel.(μ, σ))) / size(μ,2) # KL-divergence between approximation posterior and N(0, 1) prior (Note: sum over dim=1, mean over dim=2)
+KLDivergence(μq0, σq, μr0, σr) = sum(_cap.(_KLDivergence_Kernel.(μq0, σq, μr0, σr))) / size(μq0,2) # KL-divergence contribution to cross-entropy (Note: sum over dim=1, mean over dim=2)
+EvidenceLowerBound(x, μx0, σx) = sum(_cap.(_EvidenceLowerBound_Kernel.(x, μx0, σx))) / size(μx0,2) # Negative log-likelihood/ELBO contribution to cross-entropy (Note: sum over dim=1, mean over dim=2)
+
+function _crossentropy_gradcheck()
+    for T in [Float32, Float64]
+        _rand() = one(T) + rand(T)
+        MMDLearning.gradcheck(_KLDivUnitNormal_Kernel, _rand(), _rand())
+        MMDLearning.gradcheck(_KLDivergence_Kernel, _rand(), _rand(), _rand(), _rand())
+        MMDLearning.gradcheck(_EvidenceLowerBound_Kernel, _rand(), _rand(), _rand())
+    end
+end
 
 function apply_pad(::CVAE{n}, Y) where {n}
     if size(Y,1) < n

@@ -61,19 +61,22 @@ uniform_range(N::Int) = N <= 1 ? zeros(N) : range(-1,1,length=N) |> collect
 @inline split_dim1(x::AbstractArray) = (x[1:end÷2, ..], x[end÷2+1:end, ..])
 
 # Split array into mean/standard deviation
-@inline std_thresh(::AbstractArray{T}) where {T} = eps(T)
+@inline std_thresh(::AbstractArray{T}) where {T} = T(1e-6)
 @inline split_mean_std(μ::AbstractArray) = split_dim1(μ)
 @inline split_mean_exp_std(μ::AbstractArray) = ((μ0, logσ) = split_dim1(μ); return (μ0, exp.(logσ) .+ std_thresh(logσ)))
 @inline split_mean_softplus_std(μ::AbstractArray) = ((μ0, invσ) = split_dim1(μ); return (μ0, Flux.softplus.(invσ) .+ std_thresh(invσ)))
+
+# Temporary fix: https://github.com/FluxML/NNlib.jl/issues/254
+Zygote.@adjoint function Flux.softplus(x::Real)
+    y = Flux.softplus(x)
+    return y, Δ -> (Δ * Flux.σ(x),)
+end
 
 # Sample multivariate normal
 @inline sample_mv_normal(μ::Union{<:Tuple,<:NamedTuple}) = sample_mv_normal(μ...)
 @inline sample_mv_normal(μ::AbstractMatrix) = sample_mv_normal(split_dim1(μ)...)
 @inline sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ)))
 @inline sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}, nsamples::Int) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ))..., nsamples)
-
-# Compile time constant log(2π)
-@inline log2π(::Type{T}) where {T} = log(2*T(π))
 
 # One element
 @inline one_element(x) = one_element(typeof(x))
@@ -324,67 +327,59 @@ function simple_fd_gradient!(g, f, x, lo = nothing, hi = nothing)
     return f₀
 end
 
-function ngradient(f, xs::AbstractArray...)
-    grads = zero.(xs)
-    for (x, Δ) in zip(xs, grads), i in 1:length(x)
-        tmp = x[i]
-        δ = cbrt(eps(eltype(x))) # cbrt seems to be slightly better than sqrt; larger step size helps
-        x[i] = tmp - δ/2
-        y1 = f(xs...)
-        x[i] = tmp + δ/2
-        y2 = f(xs...)
-        x[i] = tmp
-        Δ[i] = (y2-y1)/δ
-        # display.(Δ[i]) #TODO FIXME
+function fd_gradients(f, xs::Number...; extrapolate = true)
+    map(1:length(xs)) do i
+        fdm = FiniteDifferences.central_fdm(3, 1) # method
+        fᵢ = y -> f(setindex!!(xs, y, i)...) # close over all j != i
+        return extrapolate ?
+            first(FiniteDifferences.extrapolate_fdm(fdm, fᵢ, xs[i]; breaktol = 2)) : # Richardson extrapolation
+            fdm(fᵢ, xs[i])
     end
-    return grads
 end
 
-function gradcheck(f, xs::AbstractArray...)
-    dx0 = Flux.gradient(f, xs...)
-    dx1 = ngradient(f, xs...)
-    @show maximum.(abs, dx0)
-    @show maximum.(abs, dx1)
-    @show maximum.(abs, (dx0 .- dx1) ./ dx0)
-    all(isapprox.(dx0, dx1, rtol = 1e-4, atol = 0))
+function fd_gradients(f, xs::AbstractArray...; extrapolate = true)
+    try
+        CUDA.allowscalar(true)
+        ∇s = map(zero, xs)
+        for (x, ∇) in zip(xs, ∇s), i in 1:length(x)
+            fdm = FiniteDifferences.central_fdm(3, 1) # method
+            xᵢ = x[i]
+            fᵢ = y -> (x[i] = y; out = f(xs...); x[i] = xᵢ; return Float64(out))
+            h₀ = 0.1 * Float64(max(abs(xᵢ), one(xᵢ)))
+            ∇[i] = extrapolate ?
+                first(FiniteDifferences.extrapolate_fdm(fdm, fᵢ, Float64(xᵢ), h₀; breaktol = 2)) : # Richardson extrapolation
+                fdm(fᵢ, Float64(xᵢ))
+        end
+        return ∇s
+    finally
+        CUDA.allowscalar(false)
+    end
 end
 
-function gradcheck(f, m::Flux.Chain, xs::AbstractArray...; onlyfirst = true, seed = 0)
-    ps = Flux.params(m)
+function gradcheck(f, xs...; extrapolate = true, kwargs...)
+    ∇ad = Zygote.gradient(f, xs...)
+    ∇fd = fd_gradients(f, xs...; extrapolate)
+    @assert all(isapprox.(∇ad, ∇fd; kwargs...))
+end
+
+_viewfirst(x::AbstractArray{T,N}) where {T,N} = view(x, ntuple(i -> 1:1, N)...)
+
+function fd_modelgradients(f, m; extrapolate = true, onlyfirst = true, seed = nothing)
     !isnothing(seed) && Random.seed!(seed)
-    g0 = Flux.gradient(() -> f(m, xs...), ps) |> g -> [g[p] for p in ps]
-    onlyfirst && (g0 = first.(g0))
-    display.(g0) #TODO FIXME
-
-    m  = Flux.paramtype(BigFloat, m)
-    ys = Flux.paramtype(BigFloat, xs)
     ps = Flux.params(m)
-    onlyfirst && (ps = [@views(p[1:1]) for p in ps])
-    g1 = ngradient(ps...) do (args...)
-        !isnothing(seed) && Random.seed!(seed)
-        f(m, ys...)
-    end
-    onlyfirst && (g1 = first.(g1))
-    display.(g1) #TODO FIXME
+    onlyfirst && (ps = [_viewfirst(p) for p in ps])
+    fd_gradients((xs...,) -> f(), ps...; extrapolate)
+end
 
-    display.(g0 .- g1) #TODO FIXME
-    map(g0, g1) do g0, g1
-        display(abs.(g0 .- g1) .< cbrt.(eps.(g0))^2) #TODO FIXME
+function modelgradcheck(f, m; extrapolate = true, onlyfirst = true, seed = nothing, kwargs...)
+    !isnothing(seed) && Random.seed!(seed)
+    ps = Flux.params(m)
+    ∇ad = Zygote.gradient(f, ps)
+    ∇fd = fd_modelgradients(f, m; extrapolate, onlyfirst, seed)
+    ∇pairs = if onlyfirst
+        [(Flux.cpu(_viewfirst(∇ad[p])), Flux.cpu(∇fd[i])) for (i,p) in enumerate(ps)]
+    else
+        [(∇ad[p], ∇fd[i]) for (i,p) in enumerate(ps)]
     end
-end;
-
-#=
-let
-    m = Flux.Dense(2,2,Flux.relu) |> Flux.f32
-    x = 100*rand(2) |> Flux.f32
-    gradcheck((m,x) -> sum(abs2, m(x)), m, x)
-end;
-let m = Flux.f32(m), xy = Flux.f32(test_data)
-    # H_LIGOCVAE(m, xy...) |> display
-    gradcheck((m,xy...) -> H_LIGOCVAE(m, xy...), m, xy...)
-end;
-let m = Flux.f64(m), xy = Flux.f64(test_data)
-    # H_LIGOCVAE(m, xy...) |> display
-    gradcheck((m,xy...) -> H_LIGOCVAE(m, xy...), m, xy...)
-end;
-=#
+    @assert all([isapprox(∇pair...; kwargs...) for ∇pair in ∇pairs])
+end

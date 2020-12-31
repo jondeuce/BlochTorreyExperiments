@@ -356,8 +356,8 @@ function CPMGImage(info::NamedTuple; seed::Int)
     rng = Random.seed!(seed)
 
     data     = convert(Array{Float32}, DECAES.load_image(info.path, Val(4)))
-    Imask    = findall(>(0), data[..,1]) # image is assumed to be masked; filter out non-positive first echo signals
-    Inonmask = findall(<=(0), data[..,1]) # compliment of mask indices
+    Imask    = findall(dropdims(all((x -> !isnan(x) && !iszero(x)).(data); dims = 4); dims = 4)) # image is masked, keep signals without zero or NaN entries
+    Inonmask = findall(dropdims(any((x ->  isnan(x) ||  iszero(x)).(data); dims = 4); dims = 4)) # compliment of mask indices
     ishuffle = randperm(MersenneTwister(seed), length(Imask)) # shuffle indices before splitting to train/test/val
 
     data[Inonmask, :] .= NaN # set signals outside of mask to NaN
