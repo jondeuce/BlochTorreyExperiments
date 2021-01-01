@@ -84,7 +84,7 @@ function KL_and_ELBO(cvae::CVAE{n,nθ,nθM,k,nz}, Y, θ, Z; marginalize_Z::Bool)
     KLDiv = KLDivergence(μq0, σq, μr0, σr)
     ELBO = marginalize_Z ?
         EvidenceLowerBound(θ[1:nθM,..], μx0[1:nθM,..], σx[1:nθM,..]) :
-        EvidenceLowerBound(vcat(θ[1:nθM,..],Z), μx0, σx)
+        EvidenceLowerBound(vcat(θ[1:nθM,..], Z), μx0, σx)
     return (; KLDiv, ELBO)
 end
 

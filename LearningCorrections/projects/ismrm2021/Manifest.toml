@@ -146,7 +146,9 @@ version = "1.0.0"
 
 [[CUDA]]
 deps = ["AbstractFFTs", "Adapt", "BFloat16s", "CEnum", "DataStructures", "ExprTools", "GPUArrays", "GPUCompiler", "LLVM", "Libdl", "LinearAlgebra", "Logging", "MacroTools", "NNlib", "Pkg", "Printf", "Random", "Reexport", "Requires", "SparseArrays", "Statistics", "TimerOutputs"]
-git-tree-sha1 = "7663b61782b569b03fba91d330a5ed2f86cd4cb8"
+git-tree-sha1 = "297734e9df100662a81927df33391b347d5eff2e"
+repo-rev = "6430796"
+repo-url = "https://github.com/jondeuce/CUDA.jl.git"
 uuid = "052768ef-5323-5732-b1bb-66c8b64840ba"
 version = "2.3.0"
 
@@ -393,9 +395,9 @@ version = "4.3.1+4"
 
 [[FFTW]]
 deps = ["AbstractFFTs", "FFTW_jll", "IntelOpenMP_jll", "Libdl", "LinearAlgebra", "MKL_jll", "Reexport"]
-git-tree-sha1 = "8b7c16b56936047ca41bf25effa137ae0b381ae8"
+git-tree-sha1 = "8fda0934cb99db617171f7296dc361f4d6fa5424"
 uuid = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
-version = "1.2.4"
+version = "1.3.0"
 
 [[FFTW_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -545,15 +547,15 @@ version = "1.0.0"
 
 [[HDF5]]
 deps = ["Blosc", "HDF5_jll", "Libdl", "Mmap", "Random"]
-git-tree-sha1 = "0b812e7872e2199a5a04944f486b4048944f1ed8"
+git-tree-sha1 = "0713cbabdf855852dfab3ce6447c87145f3d9ea8"
 uuid = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
-version = "0.13.7"
+version = "0.13.6"
 
 [[HDF5_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg", "Zlib_jll"]
-git-tree-sha1 = "bc9c3d43ffd4d8988bfa372b86d4bdbd26860e95"
+deps = ["Artifacts", "JLLWrappers", "LibCURL_jll", "Libdl", "OpenSSL_jll", "Pkg", "Zlib_jll"]
+git-tree-sha1 = "fd83fa0bde42e01952757f01149dd968c06c4dba"
 uuid = "0234f1f7-429e-5d53-9886-15a909be8d59"
-version = "1.10.5+7"
+version = "1.12.0+1"
 
 [[HTML_Entities]]
 deps = ["StrTables"]
@@ -726,9 +728,21 @@ git-tree-sha1 = "987298a681f4946b0d5d87ded1e89b53957d3b07"
 uuid = "f1f30506-32fe-5131-bd72-7c197988f9e5"
 version = "0.2.0"
 
+[[LibCURL_jll]]
+deps = ["LibSSH2_jll", "Libdl", "MbedTLS_jll", "Pkg", "Zlib_jll", "nghttp2_jll"]
+git-tree-sha1 = "897d962c20031e6012bba7b3dcb7a667170dad17"
+uuid = "deac9b47-8bc7-5906-a0fe-35ac56dc84c0"
+version = "7.70.0+2"
+
 [[LibGit2]]
 deps = ["Printf"]
 uuid = "76f85450-5226-5b5a-8eaa-529ad045b433"
+
+[[LibSSH2_jll]]
+deps = ["Libdl", "MbedTLS_jll", "Pkg"]
+git-tree-sha1 = "717705533148132e5466f2924b9a3657b16158e8"
+uuid = "29816b5a-b9ab-546f-933c-edad1886dfa8"
+version = "1.9.0+3"
 
 [[LibVPX_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -848,7 +862,7 @@ uuid = "d8e11817-5142-5d16-987a-aa16d5891078"
 version = "0.4.6"
 
 [[MMDLearning]]
-deps = ["ArgParse", "BSON", "BangBang", "BenchmarkTools", "BlackBoxOptim", "CUDA", "ChainRules", "Conda", "DECAES", "DataFrames", "DataStructures", "Dates", "Distributions", "DrWatson", "EllipsisNotation", "FFTW", "FiniteDifferences", "Flux", "ForwardDiff", "Glob", "HypothesisTests", "LaTeXStrings", "LegibleLambdas", "LinearAlgebra", "LoopVectorization", "MAT", "NLopt", "NNlib", "Optim", "Parameters", "Pkg", "PrettyTables", "Printf", "PyCall", "PyPlot", "Random", "Reexport", "Setfield", "SparseDiffTools", "SpecialFunctions", "Statistics", "StatsBase", "StatsPlots", "TimerOutputs", "Transformers", "Tullio", "UnsafeArrays", "Zygote"]
+deps = ["ArgParse", "BSON", "BangBang", "BenchmarkTools", "BlackBoxOptim", "CUDA", "ChainRules", "Conda", "DECAES", "DataFrames", "DataStructures", "Dates", "Distributions", "DrWatson", "EllipsisNotation", "FFTW", "FiniteDifferences", "Flux", "ForwardDiff", "Glob", "HypothesisTests", "LaTeXStrings", "LegibleLambdas", "LinearAlgebra", "LoopVectorization", "MAT", "NLopt", "NNlib", "Optim", "Parameters", "Pkg", "PrettyTables", "Printf", "PyCall", "PyPlot", "Random", "Reexport", "Setfield", "SparseDiffTools", "SpecialFunctions", "Statistics", "StatsBase", "StatsPlots", "TOML", "TimerOutputs", "Transformers", "Tullio", "UnsafeArrays", "Zygote"]
 path = "MMDLearning"
 uuid = "032358f6-e4b1-47a4-bb61-f69598110e2e"
 version = "0.1.0"
@@ -1346,6 +1360,12 @@ version = "1.2.1"
 deps = ["Libdl", "LinearAlgebra", "Serialization", "SparseArrays"]
 uuid = "4607b0f0-06f3-5cda-b6b1-a6196a1729e9"
 
+[[TOML]]
+deps = ["Dates"]
+git-tree-sha1 = "a748eac31508d3e1c9a5ff36963352122fa77106"
+uuid = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+version = "1.0.1"
+
 [[TableOperations]]
 deps = ["SentinelArrays", "Tables", "Test"]
 git-tree-sha1 = "85490cabedd41c56cf7574daec34769e0e2851b9"
@@ -1665,6 +1685,12 @@ deps = ["Artifacts", "JLLWrappers", "Libdl", "Ogg_jll", "Pkg"]
 git-tree-sha1 = "fa14ac25af7a4b8a7f61b287a124df7aab601bcd"
 uuid = "f27f6e37-5d2b-51aa-960f-b287f2bc3b7a"
 version = "1.3.6+6"
+
+[[nghttp2_jll]]
+deps = ["Libdl", "Pkg"]
+git-tree-sha1 = "8e2c44ab4d49ad9518f359ed8b62f83ba8beede4"
+uuid = "8e850ede-7688-5339-a07c-302acd2aaf8d"
+version = "1.40.0+2"
 
 [[p7zip_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]

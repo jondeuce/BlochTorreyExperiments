@@ -67,10 +67,7 @@ uniform_range(N::Int) = N <= 1 ? zeros(N) : range(-1,1,length=N) |> collect
 @inline split_mean_softplus_std(μ::AbstractArray) = ((μ0, invσ) = split_dim1(μ); return (μ0, Flux.softplus.(invσ) .+ std_thresh(invσ)))
 
 # Temporary fix: https://github.com/FluxML/NNlib.jl/issues/254
-Zygote.@adjoint function Flux.softplus(x::Real)
-    y = Flux.softplus(x)
-    return y, Δ -> (Δ * Flux.σ(x),)
-end
+Zygote.@adjoint Flux.softplus(x::Real) = Flux.softplus(x), Δ -> (Δ * Flux.σ(x),)
 
 # Sample multivariate normal
 @inline sample_mv_normal(μ::Union{<:Tuple,<:NamedTuple}) = sample_mv_normal(μ...)
@@ -362,24 +359,71 @@ function gradcheck(f, xs...; extrapolate = true, kwargs...)
     @assert all(isapprox.(∇ad, ∇fd; kwargs...))
 end
 
-_viewfirst(x::AbstractArray{T,N}) where {T,N} = view(x, ntuple(i -> 1:1, N)...)
-
-function fd_modelgradients(f, m; extrapolate = true, onlyfirst = true, seed = nothing)
-    !isnothing(seed) && Random.seed!(seed)
-    ps = Flux.params(m)
-    onlyfirst && (ps = [_viewfirst(p) for p in ps])
-    fd_gradients((xs...,) -> f(), ps...; extrapolate)
+function _param_subset_index_map(ps::Flux.Params, subset = nothing)
+    (subset === nothing) && return nothing
+    Is = IdDict()
+    if subset === :first
+        foreach(p -> Is[p] = (I = first(CartesianIndices(p)); I:I), ps)
+    else # :random
+        foreach(p -> Is[p] = (I = rand(CartesianIndices(p)); I:I), ps)
+    end
+    return Is
 end
 
-function modelgradcheck(f, m; extrapolate = true, onlyfirst = true, seed = nothing, kwargs...)
+function fd_modelgradients(f, ps::Flux.Params, Is::Union{<:IdDict, Nothing} = nothing; extrapolate = true)
+    !(Is === nothing) && (ps = [view(p, Is[p]) for p in ps])
+    fd_gradients((args...,) -> f(), ps...; extrapolate)
+end
+
+function fd_modelgradients(f, m; extrapolate = true, subset = nothing)
+    ps = Flux.params(m)
+    Is = _param_subset_index_map(ps, subset)
+    fd_modelgradients(f, ps, Is; extrapolate)
+end
+
+function modelgradcheck(f, m; extrapolate = true, subset = nothing, seed = nothing, kwargs...)
     !isnothing(seed) && Random.seed!(seed)
     ps = Flux.params(m)
-    ∇ad = Zygote.gradient(f, ps)
-    ∇fd = fd_modelgradients(f, m; extrapolate, onlyfirst, seed)
-    ∇pairs = if onlyfirst
-        [(Flux.cpu(_viewfirst(∇ad[p])), Flux.cpu(∇fd[i])) for (i,p) in enumerate(ps)]
+    ∇ad = Zygote.gradient(f, ps) # compute full gradient with backprop
+    Is = _param_subset_index_map(ps, subset)
+    ∇fd = fd_modelgradients(f, ps, Is; extrapolate) # compute subset of gradient with finite differences
+    ∇pairs = if !isnothing(Is)
+        [(Flux.cpu(∇ad[p][Is[p]]), Flux.cpu(∇fd[i])) for (i,p) in enumerate(ps)] # move view of ∇ad to cpu to avoid scalar indexing into view
     else
         [(∇ad[p], ∇fd[i]) for (i,p) in enumerate(ps)]
     end
     @assert all([isapprox(∇pair...; kwargs...) for ∇pair in ∇pairs])
+end
+
+function _softmax_test()
+    c(x) = x # deepcopy(x) # softmax gradient had bug which modified input; wrap in copies to test
+    sumabs2(f) = x -> sum(abs2, f(c(x)))
+    ∇sumabs2(f) = function(x)
+        y = f(c(x)) # f implements softmax
+        Δ = 2 .* y # gradient of sum(abs2, y) w.r.t. y
+        ∇x = y .* (Δ .- sum(Δ .* y, dims=1)) # softmax gradient, propagating Δ backward
+        (∇x,)
+    end
+    simple_softmax(x; dims=1) = (y = exp.(x); y ./ sum(y; dims))
+
+    let
+        Random.seed!(0)
+        CUDA.seed!(0)
+        x = CUDA.rand(Float32,3,3)
+        @assert simple_softmax(c(x)) ≈ Flux.softmax(c(x))
+
+        @info "simple_softmax"
+        Zygote.gradient(sumabs2(simple_softmax), c(x)) |> display
+        MMDLearning.fd_gradients(sumabs2(simple_softmax), c(x); extrapolate = true) |> display
+        ∇sumabs2(simple_softmax)(c(x)) |> display # true answer
+        gradcheck(sumabs2(simple_softmax), c(x); rtol = 1e-2, atol = 0, extrapolate = true)
+        println("")
+
+        @info "Flux.softmax"
+        Zygote.gradient(sumabs2(Flux.softmax), c(x)) |> display
+        MMDLearning.fd_gradients(sumabs2(Flux.softmax), c(x); extrapolate = true) |> display
+        ∇sumabs2(Flux.softmax)(c(x)) |> display # true answer
+        gradcheck(sumabs2(Flux.softmax), c(x); rtol = 1e-2, atol = 0, extrapolate = true)
+        println("")
+    end
 end

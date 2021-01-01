@@ -10,8 +10,8 @@ using Reexport
 import UnsafeArrays
 using UnsafeArrays: uview, uviews, @uviews
 
-import Pkg.TOML, BSON, Glob, PrettyTables, DrWatson, Flux, Flux.CUDA, NNlib, Zygote, ChainRules, Transformers, BlackBoxOptim, Optim, NLopt, FiniteDifferences, ForwardDiff, SparseDiffTools, DECAES, HypothesisTests
-export     TOML, BSON, Glob, PrettyTables, DrWatson, Flux,      CUDA, NNlib, Zygote, ChainRules, Transformers, BlackBoxOptim, Optim, NLopt, FiniteDifferences, ForwardDiff, SparseDiffTools, DECAES, HypothesisTests
+import TOML, BSON, Glob, PrettyTables, DrWatson, Flux, CUDA, NNlib, Zygote, ChainRules, Transformers, BlackBoxOptim, Optim, NLopt, FiniteDifferences, ForwardDiff, SparseDiffTools, DECAES, HypothesisTests
+export TOML, BSON, Glob, PrettyTables, DrWatson, Flux, CUDA, NNlib, Zygote, ChainRules, Transformers, BlackBoxOptim, Optim, NLopt, FiniteDifferences, ForwardDiff, SparseDiffTools, DECAES, HypothesisTests
 using DrWatson: @dict, @ntuple, @pack!, @unpack
 export @dict, @ntuple, @pack!, @unpack
 using Distributions: log2π

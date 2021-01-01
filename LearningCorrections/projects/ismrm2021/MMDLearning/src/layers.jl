@@ -478,6 +478,30 @@ function RESCNN(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σou
 end
 
 """
+Print all output activations for a `Transformers.Stack` for debugging purposes
+"""
+function stack_activations(m::Transformers.Stack, xs...; verbose = false)
+    _m = Transformers.Stack(
+        m.topo,
+        map(enumerate(m.models)) do (i,f)
+            function (args...,)
+                @info "layer $i", "NaN params: $(any([any(isnan, p) for p in Flux.params(f)]))", "Inf params: $(any([any(isinf, p) for p in Flux.params(f)]))", typeof(f)
+                for (j,arg) in enumerate(args)
+                    @info "layer $i", "input $j", "NaN: $(any(isnan, arg))", "Inf: $(any(isinf, arg))", typeof(arg), size(arg)
+                    verbose && display(arg)
+                end
+                y = f(args...)
+                @info "layer $i", "output", "NaN: $(any(isnan, y))", "Inf: $(any(isinf, y))", typeof(y), size(y)
+                verbose && display(y)
+                println("")
+                return y
+            end
+        end...
+    )
+    _m(xs...)
+end
+
+"""
 Print model/layer
 """
 function model_summary(io::IO, models::AbstractDict)
