@@ -146,8 +146,8 @@ version = "1.0.0"
 
 [[CUDA]]
 deps = ["AbstractFFTs", "Adapt", "BFloat16s", "CEnum", "DataStructures", "ExprTools", "GPUArrays", "GPUCompiler", "LLVM", "Libdl", "LinearAlgebra", "Logging", "MacroTools", "NNlib", "Pkg", "Printf", "Random", "Reexport", "Requires", "SparseArrays", "Statistics", "TimerOutputs"]
-git-tree-sha1 = "297734e9df100662a81927df33391b347d5eff2e"
-repo-rev = "6430796"
+git-tree-sha1 = "ce46ca940f50e218d9858fb65374f91621ab7347"
+repo-rev = "a278d93"
 repo-url = "https://github.com/jondeuce/CUDA.jl.git"
 uuid = "052768ef-5323-5732-b1bb-66c8b64840ba"
 version = "2.3.0"

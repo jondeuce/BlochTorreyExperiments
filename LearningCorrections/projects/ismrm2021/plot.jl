@@ -229,7 +229,7 @@ function plot_epsilon(; knots = (-1.0, 1.0), seriestype = :line, showplot = fals
         _, _, Y, Ymeta = sample_batch(:val; batchsize = zlen * nz)
         X, _, Z = sampleXθZ(derived["cvae"], derived["prior"], Ymeta; posterior_θ = true, posterior_Z = false)
         Z = Z[:,1] |> Flux.cpu |> z -> repeat(z, 1, zlen, nz) |> z -> (foreach(i -> z[i,:,i] .= range(start, stop; length = zlen), 1:nz); z)
-        _, ϵ = rician_params(derived["ricegen"], X, reshape(Z, nz, :) |> Flux.gpu)
+        _, ϵ = rician_params(derived["ricegen"], X, reshape(Z, nz, :) |> todevice)
         (size(ϵ,1) == 1) && (ϵ = repeat(ϵ, n, 1))
         log10ϵ = log10.(reshape(ϵ, :, zlen, nz)) |> Flux.cpu
         ps = map(1:nz) do i

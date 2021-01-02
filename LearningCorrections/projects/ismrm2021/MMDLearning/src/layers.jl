@@ -514,7 +514,7 @@ function model_summary(io::IO, models::AbstractDict)
 end
 function model_summary(models::AbstractDict, filename = nothing)
     @info "Model summary..."
-    (filename != nothing) && open(filename, "w") do file
+    !(filename === nothing) && open(filename, "w") do file
         model_summary(file, models)
     end
     model_summary(stdout, models)

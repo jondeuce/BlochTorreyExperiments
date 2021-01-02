@@ -28,6 +28,9 @@ fill_similar(::Type{<:CUDA.CuArray{T}}, v, sz...) where {T} = CUDA.fill(T(v), sz
 #TODO: `acosd` gets coerced to Float64 by Zygote on reverse pass; file bug?
 _acosd_cuda(x::AbstractArray{T}) where {T} = clamp.(T(57.29577951308232) .* acos.(x), T(0.0), T(180.0)) # 180/π ≈ 57.29577951308232
 
+# Soft minimum between `x` and `y` with sharpness `k`
+@inline softmin(x,y,k) = (m = min(x,y); return m - log(exp((m-x)/k) + exp((m-y)/k))/k)
+
 # Soft cutoff at `x = x0` with scale `w`. `f` is a sigmoidal function with unit scale which *increases* from 0 to 1 near `x = 0`
 soft_cutoff(f, x::AbstractArray, x0, w) = f(@. (x0 - x) / w)
 soft_cutoff(x::AbstractArray, x0, w) = soft_cutoff(sigmoid_weights_fun, x, x0, w) # fallback
@@ -359,7 +362,7 @@ function gradcheck(f, xs...; extrapolate = true, kwargs...)
     @assert all(isapprox.(∇ad, ∇fd; kwargs...))
 end
 
-function _param_subset_index_map(ps::Flux.Params, subset = nothing)
+function subset_indices_dict(ps::Flux.Params, subset = nothing)
     (subset === nothing) && return nothing
     Is = IdDict()
     if subset === :first
@@ -370,6 +373,30 @@ function _param_subset_index_map(ps::Flux.Params, subset = nothing)
     return Is
 end
 
+walk_model(f, m) = mapfoldl((x,y) -> isempty(y) ? x : (x..., y), fieldnames(typeof(m)); init = ()) do k
+    x = getfield(m, k)
+    out = f(m,k,x)
+    x isa AbstractArray ? (out,) : (out, walk_model(f, x)...)
+end
+
+function find_model_param(m, x)
+    keychain = Any[]
+    function find_model_param_inner(c)
+        if isempty(c)
+            false
+        elseif c isa Pair
+            c[2] === true
+        else
+            v = any(find_model_param_inner.(c))
+            v && c[1] isa Pair && pushfirst!(keychain, c[1][1])
+            return v
+        end
+    end
+    chain = walk_model((_m,_k,_x) -> _k => _x === x, m)
+    find_model_param_inner(chain)
+    return keychain
+end
+
 function fd_modelgradients(f, ps::Flux.Params, Is::Union{<:IdDict, Nothing} = nothing; extrapolate = true)
     !(Is === nothing) && (ps = [view(p, Is[p]) for p in ps])
     fd_gradients((args...,) -> f(), ps...; extrapolate)
@@ -377,20 +404,24 @@ end
 
 function fd_modelgradients(f, m; extrapolate = true, subset = nothing)
     ps = Flux.params(m)
-    Is = _param_subset_index_map(ps, subset)
+    Is = subset_indices_dict(ps, subset)
     fd_modelgradients(f, ps, Is; extrapolate)
 end
 
-function modelgradcheck(f, m; extrapolate = true, subset = nothing, seed = nothing, kwargs...)
-    !isnothing(seed) && Random.seed!(seed)
+function modelgradcheck(f, m; extrapolate = true, subset = nothing, verbose = false, seed = nothing, kwargs...)
+    !isnothing(seed) && (Random.seed!(seed); CUDA.seed!(0))
     ps = Flux.params(m)
-    ∇ad = Zygote.gradient(f, ps) # compute full gradient with backprop
-    Is = _param_subset_index_map(ps, subset)
+    ℓ, J = Zygote.pullback(f, ps) # compute full gradient with backprop
+    ∇ad = J(one(eltype(first(ps))))
+    Is = subset_indices_dict(ps, subset)
     ∇fd = fd_modelgradients(f, ps, Is; extrapolate) # compute subset of gradient with finite differences
     ∇pairs = if !isnothing(Is)
         [(Flux.cpu(∇ad[p][Is[p]]), Flux.cpu(∇fd[i])) for (i,p) in enumerate(ps)] # move view of ∇ad to cpu to avoid scalar indexing into view
     else
         [(∇ad[p], ∇fd[i]) for (i,p) in enumerate(ps)]
+    end
+    verbose && map(zip(ps, ∇pairs)) do (p, ∇pair)
+        println("ℓ: $ℓ, AD: $(∇pair[1]), FD: $(∇pair[2]), Δ: $(∇pair[1]-∇pair[2]), ≈: $(isapprox(∇pair...; kwargs...)), p: $(find_model_param(m, p))")
     end
     @assert all([isapprox(∇pair...; kwargs...) for ∇pair in ∇pairs])
 end
