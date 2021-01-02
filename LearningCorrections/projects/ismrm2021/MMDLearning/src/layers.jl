@@ -281,16 +281,16 @@ Multi-layer perceptron mapping inputs with height `sz[1]` to outputs with height
 `Nhid+2` total dense layers are used with `Dhid` hidden nodes. The first `Nhid+1` layers
 use activation `σhid` and the last layer uses activation `σout`. 
 """
-function MLP(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout = identity; skip = false, dropout = false, layernorm = false)
+function MLP(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout = identity; skip = false, dropout = false, layernorm = false, initW = Flux.glorot_uniform, initb = Flux.zeros, initW_last = initW, initb_last = initb)
     maybedropout(l) = dropout > 0 ? Flux.Chain(l, Flux.Dropout(dropout)) : l
     maybelayernorm(l) = layernorm ? Flux.Chain(l, Flux.LayerNorm(Dhid)) : l
     MaybeResidualDense() = skip ?
-        Flux.Chain(Flux.SkipConnection(Flux.Dense(Dhid, Dhid, identity), +), x -> σhid.(x)) : # x -> σhid.(x .+ W*x .+ b)
-        Flux.Dense(Dhid, Dhid, σhid) # x -> σhid.(W*x .+ b)
+        Flux.Chain(Flux.SkipConnection(Flux.Dense(Dhid, Dhid, identity; initW, initb), +), x -> σhid.(x)) : # x -> σhid.(x .+ W*x .+ b)
+        Flux.Dense(Dhid, Dhid, σhid; initW, initb) # x -> σhid.(W*x .+ b)
     Flux.Chain(
-        Flux.Dense(sz[1], Dhid, σhid) |> maybedropout |> maybelayernorm,
+        Flux.Dense(sz[1], Dhid, σhid; initW, initb) |> maybedropout |> maybelayernorm,
         [MaybeResidualDense() |> maybedropout |> maybelayernorm for _ in 1:Nhid]...,
-        Flux.Dense(Dhid, sz[2], σout),
+        Flux.Dense(Dhid, sz[2], σout; initW = initW_last, initb = initb_last),
     ) |> flattenchain
 end
 
@@ -514,7 +514,7 @@ function model_summary(io::IO, models::AbstractDict)
 end
 function model_summary(models::AbstractDict, filename = nothing)
     @info "Model summary..."
-    !(filename === nothing) && open(filename, "w") do file
+    (filename !== nothing) && open(filename, "w") do file
         model_summary(file, models)
     end
     model_summary(stdout, models)

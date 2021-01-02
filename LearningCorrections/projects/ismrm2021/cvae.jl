@@ -40,11 +40,9 @@ Zygote.@adjoint _KLDivUnitNormal_Kernel(μ, σ) = _KLDivUnitNormal_Kernel(μ, σ
 Zygote.@adjoint _KLDivergence_Kernel(μq0, σq, μr0, σr) = _KLDivergence_Kernel(μq0, σq, μr0, σr), Δ -> (Δ * (μq0 - μr0) / σr^2, Δ * (σq / σr - σr / σq) / σr, Δ * (μr0 - μq0) / σr^2, Δ * (σr^2 - (μr0 - μq0)^2 - σq^2) / σr^3)
 Zygote.@adjoint _EvidenceLowerBound_Kernel(x, μx0, σx) = _EvidenceLowerBound_Kernel(x, μx0, σx), Δ -> (Δ * (x - μx0) / σx^2, Δ * (μx0 - x) / σx^2, Δ * (σx^2 - (x - μx0)^2) / σx^3)
 
-@inline _cap(x) = min(x, 1000) # cap x from above
-# @inline _cap(x) = MMDLearning.softmin(x, oftype(float(x), 1000), oftype(float(x), 1000)) # softly cap x from above
-KLDivUnitNormal(μ, σ) = sum(_cap.(_KLDivUnitNormal_Kernel.(μ, σ))) / size(μ,2) # KL-divergence between approximation posterior and N(0, 1) prior (Note: sum over dim=1, mean over dim=2)
-KLDivergence(μq0, σq, μr0, σr) = sum(_cap.(_KLDivergence_Kernel.(μq0, σq, μr0, σr))) / size(μq0,2) # KL-divergence contribution to cross-entropy (Note: sum over dim=1, mean over dim=2)
-EvidenceLowerBound(x, μx0, σx) = sum(_cap.(_EvidenceLowerBound_Kernel.(x, μx0, σx))) / size(μx0,2) # Negative log-likelihood/ELBO contribution to cross-entropy (Note: sum over dim=1, mean over dim=2)
+KLDivUnitNormal(μ, σ) = sum(_KLDivUnitNormal_Kernel.(μ, σ)) / size(μ,2) # KL-divergence between approximation posterior and N(0, 1) prior (Note: sum over dim=1, mean over dim=2)
+KLDivergence(μq0, σq, μr0, σr) = sum(_KLDivergence_Kernel.(μq0, σq, μr0, σr)) / size(μq0,2) # KL-divergence contribution to cross-entropy (Note: sum over dim=1, mean over dim=2)
+EvidenceLowerBound(x, μx0, σx) = sum(_EvidenceLowerBound_Kernel.(x, μx0, σx)) / size(μx0,2) # Negative log-likelihood/ELBO contribution to cross-entropy (Note: sum over dim=1, mean over dim=2)
 
 function _crossentropy_gradcheck()
     for T in [Float32, Float64]
@@ -209,7 +207,7 @@ function sampleX̂(rice::RicianCorrector, X, Z, ninstances = nothing)
 end
 
 function NegLogLikelihood(rice::RicianCorrector, Y::AbstractVecOrMat, μ0, σ)
-    if typeof(rice) <: NormalizedRicianCorrector && !isnothing(rice.normalizer)
+    if typeof(rice) <: NormalizedRicianCorrector && (rice.normalizer !== nothing)
         Σμ = rice.normalizer(MMDLearning._rician_mean_cuda.(μ0, σ))
         μ0, σ = (μ0 ./ Σμ), (σ ./ Σμ)
     end
@@ -240,16 +238,16 @@ function posterior_state(
 
     function update(last_state, i)
         θnew, Znew = θZ_sampler_instance()
-        θlast = isnothing(last_state) ? nothing : last_state.θ
-        Zlast = isnothing(last_state) ? nothing : last_state.Z
+        θlast = (last_state === nothing) ? nothing : last_state.θ
+        Zlast = (last_state === nothing) ? nothing : last_state.Z
 
         if mode === :mean
-            θnew = isnothing(last_state) ? θnew : T(1/i) .* θnew .+ T(1-1/i) .* θlast
-            Znew = isnothing(last_state) ? Znew : T(1/i) .* Znew .+ T(1-1/i) .* Zlast
+            θnew = (last_state === nothing) ? θnew : T(1/i) .* θnew .+ T(1-1/i) .* θlast
+            Znew = (last_state === nothing) ? Znew : T(1/i) .* Znew .+ T(1-1/i) .* Zlast
             new_state = make_state(prior, signal(Ymeta), θnew, Znew)
         elseif mode === :maxlikelihood
             new_state = make_state(prior, signal(Ymeta), θnew, Znew)
-            if !isnothing(last_state)
+            if (last_state !== nothing)
                 mask = new_state.ℓ .< last_state.ℓ
                 new_state = map(new_state, last_state) do new, last
                     new .= ifelse.(mask, new, last)
@@ -260,7 +258,7 @@ function posterior_state(
         end
 
         # Check for convergence
-        p = isnothing(last_state) ? nothing :
+        p = (last_state === nothing) ? nothing :
             HypothesisTests.pvalue(
                 HypothesisTests.UnequalVarianceTTest(
                     map(x -> x |> Flux.cpu |> vec |> Vector{Float64}, (new_state.ℓ, last_state.ℓ))...

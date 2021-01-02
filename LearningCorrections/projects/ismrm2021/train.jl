@@ -176,7 +176,7 @@ function augment(X::AbstractMatrix)
 
     ks = (:signal, :grad, :lap, :fd, :res, :enc, :fft, :rfft, :ifft)
     Xs = [X₀, ∇X, ∇²X, ∇ⁿX, Xres, Xenc, Xfft, Xrfft, Xifft]
-    is = (!isnothing).(Xs)
+    is = (x -> x !== nothing).(Xs)
     Xs = NamedTuple{ks[is]}(Xs[is])
 
     return Xs
@@ -540,7 +540,7 @@ function fit_metrics(Ymeta, Ymeta_fit_state, θtrue, Ztrue, Wtrue)
     =#
     #= TODO
     νtrue = ϵtrue = rmse_true = logL_true = missing
-    if hasclosedform(phys) && !isnothing(θtrue) && !isnothing(Wtrue)
+    if hasclosedform(phys) && (θtrue !== nothing) && (Wtrue !== nothing)
         νtrue, ϵtrue = rician_params(ClosedForm(phys), θtrue, Wtrue) # noiseless true signal and noise level
         Ytrue = add_noise_instance(phys, νtrue, ϵtrue) # noisy true signal
         rmse_true = sqrt(mean(abs2, Ytrue - νtrue))
@@ -552,8 +552,8 @@ function fit_metrics(Ymeta, Ymeta_fit_state, θtrue, Ztrue, Wtrue)
     all_rmse = sqrt.(mean(abs2, signal(Ymeta) .- ν; dims = 1)) |> Flux.cpu |> vec |> copy
     all_logL = ℓ |> Flux.cpu |> vec |> copy
     rmse, logL = mean(all_rmse), mean(all_logL)
-    theta_err = isnothing(θtrue) ? missing : mean(abs, θerror(phys, θtrue, θ); dims = 2) |> Flux.cpu |> vec |> copy
-    Z_err = isnothing(Ztrue) ? missing : mean(abs, Ztrue .- Z; dims = 2) |> Flux.cpu |> vec |> copy
+    theta_err = (θtrue === nothing) ? missing : mean(abs, θerror(phys, θtrue, θ); dims = 2) |> Flux.cpu |> vec |> copy
+    Z_err = (Ztrue === nothing) ? missing : mean(abs, Ztrue .- Z; dims = 2) |> Flux.cpu |> vec |> copy
 
     metrics = (; all_rmse, all_logL, rmse, logL, theta_err, Z_err, rmse_true = missing, logL_true = missing)
     cache_cb_args = (signal(Ymeta), θ, Z, X, δ, ϵ, ν, X̂, missing) # νtrue
@@ -800,7 +800,7 @@ trainer.add_event_handler(
 ####
 
 # Attach training/validation output handlers
-if !isnothing(wandb_logger)
+if (wandb_logger !== nothing)
     for (tag, engine, event) in [
             ("step",  trainer,         Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.timeout_event_filter(settings["eval"]["trainevalperiod"]))), # computed each iteration; throttle recording
             ("train", train_evaluator, Events.EPOCH_COMPLETED), # throttled above; record every epoch

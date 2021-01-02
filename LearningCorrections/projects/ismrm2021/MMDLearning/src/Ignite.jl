@@ -208,7 +208,7 @@ nestedaccess(d) = d
 
 # Save and print settings file
 function save_and_print(settings::AbstractDict; filename = nothing)
-    if !isnothing(filename)
+    if (filename !== nothing)
         @assert endswith(filename, ".toml")
         mkpath(dirname(filename))
         open(filename; write = true) do io
@@ -248,7 +248,7 @@ function parse_command_line!(
     # Fields "INHERIT" with value "%PARENT%" specify that all fields from (and only from) the immediate parent
     # should be copied into the child, unless that key is already present in the child
     for (parent, (key, leaf)) in reverse(breadth_first_iterator(settings))
-        if !isnothing(parent) && get(leaf, "INHERIT", "") == "%PARENT%"
+        if (parent !== nothing) && get(leaf, "INHERIT", "") == "%PARENT%"
             for (k,v) in parent
                 (v isa AbstractDict) && continue
                 !haskey(leaf, k) && (leaf[k] = deepcopy(parent[k]))
@@ -261,7 +261,7 @@ function parse_command_line!(
 
     # Fields with value "%PARENT%" take default values from the corresponding field of their parent
     for (parent, (key, leaf)) in breadth_first_iterator(settings)
-        isnothing(parent) && continue
+        (parent === nothing) && continue
         for (k,v) in leaf
             (v == "%PARENT%") && (leaf[k] = deepcopy(parent[k]))
         end

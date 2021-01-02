@@ -42,7 +42,7 @@ function make_physics(settings; image_infos = nothing)
     #     ntest = settings["data"]["ntest"]::Int,
     #     nval = settings["data"]["nval"]::Int
     # )
-    if isnothing(image_infos)
+    if (image_infos === nothing)
         image_infos = [
             # (TE = 8e-3, refcon = 180.0, path = "/home/jdoucette/Documents/code/MWI-Data-Catalog/Example_48echo_8msTE/data-in/ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.nii.gz"),
             # (TE = 7e-3, refcon = 180.0, path = "/home/jdoucette/Documents/code/MWI-Data-Catalog/Example_56echo_7msTE_CPMG/data-in/MW_TRAINING_001_WIP_CPMG56_CS_half_2_1.masked-image.mat"),
@@ -69,6 +69,7 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
     nz  = settings["arch"]["zdim"]::Int # embedding dimension
     δ   = settings["arch"]["genatr"]["maxcorr"]::Float64
     σbd = settings["arch"]["genatr"]["noisebounds"]::Vector{Float64} |> bd -> (bd...,)::NTuple{2,Float64}
+    initb_μlogσ = (sz...) -> (sz2 = (sz[1]÷2, sz[2:end]...); vcat(Flux.zeros(sz2), 10 .* Flux.ones(sz2))) # initialize logσ bias >> 0 s.t. initial cvae loss does not blowup, since loss has 𝒪(1/σ²) and 𝒪(logσ) terms
 
     #TODO: only works for Latent(*)Corrector family
     RiceGenType = LatentScalarRicianNoiseCorrector{n,k}
@@ -170,20 +171,22 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
     # Encoders
     get!(models, "enc1") do
         @unpack hdim, nhidden, psize, head, hsize, nshards, chunksize, overlap = settings["arch"]["enc1"]
-        TransformerEncoder(; nsignals = n, ntheta = 0, nlatent = 0, pout = 2*nz, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
+        mlp = MMDLearning.MLP(psize => 2*nz, 0, hdim, Flux.relu, identity; initb_last = initb_μlogσ)
+        TransformerEncoder(mlp; nsignals = n, ntheta = 0, nlatent = 0, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
         #=
-        MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity) |> to32
+        MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity; initb_last = initb_μlogσ)) |> to32
         =#
     end
 
     get!(models, "enc2") do
         @unpack hdim, nhidden, psize, head, hsize, nshards, chunksize, overlap = settings["arch"]["enc2"]
-        TransformerEncoder(; nsignals = n, ntheta = nθ, nlatent = k, pout = 2*nz, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
+        mlp = MMDLearning.MLP(psize => 2*nz, 0, hdim, Flux.relu, identity; initb_last = initb_μlogσ)
+        TransformerEncoder(mlp; nsignals = n, ntheta = nθ, nlatent = k, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
         #=
         Transformers.Stack(
             Transformers.@nntopo( (X,θ,Z) : (X,θ,Z) => XθZ : XθZ => μq ),
             vcat,
-            MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity),
+            MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity; initb_last = initb_μlogσ)),
         ) |> to32
         =#
     end
@@ -191,16 +194,16 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
     # Decoder
     get!(models, "dec") do
         @unpack hdim, nhidden, psize, head, hsize, nshards, chunksize, overlap = settings["arch"]["dec"]
-        MLPHead = Flux.Chain(
-            MMDLearning.MLP(psize => 2*(nθM + k), 0, hdim, Flux.relu, identity)...,
+        mlp = Flux.Chain(
+            MMDLearning.MLP(psize => 2*(nθM + k), 0, hdim, Flux.relu, identity; initb_last = initb_μlogσ),
             MMDLearning.CatScale(eltype(θMbd)[θMbd; (-1, 1)], [ones(Int, nθM); k + nθM + k]),
         )
-        TransformerEncoder(MLPHead; nsignals = n, ntheta = 0, nlatent = nz, pout = 0, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
+        TransformerEncoder(mlp; nsignals = n, ntheta = 0, nlatent = nz, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
         #=
         Transformers.Stack(
             Transformers.@nntopo( (Y,zr) : (Y,zr) => Yzr : Yzr => μx : μx => μx ),
             vcat,
-            MMDLearning.MLP(n + nz => 2*(nθM + k), nhidden, hdim, Flux.relu, identity),
+            MMDLearning.MLP(n + nz => 2*(nθM + k), nhidden, hdim, Flux.relu, identity; initb_last = initb_μlogσ)),
             MMDLearning.CatScale(eltype(θMbd)[θMbd; (-1, 1)], [ones(Int, nθM); k + nθM + k]),
         ) |> to32
         =#
@@ -296,7 +299,7 @@ end
 
 function make_wandb_logger!(settings)
     wandb_logger = Ignite.init_wandb_logger(settings)
-    !isnothing(wandb_logger) && (settings["data"]["out"] = wandb.run.dir)
+    (wandb_logger !== nothing) && (settings["data"]["out"] = wandb.run.dir)
     return wandb_logger
 end
 

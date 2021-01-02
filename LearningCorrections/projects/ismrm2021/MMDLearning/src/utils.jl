@@ -35,7 +35,7 @@ end
 function saveplots(plothandles::AbstractDict; savefolder, prefix = "", suffix = "", ext = ".png")
     !isdir(savefolder) && mkpath(savefolder)
     for (name, p) in plothandles
-        isnothing(p) && continue
+        (p === nothing) && continue
         try
             savefig(p, joinpath(savefolder, prefix * string(name) * suffix * ext))
         catch e
@@ -110,7 +110,7 @@ function fast_hist_1D(y, edges; normalize = nothing)
     end
     h = hist(sum([hi.weights for hi in hs]))
 
-    !isnothing(normalize) && (h = Plots.normalize(h, mode = normalize))
+    (normalize !== nothing) && (h = Plots.normalize(h, mode = normalize))
     return h
 end
 
@@ -126,7 +126,7 @@ function fast_hist_1D(y, edges::AbstractRange; normalize = nothing)
         end
     end
     h = hist(sum([hi.weights for hi in hs]))
-    !isnothing(normalize) && (h = Plots.normalize(h, mode = normalize))
+    (normalize !== nothing) && (h = Plots.normalize(h, mode = normalize))
     return h
 end
 
@@ -168,9 +168,9 @@ Euclidean(P::Histogram, Q::Histogram) = sqrt(sum(abs2, MMDLearning.unitsum(P.wei
 function signal_histograms(Y::AbstractMatrix; nbins = nothing, edges = nothing, normalize = nothing)
     make_edges(x) = ((lo,hi) = extrema(vec(x)); return range(lo, hi; length = nbins)) # mid = median(vec(x)); length = ceil(Int, (hi - lo) * nbins / max(hi - mid, mid - lo))
     hists = Dict{Int, Histogram}()
-    hists[0] = fast_hist_1D(vec(Y), isnothing(edges) ? make_edges(Y) : edges[0]; normalize)
+    hists[0] = fast_hist_1D(vec(Y), (edges === nothing) ? make_edges(Y) : edges[0]; normalize)
     for i in 1:size(Y,1)
-        hists[i] = fast_hist_1D(Y[i,:], isnothing(edges) ? make_edges(Y[i,:]) : edges[i]; normalize)
+        hists[i] = fast_hist_1D(Y[i,:], (edges === nothing) ? make_edges(Y[i,:]) : edges[i]; normalize)
     end
     return hists
 end
@@ -212,19 +212,19 @@ function pyheatmap(
     if axis === :off
         ax.set_axis_off()
     end
-    if !isnothing(aspect)
+    if (aspect !== nothing)
         ext = ax.get_images()[1].get_extent()
         ax.set_aspect(abs((ext[2]-ext[1]) / (ext[4]-ext[3])) * aspect)
     end
-    !isnothing(xlabel) && (plt.xlabel(xlabel))
-    !isnothing(ylabel) && (plt.ylabel(ylabel))
+    (xlabel !== nothing) && (plt.xlabel(xlabel))
+    (ylabel !== nothing) && (plt.ylabel(ylabel))
 
     (formatter isa Function) && (formatter = plt.matplotlib.ticker.FuncFormatter(formatter))
     cbar = fig.colorbar(img, ticks = cticks, format = formatter, aspect = 40)
     cbar.ax.tick_params(labelsize = 10)
 
-    !isnothing(clim) && img.set_clim(clim...)
-    !isnothing(filename) && foreach(ext -> plt.savefig(filename * ext; bbox_inches = "tight", dpi), savetypes)
+    (clim !== nothing) && img.set_clim(clim...)
+    (filename !== nothing) && foreach(ext -> plt.savefig(filename * ext; bbox_inches = "tight", dpi), savetypes)
     plt.close("all")
 
     return nothing

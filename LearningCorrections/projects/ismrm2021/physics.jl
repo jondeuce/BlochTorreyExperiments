@@ -73,11 +73,11 @@ ninput(::Type{R}) where {R<:LatentScalarRicianNoiseCorrector} = nlatent(R)
 noutput(::Type{R}) where {R<:LatentScalarRicianNoiseCorrector} = 1
 
 # Helper functions
-@inline _maybe_vcat(X, Z = nothing) = isnothing(Z) ? X : vcat(X,Z)
+@inline _maybe_vcat(X, Z = nothing) = (Z === nothing) ? X : vcat(X,Z)
 @inline _split_delta_epsilon(δ_logϵ) = δ_logϵ[1:end÷2, :], exp.(δ_logϵ[end÷2+1:end, :]) .+ sqrt(eps(eltype(δ_logϵ)))
 @inline function _add_rician_noise_instance(X, ϵ = nothing, ninstances = nothing)
-    isnothing(ϵ) && return X
-    ϵsize = isnothing(ninstances) ? size(X) : (size(X)..., ninstances)
+    (ϵ === nothing) && return X
+    ϵsize = (ninstances === nothing) ? size(X) : (size(X)..., ninstances)
     ϵR = ϵ .* randn_similar(X, ϵsize)
     ϵI = ϵ .* randn_similar(X, ϵsize)
     X̂ = @. sqrt((X + ϵR)^2 + ϵI^2)
@@ -92,7 +92,7 @@ correction_and_noiselevel(G::LatentVectorRicianNoiseCorrector, X, Z) = zero(X), 
 correction_and_noiselevel(G::LatentScalarRicianNoiseCorrector, X, Z) = zero(X), exp.(generator(G)(Z)) .* ones_similar(X, nsignal(G)) .+ sqrt(eps(eltype(X)))
 function correction_and_noiselevel(G::NormalizedRicianCorrector, X, Z = nothing)
     δ, ϵ = correction_and_noiselevel(corrector(G), X, Z)
-    !isnothing(ϵ) && !isnothing(G.noisescale) && (ϵ = ϵ .* G.noisescale(X))
+    (ϵ !== nothing) && (G.noisescale !== nothing) && (ϵ = ϵ .* G.noisescale(X))
     return δ, ϵ
 end
 
@@ -106,7 +106,7 @@ add_noise_instance(::RicianCorrector, X, ϵ, ninstances = nothing) = _add_rician
 function add_noise_instance(G::NormalizedRicianCorrector, X, ϵ, ninstances = nothing)
     # X is assumed properly normalized, and ϵ is assumed relative to G.noisescale (i.e. output from correction_and_noiselevel); just add noise, then normalize X̂
     X̂ = add_noise_instance(corrector(G), X, ϵ, ninstances)
-    !isnothing(G.normalizer) && (X̂ = X̂ ./ G.normalizer(X̂))
+    (G.normalizer !== nothing) && (X̂ = X̂ ./ G.normalizer(X̂))
     return X̂
 end
 function rician_params(G::RicianCorrector, X, Z = nothing)
@@ -608,7 +608,7 @@ end
 function rician_params(c::ClosedFormToyEPGModel{T}, θ, W = nothing) where {T}
     p = physicsmodel(c)
     X = _signal_model(p, θ)
-    ϵ = isnothing(W) ? nothing : X[1:1,:] .* (p.ϵbd[1] .+ W .* (p.ϵbd[2] .- p.ϵbd[1])) # noise with amplitude relative to first echo
+    ϵ = (W === nothing) ? nothing : X[1:1,:] .* (p.ϵbd[1] .+ W .* (p.ϵbd[2] .- p.ϵbd[1])) # noise with amplitude relative to first echo
     return X, ϵ
 end
 

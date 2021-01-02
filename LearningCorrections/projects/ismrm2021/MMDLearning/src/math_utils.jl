@@ -303,13 +303,13 @@ function simple_fd_gradient!(g, f, x, lo = nothing, hi = nothing)
     f₀ = f(x)
     @inbounds for i in 1:length(x)
         x₀ = x[i]
-        if !isnothing(lo) && (x₀ - δ/2 <= lo[i]) # near LHS boundary; use second-order forward: (-3 * f(x) + 4 * f(x + δ/2) - f(x + δ)) / δ
+        if (lo !== nothing) && (x₀ - δ/2 <= lo[i]) # near LHS boundary; use second-order forward: (-3 * f(x) + 4 * f(x + δ/2) - f(x + δ)) / δ
             x[i] = x₀ + δ/2
             f₊   = f(x)
             x[i] = x₀ + δ
             f₊₊  = f(x)
             g[i] = (-3f₀ + 4f₊ - f₊₊)/δ
-        elseif !isnothing(hi) && (x₀ + δ/2 >= hi[i]) # near RHS boundary; use second-order backward: (3 * f(x) - 4 * f(x - δ/2) + f(x - δ)) / δ
+        elseif (hi !== nothing) && (x₀ + δ/2 >= hi[i]) # near RHS boundary; use second-order backward: (3 * f(x) - 4 * f(x - δ/2) + f(x - δ)) / δ
             x[i] = x₀ - δ/2
             f₋   = f(x)
             x[i] = x₀ - δ
@@ -398,7 +398,7 @@ function find_model_param(m, x)
 end
 
 function fd_modelgradients(f, ps::Flux.Params, Is::Union{<:IdDict, Nothing} = nothing; extrapolate = true)
-    !(Is === nothing) && (ps = [view(p, Is[p]) for p in ps])
+    (Is !== nothing) && (ps = [view(p, Is[p]) for p in ps])
     fd_gradients((args...,) -> f(), ps...; extrapolate)
 end
 
@@ -409,13 +409,13 @@ function fd_modelgradients(f, m; extrapolate = true, subset = nothing)
 end
 
 function modelgradcheck(f, m; extrapolate = true, subset = nothing, verbose = false, seed = nothing, kwargs...)
-    !isnothing(seed) && (Random.seed!(seed); CUDA.seed!(0))
+    (seed !== nothing) && (Random.seed!(seed); CUDA.seed!(0))
     ps = Flux.params(m)
     ℓ, J = Zygote.pullback(f, ps) # compute full gradient with backprop
     ∇ad = J(one(eltype(first(ps))))
     Is = subset_indices_dict(ps, subset)
     ∇fd = fd_modelgradients(f, ps, Is; extrapolate) # compute subset of gradient with finite differences
-    ∇pairs = if !isnothing(Is)
+    ∇pairs = if (Is !== nothing)
         [(Flux.cpu(∇ad[p][Is[p]]), Flux.cpu(∇fd[i])) for (i,p) in enumerate(ps)] # move view of ∇ad to cpu to avoid scalar indexing into view
     else
         [(∇ad[p], ∇fd[i]) for (i,p) in enumerate(ps)]

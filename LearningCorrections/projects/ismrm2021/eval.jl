@@ -17,22 +17,22 @@ function mle_biexp_epg_noise_only(
         opt_alg       = :LD_SLSQP, # Rough algorithm ranking: [:LD_SLSQP, :LD_LBFGS, :LD_CCSAQ, :LD_AUGLAG, :LD_MMA] (Note: :LD_LBFGS fails to converge with tolerance looser than ~ 1e-4)
         opt_args      = Dict{Symbol,Any}(),
     )
-    @assert dryrun || !isnothing(savefolder)
+    @assert dryrun || (savefolder !== nothing)
     matsavetime = MMDLearning.getnow()
     matsave(filename, data) = DECAES.MAT.matwrite(joinpath(mkpath(savefolder), filename * "-" * matsavetime * ".mat"), data)
 
-    dryrun && !isnothing(dryrunsamples) && let
+    dryrun && (dryrunsamples !== nothing) && let
         I = dryrunshuffle ?
             sample(MersenneTwister(0), 1:size(Y,2), dryrunsamples; replace = dryrunsamples > size(Y,2)) :
             1:min(size(Y,2), dryrunsamples)
         X = X[:,I]
         Y = Y[:,I]
-        !isnothing(initial_ϵ) && (initial_ϵ = initial_ϵ[:,I])
-        !isnothing(initial_s) && (initial_s = initial_s[:,I])
+        (initial_ϵ !== nothing) && (initial_ϵ = initial_ϵ[:,I])
+        (initial_s !== nothing) && (initial_s = initial_s[:,I])
     end
 
-    isnothing(initial_ϵ) && (initial_ϵ = sqrt.(mean(abs2, X .- Y; dims = 1)))
-    isnothing(initial_s) && (initial_s = inv.(maximum(MMDLearning._rician_mean_cuda.(X, initial_ϵ); dims = 1))) # ones_similar(X, 1, size(X,2))
+    (initial_ϵ === nothing) && (initial_ϵ = sqrt.(mean(abs2, X .- Y; dims = 1)))
+    (initial_s === nothing) && (initial_s = inv.(maximum(MMDLearning._rician_mean_cuda.(X, initial_ϵ); dims = 1))) # ones_similar(X, 1, size(X,2))
     @assert size(X) == size(Y) && size(initial_ϵ) == size(initial_s) == (1, size(X,2))
 
     initial_loss  = -sum(MMDLearning._rician_logpdf_cuda.(Y, initial_s .* X, initial_s .* initial_ϵ); dims = 1)
@@ -252,7 +252,7 @@ function mle_biexp_epg(
     )
     @assert data_source ∈ (:image, :simulated)
     @assert data_subset ∈ (:mask, :val, :train, :test)
-    @assert dryrun || !isnothing(savefolder)
+    @assert dryrun || (savefolder !== nothing)
     matsavetime = MMDLearning.getnow()
     matsave(filename, data) = DECAES.MAT.matwrite(joinpath(mkpath(savefolder), filename * "-" * matsavetime * ".mat"), data)
 
@@ -275,7 +275,7 @@ function mle_biexp_epg(
     # MLE for whole image of simulated data
     Y, Ymeta = let
         image_indices = img.indices[data_subset]
-        if dryrun && !isnothing(dryrunsamples)
+        if dryrun && (dryrunsamples !== nothing)
             I = dryrunshuffle ?
                 sample(MersenneTwister(0), 1:length(image_indices), dryrunsamples; replace = dryrunsamples > length(image_indices)) :
                 1:min(length(image_indices), dryrunsamples)

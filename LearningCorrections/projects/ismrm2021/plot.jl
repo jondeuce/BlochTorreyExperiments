@@ -25,7 +25,7 @@ function plot_gan_loss(logger, cb_state, phys; window = 100, lrdroprate = typema
         else
             p = nothing
         end
-        showplot && !isnothing(p) && display(p)
+        showplot && (p !== nothing) && display(p)
         return p
     catch e
         handleinterrupt(e; msg = "Error making gan loss plot")
@@ -49,7 +49,7 @@ function plot_rician_model(logger, cb_state, phys; bandwidths = nothing, showplo
         bandwidth_plot(logσ::AbstractMatrix) = size(logσ,1) == 1 ?
             scatter(1:length(logσ), vec(logσ); label = "logσ", title = "logσ") :
             plot(logσ; leg = :none, marker = (1,:circle), title = "logσ vs. data channel")
-        if !isnothing(bandwidths)
+        if (bandwidths !== nothing)
             push!(_subplots,
                 eltype(bandwidths) <: AbstractArray ?
                     plot(bandwidth_plot.(bandwidths)...; layout = (length(bandwidths), 1)) :
@@ -57,7 +57,7 @@ function plot_rician_model(logger, cb_state, phys; bandwidths = nothing, showplo
             )
         end
         p = plot(_subplots...)
-        showplot && !isnothing(p) && display(p)
+        showplot && (p !== nothing) && display(p)
         return p
     catch e
         handleinterrupt(e; msg = "Error making Rician model plot")
@@ -75,7 +75,7 @@ function plot_rician_signals(logger, cb_state, phys; showplot = false, nsignals 
             [plot(Yplot[:,j] - Xθ[:,j] - δθ[:,j]; lab = L"$Y - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$") for j in θplotidx]...;
             layout = (3, nsignals),
         )
-        showplot && !isnothing(p) && display(p)
+        showplot && (p !== nothing) && display(p)
         return p
     catch e
         handleinterrupt(e; msg = "Error making Rician signal plot")
@@ -93,7 +93,7 @@ function plot_rician_model_fits(logger, cb_state, phys; showplot = false)
             [plot(Yfit[:,j] - Xθfit[:,j] - δθfit[:,j]; lab = L"$\hat{X} - |X(\hat{\theta}) + g_\delta(X(\hat{\theta}))|$") for j in θplotidx]...;
             layout = (3, nsignals),
         )
-        showplot && !isnothing(p) && display(p)
+        showplot && (p !== nothing) && display(p)
         return p
     catch e
         handleinterrupt(e; msg = "Error making Rician signal plot")
@@ -123,7 +123,7 @@ function plot_mmd_losses(logger, cb_state, phys; window = 100, lrdroprate = type
         else
             p = nothing
         end
-        showplot && !isnothing(p) && display(p)
+        showplot && (p !== nothing) && display(p)
         return p
     catch e
         handleinterrupt(e; msg = "Error making MMD losses plot")
@@ -183,7 +183,7 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
             p = nothing
         end
 
-        showplot && !isnothing(p) && display(p)
+        showplot && (p !== nothing) && display(p)
         return p
     catch e
         handleinterrupt(e; msg = "Error making θ inference plot")
@@ -214,8 +214,8 @@ function plot_all_logger_losses(logger, cb_state, phys;
                 nothing
             end
         end
-        p = plot(filter(!isnothing, ps)...)
-        showplot && !isnothing(p) && display(p)
+        p = plot(filter(p -> p !== nothing, ps)...)
+        showplot && (p !== nothing) && display(p)
         return p
     catch e
         handleinterrupt(e; msg = "Error making Rician signal plot")

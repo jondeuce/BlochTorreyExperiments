@@ -32,7 +32,7 @@ end
 function (e::SignalProjector)(Y::AbstractMatrix, X::Union{Nothing, <:AbstractMatrix} = nothing)
     Zclass = zeros_similar(Y, e.shape.psize, 1, size(Y,2))
     Yenc = e.PY(Y) # [nY x b] -> [p x mY x b]
-    Z0 = if !isnothing(X)
+    Z0 = if (X !== nothing)
         Xenc = e.PX(X) # [nX x b] -> [p x 1 x b]
         hcat(Zclass, Yenc, Xenc) # [p x (1 + mY + 1) x b]
     else
@@ -73,7 +73,7 @@ function (e::SignalEncoder)(Y::AbstractMatrix, X::Union{Nothing, <:AbstractMatri
     Yenc = e.EY * reshape(Yshard, chunksize, nshards * nbatches) # [cY x mY x b] -> [cY x mY*b] -> [p x mY*b]
     Yenc = reshape(Yenc, psize, nshards, nbatches) # [p x mY*b] -> [p x mY x b]
     Zclass = zeros_similar(Y, psize, 1, nbatches)
-    Z0 = if !isnothing(X)
+    Z0 = if (X !== nothing)
         Xenc = e.DX .* reshape(X, 1, nfeatures, nbatches) # [mX x b] -> [1 x mX x b] -> [p x mX x b]
         hcat(Zclass, Yenc, Xenc) # [p x (1 + mY + mX) x b]
     else
@@ -90,7 +90,7 @@ Basic Transformer encoder with learned positional embedding
 function TransformerEncoder(
         MLPHead = nothing;
         head::Int, hsize::Int, hdim::Int, nhidden::Int,
-        pout::Int, psize::Int, nshards::Int, chunksize::Int, overlap::Int,
+        psize::Int, nshards::Int, chunksize::Int, overlap::Int,
         nsignals::Int, ntheta::Int, nlatent::Int
     )
 
@@ -100,7 +100,7 @@ function TransformerEncoder(
             Y => E : # SignalProjector (psize × _ × b)
             E => H : # Transformer encoder (psize × _ × b)
             H => A : # Extract "class" token activations (psize × b)
-            A => C # MLP head mapping "class" embedding to output (pout x b)
+            A => C # MLP head mapping "class" embedding to output (nout x b)
         )
     elseif ntheta == 0 || nlatent == 0
         Transformers.@nntopo(
@@ -108,7 +108,7 @@ function TransformerEncoder(
             (Y,X) => E : # SignalProjector (psize × _ × b)
             E => H : # Transformer encoder (psize × _ × b)
             H => A : # Extract "class" token activations (psize × b)
-            A => C # MLP head mapping "class" embedding to output (pout x b)
+            A => C # MLP head mapping "class" embedding to output (nout x b)
         )
     else
         Transformers.@nntopo(
@@ -117,7 +117,7 @@ function TransformerEncoder(
             (Y,X) => E : # SignalProjector (psize × _ × b)
             E => H : # Transformer encoder (psize × _ × b)
             H => A : # Extract "class" token activations (psize × b)
-            A => C # MLP head mapping "class" embedding to output (pout x b)
+            A => C # MLP head mapping "class" embedding to output (nout x b)
         )
     end
 
@@ -130,7 +130,7 @@ function TransformerEncoder(
             Transformers.Basic.Transformer(psize, head, hsize, hdim; future = true, act = Flux.relu, pdrop = 0.0)
         end...),
         H -> H[:, 1, :],
-        (isnothing(MLPHead) ? MMDLearning.MLP(psize => pout, 0, hdim, Flux.relu, identity) : MLPHead),
+        (MLPHead === nothing) ? identity : MLPHead,
     )
     Flux.fmap(Flux.testmode!, xf) # Force dropout layers inactive
 end

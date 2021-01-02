@@ -98,7 +98,7 @@ function tstat(k::MMDKernel, X, Y, isillposed = nothing)
     m = size(X,2)
     ϵ = eps(typeof(MMDvar))
     t = m*MMDsq / √max(m^2*MMDvar, ϵ)
-    !isnothing(isillposed) && Zygote.@ignore(isillposed[] = m^2*MMDvar < ϵ) #TODO: MMDsq < 0 --> ill-posed?
+    (isillposed !== nothing) && Zygote.@ignore(isillposed[] = m^2*MMDvar < ϵ) #TODO: MMDsq < 0 --> ill-posed?
     return t
 end
 
@@ -1438,7 +1438,7 @@ function mmd_perm_test_power_plot(perm_test_results; showplot = false)
             density!(p, m .* mmd_samples; label = "m*MMD² samples", line = (2,:green))
         end
 
-        showplot && !isnothing(p) && display(p)
+        showplot && (p !== nothing) && display(p)
         return p
     catch e
         handleinterrupt(e; msg = "Error during permutation plot")
@@ -1519,7 +1519,7 @@ function train_kernel!(k::MMDKernel{T}, X, Y, opt, Y2 = nothing; kernelloss::Str
         @timeit "reverse" ∇ℓ = back(one(T))
         Flux.Optimise.update!(opt, ps, ∇ℓ)
 
-        !isnothing(restrict!) && restrict!(k)
+        (restrict! !== nothing) && restrict!(k)
     end
 
     # Let caller know if training was applied
