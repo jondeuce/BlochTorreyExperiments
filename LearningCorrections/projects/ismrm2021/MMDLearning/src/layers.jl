@@ -143,11 +143,10 @@ transformations of chunks of height `n[i]` of the input `x`.
 Each transformation is such that values in `(-1,1)` are mapped to `(bd[i][1], bd[i][2])`.
 Input/output bounds are not enforced.
 """
-CatScale(bd::Vector{<:NTuple{2}}, n::Vector{Int}) =
-    Scale(
-        mapreduce(((bd, n)) -> fill((bd[2] - bd[1])/2, n), vcat, bd, n),
-        mapreduce(((bd, n)) -> fill((bd[1] + bd[2])/2, n), vcat, bd, n),
-    )
+CatScale(bd::Vector{<:NTuple{2}}, n::Vector{Int}) = Scale(catscale_slope_and_bias(bd, n)...)
+catscale_slope_and_bias(bd::Vector{<:NTuple{2}}, n::Vector{Int}) = catscale_slope(bd, n), catscale_bias(bd, n)
+catscale_slope(bd::Vector{<:NTuple{2}}, n::Vector{Int}) = mapreduce(((bd, n)) -> fill((bd[2] - bd[1])/2, n), vcat, bd, n)
+catscale_bias(bd::Vector{<:NTuple{2}}, n::Vector{Int}) = mapreduce(((bd, n)) -> fill((bd[1] + bd[2])/2, n), vcat, bd, n)
 
 """
 wrapprint(io::IO, layer)

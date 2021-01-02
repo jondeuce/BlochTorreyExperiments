@@ -69,7 +69,9 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
     nz  = settings["arch"]["zdim"]::Int # embedding dimension
     δ   = settings["arch"]["genatr"]["maxcorr"]::Float64
     σbd = settings["arch"]["genatr"]["noisebounds"]::Vector{Float64} |> bd -> (bd...,)::NTuple{2,Float64}
-    initb_μlogσ = (sz...) -> (sz2 = (sz[1]÷2, sz[2:end]...); vcat(Flux.zeros(sz2), 10 .* Flux.ones(sz2))) # initialize logσ bias >> 0 s.t. initial cvae loss does not blowup, since loss has 𝒪(1/σ²) and 𝒪(logσ) terms
+    init_μlogσ_bias = (sz...) -> (sz2 = (sz[1]÷2, sz[2:end]...); vcat(Flux.zeros(sz2), 10 .* Flux.ones(sz2))) # initialize logσ bias >> 0 s.t. initial cvae loss does not blowup, since loss has 𝒪(1/σ²) and 𝒪(logσ) terms
+    init_μxlogσx_slope = (sz...) -> MMDLearning.catscale_slope(eltype(θMbd)[θMbd; (-1,1); (9.5,10.5)], [ones(Int, nθM); k; nθM + k]) # scale [1] μθ[i] : (-1,1) -> θMbd[i], [2] μZ[i] : (-1,1) -> (-1,1), and [3] logσθ, logσZ : (-1,1) -> (9.5,10.5)
+    init_μxlogσx_bias = (sz...) -> MMDLearning.catscale_slope(eltype(θMbd)[θMbd; (-1,1); (9.5,10.5)], [ones(Int, nθM); k; nθM + k])
 
     #TODO: only works for Latent(*)Corrector family
     RiceGenType = LatentScalarRicianNoiseCorrector{n,k}
@@ -171,23 +173,20 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
     # Encoders
     get!(models, "enc1") do
         @unpack hdim, nhidden, psize, head, hsize, nshards, chunksize, overlap = settings["arch"]["enc1"]
-        mlp = MMDLearning.MLP(psize => 2*nz, 0, hdim, Flux.relu, identity; initb_last = initb_μlogσ)
+        mlp = MMDLearning.MLP(psize => 2*nz, 0, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias) |> to32
         TransformerEncoder(mlp; nsignals = n, ntheta = 0, nlatent = 0, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
         #=
-        MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity; initb_last = initb_μlogσ)) |> to32
+        MMDLearning.MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias) |> to32
         =#
     end
 
     get!(models, "enc2") do
         @unpack hdim, nhidden, psize, head, hsize, nshards, chunksize, overlap = settings["arch"]["enc2"]
-        mlp = MMDLearning.MLP(psize => 2*nz, 0, hdim, Flux.relu, identity; initb_last = initb_μlogσ)
+        mlp = MMDLearning.MLP(psize => 2*nz, 0, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias) |> to32
         TransformerEncoder(mlp; nsignals = n, ntheta = nθ, nlatent = k, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
         #=
-        Transformers.Stack(
-            Transformers.@nntopo( (X,θ,Z) : (X,θ,Z) => XθZ : XθZ => μq ),
-            vcat,
-            MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity; initb_last = initb_μlogσ)),
-        ) |> to32
+        mlp = MMDLearning.MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias) |> to32
+        Transformers.Stack(Transformers.@nntopo((X,θ,Z) => XθZ => μq), vcat, mlp) |> to32
         =#
     end
 
@@ -195,17 +194,16 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
     get!(models, "dec") do
         @unpack hdim, nhidden, psize, head, hsize, nshards, chunksize, overlap = settings["arch"]["dec"]
         mlp = Flux.Chain(
-            MMDLearning.MLP(psize => 2*(nθM + k), 0, hdim, Flux.relu, identity; initb_last = initb_μlogσ),
-            MMDLearning.CatScale(eltype(θMbd)[θMbd; (-1, 1)], [ones(Int, nθM); k + nθM + k]),
-        )
+            MMDLearning.MLP(psize => 2*(nθM + k), 0, hdim, Flux.relu, identity),
+            Flux.Diagonal(2*(nθM + k); initα = init_μxlogσx_slope, initβ = init_μxlogσx_bias),
+        ) |> to32
         TransformerEncoder(mlp; nsignals = n, ntheta = 0, nlatent = nz, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
         #=
-        Transformers.Stack(
-            Transformers.@nntopo( (Y,zr) : (Y,zr) => Yzr : Yzr => μx : μx => μx ),
-            vcat,
-            MMDLearning.MLP(n + nz => 2*(nθM + k), nhidden, hdim, Flux.relu, identity; initb_last = initb_μlogσ)),
-            MMDLearning.CatScale(eltype(θMbd)[θMbd; (-1, 1)], [ones(Int, nθM); k + nθM + k]),
+        mlp = Flux.Chain(
+            MMDLearning.MLP(n + nz => 2*(nθM + k), nhidden, hdim, Flux.relu, identity)...,
+            Flux.Diagonal(2*(nθM + k); initα = init_μxlogσx_slope, initβ = init_μxlogσx_bias),
         ) |> to32
+        Transformers.Stack(Transformers.@nntopo((Y,zr) => Yzr => μx), vcat, mlp) |> to32
         =#
     end
 
