@@ -4,81 +4,12 @@ using ArgParse
 using ..PyTools
 import ..TOML
 import ..Flux
-import ..CUDA
-
-export todevice, to32, to64, @j2p
-
-# Default to running on CPU; init() will override to GPU if available
-todevice(x) = Flux.cpu(x)
-todevice(d::AbstractDict) = Dict(k => todevice(v) for (k,v) in d)
-to32(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float32}, xi) : xi, todevice(x))
-to64(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float64}, xi) : xi, todevice(x))
-
-const JL_CUDA_FUNCTIONAL = Ref(false)
-const JL_CUDA_DEVICE     = Ref(-1)
-const JL_ZERO_SUBNORMALS = Ref(true)
-const JL_WANDB_LOGGER    = Ref(false)
-
-function init()
-    JL_CUDA_FUNCTIONAL[] = get(ENV, "JL_DISABLE_GPU", "0") != "1" && CUDA.functional()
-    JL_CUDA_DEVICE[]     = JL_CUDA_FUNCTIONAL[] ? parse(Int, get(ENV, "JL_CUDA_DEVICE", "0")) : -1
-    JL_ZERO_SUBNORMALS[] = get(ENV, "JL_ZERO_SUBNORMALS", "1") == "1"
-    JL_WANDB_LOGGER[]    = get(ENV, "JL_WANDB_LOGGER", "0") == "1"
-
-    # CUDA settings
-    if JL_CUDA_FUNCTIONAL[]
-        @eval todevice(x) = Flux.gpu(x)
-        CUDA.allowscalar(false)
-        CUDA.device!(JL_CUDA_DEVICE[])
-    end
-
-    # Treat subnormals as zero
-    if JL_ZERO_SUBNORMALS[]
-        Threads.@threads for i in 1:Threads.nthreads()
-            set_zero_subnormals(true)
-        end
-    end
-
-    return nothing
-end
+import ..JL_WANDB_LOGGER
 
 # Initialize WandBLogger object
 function init_wandb_logger(settings)
     WandBLogger = ignite.contrib.handlers.wandb_logger.WandBLogger
     return JL_WANDB_LOGGER[] ? WandBLogger(config = flatten_dict(settings)) : nothing
-end
-
-# Convert Julia callback function to Python function.
-# Julia functions can already by passed directly via pycall
-# but it's via a wrapper type that will error if Python tries
-# to inspect the Julia function too closely, e.g. counting
-# the number of arguments, etc.
-# 
-# First argument is assumed to be the `engine` object,
-# which is used to terminate training in an error or
-# user interrupt occurs.
-macro j2p(f)
-    local wrapped_f = :(wrap_catch_interrupt($(esc(f))))
-    local jlfun2pyfun = esc(:(PyCall.jlfun2pyfun))
-    quote
-        $jlfun2pyfun($wrapped_f)
-    end
-end
-
-function wrap_catch_interrupt(f; msg = "")
-    function wrap_catch_interrupt_inner(engine, args...)
-        try
-            f(engine, args...)
-        catch e
-            if e isa InterruptException
-                @info "User interrupt"
-            else
-                !isempty(msg) && @warn msg
-                @warn sprint(showerror, e, catch_backtrace())
-            end
-            engine.terminate()
-        end
-    end
 end
 
 # Throttle even to run every `period` seconds
