@@ -2,9 +2,9 @@
 #### Accelerated batched functions
 ####
 
-# TODO: Some necessary piracy here: broadcasted `+.(::Diagonal{Fill}, ::CuMatrix)` falls back to scalar indexing
-Zygote.accum(x::Diagonal{<:Any, <:Zygote.FillArrays.Fill}, y::CUDA.CuMatrix) = Zygote.accum.(Diagonal(CUDA.CuVector(diag(x))), y)
-Zygote.accum(x::CUDA.CuMatrix, y::Diagonal{<:Any, <:Zygote.FillArrays.Fill}) = Zygote.accum.(x, Diagonal(CUDA.CuVector(diag(y))))
+# TODO: Some necessary piracy here: broadcasted `+.(::LinearAlgebra.Diagonal{Fill}, ::CuMatrix)` falls back to scalar indexing
+Zygote.accum(x::LinearAlgebra.Diagonal{<:Any, <:Zygote.FillArrays.Fill}, y::CUDA.CuMatrix) = Zygote.accum.(LinearAlgebra.Diagonal(CUDA.CuVector(diag(x))), y)
+Zygote.accum(x::CUDA.CuMatrix, y::LinearAlgebra.Diagonal{<:Any, <:Zygote.FillArrays.Fill}) = Zygote.accum.(x, LinearAlgebra.Diagonal(CUDA.CuVector(diag(y))))
 
 function mean3(X::AbstractTensor3D)
     size(X,3) == 1 && return reshape(X, size(X,1), size(X,2))

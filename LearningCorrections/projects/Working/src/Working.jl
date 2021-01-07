@@ -1,33 +1,69 @@
 module Working
 
-using Reexport
-@reexport using LinearAlgebra, Statistics, Random, Dates, Printf
-@reexport using StatsBase, Distributions, DataFrames, SpecialFunctions, FFTW, TimerOutputs, BenchmarkTools
-@reexport using Parameters, BangBang, EllipsisNotation, LegibleLambdas, LaTeXStrings
+include("Reexport.jl") # workaround until Reexport v1.0 is tagged
+using .Reexport: @reexport, @importexport
+
+#### Import/export dependency names
+
+@importexport import ArgParse, BSON, BangBang, BenchmarkTools, BlackBoxOptim, CUDA, ChainRules, Conda, DECAES, DataFrames, Dates, Distributions, DrWatson, EllipsisNotation, FFTW, FiniteDifferences, Flux, ForwardDiff, Glob, HypothesisTests, LaTeXStrings, LinearAlgebra, LoopVectorization, NLopt, NNlib, Optim, Parameters, Pkg, PrettyTables, PyCall, PyPlot, Random, SparseDiffTools, SpecialFunctions, StatsBase, StatsPlots, Suppressor, TOML, TimerOutputs, Transformers, Tullio, UnicodePlots, UnsafeArrays, Zygote
+
+#### Dependencies' symbols
+
+@reexport using BangBang: push!!, setindex!!
+@reexport using BenchmarkTools: @btime
+@reexport using DataFrames: DataFrame, dropmissing
+@reexport using Distributions: Normal, Uniform, cdf, logpdf, pdf, log2π
+@reexport using DrWatson: @dict, @ntuple, projectdir
+@reexport using EllipsisNotation: (..)
+@reexport using FFTW: fft, ifft, rfft
+@reexport using LaTeXStrings: @L_str, latexstring
+@reexport using LinearAlgebra: BLAS, diag, diagm, dot, mul!, norm, normalize, tr, ×, ⋅
+@reexport using LoopVectorization: @avx
+@reexport using Parameters: @unpack, @with_kw, @with_kw_noshow
+@reexport using Random: MersenneTwister, randperm, randperm!
+@reexport using SpecialFunctions: besseli, besselix, erf, erfinv
+@reexport using Statistics: mean, median, quantile, std, var
+@reexport using StatsBase: Histogram, UnitWeights, mean_and_std, sample
+@reexport using Suppressor: @suppress
+@reexport using TimerOutputs: @timeit
+@reexport using Tullio: @tullio
+@reexport using UnsafeArrays: @uviews, uview, uviews
+
+#### TODO: give plotting functions their own namespace
+
 @reexport using StatsPlots
-@reexport using PyCall
 
-@reexport using LoopVectorization, Tullio
-import UnsafeArrays
-using UnsafeArrays: uview, uviews, @uviews
+#### Exports
 
-import PyPlot, Conda, TOML, BSON, Glob, PrettyTables, DrWatson, Flux, CUDA, NNlib, Zygote, ChainRules, Transformers, BlackBoxOptim, Optim, NLopt, FiniteDifferences, ForwardDiff, SparseDiffTools, DECAES, HypothesisTests
-export PyPlot, Conda, TOML, BSON, Glob, PrettyTables, DrWatson, Flux, CUDA, NNlib, Zygote, ChainRules, Transformers, BlackBoxOptim, Optim, NLopt, FiniteDifferences, ForwardDiff, SparseDiffTools, DECAES, HypothesisTests
-using DrWatson: @dict, @ntuple, @pack!, @unpack
-export @dict, @ntuple, @pack!, @unpack
-using Distributions: log2π
-export log2π
+export AbstractTensor3D, AbstractTensor4D, CuTensor3D, CuTensor4D, todevice, to32, to64
 
-const AbstractTensor3D{T} = AbstractArray{T,3}
-const AbstractTensor4D{T} = AbstractArray{T,4}
-const CuTensor3D{T} = CUDA.CuArray{T,3}
-const CuTensor4D{T} = CUDA.CuArray{T,4}
+#### Internal modules
 
-####
+include("PyTools.jl")
+@importexport import .PyTools
+@reexport using .PyTools: torch, wandb, ignite, logging, plt, rcParams
+
+#### Includes
+
+include("utils/common.jl")
+include("utils/ignite.jl")
+
+include("math/rician.jl")
+include("math/batched_math.jl")
+include("math/math_utils.jl")
+include("math/mmd.jl")
+
+include("utils/utils.jl")
+include("utils/plot.jl")
+
+include("models/layers.jl")
+include("models/physics.jl")
+include("models/cvae.jl")
+include("models/xformer.jl")
+include("models/eval.jl")
+include("models/setup.jl")
+
 #### Init
-####
-
-export todevice, to32, to64
 
 const JL_WANDB_LOGGER = Ref(false)
 const JL_CHECKPOINT_FOLDER = Ref("")
@@ -35,8 +71,8 @@ const JL_CHECKPOINT_FOLDER = Ref("")
 function __init__()
     # Use CUDA
     Flux.use_cuda[] = CUDA.functional() && get(ENV, "JL_DISABLE_GPU", "0") != "1"
-    cuda_device = parse(Int, get(ENV, "JL_CUDA_DEVICE", "0"))
     if Flux.use_cuda[]
+        cuda_device = parse(Int, get(ENV, "JL_CUDA_DEVICE", "0"))
         CUDA.allowscalar(false)
         CUDA.device!(cuda_device)
     end
@@ -55,35 +91,5 @@ function __init__()
         end
     end
 end
-
-todevice(x) = Flux.use_cuda[] ? Flux.gpu(x) : Flux.cpu(x)
-todevice(d::AbstractDict) = Dict(k => todevice(v) for (k,v) in d)
-to32(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float32}, xi) : xi, todevice(x))
-to64(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float64}, xi) : xi, todevice(x))
-
-####
-#### Includes
-####
-
-include("PyTools.jl")
-@reexport using .PyTools
-
-include("Ignite.jl")
-@reexport using .Ignite
-
-include("math/rician.jl")
-include("math/batched_math.jl")
-include("math/math_utils.jl")
-include("math/mmd.jl")
-
-include("utils/utils.jl")
-include("utils/plot.jl")
-
-include("models/layers.jl")
-include("models/physics.jl")
-include("models/cvae.jl")
-include("models/xformer.jl")
-include("models/eval.jl")
-include("models/setup.jl")
 
 end # module

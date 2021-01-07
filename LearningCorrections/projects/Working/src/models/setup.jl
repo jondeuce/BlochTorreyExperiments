@@ -6,7 +6,7 @@ function new_settings_template end
 
 new_savepath() = "./output/ignite-cvae-$(getnow())"
 
-make_default_settings(args...) = Ignite.parse_command_line!(new_settings_template(), args...)
+make_default_settings(args...) = parse_command_line!(new_settings_template(), args...)
 
 # Parse command line arguments into default settings
 function make_settings(args...)
@@ -58,7 +58,7 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
     δ   = settings["arch"]["genatr"]["maxcorr"]::Float64
     σbd = settings["arch"]["genatr"]["noisebounds"]::Vector{Float64} |> bd -> (bd...,)::NTuple{2,Float64}
     init_μlogσ_bias = (sz...) -> (sz2 = (sz[1]÷2, sz[2:end]...); vcat(Flux.zeros(sz2), 10 .* Flux.ones(sz2))) # initialize logσ bias >> 0 s.t. initial cvae loss does not blowup, since loss has 𝒪(1/σ²) and 𝒪(logσ) terms
-    init_μxlogσx_slope = (sz...) -> catscale_slope(eltype(θMbd)[θMbd; (-1,1); (9.5,10.5)], [ones(Int, nθM); k; nθM + k]) # scale [1] μθ[i] : (-1,1) -> θMbd[i], [2] μZ[i] : (-1,1) -> (-1,1), and [3] logσθ, logσZ : (-1,1) -> (9.5,10.5)
+    init_μxlogσx_slope = (sz...) -> catscale_slope(eltype(θMbd)[θMbd; (-1,1); (9.5,10.5)], [ones(Int, nθM); k; nθM + k]) # [1] μθ[i] : (-1,1) -> θMbd[i], [2] μZ[i] : (-1,1) -> (-1,1), and [3] logσθ, logσZ : (-1,1) -> (9.5,10.5)
     init_μxlogσx_bias = (sz...) -> catscale_slope(eltype(θMbd)[θMbd; (-1,1); (9.5,10.5)], [ones(Int, nθM); k; nθM + k])
 
     #TODO: only works for Latent(*)Corrector family
@@ -224,7 +224,7 @@ function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, m
     get!(derived, "laplacian") do; Laplacian() |> to32 end
     get!(derived, "fdcat") do
         order = get!(settings["train"]["augment"], "fdcat", 0)::Int #TODO
-        A = I(n) |> Matrix{Float64}
+        A = LinearAlgebra.I(n) |> Matrix{Float64}
         FD = LinearAlgebra.diagm(n-1, n, 0 => -ones(n-1), 1 => ones(n-1))
         A = mapfoldl(vcat, 1:order; init = A) do i
             A = @views FD[1:end-i+1, 1:end-i+1] * A
@@ -284,7 +284,7 @@ end
 ####
 
 function make_wandb_logger!(settings)
-    wandb_logger = Ignite.init_wandb_logger(settings)
+    wandb_logger = init_wandb_logger(settings)
     (wandb_logger !== nothing) && (settings["data"]["out"] = wandb.run.dir)
     return wandb_logger
 end
@@ -301,7 +301,7 @@ function save_snapshot!(settings, models)
         cp(file, joinpath(savepath, basename(file)); force = true)
     end
     model_summary(models, summary_filename)
-    Ignite.save_and_print(settings; filename = settings_filename)
+    save_and_print(settings; filename = settings_filename)
     return nothing
 end
 

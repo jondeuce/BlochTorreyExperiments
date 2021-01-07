@@ -1,10 +1,37 @@
-module Ignite
+"""
+Convert Julia callback function to Python function.
+Julia functions can already by passed directly via pycall
+but it's via a wrapper type that will error if Python tries
+to inspect the Julia function too closely, e.g. counting
+the number of arguments, etc.
 
-using ArgParse
-using ..PyTools
-import ..TOML
-import ..Flux
-import ..JL_WANDB_LOGGER
+First argument is assumed to be the `engine` object,
+which is used to terminate training in an error or
+user interrupt occurs.
+"""
+macro j2p(f)
+    local wrapped_f = :(terminate_on_error($(esc(f))))
+    local jlfun2pyfun = esc(:(PyCall.jlfun2pyfun))
+    quote
+        $jlfun2pyfun($wrapped_f)
+    end
+end
+
+function terminate_on_error(f; msg = "")
+    function terminate_on_error_inner(engine, args...)
+        try
+            f(engine, args...)
+        catch e
+            if e isa InterruptException
+                @info "User interrupt"
+            else
+                !isempty(msg) && @warn msg
+                @warn sprint(showerror, e, catch_backtrace())
+            end
+            engine.terminate()
+        end
+    end
+end
 
 # Initialize WandBLogger object
 function init_wandb_logger(settings)
@@ -212,15 +239,15 @@ function parse_command_line!(
                 else
                     props[:arg_type] = typeof(v)
                 end
-                add_arg_table!(parser, "--" * k, props)
+                ArgParse.add_arg_table!(parser, "--" * k, props)
             end
         end
         return parser
     end
-    parser = populate_arg_table!(ArgParseSettings(), settings, settings)
+    parser = populate_arg_table!(ArgParse.ArgParseSettings(), settings, settings)
 
     # Parse and merge into settings
-    for (k,v) in parse_args(args, parser)
+    for (k,v) in ArgParse.parse_args(args, parser)
         ksplit = String.(split(k, "."))
         din = nestedaccess(settings, ksplit[begin:end-1]...)
         din[ksplit[end]] = deepcopy(v)
@@ -228,5 +255,3 @@ function parse_command_line!(
 
     return settings
 end
-
-end # module

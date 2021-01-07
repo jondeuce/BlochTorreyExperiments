@@ -4,7 +4,7 @@
 
 using Working
 using Working:
-    new_settings_template, new_savepath, make_settings, make_physics, make_models!, load_checkpoint, make_optimizers, make_wandb_logger!, save_snapshot!,
+    @j2p, new_settings_template, new_savepath, make_settings, make_physics, make_models!, load_checkpoint, make_optimizers, make_wandb_logger!, save_snapshot!,
     AbstractTensor3D, AbstractTensor4D, CuTensor3D, CuTensor4D,
     AbstractMetaDataSignal, MetaCPMGSignal, signal,
     MMDKernel, FunctionKernel, DeepExponentialKernel,
@@ -145,12 +145,12 @@ Working.new_settings_template() = TOML.parse(
 #### Setup
 ####
 
-Working.JL_CHECKPOINT_FOLDER[] = "output/ignite-cvae-2021-01-05-T-12-20-53-131"
+Working.JL_CHECKPOINT_FOLDER[] = "output/ignite-cvae-2021-01-05-T-13-45-23-425"
 
 settings = make_settings()
 
-# for (parent, (key, leaf)) in Ignite.breadth_first_iterator(settings), (k,v) in leaf
-#    (k == "lr") && (leaf[k] = 1e-4)
+# for (parent, (key, leaf)) in Working.breadth_first_iterator(settings), (k,v) in leaf
+#    (k == "lr") && (leaf[k] = 1e-5)
 #    (k == "lrwarmup") && (leaf[k] = 10000)
 #    (k == "wdecay") && (leaf[k] = 0.0)
 # end
@@ -459,11 +459,11 @@ logger = DataFrame(
     :time       => Union{Float64, Missing}[],
 )
 
-# make_dataset(dataset) = torch.utils.data.TensorDataset(PyTools.array(sampleY(phys, :all; dataset)))
+# make_dataset(dataset) = torch.utils.data.TensorDataset(PyTools.j2p_array(sampleY(phys, :all; dataset)))
 # train_loader = torch.utils.data.DataLoader(make_dataset(:train); batch_size = settings["train"]["batchsize"], shuffle = true, drop_last = true)
 # val_eval_loader = torch.utils.data.DataLoader(make_dataset(:val); batch_size = settings["train"]["batchsize"], shuffle = false, drop_last = true) #Note: drop_last=true and batch_size=train_batchsize for MMD (else, batch_size = settings["data"]["nval"] is fine)
 
-make_dataset_indices(n) = torch.utils.data.TensorDataset(PyTools.array(collect(1:n)))
+make_dataset_indices(n) = torch.utils.data.TensorDataset(PyTools.j2p_array(collect(1:n)))
 train_loader = torch.utils.data.DataLoader(make_dataset_indices(settings["train"]["nbatches"]))
 val_eval_loader = torch.utils.data.DataLoader(make_dataset_indices(settings["eval"]["nbatches"]))
 train_eval_loader = torch.utils.data.DataLoader(make_dataset_indices(settings["eval"]["nbatches"]))
@@ -798,12 +798,12 @@ Events = ignite.engine.Events
 # Force terminate
 trainer.add_event_handler(
     Events.STARTED | Events.ITERATION_STARTED | Events.ITERATION_COMPLETED,
-    @j2p Ignite.terminate_file_event(file = joinpath(settings["data"]["out"], "stop"))
+    @j2p Working.terminate_file_event(file = joinpath(settings["data"]["out"], "stop"))
 )
 
 # Timeout
 trainer.add_event_handler(
-    Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.timeout_event_filter(settings["train"]["timeout"])),
+    Events.EPOCH_COMPLETED(event_filter = @j2p Working.timeout_event_filter(settings["train"]["timeout"])),
     @j2p function (engine)
         @info "Exiting: training time exceeded $(DECAES.pretty_time(settings["train"]["timeout"]))"
         engine.terminate()
@@ -812,17 +812,17 @@ trainer.add_event_handler(
 
 # Compute callback metrics
 trainer.add_event_handler(
-    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.throttler_event_filter(settings["eval"]["valevalperiod"])),
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Working.throttler_event_filter(settings["eval"]["valevalperiod"])),
     @j2p (engine) -> val_evaluator.run(val_eval_loader)
 )
 trainer.add_event_handler(
-    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.throttler_event_filter(settings["eval"]["trainevalperiod"])),
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Working.throttler_event_filter(settings["eval"]["trainevalperiod"])),
     @j2p (engine) -> train_evaluator.run(train_eval_loader)
 )
 
 # Checkpoint current model + logger + make plots
 trainer.add_event_handler(
-    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.throttler_event_filter(settings["eval"]["saveperiod"])),
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Working.throttler_event_filter(settings["eval"]["saveperiod"])),
     @j2p function (engine)
         @timeit "checkpoint" let models = map_dict(Flux.cpu, models)
             @timeit "save current model" saveprogress(@dict(models, logger); savefolder = settings["data"]["out"], prefix = "current-")
@@ -834,7 +834,7 @@ trainer.add_event_handler(
 
 # Check for + save best model + logger + make plots
 trainer.add_event_handler(
-    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.throttler_event_filter(settings["eval"]["saveperiod"])),
+    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Working.throttler_event_filter(settings["eval"]["saveperiod"])),
     @j2p function (engine)
         loss_metric = :CVAE # :Yhat_logL
         losses = logger[logger.dataset .=== :val, loss_metric] |> skipmissing |> collect
@@ -853,7 +853,7 @@ trainer.add_event_handler(
 trainer.add_event_handler(
     Events.STARTED | Events.ITERATION_COMPLETED,
     @j2p function (engine)
-        Ignite.update_optimizers!(optimizers; field = :eta) do opt, name
+        Working.update_optimizers!(optimizers; field = :eta) do opt, name
             lr_warmup = settings["opt"][name]["lrwarmup"]
             lr_initial = Working.initial_learning_rate!(settings, name)
             !(engine.state.iteration <= lr_warmup > 0) && return
@@ -867,7 +867,7 @@ trainer.add_event_handler(
 # Drop learning rate
 trainer.add_event_handler(
     Events.EPOCH_COMPLETED,
-    @j2p Ignite.droplr_file_event(optimizers;
+    @j2p Working.droplr_file_event(optimizers;
         file = joinpath(settings["data"]["out"], "droplr"),
         lrrate = settings["opt"]["lrrate"]::Int,
         lrdrop = settings["opt"]["lrdrop"]::Float64,
@@ -878,12 +878,12 @@ trainer.add_event_handler(
 # User input
 trainer.add_event_handler(
     Events.EPOCH_COMPLETED,
-    @j2p(Ignite.file_event(Ignite.user_input_event(); file = joinpath(settings["data"]["out"], "user"))),
+    @j2p(Working.file_event(Working.user_input_event(); file = joinpath(settings["data"]["out"], "user"))),
 )
 
 # Print TimerOutputs timings
 trainer.add_event_handler(
-    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.throttler_event_filter(settings["eval"]["printperiod"])),
+    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Working.throttler_event_filter(settings["eval"]["printperiod"])),
     @j2p function (engine)
         @info sprint() do io
             println(io, "Log folder: $(settings["data"]["out"])"); println(io, "\n")
@@ -897,7 +897,7 @@ trainer.add_event_handler(
 # Reset loging/timer/etc.
 trainer.add_event_handler(
     Events.EPOCH_COMPLETED,
-    @j2p Ignite.file_event(file = joinpath(settings["data"]["out"], "reset")) do engine
+    @j2p Working.file_event(file = joinpath(settings["data"]["out"], "reset")) do engine
         TimerOutputs.reset_timer!()
         empty!(cb_state)
         empty!(logger)
@@ -911,7 +911,7 @@ trainer.add_event_handler(
 # Attach training/validation output handlers
 if (wandb_logger !== nothing)
     for (tag, engine, event) in [
-            ("step",  trainer,         Events.EPOCH_COMPLETED(event_filter = @j2p Ignite.timeout_event_filter(settings["eval"]["trainevalperiod"]))), # computed each iteration; throttle recording
+            ("step",  trainer,         Events.EPOCH_COMPLETED(event_filter = @j2p Working.timeout_event_filter(settings["eval"]["trainevalperiod"]))), # computed each iteration; throttle recording
             ("train", train_evaluator, Events.EPOCH_COMPLETED), # throttled above; record every epoch
             ("val",   val_evaluator,   Events.EPOCH_COMPLETED), # throttled above; record every epoch
         ]

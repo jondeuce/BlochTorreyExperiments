@@ -130,7 +130,7 @@ Laplacian() = ConstantFilter(reshape(Float32[1.0, -2.0, 1.0], 3, 1, 1, 1), Float
 """
 Scale(α = 1, β = zero(α))
 
-Non-trainable wrapper of `Diagonal` layer. Output is `α .* x .+ β`.
+Non-trainable wrapper of `Flux.Diagonal` layer. Output is `α .* x .+ β`.
 """
 Scale(α = 1, β = zero(α)) = NotTrainable(Flux.Diagonal(α, β))
 
@@ -152,10 +152,10 @@ catscale_bias(bd::Vector{<:NTuple{2}}, n::Vector{Int}) = mapreduce(((bd, n)) -> 
 wrapprint(io::IO, layer)
 """
 wrapprint(io::IO, layer) = Flux.Chain(
-    @λ(x -> (  print(io, "      layer: "); _model_summary(io, layer); print(io, "\n"); x)),
-    @λ(x -> (println(io, " input size: $(size(x))"); x)),
+    x -> (  print(io, "      layer: "); _model_summary(io, layer); print(io, "\n"); x),
+    x -> (println(io, " input size: $(size(x))"); x),
     layer,
-    @λ(x -> (println(io, "output size: $(size(x))"); x)),
+    x -> (println(io, "output size: $(size(x))"); x),
 )
 wrapprint(layer) = wrapprint(stdout, layer)
 wrapprint(layer::Flux.Chain) = Flux.Chain(wrapprint.(layer.layers)...)
@@ -166,7 +166,7 @@ PrintSize()
 Non-trainable layer which simply prints the current size.
 """
 printsize(x) = (@show size(x); x)
-PrintSize() = @λ (x -> printsize(x))
+PrintSize() = x -> printsize(x)
 
 """
 DenseResize()
@@ -253,7 +253,7 @@ ChannelwiseDense(H::Int, ch::Pair, σ = identity) = Flux.Chain(DenseResize(), Fl
 """
 HeightwiseDense
 """
-HeightwiseDense(H::Int, C::Int, σ = identity) = Flux.Chain(@λ(x -> reshape(x, H, :)), Flux.Dense(H, H, σ), @λ(x -> reshape(x, H, 1, C, :)))
+HeightwiseDense(H::Int, C::Int, σ = identity) = Flux.Chain(x -> reshape(x, H, :), Flux.Dense(H, H, σ), x -> reshape(x, H, 1, C, :))
 
 """
 IdentitySkip
@@ -261,16 +261,16 @@ IdentitySkip
 `ResNet`-type skip-connection with identity shortcut.
 Wraps `SkipConnection` from the Flux library.
 """
-IdentitySkip(layer::Flux.Chain) = Flux.SkipConnection(layer, @λ (a,b) -> a + b)
+IdentitySkip(layer::Flux.Chain) = Flux.SkipConnection(layer, (a,b) -> a + b)
 IdentitySkip(layer) = IdentitySkip(Flux.Chain(layer))
 
 """
 CatSkip
 
-`DenseNet`-type skip-connection with concatenation shortcut along dimension `dim`.
+`DenseNet`-type skip-connection with concatenation shortcut along dimensions `dims`.
 Wraps `SkipConnection` from the Flux library.
 """
-CatSkip(dims, layer::Flux.Chain) = Flux.SkipConnection(layer, @λ (a,b) -> cat(a, b; dims = dims))
+CatSkip(dims, layer::Flux.Chain) = Flux.SkipConnection(layer, (a,b) -> cat(a, b; dims = dims))
 CatSkip(dims, layer) = CatSkip(dims, Flux.Chain(layer))
 
 """
@@ -319,7 +319,7 @@ function BatchDenseConnection(
     )
     CD(σ = identity) = ChannelwiseDense(H, C=>C, σ).layers
     BN(σ = identity) = batchnorm ? Flux.BatchNorm(C, σ) : groupnorm ? Flux.GroupNorm(C, C÷2, σ) : identity
-    AF() = @λ x -> σ.(x)
+    AF() = x -> σ.(x)
     if mode === :pre
         Flux.Chain(BN(), AF(), CD()..., BN(), AF(), CD()...)
     elseif mode === :post
@@ -348,7 +348,7 @@ function BatchConvConnection(
     @assert numlayers >= 2 && !(groupnorm && batchnorm)
     CV(ch, σ = identity) = XavierConv(k, ch, σ; pad = (k.-1).÷2)
     BN(C,  σ = identity) = batchnorm ? Flux.BatchNorm(C, σ) : groupnorm ? Flux.GroupNorm(C, C÷2, σ) : identity
-    AF() = @λ x -> σ.(x)
+    AF() = x -> σ.(x)
     if mode === :pre
         Flux.Chain(BN(ch[1]), AF(), CV(ch[1]=>ch[2]), vcat(([BN(ch[2]), AF(), CV(ch[2]=>ch[2])] for _ in 1:numlayers-2)...)..., BN(ch[2]), AF(), CV(ch[2]=>ch[2]))
     elseif mode === :post

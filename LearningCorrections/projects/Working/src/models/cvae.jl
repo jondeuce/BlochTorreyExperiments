@@ -41,9 +41,9 @@ Zygote.@adjoint _KLDivergence_Kernel(μq0, σq, μr0, σr) = _KLDivergence_Kerne
 Zygote.@adjoint _EvidenceLowerBound_Kernel(x, μx0, σx) = _EvidenceLowerBound_Kernel(x, μx0, σx), Δ -> (Δ * (x - μx0) / σx^2, Δ * (μx0 - x) / σx^2, Δ * (σx^2 - (x - μx0)^2) / σx^3)
 
 @inline _cap(x) = min(x, oftype(x, 1000))
-KLDivUnitNormal(μ, σ) = sum(_cap.(_KLDivUnitNormal_Kernel.(μ, σ))) / size(μ,2) # KL-divergence between approximation posterior and N(0, 1) prior (Note: sum over dim=1, mean over dim=2)
-KLDivergence(μq0, σq, μr0, σr) = sum(_cap.(_KLDivergence_Kernel.(μq0, σq, μr0, σr))) / size(μq0,2) # KL-divergence contribution to cross-entropy (Note: sum over dim=1, mean over dim=2)
-EvidenceLowerBound(x, μx0, σx) = sum(_cap.(_EvidenceLowerBound_Kernel.(x, μx0, σx))) / size(μx0,2) # Negative log-likelihood/ELBO contribution to cross-entropy (Note: sum over dim=1, mean over dim=2)
+KLDivUnitNormal(μ, σ) = sum(_cap.(_KLDivUnitNormal_Kernel.(μ, σ))) / size(μ,2) # KL-divergence between approximation posterior and N(0, 1) prior (Note: sum over dims=1, mean over dims=2)
+KLDivergence(μq0, σq, μr0, σr) = sum(_cap.(_KLDivergence_Kernel.(μq0, σq, μr0, σr))) / size(μq0,2) # KL-divergence contribution to cross-entropy (Note: sum over dims=1, mean over dims=2)
+EvidenceLowerBound(x, μx0, σx) = sum(_cap.(_EvidenceLowerBound_Kernel.(x, μx0, σx))) / size(μx0,2) # Negative log-likelihood/ELBO contribution to cross-entropy (Note: sum over dims=1, mean over dims=2)
 
 function _crossentropy_gradcheck()
     for T in [Float32, Float64]

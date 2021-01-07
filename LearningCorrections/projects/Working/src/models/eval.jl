@@ -106,7 +106,7 @@ function mle_biexp_epg_noise_only(
 
     start_time = time()
     batches = Iterators.partition(1:size(Y,2), batch_size)
-    LinearAlgebra.BLAS.set_num_threads(1) # Prevent BLAS from stealing julia threads
+    BLAS.set_num_threads(1) # Prevent BLAS from stealing julia threads
 
     for (batchnum, batch) in enumerate(batches)
         batchtime = @elapsed Threads.@sync for j in batch
@@ -144,7 +144,7 @@ function mle_biexp_epg_noise_only(
     end
 
     !dryrun && matsave("mle-$data_source-$data_subset-results-final", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # save final results
-    LinearAlgebra.BLAS.set_num_threads(Threads.nthreads()) # Reset BLAS threads
+    BLAS.set_num_threads(Threads.nthreads()) # Reset BLAS threads
 
     return initial_guess, results
 end
@@ -169,7 +169,7 @@ function _test_mle_biexp_epg_noise_only(phys::BiexpEPGModel, derived; nsamples =
         dryrunshuffle = false,
     )
 
-    ϵ_true = Z .+ log.(derived["ricegen"].noisescale(X)); # logϵ = log(exp(Z) * scale(X)) = Z + log(scale(X))
+    ϵ_true = Z .+ log.(derived["ricegen"].noisescale(X)); # logϵ = log(exp(Z) * noisescale(X)) = Z + log(noisescale(X))
     println("initial log epsilon:"); display(log.(init.ϵ))
     println("final log epsilon:"); display(res.logepsilon')
     println("true log epsilon:"); display(ϵ_true); display(mean(abs, arr_similar(ϵ_true, res.logepsilon') .- ϵ_true))
@@ -401,7 +401,7 @@ function mle_biexp_epg(
 
     start_time = time()
     batches = Iterators.partition(1:size(Y,2), batch_size)
-    LinearAlgebra.BLAS.set_num_threads(1) # Prevent BLAS from stealing julia threads
+    BLAS.set_num_threads(1) # Prevent BLAS from stealing julia threads
 
     for (batchnum, batch) in enumerate(batches)
         batchtime = @elapsed Threads.@sync for j in batch
@@ -442,7 +442,7 @@ function mle_biexp_epg(
     end
 
     !dryrun && matsave("mle-$data_source-$data_subset-results-final", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # save final results
-    LinearAlgebra.BLAS.set_num_threads(Threads.nthreads()) # Reset BLAS threads
+    BLAS.set_num_threads(Threads.nthreads()) # Reset BLAS threads
 
     return initial_guess, results
 end

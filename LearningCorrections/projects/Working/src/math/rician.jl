@@ -61,7 +61,7 @@ end
 =#
 
 #### Laguerre/Bessel functions
-_besselix(ν::Real, x::Real) = SpecialFunctions.besselix(oftype(float(x), ν), float(x)) # besselix(ν, x) = Iν(x) * exp(-|x|)
+_besselix(ν::Real, x::Real) = besselix(oftype(float(x), ν), float(x)) # besselix(ν, x) = Iν(x) * exp(-|x|)
 _logbesseli(ν::Real, x::Real) = log(_besselix(ν, x)) + abs(x) # since log(besselix(ν, x)) = log(Iν(x)) - |x| #TODO: log(⋅) -> log(⋅ + eps(typeof(float(x))))?
 _logbesseli0(x::Real) = _logbesseli(0, x)
 _logbesseli1(x::Real) = _logbesseli(1, x)
@@ -188,7 +188,7 @@ end
 end
 
 #### Sampling
-@inline Distributions.rand(rng::Distributions.AbstractRNG, d::Rician{T}) where {T} = sqrt((d.ν + d.σ * randn(rng, T))^2 + (d.σ * randn(rng, T))^2)
+@inline Distributions.rand(rng::Random.AbstractRNG, d::Rician{T}) where {T} = sqrt((d.ν + d.σ * randn(rng, T))^2 + (d.σ * randn(rng, T))^2)
 
 #### Testing
 #= _laguerre½
