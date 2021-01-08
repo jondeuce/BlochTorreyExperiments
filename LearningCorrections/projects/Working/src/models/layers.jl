@@ -17,112 +17,109 @@ end
 Flux.@functor HyperNet
 Flux.trainable(h::HyperNet) = (h.hyper,)
 
-function hypernet_from_template(hyper, template)
-    frame = hyperify(template)
-    ps = Flux.params(frame)
-    frame = Flux.fmap(frame) do x
-        (x isa AbstractArray && x ∈ ps) || return x
-        ArrayInfo(x)
-    end
-    return HyperNet{typeof(hyper), typeof(frame)}(hyper, frame)
-end
+(h::HyperNet)(x) = restructure(h.frame, h.hyper(x))
+(h::HyperNet{F,Nothing})(x) where {F} = h.hyper
 
-function (h::HyperNet)(x, z)
-    θ = h.hyper(z)
-    m = batched_restructure(h.frame, θ)
-    m(x)
-end
+hypernet_from_template(hyper, template) = HyperNet(hyper, fmap_trainables(ArrayInfo, hyperify(template)))
+hypernet_wrapper(model) = HyperNet(model, nothing)
 
-hyperify1(m) = false, m # fallback
-hyperify1(m::Flux.Dense{<:Any, <:AbstractMatrix, <:AbstractVector}) = true, BatchedDense(copy(reshape(m.W, size(m.W)..., 1)), copy(reshape(m.b, size(m.b, 1), 1, 1)), m.σ)
-hyperify1(m::Flux.Diagonal{<:AbstractVector}) = true, BatchedDiagonal(copy(reshape(m.α, size(m.α, 1), 1)), copy(reshape(m.β, size(m.β, 1), 1)))
+ishyperleaf(m) = false # fallback
+ishyperleaf(m::Flux.Dense{<:Any, <:AbstractMatrix, <:AbstractVector}) = true
+ishyperleaf(m::Flux.Diagonal{<:AbstractVector}) = true
 
-function hyperify(x; cache = IdDict())
+hyperify1(m) = m # fallback
+hyperify1(m::Flux.Dense{<:Any, <:AbstractMatrix, <:AbstractVector}) = BatchedDense(copy(reshape(m.W, size(m.W)..., 1)), copy(reshape(m.b, size(m.b, 1), 1, 1)), m.σ)
+hyperify1(m::Flux.Diagonal{<:AbstractVector}) = BatchedDiagonal(copy(reshape(m.α, size(m.α, 1), 1)), copy(reshape(m.β, size(m.β, 1), 1)))
+hyperify(m) = fmap_(hyperify1, m, ishyperleaf)
+
+function fmap_(f, x, isleaf = Functors.isleaf; cache = IdDict())
     haskey(cache, x) && return cache[x]
-    isleaf, h = hyperify1(x)
-    cache[x] = isleaf ? h : begin
-        func, re = Flux.functor(h)
-        re(map(y -> hyperify(y; cache), func))
+    cache[x] = isleaf(x) ? f(x) : begin
+        func, re = Flux.functor(x)
+        re(map(y -> fmap_(f, y, isleaf; cache), func))
     end
 end
 
-function batched_restructure(m, ps::AbstractVecOrMat)
-    i = 0
-    trainables = IdDict()
-    map(Flux.params(m)) do p
-        trainables[p] = true
+function fmap_trainables(f, x, args...; kwargs...)
+    θ = IdDict(Flux.params(x) .=> true)
+    fmap_trainables_inner(y) = haskey(θ, y) ? f(y) : y
+    fmap_(fmap_trainables_inner, x, args...; kwargs...)
+end
+
+function allparams!(ps, x, isleaf = Functors.isleaf)
+    isleaf(x) && x isa AbstractArray{<:Number} ?
+        push!(ps, x) :
+        foreach(y -> allparams!(ps, y, isleaf), Flux.functor(x)[1])
+    return ps
+end
+allparams(x, args...) = allparams!(Any[], x, args...)
+
+function accum∇(m, ∇m)
+    ps, ∇ps = allparams(m), allparams(∇m)
+    θs = IdDict(Flux.params(m) .=> true)
+    order = IdDict()
+    ∇ = Any[]
+    for (i, (p, ∇p)) in enumerate(zip(ps, ∇ps))
+        haskey(θs, p) || continue # trainables only
+        if !haskey(order, p)
+            order[p] = i # record location, in case of weight-sharing
+            push!(∇, copy(∇p))
+        else
+            ∇[order[p]] .+= ∇p # accumulate gradient
+        end
     end
-    batchsize = size(ps, 2)
-    Flux.fmap(m) do x
-        (x isa ArrayInfo && haskey(trainables, x)) || return x
-        basesize = size(x)[1:end-1]
-        len = prod(basesize)
-        x = reshape(ps[i.+(1:len), ..], basesize..., batchsize)
+    return ∇
+end
+
+function restructure(m, ps::AbstractVecOrMat)
+    i = 0
+    fmap_trainables(m) do x
+        if ps isa AbstractVector
+            len = length(x)
+            x = reshape(ps[i.+(1:len)], size(x))
+        else
+            basesize = size(x)[1:end-1]
+            len = prod(basesize)
+            x = reshape(ps[i.+(1:len), ..], basesize..., size(ps,2))
+        end
         i += len
         return x
     end
 end
 
-Zygote.@adjoint batched_restructure(m, ps::AbstractVector) = batched_restructure(m, ps), dm -> (nothing, vec(batched_destructure(m, dm)))
-Zygote.@adjoint batched_restructure(m, ps::AbstractMatrix) = batched_restructure(m, ps), dm -> (nothing, batched_destructure(m, dm))
-
-Flux.functor(::Type{<:Flux.Chain}, c) = (layers = c.layers,), ls -> Flux.Chain(ls.layers...)
-
-function batched_destructure(m, dm)
-    dps = Zygote.Buffer([])
-    fmap_accum(m, dm) do x, dx
-        (x isa ArrayInfo) || return x
-        push!(dps, dx)
+Zygote.@adjoint function restructure(m, ps::AbstractVecOrMat)
+    function ∇restructure(∇m)
+        ∇ps = mapreduce(vcat, accum∇(m, ∇m)) do ∇p
+            ps isa AbstractVector ? vec(∇p) : reshape(∇p, :, batchsize(∇p))
+        end
+        return (nothing, reshape(∇ps, size(ps)))
     end
-    mapreduce(vcat, copy(dps)) do dp
-        reshape(dp, :, batchsize(dp))
-    end
-end
-
-function fmap_accum(f, m, dm; accum = IdDict(), seen = IdDict())
-    if Functors.isleaf(m) && Functors.isleaf(dm)
-        m isa ArrayInfo || return
-        haskey(accum, m) ? (accum[m] .+= dm) : (accum[m] = dm)
-        haskey(seen, m) && return
-        seen[m] = true
-        f(m, dm)
-    else
-        func, dfunc = Flux.functor(m)[1], Flux.functor(dm)[1]
-        map((y, dy) -> fmap_accum(f, y, dy; accum, seen), func, dfunc)
-    end
-end
-
-function load_param_vec!(m, ps::AbstractVector)
-    i = 0
-    ps = map(Flux.params(m)) do p
-        p = reshape(ps[i .+ (1:length(p))], size(p))
-        i += length(p)
-        return p
-    end
-    Flux.loadparams!(m, ps)
-    return m
+    return restructure(m, ps), ∇restructure
 end
 
 function _hypernet_test()
-    c1 = x->Flux.normalise(x;dims=1)
-    d1 = Flux.Diagonal(2)
-    d2 = Flux.Dense(2,3,x->x^2) # smooth activation function for gradient test
-    d3 = Flux.Diagonal(3)
-    d4 = Flux.Dense(3,2,x->Flux.softplus(abs(x))) # smooth activation function for gradient test
     nparams(m) = mapreduce(length, +, Flux.params(m); init=0)
     lossfun(m, xs...) = () -> √mean(abs2, m(xs...))
     gradcheck(ℓ, m) = modelgradcheck(ℓ, m; verbose = false, subset = :random, rtol = 1e-3, atol = 1e-4)
 
-    template = Flux.Chain(c1, d1, Flux.Chain(d2, d3), d3, NotTrainable(d4), d2) # must include shared weights
-    hyper = Flux.Chain(Flux.Dense(3,32,Flux.relu), Flux.Dense(32,nparams(template)))
-    hypernet = hypernet_from_template(hyper, template)
-    @assert hypernet.frame[3][1] === hypernet.frame[6] && hypernet.frame[3][2] === hypernet.frame[4] # test that weight-sharing patterns are preserved
+    local template, hyper, hypernet
+    let
+        c1 = x->Flux.normalise(x;dims=1)
+        d1 = Flux.Diagonal(2)
+        d2 = Flux.Dense(2,3,x->x^2) # smooth activation function for gradient test
+        d3 = Flux.Diagonal(3)
+        d4 = Flux.Dense(3,2,x->Flux.softplus(abs(x))) # smooth activation function for gradient test
+        template = Flux.Chain(c1, d1, Flux.Chain(d2, d3), d3, NotTrainable(d4), d2) # must include shared weights
+        hyper = Flux.Chain(Flux.Dense(3,32,Flux.relu), Flux.Dense(32,nparams(template)))
+        hypernet = hypernet_from_template(hyper, template)
+        @assert hypernet.frame[3][1] === hypernet.frame[6] && hypernet.frame[3][2] === hypernet.frame[4] # test that weight-sharing patterns are preserved
+    end
 
     # vector inputs
     let x = rand(Float32, 2)
         ps = mapreduce(vec, vcat, Flux.params(template))
         m1 = template
-        m2 = batched_restructure(hypernet.frame, ps)
+        m2 = restructure(hypernet.frame, ps)
         y1 = m1(x)
         y2 = m2(x)
         @assert y1 ≈ y2
@@ -133,7 +130,7 @@ function _hypernet_test()
     let x = repeat(rand(Float32, 2), 1, 5)
         ps = mapreduce(vec, vcat, Flux.params(template))
         m1 = _x -> reduce(hcat, [template(_x[:,j]) for j in 1:size(_x,2)]) # template(x[:,j]) across columns
-        m2 = batched_restructure(hypernet.frame, repeat(ps, 1, batchsize(x)))
+        m2 = restructure(hypernet.frame, repeat(ps, 1, batchsize(x)))
         y1 = m1(x)
         y2 = m2(x)
         @assert y1 ≈ y2 && y1[:,1:end-1] ≈ y1[:,2:end]
@@ -143,17 +140,17 @@ function _hypernet_test()
     # random batched inputs, random models
     let x = rand(Float32, 2, 5), z = rand(Float32, 3, 5)
         ps = hyper(z)
-        m1s = map(j -> load_param_vec!(deepcopy(template), ps[:,j]), 1:batchsize(x)) # deepcopy new model per column
+        m1s = map(j -> restructure(template, ps[:,j]), 1:batchsize(x)) # new model per column
         @assert ps ≈ reduce(hcat, [mapreduce(vec, vcat, Flux.params(_m1)) for _m1 in m1s])
         m1 = _x -> reduce(hcat, [_m1(x[:,j]) for (j,_m1) in enumerate(m1s)]) # m1s[j](x[:,j]) across columns
-        m2 = batched_restructure(hypernet.frame, ps)
-        m3 = hypernet
+        m2 = restructure(hypernet.frame, ps)
+        m3 = hypernet(z)
         y1 = m1(x)
         y2 = m2(x)
-        y3 = m3(x, z)
-        @assert y1 ≈ y2
+        y3 = m3(x)
+        @assert y1 ≈ y2 && y2 ≈ y3
         @assert gradcheck(lossfun(m2, x), m2)
-        @assert gradcheck(lossfun(m3, x, z), m3)
+        @assert gradcheck(lossfun(x -> hypernet(z)(x), x), hypernet)
     end
 
     hypernet
