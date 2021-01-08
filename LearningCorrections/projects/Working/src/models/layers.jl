@@ -1,21 +1,225 @@
+# Mutability needed for unique objectid, which `Flux.fmap` relies on
+mutable struct ArrayInfo{T,N,P} <: AbstractArray{T,N}
+    dims::NTuple{N,Int}
+end
+ArrayInfo(x::AbstractArray{T,N}) where {T,N} = ArrayInfo{T,N,typeof(x)}(size(x))
+Base.size(x::ArrayInfo) = x.dims
+Base.length(x::ArrayInfo) = prod(size(x))
+Base.getindex(::ArrayInfo, I...) = error("Base.getindex not defined for ArrayInfo")
+Base.setindex!(::ArrayInfo, v, I...) = error("Base.setindex! not defined for ArrayInfo")
+Base.show(io::IO, x::ArrayInfo{T,N,P}) where {T,N,P} = print(io, "ArrayInfo{$T,$N,$P}(dims = $(size(x)))")
+Base.show(io::IO, ::MIME"text/plain", x::ArrayInfo) = show(io, x) # avoid falling back to AbstractArray default
+
+struct HyperNet{F,M}
+    hyper::F
+    frame::M
+end
+Flux.@functor HyperNet
+Flux.trainable(h::HyperNet) = (h.hyper,)
+
+function hypernet_from_template(hyper, template)
+    frame = hyperify(template)
+    ps = Flux.params(frame)
+    frame = Flux.fmap(frame) do x
+        (x isa AbstractArray && x ∈ ps) || return x
+        ArrayInfo(x)
+    end
+    return HyperNet{typeof(hyper), typeof(frame)}(hyper, frame)
+end
+
+function (h::HyperNet)(x, z)
+    θ = h.hyper(z)
+    m = batched_restructure(h.frame, θ)
+    m(x)
+end
+
+hyperify1(m) = false, m # fallback
+hyperify1(m::Flux.Dense{<:Any, <:AbstractMatrix, <:AbstractVector}) = true, BatchedDense(copy(reshape(m.W, size(m.W)..., 1)), copy(reshape(m.b, size(m.b, 1), 1, 1)), m.σ)
+hyperify1(m::Flux.Diagonal{<:AbstractVector}) = true, BatchedDiagonal(copy(reshape(m.α, size(m.α, 1), 1)), copy(reshape(m.β, size(m.β, 1), 1)))
+
+function hyperify(x; cache = IdDict())
+    haskey(cache, x) && return cache[x]
+    isleaf, h = hyperify1(x)
+    cache[x] = isleaf ? h : begin
+        func, re = Flux.functor(h)
+        re(map(y -> hyperify(y; cache), func))
+    end
+end
+
+function batched_restructure(m, ps::AbstractVecOrMat)
+    i = 0
+    trainables = IdDict()
+    map(Flux.params(m)) do p
+        trainables[p] = true
+    end
+    batchsize = size(ps, 2)
+    Flux.fmap(m) do x
+        (x isa ArrayInfo && haskey(trainables, x)) || return x
+        basesize = size(x)[1:end-1]
+        len = prod(basesize)
+        x = reshape(ps[i.+(1:len), ..], basesize..., batchsize)
+        i += len
+        return x
+    end
+end
+
+Zygote.@adjoint batched_restructure(m, ps::AbstractVector) = batched_restructure(m, ps), dm -> (nothing, vec(batched_destructure(m, dm)))
+Zygote.@adjoint batched_restructure(m, ps::AbstractMatrix) = batched_restructure(m, ps), dm -> (nothing, batched_destructure(m, dm))
+
+Flux.functor(::Type{<:Flux.Chain}, c) = (layers = c.layers,), ls -> Flux.Chain(ls.layers...)
+
+function batched_destructure(m, dm)
+    dps = Zygote.Buffer([])
+    fmap_accum(m, dm) do x, dx
+        (x isa ArrayInfo) || return x
+        push!(dps, dx)
+    end
+    mapreduce(vcat, copy(dps)) do dp
+        reshape(dp, :, batchsize(dp))
+    end
+end
+
+function fmap_accum(f, m, dm; accum = IdDict(), seen = IdDict())
+    if Functors.isleaf(m) && Functors.isleaf(dm)
+        m isa ArrayInfo || return
+        haskey(accum, m) ? (accum[m] .+= dm) : (accum[m] = dm)
+        haskey(seen, m) && return
+        seen[m] = true
+        f(m, dm)
+    else
+        func, dfunc = Flux.functor(m)[1], Flux.functor(dm)[1]
+        map((y, dy) -> fmap_accum(f, y, dy; accum, seen), func, dfunc)
+    end
+end
+
+function load_param_vec!(m, ps::AbstractVector)
+    i = 0
+    ps = map(Flux.params(m)) do p
+        p = reshape(ps[i .+ (1:length(p))], size(p))
+        i += length(p)
+        return p
+    end
+    Flux.loadparams!(m, ps)
+    return m
+end
+
+function _hypernet_test()
+    c1 = x->Flux.normalise(x;dims=1)
+    d1 = Flux.Diagonal(2)
+    d2 = Flux.Dense(2,3,x->x^2) # smooth activation function for gradient test
+    d3 = Flux.Diagonal(3)
+    d4 = Flux.Dense(3,2,x->Flux.softplus(abs(x))) # smooth activation function for gradient test
+    nparams(m) = mapreduce(length, +, Flux.params(m); init=0)
+    lossfun(m, xs...) = () -> √mean(abs2, m(xs...))
+    gradcheck(ℓ, m) = modelgradcheck(ℓ, m; verbose = false, subset = :random, rtol = 1e-3, atol = 1e-4)
+
+    template = Flux.Chain(c1, d1, Flux.Chain(d2, d3), d3, NotTrainable(d4), d2) # must include shared weights
+    hyper = Flux.Chain(Flux.Dense(3,32,Flux.relu), Flux.Dense(32,nparams(template)))
+    hypernet = hypernet_from_template(hyper, template)
+    @assert hypernet.frame[3][1] === hypernet.frame[6] && hypernet.frame[3][2] === hypernet.frame[4] # test that weight-sharing patterns are preserved
+
+    # vector inputs
+    let x = rand(Float32, 2)
+        ps = mapreduce(vec, vcat, Flux.params(template))
+        m1 = template
+        m2 = batched_restructure(hypernet.frame, ps)
+        y1 = m1(x)
+        y2 = m2(x)
+        @assert y1 ≈ y2
+        @assert gradcheck(lossfun(m2, x), m2)
+    end
+
+    # repeated batched inputs w/ same model per input
+    let x = repeat(rand(Float32, 2), 1, 5)
+        ps = mapreduce(vec, vcat, Flux.params(template))
+        m1 = _x -> reduce(hcat, [template(_x[:,j]) for j in 1:size(_x,2)]) # template(x[:,j]) across columns
+        m2 = batched_restructure(hypernet.frame, repeat(ps, 1, batchsize(x)))
+        y1 = m1(x)
+        y2 = m2(x)
+        @assert y1 ≈ y2 && y1[:,1:end-1] ≈ y1[:,2:end]
+        @assert gradcheck(lossfun(m2, x), m2)
+    end
+
+    # random batched inputs, random models
+    let x = rand(Float32, 2, 5), z = rand(Float32, 3, 5)
+        ps = hyper(z)
+        m1s = map(j -> load_param_vec!(deepcopy(template), ps[:,j]), 1:batchsize(x)) # deepcopy new model per column
+        @assert ps ≈ reduce(hcat, [mapreduce(vec, vcat, Flux.params(_m1)) for _m1 in m1s])
+        m1 = _x -> reduce(hcat, [_m1(x[:,j]) for (j,_m1) in enumerate(m1s)]) # m1s[j](x[:,j]) across columns
+        m2 = batched_restructure(hypernet.frame, ps)
+        m3 = hypernet
+        y1 = m1(x)
+        y2 = m2(x)
+        y3 = m3(x, z)
+        @assert y1 ≈ y2
+        @assert gradcheck(lossfun(m2, x), m2)
+        @assert gradcheck(lossfun(m3, x, z), m3)
+    end
+
+    hypernet
+end
+
+"""
+Same as `Flux.Dense`, except `W` and `b` act along batch dimensions:
+
+    y[:,k] = σ.(W[:,:,k] * x[:,k] .+ b[:,:,k])
+"""
+struct BatchedDense{F,S<:AbstractTensor3D,T<:AbstractTensor3D}
+    W::S
+    b::T
+    σ::F
+end
+Flux.@functor BatchedDense
+BatchedDense(W, b) = BatchedDense(W, b, identity)
+Base.show(io::IO, l::BatchedDense) = print(io, "BatchedDense(", size(l.W, 2), ", ", size(l.W, 1), (l.σ === identity ? () : (", ", l.σ))..., ")")
+
+function (a::BatchedDense)(x::AbstractVecOrMat)
+    W, b, σ = a.W, a.b, a.σ
+    sz = size(x)
+    x = reshape(x, sz[1], 1, :) # treat dims > 1 as batch dimensions
+    x = σ.(Flux.batched_mul(W, x) .+ b)
+    x = reshape(x, :, sz[2:end]...)
+    return x
+end
+
+"""
+Same as `Flux.Diagonal`, except `W` and `b` act along batch dimensions:
+
+    y[:,k] = σ.(W[:,:,k] * x[:,k] .+ b[:,:,k])
+"""
+struct BatchedDiagonal{T}
+    α::T
+    β::T
+end
+Flux.@functor BatchedDiagonal
+Base.show(io::IO, l::BatchedDiagonal) = print(io, "BatchedDiagonal(", size(l.α, 1), ")")
+
+function (a::BatchedDiagonal)(x::AbstractVecOrMat)
+    α, β = a.α, a.β
+    sz = size(x)
+    x = reshape(x, sz[1], :) # treat dims > 1 as batch dimensions
+    x = α .* x .+ β
+    x = reshape(x, :, sz[2:end]...)
+end
+
 """
 batchsize(x::AbstractArray)
 
-Returns the length of the last dimension of the data `x`.
+Returns the size of the last dimension if ndims(x) >= 2, else returns 1.
 """
-batchsize(x::AbstractArray{T,N}) where {T,N} = size(x, N)
+batchsize(x::AbstractArray{T,N}) where {T,N} = N <= 1 ? 1 : size(x, N)
 
 """
 channelsize(x::AbstractArray)
 
-Returns the length of the second-last dimension of the data `x`.
+Returns the size of the second-last dimension if ndims(x) >= 3, else returns 1.
 """
-channelsize(x::AbstractArray{T,N}) where {T,N} = N <= 1 ? 1 : size(x, N-1)
+channelsize(x::AbstractArray{T,N}) where {T,N} = N <= 2 ? 1 : size(x, N-1)
 
 """
 heightsize(x::AbstractArray)
 
-Returns the length of the first dimension of the data `x`.
+Returns the size of the first dimension.
 """
 heightsize(x::AbstractArray) = size(x, 1)
 

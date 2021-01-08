@@ -5,7 +5,7 @@ using .Reexport: @reexport, @importexport
 
 #### Import/export dependency names
 
-@importexport import ArgParse, BSON, BangBang, BenchmarkTools, BlackBoxOptim, CUDA, ChainRules, Conda, DECAES, DataFrames, Dates, Distributions, DrWatson, EllipsisNotation, FFTW, FiniteDifferences, Flux, ForwardDiff, Glob, HypothesisTests, LaTeXStrings, LinearAlgebra, LoopVectorization, NLopt, NNlib, Optim, Parameters, Pkg, PrettyTables, PyCall, PyPlot, Random, SparseDiffTools, SpecialFunctions, StatsBase, StatsPlots, Suppressor, TOML, TimerOutputs, Transformers, Tullio, UnicodePlots, UnsafeArrays, Zygote
+@importexport import ArgParse, BSON, BangBang, BenchmarkTools, BlackBoxOptim, CUDA, ChainRules, Conda, DECAES, DataFrames, Dates, Distributions, DrWatson, EllipsisNotation, FFTW, FiniteDifferences, Flux, ForwardDiff, Functors, Glob, HypothesisTests, LaTeXStrings, LinearAlgebra, LoopVectorization, NLopt, NNlib, Optim, Parameters, Pkg, PrettyTables, PyCall, PyPlot, Random, SparseDiffTools, SpecialFunctions, StatsBase, StatsPlots, Suppressor, TOML, TimerOutputs, Transformers, Tullio, UnicodePlots, UnsafeArrays, Zygote
 
 #### Dependencies' symbols
 

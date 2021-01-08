@@ -397,7 +397,7 @@ function modelgradcheck(f, m; extrapolate = true, subset = nothing, verbose = fa
     verbose && map(zip(ps, ∇pairs)) do (p, ∇pair)
         println("ℓ: $ℓ, AD: $(∇pair[1]), FD: $(∇pair[2]), Δ: $(∇pair[1]-∇pair[2]), ≈: $(isapprox(∇pair...; kwargs...)), p: $(find_model_param(m, p))")
     end
-    @assert all([isapprox(∇pair...; kwargs...) for ∇pair in ∇pairs])
+    return all([isapprox(∇pair...; kwargs...) for ∇pair in ∇pairs])
 end
 
 function _softmax_test()
