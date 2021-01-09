@@ -104,26 +104,6 @@ function terminate_file_event(; file::AbstractString)
     end
 end
 
-walk(o::Flux.Optimise.Optimiser) = mapfoldl(walk, vcat, o; init = Any[])
-walk(o::AbstractArray) = walk(Flux.Optimise.Optimiser(convert(Vector{Any}, vec(o))))
-walk(o) = Any[o]
-
-function update_optimizers!(f!, opts, args...; field::Symbol)
-    for opt in walk(opts)
-        if hasfield(typeof(opt), field)
-            f!(opt, args...) # update optimizer
-        else
-            continue
-        end
-    end
-end
-
-function update_optimizers!(f!, optimizers::AbstractDict{<:AbstractString,Any}, args...; field::Symbol)
-    for (name, opts) in optimizers
-        update_optimizers!(f!, opts, name, args...; field)
-    end
-end
-
 function droplr_file_event(optimizers::AbstractDict{<:AbstractString,Any}; file::AbstractString, lrrate::Int, lrdrop, lrthresh)
     pred(engine) = engine.state.epoch > 1 && mod(engine.state.epoch-1, lrrate) == 0
     file_event(pred; file = file) do engine
@@ -137,65 +117,6 @@ function droplr_file_event(optimizers::AbstractDict{<:AbstractString,Any}; file:
             opt.eta = new_eta
         end
     end
-end
-
-# Flatten settings dictionary
-flatten_dict(d::AbstractDict{<:AbstractString, Any}, prefix = "", delim = ".") = _recurse_insert!(Dict{String,Any}(), d, prefix, delim)
-function _recurse_insert!(dout::AbstractDict{<:AbstractString, Any}, d::AbstractDict{<:AbstractString, Any}, prefix = "", delim = ".")
-    maybeprefix(k) = isempty(prefix) ? k : prefix * delim * k
-    for (k, v) in d
-        if v isa AbstractDict{<:AbstractString, Any}
-            _recurse_insert!(dout, v, maybeprefix(k), delim)
-        else
-            dout[maybeprefix(k)] = deepcopy(v)
-        end
-    end
-    return dout
-end
-
-# Set `d[k]` to `new` if its current value is `default`, else do nothing
-function compare_and_set!(d::AbstractDict, k, default, new)
-    if isequal(d[k], default)
-        d[k] = deepcopy(new)
-    end
-    return d[k]
-end
-
-# Nested dict access
-nestedaccess(d::AbstractDict, args...) = isempty(args) ? d : nestedaccess(d[first(args)], Base.tail(args)...)
-nestedaccess(d) = d
-
-# Save and print settings file
-function save_and_print(settings::AbstractDict; filename = nothing)
-    if (filename !== nothing)
-        @assert endswith(filename, ".toml")
-        mkpath(dirname(filename))
-        open(filename; write = true) do io
-            TOML.print(io, settings)
-        end
-    end
-    TOML.print(stdout, settings)
-    return settings
-end
-
-function breadth_first_iterator(tree::AbstractDict)
-    iter = Pair{<:Union{Nothing, <:AbstractDict}, <:Pair{<:Union{Nothing, <:AbstractString}, <:AbstractDict}}[nothing => (nothing => tree)]
-    oldleafs = 1
-    while true
-        newleafs = 0
-        for i in oldleafs:length(iter)
-            parent, (_, leaf) = iter[i]
-            oldleafs += 1
-            for (k,v) in leaf
-                if v isa AbstractDict
-                    push!(iter, leaf => (k => v))
-                    newleafs += 1
-                end
-            end
-        end
-        newleafs == 0 && break
-    end
-    return iter
 end
 
 # Settings parsing

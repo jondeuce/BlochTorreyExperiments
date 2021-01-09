@@ -1,14 +1,21 @@
-# Mutability needed for unique objectid, which `Flux.fmap` relies on
-mutable struct ArrayInfo{T,N,P} <: AbstractArray{T,N}
+"""
+DummyArray(x::AbstractArray{T,N}) <: AbstractArray{T,N}
+
+Data-less dummy array wrapping a tuple representating the array size.
+`DummyArray`s implement the bare minimum `AbstractArray` interface, and are
+additionally mutable, thence providing a unique `objectid`, which e.g.
+`IdDict`, `Flux.fmap`, and `===` rely on.
+"""
+mutable struct DummyArray{T,N,A} <: AbstractArray{T,N}
     dims::NTuple{N,Int}
 end
-ArrayInfo(x::AbstractArray{T,N}) where {T,N} = ArrayInfo{T,N,typeof(x)}(size(x))
-Base.size(x::ArrayInfo) = x.dims
-Base.length(x::ArrayInfo) = prod(size(x))
-Base.getindex(::ArrayInfo, I...) = error("Base.getindex not defined for ArrayInfo")
-Base.setindex!(::ArrayInfo, v, I...) = error("Base.setindex! not defined for ArrayInfo")
-Base.show(io::IO, x::ArrayInfo{T,N,P}) where {T,N,P} = print(io, "ArrayInfo{$T,$N,$P}(dims = $(size(x)))")
-Base.show(io::IO, ::MIME"text/plain", x::ArrayInfo) = show(io, x) # avoid falling back to AbstractArray default
+DummyArray(x::AbstractArray{T,N}) where {T,N} = DummyArray{T,N,typeof(x)}(size(x))
+Base.size(x::DummyArray) = x.dims
+Base.length(x::DummyArray) = prod(size(x))
+Base.getindex(::DummyArray, I...) = error("Base.getindex not defined for DummyArray")
+Base.setindex!(::DummyArray, v, I...) = error("Base.setindex! not defined for DummyArray")
+Base.show(io::IO, x::DummyArray{T,N,A}) where {T,N,A} = print(io, "DummyArray{$T,$N,$A}(dims = $(size(x)))")
+Base.show(io::IO, ::MIME"text/plain", x::DummyArray) = show(io, x) # avoid falling back to AbstractArray default
 
 struct HyperNet{F,M}
     hyper::F
@@ -20,7 +27,7 @@ Flux.trainable(h::HyperNet) = (h.hyper,)
 (h::HyperNet)(x) = restructure(h.frame, h.hyper(x))
 (h::HyperNet{F,Nothing})(x) where {F} = h.hyper
 
-hypernet_from_template(hyper, template) = HyperNet(hyper, fmap_trainables(ArrayInfo, hyperify(template)))
+hypernet_from_template(hyper, template) = HyperNet(hyper, fmap_trainables(DummyArray, hyperify(template)))
 hypernet_wrapper(model) = HyperNet(model, nothing)
 
 ishyperleaf(m) = false # fallback
@@ -31,130 +38,6 @@ hyperify1(m) = m # fallback
 hyperify1(m::Flux.Dense{<:Any, <:AbstractMatrix, <:AbstractVector}) = BatchedDense(copy(reshape(m.W, size(m.W)..., 1)), copy(reshape(m.b, size(m.b, 1), 1, 1)), m.σ)
 hyperify1(m::Flux.Diagonal{<:AbstractVector}) = BatchedDiagonal(copy(reshape(m.α, size(m.α, 1), 1)), copy(reshape(m.β, size(m.β, 1), 1)))
 hyperify(m) = fmap_(hyperify1, m, ishyperleaf)
-
-function fmap_(f, x, isleaf = Functors.isleaf; cache = IdDict())
-    haskey(cache, x) && return cache[x]
-    cache[x] = isleaf(x) ? f(x) : begin
-        func, re = Flux.functor(x)
-        re(map(y -> fmap_(f, y, isleaf; cache), func))
-    end
-end
-
-function fmap_trainables(f, x, args...; kwargs...)
-    θ = IdDict(Flux.params(x) .=> true)
-    fmap_trainables_inner(y) = haskey(θ, y) ? f(y) : y
-    fmap_(fmap_trainables_inner, x, args...; kwargs...)
-end
-
-function allparams!(ps, x, isleaf = Functors.isleaf)
-    isleaf(x) && x isa AbstractArray{<:Number} ?
-        push!(ps, x) :
-        foreach(y -> allparams!(ps, y, isleaf), Flux.functor(x)[1])
-    return ps
-end
-allparams(x, args...) = allparams!(Any[], x, args...)
-
-function accum∇(m, ∇m)
-    ps, ∇ps = allparams(m), allparams(∇m)
-    θs = IdDict(Flux.params(m) .=> true)
-    order = IdDict()
-    ∇ = Any[]
-    for (i, (p, ∇p)) in enumerate(zip(ps, ∇ps))
-        haskey(θs, p) || continue # trainables only
-        if !haskey(order, p)
-            order[p] = i # record location, in case of weight-sharing
-            push!(∇, copy(∇p))
-        else
-            ∇[order[p]] .+= ∇p # accumulate gradient
-        end
-    end
-    return ∇
-end
-
-function restructure(m, ps::AbstractVecOrMat)
-    i = 0
-    fmap_trainables(m) do x
-        if ps isa AbstractVector
-            len = length(x)
-            x = reshape(ps[i.+(1:len)], size(x))
-        else
-            basesize = size(x)[1:end-1]
-            len = prod(basesize)
-            x = reshape(ps[i.+(1:len), ..], basesize..., size(ps,2))
-        end
-        i += len
-        return x
-    end
-end
-
-Zygote.@adjoint function restructure(m, ps::AbstractVecOrMat)
-    function ∇restructure(∇m)
-        ∇ps = mapreduce(vcat, accum∇(m, ∇m)) do ∇p
-            ps isa AbstractVector ? vec(∇p) : reshape(∇p, :, batchsize(∇p))
-        end
-        return (nothing, reshape(∇ps, size(ps)))
-    end
-    return restructure(m, ps), ∇restructure
-end
-
-function _hypernet_test()
-    nparams(m) = mapreduce(length, +, Flux.params(m); init=0)
-    lossfun(m, xs...) = () -> √mean(abs2, m(xs...))
-    gradcheck(ℓ, m) = modelgradcheck(ℓ, m; verbose = false, subset = :random, rtol = 1e-3, atol = 1e-4)
-
-    local template, hyper, hypernet
-    let
-        c1 = x->Flux.normalise(x;dims=1)
-        d1 = Flux.Diagonal(2)
-        d2 = Flux.Dense(2,3,x->x^2) # smooth activation function for gradient test
-        d3 = Flux.Diagonal(3)
-        d4 = Flux.Dense(3,2,x->Flux.softplus(abs(x))) # smooth activation function for gradient test
-        template = Flux.Chain(c1, d1, Flux.Chain(d2, d3), d3, NotTrainable(d4), d2) # must include shared weights
-        hyper = Flux.Chain(Flux.Dense(3,32,Flux.relu), Flux.Dense(32,nparams(template)))
-        hypernet = hypernet_from_template(hyper, template)
-        @assert hypernet.frame[3][1] === hypernet.frame[6] && hypernet.frame[3][2] === hypernet.frame[4] # test that weight-sharing patterns are preserved
-    end
-
-    # vector inputs
-    let x = rand(Float32, 2)
-        ps = mapreduce(vec, vcat, Flux.params(template))
-        m1 = template
-        m2 = restructure(hypernet.frame, ps)
-        y1 = m1(x)
-        y2 = m2(x)
-        @assert y1 ≈ y2
-        @assert gradcheck(lossfun(m2, x), m2)
-    end
-
-    # repeated batched inputs w/ same model per input
-    let x = repeat(rand(Float32, 2), 1, 5)
-        ps = mapreduce(vec, vcat, Flux.params(template))
-        m1 = _x -> reduce(hcat, [template(_x[:,j]) for j in 1:size(_x,2)]) # template(x[:,j]) across columns
-        m2 = restructure(hypernet.frame, repeat(ps, 1, batchsize(x)))
-        y1 = m1(x)
-        y2 = m2(x)
-        @assert y1 ≈ y2 && y1[:,1:end-1] ≈ y1[:,2:end]
-        @assert gradcheck(lossfun(m2, x), m2)
-    end
-
-    # random batched inputs, random models
-    let x = rand(Float32, 2, 5), z = rand(Float32, 3, 5)
-        ps = hyper(z)
-        m1s = map(j -> restructure(template, ps[:,j]), 1:batchsize(x)) # new model per column
-        @assert ps ≈ reduce(hcat, [mapreduce(vec, vcat, Flux.params(_m1)) for _m1 in m1s])
-        m1 = _x -> reduce(hcat, [_m1(x[:,j]) for (j,_m1) in enumerate(m1s)]) # m1s[j](x[:,j]) across columns
-        m2 = restructure(hypernet.frame, ps)
-        m3 = hypernet(z)
-        y1 = m1(x)
-        y2 = m2(x)
-        y3 = m3(x)
-        @assert y1 ≈ y2 && y2 ≈ y3
-        @assert gradcheck(lossfun(m2, x), m2)
-        @assert gradcheck(lossfun(x -> hypernet(z)(x), x), hypernet)
-    end
-
-    hypernet
-end
 
 """
 Same as `Flux.Dense`, except `W` and `b` act along batch dimensions:
@@ -219,52 +102,6 @@ heightsize(x::AbstractArray)
 Returns the size of the first dimension.
 """
 heightsize(x::AbstractArray) = size(x, 1)
-
-"""
-Kaiming uniform initialization.
-"""
-function kaiming_uniform(T::Type, dims; gain = 1)
-   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
-   bound = sqrt(3) * gain / sqrt(fan_in)
-   return rand(Uniform(-bound, bound), dims) |> Array{T}
-end
-kaiming_uniform(T::Type, dims...; kwargs...) = kaiming_uniform(T::Type, dims; kwargs...)
-kaiming_uniform(args...; kwargs...) = kaiming_uniform(Float64, args...; kwargs...)
-
-"""
-Kaiming normal initialization.
-"""
-function kaiming_normal(T::Type, dims; gain = 1)
-   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
-   std = gain / sqrt(fan_in)
-   return rand(Normal(0, std), dims) |> Array{T}
-end
-kaiming_normal(T::Type, dims...; kwargs...) = kaiming_normal(T::Type, dims; kwargs...)
-kaiming_normal(args...; kwargs...) = kaiming_normal(Float64, args...; kwargs...)
-
-"""
-Xavier uniform initialization.
-"""
-function xavier_uniform(T::Type, dims; gain = 1)
-   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
-   fan_out = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end-1]
-   bound = sqrt(3) * gain * sqrt(2 / (fan_in + fan_out))
-   return rand(Uniform(-bound, bound), dims) |> Array{T}
-end
-xavier_uniform(T::Type, dims...; kwargs...) = xavier_uniform(T::Type, dims; kwargs...)
-xavier_uniform(args...; kwargs...) = xavier_uniform(Float64, args...; kwargs...)
-
-"""
-Xavier normal initialization.
-"""
-function xavier_normal(T::Type, dims; gain = 1)
-   fan_in = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end]
-   fan_out = length(dims) <= 2 ? dims[end] : prod(dims) ÷ dims[end-1]
-   std = gain * sqrt(2 / (fan_in + fan_out))
-   return rand(Normal(0, std), dims) |> Array{T}
-end
-xavier_normal(T::Type, dims...; kwargs...) = xavier_normal(T::Type, dims; kwargs...)
-xavier_normal(args...; kwargs...) = xavier_normal(Float64, args...; kwargs...)
 
 """
 wrapchain(layer)
@@ -462,8 +299,7 @@ IdentitySkip
 `ResNet`-type skip-connection with identity shortcut.
 Wraps `SkipConnection` from the Flux library.
 """
-IdentitySkip(layer::Flux.Chain) = Flux.SkipConnection(layer, (a,b) -> a + b)
-IdentitySkip(layer) = IdentitySkip(Flux.Chain(layer))
+IdentitySkip(layer) = Flux.SkipConnection(layer, +)
 
 """
 CatSkip
@@ -471,8 +307,7 @@ CatSkip
 `DenseNet`-type skip-connection with concatenation shortcut along dimensions `dims`.
 Wraps `SkipConnection` from the Flux library.
 """
-CatSkip(dims, layer::Flux.Chain) = Flux.SkipConnection(layer, (a,b) -> cat(a, b; dims = dims))
-CatSkip(dims, layer) = CatSkip(dims, Flux.Chain(layer))
+CatSkip(dims::Int, layer) = Flux.SkipConnection(layer, dims == 1 ? vcat : dims == 2 ? hcat : (a,b) -> cat(a, b; dims = dims))
 
 """
 MLP
@@ -493,18 +328,6 @@ function MLP(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout =
         Flux.Dense(Dhid, sz[2], σout; initW = initW_last, initb = initb_last),
     ) |> flattenchain
 end
-
-"""
-`Conv` wrapper which initializes using `xavier_uniform`
-"""
-XavierConv(k::NTuple{2,Int}, ch::Pair{Int,Int}, σ = identity; kwargs...) = XavierConv(Float64, k, ch, σ; kwargs...)
-XavierConv(T, k::NTuple{2,Int}, ch::Pair{Int,Int}, σ = identity; kwargs...) = Flux.Conv(xavier_uniform(T, k..., ch...), zeros(T, ch[2]), σ; kwargs...)
-
-"""
-`ConvTranspose` wrapper which initializes using `xavier_uniform`
-"""
-XavierConvTrans(k::NTuple{2,Int}, ch::Pair{Int,Int}, σ = identity; kwargs...) = XavierConvTrans(Float64, k, ch, σ; kwargs...)
-XavierConvTrans(T, k::NTuple{2,Int}, ch::Pair{Int,Int}, σ = identity; kwargs...) = Flux.ConvTranspose(xavier_uniform(T, k..., reverse(ch)...), zeros(T, ch[2]), σ; kwargs...)
 
 """
 BatchDenseConnection
@@ -547,7 +370,7 @@ function BatchConvConnection(
         batchnorm::Bool = false,
     )
     @assert numlayers >= 2 && !(groupnorm && batchnorm)
-    CV(ch, σ = identity) = XavierConv(k, ch, σ; pad = (k.-1).÷2)
+    CV(ch, σ = identity) = Flux.Conv(k, ch, σ; pad = (k.-1).÷2)
     BN(C,  σ = identity) = batchnorm ? Flux.BatchNorm(C, σ) : groupnorm ? Flux.GroupNorm(C, C÷2, σ) : identity
     AF() = x -> σ.(x)
     if mode === :pre
@@ -578,12 +401,12 @@ feature fusion via 1x1 convolution:
 function DenseConnection(Factory, G0::Int, G::Int, C::Int; dims::Int = 3)
     Flux.Chain(
         [CatSkip(dims, Factory(G0 + (c - 1) * G => G)) for c in 1:C]...,
-        XavierConv((1,1), G0 + C * G => G0; pad = (0,0)),
+        Flux.Conv((1,1), G0 + C * G => G0; pad = (0,0)),
     )
 end
 DenseConnection(G0::Int, G::Int, C::Int; dims::Int = 3, k::Tuple = (3,1), σ = Flux.relu) =
     DenseConnection(
-        ch -> XavierConv(k, ch, σ; pad = (k.-1).÷2), # Default factory for RDB's
+        ch -> Flux.Conv(k, ch, σ; pad = (k.-1).÷2), # Default factory for RDB's
         G0, G, C; dims = dims)
 
 """
@@ -643,21 +466,21 @@ where the output - the densely fused features - is then given by
 function DenseFeatureFusion(Factory, G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,1), σ = Flux.relu; dims::Int = 3)
     IdentitySkip(
         Flux.Chain(
-            # XavierConv(k, G0 => G0, σ; pad = (k.-1).÷2),
+            # Flux.Conv(k, G0 => G0, σ; pad = (k.-1).÷2),
             GlobalFeatureFusion(
                 dims,
                 [ResidualDenseBlock(Factory, G0, G, C; dims = dims) for d in 1:D]...,
             ),
             # Flux.BatchNorm(D * G0, σ),
             Flux.GroupNorm(D * G0, (D * G0) ÷ 2, σ),
-            XavierConv((1,1), D * G0 => G0; pad = (0,0)),
-            # XavierConv(k, G0 => G0, σ; pad = (k.-1).÷2),
+            Flux.Conv((1,1), D * G0 => G0; pad = (0,0)),
+            # Flux.Conv(k, G0 => G0, σ; pad = (k.-1).÷2),
         )
     )
 end
 DenseFeatureFusion(G0::Int, G::Int, C::Int, D::Int, k::Tuple = (3,1), σ = Flux.relu; kwargs...) =
     DenseFeatureFusion(
-        ch -> XavierConv(k, ch, σ; pad = (k.-1).÷2), # Default factory for RDB's
+        ch -> Flux.Conv(k, ch, σ; pad = (k.-1).÷2), # Default factory for RDB's
         G0, G, C, D, k, σ; kwargs...)
 
 """
@@ -768,15 +591,8 @@ end
 # Transformers.NNTopo
 function _model_summary(io::IO, model::Transformers.Stacks.NNTopo; depth::Int = 0, pre = "", suf = "")
     # Workaround (https://github.com/chengchingwen/Transformers.jl/pull/32)
-    topo_print = let original_stdout = stdout
-        read_pipe, write_pipe = redirect_stdout()
-        try
-            show(model)
-        finally
-            close(write_pipe)
-            redirect_stdout(original_stdout)
-        end
-        read(read_pipe, String)
+    topo_print = capture_stdout() do
+        show(stdout, model)
     end
     topo_print = _getprefix(depth, pre, suf) * topo_print
     topo_print = replace(topo_print, "\t" => _getprefix(1, pre, suf))

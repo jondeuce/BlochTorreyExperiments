@@ -17,7 +17,7 @@ function sigmoid_weights_fun(x::AbstractArray{T}, k::Number = T(0.1)) where {T}
     σ = T(abs(erfinv(1 - 2k)))
     y = @. (1 + erf(σ * x)) / 2
 end
-function sigmoid_weights_fun(x::CUDA.CuArray{T}, k::Number = T(0.1)) where {T}
+function sigmoid_weights_fun(x::CuArray{T}, k::Number = T(0.1)) where {T}
     σ = T(abs(erfinv(1 - 2k)))
     y = @. (1 + CUDA.erf(σ * x)) / 2 #TODO: need to explicitly call CUDA.erf here... bug?
 end
@@ -58,32 +58,6 @@ Zygote.@adjoint Flux.softplus(x::Real) = Flux.softplus(x), Δ -> (Δ * Flux.σ(x
 # One element
 @inline one_element(x) = one_element(typeof(x))
 @inline one_element(::Type{<:AbstractArray{T}}) where {T} = one{T}
-
-# Map over dictionary values
-map_dict(f, d::Dict{K,V}) where {K,V} = Dict{K,V}(map(((k,v),) -> k => f(v), collect(d)))
-
-# Differentiable summing of dictionary values
-sum_dict(d::Dict{K,V}) where {K,V} = sum(values(d))
-
-Zygote.@adjoint function sum_dict(d::Dict{K,V}) where {K,V}
-    sum_dict(d), function (Δ)
-        grad = Zygote.grad_mut(__context__, d)
-        for k in keys(d)
-            grad[k] = Zygote.accum(get(grad, k, nothing), Δ)
-        end
-        return (grad,)
-    end
-end
-
-@generated function mask_tuple(tup::NamedTuple{keys, NTuple{N,T}}, ::Val{mask}) where {keys,N,T,mask}
-    ex = [:(keys[$i] => getproperty(tup, keys[$i])) for i in 1:N if mask[i]]
-    return :((; $(ex...)))
-end
-
-@generated function mask_tuple(tup::NTuple{N,T}, ::Val{mask}) where {N,T,mask}
-    ex = [:(tup[$i]) for i in 1:N if mask[i]]
-    return :(($(ex...),))
-end
 
 # Smoothed version of max(x,e) for fixed e > 0
 smoothmax(x,e) = e + e * Flux.softplus((x-e) / e)
@@ -254,24 +228,6 @@ end
 #### Gradient testing
 ####
 
-# Compute discrete CDF
-discrete_cdf(x) = (t = sort(x; dims = 2); c = cumsum(t; dims = 2) ./ sum(t; dims = 2); return permutedims.((t, c))) # return (t[1:12:end, :]', c[1:12:end, :]')
-
-# Unzip array of structs into struct of arrays
-unzip(a) = map(x -> getfield.(a, x), fieldnames(eltype(a)))
-
-function bin_sorted(X, Y; binsize::Int)
-    X_sorted, Y_sorted = unzip(sort(collect(zip(X, Y)); by = first))
-    X_binned, Y_binned = unzip(map(is -> (mean(X_sorted[is]), mean(Y_sorted[is])), Iterators.partition(1:length(X), binsize)))
-end
-
-function bin_edges(X, Y, edges)
-    X_binned, Y_binned = map(1:length(edges)-1) do i
-        Is = @. edges[i] <= X <= edges[i+1]
-        mean(X[Is]), mean(Y[Is])
-    end |> unzip
-end
-
 function simple_fd_gradient!(g, f, x, lo = nothing, hi = nothing)
     δ = cbrt(eps(float(eltype(x))))
     f₀ = f(x)
@@ -345,30 +301,6 @@ function subset_indices_dict(ps::Flux.Params, subset = nothing)
         foreach(p -> Is[p] = (I = rand(CartesianIndices(p)); I:I), ps)
     end
     return Is
-end
-
-walk_model(f, m) = mapfoldl((x,y) -> isempty(y) ? x : (x..., y), fieldnames(typeof(m)); init = ()) do k
-    x = getfield(m, k)
-    out = f(m,k,x)
-    x isa AbstractArray ? (out,) : (out, walk_model(f, x)...)
-end
-
-function find_model_param(m, x)
-    keychain = Any[]
-    function find_model_param_inner(c)
-        if isempty(c)
-            false
-        elseif c isa Pair
-            c[2] === true
-        else
-            v = any(find_model_param_inner.(c))
-            v && c[1] isa Pair && pushfirst!(keychain, c[1][1])
-            return v
-        end
-    end
-    chain = walk_model((_m,_k,_x) -> _k => _x === x, m)
-    find_model_param_inner(chain)
-    return keychain
 end
 
 function fd_modelgradients(f, ps::Flux.Params, Is::Union{<:IdDict, Nothing} = nothing; extrapolate = true)

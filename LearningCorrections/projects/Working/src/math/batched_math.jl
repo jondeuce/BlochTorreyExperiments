@@ -3,8 +3,8 @@
 ####
 
 # TODO: Some necessary piracy here: broadcasted `+.(::LinearAlgebra.Diagonal{Fill}, ::CuMatrix)` falls back to scalar indexing
-Zygote.accum(x::LinearAlgebra.Diagonal{<:Any, <:Zygote.FillArrays.Fill}, y::CUDA.CuMatrix) = Zygote.accum.(LinearAlgebra.Diagonal(CUDA.CuVector(diag(x))), y)
-Zygote.accum(x::CUDA.CuMatrix, y::LinearAlgebra.Diagonal{<:Any, <:Zygote.FillArrays.Fill}) = Zygote.accum.(x, LinearAlgebra.Diagonal(CUDA.CuVector(diag(y))))
+Zygote.accum(x::LinearAlgebra.Diagonal{<:Any, <:Zygote.FillArrays.Fill}, y::CuMatrix) = Zygote.accum.(LinearAlgebra.Diagonal(CuVector(diag(x))), y)
+Zygote.accum(x::CuMatrix, y::LinearAlgebra.Diagonal{<:Any, <:Zygote.FillArrays.Fill}) = Zygote.accum.(x, LinearAlgebra.Diagonal(CuVector(diag(y))))
 
 function mean3(X::AbstractTensor3D)
     size(X,3) == 1 && return reshape(X, size(X,1), size(X,2))
@@ -21,13 +21,13 @@ mean3(X::CuTensor3D) = dropdims(mean(X; dims = 3); dims = 3)
 # Generic versions of `NNlib.batched_transpose` for use outside of `NNlib.batched_mul`
 batched_transpose(A::AbstractMatrix) = transpose(A)
 batched_transpose(A::AbstractTensor3D) = permutedims(A, (2,1,3))
-batched_transpose(A::CUDA.CuMatrix) = transpose(A)
+batched_transpose(A::CuMatrix) = transpose(A)
 batched_transpose(A::CuTensor3D) = permutedims(A, (2,1,3))
 
-add_transpose!(A::CUDA.CuMatrix) = A .= A .+ A'
+add_transpose!(A::CuMatrix) = A .= A .+ A'
 add_transpose!(A::CuTensor3D) = A .= A .+ batched_transpose(A)
 
-self_transpose!(A::CUDA.CuMatrix) = A .= A'
+self_transpose!(A::CuMatrix) = A .= A'
 self_transpose!(A::CuTensor3D) = A .= batched_transpose(A)
 
 function add_transpose!(A::AbstractMatrix)

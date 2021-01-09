@@ -11,6 +11,7 @@ using .Reexport: @reexport, @importexport
 
 @reexport using BangBang: push!!, setindex!!
 @reexport using BenchmarkTools: @btime
+@reexport using CUDA: CuArray, CuVector, CuMatrix
 @reexport using DataFrames: DataFrame, dropmissing
 @reexport using Distributions: Normal, Uniform, cdf, logpdf, pdf, log2π
 @reexport using DrWatson: @dict, @ntuple, projectdir
@@ -47,14 +48,13 @@ include("PyTools.jl")
 
 include("utils/common.jl")
 include("utils/ignite.jl")
+include("utils/flux.jl")
+include("utils/plot.jl")
 
 include("math/rician.jl")
 include("math/batched_math.jl")
 include("math/math_utils.jl")
 include("math/mmd.jl")
-
-include("utils/utils.jl")
-include("utils/plot.jl")
 
 include("models/layers.jl")
 include("models/physics.jl")

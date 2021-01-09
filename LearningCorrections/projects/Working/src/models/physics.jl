@@ -638,7 +638,7 @@ end
 # Faster to compute forward/reverse pass on the CPU and convert back to GPU after... DECAES is just too fast (for typical batch sizes of ~1024, anyways)
 
 _signal_model(c::MaybeClosedFormBiexpEPGModel{T}, args::AbstractVector{T}...) where {T} = arr_similar(Matrix{T}, _signal_model_f64(c, map(arr64, args)...))
-_signal_model(c::MaybeClosedFormBiexpEPGModel{T}, args::CUDA.CuVector{T}...) where {T} = arr_similar(CUDA.CuMatrix{T}, _signal_model_f64(c, map(arr64, args)...))
+_signal_model(c::MaybeClosedFormBiexpEPGModel{T}, args::CuVector{T}...) where {T} = arr_similar(CuMatrix{T}, _signal_model_f64(c, map(arr64, args)...))
 
 function _signal_model_f64(c::MaybeClosedFormBiexpEPGModel, alpha::AbstractVector{Float64}, refcon::AbstractVector{Float64}, T2short::AbstractVector{Float64}, T2long::AbstractVector{Float64}, Ashort::AbstractVector{Float64}, Along::AbstractVector{Float64}, T1::AbstractVector{Float64}, TE::AbstractVector{Float64})
     args = (alpha, refcon, T2short, T2long, Ashort, Along, T1, TE)
@@ -756,7 +756,7 @@ end
 
 #### GPU DECAES signal model; currently slower than cpu version unless batch size is large (~10000 or more)
 
-function _signal_model_cuda(c::MaybeClosedFormBiexpEPGModel, alpha::CUDA.CuVector, T2short::CUDA.CuVector, T2long::CUDA.CuVector, Ashort::CUDA.CuVector, Along::CUDA.CuVector)
+function _signal_model_cuda(c::MaybeClosedFormBiexpEPGModel, alpha::CuVector, T2short::CuVector, T2long::CuVector, Ashort::CuVector, Along::CuVector)
     @unpack TE, T1, refcon = physicsmodel(c)
     return Ashort' .* DECAES.EPGdecaycurve(nsignal(c), alpha, TE, T2short, T1, refcon) .+
             Along' .* DECAES.EPGdecaycurve(nsignal(c), alpha, TE, T2long,  T1, refcon)
@@ -764,9 +764,9 @@ end
 
 function DECAES.EPGdecaycurve(
         ETL::Int,
-        flip_angles::CUDA.CuVector{T},
+        flip_angles::CuVector{T},
         TE::T,
-        T2times::CUDA.CuVector{T},
+        T2times::CuVector{T},
         T1::T,
         refcon::T,
     ) where {T}

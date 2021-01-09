@@ -301,7 +301,7 @@ function save_snapshot!(settings, models)
         cp(file, joinpath(savepath, basename(file)); force = true)
     end
     model_summary(models, summary_filename)
-    save_and_print(settings; filename = settings_filename)
+    savesettings(settings; filename = settings_filename, verbose = false)
     return nothing
 end
 

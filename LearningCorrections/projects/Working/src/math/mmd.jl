@@ -525,7 +525,7 @@ Zygote.@adjoint function Working._mmd_flux_kernel_matrices(X::AbstractMatrix, Y:
     end
 end
 
-function _mmd_flux_kernel_matrices(X::CUDA.CuMatrix, Y::CUDA.CuMatrix)
+function _mmd_flux_kernel_matrices(X::CuMatrix, Y::CuMatrix)
     Kxx, Kyy, Kxy = X'X, Y'Y, X'Y
     xx, yy = batched_diag(Kxx), batched_diag(Kyy)
     Kxx .= exp.(2 .* Kxx .- xx .- xx')
@@ -534,7 +534,7 @@ function _mmd_flux_kernel_matrices(X::CUDA.CuMatrix, Y::CUDA.CuMatrix)
     @ntuple(Kxx, Kyy, Kxy)
 end
 
-Zygote.@adjoint function _mmd_flux_kernel_matrices(X::CUDA.CuMatrix, Y::CUDA.CuMatrix)
+Zygote.@adjoint function _mmd_flux_kernel_matrices(X::CuMatrix, Y::CuMatrix)
     # Store kernel matrices for reverse pass
     @unpack Kxx, Kyy, Kxy = _mmd_flux_kernel_matrices(X, Y)
 
@@ -813,7 +813,7 @@ function _test_mmd_flux_kernel_matrices(fs = [_mmd_flux_kernel_matrices], fcs = 
     allfout = vcat(fout, fcout)
 
     for i in 1:length(allfout), j in i+1:length(allfout)
-        labi, labj = (fout -> fout.out isa CUDA.CuArray ? "gpu" : "cpu").((allfout[i], allfout[j]))
+        labi, labj = (fout -> fout.out isa CuArray ? "gpu" : "cpu").((allfout[i], allfout[j]))
         println("$(allfs[i]) ($labi) vs. $(allfs[j]) ($labj)")
         compare(allfout[i].out, allfout[j].out)
         compare(allfout[i].grad, allfout[j].grad)
