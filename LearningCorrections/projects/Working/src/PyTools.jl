@@ -5,7 +5,7 @@ import ..PyPlot
 import ..Conda
 
 ####
-#### Initialize python libraries
+#### Initialization
 ####
 
 const torch = PyNULL()
@@ -16,7 +16,7 @@ const logging = PyNULL()
 const plt = PyPlot
 rcParams = PyDict()
 
-function __init__()
+function __pyinit__()
     copy!(torch, pyimport("torch"))
     copy!(wandb, pyimport("wandb"))
     copy!(ignite, pyimport("ignite"))
@@ -38,8 +38,22 @@ function __init__()
     rcParams["legend.fontsize"] = "small"
 end
 
+function __init__()
+    try
+        __pyinit__()
+    catch e
+        if e isa PyCall.PyError
+            @info "Installing python utilities..."
+            __pyinstall__()
+            __pyinit__()
+        else
+            rethrow(e)
+        end
+    end
+end
+
 ####
-#### Python helpers
+#### Utils
 ####
 
 """
@@ -50,10 +64,10 @@ j2p_array(x::AbstractArray) = torch.Tensor(_py_reverse_dims(x)) #  # `Array` -->
 _py_reverse_dims(x::AbstractArray{T,N}) where {T,N} = permutedims(x, ntuple(i -> N-i+1, N))
 
 ####
-#### Python modules installation
+#### Installation
 ####
 
-function install()
+function __pyinstall__()
     # Install pip into conda environment
     Conda.add("pip")
 
@@ -67,7 +81,11 @@ function install()
 
     # Install wandb via pip (https://docs.wandb.com/quickstart)
     #   pip install wandb
-    run(`$(joinpath(Conda.ROOTENV, "bin", "pip")) install wandb`)
+    if !Sys.iswindows()
+        run(`$(joinpath(Conda.ROOTENV, "bin", "pip")) install wandb`)
+    else
+        run(`$(joinpath(Conda.ROOTENV, "Scripts", "pip.exe")) install wandb`)
+    end
 
     # Install hydra via pip (https://hydra.cc/docs/intro#installation)
     #   pip install hydra-core --upgrade
