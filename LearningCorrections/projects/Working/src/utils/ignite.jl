@@ -36,7 +36,7 @@ end
 # Initialize WandBLogger object
 function init_wandb_logger(settings)
     WandBLogger = ignite.contrib.handlers.wandb_logger.WandBLogger
-    return JL_WANDB_LOGGER[] ? WandBLogger(config = flatten_dict(settings)) : nothing
+    return use_wandb_logger[] ? WandBLogger(config = flatten_dict(settings)) : nothing
 end
 
 # Throttle even to run every `period` seconds
@@ -117,62 +117,4 @@ function droplr_file_event(optimizers::AbstractDict{<:AbstractString,Any}; file:
             opt.eta = new_eta
         end
     end
-end
-
-# Settings parsing
-function parse_command_line!(
-        settings::AbstractDict{<:AbstractString, Any},
-        args = isinteractive() ? String[] : ARGS,
-    )
-
-    # Fields "INHERIT" with value "%PARENT%" specify that all fields from (and only from) the immediate parent
-    # should be copied into the child, unless that key is already present in the child
-    for (parent, (key, leaf)) in reverse(breadth_first_iterator(settings))
-        if (parent !== nothing) && get(leaf, "INHERIT", "") == "%PARENT%"
-            for (k,v) in parent
-                (v isa AbstractDict) && continue
-                !haskey(leaf, k) && (leaf[k] = deepcopy(parent[k]))
-            end
-            delete!(leaf, "INHERIT")
-        else
-            continue
-        end
-    end
-
-    # Fields with value "%PARENT%" take default values from the corresponding field of their parent
-    for (parent, (key, leaf)) in breadth_first_iterator(settings)
-        (parent === nothing) && continue
-        for (k,v) in leaf
-            (v == "%PARENT%") && (leaf[k] = deepcopy(parent[k]))
-        end
-    end
-
-    # Generate arg parser
-    function populate_arg_table!(parser, leaf_settings, root_settings = leaf_settings)
-        for (k,v) in leaf_settings
-            if v isa AbstractDict
-                populate_arg_table!(parser, Dict{String,Any}(k * "." * kin => deepcopy(vin) for (kin, vin) in v), root_settings)
-            else
-                props = Dict{Symbol,Any}(:default => deepcopy(v))
-                if v isa AbstractVector
-                    props[:arg_type] = eltype(v)
-                    props[:nargs] = length(v)
-                else
-                    props[:arg_type] = typeof(v)
-                end
-                ArgParse.add_arg_table!(parser, "--" * k, props)
-            end
-        end
-        return parser
-    end
-    parser = populate_arg_table!(ArgParse.ArgParseSettings(), settings, settings)
-
-    # Parse and merge into settings
-    for (k,v) in ArgParse.parse_args(args, parser)
-        ksplit = String.(split(k, "."))
-        din = nestedaccess(settings, ksplit[begin:end-1]...)
-        din[ksplit[end]] = deepcopy(v)
-    end
-
-    return settings
 end

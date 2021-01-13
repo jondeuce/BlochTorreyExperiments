@@ -1,8 +1,13 @@
-module PyTools
+####
+#### Utils
+####
 
-using ..PyCall
-import ..PyPlot
-import ..Conda
+"""
+Converting between row major PyTorch `Tensor`s to Julia major Julia `Array`s
+"""
+p2j_array(x::PyObject) = _py_reverse_dims(x.detach().cpu().numpy()) # `Tensor` --> `Array`
+j2p_array(x::AbstractArray) = torch.Tensor(_py_reverse_dims(x)) #  # `Array` --> `Tensor`
+_py_reverse_dims(x::AbstractArray{T,N}) where {T,N} = permutedims(x, ntuple(i -> N-i+1, N))
 
 ####
 #### Initialization
@@ -38,31 +43,6 @@ function __pyinit__()
     rcParams["legend.fontsize"] = "small"
 end
 
-function __init__()
-    try
-        __pyinit__()
-    catch e
-        if e isa PyCall.PyError
-            @info "Installing python utilities..."
-            __pyinstall__()
-            __pyinit__()
-        else
-            rethrow(e)
-        end
-    end
-end
-
-####
-#### Utils
-####
-
-"""
-Converting between row major PyTorch `Tensor`s to Julia major Julia `Array`s
-"""
-p2j_array(x::PyObject) = _py_reverse_dims(x.detach().cpu().numpy()) # `Tensor` --> `Array`
-j2p_array(x::AbstractArray) = torch.Tensor(_py_reverse_dims(x)) #  # `Array` --> `Tensor`
-_py_reverse_dims(x::AbstractArray{T,N}) where {T,N} = permutedims(x, ntuple(i -> N-i+1, N))
-
 ####
 #### Installation
 ####
@@ -91,5 +71,3 @@ function __pyinstall__()
     #   pip install hydra-core --upgrade
     # run(`$(joinpath(Conda.ROOTENV, "bin", "pip")) install hydra-core --upgrade`)
 end
-
-end # module

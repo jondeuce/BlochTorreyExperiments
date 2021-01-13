@@ -95,7 +95,7 @@ function TransformerEncoder(
     )
 
     topology = if ntheta == 0 && nlatent == 0
-        Transformers.@nntopo(
+        @nntopo(
             Y : # Input (nY × b)
             Y => E : # SignalProjector (psize × _ × b)
             E => H : # Transformer encoder (psize × _ × b)
@@ -103,7 +103,7 @@ function TransformerEncoder(
             A => C # MLP head mapping "class" embedding to output (nout x b)
         )
     elseif ntheta == 0 || nlatent == 0
-        Transformers.@nntopo(
+        @nntopo(
             (Y,X) : # Inputs (nY × b), (mX x b)
             (Y,X) => E : # SignalProjector (psize × _ × b)
             E => H : # Transformer encoder (psize × _ × b)
@@ -111,7 +111,7 @@ function TransformerEncoder(
             A => C # MLP head mapping "class" embedding to output (nout x b)
         )
     else
-        Transformers.@nntopo(
+        @nntopo(
             (Y,θ,Z) : # Inputs (nY × b), (nθ x b), (nZ x b)
             (θ,Z) => X : # Concatenate θ,Z inputs (nY × b), (mX x b)
             (Y,X) => E : # SignalProjector (psize × _ × b)
@@ -121,13 +121,14 @@ function TransformerEncoder(
         )
     end
 
-    xf = Transformers.Stack(
+    xf = Stack(
         topology,
         (ntheta != 0 && nlatent != 0 ? [vcat] : [])...,
         # SignalEncoder(; psize, chunksize, overlap, nsignals, nfeatures = ntheta + nlatent),
         SignalProjector(; psize, nshards, nsignals, nfeatures = ntheta + nlatent),
         Flux.Chain(map(1:nhidden) do _
-            Transformers.Basic.Transformer(psize, head, hsize, hdim; future = true, act = Flux.relu, pdrop = 0.0)
+            # TODO: Transformer
+            Transformer(psize, head, hsize, hdim; future = true, act = Flux.relu, pdrop = 0.0)
         end...),
         H -> H[:, 1, :],
         (MLPHead === nothing) ? identity : MLPHead,

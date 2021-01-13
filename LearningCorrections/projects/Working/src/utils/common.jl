@@ -90,10 +90,6 @@ function compare_and_set!(d::AbstractDict, k, default, new)
     return d[k]
 end
 
-# Nested dict access
-nestedaccess(d::AbstractDict, args...) = isempty(args) ? d : nestedaccess(d[first(args)], Base.tail(args)...)
-nestedaccess(d) = d
-
 function breadth_first_iterator(tree::AbstractDict)
     iter = Pair{<:Union{Nothing, <:AbstractDict}, <:Pair{<:Union{Nothing, <:AbstractString}, <:AbstractDict}}[nothing => (nothing => tree)]
     oldleafs = 1
@@ -120,7 +116,6 @@ end
 
 getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
 savebson(filename, data::AbstractDict) = @elapsed BSON.bson(filename, data)
-# gitdir() = realpath(DrWatson.projectdir(".."))
 
 function capture_stdout(f)
     let original_stdout = stdout

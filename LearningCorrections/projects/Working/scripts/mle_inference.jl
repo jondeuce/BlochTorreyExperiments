@@ -13,9 +13,9 @@ image_infos = [
 
 for model_path in readdir(joinpath(ismrm_dir, "models"); join = true)
     @info basename(model_path)
-    JL_CHECKPOINT_FOLDER[] = model_path
-    global settings = make_settings()
-    global phys = make_physics(settings; image_infos)
+    lib.set_checkpointdir!(model_path)
+    global settings = load_settings()
+    global phys = load_epgmodel_physics(settings; image_infos)
     global models, derived = make_models!(phys, settings, load_checkpoint())
 
     for (i,img) in enumerate(phys.images)
@@ -44,9 +44,9 @@ end
 
 for model_path in readdir(joinpath(ismrm_dir, "models"); join = true)
     @info basename(model_path)
-    JL_CHECKPOINT_FOLDER[] = model_path
-    global settings = make_settings()
-    global phys = make_physics(settings; image_infos)
+    lib.set_checkpointdir!(model_path)
+    global settings = load_settings()
+    global phys = load_epgmodel_physics(settings; image_infos)
     global models, derived = make_models!(phys, settings, load_checkpoint())
 
     slices = [24:24, 162:162, 1:1, 1:1]

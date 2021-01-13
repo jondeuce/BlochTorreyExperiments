@@ -1,15 +1,18 @@
 module Working
 
-include("Reexport.jl") # workaround until Reexport v1.0 is tagged
+include("fix/Reexport.jl") # workaround until Reexport v1.0 is tagged
 using .Reexport: @reexport, @importexport
+
+include("fix/Stacks/Stacks.jl") # workaround until Transformers is updated for julia v1.6
+@reexport using .Stacks: @nntopo_str, @nntopo, NNTopo, Stack, show_stackfunc, stack
 
 #### Import/export dependency names
 
-@importexport import ArgParse, BSON, BangBang, BenchmarkTools, BlackBoxOptim, CUDA, ChainRules, Conda, DECAES, DataFrames, Dates, Distributions, DrWatson, EllipsisNotation, FFTW, FiniteDifferences, Flux, ForwardDiff, Functors, Glob, HypothesisTests, LaTeXStrings, LinearAlgebra, LoopVectorization, NLopt, NNlib, Optim, Parameters, Pkg, PrettyTables, PyCall, PyPlot, Random, SparseDiffTools, SpecialFunctions, StatsBase, StatsPlots, Suppressor, TOML, TimerOutputs, Transformers, Tullio, UnicodePlots, UnsafeArrays, Zygote
+@importexport import ArgParse, BSON, BangBang, BenchmarkTools, BlackBoxOptim, CUDA, ChainRules, Conda, DECAES, DataFrames, Dates, Distributions, DrWatson, EllipsisNotation, FFTW, FiniteDifferences, Flux, ForwardDiff, Functors, Glob, HypothesisTests, LaTeXStrings, LinearAlgebra, LoopVectorization, NLopt, NNlib, Optim, Parameters, Pkg, PrettyTables, PyCall, PyPlot, Random, SpecialFunctions, StatsBase, StatsPlots, Suppressor, TOML, TimerOutputs, Tullio, UnicodePlots, Zygote
 
 #### Dependencies' symbols
 
-@reexport using BangBang: push!!, setindex!!
+@reexport using BangBang: push!!, setindex!!, append!!
 @reexport using BenchmarkTools: @btime
 @reexport using CUDA: CuArray, CuVector, CuMatrix
 @reexport using DataFrames: DataFrame, dropmissing
@@ -21,6 +24,7 @@ using .Reexport: @reexport, @importexport
 @reexport using LinearAlgebra: BLAS, diag, diagm, dot, mul!, norm, normalize, tr, ×, ⋅
 @reexport using LoopVectorization: @avx
 @reexport using Parameters: @unpack, @with_kw, @with_kw_noshow
+@reexport using PyCall: @py_str, PyCall, PyDict, PyNULL, PyObject, pycall, pyimport
 @reexport using Random: MersenneTwister, randperm, randperm!
 @reexport using SpecialFunctions: besseli, besselix, erf, erfinv
 @reexport using Statistics: mean, median, quantile, std, var
@@ -28,7 +32,6 @@ using .Reexport: @reexport, @importexport
 @reexport using Suppressor: @suppress
 @reexport using TimerOutputs: @timeit
 @reexport using Tullio: @tullio
-@reexport using UnsafeArrays: @uviews, uview, uviews
 
 #### TODO: give plotting functions their own namespace
 
@@ -36,17 +39,15 @@ using .Reexport: @reexport, @importexport
 
 #### Exports
 
-export AbstractTensor3D, AbstractTensor4D, CuTensor3D, CuTensor4D, todevice, to32, to64
-
-#### Internal modules
-
-include("PyTools.jl")
-@importexport import .PyTools
-@reexport using .PyTools: torch, wandb, ignite, logging, plt, rcParams
+const lib = @__MODULE__
+export lib, plt, rcParams, torch, wandb, ignite, logging
+export @j2p, todevice, to32, to64
+export AbstractTensor3D, AbstractTensor4D, CuTensor3D, CuTensor4D
 
 #### Includes
 
 include("utils/common.jl")
+include("utils/pytools.jl")
 include("utils/ignite.jl")
 include("utils/flux.jl")
 include("utils/plot.jl")
@@ -60,36 +61,56 @@ include("models/layers.jl")
 include("models/physics.jl")
 include("models/cvae.jl")
 include("models/xformer.jl")
-include("models/eval.jl")
 include("models/setup.jl")
+include("models/transforms.jl")
+include("models/eval.jl")
 
 #### Init
 
-const JL_WANDB_LOGGER = Ref(false)
-const JL_CHECKPOINT_FOLDER = Ref("")
-
 function __init__()
+    # Environment variable defaults
+    get!(ENV, "JL_DISABLE_GPU", "0")
+    get!(ENV, "JL_CUDA_DEVICE", "0")
+    get!(ENV, "JL_WANDB_LOGGER", "0")
+    get!(ENV, "JL_ZERO_SUBNORMALS", "1")
+    get!(ENV, "JL_CHECKPOINT_FOLDER", "")
+
+    # Python utilities
+    try
+        __pyinit__()
+    catch e
+        if e isa PyCall.PyError
+            @info "Installing python utilities..."
+            __pyinstall__()
+            __pyinit__()
+        else
+            rethrow(e)
+        end
+    end
+
     # Use CUDA
-    Flux.use_cuda[] = CUDA.functional() && get(ENV, "JL_DISABLE_GPU", "0") != "1"
+    Flux.use_cuda[] = CUDA.functional() && ENV["JL_DISABLE_GPU"] != "1"
     if Flux.use_cuda[]
-        cuda_device = parse(Int, get(ENV, "JL_CUDA_DEVICE", "0"))
         CUDA.allowscalar(false)
-        CUDA.device!(cuda_device)
+        CUDA.device!(parse(Int, ENV["JL_CUDA_DEVICE"]))
     end
 
     # Use WandB logger
-    JL_WANDB_LOGGER[] = get(ENV, "JL_WANDB_LOGGER", "0") == "1"
+    use_wandb_logger[] = ENV["JL_WANDB_LOGGER"] == "1"
 
     # Load model from checkpoint folder
-    JL_CHECKPOINT_FOLDER[] = get(ENV, "JL_CHECKPOINT_FOLDER", "")
+    if isempty(ENV["JL_CHECKPOINT_FOLDER"])
+        set_checkpointdir!(ENV["JL_CHECKPOINT_FOLDER"])
+    else
+        clear_checkpointdir!()
+    end
 
     # Treat subnormals as zero
-    zero_subnormals = get(ENV, "JL_ZERO_SUBNORMALS", "1") != "0"
-    if zero_subnormals
+    if ENV["JL_ZERO_SUBNORMALS"] != "0"
         Threads.@threads for i in 1:Threads.nthreads()
             set_zero_subnormals(true)
         end
     end
 end
 
-end # module
+end # module Working

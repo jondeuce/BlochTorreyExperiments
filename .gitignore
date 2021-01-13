@@ -4,6 +4,8 @@
 old/
 tmp/
 output/
+log/
+data/
 wandb/
 
 ####################

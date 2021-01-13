@@ -131,6 +131,13 @@ flattenchain(chain::Flux.Chain) = length(chain) == 1 ? flattenchain(chain[1]) : 
 flattenchain(chain) = chain
 
 """
+CollectNamedTuple(keys...)
+"""
+struct CollectNamedTuple{N,Ks} end
+CollectNamedTuple(ks::Symbol...) = CollectNamedTuple{length(ks), ks}()
+(c::CollectNamedTuple{N,Ks})(Xs::Vararg{<:Any,N}) where {N,Ks} = NamedTuple{Ks}(Xs)
+
+"""
 NotTrainable(layer)
 
 Wraps the callable `layer` such that any parameters internal to `layer`
@@ -140,7 +147,7 @@ struct NotTrainable{F}
     layer::F
 end
 Flux.@functor NotTrainable # need functor for e.g. `fmap`
-Flux.trainable(l::NotTrainable) = () # no trainable parameters
+Flux.trainable(::NotTrainable) = () # no trainable parameters
 (l::NotTrainable)(x...) = l.layer(x...)
 Base.show(io::IO, l::NotTrainable) = (print(io, "NotTrainable("); print(io, l.layer); print(io, ")"))
 
@@ -156,6 +163,15 @@ along the first dimension of `d x b` inputs, producing `(d-2) x b` outputs.
 CentralDifference() = ConstantFilter(reshape(Float32[-1.0, 0.0, 1.0], 3, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
 ForwardDifferemce() = ConstantFilter(reshape(Float32[1.0, -1.0], 2, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
 BackwardDifferemce() = ConstantFilter(reshape(Float32[-1.0, 1.0], 2, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
+
+function CatFiniteDifference(n::Int, order::Int)
+    A = LinearAlgebra.I(n) |> Matrix{Float32}
+    FD = LinearAlgebra.diagm(n-1, n, 0 => -ones(Float32, n-1), 1 => ones(Float32, n-1))
+    Acat = mapfoldl(vcat, 1:order; init = copy(A)) do i
+        A = @views FD[1:end-i+1, 1:end-i+1] * A
+    end
+    NotTrainable(Flux.Dense(Acat, Float32[0.0]))
+end
 
 """
 Laplacian()
@@ -503,8 +519,8 @@ end
 """
 Print all output activations for a `Transformers.Stack` for debugging purposes
 """
-function stack_activations(m::Transformers.Stack, xs...; verbose = false)
-    _m = Transformers.Stack(
+function stack_activations(m::Stack, xs...; verbose = false)
+    _m = Stack(
         m.topo,
         map(enumerate(m.models)) do (i,f)
             function (args...,)
@@ -589,7 +605,7 @@ function _model_summary(io::IO, model::Flux.Chain; depth::Int = 0, pre = "", suf
 end
 
 # Transformers.NNTopo
-function _model_summary(io::IO, model::Transformers.Stacks.NNTopo; depth::Int = 0, pre = "", suf = "")
+function _model_summary(io::IO, model::NNTopo; depth::Int = 0, pre = "", suf = "")
     # Workaround (https://github.com/chengchingwen/Transformers.jl/pull/32)
     topo_print = capture_stdout() do
         show(stdout, model)
@@ -602,7 +618,7 @@ function _model_summary(io::IO, model::Transformers.Stacks.NNTopo; depth::Int = 
 end
 
 # Transformers.Stack
-function _model_summary(io::IO, model::Transformers.Stack; depth::Int = 0, pre = "", suf = "")
+function _model_summary(io::IO, model::Stack; depth::Int = 0, pre = "", suf = "")
     println(io, _getprefix(depth, pre, suf * "Stack("))
     _model_summary(io, model.topo; depth = depth + 1)
     println(io, ",")
