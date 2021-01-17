@@ -490,9 +490,9 @@ function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
     @ntuple(Kxx, Kyy, Kxy)
 end
 
-Zygote.@adjoint function Working._mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
+Zygote.@adjoint function _mmd_flux_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
     # Store kernel matrices for reverse pass
-    @unpack Kxx, Kyy, Kxy = Working._mmd_flux_kernel_matrices(X, Y)
+    @unpack Kxx, Kyy, Kxy = _mmd_flux_kernel_matrices(X, Y)
 
     return @ntuple(Kxx, Kyy, Kxy), function(Δ)
         ΔKxx, ΔKyy, ΔKxy = Δ.Kxx, Δ.Kyy, Δ.Kxy
@@ -572,16 +572,16 @@ function _mmd_tullio_kernel_matrices end
 function _∇mmd_tullio_kernel_matrices end
 function _mmd_tullio_kernel_matrices_inner end
 
-function Working._mmd_tullio_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
+function _mmd_tullio_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
     Kxx, Kyy, Kxy = X'X, Y'Y, X'Y
-    xx, yy = Working.batched_diag(Kxx), Working.batched_diag(Kyy)
+    xx, yy = batched_diag(Kxx), batched_diag(Kyy)
     @tullio Kxx[i,j] = exp(2 * Kxx[i,j] - xx[i] - xx[j])
     @tullio Kyy[i,j] = exp(2 * Kyy[i,j] - yy[i] - yy[j])
     @tullio Kxy[i,j] = exp(2 * Kxy[i,j] - xx[i] - yy[j])
     @ntuple(Kxx, Kyy, Kxy)
 end
 
-function Working._∇mmd_tullio_kernel_matrices(Δ,X,Y,Kxx,Kyy,Kxy) # much faster + much less memory usage
+function _∇mmd_tullio_kernel_matrices(Δ,X,Y,Kxx,Kyy,Kxy) # much faster + much less memory usage
     ΔKxx, ΔKyy, ΔKxy = Δ.Kxx, Δ.Kyy, Δ.Kxy
     # dK_dX
     @tullio Δ_buf[i,j] := @inbounds ΔKxx[i,j] * Kxx[i,j] # Δ_buf = Δ.Kxx .* Kxx
@@ -610,23 +610,23 @@ function Working._∇mmd_tullio_kernel_matrices(Δ,X,Y,Kxx,Kyy,Kxy) # much faste
     return dK_dX, dK_dY
 end
 
-Zygote.@adjoint function Working._mmd_tullio_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
+Zygote.@adjoint function _mmd_tullio_kernel_matrices(X::AbstractMatrix, Y::AbstractMatrix)
     # Store kernel matrices for reverse pass
-    @unpack Kxx, Kyy, Kxy = Working._mmd_tullio_kernel_matrices(X, Y)
-    return @ntuple(Kxx, Kyy, Kxy), Δ -> Working._∇mmd_tullio_kernel_matrices(Δ, X, Y, Kxx, Kyy, Kxy)
+    @unpack Kxx, Kyy, Kxy = _mmd_tullio_kernel_matrices(X, Y)
+    return @ntuple(Kxx, Kyy, Kxy), Δ -> _∇mmd_tullio_kernel_matrices(Δ, X, Y, Kxx, Kyy, Kxy)
 end
 
-function Working._mmd_tullio_kernel_matrices_inner(X::Working.AbstractTensor3D, Y::Working.AbstractTensor3D)
+function _mmd_tullio_kernel_matrices_inner(X::AbstractTensor3D, Y::AbstractTensor3D)
     Kxx, Kyy, Kxy = NNlib.batched_mul(NNlib.batched_transpose(X), X), NNlib.batched_mul(NNlib.batched_transpose(Y), Y), NNlib.batched_mul(NNlib.batched_transpose(X), Y)
-    xx, yy = Working.batched_diag(Kxx), Working.batched_diag(Kyy)
+    xx, yy = batched_diag(Kxx), batched_diag(Kyy)
     Tullio.@tullio Kxx[i,j,k] = exp(2 * Kxx[i,j,k] - xx[i,1,k] - xx[j,1,k])
     Tullio.@tullio Kyy[i,j,k] = exp(2 * Kyy[i,j,k] - yy[i,1,k] - yy[j,1,k])
     Tullio.@tullio Kxy[i,j,k] = exp(2 * Kxy[i,j,k] - xx[i,1,k] - yy[j,1,k])
     @ntuple(Kxx, Kyy, Kxy)
 end
 
-function Working._mmd_tullio_kernel_matrices(X::Working.AbstractTensor3D, Y::Working.AbstractTensor3D)
-    @unpack Kxx, Kyy, Kxy = Working._mmd_tullio_kernel_matrices_inner(X, Y)
+function _mmd_tullio_kernel_matrices(X::AbstractTensor3D, Y::AbstractTensor3D)
+    @unpack Kxx, Kyy, Kxy = _mmd_tullio_kernel_matrices_inner(X, Y)
     γ = inv(eltype(Kxx)(size(Kxx,3)))
     Tullio.@tullio _Kxx[i,j] := γ * Kxx[i,j,k]
     Tullio.@tullio _Kyy[i,j] := γ * Kyy[i,j,k]
@@ -634,9 +634,9 @@ function Working._mmd_tullio_kernel_matrices(X::Working.AbstractTensor3D, Y::Wor
     (Kxx = _Kxx, Kyy = _Kyy, Kxy = _Kxy)
 end
 
-Zygote.@adjoint function Working._mmd_tullio_kernel_matrices(X::Working.AbstractTensor3D, Y::Working.AbstractTensor3D)
+Zygote.@adjoint function _mmd_tullio_kernel_matrices(X::AbstractTensor3D, Y::AbstractTensor3D)
     # Store kernel matrices for reverse pass
-    @unpack Kxx, Kyy, Kxy = Working._mmd_tullio_kernel_matrices_inner(X, Y)
+    @unpack Kxx, Kyy, Kxy = _mmd_tullio_kernel_matrices_inner(X, Y)
     γ = inv(eltype(Kxx)(size(Kxx,3)))
     Tullio.@tullio _Kxx[i,j] := γ * Kxx[i,j,k]
     Tullio.@tullio _Kyy[i,j] := γ * Kyy[i,j,k]

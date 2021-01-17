@@ -119,9 +119,9 @@ let
     for T in [Float32]
         vals = [one(T); T.(0.01 .+ exp.(randn(1)))]
         for x in vals, ν in vals, σ in vals
-            fx = _x -> Working._rician_logpdf_cuda_unsafe(_x, ν, σ)
-            fν = _ν -> Working._rician_logpdf_cuda_unsafe(x, _ν, σ)
-            fσ = _σ -> Working._rician_logpdf_cuda_unsafe(x, ν, _σ)
+            fx = _x -> _rician_logpdf_cuda_unsafe(_x, ν, σ)
+            fν = _ν -> _rician_logpdf_cuda_unsafe(x, _ν, σ)
+            fσ = _σ -> _rician_logpdf_cuda_unsafe(x, ν, _σ)
             for (lab, f) in [(:x, fx), (:ν, fν), (:σ, fσ)]
                 δ_fd  = ChainRulesTestUtils.FiniteDifferences.central_fdm(5,1)(f, x)
                 # δ_fwd = ForwardDiff.derivative(f, x)

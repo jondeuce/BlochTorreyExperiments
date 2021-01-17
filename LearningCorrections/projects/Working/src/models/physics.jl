@@ -115,6 +115,17 @@ function rician_params(G::RicianCorrector, X, Z = nothing)
     return ν, σ
 end
 
+function rician_state(G::RicianCorrector, X, Z = nothing)
+    δ, ϵ = correction_and_noiselevel(G, X, Z)
+    ν = add_correction(G, X, δ)
+    return (; X, Z, δ, ϵ, ν)
+end
+function sample_rician_state(G::RicianCorrector, X, Z = nothing, ninstances = nothing)
+    state = rician_state(G, X, Z)
+    X̂ = add_noise_instance(G, X, state.ϵ, ninstances)
+    return (; X̂, state...)
+end
+
 ####
 #### Physics model interface
 ####
@@ -207,7 +218,7 @@ const ClosedFormAbstractToyModel{T,isfinite} = ClosedForm{<:AbstractToyModel{T,i
 const MaybeClosedFormAbstractToyModel{T,isfinite} = Union{<:AbstractToyModel{T,isfinite}, <:ClosedFormAbstractToyModel{T,isfinite}}
 
 # Default samplers for models with data stored in `θ`, `X`, `Y` fields
-_sample_data(d::Dict, n::Union{Int, Symbol}; dataset::Symbol) = n === :all ? d[dataset] : Working.sample_columns(d[dataset], n)
+_sample_data(d::Dict, n::Union{Int, Symbol}; dataset::Symbol) = n === :all ? d[dataset] : sample_columns(d[dataset], n)
 sampleθ(p::MaybeClosedForm, n::Union{Int, Symbol};              dataset::Symbol) = _sample_data(physicsmodel(p).θ, n; dataset)
 sampleX(p::MaybeClosedForm, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = _sample_data(physicsmodel(p).X, n; dataset)
 sampleY(p::MaybeClosedForm, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = _sample_data(physicsmodel(p).Y, n; dataset)
@@ -576,7 +587,7 @@ function θderived(
     logT2short, logT2long = log.(T2short), log.(T2long)
     logT2bar = @. (Ashort * logT2short + Along * logT2long) / (Ashort + Along) # log of geometric mean weighted by Ashort, Along
     T2bar = @. exp(logT2bar) # geometric mean weighted by Ashort, Along
-    wshort, wlong = Working.soft_cutoff(T2short, SPcutoff, SPwidth), Working.soft_cutoff(T2long, SPcutoff, SPwidth)
+    wshort, wlong = soft_cutoff(T2short, SPcutoff, SPwidth), soft_cutoff(T2long, SPcutoff, SPwidth)
     mwf = @. 100 * (wshort * Ashort + wlong * Along) / (Ashort + Along)
     T2sgm = @. exp(wshort * Ashort * logT2short + wlong * Along * logT2long) * exp(-(wshort * Ashort + wlong * Along)) # geometric mean weighted by wshort * Ashort, wlong * Along
     T2mgm = @. exp((1 - wshort) * Ashort * logT2short + (1 - wlong) * Along * logT2long) * exp(-((1 - wshort) * Ashort + (1 - wlong) * Along)) # geometric mean weighted by (1 - wshort) * Ashort, (1 - wlong) * Along

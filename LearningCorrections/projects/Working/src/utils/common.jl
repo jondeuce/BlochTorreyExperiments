@@ -38,6 +38,9 @@ fill_similar(::Type{<:CuArray{T}}, v, sz...) where {T} = CUDA.fill(T(v), sz...) 
 # Unzip array of structs into struct of arrays
 unzip(a) = map(x -> getfield.(a, x), fieldnames(eltype(a)))
 
+# Display and return
+disp_ret(x; type = true, val = true) = (type && display(typeof(x)); val && display(x); (type || val) && println(""); x)
+
 ####
 #### Dict, (Named)Tuples
 ####

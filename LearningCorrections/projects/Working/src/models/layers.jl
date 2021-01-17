@@ -131,11 +131,37 @@ flattenchain(chain::Flux.Chain) = length(chain) == 1 ? flattenchain(chain[1]) : 
 flattenchain(chain) = chain
 
 """
-CollectNamedTuple(keys...)
+CollectAsNamedTuple(keys...)
 """
-struct CollectNamedTuple{N,Ks} end
-CollectNamedTuple(ks::Symbol...) = CollectNamedTuple{length(ks), ks}()
-(c::CollectNamedTuple{N,Ks})(Xs::Vararg{<:Any,N}) where {N,Ks} = NamedTuple{Ks}(Xs)
+struct CollectAsNamedTuple{N,Ks} end
+CollectAsNamedTuple(ks::Symbol...) = CollectAsNamedTuple{length(ks), ks}()
+(c::CollectAsNamedTuple{N,Ks})(Xs::Vararg{<:Any,N}) where {N,Ks} = NamedTuple{Ks}(Xs)
+
+"""
+ZipNamedTuples()(nts...)
+
+Convert tuple of named tuples (with matching keys) to named tuple of tuples, e.g.
+
+    ZipNamedTuples()(((a=1,b=2), (a=3,b=4))) == (a=(1,3), b=(2,4))
+"""
+struct ZipNamedTuples end
+const TupleOfNamedTuples{Ks,M,N} = NTuple{N,<:NamedTuple{Ks,<:NTuple{M}}}
+(::ZipNamedTuples)(nts::TupleOfNamedTuples{Ks,M,N}) where {Ks,M,N} = zipnamedtuples(nts)
+zipnamedtuples(nts::TupleOfNamedTuples{Ks,M,N}) where {Ks,M,N} = NamedTuple{Ks}(ntuple(j -> ntuple(i -> nts[i][j], N), M))
+Zygote.@adjoint zipnamedtuples(nts::TupleOfNamedTuples{Ks,M,N}) where {Ks,M,N} = zipnamedtuples(nts), Δ -> (unzipnamedtuple(Δ),)
+
+"""
+UnzipNamedTuple()(nt)
+
+Convert named tuple of tuples to tuple of named tuples, e.g.
+
+    UnzipNamedTuple()((a=(1,3), b=(2,4))) == ((a=1,b=2), (a=3,b=4))
+"""
+struct UnzipNamedTuple end
+const NamedTupleOfTuples{Ks,M,N} = NamedTuple{Ks, <:NTuple{M, <:NTuple{N}}}
+(::UnzipNamedTuple)(nt::NamedTupleOfTuples{Ks,M,N}) where {Ks,M,N} = unzipnamedtuple(nt)
+unzipnamedtuple(nt::NamedTupleOfTuples{Ks,M,N}) where {Ks,M,N} = ntuple(j -> NamedTuple{Ks}(ntuple(i -> nt[i][j], M)), N)
+Zygote.@adjoint unzipnamedtuple(nt::NamedTupleOfTuples{Ks,M,N}) where {Ks,M,N} = unzipnamedtuple(nt), Δ -> (zipnamedtuples(Δ),)
 
 """
 NotTrainable(layer)
@@ -161,16 +187,26 @@ Non-trainable central-difference layer which convolves the stencil [-1, 0, 1]
 along the first dimension of `d x b` inputs, producing `(d-2) x b` outputs.
 """
 CentralDifference() = ConstantFilter(reshape(Float32[-1.0, 0.0, 1.0], 3, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
-ForwardDifferemce() = ConstantFilter(reshape(Float32[1.0, -1.0], 2, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
-BackwardDifferemce() = ConstantFilter(reshape(Float32[-1.0, 1.0], 2, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
+ForwardDifference() = ConstantFilter(reshape(Float32[1.0, -1.0], 2, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
+BackwardDifference() = ConstantFilter(reshape(Float32[-1.0, 1.0], 2, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
 
-function CatFiniteDifference(n::Int, order::Int)
-    A = LinearAlgebra.I(n) |> Matrix{Float32}
-    FD = LinearAlgebra.diagm(n-1, n, 0 => -ones(Float32, n-1), 1 => ones(Float32, n-1))
-    Acat = mapfoldl(vcat, 1:order; init = copy(A)) do i
-        A = @views FD[1:end-i+1, 1:end-i+1] * A
+Id_matrix(n::Int) = convert(Matrix{Float32}, LinearAlgebra.I(n))
+FD_matrix(n::Int) = LinearAlgebra.diagm(n-1, n, 0 => -ones(Float32, n-1), 1 => ones(Float32, n-1))
+
+function DenseFiniteDiff(n::Int, order::Int)
+    FD = FD_matrix(n)
+    A = foldl(1:order; init = Id_matrix(n)) do acc, i
+        @views FD[1:end-i+1, 1:end-i+1] * acc
     end
-    NotTrainable(Flux.Dense(Acat, Float32[0.0]))
+    NotTrainable(Flux.Dense(A, Float32[0.0]))
+end
+
+function CatDenseFiniteDiff(n::Int, order::Int)
+    FD = FD_matrix(n)
+    A = foldl(1:order; init = Id_matrix(n)) do acc, i
+        vcat(acc, @views FD[1:end-i+1, 1:end-i+1] * acc[end-n+i:end, :])
+    end
+    NotTrainable(Flux.Dense(A, Float32[0.0]))
 end
 
 """
@@ -300,6 +336,21 @@ Fanout(N::Int) = Fanout{N}()
 Base.show(io::IO, m::Fanout{N}) where {N} = print(io, "Fanout($N)")
 
 """
+DistributionUnion(d1, d2, p)
+
+Draw samples from distributions `d1` and `d2` with probabilities `p` and `1-p`, respectively.
+"""
+struct DistributionUnion{D1,D2,T}
+    d1::D1
+    d2::D2
+    p::T
+end
+Flux.@functor DistributionUnion
+DistributionUnion(d1, d2; p) = p <= 0 ? d2 : p >= 1 ? d1 : DistributionUnion(d1, d2, p)
+
+(u::DistributionUnion)(x) = sample_union(u.d1, u.d2, eltype(x)(u.p), x)
+
+"""
 ChannelwiseDense
 """
 ChannelwiseDense(H::Int, ch::Pair, σ = identity) = Flux.Chain(DenseResize(), Flux.Dense(H*ch[1], H*ch[2], σ), ChannelResize(ch[2]))
@@ -324,6 +375,25 @@ CatSkip
 Wraps `SkipConnection` from the Flux library.
 """
 CatSkip(dims::Int, layer) = Flux.SkipConnection(layer, dims == 1 ? vcat : dims == 2 ? hcat : (a,b) -> cat(a, b; dims = dims))
+
+"""
+ApplyAsMatrix(f)
+
+Apply `f` columnwise to input `X::AbstractArray`.
+If `X` is a matrix, return `Y = f(X)`. Else, flatten X first and reshape the intermediate output,
+i.e. `Y = f(reshape(X, size(X,1), :))` followed by `reshape(Y, size(Y,1), size(X)[2:end]...)`.
+"""
+struct ApplyAsMatrix{F}
+    f::F
+end
+Flux.@functor ApplyAsMatrix
+
+(a::ApplyAsMatrix)(X::AbstractMatrix) = a.f(X)
+
+function (a::ApplyAsMatrix)(X::AbstractArray)
+    Y = a.f(reshape(X, size(X,1), :))
+    return reshape(Y, size(Y,1), Base.tail(size(X))...)
+end
 
 """
 MLP
@@ -584,19 +654,23 @@ Note: All models implementing `_model_summary` should not end the printing on a 
       called inside the `model_summary` parent function.
 """
 function _model_summary(io::IO, model; depth::Int = 0, pre = "", suf = "")
-    println(io, _getprefix(depth, pre, suf * "$(typeof(model).name)("))
     fs = fieldnames(typeof(model))
-    for (i,f) in enumerate(fs)
-        _model_summary(io, getfield(model, f); depth = depth + 1, suf = "$f: ")
-        println(io, i < length(fs) ? "," : "")
+    if length(fs) == 0
+        print(io, _getprefix(depth, pre, suf * "$(nameof(typeof(model)))()"))
+    else
+        println(io, _getprefix(depth, pre, suf * "$(nameof(typeof(model)))("))
+        for (i,f) in enumerate(fs)
+            _model_summary(io, getfield(model, f); depth = depth + 1, suf = "$f: ")
+            println(io, i < length(fs) ? "," : "")
+        end
+        print(io, _getprefix(depth, pre, ")"))
     end
-    print(io, _getprefix(depth, pre, ")"))
 end
 
 # Flux.Chain
 function _model_summary(io::IO, model::Flux.Chain; depth::Int = 0, pre = "", suf = "")
     println(io, _getprefix(depth, pre, suf * "Chain("))
-    for (i,layer) in enumerate(model)
+    for (i,layer) in enumerate(model.layers)
         _model_summary(io, layer; depth = depth + 1, suf = "$i: ")
         (i < length(model)) ? println(io, ",") : println(io, "")
     end
@@ -606,26 +680,21 @@ end
 
 # Transformers.NNTopo
 function _model_summary(io::IO, model::NNTopo; depth::Int = 0, pre = "", suf = "")
-    # Workaround (https://github.com/chengchingwen/Transformers.jl/pull/32)
-    topo_print = capture_stdout() do
-        show(stdout, model)
-    end
-    topo_print = _getprefix(depth, pre, suf) * topo_print
-    topo_print = replace(topo_print, "\t" => _getprefix(1, pre, suf))
+    topo_print = sprint(Stacks.print_topo, model)
+    topo_print = _getprefix(depth, pre, suf * "@λ ") * topo_print
+    topo_print = replace(topo_print, "\t" => _getprefix(1, pre))
     topo_print = replace(topo_print, "end\n" => "end")
-    topo_print = replace(topo_print, "\n" => "\n" * _getprefix(depth, pre, suf))
+    topo_print = replace(topo_print, "\n" => "\n" * _getprefix(depth, pre))
     print(io, topo_print)
 end
 
 # Transformers.Stack
 function _model_summary(io::IO, model::Stack; depth::Int = 0, pre = "", suf = "")
     println(io, _getprefix(depth, pre, suf * "Stack("))
-    _model_summary(io, model.topo; depth = depth + 1)
+    _model_summary(io, model.topo; depth = depth + 1, suf = "topo: ")
     println(io, ",")
-    for (i,layer) in enumerate(model.models)
-        _model_summary(io, layer; depth = depth + 1, suf = "$i: ")
-        (i < length(model.models)) ? println(io, ",") : println(io, "")
-    end
+    _model_summary(io, model.models; depth = depth + 1, suf = "models: ")
+    println(io, "")
     print(io, _getprefix(depth, pre, ")"))
 end
 
@@ -634,8 +703,12 @@ function _model_summary(io::IO, model::AbstractArray; depth::Int = 0, pre = "", 
     print(io, _getprefix(depth, pre, suf * "size " * string(size(model)) * " " * string(typeof(model))))
 end
 
-# Numbers, Symbols, ...
-function _model_summary(io::IO, model::Union{<:Number, Nothing, Symbol, String}; depth::Int = 0, pre = "", suf = "")
+# Print as scalars (Numbers, Symbols, ...)
+const ScalarPrint = Union{<:Number, Nothing, Symbol, String}
+const TupleOfScalarPrint = Tuple{Vararg{<:ScalarPrint}}
+const NamedTupleOfScalarPrint = NamedTuple{Keys, <:TupleOfScalarPrint} where {Keys}
+
+function _model_summary(io::IO, model::Union{<:ScalarPrint, <:TupleOfScalarPrint, <:NamedTupleOfScalarPrint}; depth::Int = 0, pre = "", suf = "")
     print(io, _getprefix(depth, pre, suf * "$model :: $(typeof(model))"))
 end
 

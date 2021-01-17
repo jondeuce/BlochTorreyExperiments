@@ -12,7 +12,7 @@ struct CVAE{n,nθ,nθM,k,nz,E1,E2,D}
     CVAE{n,nθ,nθM,k,nz}(enc1::E1, enc2::E2, dec::D) where {n,nθ,nθM,k,nz,E1,E2,D} = new{n,nθ,nθM,k,nz,E1,E2,D}(enc1, enc2, dec)
 end
 Flux.@functor CVAE
-Base.show(io::IO, m::CVAE) = Working.model_summary(io, Dict("E1" => m.E1, "E2" => m.E2, "D" => m.D))
+Base.show(io::IO, m::CVAE) = model_summary(io, Dict("E1" => m.E1, "E2" => m.E2, "D" => m.D))
 
 nsignal(::CVAE{n,nθ,nθM,k,nz}) where {n,nθ,nθM,k,nz} = n
 ntheta(::CVAE{n,nθ,nθM,k,nz}) where {n,nθ,nθM,k,nz} = nθ
@@ -31,28 +31,6 @@ split_marginal_latent(::CVAE{n,nθ,nθM,k,nz}, x::AbstractMatrix) where {n,nθ,n
 ####
 #### CVAE methods
 ####
-
-_KLDivUnitNormal_Kernel(μ, σ) = (σ^2 + μ^2 - 1) / 2  - log(σ)
-_KLDivergence_Kernel(μq0, σq, μr0, σr) = ((σq / σr)^2 + ((μr0 - μq0) / σr)^2 - 1) / 2 - log(σq / σr)
-_EvidenceLowerBound_Kernel(x, μx0, σx) = (((x - μx0) / σx)^2 + log2π) / 2 + log(σx)
-
-Zygote.@adjoint _KLDivUnitNormal_Kernel(μ, σ) = _KLDivUnitNormal_Kernel(μ, σ), Δ -> (Δ * μ, Δ * (σ - inv(σ)))
-Zygote.@adjoint _KLDivergence_Kernel(μq0, σq, μr0, σr) = _KLDivergence_Kernel(μq0, σq, μr0, σr), Δ -> (Δ * (μq0 - μr0) / σr^2, Δ * (σq / σr - σr / σq) / σr, Δ * (μr0 - μq0) / σr^2, Δ * (σr^2 - (μr0 - μq0)^2 - σq^2) / σr^3)
-Zygote.@adjoint _EvidenceLowerBound_Kernel(x, μx0, σx) = _EvidenceLowerBound_Kernel(x, μx0, σx), Δ -> (Δ * (x - μx0) / σx^2, Δ * (μx0 - x) / σx^2, Δ * (σx^2 - (x - μx0)^2) / σx^3)
-
-@inline _cap(x) = min(x, oftype(x, 1000))
-KLDivUnitNormal(μ, σ) = sum(_cap.(_KLDivUnitNormal_Kernel.(μ, σ))) / size(μ,2) # KL-divergence between approximation posterior and N(0, 1) prior (Note: sum over dims=1, mean over dims=2)
-KLDivergence(μq0, σq, μr0, σr) = sum(_cap.(_KLDivergence_Kernel.(μq0, σq, μr0, σr))) / size(μq0,2) # KL-divergence contribution to cross-entropy (Note: sum over dims=1, mean over dims=2)
-EvidenceLowerBound(x, μx0, σx) = sum(_cap.(_EvidenceLowerBound_Kernel.(x, μx0, σx))) / size(μx0,2) # Negative log-likelihood/ELBO contribution to cross-entropy (Note: sum over dims=1, mean over dims=2)
-
-function _crossentropy_gradcheck()
-    for T in [Float32, Float64]
-        _rand() = one(T) + rand(T)
-        Working.gradcheck(_KLDivUnitNormal_Kernel, _rand(), _rand())
-        Working.gradcheck(_KLDivergence_Kernel, _rand(), _rand(), _rand(), _rand())
-        Working.gradcheck(_EvidenceLowerBound_Kernel, _rand(), _rand(), _rand())
-    end
-end
 
 function apply_pad(::CVAE{n}, Y) where {n}
     if size(Y,1) < n
@@ -130,7 +108,7 @@ struct DeepPriorRicianPhysicsModel{T,kθ,kZ,P<:PhysicsModel{T},R<:RicianCorrecto
 end
 Flux.@functor DeepPriorRicianPhysicsModel
 Flux.trainable(prior::DeepPriorRicianPhysicsModel) = (prior.θprior, prior.Zprior)
-Base.show(io::IO, prior::DeepPriorRicianPhysicsModel) = Working.model_summary(io, Dict("θprior" => prior.θprior, "θprior" => prior.θprior))
+Base.show(io::IO, prior::DeepPriorRicianPhysicsModel) = model_summary(io, Dict("θprior" => prior.θprior, "Zprior" => prior.Zprior))
 
 sampleθprior(prior::DeepPriorRicianPhysicsModel{T}, n::Int) where {T} = sampleθprior(prior, CuMatrix{T}, n) # default to sampling θ on the gpu
 sampleθprior(prior::DeepPriorRicianPhysicsModel, Y::AbstractArray, n::Int = size(Y,2)) = sampleθprior(prior, typeof(Y), n) # θ type is similar to Y type
@@ -201,24 +179,19 @@ sampleX̂(cvae::CVAE, prior::DeepPriorRicianPhysicsModel, Ymeta::AbstractMetaDat
 #### Rician posterior state
 ####
 
-function sampleX̂(rice::RicianCorrector, X, Z, ninstances = nothing)
-    ν, ϵ = rician_params(rice, X, Z)
-    ν, ϵ = clamp_dim1(X, (ν, ϵ))
-    return add_noise_instance(rice, ν, ϵ, ninstances)
-end
+sampleX̂(G::RicianCorrector, X, Z = nothing, ninstances = nothing) = sample_rician_state(G, X, Z, ninstances).X̂
 
-function NegLogLikelihood(rice::RicianCorrector, Y::AbstractVecOrMat, μ0, σ)
-    if typeof(rice) <: NormalizedRicianCorrector && (rice.normalizer !== nothing)
-        Σμ = rice.normalizer(Working._rician_mean_cuda.(μ0, σ))
+function NegLogLikelihood(G::RicianCorrector, Y::AbstractVecOrMat, μ0, σ)
+    if typeof(G) <: NormalizedRicianCorrector && (G.normalizer !== nothing)
+        Σμ = G.normalizer(_rician_mean_cuda.(μ0, σ))
         μ0, σ = (μ0 ./ Σμ), (σ ./ Σμ)
     end
-    -sum(Working._rician_logpdf_cuda.(Y, μ0, σ); dims = 1) # Rician negative log likelihood
+    -sum(_rician_logpdf_cuda.(Y, μ0, σ); dims = 1) # Rician negative log likelihood
 end
 
-function make_state(prior::DeepPriorRicianPhysicsModel, Y::AbstractVecOrMat, θ::AbstractMatrix, Z::AbstractMatrix)
+function posterior_state(prior::DeepPriorRicianPhysicsModel, Y::AbstractVecOrMat, θ::AbstractMatrix, Z::AbstractMatrix)
     X = signal_model(prior.phys, θ)
-    δ, ϵ = correction_and_noiselevel(prior.rice, X, Z)
-    ν = add_correction(prior.rice, X, δ)
+    δ, ϵ, ν = @unpack rician_state(G, X, Z)
     X, δ, ϵ, ν = clamp_dim1(Y, (X, δ, ϵ, ν))
     ℓ = reshape(NegLogLikelihood(prior.rice, Y, ν, ϵ), 1, :)
     return (; Y, θ, Z, X, δ, ϵ, ν, ℓ)
@@ -245,9 +218,9 @@ function posterior_state(
         if mode === :mean
             θnew = (last_state === nothing) ? θnew : T(1/i) .* θnew .+ T(1-1/i) .* θlast
             Znew = (last_state === nothing) ? Znew : T(1/i) .* Znew .+ T(1-1/i) .* Zlast
-            new_state = make_state(prior, signal(Ymeta), θnew, Znew)
+            new_state = posterior_state(prior, signal(Ymeta), θnew, Znew)
         elseif mode === :maxlikelihood
-            new_state = make_state(prior, signal(Ymeta), θnew, Znew)
+            new_state = posterior_state(prior, signal(Ymeta), θnew, Znew)
             if (last_state !== nothing)
                 mask = new_state.ℓ .< last_state.ℓ
                 new_state = map(new_state, last_state) do new, last

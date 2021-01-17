@@ -57,6 +57,7 @@ include("math/batched_math.jl")
 include("math/math_utils.jl")
 include("math/mmd.jl")
 
+include("models/losses.jl")
 include("models/layers.jl")
 include("models/physics.jl")
 include("models/cvae.jl")

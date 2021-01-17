@@ -111,191 +111,165 @@ end
 #### Models
 ####
 
+init_μlogσ_bias(phys::PhysicsModel{Float32}; kwargs...) = (sz...) -> (sz2 = (sz[1]÷2, sz[2:end]...); vcat(zeros(Float32, sz2), 10 .* ones(Float32, sz2))) # initialize logσ bias >> 0 s.t. initial cvae loss does not blowup, since loss has 𝒪(1/σ²) and 𝒪(logσ) terms
+init_μxlogσx_slope(phys::PhysicsModel{Float32}; nlatent, kwargs...) = (sz...) -> (nθM = nmarginalized(phys); θMbd = θmarginalized(phys, θbounds(phys)); @assert(length(sz) == 1 && sz[1] == 2*(nθM + nlatent)); catscale_slope(NTuple{2,Float32}[θMbd; (-1,1); (9.5,10.5)], [ones(Int, nθM); nlatent; nθM + nlatent])) # [1] μθ[i] : (-1,1) -> θMbd[i], [2] μZ[i] : (-1,1) -> (-1,1), and [3] logσθ, logσZ : (-1,1) -> (9.5,10.5)
+init_μxlogσx_bias(phys::PhysicsModel{Float32}; nlatent, kwargs...) = (sz...) -> (nθM = nmarginalized(phys); θMbd = θmarginalized(phys, θbounds(phys)); @assert(length(sz) == 1 && sz[1] == 2*(nθM + nlatent)); catscale_slope(NTuple{2,Float32}[θMbd; (-1,1); (9.5,10.5)], [ones(Int, nθM); nlatent; nθM + nlatent]))
+
+function init_rician_outputscale(phys::PhysicsModel{Float32}; nlatent, maxcorr, noisebounds, RiceGenType = LatentScalarRicianNoiseCorrector, kwargs...)
+    n = nsignal(phys)
+    δ = Float32(maxcorr)
+    σbd = Float32.((noisebounds...,))
+    OutputScale =
+        RiceGenType{n,nlatent} <: Union{<:VectorRicianCorrector, <:LatentVectorRicianCorrector} ? CatScale([(-δ, δ), σbd], [n,n]) :
+        RiceGenType{n,nlatent} <: FixedNoiseVectorRicianCorrector ? CatScale([(-δ, δ)], [n]) :
+        RiceGenType{n,nlatent} <: LatentVectorRicianNoiseCorrector ? CatScale([σbd], [n]) :
+        RiceGenType{n,nlatent} <: LatentScalarRicianNoiseCorrector ? CatScale([σbd], [1]) :
+        error("Unsupported corrector type: $RiceGenType")
+end
+
+# models["genatr"]
+function init_isotropic_rician_generator(phys::PhysicsModel{Float32}; kwargs...)
+    # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
+    n = nsignal(phys)
+    R = LatentScalarRicianNoiseCorrector{n,1}(Flux.Chain(identity)) # Latent space outputs noise level directly
+    normalizer = X -> maximum(X; dims = 1) #TODO: normalize by mean? sum? maximum? first echo?
+    noisescale = X -> mean(X; dims = 1) #TODO: relative to mean? nothing?
+    NormalizedRicianCorrector(R, normalizer, noisescale) # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
+end
+
+# models["genatr"]
+function init_vector_rician_generator(phys::PhysicsModel{Float32}; nlatent, maxcorr, noisebounds, nhidden, hdim, kwargs...)
+    n = nsignal(phys)
+    k = nlatent
+    RiceGenType = LatentVectorRicianNoiseCorrector
+    OutputScale = init_rician_outputscale(phys; nlatent, maxcorr, noisebounds, RiceGenType)
+    R = RiceGenType{n,k}(
+        Flux.Chain(
+            # position encoding
+            Z -> vcat(Z, zeros_similar(Z, 1, size(Z,2))),   # [k x b] -> [(k+1) x b]
+            Z -> repeat(Z, n, 1),                           # [(k+1) x b] -> [(k+1)*n x b]
+            NotTrainable(Flux.Diagonal(ones((k+1)*n), vec(vcat(zeros(k, n), uniform_range(n)')))),
+            Z -> reshape(Z, k+1, :),                        # [(k+1)*n x b] -> [(k+1) x n*b]
+            # position-wise mlp
+            MLP(k+1 => 1, nhidden, hdim, Flux.relu, tanh)..., # [(k+1) x n*b] -> [1 x n*b]
+            # output scaling
+            Z -> reshape(Z, n, :),                          # [1 x n*b] -> [n x b]
+            OutputScale,
+        ) |> to32
+    )
+    # Rician generator mapping Z variables from prior space to Rician parameter space
+    normalizer = X -> maximum(X; dims = 1) #TODO: normalize by mean? sum? maximum? first echo?
+    noisescale = X -> mean(X; dims = 1) #TODO: relative to mean? nothing?
+    NormalizedRicianCorrector(R, normalizer, noisescale) # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
+end
+
+function init_default_theta_prior(phys::PhysicsModel{Float32}; kwargs...)
+    default_θprior(z) = sampleθprior(phys, typeof(z), size(z,2))
+end
+
+function init_default_latent_prior(phys::PhysicsModel{Float32}; nlatent, noisebounds, kwargs...)
+    lo, hi, k = Float32.(noisebounds)..., Int(nlatent)
+    default_Zprior(z) = (T = eltype(z); T(lo) .+ (T(hi) .- T(lo)) .* rand_similar(z, k, size(z,2)))
+end
+
+# models["latent_prior"]
+function init_deep_latent_prior(phys::PhysicsModel{Float32}; nlatent, klatent, maxcorr, noisebounds, nhidden, hdim, leakyslope, kwargs...)
+    σinner = Float32(leakyslope) |> a -> a == 0 ? Flux.relu : (x -> Flux.leakyrelu(x, a))
+    Flux.Chain(
+        MLP(klatent => nlatent, nhidden, hdim, σinner, tanh)...,
+        init_rician_outputscale(phys; nlatent, maxcorr, noisebounds, RiceGenType = LatentScalarRicianNoiseCorrector),
+    ) |> to32
+end
+
+# models["theta_prior"]
+function init_deep_theta_prior(phys::PhysicsModel{Float32}; nlatent, ktheta, maxcorr, noisebounds, nhidden, hdim, leakyslope, kwargs...)
+    σinner = Float32(leakyslope) |> a -> a == 0 ? Flux.relu : (x -> Flux.leakyrelu(x, a))
+    Flux.Chain(
+        MLP(ktheta => ntheta(phys), nhidden, hdim, σinner, tanh)...,
+        CatScale(θbounds(phys), ones(Int, ntheta(phys))),
+    ) |> to32
+end
+
+# models["enc1"]
+function init_mlp_cvae_enc1(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, kwargs...)
+    MLP(nsignal(phys) => 2*zdim, nhidden, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias(phys)) |> to32
+end
+
+# models["enc1"]
+function init_xformer_cvae_enc1(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, psize, head, hsize, nshards, chunksize, overlap, kwargs...)
+    mlp = MLP(psize => 2*zdim, 0, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias(phys)) |> to32
+    TransformerEncoder(mlp; nsignals = nsignal(phys), ntheta = 0, nlatent = 0, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
+end
+
+# models["enc2"]
+function init_mlp_cvae_enc2(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nlatent, kwargs...)
+    mlp = MLP(nsignal(phys) + ntheta(phys) + nlatent => 2*zdim, nhidden, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias(phys)) |> to32
+    Stack(@nntopo((X,θ,Z) => XθZ => μq), vcat, mlp) |> to32
+end
+
+# models["enc2"]
+function init_xformer_cvae_enc2(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nlatent, psize, head, hsize, nshards, chunksize, overlap, kwargs...)
+    mlp = MLP(psize => 2*zdim, 0, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias(phys)) |> to32
+    TransformerEncoder(mlp; nsignals = nsignal(phys), ntheta = ntheta(phys), nlatent, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
+end
+
+# models["dec"]
+function init_mlp_cvae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nlatent, kwargs...)
+    mlp = Flux.Chain(
+        MLP(nsignal(phys) + zdim => 2*(nmarginalized(phys) + nlatent), nhidden, hdim, Flux.relu, identity)...,
+        Flux.Diagonal(2*(nmarginalized(phys) + nlatent); initα = init_μxlogσx_slope(phys; nlatent), initβ = init_μxlogσx_bias(phys; nlatent)),
+    ) |> to32
+    Stack(@nntopo((Y,zr) => Yzr => μx), vcat, mlp) |> to32
+end
+
+# models["dec"]
+function init_xformer_cvae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nlatent, psize, head, hsize, nshards, chunksize, overlap, kwargs...)
+    mlp = Flux.Chain(
+        MLP(psize => 2*(nmarginalized(phys) + nlatent), 0, hdim, Flux.relu, identity),
+        Flux.Diagonal(2*(nmarginalized(phys) + nlatent); initα = init_μxlogσx_slope(phys; nlatent), initβ = init_μxlogσx_bias(phys; nlatent)),
+    ) |> to32
+    TransformerEncoder(mlp; nsignals = nsignal(phys), ntheta = 0, nlatent = zdim, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
+end
+
+# models["vae_dec"]
+function init_mlp_cvae_vae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, kwargs...)
+    MLP(nsignal(phys) => 2*zdim, nhidden, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias(phys)) |> to32
+    Flux.Chain(
+        MLP(zdim => nsignal(phys), nhidden, hdim, Flux.relu, Flux.softplus)...,
+        # X -> X ./ maximum(X; dims = 1), #TODO
+    ) |> to32
+end
+
+# models["discrim"]
+function init_mlp_discrim(phys::PhysicsModel{Float32}; ninput = nsignal(phys), hdim, nhidden, dropout, kwargs...)
+    MLP(ninput => 1, nhidden, hdim, Flux.relu, identity; dropout) |> to32
+end
+
+# derived["genatr_prior"] -> derived["genatr_prior"]
+function derived_genatr_prior(phys::PhysicsModel{Float32}, ricegen, θprior, Zprior; ktheta, klatent, kwargs...)
+    DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(phys, ricegen, θprior, Zprior)
+end
+
+# derived["cvae_prior"]
+function derived_cvae_prior(phys::PhysicsModel{Float32}, ricegen, θprior, Zprior; ktheta, klatent, nlatent, noisebounds, prior_mix, kwargs...)
+    # CVAE distribution prior; mix (possibly deep) data distribution prior with a fraction `prior_mix` of samples from the default distribution
+    mixed_θprior = DistributionUnion(init_default_theta_prior(phys), θprior; p = prior_mix)
+    mixed_Zprior = DistributionUnion(init_default_latent_prior(phys; nlatent, noisebounds), Zprior; p = prior_mix)
+    DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(phys, ricegen, mixed_θprior, mixed_Zprior)
+end
+
+# derived["cvae"]
+function derived_cvae(phys::PhysicsModel{Float32}, enc1, enc2, dec; nlatent, zdim, kwargs...)
+    CVAE{nsignal(phys),ntheta(phys),nmarginalized(phys),nlatent,zdim}(enc1, enc2, dec)
+end
+
 # Initialize generator + discriminator + kernel
 function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, models = Dict{String, Any}(), derived = Dict{String, Any}())
-    n   = nsignal(phys) # input signal length
-    nθ  = ntheta(phys) # number of physics variables
-    nθM = nmarginalized(phys) # number of marginalized, i.e. recovered, physics variables
-    θbd = θbounds(phys)
-    θMbd= θmarginalized(phys, θbounds(phys))
-    k   = settings["arch"]["nlatent"]::Int # number of latent variables Z
-    nz  = settings["arch"]["zdim"]::Int # embedding dimension
-    δ   = settings["arch"]["genatr"]["maxcorr"]::Float64
-    σbd = settings["arch"]["genatr"]["noisebounds"]::Vector{Float64} |> bd -> (bd...,)::NTuple{2,Float64}
-    init_μlogσ_bias = (sz...) -> (sz2 = (sz[1]÷2, sz[2:end]...); vcat(Flux.zeros(sz2), 10 .* Flux.ones(sz2))) # initialize logσ bias >> 0 s.t. initial cvae loss does not blowup, since loss has 𝒪(1/σ²) and 𝒪(logσ) terms
-    init_μxlogσx_slope = (sz...) -> catscale_slope(eltype(θMbd)[θMbd; (-1,1); (9.5,10.5)], [ones(Int, nθM); k; nθM + k]) # [1] μθ[i] : (-1,1) -> θMbd[i], [2] μZ[i] : (-1,1) -> (-1,1), and [3] logσθ, logσZ : (-1,1) -> (9.5,10.5)
-    init_μxlogσx_bias = (sz...) -> catscale_slope(eltype(θMbd)[θMbd; (-1,1); (9.5,10.5)], [ones(Int, nθM); k; nθM + k])
-
-    #TODO: only works for Latent(*)Corrector family
-    RiceGenType = LatentScalarRicianNoiseCorrector{n,k}
-    # RiceGenType = LatentVectorRicianNoiseCorrector{n,k}
-    # RiceGenType = LatentVectorRicianCorrector{n,k}
-    # RiceGenType = VectorRicianCorrector{n,k}
-
-    OutputScale = let
-        RiceGenType <: Union{<:VectorRicianCorrector, <:LatentVectorRicianCorrector} ? CatScale([(-δ, δ), σbd], [n,n]) :
-        RiceGenType <: FixedNoiseVectorRicianCorrector ? CatScale([(-δ, δ)], [n]) :
-        RiceGenType <: LatentVectorRicianNoiseCorrector ? CatScale([σbd], [n]) :
-        RiceGenType <: LatentScalarRicianNoiseCorrector ? CatScale([σbd], [1]) :
-        error("Unsupported corrector type: $RiceGenType")
-    end
-
-    # Priors for physics model and latent variables
-    let
-        hdim = settings["arch"]["genatr"]["hdim"]::Int
-        ktheta = settings["arch"]["genatr"]["ktheta"]::Int
-        klatent = settings["arch"]["genatr"]["klatent"]::Int
-        nhidden = settings["arch"]["genatr"]["nhidden"]::Int
-        leakyslope = settings["arch"]["genatr"]["leakyslope"]::Float64
-        σinner = leakyslope == 0 ? Flux.relu : eltype(phys)(leakyslope) |> a -> (x -> Flux.leakyrelu(x, a))
-        get!(models, "theta_prior") do
-            Flux.Chain(
-                MLP(ktheta => nθ, nhidden, hdim, σinner, tanh)...,
-                CatScale(θbd, ones(Int, nθ)),
-            ) |> to32
-        end
-        get!(models, "latent_prior") do
-            Flux.Chain(
-                MLP(klatent => k, nhidden, hdim, σinner, tanh)...,
-                deepcopy(OutputScale),
-            ) |> to32
-        end
-    end
-
-    # Rician generator mapping Z variables from prior space to Rician parameter space
-    get!(models, "genatr") do
-        if k == 1
-            return Flux.Chain(identity) # Latent space outputs noise level directly
-        else
-            error("nlatent = $k not implemented")
-        end
-
-        # #TODO: only works for LatentVectorRicianNoiseCorrector
-        # @assert nin == k == nlatent(RiceGenType) && nout == n
-        # Flux.Chain(
-        #     # position encoding
-        #     Z -> vcat(Z, zeros_similar(Z, 1, size(Z,2))),   # [k x b] -> [(k+1) x b]
-        #     Z -> repeat(Z, n, 1),                           # [(k+1) x b] -> [(k+1)*n x b]
-        #     NotTrainable(Flux.Diagonal(ones((k+1)*n), vec(vcat(zeros(k, n), uniform_range(n)')))),
-        #     Z -> reshape(Z, k+1, :),                        # [(k+1)*n x b] -> [(k+1) x n*b]
-        #     # position-wise mlp
-        #     MLP(k+1 => 1, nhidden, hdim, σinner, tanh)..., # [(k+1) x n*b] -> [1 x n*b]
-        #     # output scaling
-        #     Z -> reshape(Z, n, :),                          # [1 x n*b] -> [n x b]
-        #     OutputScale,
-        # ) |> to32
-    end
-
-    # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
-    get!(derived, "ricegen") do
-        R = RiceGenType(models["genatr"])
-        normalizer = X -> maximum(X; dims = 1) #TODO: normalize by mean? sum? maximum? first echo?
-        noisescale = X -> mean(X; dims = 1) #TODO: relative to mean? nothing?
-        NormalizedRicianCorrector(R, normalizer, noisescale)
-    end
-
-    # Deep prior for data distribution model and for cvae training distribution
-    let
-        deepθprior = get!(settings["train"], "DeepThetaPrior", false)::Bool
-        deepZprior = get!(settings["train"], "DeepLatentPrior", false)::Bool
-        ktheta = get!(settings["arch"]["genatr"], "ktheta", 0)::Int
-        klatent = get!(settings["arch"]["genatr"], "klatent", 0)::Int
-        prior_mix = get!(settings["arch"]["genatr"], "prior_mix", 0.0)::Float64
-        default_θprior(x) = sampleθprior(phys, typeof(x), size(x,2))
-        default_Zprior(x) = ((lo,hi) = eltype(x).(σbd); return lo .+ (hi .- lo) .* rand_similar(x, k, size(x,2)))
-        # default_Zprior(x) = randn_similar(x, k, size(x,2))
-
-        # Data distribution prior
-        get!(derived, "prior") do
-            DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(
-                phys,
-                derived["ricegen"],
-                !deepθprior || ktheta == 0 ? default_θprior : models["theta_prior"],
-                !deepZprior || klatent == 0 ? default_Zprior : models["latent_prior"],
-            )
-        end
-
-        # CVAE distribution prior; mix (possibly deep) data distribution prior with a fraction `prior_mix` of samples from the default distribution
-        mixed_θprior(x) = sample_union(default_θprior, derived["prior"].θprior, prior_mix, x)
-        mixed_Zprior(x) = sample_union(default_Zprior, derived["prior"].Zprior, prior_mix, x)
-        get!(derived, "cvae_prior") do
-            DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(phys, derived["ricegen"], mixed_θprior, mixed_Zprior)
-        end
-    end
-
-    # Encoders
-    get!(models, "enc1") do
-        @unpack hdim, nhidden, psize, head, hsize, nshards, chunksize, overlap = settings["arch"]["enc1"]
-        #=
-        mlp = MLP(psize => 2*nz, 0, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias) |> to32
-        TransformerEncoder(mlp; nsignals = n, ntheta = 0, nlatent = 0, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
-        =#
-        mlp = MLP(n => 2*nz, nhidden, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias) |> to32
-    end
-
-    get!(models, "enc2") do
-        @unpack hdim, nhidden, psize, head, hsize, nshards, chunksize, overlap = settings["arch"]["enc2"]
-        #=
-        mlp = MLP(psize => 2*nz, 0, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias) |> to32
-        TransformerEncoder(mlp; nsignals = n, ntheta = nθ, nlatent = k, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
-        =#
-        mlp = MLP(n + nθ + k => 2*nz, nhidden, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias) |> to32
-        Transformers.Stack(Transformers.@nntopo((X,θ,Z) => XθZ => μq), vcat, mlp) |> to32
-    end
-
-    # Decoder
-    get!(models, "dec") do
-        @unpack hdim, nhidden, psize, head, hsize, nshards, chunksize, overlap = settings["arch"]["dec"]
-        #=
-        mlp = Flux.Chain(
-            MLP(psize => 2*(nθM + k), 0, hdim, Flux.relu, identity),
-            Flux.Diagonal(2*(nθM + k); initα = init_μxlogσx_slope, initβ = init_μxlogσx_bias),
-        ) |> to32
-        TransformerEncoder(mlp; nsignals = n, ntheta = 0, nlatent = nz, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
-        =#
-        mlp = Flux.Chain(
-            MLP(n + nz => 2*(nθM + k), nhidden, hdim, Flux.relu, identity)...,
-            Flux.Diagonal(2*(nθM + k); initα = init_μxlogσx_slope, initβ = init_μxlogσx_bias),
-        ) |> to32
-        Transformers.Stack(Transformers.@nntopo((Y,zr) => Yzr => μx), vcat, mlp) |> to32
-    end
-
-    # Variational decoder regularizer
-    get!(models, "vae_dec") do
-        @unpack hdim, nhidden = settings["arch"]["vae_dec"]
-        Flux.Chain(
-            MLP(nz => n, nhidden, hdim, Flux.relu, Flux.softplus)...,
-            # X -> X ./ maximum(X; dims = 1), #TODO
-        ) |> to32
-    end
-
-    # Discriminator
-    get!(models, "discrim") do
-        hdim = settings["arch"]["discrim"]["hdim"]::Int
-        nhidden = settings["arch"]["discrim"]["nhidden"]::Int
-        dropout = settings["arch"]["discrim"]["dropout"]::Float64
-        chunk = settings["train"]["transform"]["chunk"]::Int
-        order = get!(settings["train"]["augment"], "fdcat", 0)::Int #TODO
-        augsizes = Dict{String,Int}(["signal" => n, "gradient" => n-1, "laplacian" => n-2, "encoderspace" => nz, "residuals" => n, "fftcat" => 2*(n÷2 + 1), "fftsplit" => 2*(n÷2 + 1), "fdcat" => sum(n-i for i in 0:order)])
-        nin = sum((s -> ifelse(settings["train"]["augment"][s]::Union{Int,Bool} > 0, min(augsizes[s], chunk), 0)).(keys(augsizes))) #TODO > 0 hack works for both boolean and integer flags
-        MLP(nin => 1, nhidden, hdim, Flux.relu, Flux.sigmoid; dropout) |> to32
-    end
-
-    # CVAE
-    get!(derived, "cvae") do; CVAE{n,nθ,nθM,k,nz}(models["enc1"], models["enc2"], models["dec"]) end
 
     # Misc. useful operators
-    get!(derived, "forwarddiff") do; ForwardDifferemce() |> to32 end
-    get!(derived, "laplacian") do; Laplacian() |> to32 end
-    get!(derived, "fdcat") do
-        order = get!(settings["train"]["augment"], "fdcat", 0)::Int #TODO
-        A = LinearAlgebra.I(n) |> Matrix{Float64}
-        FD = LinearAlgebra.diagm(n-1, n, 0 => -ones(n-1), 1 => ones(n-1))
-        A = mapfoldl(vcat, 1:order; init = A) do i
-            A = @views FD[1:end-i+1, 1:end-i+1] * A
-        end
-        NotTrainable(Flux.Dense(A, [0.0])) |> to32
-    end
+    get!(derived, "forwarddiff") do; ForwardDifference() |> to32; end
+    get!(derived, "laplacian") do; Laplacian() |> to32; end
+    get!(derived, "fdcat") do; CatDenseFiniteDiff(nsignal(phys), order) |> to32; end
     get!(derived, "encoderspace") do # non-trainable sampling of encoder signal representations
         NotTrainable(flattenchain(Flux.Chain(
             models["enc1"],

@@ -18,7 +18,7 @@ function mle_biexp_epg_noise_only(
         opt_args      = Dict{Symbol,Any}(),
     )
     @assert dryrun || (savefolder !== nothing)
-    matsavetime = Working.getnow()
+    matsavetime = getnow()
     matsave(filename, data) = DECAES.MAT.matwrite(joinpath(mkpath(savefolder), filename * "-" * matsavetime * ".mat"), data)
 
     dryrun && (dryrunsamples !== nothing) && let
@@ -32,10 +32,10 @@ function mle_biexp_epg_noise_only(
     end
 
     (initial_ϵ === nothing) && (initial_ϵ = sqrt.(mean(abs2, X .- Y; dims = 1)))
-    (initial_s === nothing) && (initial_s = inv.(maximum(Working._rician_mean_cuda.(X, initial_ϵ); dims = 1))) # ones_similar(X, 1, size(X,2))
+    (initial_s === nothing) && (initial_s = inv.(maximum(_rician_mean_cuda.(X, initial_ϵ); dims = 1))) # ones_similar(X, 1, size(X,2))
     @assert size(X) == size(Y) && size(initial_ϵ) == size(initial_s) == (1, size(X,2))
 
-    initial_loss  = -sum(Working._rician_logpdf_cuda.(Y, initial_s .* X, initial_s .* initial_ϵ); dims = 1)
+    initial_loss  = -sum(_rician_logpdf_cuda.(Y, initial_s .* X, initial_s .* initial_ϵ); dims = 1)
     initial_guess = (
         ϵ = initial_ϵ |> arr64,
         s = initial_s |> arr64,
@@ -80,7 +80,7 @@ function mle_biexp_epg_noise_only(
             ℓ  = 0.0
             for i in eachindex(work.Xj)
                 νi = max(s * work.Xj[i], δ₀)
-                ℓ -= Working._rician_logpdf_cuda(work.Yj[i], νi, ϵi) # Rician negative log likelihood
+                ℓ -= _rician_logpdf_cuda(work.Yj[i], νi, ϵi) # Rician negative log likelihood
             end
             return ℓ
         end
@@ -88,7 +88,7 @@ function mle_biexp_epg_noise_only(
 
     function fg!(work, x::Vector{Float64}, g::Vector{Float64})
         if length(g) > 0
-            Working.simple_fd_gradient!(g, y -> f(work, y), x)
+            simple_fd_gradient!(g, y -> f(work, y), x)
         else
             f(work, x)
         end
@@ -150,15 +150,15 @@ function mle_biexp_epg_noise_only(
 end
 
 function _test_mle_biexp_epg_noise_only(phys::BiexpEPGModel, derived; nsamples = 10240, init_epsilon = false)
-    θ = sampleθprior(derived["prior"], nsamples)
-    Z = sampleZprior(derived["prior"], nsamples)
+    θ = sampleθprior(derived["genatr_prior"], nsamples)
+    Z = sampleZprior(derived["genatr_prior"], nsamples)
     X = signal_model(phys, θ)
-    X̂ = sampleX̂(derived["ricegen"], X, Z) #TODO
+    X̂ = sampleX̂(models["genatr"], X, Z) #TODO
 
     initial_ϵ = init_epsilon ?
-        rician_params(derived["ricegen"], X, Z)[2][1:1,:] : # use true answer as initial guess (for sanity check)
+        rician_params(models["genatr"], X, Z)[2][1:1,:] : # use true answer as initial guess (for sanity check)
         sqrt.(mean(abs2, X .- X̂; dims = 1))
-    initial_s = inv.(maximum(Working._rician_mean_cuda.(X, initial_ϵ); dims = 1)) # ones_similar(X, 1, size(X,2))
+    initial_s = inv.(maximum(_rician_mean_cuda.(X, initial_ϵ); dims = 1)) # ones_similar(X, 1, size(X,2))
 
     init, res = mle_biexp_epg_noise_only(
         X, X̂, initial_ϵ, initial_s;
@@ -169,7 +169,7 @@ function _test_mle_biexp_epg_noise_only(phys::BiexpEPGModel, derived; nsamples =
         dryrunshuffle = false,
     )
 
-    ϵ_true = Z .+ log.(derived["ricegen"].noisescale(X)); # logϵ = log(exp(Z) * noisescale(X)) = Z + log(noisescale(X))
+    ϵ_true = Z .+ log.(models["genatr"].noisescale(X)); # logϵ = log(exp(Z) * noisescale(X)) = Z + log(noisescale(X))
     println("initial log epsilon:"); display(log.(init.ϵ))
     println("final log epsilon:"); display(res.logepsilon')
     println("true log epsilon:"); display(ϵ_true); display(mean(abs, arr_similar(ϵ_true, res.logepsilon') .- ϵ_true))
@@ -186,7 +186,7 @@ function _test_mle_biexp_epg_noise_only(phys::BiexpEPGModel, derived; nsamples =
 end
 
 function _test_noiselevel()
-    prior = derived["prior"]
+    prior = derived["genatr_prior"]
     G = prior.rice
     θ = sampleθprior(prior, 10240)
     Z = sampleZprior(prior, 10240)
@@ -253,7 +253,7 @@ function mle_biexp_epg(
     @assert data_source ∈ (:image, :simulated)
     @assert data_subset ∈ (:mask, :val, :train, :test)
     @assert dryrun || (savefolder !== nothing)
-    matsavetime = Working.getnow()
+    matsavetime = getnow()
     matsave(filename, data) = DECAES.MAT.matwrite(joinpath(mkpath(savefolder), filename * "-" * matsavetime * ".mat"), data)
 
     batched_posterior_state(Ymeta) = mapreduce(
@@ -262,7 +262,7 @@ function mle_biexp_epg(
         ) do (batchnum, batch)
         posterior_state(
             derived["cvae"],
-            derived["prior"],
+            derived["genatr_prior"],
             Ymeta[:,batch];
             miniter = 1,
             maxiter = initial_iter,
@@ -288,7 +288,7 @@ function mle_biexp_epg(
             arr64(image_data), MetaCPMGSignal(phys, img, image_data)
         else # data_source === :simulated
             mock_image_state = batched_posterior_state(MetaCPMGSignal(phys, img, image_data))
-            mock_image_data  = sampleX̂(derived["ricegen"], mock_image_state.X, mock_image_state.Z)
+            mock_image_data  = sampleX̂(models["genatr"], mock_image_state.X, mock_image_state.Z)
             !dryrun && matsave("mle-$data_source-$data_subset-data", Dict{String,Any}("X" => arr64(mock_image_state.X), "theta" => arr64(mock_image_state.θ), "Z" => arr64(mock_image_state.Z), "Xhat" => arr64(mock_image_data), "Y" => arr64(image_data)))
             arr64(mock_image_data), MetaCPMGSignal(phys, img, mock_image_data)
         end
@@ -296,7 +296,7 @@ function mle_biexp_epg(
 
     initial_guess = batched_posterior_state(Ymeta)
     initial_guess = setindex!!(initial_guess, exp.(mean(log.(initial_guess.ϵ); dims = 1)), :ϵ)
-    initial_guess = setindex!!(initial_guess, inv.(maximum(Working._rician_mean_cuda.(initial_guess.X, initial_guess.ϵ); dims = 1)), :s)
+    initial_guess = setindex!!(initial_guess, inv.(maximum(_rician_mean_cuda.(initial_guess.X, initial_guess.ϵ); dims = 1)), :s)
     initial_guess = map(arr64, initial_guess)
 
     lower_bounds  = [θmarginalized(phys, θlower(phys)); -Inf; -Inf] |> arr64
@@ -379,7 +379,7 @@ function mle_biexp_epg(
             ℓ  = 0.0
             @simd for i in eachindex(work.Y)
                 νi = max(sX * X[i], l)
-                ℓ -= Working._rician_logpdf_cuda(work.Y[i], νi, ϵi) # Rician negative log likelihood
+                ℓ -= _rician_logpdf_cuda(work.Y[i], νi, ϵi) # Rician negative log likelihood
             end
             return ℓ
         end
@@ -387,7 +387,7 @@ function mle_biexp_epg(
 
     function fg!(work, x::Vector{Float64}, g::Vector{Float64})
         if length(g) > 0
-            Working.simple_fd_gradient!(g, y -> f(work, y), x, lower_bounds, upper_bounds)
+            simple_fd_gradient!(g, y -> f(work, y), x, lower_bounds, upper_bounds)
         else
             f(work, x)
         end
@@ -506,7 +506,7 @@ function eval_mri_model(
     )
 
     inverter(Y; kwargs...) = mapreduce((x,y) -> map(hcat, x, y), enumerate(Iterators.partition(1:size(Y,2), batch_size))) do (batchnum, batch)
-        posterior_state(derived["cvae"], derived["prior"], MetaCPMGSignal(phys, img, Y[:,batch]); verbose = false, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
+        posterior_state(derived["cvae"], derived["genatr_prior"], MetaCPMGSignal(phys, img, Y[:,batch]); verbose = false, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
     end
     saveplot(p, name, folder = savefolder) = map(suf -> savefig(p, joinpath(mkpath(folder), name * suf)), savetypes)
 
@@ -556,7 +556,7 @@ function eval_mri_model(
         Xs[:Y_test]    = Dict(:label => L"Y_{TEST}",       :colour => :grey,   :data => Y_test)
         Xs[:Y_train]   = Dict(:label => L"Y_{TRAIN}",      :colour => :black,  :data => Y_train)
         Xs[:Yhat_mle]  = Dict(:label => L"\hat{Y}_{MLE}",  :colour => :red,    :data => flat_image_to_flat_test(mle_image_state.Y))
-        Xs[:Yhat_cvae] = Dict(:label => L"\hat{Y}_{CVAE}", :colour => :blue,   :data => add_noise_instance(derived["ricegen"], cvae_image_state.ν, cvae_image_state.ϵ))
+        Xs[:Yhat_cvae] = Dict(:label => L"\hat{Y}_{CVAE}", :colour => :blue,   :data => add_noise_instance(models["genatr"], cvae_image_state.ν, cvae_image_state.ϵ))
         Xs[:X_decaes]  = Dict(:label => L"X_{DECAES}",     :colour => :orange, :data => flat_test(img.meta[:decaes][:t2maps][:Y]["decaycurve"]))
         Xs[:X_mle]     = Dict(:label => L"X_{MLE}",        :colour => :green,  :data => flat_image_to_flat_test(mle_image_state.ν))
         Xs[:X_cvae]    = Dict(:label => L"X_{CVAE}",       :colour => :purple, :data => cvae_image_state.ν)
@@ -596,7 +596,7 @@ function eval_mri_model(
 
         @info "Plotting histogram distances compared to $dataset data..." # Compare histogram distances for each echo and across all-signal for test data and simulated data
         phist = @time plot(
-            map(collect(pairs((; Working.ChiSquared, Working.CityBlock, Working.Euclidean)))) do (distname, dist) # Working.KLDivergence
+            map(collect(pairs((; ChiSquared, CityBlock, Euclidean)))) do (distname, dist) # KLDivergence
                 echoes = 0:size(img.data,4)
                 Xplots = [X for (k,X) in Xs if k !== :Y_test]
                 logdists = mapreduce(hcat, Xplots) do X
@@ -671,7 +671,7 @@ function eval_mri_model(
         psignaldiff = @time let
             Xplots = [X for (k,X) in Xs if k ∉ (:X_decaes, :Y_test)]
             # Xplots = [Xs[k] for k ∈ (:Y_train, :Yhat_mle, :Yhat_cvae)] #TODO
-            histdiffs = mapreduce(X -> Working.unitsum(X[:hist][0].weights) .- Working.unitsum(Xs[:Y_test][:hist][0].weights), hcat, Xplots)
+            histdiffs = mapreduce(X -> unitsum(X[:hist][0].weights) .- unitsum(Xs[:Y_test][:hist][0].weights), hcat, Xplots)
             plot(
                 Xs[:Y_test][:hist][0].edges[1][2:end], histdiffs;
                 label = permutedims(getindex.(Xplots, :label)) .* L" $-$ " .* Xs[:Y_test][:label],
@@ -690,8 +690,8 @@ function eval_mri_model(
         @info "Plotting signal distributions compared to $dataset data..." # Compare per-echo and all-signal cdf's of test data and simulated data
         pcdf = plot(; commonkwargs...)
         @time for X in [X for (k,X) in Xs if k ∈ (:Y_test, :Yhat_cvae)]
-            plot!(pcdf, Working.discrete_cdf(Flux.cpu(X[:data]))...; line = (1, X[:colour]), legend = :none, commonkwargs...)
-            plot!(pcdf, Working.discrete_cdf(reshape(Flux.cpu(X[:data]),1,:))...; line = (1, X[:colour]), legend = :none, commonkwargs...)
+            plot!(pcdf, discrete_cdf(Flux.cpu(X[:data]))...; line = (1, X[:colour]), legend = :none, commonkwargs...)
+            plot!(pcdf, discrete_cdf(reshape(Flux.cpu(X[:data]),1,:))...; line = (1, X[:colour]), legend = :none, commonkwargs...)
         end
         saveplot(pcdf, "signal-cdf-compare")
     end
@@ -750,8 +750,8 @@ function eval_mri_model(
                 T2 = 1000 .* vcat(θ.T2short, θ.T2long)
                 A = vcat(θ.Ashort, θ.Along)
                 p = plot(
-                    # Working.bin_edges(T2, A, exp.(range(log.(phys.T2bd)...; length = 100)))...;
-                    Working.bin_sorted(T2, A; binsize = 100)...;
+                    # bin_edges(T2, A, exp.(range(log.(phys.T2bd)...; length = 100)))...;
+                    bin_sorted(T2, A; binsize = 100)...;
                     label = "T2 Distribution", ylabel = "T2 Amplitude [a.u.]", xlabel = "T2 [ms]",
                     xscale = :log10, xlim = 1000 .* phys.T2bd, xticks = 10 .^ (0.5:0.25:3),
                 )
@@ -870,7 +870,7 @@ function peak_separation(
     function cvae_inference_state(Ymeta)
         state = posterior_state(
             derived["cvae"],
-            derived["prior"],
+            derived["genatr_prior"],
             Ymeta;
             miniter = cvae_iters,
             maxiter = cvae_iters,

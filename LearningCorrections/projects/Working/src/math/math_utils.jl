@@ -316,7 +316,7 @@ end
 
 function modelgradcheck(f, m; extrapolate = true, subset = nothing, verbose = false, seed = nothing, kwargs...)
     (seed !== nothing) && (Random.seed!(seed); CUDA.seed!(0))
-    ps = Flux.params(m)
+    ps = m isa Flux.Params ? m : Flux.params(m)
     ℓ, J = Zygote.pullback(f, ps) # compute full gradient with backprop
     ∇ad = J(one(eltype(first(ps))))
     Is = subset_indices_dict(ps, subset)
@@ -327,7 +327,7 @@ function modelgradcheck(f, m; extrapolate = true, subset = nothing, verbose = fa
         [(∇ad[p], ∇fd[i]) for (i,p) in enumerate(ps)]
     end
     verbose && map(zip(ps, ∇pairs)) do (p, ∇pair)
-        println("ℓ: $ℓ, AD: $(∇pair[1]), FD: $(∇pair[2]), Δ: $(∇pair[1]-∇pair[2]), ≈: $(isapprox(∇pair...; kwargs...)), p: $(find_model_param(m, p))")
+        println("ℓ: $ℓ, AD: $(∇pair[1]), FD: $(∇pair[2]), Δ: $(∇pair[1]-∇pair[2]), ≈: $(isapprox(∇pair...; kwargs...))" * (m isa Flux.Params ? "" : ", p: $(find_model_param(m, p))"))
     end
     return all([isapprox(∇pair...; kwargs...) for ∇pair in ∇pairs])
 end

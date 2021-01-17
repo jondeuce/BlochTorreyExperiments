@@ -163,10 +163,10 @@ end
 
 _ChiSquared(Pi::T, Qi::T) where {T} = ifelse(Pi + Qi <= eps(T), zero(T), (Pi - Qi)^2 / (2 * (Pi + Qi)))
 _KLDivergence(Pi::T, Qi::T) where {T} = ifelse(Pi <= eps(T) || Qi <= eps(T), zero(T), Pi * log(Pi / Qi))
-ChiSquared(P::Histogram, Q::Histogram) = sum(_ChiSquared.(Working.unitsum(P.weights), Working.unitsum(Q.weights)))
-KLDivergence(P::Histogram, Q::Histogram) = sum(_KLDivergence.(Working.unitsum(P.weights), Working.unitsum(Q.weights)))
-CityBlock(P::Histogram, Q::Histogram) = sum(abs, Working.unitsum(P.weights) .- Working.unitsum(Q.weights))
-Euclidean(P::Histogram, Q::Histogram) = sqrt(sum(abs2, Working.unitsum(P.weights) .- Working.unitsum(Q.weights)))
+ChiSquared(P::Histogram, Q::Histogram) = sum(_ChiSquared.(unitsum(P.weights), unitsum(Q.weights)))
+KLDivergence(P::Histogram, Q::Histogram) = sum(_KLDivergence.(unitsum(P.weights), unitsum(Q.weights)))
+CityBlock(P::Histogram, Q::Histogram) = sum(abs, unitsum(P.weights) .- unitsum(Q.weights))
+Euclidean(P::Histogram, Q::Histogram) = sqrt(sum(abs2, unitsum(P.weights) .- unitsum(Q.weights)))
 
 function signal_histograms(Y::AbstractMatrix; nbins = nothing, edges = nothing, normalize = nothing)
     make_edges(x) = ((lo,hi) = extrema(vec(x)); return range(lo, hi; length = nbins)) # mid = median(vec(x)); length = ceil(Int, (hi - lo) * nbins / max(hi - mid, mid - lo))
@@ -423,11 +423,11 @@ end
 function plot_epsilon(phys, derived; knots = (-1.0, 1.0), seriestype = :line, showplot = false)
     function plot_epsilon_inner(; start, stop, zlen = 256, levels = 50)
         #TODO fixed knots, start, stop
-        n, nθ, nz = nsignal(phys)::Int, ntheta(phys)::Int, nlatent(derived["ricegen"])::Int
+        n, nθ, nz = nsignal(phys)::Int, ntheta(phys)::Int, nlatent(models["genatr"])::Int
         _, _, Y, Ymeta = sample_batch(:val; batchsize = zlen * nz)
-        X, _, Z = sampleXθZ(derived["cvae"], derived["prior"], Ymeta; posterior_θ = true, posterior_Z = false)
+        X, _, Z = sampleXθZ(derived["cvae"], derived["genatr_prior"], Ymeta; posterior_θ = true, posterior_Z = false)
         Z = Z[:,1] |> Flux.cpu |> z -> repeat(z, 1, zlen, nz) |> z -> (foreach(i -> z[i,:,i] .= range(start, stop; length = zlen), 1:nz); z)
-        _, ϵ = rician_params(derived["ricegen"], X, reshape(Z, nz, :) |> todevice)
+        _, ϵ = rician_params(models["genatr"], X, reshape(Z, nz, :) |> todevice)
         (size(ϵ,1) == 1) && (ϵ = repeat(ϵ, n, 1))
         log10ϵ = log10.(reshape(ϵ, :, zlen, nz)) |> Flux.cpu
         ps = map(1:nz) do i
@@ -460,8 +460,8 @@ function plot_θZ_histograms(phys, θ, Z; showplot = false)
 end
 
 function plot_priors(phys, derived; showplot = false)
-    θ = sampleθprior(derived["prior"], 10000) |> Flux.cpu
-    Z = sampleZprior(derived["prior"], 10000) |> Flux.cpu
+    θ = sampleθprior(derived["genatr_prior"], 10000) |> Flux.cpu
+    Z = sampleZprior(derived["genatr_prior"], 10000) |> Flux.cpu
     plot_θZ_histograms(phys, θ, Z; showplot)
 end
 
@@ -474,6 +474,6 @@ end
 # TODO: calls sample_batch
 function plot_posteriors(phys, derived; showplot = false)
     _, _, Y, Ymeta = sample_batch(:val; batchsize = 10000)
-    θ, Z = sampleθZ(derived["cvae"], derived["prior"], Ymeta; posterior_θ = true, posterior_Z = true) .|> Flux.cpu
+    θ, Z = sampleθZ(derived["cvae"], derived["genatr_prior"], Ymeta; posterior_θ = true, posterior_Z = true) .|> Flux.cpu
     plot_θZ_histograms(phys, θ, Z; showplot)
 end

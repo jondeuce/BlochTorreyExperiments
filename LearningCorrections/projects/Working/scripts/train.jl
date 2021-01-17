@@ -2,33 +2,25 @@
 #### Settings
 ####
 
+using DrWatson: @quickactivate, projectdir
+@quickactivate "Working"
+
 using Working
 using Working:
-    @j2p, new_settings_template, new_savepath, make_settings, make_physics, make_models!, load_checkpoint, make_optimizers, make_wandb_logger!, save_snapshot!,
-    AbstractTensor3D, AbstractTensor4D, CuTensor3D, CuTensor4D,
     AbstractMetaDataSignal, MetaCPMGSignal, signal,
-    MMDKernel, FunctionKernel, DeepExponentialKernel,
-    mmd, mmdvar, mmd_and_mmdvar, tstat, logbandwidths, train_kernel!,
-    CityBlock, ChiSquared, KLDivergence,
-    map_dict, sum_dict, apply_dim1, clamp_dim1,
-    arr_similar, arr32, arr64, zeros_similar, ones_similar, randn_similar, rand_similar, fill_similar,
-    handleinterrupt, saveprogress, saveplots,
-    corrector, generator, nsignal, nlatent, ninput, noutput, correction_and_noiselevel, correction, noiselevel, add_noise_instance, corrected_signal_instance, add_correction, rician_params,
-    hasclosedform, physicsmodel,
+    MMDKernel, FunctionKernel, DeepExponentialKernel, mmd, logbandwidths, train_kernel!,
+    map_dict, sum_dict, arr_similar, arr32, arr64, zeros_similar, ones_similar, randn_similar, rand_similar, fill_similar,
+    add_noise_instance, rician_params,
     ntheta, nsignal, signal_model, noiselevel, sampleθprior, sampleZprior, sampleWprior, θlabels, θasciilabels, θunits, θlower, θupper, θerror, nnuissance, nmarginalized, nmodel, θmarginalized, θnuissance, θderived, θmodel, θsufficient,
-    sampleθ, sampleX, sampleX̂, sampleY,
-    sampleθZ, θZ_sampler, sampleXθZ, sampleX̂θZ, sampleθZposterior, θZposterior_sampler, make_state, posterior_state,
-    KLDivUnitNormal, KLDivergence, EvidenceLowerBound, KL_and_ELBO, DeepPriorRicianPhysicsModel, NegLogLikelihood,
+    sampleθ, sampleX, sampleX̂, sampleY, sampleθZ, θZ_sampler, sampleXθZ, sampleX̂θZ, sampleθZposterior, θZposterior_sampler, posterior_state,
+    KL_and_ELBO, DeepPriorRicianPhysicsModel,
     apply_pad, mv_normal_parameters, sample_columns, sample_mv_normal,
-    MLP, flattenchain,
-    fast_hist_1D, signal_histograms, pyheatmap
 
 pyplot(size=(800,600))
 
-Working.new_settings_template() = TOML.parse(
+lib.settings_template() = TOML.parse(
 """
 [data]
-    out    = "$(new_savepath())"
     ntrain = "auto" # 102_400
     ntest  = "auto" # 10_240
     nval   = "auto" # 10_240
@@ -120,19 +112,22 @@ Working.new_settings_template() = TOML.parse(
     [arch.vae_dec]
         INHERIT = "%PARENT%"
     [arch.genatr]
+        INHERIT     = "%PARENT%"
         hdim        = 64   #TODO "%PARENT%"
         nhidden     = 2    #TODO "%PARENT%"
         ktheta      = 16   #TODO Dimension of domain of theta prior space
         klatent     = 4    #TODO Dimension of domain of latent prior space
-        prior_mix   = 0.5  #TODO Mix learned deep prior with `prior_mix` fraction of default prior for robustness
+        prior_mix   = 0.5  #TODO Mix (possibly learned) genatr prior with `prior_mix` fraction of default prior
         leakyslope  = 0.0
         maxcorr     = 0.1
         noisebounds = [-6.0, 0.0] #TODO
     [arch.discrim]
+        INHERIT     = "%PARENT%"
         hdim      = 0     #TODO "%PARENT%"
         nhidden   = 0     #TODO "%PARENT%"
         dropout   = 0.1
     [arch.kernel]
+        INHERIT     = "%PARENT%"
         nbandwidth  = 32            #TODO
         channelwise = false         #TODO
         deep        = false         #TODO
@@ -141,32 +136,51 @@ Working.new_settings_template() = TOML.parse(
 """
 )
 
+lib.set_logdirname!()
+lib.clear_checkpointdir!()
+# lib.set_checkpointdir!(projectdir("output", "ignite-cvae-2021-01-05-T-13-45-23-425"))
+
+settings = lib.load_settings()
+# phys = lib.EPGModel{Float32,false}(n = 64)
+!isdefined(Main, :phys) && (phys = lib.load_epgmodel_physics())
+settings = lib.load_settings()
+optimizers = lib.make_optimizers(settings)
+wandb_logger = lib.init_wandb_logger(settings)
+
+kws(keys...) = Any[Symbol(k) => v for (k,v) in foldl(getindex, string.(keys); init = settings)]
+
+models = Dict{String,Any}()
+models["genatr"] = lib.init_isotropic_rician_generator(phys; kws("arch", "genatr")...)
+models["latent_prior"] = settings["train"]["DeepLatentPrior"] ? lib.init_deep_latent_prior(phys; kws("arch", "genatr")...) : lib.init_default_latent_prior(phys; kws("arch", "genatr")...)
+models["theta_prior"] = settings["train"]["DeepThetaPrior"] ? lib.init_deep_theta_prior(phys; kws("arch", "genatr")...) : lib.init_default_theta_prior(phys; kws("arch", "genatr")...)
+models["enc1"] = lib.init_mlp_cvae_enc1(phys; kws("arch", "enc1")...)
+models["enc2"] = lib.init_mlp_cvae_enc2(phys; kws("arch", "enc2")...)
+models["dec"] = lib.init_mlp_cvae_dec(phys; kws("arch", "dec")...)
+models["vae_dec"] = lib.init_mlp_cvae_vae_dec(phys; kws("arch", "vae_dec")...)
+models["discrim"] = lib.init_mlp_discrim(phys; kws("arch", "discrim")..., ninput = lib.domain_transforms_sum_outlength(phys; kws("train", "augment")...))
+
+derived = Dict{String,Any}()
+derived["domain_transforms"] = lib.DomainTransforms(phys; kws("train", "augment")...)
+derived["augmentations"] = lib.Augmentations(; kws("train", "transform")...)
+derived["genatr_prior"] = lib.derived_genatr_prior(phys, models["genatr"], models["theta_prior"], models["latent_prior"]; kws("arch", "genatr")...)
+derived["cvae_prior"] = lib.derived_cvae_prior(phys, models["genatr"], models["theta_prior"], models["latent_prior"]; kws("arch", "genatr")...)
+derived["cvae"] = lib.derived_cvae(phys, models["enc1"], models["enc2"], models["dec"]; kws("arch")...)
+
+lib.save_snapshot!(settings, models)
+
 ####
 #### Setup
 ####
 
-Working.JL_CHECKPOINT_FOLDER[] = "output/ignite-cvae-2021-01-05-T-13-45-23-425"
-
-settings = make_settings()
-
-# for (parent, (key, leaf)) in Working.breadth_first_iterator(settings), (k,v) in leaf
+# for (parent, (key, leaf)) in lib.breadth_first_iterator(settings), (k,v) in leaf
 #    (k == "lr") && (leaf[k] = 1e-5)
 #    (k == "lrwarmup") && (leaf[k] = 10000)
 #    (k == "wdecay") && (leaf[k] = 0.0)
 # end
 
-!isdefined(Main, :phys) && (phys = make_physics(settings))
-# phys = make_physics(settings)
-models, derived = make_models!(phys, settings, load_checkpoint())
-optimizers = make_optimizers(settings)
-wandb_logger = make_wandb_logger!(settings)
-save_snapshot!(settings, models)
-
-Working.JL_CHECKPOINT_FOLDER[] = ""
-
 # # Gradient testing
 # _models, _derived = deepcopy(models), deepcopy(derived)
-# models, derived = make_models!(phys, settings, BSON.load("/home/jdoucette/Documents/code/BlochTorreyExperiments-shared/LearningCorrections/projects/ismrm2021/output/ignite-cvae-2021-01-02-T-13-44-10-685/current-models.bson")["models"] |> deepcopy |> todevice |> to32)
+# models, derived = lib.make_models!(phys, settings, BSON.load("/home/jdoucette/Documents/code/BlochTorreyExperiments-shared/LearningCorrections/projects/ismrm2021/output/ignite-cvae-2021-01-02-T-13-44-10-685/current-models.bson")["models"] |> deepcopy |> todevice |> to32)
 # let
 #     ymeta = sample_batch(:val; batchsize = settings["eval"]["batchsize"], img_idx = 2)[end]
 #     m = derived["cvae"]
@@ -174,7 +188,7 @@ Working.JL_CHECKPOINT_FOLDER[] = ""
 #     # m = Transformers.Basic.MultiheadAttention(2, 32, 16, 32) |> todevice
 #     # x = CUDA.randn(32,4,1)
 #     # loss = () -> sum(abs2, m(1f0 .* x, 1f0 .* x, 1f0 .* x))
-#     Working.modelgradcheck(loss, m; extrapolate = true, subset = :random, verbose = true, rtol = 1e-2, atol = 1e-2, seed = 5)
+#     lib.modelgradcheck(loss, m; extrapolate = true, subset = :random, verbose = true, rtol = 1e-2, atol = 1e-2, seed = 5)
 # end
 
 ####
@@ -182,66 +196,30 @@ Working.JL_CHECKPOINT_FOLDER[] = ""
 ####
 
 function augment_and_transform(Xs::AbstractArray...)
-    chunk = settings["train"]["transform"]["chunk"]::Int
-    flip = settings["train"]["transform"]["flipsignals"]::Bool
-    Xaugs = map(augment, Xs) # tuple of named tuples of domain augmentations
-    Xtrans = map(Xaugs...) do (Xaug...) # tuple of inputs over same domain
-        nchannel = size(first(Xaug),1) # all Xs of same domain are equal size in first dimension
-        if (0 < chunk < nchannel) || flip
-            i = ifelse(!(0 < chunk < nchannel), 1:nchannel, rand(1:nchannel-chunk+1) .+ (0:chunk-1))
-            i = ifelse(!flip, i, ifelse(rand(Bool), i, reverse(i)))
-            map(Xi -> Xi[i,..], Xaug) # tuple of transformed augmentations
-        else
-            Xaug
-        end
-    end
-    ks = Zygote.@ignore keys(Xtrans)
-    return map((xs...,) -> NamedTuple{ks}(xs), Xtrans...) # named tuple (by domain) of tuples -> tuple of named tuples (by domain)
-end
-
-function augment(X::AbstractMatrix)
-    X₀   = settings["train"]["augment"]["signal"]::Bool ? X : nothing # Plain signal
-    ∇X   = settings["train"]["augment"]["gradient"]::Bool ? derived["forwarddiff"](X) : nothing # Signal gradient
-    ∇²X  = settings["train"]["augment"]["laplacian"]::Bool ? derived["laplacian"](X) : nothing # Signal laplacian
-    ∇ⁿX  = settings["train"]["augment"]["fdcat"]::Int > 0 ? derived["fdcat"](X) : nothing # Signal finite differences, concatenated
-    Xres = nothing #TODO metadata: settings["train"]["augment"]["residuals"]::Bool ? X .- Zygote.@ignore(sampleXθZ(derived["cvae"], derived["prior"], X; posterior_θ = true, posterior_Z = true))[1] : nothing # Residual relative to different sample X̄(θ), θ ~ P(θ|X) (note: Z discarded, posterior_Z irrelevant)
-    Xenc = settings["train"]["augment"]["encoderspace"]::Bool ? derived["encoderspace"](X) : nothing # Encoder-space signal
-    Xfft = settings["train"]["augment"]["fftcat"]::Bool ? vcat(reim(rfft(X,1))...) : nothing # Concatenated real/imag fourier components
-    Xrfft, Xifft = settings["train"]["augment"]["fftsplit"]::Bool ? reim(rfft(X,1)) : (nothing, nothing) # Separate real/imag fourier components
-
-    ks = (:signal, :grad, :lap, :fd, :res, :enc, :fft, :rfft, :ifft)
-    Xs = [X₀, ∇X, ∇²X, ∇ⁿX, Xres, Xenc, Xfft, Xrfft, Xifft]
-    is = (x -> x !== nothing).(Xs)
-    Xs = NamedTuple{ks[is]}(Xs[is])
-
-    return Xs
-end
-
-function augment(X::AbstractArray)
-    Xs = augment(reshape(X, size(X,1), :))
-    return map(Xi -> reshape(Xi, size(Xi,1), Base.tail(size(X))...), Xs)
+    Ts = map(derived["domain_transforms"], Xs) # tuple of named tuples of domain transformations
+    Ys = lib.unzipnamedtuple(map(derived["augmentations"], lib.zipnamedtuples(Ts)))
 end
 
 ####
 #### GANs
 ####
 
-D_Y_prob(Y) = -sum(log.(apply_dim1(models["discrim"], Y) .+ eps(eltype(Y)))) / size(Y,2) # discrim learns toward Prob(Y) = 1
-D_G_X_prob(X̂) = -sum(log.(1 .- apply_dim1(models["discrim"], X̂) .+ eps(eltype(X̂)))) / size(X̂,2) # discrim learns toward Prob(G(X)) = 0
-
-function Dloss(X,Y,Z)
-    X̂augs, Yaugs = augment_and_transform(sampleX̂(derived["ricegen"], X, Z), Y)
-    X̂s, Ys = reduce(vcat, X̂augs), reduce(vcat, Yaugs)
-    D_Y = D_Y_prob(Ys)
-    D_G_X = D_G_X_prob(X̂s)
-    return (; D_Y, D_G_X)
+function Gloss(X,Z)
+    X̂ = sampleX̂(models["genatr"], X, Z)
+    X̂s, = augment_and_transform(X̂)
+    PX̂  = models["discrim"](reduce(vcat, X̂s))
+    BCE_GX = lib.LogitBCEOne(PX̂) # -log(D(G(Z))) (equivalent to log(1-D(G(Z))) in Goodfellow et al.)
+    return (; BCE_GX)
 end
 
-function Gloss(X,Z)
-    X̂aug, = augment_and_transform(sampleX̂(derived["ricegen"], X, Z))
-    X̂s = reduce(vcat, X̂aug)
-    neg_D_G_X = -D_G_X_prob(X̂s) # genatr learns toward Prob(G(X)) = 1
-    return (; neg_D_G_X)
+function Dloss(X,Y,Z)
+    X̂ = Zygote.@ignore sampleX̂(models["genatr"], X, Z)
+    X̂s, Ys = augment_and_transform(X̂, Y)
+    PY = models["discrim"](reduce(vcat, Ys))
+    PX̂ = models["discrim"](reduce(vcat, X̂s))
+    BCE_DY = lib.LogitBCEOne(PY) # -log(D(Y))
+    BCE_DX = lib.LogitBCEZero(PX̂) # -log(1-D(G(Z)))
+    return (; BCE_DY, BCE_DX)
 end
 
 ####
@@ -309,10 +287,10 @@ function get_mmd_kernel(key, nchannel)
             !deep ?
                 identity :
                 Flux.Chain(
-                    MLP(nchannel => nz, 0, hdim, Flux.relu, identity; skip = false),
+                    lib.MLP(nchannel => nz, 0, hdim, Flux.relu, identity; skip = false),
                     z -> Flux.normalise(z; dims = 1), # kernel bandwidths are sensitive to scale; normalize learned representations
                     z -> z .+ randn_similar(z, size(z)...), # stochastic embedding prevents overfitting to Y data
-                ) |> flattenchain |> to32,
+                ) |> lib.flattenchain |> to32,
             )
     end
 
@@ -325,18 +303,18 @@ MMDloss(k, X::AbstractTensor3D, Y::AbstractMatrix) = mean(map(i -> MMDloss(k, X[
 # Maximum mean discrepency (m*MMD^2) loss
 function MMDlosses(Ymeta::AbstractMetaDataSignal)
     if settings["train"]["DeepThetaPrior"]::Bool && settings["train"]["DeepLatentPrior"]::Bool
-        X, θ, Z = sampleXθZ(derived["cvae"], derived["prior"], Ymeta; posterior_θ = false, posterior_Z = false) # sample θ and Z from the learned deep priors, differentiating through the sampling process and the physics model
+        X, θ, Z = sampleXθZ(derived["cvae"], derived["genatr_prior"], Ymeta; posterior_θ = false, posterior_Z = false) # sample θ and Z from the learned deep priors, differentiating through the sampling process and the physics model
     else
-        Z = settings["train"]["DeepLatentPrior"]::Bool ? sampleZprior(derived["prior"], signal(Ymeta)) : Zygote.@ignore(sampleZprior(derived["prior"], signal(Ymeta))) # differentiate through deep Z prior, else ignore
-        θ = settings["train"]["DeepThetaPrior"]::Bool ? sampleθprior(derived["prior"], signal(Ymeta)) : Zygote.@ignore(sampleθZ(derived["cvae"], derived["prior"], Ymeta; posterior_θ = true, posterior_Z = true)[1]) # use CVAE posterior for θ prior; Z is ignored w/ `posterior_Z` arbitrary
+        Z = settings["train"]["DeepLatentPrior"]::Bool ? sampleZprior(derived["genatr_prior"], signal(Ymeta)) : Zygote.@ignore(sampleZprior(derived["genatr_prior"], signal(Ymeta))) # differentiate through deep Z prior, else ignore
+        θ = settings["train"]["DeepThetaPrior"]::Bool ? sampleθprior(derived["genatr_prior"], signal(Ymeta)) : Zygote.@ignore(sampleθZ(derived["cvae"], derived["genatr_prior"], Ymeta; posterior_θ = true, posterior_Z = true)[1]) # use CVAE posterior for θ prior; Z is ignored w/ `posterior_Z` arbitrary
         X = settings["train"]["DeepThetaPrior"]::Bool ? signal_model(phys, θ) : Zygote.@ignore(signal_model(phys, θ)) # differentiate through physics model if learning deep θ prior, else ignore
     end
 
     # Differentiate through generator corrections `sampleX̂`
     nX̂ = settings["train"]["transform"]["nsamples"]::Int |> n -> ifelse(n > 1, n, nothing)
-    ν, ϵ = rician_params(derived["ricegen"], X, Z)
-    ν, ϵ = clamp_dim1(signal(Ymeta), ν, ϵ)
-    X̂ = add_noise_instance(derived["ricegen"], ν, ϵ, nX̂)
+    ν, ϵ = rician_params(models["genatr"], X, Z)
+    ν, ϵ = lib.clamp_dim1(signal(Ymeta), ν, ϵ)
+    X̂ = add_noise_instance(models["genatr"], ν, ϵ, nX̂)
 
     X̂s, Ys = augment_and_transform(X̂, signal(Ymeta))
     ks = Zygote.@ignore NamedTuple{keys(X̂s)}(get_mmd_kernel.(keys(X̂s), size.(values(X̂s),1)))
@@ -380,7 +358,7 @@ function CVAElosses(Ymeta::AbstractMetaDataSignal; marginalize_Z)
     θ = Zygote.@ignore sampleθprior(derived["cvae_prior"], signal(Ymeta))
     Z = Zygote.@ignore sampleZprior(derived["cvae_prior"], signal(Ymeta))
     X = Zygote.@ignore signal_model(phys, θ)
-    X̂ = Zygote.@ignore sampleX̂(derived["ricegen"], X, Z)
+    X̂ = Zygote.@ignore sampleX̂(models["genatr"], X, Z)
 
     # Cross-entropy loss function components
     X̂mask   = Zygote.@ignore make_signal_mask(X̂; minkept)
@@ -395,8 +373,8 @@ function CVAElosses(Ymeta::AbstractMetaDataSignal; marginalize_Z)
         Ymasked = Ymask .* Ypadded
         X̂dec    = models["vae_dec"](sample_mv_normal(mv_normal_parameters(derived["cvae"], X̂masked)))
         Ydec    = models["vae_dec"](sample_mv_normal(mv_normal_parameters(derived["cvae"], Ymasked)))
-        VAEsim  = λ_vae_reg * sum(abs, X̂masked .- X̂mask .* X̂dec) / size(X̂masked, 2) # only penalize recon error within X̂mask
-        VAEdata = λ_vae_reg * sum(abs, Ymasked .- Ymask .* Ydec) / size(Ymasked, 2) # only penalize recon error within Ymask
+        VAEsim  = λ_vae_reg * sum(abs.(X̂masked .- X̂mask .* X̂dec)) / size(X̂masked, 2) # only penalize recon error within X̂mask
+        VAEdata = λ_vae_reg * sum(abs.(Ymasked .- Ymask .* Ydec)) / size(Ymasked, 2) # only penalize recon error within Ymask
         (; KLDiv, ELBO, VAEsim, VAEdata)
     end
 
@@ -416,7 +394,7 @@ end
 #     θ = Zygote.@ignore sampleθprior(derived["cvae_prior"], signal(Ymeta))
 #     Z = Zygote.@ignore sampleZprior(derived["cvae_prior"], signal(Ymeta))
 #     X = Zygote.@ignore signal_model(phys, θ)
-#     X̂ = Zygote.@ignore sampleX̂(derived["ricegen"], X, Z)
+#     X̂ = Zygote.@ignore sampleX̂(models["genatr"], X, Z)
 #     X̂mask   = Zygote.@ignore make_signal_mask(X̂; minkept)
 #     X̂masked = X̂mask .* X̂
 #     KLDiv, ELBO = KL_and_ELBO(derived["cvae"], X̂masked, θ, Z; marginalize_Z = false)
@@ -440,7 +418,7 @@ end
 #     @info "ΔY (with mask)"; Ymask .* (Ymasked .- Ydec) |> display
 #     # check grad
 #     _m = Flux.Chain(m[1:end-2]..., Flux.Dense(dropnan.(m[end-1].W), m[end-1].b, Flux.softplus), m[end])
-#     Working.modelgradcheck(_m; extrapolate = true, subset = :random, verbose = true, rtol = 1e-2, atol = 1e-2, seed = 5) do
+#     lib.modelgradcheck(_m; extrapolate = true, subset = :random, verbose = true, rtol = 1e-2, atol = 1e-2, seed = 5) do
 #         sum(abs, Ymask .* (Ymasked .- _m(zr_Y))) / size(Ymask,2)
 #     end
 # end;
@@ -459,11 +437,11 @@ logger = DataFrame(
     :time       => Union{Float64, Missing}[],
 )
 
-# make_dataset(dataset) = torch.utils.data.TensorDataset(PyTools.j2p_array(sampleY(phys, :all; dataset)))
+# make_dataset(dataset) = torch.utils.data.TensorDataset(lib.j2p_array(sampleY(phys, :all; dataset)))
 # train_loader = torch.utils.data.DataLoader(make_dataset(:train); batch_size = settings["train"]["batchsize"], shuffle = true, drop_last = true)
 # val_eval_loader = torch.utils.data.DataLoader(make_dataset(:val); batch_size = settings["train"]["batchsize"], shuffle = false, drop_last = true) #Note: drop_last=true and batch_size=train_batchsize for MMD (else, batch_size = settings["data"]["nval"] is fine)
 
-make_dataset_indices(n) = torch.utils.data.TensorDataset(PyTools.j2p_array(collect(1:n)))
+make_dataset_indices(n) = torch.utils.data.TensorDataset(lib.j2p_array(collect(1:n)))
 train_loader = torch.utils.data.DataLoader(make_dataset_indices(settings["train"]["nbatches"]))
 val_eval_loader = torch.utils.data.DataLoader(make_dataset_indices(settings["eval"]["nbatches"]))
 train_eval_loader = torch.utils.data.DataLoader(make_dataset_indices(settings["eval"]["nbatches"]))
@@ -567,7 +545,7 @@ function train_step(engine, batch)
 
         # Train GAN loss
         train_GAN && @timeit "gan" let #TODO CUDA.@sync
-            @timeit "sampleXθZ" Xtrain, θtrain, Ztrain = sampleXθZ(derived["cvae"], derived["prior"], Ytrainmeta; posterior_θ = true, posterior_Z = false) # learn to map whole Z domain via `posterior_Z = false` #TODO CUDA.@sync
+            @timeit "sampleXθZ" Xtrain, θtrain, Ztrain = sampleXθZ(derived["cvae"], derived["genatr_prior"], Ytrainmeta; posterior_θ = true, posterior_Z = false) # learn to map whole Z domain via `posterior_Z = false` #TODO CUDA.@sync
             train_discrim && @timeit "discrim" let #TODO CUDA.@sync
                 ps = Flux.params(models["discrim"])
                 for _ in 1:settings["train"]["Dsteps"]
@@ -595,7 +573,7 @@ function train_step(engine, batch)
             opts = (get_kernel_opt(aug) for aug in aug_types) # unique optimizer per augmentation
             kernels = (get_mmd_kernel(aug, size(Y,1)) for (aug, Y) in zip(aug_types, aug_Ytrains)) # unique kernel per augmentation
             for _ in 1:settings["train"]["kernelsteps"]::Int
-                @timeit "sample G(X)" X̂train = sampleX̂(derived["cvae"], derived["prior"], Ytrainmeta; posterior_θ = true, posterior_Z = false) # # sample unique X̂ per step (TODO: posterior_Z = true? or posterior_Z = false to force learning of whole Z domain?)
+                @timeit "sample G(X)" X̂train = sampleX̂(derived["cvae"], derived["genatr_prior"], Ytrainmeta; posterior_θ = true, posterior_Z = false) # # sample unique X̂ per step (TODO: posterior_Z = true? or posterior_Z = false to force learning of whole Z domain?)
                 @timeit "sample Y2" Ytrain2 = sampleY(phys, settings["train"]["batchsize"]::Int; dataset = :train) |> to32 # draw another Y sample
                 aug_X̂trains, aug_Ytrains2 = augment_and_transform(X̂train, Ytrain2) .|> values # augment data + simulated data
                 for (aug, kernel, aug_X̂train, aug_Ytrain, aug_Ytrain2, opt) in zip(aug_types, kernels, aug_X̂trains, aug_Ytrains, aug_Ytrains2, opts)
@@ -614,7 +592,7 @@ end
 function fit_cvae(Ymeta; marginalize_Z)
     # CVAE posterior state
     @timeit "posterior state" @unpack θ, Z, X, δ, ϵ, ν, ℓ = posterior_state(
-        derived["cvae"], derived["prior"], Ymeta;
+        derived["cvae"], derived["genatr_prior"], Ymeta;
         miniter = 1, maxiter = 1, alpha = 0.0, verbose = false, mode = :maxlikelihood,
     )
 
@@ -626,11 +604,11 @@ function fit_cvae(Ymeta; marginalize_Z)
             ℓ .= arr_similar(ν, mle_res.loss)'
             ϵ .= arr_similar(ν, mle_res.logepsilon)' .|> exp
             # Z .= 0 #TODO marginalize_Z # Z is filled with garbage
-            X̂ = add_noise_instance(derived["ricegen"], ν, ϵ)
+            X̂ = add_noise_instance(models["genatr"], ν, ϵ)
         end
     else
         # Add noise (Z-dependent, i.e. ϵ = ϵ(Z))
-        X̂ = add_noise_instance(derived["ricegen"], ν, ϵ)
+        X̂ = add_noise_instance(models["genatr"], ν, ϵ)
     end
 
     return (; Y = signal(Ymeta), X̂, θ, Z, X, δ, ϵ, ν, ℓ, mle_init, mle_res)
@@ -638,7 +616,7 @@ end
 
 function fit_metrics(Ymeta, Ymeta_fit_state, θtrue, Ztrue, Wtrue)
     #= TODO
-    if hasclosedform(phys)
+    if lib.hasclosedform(phys)
         W = sampleWprior(ClosedForm(phys), Y, size(Y, 2)) # Sample hidden latent variables
         Y_metrics, Y_cache_cb_args = fit_metrics(nothing, θ, nothing, W)
     else
@@ -647,11 +625,11 @@ function fit_metrics(Ymeta, Ymeta_fit_state, θtrue, Ztrue, Wtrue)
     =#
     #= TODO
     νtrue = ϵtrue = rmse_true = logL_true = missing
-    if hasclosedform(phys) && (θtrue !== nothing) && (Wtrue !== nothing)
+    if lib.hasclosedform(phys) && (θtrue !== nothing) && (Wtrue !== nothing)
         νtrue, ϵtrue = rician_params(ClosedForm(phys), θtrue, Wtrue) # noiseless true signal and noise level
         Ytrue = add_noise_instance(phys, νtrue, ϵtrue) # noisy true signal
         rmse_true = sqrt(mean(abs2, Ytrue - νtrue))
-        logL_true = mean(NegLogLikelihood(derived["ricegen"], Ytrue, νtrue, ϵtrue))
+        logL_true = mean(lib.NegLogLikelihood(models["genatr"], Ytrue, νtrue, ϵtrue))
     end
     =#
 
@@ -715,7 +693,7 @@ function compute_metrics(engine, batch; dataset)
             if settings["train"]["GANrate"]::Int > 0
                 ℓ_GAN = Dloss(Y_fit_state.X, Y, Y_fit_state.Z)
                 ℓ_GAN = push!!(ℓ_GAN, :Dloss => sum(ℓ_GAN))
-                ℓ_GAN = push!!(ℓ_GAN, :Gloss => -ℓ_GAN.D_G_X)
+                ℓ_GAN = push!!(ℓ_GAN, :Gloss => -ℓ_GAN.BCE_DX)
                 accum!(ℓ_GAN)
             end
         end
@@ -741,10 +719,10 @@ function compute_metrics(engine, batch; dataset)
             accum!(Dict(Symbol(:Xhat_, k) => v for (k,v) in pairs(X̂_metrics) if k ∉ (:all_rmse, :all_logL) && !ismissing(v)))
 
             img_key = Symbol(:img, img_idx)
-            accum!(img_key, fast_hist_1D(Flux.cpu(vec(Y_fit_state.X̂)), img.meta[:histograms][dataset][0].edges[1]))
-            Dist_L1 = CityBlock(img.meta[:histograms][dataset][0], cb_state["all_histograms"][dataset][img_key])
-            Dist_ChiSq = ChiSquared(img.meta[:histograms][dataset][0], cb_state["all_histograms"][dataset][img_key])
-            Dist_KLDiv = KLDivergence(img.meta[:histograms][dataset][0], cb_state["all_histograms"][dataset][img_key])
+            accum!(img_key, lib.fast_hist_1D(Flux.cpu(vec(Y_fit_state.X̂)), img.meta[:histograms][dataset][0].edges[1]))
+            Dist_L1 = lib.CityBlock(img.meta[:histograms][dataset][0], cb_state["all_histograms"][dataset][img_key])
+            Dist_ChiSq = lib.ChiSquared(img.meta[:histograms][dataset][0], cb_state["all_histograms"][dataset][img_key])
+            Dist_KLDiv = lib.KLDivergence(img.meta[:histograms][dataset][0], cb_state["all_histograms"][dataset][img_key])
             accum!((; Dist_L1, Dist_ChiSq, Dist_KLDiv))
         end
 
@@ -762,21 +740,21 @@ end
 function makeplots(;showplot = false)
     try
         Dict{Symbol, Any}(
-            :ricemodel    => Working.plot_rician_model(logger, cb_state, phys; showplot, bandwidths = (filter(((k,v),) -> startswith(k, "logsigma"), collect(models)) |> logσs -> isempty(logσs) ? nothing : (x->Flux.cpu(permutedims(x[2]))).(logσs))),
-            :signals      => Working.plot_rician_signals(logger, cb_state, phys; showplot),
-            :signalmodels => Working.plot_rician_model_fits(logger, cb_state, phys; showplot),
-            :infer        => Working.plot_rician_inference(logger, cb_state, phys; showplot),
-            :ganloss      => Working.plot_gan_loss(logger, cb_state, phys; showplot, lrdroprate = settings["opt"]["lrrate"], lrdrop = settings["opt"]["lrdrop"]),
-            :vallosses    => Working.plot_all_logger_losses(logger, cb_state, phys; showplot, dataset = :val),
-            :trainlosses  => Working.plot_all_logger_losses(logger, cb_state, phys; showplot, dataset = :train),
-            # :epsline      => Working.plot_epsilon(phys, derived; showplot, seriestype = :line), #TODO
-            # :epscontour   => Working.plot_epsilon(phys, derived; showplot, seriestype = :contour), #TODO
-            :priors       => Working.plot_priors(phys, derived; showplot), #TODO
-            :cvaepriors   => Working.plot_cvaepriors(phys, derived; showplot), #TODO
-            # :posteriors   => Working.plot_posteriors(phys, derived; showplot), #TODO
+            :ricemodel    => lib.plot_rician_model(logger, cb_state, phys; showplot, bandwidths = (filter(((k,v),) -> startswith(k, "logsigma"), collect(models)) |> logσs -> isempty(logσs) ? nothing : (x->Flux.cpu(permutedims(x[2]))).(logσs))),
+            :signals      => lib.plot_rician_signals(logger, cb_state, phys; showplot),
+            :signalmodels => lib.plot_rician_model_fits(logger, cb_state, phys; showplot),
+            :infer        => lib.plot_rician_inference(logger, cb_state, phys; showplot),
+            :ganloss      => lib.plot_gan_loss(logger, cb_state, phys; showplot, lrdroprate = settings["opt"]["lrrate"], lrdrop = settings["opt"]["lrdrop"]),
+            :vallosses    => lib.plot_all_logger_losses(logger, cb_state, phys; showplot, dataset = :val),
+            :trainlosses  => lib.plot_all_logger_losses(logger, cb_state, phys; showplot, dataset = :train),
+            # :epsline      => lib.plot_epsilon(phys, derived; showplot, seriestype = :line), #TODO
+            # :epscontour   => lib.plot_epsilon(phys, derived; showplot, seriestype = :contour), #TODO
+            :priors       => lib.plot_priors(phys, derived; showplot), #TODO
+            :cvaepriors   => lib.plot_cvaepriors(phys, derived; showplot), #TODO
+            # :posteriors   => lib.plot_posteriors(phys, derived; showplot), #TODO
         )
     catch e
-        handleinterrupt(e; msg = "Error plotting")
+        lib.handleinterrupt(e; msg = "Error plotting")
     end
 end
 
@@ -798,12 +776,12 @@ Events = ignite.engine.Events
 # Force terminate
 trainer.add_event_handler(
     Events.STARTED | Events.ITERATION_STARTED | Events.ITERATION_COMPLETED,
-    @j2p Working.terminate_file_event(file = joinpath(settings["data"]["out"], "stop"))
+    @j2p lib.terminate_file_event(file = lib.logdir("stop"))
 )
 
 # Timeout
 trainer.add_event_handler(
-    Events.EPOCH_COMPLETED(event_filter = @j2p Working.timeout_event_filter(settings["train"]["timeout"])),
+    Events.EPOCH_COMPLETED(event_filter = @j2p lib.timeout_event_filter(settings["train"]["timeout"])),
     @j2p function (engine)
         @info "Exiting: training time exceeded $(DECAES.pretty_time(settings["train"]["timeout"]))"
         engine.terminate()
@@ -812,37 +790,37 @@ trainer.add_event_handler(
 
 # Compute callback metrics
 trainer.add_event_handler(
-    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Working.throttler_event_filter(settings["eval"]["valevalperiod"])),
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["valevalperiod"])),
     @j2p (engine) -> val_evaluator.run(val_eval_loader)
 )
 trainer.add_event_handler(
-    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Working.throttler_event_filter(settings["eval"]["trainevalperiod"])),
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["trainevalperiod"])),
     @j2p (engine) -> train_evaluator.run(train_eval_loader)
 )
 
 # Checkpoint current model + logger + make plots
 trainer.add_event_handler(
-    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Working.throttler_event_filter(settings["eval"]["saveperiod"])),
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["saveperiod"])),
     @j2p function (engine)
         @timeit "checkpoint" let models = map_dict(Flux.cpu, models)
-            @timeit "save current model" saveprogress(@dict(models, logger); savefolder = settings["data"]["out"], prefix = "current-")
+            @timeit "save current model" lib.saveprogress(@dict(models, logger); savefolder = lib.logdir(), prefix = "current-")
             @timeit "make current plots" plothandles = makeplots()
-            @timeit "save current plots" saveplots(plothandles; savefolder = settings["data"]["out"], prefix = "current-")
+            @timeit "save current plots" lib.saveplots(plothandles; savefolder = lib.logdir(), prefix = "current-")
         end
     end
 )
 
 # Check for + save best model + logger + make plots
 trainer.add_event_handler(
-    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Working.throttler_event_filter(settings["eval"]["saveperiod"])),
+    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["saveperiod"])),
     @j2p function (engine)
         loss_metric = :CVAE # :Yhat_logL
         losses = logger[logger.dataset .=== :val, loss_metric] |> skipmissing |> collect
         if !isempty(losses) && (length(losses) == 1 || losses[end] < minimum(losses[1:end-1]))
             @timeit "save best progress" let models = map_dict(Flux.cpu, models)
-                @timeit "save best model" saveprogress(@dict(models, logger); savefolder = settings["data"]["out"], prefix = "best-")
+                @timeit "save best model" lib.saveprogress(@dict(models, logger); savefolder = lib.logdir(), prefix = "best-")
                 @timeit "make best plots" plothandles = makeplots()
-                @timeit "save best plots" saveplots(plothandles; savefolder = settings["data"]["out"], prefix = "best-")
+                @timeit "save best plots" lib.saveplots(plothandles; savefolder = lib.logdir(), prefix = "best-")
             end
         end
     end
@@ -853,9 +831,9 @@ trainer.add_event_handler(
 trainer.add_event_handler(
     Events.STARTED | Events.ITERATION_COMPLETED,
     @j2p function (engine)
-        Working.update_optimizers!(optimizers; field = :eta) do opt, name
+        lib.update_optimizers!(optimizers; field = :eta) do opt, name
             lr_warmup = settings["opt"][name]["lrwarmup"]
-            lr_initial = Working.initial_learning_rate!(settings, name)
+            lr_initial = lib.initial_learning_rate!(settings, name)
             !(engine.state.iteration <= lr_warmup > 0) && return
             new_eta = range(lr_initial / lr_warmup, lr_initial; length = lr_warmup + 1)[engine.state.iteration + 1]
             opt.eta = new_eta
@@ -867,8 +845,8 @@ trainer.add_event_handler(
 # Drop learning rate
 trainer.add_event_handler(
     Events.EPOCH_COMPLETED,
-    @j2p Working.droplr_file_event(optimizers;
-        file = joinpath(settings["data"]["out"], "droplr"),
+    @j2p lib.droplr_file_event(optimizers;
+        file = lib.logdir("droplr"),
         lrrate = settings["opt"]["lrrate"]::Int,
         lrdrop = settings["opt"]["lrdrop"]::Float64,
         lrthresh = settings["opt"]["lrthresh"]::Float64,
@@ -878,15 +856,15 @@ trainer.add_event_handler(
 # User input
 trainer.add_event_handler(
     Events.EPOCH_COMPLETED,
-    @j2p(Working.file_event(Working.user_input_event(); file = joinpath(settings["data"]["out"], "user"))),
+    @j2p(lib.file_event(lib.user_input_event(); file = lib.logdir("user"))),
 )
 
 # Print TimerOutputs timings
 trainer.add_event_handler(
-    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p Working.throttler_event_filter(settings["eval"]["printperiod"])),
+    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["printperiod"])),
     @j2p function (engine)
         @info sprint() do io
-            println(io, "Log folder: $(settings["data"]["out"])"); println(io, "\n")
+            println(io, "Log folder: $(lib.logdir())"); println(io, "\n")
             show(io, TimerOutputs.get_defaulttimer()); println(io, "\n")
             show(io, last(logger[!,[names(logger)[1:4]; sort(names(logger)[5:end])]], 10)); println(io, "\n")
         end
@@ -897,7 +875,7 @@ trainer.add_event_handler(
 # Reset loging/timer/etc.
 trainer.add_event_handler(
     Events.EPOCH_COMPLETED,
-    @j2p Working.file_event(file = joinpath(settings["data"]["out"], "reset")) do engine
+    @j2p lib.file_event(file = lib.logdir("reset")) do engine
         TimerOutputs.reset_timer!()
         empty!(cb_state)
         empty!(logger)
@@ -911,7 +889,7 @@ trainer.add_event_handler(
 # Attach training/validation output handlers
 if (wandb_logger !== nothing)
     for (tag, engine, event) in [
-            ("step",  trainer,         Events.EPOCH_COMPLETED(event_filter = @j2p Working.timeout_event_filter(settings["eval"]["trainevalperiod"]))), # computed each iteration; throttle recording
+            ("step",  trainer,         Events.EPOCH_COMPLETED(event_filter = @j2p lib.timeout_event_filter(settings["eval"]["trainevalperiod"]))), # computed each iteration; throttle recording
             ("train", train_evaluator, Events.EPOCH_COMPLETED), # throttled above; record every epoch
             ("val",   val_evaluator,   Events.EPOCH_COMPLETED), # throttled above; record every epoch
         ]

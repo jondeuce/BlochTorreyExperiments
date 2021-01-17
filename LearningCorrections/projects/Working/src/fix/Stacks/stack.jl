@@ -44,4 +44,5 @@ function Base.show(io::IO, s::Stack)
 end
 
 "show the structure of the Stack function"
-show_stackfunc(s::Stack) = print_topo(s.topo; models=s.models)
+show_stackfunc(s::Stack) = show_stackfunc(stdout, s)
+show_stackfunc(io::IO, s::Stack) = print_topo(io, s.topo; models=s.models)
