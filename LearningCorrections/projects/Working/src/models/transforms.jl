@@ -34,8 +34,8 @@ function DomainTransforms(
     fdcat > 0     && add!((:fd,), ("∇ⁿX",), CatDenseFiniteDiff(nsignal(phys), fdcat))
     fftcat        && add!((:fft,), ("ℱX",), X -> vcat(reim(rfft(X,1))...))
     fftsplit      && add!((:rfft, :ifft), ("ℜℱX", "ℑℱX"), X -> reim(rfft(X,1)))
-    #residuals    && add!((:res,), ("Xres",), identity) #TODO Xres = X .- Zygote.@ignore(sampleXθZ(derived["cvae"], derived["genatr_prior"], X; posterior_θ = true, posterior_Z = true))[1] : nothing # Residual relative to different sample X̄(θ), θ ~ P(θ|X) (note: Z discarded, posterior_Z irrelevant)
-    #encoderspace && add!((:enc,), ("Xenc",), identity) #TODO Xenc = derived["encoderspace"](X) # Encoder-space signal
+    #residuals    && add!((:res,), ("Xres",), identity) #TODO X -> X .- Zygote.@ignore(sampleXθZ(phys, cvae, θprior, Zprior, X; posterior_θ = true, posterior_Z = true))[1] : nothing # Residual relative to different sample X̄(θ), θ ~ P(θ|X) (note: Z discarded, posterior_Z irrelevant)
+    #encoderspace && add!((:enc,), ("Xenc",), identity) #TODO X -> encoderspace(X) # Encoder-space signal
 
     ParallelCollector(models, varname_list, CollectAsNamedTuple(ntuple_labels...))
 end
@@ -45,10 +45,8 @@ function domain_transforms_outdims(phys::PhysicsModel{Float32}; kwargs...)
     Aug = DomainTransforms(phys; kwargs...)
     map(size, Aug(X))
 end
-
-function domain_transforms_sum_outlength(phys::PhysicsModel{Float32}; kwargs...)
-    sum(first.(values(domain_transforms_outdims(phys; kwargs...))))
-end
+domain_transforms_outlengths(phys::PhysicsModel{Float32}; kwargs...) = map(first, domain_transforms_outdims(phys; kwargs...))
+domain_transforms_sum_outlengths(phys::PhysicsModel{Float32}; kwargs...) = sum(domain_transforms_outlengths(phys; kwargs...))
 
 function Augmentations(;
         chunk::Int,

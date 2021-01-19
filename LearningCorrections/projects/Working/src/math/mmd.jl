@@ -338,8 +338,8 @@ end
 # Speed testing of mmd_flux_kernel_matrices
 function _bench_mmd_and_mmdvar_cpu_vs_gpu(;T = Float32, n = 128, m = 2048)
     @assert CUDA.functional()
-    cpu_and_gpu(x) = (Flux.cpu(x), Flux.gpu(x))
-    _isapprox(x,y) = isapprox(Flux.cpu(x), Flux.cpu(y); rtol = sqrt(eps(T)), atol = sqrt(eps(T)))
+    cpu_and_gpu(x) = (cpu(x), gpu(x))
+    _isapprox(x,y) = isapprox(cpu(x), cpu(y); rtol = sqrt(eps(T)), atol = sqrt(eps(T)))
     X, Xc = T(0.1) .* randn(T,n,m) |> cpu_and_gpu
     Y, Yc = T(2.0) .* randn(T,n,m) |> cpu_and_gpu
 
@@ -431,8 +431,8 @@ function mmd_flux_kernel_matrices(logsigma::AbstractTensor3D, X::AbstractMatrix,
 end
 
 # Speed testing of mmd_flux_kernel_matrices
-function _bench_mmd_flux_kernel_matrices(;T = Float32, n = 128, m = 2048, gpu::Bool = false)
-    maybegpu = gpu ? Flux.gpu : Flux.cpu
+function _bench_mmd_flux_kernel_matrices(;T = Float32, n = 128, m = 2048, use_gpu::Bool = false)
+    maybegpu = use_gpu ? gpu : cpu
     X = randn(T,n,m) |> maybegpu
     Y = randn(T,n,m) |> maybegpu
     Δ = (rand(T,m,m) |> maybegpu for _ in 1:3) |> ((Kxx, Kyy, Kxy),) -> @ntuple(Kxx, Kyy, Kxy)
@@ -789,8 +789,8 @@ end
 function _test_mmd_flux_kernel_matrices(fs = [_mmd_flux_kernel_matrices], fcs = []; T = Float32, n = 10, m = 10, p = 0)
     X = (p <= 0 ? randn(T,n,m) : randn(T,n,m,p))
     Y = (p <= 0 ? randn(T,n,m) : randn(T,n,m,p))
-    Xc = isempty(fcs) ? nothing : Flux.gpu(X)
-    Yc = isempty(fcs) ? nothing : Flux.gpu(Y)
+    Xc = isempty(fcs) ? nothing : gpu(X)
+    Yc = isempty(fcs) ? nothing : gpu(Y)
 
     function fwd_and_back(f,X,Y)
         out, back = Zygote.pullback((x,y) -> f(x,y), X, Y)
@@ -800,7 +800,7 @@ function _test_mmd_flux_kernel_matrices(fs = [_mmd_flux_kernel_matrices], fcs = 
 
     function compare(val1, val2)
         for (k,v1,v2) in zip(keys(val1), values(val1), values(val2))
-            cv1, cv2 = Flux.cpu(v1), Flux.cpu(v2)
+            cv1, cv2 = cpu(v1), cpu(v2)
             cmp = isapprox(cv1, cv2; rtol = sqrt(eps(T)), atol = 10 * eps(T))
             err = maximum(abs, cv1 .- cv2) # / max(sqrt(eps(T)), maximum(abs, cv1), maximum(abs, cv2))
             @show k, cmp, err

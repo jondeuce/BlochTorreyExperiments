@@ -886,13 +886,13 @@ function _EPGdecaycurve_test(; nsamples = 1024, ETL = 48)
     end
 
     S1 = gpufun(flip_angles, T2_times)
-    S2 = cpufun(map(Flux.cpu, (flip_angles, T2_times))..., Val(ETL))
-    @assert Flux.cpu(S1) ≈ S2
+    S2 = cpufun(map(cpu, (flip_angles, T2_times))..., Val(ETL))
+    @assert cpu(S1) ≈ S2
 
-    flip_angles_cpu, T2_times_cpu = map(Flux.cpu, (flip_angles, T2_times))
+    flip_angles_cpu, T2_times_cpu = map(cpu, (flip_angles, T2_times))
     @btime CUDA.@sync $gpufun($flip_angles, $T2_times) # gpu timing
     @btime $cpufun($flip_angles_cpu, $T2_times_cpu, Val($ETL)) # cpu timing
-    @btime CUDA.@sync Flux.gpu($cpufun(map(Flux.cpu, ($flip_angles, $T2_times))..., Val($ETL))) # gpu-to-cpu-to-gpu timing
+    @btime CUDA.@sync gpu($cpufun(map(cpu, ($flip_angles, $T2_times))..., Val($ETL))) # gpu-to-cpu-to-gpu timing
 
     nothing
 end
@@ -906,13 +906,13 @@ function _signal_model_test(; nsamples = 1024)
     Along    = 0.1f0 .+ (0.9f0 .- 0.1f0) .* CUDA.rand(Float32, nsamples)
 
     S1 = _signal_model_cuda(p, alpha, T2short, T2long, Ashort, Along)
-    S2 = _signal_model(p, map(Flux.cpu, (alpha, T2short, T2long, Ashort, Along))...)
-    @assert Flux.cpu(S1) ≈ S2
+    S2 = _signal_model(p, map(cpu, (alpha, T2short, T2long, Ashort, Along))...)
+    @assert cpu(S1) ≈ S2
 
-    cpu_args = map(Flux.cpu, (alpha, T2short, T2long, Ashort, Along))
+    cpu_args = map(cpu, (alpha, T2short, T2long, Ashort, Along))
     @btime CUDA.@sync _signal_model_cuda($p, $alpha, $T2short, $T2long, $Ashort, $Along)
     @btime _signal_model($p, $(cpu_args)...)
-    @btime CUDA.@sync Flux.gpu(_signal_model($p, map(Flux.cpu, ($alpha, $T2short, $T2long, $Ashort, $Along))...))
+    @btime CUDA.@sync gpu(_signal_model($p, map(cpu, ($alpha, $T2short, $T2long, $Ashort, $Along))...))
 
     nothing
 end

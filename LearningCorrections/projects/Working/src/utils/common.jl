@@ -7,15 +7,20 @@ const AbstractTensor4D{T} = AbstractArray{T,4}
 const CuTensor3D{T} = CuArray{T,3}
 const CuTensor4D{T} = CuArray{T,4}
 
-todevice(x) = Flux.use_cuda[] ? Flux.gpu(x) : Flux.cpu(x)
-todevice(d::AbstractDict) = Dict(k => todevice(v) for (k,v) in d)
+# Extend Flux.cpu and Flux.gpu
+for f in [:cpu, :gpu]
+    @eval $f(x) = Flux.$f(x) # fallback to Flux.cpu/Flux.gpu
+    @eval $f(d::AbstractDict) = Dict(k => $f(v) for (k,v) in d)
+end
+
+todevice(x) = Flux.use_cuda[] ? gpu(x) : cpu(x)
 to32(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float32}, xi) : xi, todevice(x))
 to64(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float64}, xi) : xi, todevice(x))
 
 arr_similar(x::AbstractArray, y::AbstractArray) = arr_similar(typeof(x), y)
 arr_similar(::Type{<:AbstractArray{T}}, y::AbstractArray) where {T} = convert(Array{T}, y)
 arr_similar(::Type{<:AbstractArray{T}}, y::CuArray{T}) where {T} = convert(Array{T}, y) #TODO: CuArray -> Array works directly if eltypes are equal
-arr_similar(::Type{<:AbstractArray{T1}}, y::CuArray{T2}) where {T1,T2} = convert(Array{T1}, y |> Flux.cpu) #TODO: CuArray -> Array falls back to scalar indexing with unequal eltypes
+arr_similar(::Type{<:AbstractArray{T1}}, y::CuArray{T2}) where {T1,T2} = convert(Array{T1}, y |> cpu) #TODO: CuArray -> Array falls back to scalar indexing with unequal eltypes
 arr_similar(::Type{<:CuArray{T1}}, y::CuArray{T2}) where {T1,T2} = convert(CuArray{T1}, y) #TODO: Needed for disambiguation
 arr_similar(::Type{<:CuArray{T}}, y::AbstractArray) where {T} = convert(CuArray{T}, y)
 Zygote.@adjoint arr_similar(::Type{Tx}, y::Ty) where {Tx <: AbstractArray, Ty <: AbstractArray} = arr_similar(Tx, y), Δ -> (nothing, arr_similar(Ty, Δ)) # preserve input type on backward pass
@@ -152,10 +157,10 @@ function saveprogress(savedata::AbstractDict; savefolder, prefix = "", suffix = 
         try
             BSON.bson(
                 joinpath(savefolder, "$(prefix)$(key)$(suffix).bson"),
-                Dict{String,Any}(string(key) => deepcopy(Flux.cpu(data))),
+                Dict{String,Any}(string(key) => deepcopy(cpu(data))),
             )
         catch e
-            handleinterrupt(e; msg = "Error saving progress")
+            handleinterrupt(e; msg = "Error saving progress for data: $key")
         end
     end
 end

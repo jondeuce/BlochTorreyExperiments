@@ -8,7 +8,7 @@ include("fix/Stacks/Stacks.jl") # workaround until Transformers is updated for j
 
 #### Import/export dependency names
 
-@importexport import ArgParse, BSON, BangBang, BenchmarkTools, BlackBoxOptim, CUDA, ChainRules, Conda, DECAES, DataFrames, Dates, Distributions, DrWatson, EllipsisNotation, FFTW, FiniteDifferences, Flux, ForwardDiff, Functors, Glob, HypothesisTests, LaTeXStrings, LinearAlgebra, LoopVectorization, NLopt, NNlib, Optim, Parameters, Pkg, PrettyTables, PyCall, PyPlot, Random, SpecialFunctions, StatsBase, StatsPlots, Suppressor, TOML, TimerOutputs, Tullio, UnicodePlots, Zygote
+@importexport import ArgParse, BSON, BangBang, BenchmarkTools, BlackBoxOptim, CUDA, ChainRules, Conda, DECAES, DataFrames, Dates, Distributions, DrWatson, EllipsisNotation, FFTW, FiniteDifferences, Flux, ForwardDiff, Functors, Glob, HypothesisTests, JLD2, LaTeXStrings, LinearAlgebra, LoopVectorization, NLopt, NNlib, Optim, Parameters, Pkg, PrettyTables, PyCall, PyPlot, Random, SpecialFunctions, StatsBase, StatsPlots, Suppressor, TOML, TimerOutputs, Tullio, UnicodePlots, Zygote
 
 #### Dependencies' symbols
 
@@ -57,14 +57,14 @@ include("math/batched_math.jl")
 include("math/math_utils.jl")
 include("math/mmd.jl")
 
-include("models/losses.jl")
-include("models/layers.jl")
 include("models/physics.jl")
+include("models/layers.jl")
+include("models/transforms.jl")
 include("models/cvae.jl")
 include("models/xformer.jl")
-include("models/setup.jl")
-include("models/transforms.jl")
+include("models/losses.jl")
 include("models/eval.jl")
+include("models/setup.jl")
 
 #### Init
 

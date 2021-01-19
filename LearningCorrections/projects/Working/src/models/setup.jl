@@ -108,7 +108,7 @@ function load_epgmodel_physics(; max_numechos = 64, image_infos = nothing, seed 
 end
 
 ####
-#### Models
+#### Physics generator
 ####
 
 init_μlogσ_bias(phys::PhysicsModel{Float32}; kwargs...) = (sz...) -> (sz2 = (sz[1]÷2, sz[2:end]...); vcat(zeros(Float32, sz2), 10 .* ones(Float32, sz2))) # initialize logσ bias >> 0 s.t. initial cvae loss does not blowup, since loss has 𝒪(1/σ²) and 𝒪(logσ) terms
@@ -163,32 +163,58 @@ function init_vector_rician_generator(phys::PhysicsModel{Float32}; nlatent, maxc
     NormalizedRicianCorrector(R, normalizer, noisescale) # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
 end
 
+####
+#### Priors
+####
+
 function init_default_theta_prior(phys::PhysicsModel{Float32}; kwargs...)
-    default_θprior(z) = sampleθprior(phys, typeof(z), size(z,2))
+    default_θprior(A, _, n) = sampleθprior(phys, A, n)
+    DeepPrior{Float32,ntheta(phys)}(identity, default_θprior)
 end
 
 function init_default_latent_prior(phys::PhysicsModel{Float32}; nlatent, noisebounds, kwargs...)
     lo, hi, k = Float32.(noisebounds)..., Int(nlatent)
-    default_Zprior(z) = (T = eltype(z); T(lo) .+ (T(hi) .- T(lo)) .* rand_similar(z, k, size(z,2)))
+    default_Zprior(A, _, n) = (T = eltype(A); T(lo) .+ (T(hi) .- T(lo)) .* rand_similar(A, k, n))
+    DeepPrior{Float32,nlatent}(identity, default_Zprior)
 end
 
 # models["latent_prior"]
 function init_deep_latent_prior(phys::PhysicsModel{Float32}; nlatent, klatent, maxcorr, noisebounds, nhidden, hdim, leakyslope, kwargs...)
     σinner = Float32(leakyslope) |> a -> a == 0 ? Flux.relu : (x -> Flux.leakyrelu(x, a))
-    Flux.Chain(
-        MLP(klatent => nlatent, nhidden, hdim, σinner, tanh)...,
-        init_rician_outputscale(phys; nlatent, maxcorr, noisebounds, RiceGenType = LatentScalarRicianNoiseCorrector),
+    DeepPrior{Float32,klatent}(
+        Flux.Chain(
+            MLP(klatent => nlatent, nhidden, hdim, σinner, tanh)...,
+            init_rician_outputscale(phys; nlatent, maxcorr, noisebounds, RiceGenType = LatentScalarRicianNoiseCorrector),
+        ),
+        randn_similar,
     ) |> to32
 end
 
 # models["theta_prior"]
-function init_deep_theta_prior(phys::PhysicsModel{Float32}; nlatent, ktheta, maxcorr, noisebounds, nhidden, hdim, leakyslope, kwargs...)
+function init_deep_theta_prior(phys::PhysicsModel{Float32}; ktheta, nhidden, hdim, leakyslope, kwargs...)
     σinner = Float32(leakyslope) |> a -> a == 0 ? Flux.relu : (x -> Flux.leakyrelu(x, a))
-    Flux.Chain(
-        MLP(ktheta => ntheta(phys), nhidden, hdim, σinner, tanh)...,
-        CatScale(θbounds(phys), ones(Int, ntheta(phys))),
+    DeepPrior{Float32,ktheta}(
+        Flux.Chain(
+            MLP(ktheta => ntheta(phys), nhidden, hdim, σinner, tanh)...,
+            CatScale(θbounds(phys), ones(Int, ntheta(phys))),
+        ),
+        randn_similar,
     ) |> to32
 end
+
+function derived_cvae_theta_prior(phys::PhysicsModel{Float32}, θprior; prior_mix, kwargs...)
+    # CVAE distribution prior; mix (possibly deep) data distribution prior with a fraction `prior_mix` of samples from the default distribution
+    DeepPrior{Float32,0}(DistributionUnion(init_default_theta_prior(phys), θprior; p = prior_mix), zeros_similar)
+end
+
+function derived_cvae_latent_prior(phys::PhysicsModel{Float32}, Zprior; nlatent, noisebounds, prior_mix, kwargs...)
+    # CVAE distribution prior; mix (possibly deep) data distribution prior with a fraction `prior_mix` of samples from the default distribution
+    DeepPrior{Float32,0}(DistributionUnion(init_default_latent_prior(phys; nlatent, noisebounds), Zprior; p = prior_mix), zeros_similar)
+end
+
+####
+#### CVAE
+####
 
 # models["enc1"]
 function init_mlp_cvae_enc1(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, kwargs...)
@@ -231,13 +257,16 @@ function init_xformer_cvae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim,
     TransformerEncoder(mlp; nsignals = nsignal(phys), ntheta = 0, nlatent = zdim, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
 end
 
+# derived["cvae"]
+function derived_cvae(phys::PhysicsModel{Float32}, enc1, enc2, dec; nlatent, zdim, kwargs...)
+    CVAE{nsignal(phys),ntheta(phys),nmarginalized(phys),nlatent,zdim}(enc1, enc2, dec)
+end
+
 # models["vae_dec"]
-function init_mlp_cvae_vae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, kwargs...)
-    MLP(nsignal(phys) => 2*zdim, nhidden, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias(phys)) |> to32
-    Flux.Chain(
-        MLP(zdim => nsignal(phys), nhidden, hdim, Flux.relu, Flux.softplus)...,
-        # X -> X ./ maximum(X; dims = 1), #TODO
-    ) |> to32
+function init_mlp_cvae_vae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, regtype, kwargs...)
+    # Output is either `nsignal` channel outputs directly for "L1", or `nsignal` mean/std pairs for "Rician" or "Gaussian"
+    noutput = nsignal(phys) * (regtype == "L1" ? 1 : 2)
+    MLP(zdim => noutput, nhidden, hdim, Flux.relu, Flux.softplus) |> to32 # softplus both mean and std outputs, since both must be positive
 end
 
 # models["discrim"]
@@ -245,76 +274,49 @@ function init_mlp_discrim(phys::PhysicsModel{Float32}; ninput = nsignal(phys), h
     MLP(ninput => 1, nhidden, hdim, Flux.relu, identity; dropout) |> to32
 end
 
-# derived["genatr_prior"] -> derived["genatr_prior"]
-function derived_genatr_prior(phys::PhysicsModel{Float32}, ricegen, θprior, Zprior; ktheta, klatent, kwargs...)
-    DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(phys, ricegen, θprior, Zprior)
-end
+# derived["kernel_$key"]
+function init_mmd_kernels(phys::PhysicsModel{Float32}; bwsizes, bwbounds, nbandwidth, channelwise, embeddingdim, hdim, kwargs...)
+    map(bwsizes) do nchannel
+        # Initialize kernel bandwidths
+        logσ = range((embeddingdim <= 0 ? bwbounds : (-5.0, 5.0))...; length = nbandwidth + 2)[2:end-1]
+        logσ = repeat(logσ, 1, (channelwise ? nchannel : 1))
 
-# derived["cvae_prior"]
-function derived_cvae_prior(phys::PhysicsModel{Float32}, ricegen, θprior, Zprior; ktheta, klatent, nlatent, noisebounds, prior_mix, kwargs...)
-    # CVAE distribution prior; mix (possibly deep) data distribution prior with a fraction `prior_mix` of samples from the default distribution
-    mixed_θprior = DistributionUnion(init_default_theta_prior(phys), θprior; p = prior_mix)
-    mixed_Zprior = DistributionUnion(init_default_latent_prior(phys; nlatent, noisebounds), Zprior; p = prior_mix)
-    DeepPriorRicianPhysicsModel{Float32,ktheta,klatent}(phys, ricegen, mixed_θprior, mixed_Zprior)
-end
+        # Optionally embed `nchannel` input into `embeddingdim`-dimensional learned embedding space
+        embedding = embeddingdim <= 0 ? identity : Flux.Chain(
+            lib.MLP(nchannel => embeddingdim, 0, hdim, Flux.relu, identity)...,
+            z -> Flux.normalise(z; dims = 1), # kernel bandwidths are sensitive to scale; normalize learned representations
+            z -> z .+ 0.1f0 .* randn_similar(z, size(z)...), # stochastic embedding prevents overfitting to Y data
+        )
 
-# derived["cvae"]
-function derived_cvae(phys::PhysicsModel{Float32}, enc1, enc2, dec; nlatent, zdim, kwargs...)
-    CVAE{nsignal(phys),ntheta(phys),nmarginalized(phys),nlatent,zdim}(enc1, enc2, dec)
-end
-
-# Initialize generator + discriminator + kernel
-function make_models!(phys::PhysicsModel{Float32}, settings::Dict{String,Any}, models = Dict{String, Any}(), derived = Dict{String, Any}())
-
-    # Misc. useful operators
-    get!(derived, "forwarddiff") do; ForwardDifference() |> to32; end
-    get!(derived, "laplacian") do; Laplacian() |> to32; end
-    get!(derived, "fdcat") do; CatDenseFiniteDiff(nsignal(phys), order) |> to32; end
-    get!(derived, "encoderspace") do # non-trainable sampling of encoder signal representations
-        NotTrainable(flattenchain(Flux.Chain(
-            models["enc1"],
-            split_mean_softplus_std,
-            sample_mv_normal,
-        )))
-    end
-
-    return models, derived
-end
-
-function load_checkpoint()
-    if isempty(checkpointdir())
-        Dict{String, Any}()
-    else
-        BSON.load(checkpointdir("current-models.bson"))["models"] |> deepcopy |> to32
+        # MMD kernel wrapper
+        DeepExponentialKernel(logσ, embedding) |> to32
     end
 end
 
-function make_optimizer(otype = Flux.ADAM; lr = 0.0, gclip = 0.0, wdecay = 0.0)
+function load_checkpoint(filename = "current-models.jld2")
+    isempty(checkpointdir()) && return Dict{String, Any}()
+    try
+        if endswith(filename, ".bson")
+            BSON.@load checkpointdir(filename) models
+        elseif endswith(filename, ".jld2")
+            BSON.@load checkpointdir(filename) models
+        else
+            @warn "Unknown filetype: $filename"
+            models = Dict{String, Any}()
+        end
+        return models |> deepcopy |> to32
+    catch e
+        @warn "Error loading checkpoint from $(checkpointdir())"
+        @warn sprint(showerror, e, catch_backtrace())
+        return Dict{String, Any}()
+    end
+end
+
+function init_optimizer(otype = Flux.ADAM; lr = 0.0, gclip = 0.0, wdecay = 0.0, kwargs...)
     os = Any[otype(lr)]
     (gclip > 0) && pushfirst!(os, Flux.ClipValue(gclip))
     (wdecay > 0) && push!(os, Flux.WeightDecay(wdecay))
     Flux.Optimiser(os)
-end
-
-function make_optimizers(settings)
-    os = Dict{String,Any}()
-    for name in ["mmd", "cvae", "genatr", "discrim"]
-        os[name] = make_optimizer(
-            Flux.ADAM;
-            lr = initial_learning_rate!(settings, name),
-            gclip = settings["opt"][name]["gclip"],
-            wdecay = settings["opt"][name]["wdecay"],
-        )
-    end
-    return os
-end
-
-function initial_learning_rate!(settings, optname)
-    lr = get!(settings["opt"][optname], "lr", 0.0)
-    lrrel = get!(settings["opt"][optname], "lrrel", 0.0)
-    batchsize = settings["train"]["batchsize"]
-    @assert (lr > 0) ⊻ (lrrel > 0)
-    return lr > 0 ? lr : lrrel / batchsize
 end
 
 ####

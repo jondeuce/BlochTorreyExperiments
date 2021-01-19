@@ -1,5 +1,5 @@
 ####
-#### Crossentropy
+#### Gaussian losses (KL-divergence, ELBO, likelihood, ...)
 ####
 
 kldiv_unitnormal(μ, σ) = (σ^2 + μ^2 - 1) / 2  - log(σ)
@@ -45,3 +45,67 @@ LogitBCEOne(σ⁻¹ŷ; agg = mean) = agg(@.(-Flux.logσ(σ⁻¹ŷ)))
 
 "Binary cross-entropy loss from logit probabilities with respect to labels of all 0s; minimized when ŷ = 0"
 LogitBCEZero(σ⁻¹ŷ; agg = mean) = agg(@.(σ⁻¹ŷ - Flux.logσ(σ⁻¹ŷ)))
+
+####
+#### Regularization
+####
+
+function DepthwiseSmoothReg(; type)
+    type = Symbol(type)
+    rmse(X) = sqrt(mean(abs2.(X)))
+    mae(X) = mean(abs.(X))
+    if type === :L2grad
+        Stack(@nntopo(X => ∇X => L2grad), ForwardDifference(), rmse)
+    elseif type === :L2lap
+        Stack(@nntopo(X => ∇²X => L2lap), Laplacian(), rmse)
+    elseif type === :L1grad
+        Stack(@nntopo(X => ∇X => L1grad), ForwardDifference(), mae)
+    elseif type === :L1lap
+        Stack(@nntopo(X => ∇²X => L1lap), Laplacian(), mae)
+    else
+        error("Unknown regularization type: $type")
+    end
+end
+
+function ChannelwiseSmoothReg(; type)
+    type = Symbol(type)
+    ΔZ²(Z) = mean(abs2.(Z); dims = 2)
+    ΔX²_ΔZ²(ΔX, ΔZ²) = @. abs2(ΔX) / (ΔZ² + 1f-3)
+    ΔX_ΔZ(ΔX, ΔZ²) = @. abs(ΔX) / √(ΔZ² + 1f-3)
+    rootmean(ΔX²_ΔZ²) = √(mean(ΔX²_ΔZ²))
+    transp(X) = permutedims(X, (2,1))
+    FD = Flux.Chain(transp, ForwardDifference())
+    if type === :L2diff
+        Stack(@nntopo((X,Z) : X => ΔX : Z => ΔZ => ΔZ² : (ΔX,ΔZ²) => ΔX²_ΔZ² => L2diff), FD, FD, ΔZ², ΔX²_ΔZ², rootmean)
+    elseif type === :L1diff
+        Stack(@nntopo((X,Z) : X => ΔX : Z => ΔZ => ΔZ² : (ΔX,ΔZ²) => ΔX_ΔZ => L1diff), FD, FD, ΔZ², ΔX_ΔZ, mean)
+    else
+        error("Unknown regularization type: $type")
+    end
+end
+
+function VAEReg(vae_dec; type)
+    type = Symbol(type)
+    L1(X, Xdec, M) = sum(abs.(M .* (X .- Xdec))) / sum(M) # mean of recon error within mask M
+    RiceLogL(X, (μXdec, σXdec), M) = -sum(M .* _cap.(_rician_logpdf_cuda.(X, μXdec, σXdec))) / sum(M) # mean negative Rician log likelihood within mask M
+    GaussianLogL(X, (μXdec, σXdec), M) = sum(M .* _cap.(elbo.(X, μXdec, σXdec))) / sum(M) # mean negative Gaussian log likelihood within mask M
+    if type === :L1
+        decoder = vae_dec
+        loss = L1
+    elseif type === :Rician
+        decoder = Flux.Chain(vae_dec, split_mean_std) # `vae_dec` handles exp/softplus/etc. for mean/std outputs; just split the output in half
+        loss = RiceLogL
+    elseif type === :Gaussian
+        decoder = Flux.Chain(vae_dec, split_mean_std) # `vae_dec` handles exp/softplus/etc. for mean/std outputs; just split the output in half
+        loss = GaussianLogL
+    else
+        error("Unknown regularization type: $type")
+    end
+    Stack(
+        @nntopo((cvae,X,M) : (cvae,X) => (μr0,σr) => zr => Xdec : (X,Xdec,M) => loss),
+        mv_normal_parameters,
+        sample_mv_normal,
+        decoder,
+        loss,
+    )
+end

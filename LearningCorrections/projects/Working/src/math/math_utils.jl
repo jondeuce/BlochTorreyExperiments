@@ -23,7 +23,8 @@ function sigmoid_weights_fun(x::CuArray{T}, k::Number = T(0.1)) where {T}
 end
 
 # Mix two functions
-sample_union(f1, f2, p1, x::AbstractMatrix{T}) where {T} = p1 == 1 ? f1(x) : p1 == 0 ? f2(x) : ifelse.(rand_similar(x, 1, size(x,2)) .< T(p1), f1(x), f2(x))
+sample_union(f1, f2, p1, x::AbstractMatrix) = p1 >= 1 ? f1(x) : p1 <= 0 ? f2(x) : sample_union(f1(x), f2(x), p1)
+sample_union(Y1::AbstractMatrix{T}, Y2::AbstractMatrix{T}, p1) where {T} = p1 >= 1 ? Y1 : p1 <= 0 ? Y2 : ifelse.(rand_similar(Y1, 1, size(Y1,2)) .< T(p1), Y1, Y2)
 
 normalized_range(N::Int) = N <= 1 ? zeros(N) : √(3*(N-1)/(N+1)) |> a -> range(-a,a,length=N) |> collect # mean zero and (uncorrected) std one
 uniform_range(N::Int) = N <= 1 ? zeros(N) : range(-1,1,length=N) |> collect
@@ -43,14 +44,14 @@ uniform_range(N::Int) = N <= 1 ? zeros(N) : range(-1,1,length=N) |> collect
 # Split array into mean/standard deviation
 @inline std_thresh(::AbstractArray{T}) where {T} = T(1e-6)
 @inline split_mean_std(μ::AbstractArray) = split_dim1(μ)
-@inline split_mean_exp_std(μ::AbstractArray) = ((μ0, logσ) = split_dim1(μ); return (μ0, exp.(logσ) .+ std_thresh(logσ)))
-@inline split_mean_softplus_std(μ::AbstractArray) = ((μ0, invσ) = split_dim1(μ); return (μ0, Flux.softplus.(invσ) .+ std_thresh(invσ)))
+@inline split_mean_exp_std(μ::AbstractArray) = ((μ0, logσ) = split_dim1(μ); return (μ0, exp.(logσ))) #TODO add `std_thresh(logσ)`? shouldn't be necessary with properly initialized weights etc...
+@inline split_mean_softplus_std(μ::AbstractArray) = ((μ0, invσ) = split_dim1(μ); return (μ0, Flux.softplus.(invσ))) #TODO add `std_thresh(invσ)`? shouldn't be necessary with properly initialized weights etc...
 
 # Temporary fix: https://github.com/FluxML/NNlib.jl/issues/254
 Zygote.@adjoint Flux.softplus(x::Real) = Flux.softplus(x), Δ -> (Δ * Flux.σ(x),)
 
 # Sample multivariate normal
-@inline sample_mv_normal(μ::Union{<:Tuple,<:NamedTuple}) = sample_mv_normal(μ...)
+@inline sample_mv_normal((μ0, σ)) = sample_mv_normal(μ0, σ)
 @inline sample_mv_normal(μ::AbstractMatrix) = sample_mv_normal(split_dim1(μ)...)
 @inline sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ)))
 @inline sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}, nsamples::Int) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ))..., nsamples)
@@ -322,7 +323,7 @@ function modelgradcheck(f, m; extrapolate = true, subset = nothing, verbose = fa
     Is = subset_indices_dict(ps, subset)
     ∇fd = fd_modelgradients(f, ps, Is; extrapolate) # compute subset of gradient with finite differences
     ∇pairs = if (Is !== nothing)
-        [(Flux.cpu(∇ad[p][Is[p]]), Flux.cpu(∇fd[i])) for (i,p) in enumerate(ps)] # move view of ∇ad to cpu to avoid scalar indexing into view
+        [(cpu(∇ad[p][Is[p]]), cpu(∇fd[i])) for (i,p) in enumerate(ps)] # move view of ∇ad to cpu to avoid scalar indexing into view
     else
         [(∇ad[p], ∇fd[i]) for (i,p) in enumerate(ps)]
     end

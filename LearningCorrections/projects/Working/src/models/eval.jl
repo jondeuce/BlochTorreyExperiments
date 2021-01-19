@@ -150,8 +150,8 @@ function mle_biexp_epg_noise_only(
 end
 
 function _test_mle_biexp_epg_noise_only(phys::BiexpEPGModel, derived; nsamples = 10240, init_epsilon = false)
-    θ = sampleθprior(derived["genatr_prior"], nsamples)
-    Z = sampleZprior(derived["genatr_prior"], nsamples)
+    θ = sample(derived["genatr_theta_prior"], nsamples)
+    Z = sample(derived["genatr_latent_prior"], nsamples)
     X = signal_model(phys, θ)
     X̂ = sampleX̂(models["genatr"], X, Z) #TODO
 
@@ -186,10 +186,9 @@ function _test_mle_biexp_epg_noise_only(phys::BiexpEPGModel, derived; nsamples =
 end
 
 function _test_noiselevel()
-    prior = derived["genatr_prior"]
-    G = prior.rice
-    θ = sampleθprior(prior, 10240)
-    Z = sampleZprior(prior, 10240)
+    G = models["genatr"]
+    θ = sample(derived["genatr_theta_prior"], 10240)
+    Z = sample(derived["genatr_latent_prior"], 10240)
     X = signal_model(phys, θ)
     let
         ν, ϵ = rician_params(G, X, Z)
@@ -261,8 +260,11 @@ function mle_biexp_epg(
             enumerate(Iterators.partition(1:size(signal(Ymeta),2), batch_size)),
         ) do (batchnum, batch)
         posterior_state(
+            phys,
+            models["genatr"],
             derived["cvae"],
-            derived["genatr_prior"],
+            derived["genatr_theta_prior"],
+            derived["genatr_latent_prior"],
             Ymeta[:,batch];
             miniter = 1,
             maxiter = initial_iter,
@@ -506,7 +508,7 @@ function eval_mri_model(
     )
 
     inverter(Y; kwargs...) = mapreduce((x,y) -> map(hcat, x, y), enumerate(Iterators.partition(1:size(Y,2), batch_size))) do (batchnum, batch)
-        posterior_state(derived["cvae"], derived["genatr_prior"], MetaCPMGSignal(phys, img, Y[:,batch]); verbose = false, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
+        posterior_state(phys, models["genatr"], derived["cvae"], derived["genatr_theta_prior"], derived["genatr_latent_prior"], MetaCPMGSignal(phys, img, Y[:,batch]); verbose = false, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
     end
     saveplot(p, name, folder = savefolder) = map(suf -> savefig(p, joinpath(mkpath(folder), name * suf)), savetypes)
 
@@ -575,7 +577,7 @@ function eval_mri_model(
                 (force_histograms || !haskey(img.meta[:histograms][:inference], key)) ?
                     let
                         @info "Computing signal histogram for $(key) data..."
-                        @time signal_histograms(Flux.cpu(X[:data]); edges = Y_train_edges, nbins = nothing)
+                        @time signal_histograms(cpu(X[:data]); edges = Y_train_edges, nbins = nothing)
                     end :
                     img.meta[:histograms][:inference][key]
 
@@ -690,8 +692,8 @@ function eval_mri_model(
         @info "Plotting signal distributions compared to $dataset data..." # Compare per-echo and all-signal cdf's of test data and simulated data
         pcdf = plot(; commonkwargs...)
         @time for X in [X for (k,X) in Xs if k ∈ (:Y_test, :Yhat_cvae)]
-            plot!(pcdf, discrete_cdf(Flux.cpu(X[:data]))...; line = (1, X[:colour]), legend = :none, commonkwargs...)
-            plot!(pcdf, discrete_cdf(reshape(Flux.cpu(X[:data]),1,:))...; line = (1, X[:colour]), legend = :none, commonkwargs...)
+            plot!(pcdf, discrete_cdf(cpu(X[:data]))...; line = (1, X[:colour]), legend = :none, commonkwargs...)
+            plot!(pcdf, discrete_cdf(reshape(cpu(X[:data]),1,:))...; line = (1, X[:colour]), legend = :none, commonkwargs...)
         end
         saveplot(pcdf, "signal-cdf-compare")
     end
@@ -714,7 +716,7 @@ function eval_mri_model(
         Y = get_slice(img.data, slices) # (nx, ny, nslice, nTE)
         Islices = findall(!isnan, Y[..,1]) # entries within Y mask
         Imaskslices = filter(I -> I[slicedim] ∈ slices, img.indices[:mask])
-        fill_maps(x) = (out = fill(NaN, size(Y)[1:3]); out[Islices] .= Flux.cpu(x); return out)
+        fill_maps(x) = (out = fill(NaN, size(Y)[1:3]); out[Islices] .= cpu(x); return out)
 
         θcvae = infer_θderived(permutedims(Y[Islices,:]) |> to32)
         θmle = θderived_cpu(flat_image_to_flat_indices(mle_image_state.θ, Imaskslices))
@@ -869,8 +871,11 @@ function peak_separation(
 
     function cvae_inference_state(Ymeta)
         state = posterior_state(
+            phys,
+            models["genatr"],
             derived["cvae"],
-            derived["genatr_prior"],
+            derived["genatr_theta_prior"],
+            derived["genatr_latent_prior"],
             Ymeta;
             miniter = cvae_iters,
             maxiter = cvae_iters,
