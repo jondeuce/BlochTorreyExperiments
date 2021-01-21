@@ -123,7 +123,6 @@ end
 ####
 
 getnow() = Dates.format(Dates.now(), "yyyy-mm-dd-T-HH-MM-SS-sss")
-savebson(filename, data::AbstractDict) = @elapsed BSON.bson(filename, data)
 
 function capture_stdout(f)
     let original_stdout = stdout
@@ -151,14 +150,12 @@ function savesettings(settings::AbstractDict; filename = nothing, verbose = true
     return settings
 end
 
-function saveprogress(savedata::AbstractDict; savefolder, prefix = "", suffix = "")
-    !isdir(savefolder) && mkpath(savefolder)
+function saveprogress(savedata::AbstractDict; savefolder, ext, prefix = "", suffix = "")
     for (key, data) in savedata
         try
-            BSON.bson(
-                joinpath(savefolder, "$(prefix)$(key)$(suffix).bson"),
-                Dict{String,Any}(string(key) => deepcopy(cpu(data))),
-            )
+            filename = joinpath(mkpath(savefolder), prefix * string(key) * suffix * ext)
+            data = Dict{String,Any}(string(key) => deepcopy(cpu(data)))
+            FileIO.save(filename, data)
         catch e
             handleinterrupt(e; msg = "Error saving progress for data: $key")
         end
@@ -166,11 +163,10 @@ function saveprogress(savedata::AbstractDict; savefolder, prefix = "", suffix = 
 end
 
 function saveplots(plothandles::AbstractDict; savefolder, prefix = "", suffix = "", ext = ".png")
-    !isdir(savefolder) && mkpath(savefolder)
     for (name, p) in plothandles
         (p === nothing) && continue
         try
-            savefig(p, joinpath(savefolder, prefix * string(name) * suffix * ext))
+            savefig(p, joinpath(mkpath(savefolder), prefix * string(name) * suffix * ext))
         catch e
             handleinterrupt(e; msg = "Error saving plot ($name)")
         end

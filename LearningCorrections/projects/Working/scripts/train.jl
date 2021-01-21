@@ -54,24 +54,24 @@ lib.settings_template() = TOML.parse(
         nsamples      = 1     # Average over `nsamples` instances of corrected signals
 
 [eval]
-    batchsize       = 10240 # batch size for evaluation
-    nbatches        = 2     # number of eval batches
-    valevalperiod   = 120.0
-    trainevalperiod = 120.0
-    printperiod     = 120.0
-    saveperiod      = 600.0
+    batchsize        = 10240 # batch size for evaluation
+    nbatches         = 2     # number of eval batches
+    stepsaveperiod   = 60.0
+    valsaveperiod    = 120.0
+    trainsaveperiod  = 120.0
+    printperiod      = 120.0
+    checkpointperiod = 600.0
 
 [opt]
     lr       = 1e-4    # Initial learning rate
-    lrthresh = 0.0     #1e-6 # Absolute minimum learning rate
+    lrthresh = 1e-6    # Absolute minimum learning rate
     lrdrop   = 3.16    # Drop learning rate by factor `lrdrop` every `lrrate` epochs
-    lrrate   = 999_999 # Drop learning rate by factor `lrdrop` every `lrrate` epochs
-    lrwarmup = 1000    # Linear learning rate warmup period (iterations, not epochs)
+    lrrate   = 10_000  # Drop learning rate by factor `lrdrop` every `lrrate` epochs
     gclip    = 0.0     # Gradient clipping
     wdecay   = 0.0     # Weight decay
     [opt.cvae]
         INHERIT = "%PARENT%"
-        lambda_vae_data = 1.0 # Weighting of vae decoder regularization loss on real signals
+        lambda_vae_data = 0.0 # Weighting of vae decoder regularization loss on real signals
         lambda_vae_sim  = 1.0 # Weighting of vae decoder regularization loss on simulated signals
         lambda_pseudo   = 0.0 # Weighting of pseudo label loss
     [opt.genatr]
@@ -112,18 +112,18 @@ lib.settings_template() = TOML.parse(
         regtype = "Gaussian" # "L1", "Gaussian", or "Rician"
     [arch.genatr]
         INHERIT     = "%PARENT%"
-        hdim        = 64   #TODO "%PARENT%"
-        nhidden     = 2    #TODO "%PARENT%"
+        hdim        = 64   #TODO
+        nhidden     = 2    #TODO
         ktheta      = 16   #TODO Dimension of domain of theta prior space
         klatent     = 4    #TODO Dimension of domain of latent prior space
-        prior_mix   = 0.5  #TODO Mix (possibly learned) genatr prior with `prior_mix` fraction of default prior
+        prior_mix   = 0.0  #TODO Mix (possibly learned) genatr prior with `prior_mix` fraction of default prior
         leakyslope  = 0.0
         maxcorr     = 0.1
         noisebounds = [-6.0, 0.0] #TODO
     [arch.discrim]
         INHERIT     = "%PARENT%"
-        hdim      = 0     #TODO "%PARENT%"
-        nhidden   = 0     #TODO "%PARENT%"
+        hdim      = 0     #TODO
+        nhidden   = 0     #TODO
         dropout   = 0.1
     [arch.kernel]
         INHERIT      = "%PARENT%"
@@ -140,10 +140,10 @@ lib.clear_checkpointdir!()
 # lib.set_checkpointdir!(projectdir("log", "ignite-cvae-2021-01-05-T-13-45-23-425"))
 
 settings = lib.load_settings()
+wandb_logger = lib.init_wandb_logger(settings; activate = true, dryrun = false, wandb_dir = projectdir())
+
 # phys = lib.EPGModel{Float32,false}(n = 64)
-!isdefined(Main, :phys) && (phys = lib.load_epgmodel_physics())
-settings = lib.load_settings()
-wandb_logger = lib.init_wandb_logger(settings)
+@isdefined(phys) || (phys = lib.load_epgmodel_physics())
 
 kws(keys...) = Any[Symbol(k) => v for (k,v) in foldl(getindex, string.(keys); init = settings)]
 
@@ -181,16 +181,6 @@ optimizers["cvae"] = lib.init_optimizer(Flux.ADAM; kws("opt", "cvae")...)
 optimizers["genatr"] = lib.init_optimizer(Flux.ADAM; kws("opt", "genatr")...)
 optimizers["discrim"] = lib.init_optimizer(Flux.ADAM; kws("opt", "discrim")...)
 optimizers["kernel"] = map(_ -> lib.init_optimizer(Flux.ADAM; kws("opt", "kernel")...), models["kernel"])
-
-####
-#### Setup
-####
-
-# for (parent, (key, leaf)) in lib.breadth_first_iterator(settings), (k,v) in leaf
-#    (k == "lr") && (leaf[k] = 1e-5)
-#    (k == "lrwarmup") && (leaf[k] = 10000)
-#    (k == "wdecay") && (leaf[k] = 0.0)
-# end
 
 ####
 #### Augmentations
@@ -276,7 +266,6 @@ function CVAElosses(Ymeta::AbstractMetaDataSignal; marginalize_Z)
     X̂mask   = Zygote.@ignore lib.signal_mask(X̂; minkept)
     X̂masked = X̂mask .* X̂
     KLDiv, ELBO = KL_and_ELBO(derived["cvae"], X̂masked, θ, Z; marginalize_Z)
-
     ℓ = (; KLDiv, ELBO)
 
     if λ_vae_sim > 0
@@ -351,58 +340,18 @@ function train_step(engine, batch)
                 cvae = sum(CVAElosses(Ytrainmeta; marginalize_Z = false)) #TODO marginalize_Z
                 return λ_0 * mmd + cvae
             end
-            @timeit "reverse" gs = back(one(eltype(phys))) #TODO CUDA.@sync
+            @timeit "reverse" gs = back(one(ℓ)) #TODO CUDA.@sync
             @timeit "update!" Flux.Optimise.update!(optimizers["mmd"], ps, gs) #TODO CUDA.@sync
             outputs["loss"] = ℓ
         end
 
         # Train CVAE loss
         train_CVAE && @timeit "cvae" let #TODO CUDA.@sync
-            # ps = Flux.params(models["enc1"], models["enc2"], models["dec"])
-            ps = Flux.params(models["enc1"], models["enc2"], models["dec"], models["vae_dec"]) #TODO
-            _found_nan_param = false
-            for m in ["enc1", "enc2", "dec", "vae_dec"]
-                pm = Flux.params(models[m])
-                for (i,p) in enumerate(pm)
-                    if any(isnan, p)
-                        _found_nan_param = true
-                        @info m, i, typeof(p), size(p), sum(isnan, p) / length(p)
-                        J = findall(isnan.(p))
-                        for j in 1:min(length(J), 5)
-                            @info m, i, j, J[j:j], p[J[j:j]]
-                        end
-                    end
-                end
-            end
-            if _found_nan_param
-                @info "TERMINATING - FOUND NAN PARAM"
-                engine.terminate()
-            end
+            ps = Flux.params(models["enc1"], models["enc2"], models["dec"], models["vae_dec"])
             for _ in 1:settings["train"]["CVAEsteps"]
-                @timeit "forward"   ℓ, back = Zygote.pullback(() -> sum(CVAElosses(Ytrainmeta; marginalize_Z = false)), ps) #TODO CUDA.@sync #TODO marginalize_Z
-                @timeit "reverse"   gs = back(one(eltype(phys))) #TODO CUDA.@sync
-                _found_nan_grad = false
-                for m in ["enc1", "enc2", "dec", "vae_dec"]
-                    pm = Flux.params(models[m])
-                    for (i,p) in enumerate(pm)
-                        g = gs[p]
-                        if any(isnan, g)
-                            _found_nan_grad = true
-                            @info m, i, typeof(g), size(g), sum(isnan, g) / length(g)
-                            J = findall(isnan.(g))
-                            for j in 1:min(length(J), 5)
-                                @info m, i, j, J[j:j], p[J[j:j]], g[J[j:j]]
-                            end
-                        end
-                        # @. g = ifelse(isnan(g), 0, g)
-                    end
-                end
-                if _found_nan_grad
-                    # @info "ZEROING NAN GRADIENT"
-                    @info "TERMINATING - FOUND NAN GRADIENT"
-                    engine.terminate()
-                end
-                @timeit "update!"   Flux.Optimise.update!(optimizers["cvae"], ps, gs) #TODO CUDA.@sync
+                @timeit "forward" ℓ, back = Zygote.pullback(() -> sum(CVAElosses(Ytrainmeta; marginalize_Z = false)), ps) #TODO CUDA.@sync #TODO marginalize_Z
+                @timeit "reverse" gs = back(one(ℓ)) #TODO CUDA.@sync
+                @timeit "update!" Flux.Optimise.update!(optimizers["cvae"], ps, gs) #TODO CUDA.@sync
                 outputs["CVAE"] = ℓ
             end
         end
@@ -413,7 +362,7 @@ function train_step(engine, batch)
                 deeppriors = [models["theta_prior"], models["latent_prior"]][[settings["train"]["DeepThetaPrior"]::Bool, settings["train"]["DeepLatentPrior"]::Bool]]
                 ps = Flux.params(models["genatr"], deeppriors...)
                 @timeit "forward" ℓ, back = Zygote.pullback(() -> sum(MMDlosses(Ytrainmeta)), ps) #TODO CUDA.@sync
-                @timeit "reverse" gs = back(one(eltype(phys))) #TODO CUDA.@sync
+                @timeit "reverse" gs = back(one(ℓ)) #TODO CUDA.@sync
                 @timeit "update!" Flux.Optimise.update!(optimizers["mmd"], ps, gs) #TODO CUDA.@sync
                 outputs["MMD"] = ℓ
             end
@@ -426,7 +375,7 @@ function train_step(engine, batch)
                 ps = Flux.params(models["discrim"])
                 for _ in 1:settings["train"]["Dsteps"]
                     @timeit "forward" ℓ, back = Zygote.pullback(() -> sum(Dloss(Xtrain, Ytrain, Ztrain)), ps) #TODO CUDA.@sync
-                    @timeit "reverse" gs = back(one(eltype(phys))) #TODO CUDA.@sync
+                    @timeit "reverse" gs = back(one(ℓ)) #TODO CUDA.@sync
                     @timeit "update!" Flux.Optimise.update!(optimizers["discrim"], ps, gs) #TODO CUDA.@sync
                     outputs["Dloss"] = ℓ
                 end
@@ -435,7 +384,7 @@ function train_step(engine, batch)
                 deeppriors = [models["theta_prior"], models["latent_prior"]][[settings["train"]["DeepThetaPrior"]::Bool, settings["train"]["DeepLatentPrior"]::Bool]]
                 ps = Flux.params(models["genatr"], deeppriors...)
                 @timeit "forward" ℓ, back = Zygote.pullback(() -> sum(Gloss(Xtrain, Ztrain)), ps) #TODO CUDA.@sync
-                @timeit "reverse" gs = back(one(eltype(phys))) #TODO CUDA.@sync
+                @timeit "reverse" gs = back(one(ℓ)) #TODO CUDA.@sync
                 @timeit "update!" Flux.Optimise.update!(optimizers["genatr"], ps, gs) #TODO CUDA.@sync
                 outputs["Gloss"] = ℓ
             end
@@ -536,7 +485,7 @@ function compute_metrics(engine, batch; dataset)
 
         # Initialize output metrics dictionary
         is_consecutive = !isempty(logger) && (logger.epoch[end] == trainer.state.epoch && logger.iter[end] == trainer.state.iteration && logger.dataset[end] === dataset)
-        accum!(k, v) = (d = cb_state["all_log_metrics"][dataset]; (!is_consecutive || !haskey(d, k)) ? (d[Symbol(k)] = Any[v]) : push!(d[Symbol(k)], v))
+        accum!(k, v) = (d = cb_state["all_log_metrics"][dataset]; (!is_consecutive || !haskey(d, k)) ? (d[Symbol(k)] = Any[Float64.(v)]) : push!(d[Symbol(k)], Float64.(v)))
         accum!(k, v::Histogram) = (d = cb_state["all_histograms"][dataset]; (!is_consecutive || !haskey(d, k)) ? (d[Symbol(k)] = v) : (d[Symbol(k)].weights .+= v.weights))
         accum!(iter) = foreach(((k,v),) -> accum!(k, v), collect(pairs(iter)))
 
@@ -565,6 +514,17 @@ function compute_metrics(engine, batch; dataset)
             λ_0 = eltype(Y)(get!(settings["opt"]["mmd"], "lambda_0", 0.0)::Float64)
             loss = ℓ_CVAE.CVAE + λ_0 * ℓ_MMD.MMD
             accum!((; loss))
+
+            CVAE_Acts = let
+                θ = sample(derived["cvae_theta_prior"], signal(Ymeta))
+                Z = sample(derived["cvae_latent_prior"], signal(Ymeta))
+                X = lib.signal_model(phys, θ)
+                X̂ = lib.sampleX̂(models["genatr"], X, Z)
+                @unpack μr0, σr, μq0, σq = lib.mv_normal_parameters(derived["cvae"], X̂, θ, Z)
+                activation_scale(z) = vcat(mean(z; dims=2), std(z; dims=2)) |> vec |> lib.cpu |> z -> @. log10(1e-3 + abs(z)) # distribution of mean/std of activations
+                mapreduce(activation_scale, vcat, (μr0, σr, μq0, σq))
+            end
+            accum!((; CVAE_Acts))
 
             if settings["train"]["GANrate"]::Int > 0
                 ℓ_GAN = Dloss(Y_fit_state.X, Y, Y_fit_state.Z)
@@ -608,6 +568,14 @@ function compute_metrics(engine, batch; dataset)
         output_metrics = Dict{Any,Any}(string(k) => deepcopy(v) for (k,v) in cb_state["log_metrics"] if k ∉ [:epoch, :iter, :dataset, :time]) # output non-housekeeping metrics
         merge!(cb_state["metrics"], output_metrics) # merge all log metrics into cb_state
         filter!(((k,v),) -> !ismissing(v), output_metrics) # return non-missing metrics (wandb cannot handle missing)
+        for (k,v) in output_metrics
+            if endswith(k, "_err") && v isa AbstractVector
+                for (i,vi) in enumerate(v)
+                    output_metrics[k * "_$i"] = vi
+                end
+                delete!(output_metrics, k)
+            end
+        end
 
         return output_metrics
     end
@@ -666,20 +634,20 @@ trainer.add_event_handler(
 
 # Compute callback metrics
 trainer.add_event_handler(
-    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["valevalperiod"])),
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["valsaveperiod"])),
     @j2p (engine) -> val_evaluator.run(val_eval_loader)
 )
 trainer.add_event_handler(
-    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["trainevalperiod"])),
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["trainsaveperiod"])),
     @j2p (engine) -> train_evaluator.run(train_eval_loader)
 )
 
 # Checkpoint current model + logger + make plots
 trainer.add_event_handler(
-    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["saveperiod"])),
+    Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["checkpointperiod"])),
     @j2p function (engine)
         @timeit "checkpoint" let models = lib.cpu(models)
-            @timeit "save current model" lib.saveprogress(@dict(models, logger); savefolder = lib.logdir(), prefix = "current-")
+            @timeit "save current model" lib.saveprogress(@dict(models, logger); savefolder = lib.logdir(), prefix = "current-", ext = ".jld2")
             @timeit "make current plots" plothandles = makeplots()
             @timeit "save current plots" lib.saveplots(plothandles; savefolder = lib.logdir(), prefix = "current-")
         end
@@ -688,35 +656,19 @@ trainer.add_event_handler(
 
 # Check for + save best model + logger + make plots
 trainer.add_event_handler(
-    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["saveperiod"])),
+    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["checkpointperiod"])),
     @j2p function (engine)
         loss_metric = :CVAE # :Yhat_logL
         losses = logger[logger.dataset .=== :val, loss_metric] |> skipmissing |> collect
         if !isempty(losses) && (length(losses) == 1 || losses[end] < minimum(losses[1:end-1]))
             @timeit "save best progress" let models = lib.cpu(models)
-                @timeit "save best model" lib.saveprogress(@dict(models, logger); savefolder = lib.logdir(), prefix = "best-")
+                @timeit "save best model" lib.saveprogress(@dict(models, logger); savefolder = lib.logdir(), prefix = "best-", ext = ".jld2")
                 @timeit "make best plots" plothandles = makeplots()
                 @timeit "save best plots" lib.saveplots(plothandles; savefolder = lib.logdir(), prefix = "best-")
             end
         end
     end
 )
-
-#=
-# Linear warmup
-trainer.add_event_handler(
-    Events.STARTED | Events.ITERATION_COMPLETED,
-    @j2p function (engine)
-        lib.update_optimizers!(optimizers; field = :eta) do opt, name
-            lr_warmup = settings["opt"][name]["lrwarmup"]
-            lr_initial = lib.initial_learning_rate!(settings, name)
-            !(engine.state.iteration <= lr_warmup > 0) && return
-            new_eta = range(lr_initial / lr_warmup, lr_initial; length = lr_warmup + 1)[engine.state.iteration + 1]
-            opt.eta = new_eta
-        end
-    end
-)
-=#
 
 # Drop learning rate
 trainer.add_event_handler(
@@ -763,19 +715,18 @@ trainer.add_event_handler(
 ####
 
 # Attach training/validation output handlers
-if (wandb_logger !== nothing)
-    for (tag, engine, event) in [
-            ("step",  trainer,         Events.EPOCH_COMPLETED(event_filter = @j2p lib.timeout_event_filter(settings["eval"]["trainevalperiod"]))), # computed each iteration; throttle recording
-            ("train", train_evaluator, Events.EPOCH_COMPLETED), # throttled above; record every epoch
-            ("val",   val_evaluator,   Events.EPOCH_COMPLETED), # throttled above; record every epoch
-        ]
-        wandb_logger.attach_output_handler(engine;
-            tag = tag,
-            event_name = event,
-            output_transform = @j2p(metrics -> metrics),
-            global_step_transform = @j2p((args...; kwargs...) -> trainer.state.epoch),
-        )
-    end
+(wandb_logger !== nothing) && for (tag, engine, event_name) in [
+        (tag = "step",  engine = trainer,         event_name = Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["stepsaveperiod"]))), # computed each iteration; throttle recording
+        (tag = "train", engine = train_evaluator, event_name = Events.EPOCH_COMPLETED), # throttled above; record every epoch
+        (tag = "val",   engine = val_evaluator,   event_name = Events.EPOCH_COMPLETED), # throttled above; record every epoch
+    ]
+    wandb_logger.attach_output_handler(
+        engine;
+        tag = tag,
+        event_name = event_name,
+        output_transform = @j2p(metrics -> metrics),
+        global_step_transform = @j2p((args...; kwargs...) -> trainer.state.epoch),
+    )
 end
 
 ####
@@ -784,3 +735,4 @@ end
 
 TimerOutputs.reset_timer!()
 trainer.run(train_loader, settings["train"]["epochs"])
+(wandb_logger !== nothing) && wandb.run.finish()

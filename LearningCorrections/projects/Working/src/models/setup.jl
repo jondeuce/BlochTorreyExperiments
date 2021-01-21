@@ -4,26 +4,42 @@
 
 function settings_template end
 
-make_default_settings(args...) = parse_command_line!(settings_template(), args...)
-
 # Parse command line arguments into default settings
-function load_settings(args...)
-    if isempty(checkpointdir())
-        make_default_settings(args...)
+function load_settings(args...; override = nothing)
+    settings = if isempty(checkpointdir())
+        parse_args_from_template(settings_template(), args...)
     else
         TOML.parsefile(checkpointdir("settings.toml"))
     end
+    (override !== nothing) && override_settings!(settings, override)
+    return settings
 end
 
-# Settings parsing
-function parse_command_line!(
-        settings::AbstractDict{<:AbstractString, Any},
-        args = isinteractive() ? String[] : ARGS,
-    )
+# Generate arg parser
+function generate_arg_parser!(parser, leaf_settings, root_settings = leaf_settings)
+    for (k,v) in leaf_settings
+        if v isa AbstractDict
+            generate_arg_parser!(parser, Dict{String,Any}(k * "." * kin => deepcopy(vin) for (kin, vin) in v), root_settings)
+        else
+            props = Dict{Symbol,Any}(:default => deepcopy(v))
+            if v isa AbstractVector
+                props[:arg_type] = eltype(v)
+                props[:nargs] = length(v)
+            else
+                props[:arg_type] = typeof(v)
+            end
+            ArgParse.add_arg_table!(parser, "--" * k, props)
+        end
+    end
+    return parser
+end
+generate_arg_parser(args...; kwargs...) = generate_arg_parser!(ArgParse.ArgParseSettings(), args...; kwargs...)
 
-    # Fields "INHERIT" with value "%PARENT%" specify that all fields from (and only from) the immediate parent
-    # should be copied into the child, unless that key is already present in the child
-    for (parent, (key, leaf)) in reverse(breadth_first_iterator(settings))
+function clean_template!(template::AbstractDict{<:AbstractString})
+    # Keys `"INHERIT"` with value `"%PARENT%"` specify that all fields from the immediate parent (i.e. non-recursive) should be copied into the child, unless that key is already present in the child
+    for (parent, (key, leaf)) in reverse(breadth_first_iterator(template))
+        (parent === nothing) && continue
+        (get(leaf, "INHERIT", "") != "%PARENT%") && continue
         (parent !== nothing && get(leaf, "INHERIT", "") == "%PARENT%") || continue
         for (k,v) in parent
             (v isa AbstractDict) && continue
@@ -33,41 +49,97 @@ function parse_command_line!(
     end
 
     # Fields with value "%PARENT%" take default values from the corresponding field of their parent
-    for (parent, (key, leaf)) in breadth_first_iterator(settings)
+    for (parent, (key, leaf)) in breadth_first_iterator(template)
         (parent === nothing) && continue
         for (k,v) in leaf
             (v == "%PARENT%") && (leaf[k] = deepcopy(parent[k]))
         end
     end
 
-    # Generate arg parser
-    function populate_arg_table!(parser, leaf_settings, root_settings = leaf_settings)
-        for (k,v) in leaf_settings
-            if v isa AbstractDict
-                populate_arg_table!(parser, Dict{String,Any}(k * "." * kin => deepcopy(vin) for (kin, vin) in v), root_settings)
-            else
-                props = Dict{Symbol,Any}(:default => deepcopy(v))
-                if v isa AbstractVector
-                    props[:arg_type] = eltype(v)
-                    props[:nargs] = length(v)
-                else
-                    props[:arg_type] = typeof(v)
-                end
-                ArgParse.add_arg_table!(parser, "--" * k, props)
-            end
-        end
-        return parser
-    end
-    parser = populate_arg_table!(ArgParse.ArgParseSettings(), settings, settings)
+    return template
+end
+clean_template(template, args...; kwargs...) = clean_template!(deepcopy(template), args...; kwargs...)
 
+function parse_args_into!(settings::AbstractDict{<:AbstractString}, args, parser; filter_args = false)
     # Parse and merge into settings
     for (k,v) in ArgParse.parse_args(args, parser)
-        ksplit = String.(split(k, "."))
-        din = foldl(getindex, ksplit[begin:end-1]; init = settings)
-        din[ksplit[end]] = deepcopy(v)
+        filter_args && !any(startswith("--" * k), args) && continue
+        ks = String.(split(k, "."))
+        d = foldl(getindex, ks[begin:end-1]; init = settings)
+        @assert haskey(d, ks[end])
+        d[ks[end]] = deepcopy(v)
     end
+    return settings
+end
+parse_args_into(settings::AbstractDict{<:AbstractString}, args...; kwargs...) = parse_args_into!(deepcopy(settings), args...; kwargs...)
+
+function override_settings!(settings, override)
+    (override === nothing) && return settings
+    for (parent, (key, leaf)) in breadth_first_iterator(settings), (k,v) in leaf
+        haskey(override, k) && (leaf[k] = deepcopy(override[k]))
+    end
+    return settings
+end
+
+# Command line parsing
+function parse_args_from_template(
+        template::AbstractDict{<:AbstractString},
+        args = isinteractive() ? String[] : ARGS;
+        override = nothing
+    )
+
+    template_parser = generate_arg_parser(clean_template(template))
+    template_updated = parse_args_into(template, args, template_parser; filter_args = true)
+    template_updated = clean_template(template_updated)
+    settings_parser = generate_arg_parser(template_updated)
+    settings = parse_args_into(template_updated, args, settings_parser)
+    (override !== nothing) && override_settings!(settings, override)
 
     return settings
+end
+
+function _parse_args_from_template_test()
+    template = TOML.parse(
+    """
+    a = 0
+    b = 0
+    c = 0
+    [B]
+        INHERIT = "%PARENT%"
+        a = 1
+        [B.C]
+            INHERIT = "%PARENT%"
+            c = 2
+        [B.D]
+            INHERIT = "%PARENT%"
+            b = "%PARENT%"
+            c = 2
+    """)
+
+    check_keys(s, has, doesnt) = all(haskey.(Ref(s), has)) && !any(haskey.(Ref(s), doesnt))
+    function check_keys(s)
+        @assert check_keys(s, ["a", "b", "c"], ["INHERIT"])
+        @assert check_keys(s["B"], ["a", "b", "c"], ["INHERIT"])
+        @assert check_keys(s["B"]["C"], ["a", "c"], ["INHERIT", "b"])
+        @assert check_keys(s["B"]["D"], ["a", "b", "c"], ["INHERIT"])
+        return true
+    end
+
+    let s = parse_args_from_template(template, String[])
+        @assert s == clean_template(template) # no args passed
+        @assert check_keys(s)
+        @assert s["a"] == 0 != s["B"]["a"] == s["B"]["C"]["a"] == s["B"]["D"]["a"] == 1
+        @assert s["b"] == s["B"]["b"] == s["B"]["D"]["b"] == 0
+    end
+
+    let s = parse_args_from_template(template, ["--b=1", "--B.a=2", "--B.D.c=3"])
+        @assert check_keys(s)
+        @assert s["a"] == 0 != s["B"]["a"] == s["B"]["C"]["a"] == s["B"]["D"]["a"] == 2
+        @assert s["b"] == s["B"]["b"] == s["B"]["D"]["b"] == 1
+        @assert s["c"] == s["B"]["c"] == 0 != s["B"]["C"]["c"] == 2 != s["B"]["D"]["c"] == 3
+    end
+
+    return nothing
 end
 
 ####
@@ -77,9 +149,9 @@ end
 const use_wandb_logger = Ref(false)
 
 const _logdirname = Ref("")
-set_logdirname!(dirname) = !use_wandb_logger[] ? (_logdirname[] = basename(dirname)) : error("Cannot set log directory with WandB logger active; `wandb.run.dir` is used automatically")
-set_logdirname!() = !use_wandb_logger[] ? basename(mkpath(projectdir("log", set_logdirname!(getnow())))) : error("Cannot set log directory with WandB logger active; `wandb.run.dir` is used automatically")
-get_logdirname() = !use_wandb_logger[] ? (isempty(_logdirname[]) ? set_logdirname!() : _logdirname[]) : error("Use `logdir` to access WandB logger directory")
+set_logdirname!(dirname) = !use_wandb_logger[] && (_logdirname[] = basename(dirname))
+set_logdirname!() = !use_wandb_logger[] && basename(mkpath(projectdir("log", set_logdirname!(getnow()))))
+get_logdirname() = !use_wandb_logger[] ? (isempty(_logdirname[]) ? set_logdirname!() : _logdirname[]) : basename(logdir())
 logdir(args...) = !use_wandb_logger[] ? projectdir("log", get_logdirname(), args...) : joinpath(wandb.run.dir, args...)
 
 const _checkpointdir = Ref("")
@@ -283,7 +355,7 @@ function init_mmd_kernels(phys::PhysicsModel{Float32}; bwsizes, bwbounds, nbandw
 
         # Optionally embed `nchannel` input into `embeddingdim`-dimensional learned embedding space
         embedding = embeddingdim <= 0 ? identity : Flux.Chain(
-            lib.MLP(nchannel => embeddingdim, 0, hdim, Flux.relu, identity)...,
+            MLP(nchannel => embeddingdim, 0, hdim, Flux.relu, identity)...,
             z -> Flux.normalise(z; dims = 1), # kernel bandwidths are sensitive to scale; normalize learned representations
             z -> z .+ 0.1f0 .* randn_similar(z, size(z)...), # stochastic embedding prevents overfitting to Y data
         )
@@ -293,18 +365,10 @@ function init_mmd_kernels(phys::PhysicsModel{Float32}; bwsizes, bwbounds, nbandw
     end
 end
 
-function load_checkpoint(filename = "current-models.jld2")
+function load_checkpoint(filename)
     isempty(checkpointdir()) && return Dict{String, Any}()
     try
-        if endswith(filename, ".bson")
-            BSON.@load checkpointdir(filename) models
-        elseif endswith(filename, ".jld2")
-            BSON.@load checkpointdir(filename) models
-        else
-            @warn "Unknown filetype: $filename"
-            models = Dict{String, Any}()
-        end
-        return models |> deepcopy |> to32
+        FileIO.load(checkpointdir(filename))["models"] |> deepcopy |> to32
     catch e
         @warn "Error loading checkpoint from $(checkpointdir())"
         @warn sprint(showerror, e, catch_backtrace())

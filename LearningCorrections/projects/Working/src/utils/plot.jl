@@ -393,7 +393,7 @@ function plot_all_logger_losses(logger, cb_state, phys;
         window = 100,
         showplot = false,
     )
-    @timeit "signal plot" try
+    @timeit "logger losses plot" try
         s = x -> (x == round(Int, x) ? round(Int, x) : round(x; sigdigits = 4)) |> string
         dfp = logger[logger.dataset .=== dataset, :]
         epoch = dfp.epoch[end]

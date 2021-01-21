@@ -34,9 +34,26 @@ function terminate_on_error(f; msg = "")
 end
 
 # Initialize WandBLogger object
-function init_wandb_logger(settings)
-    WandBLogger = ignite.contrib.handlers.wandb_logger.WandBLogger
-    return use_wandb_logger[] ? WandBLogger(config = flatten_dict(settings)) : nothing
+function init_wandb_logger(settings; activate = false, dryrun = true, wandb_dir = DrWatson.projectdir())
+    if (use_wandb_logger[] = activate)
+        # Collect WandB environment variables from settings file (unless already set) and copy to python environment
+        WandBEnv = filter(((k,v),) -> startswith(k, "WANDB"), ENV)
+        get!(WandBEnv, "WANDB_MODE", ifelse(dryrun, "dryrun", "run"))
+        get!(WandBEnv, "WANDB_DIR", wandb_dir)
+
+        DefaultWandBEnv = TOML.parsefile(DrWatson.datadir("default_wandb_env.toml"))
+        for (k,v) in DefaultWandBEnv
+            get!(WandBEnv, k, v)
+        end
+
+        PyEnv = PyDict(pyimport("os").environ)
+        merge!(PyEnv, WandBEnv)
+
+        WandBLogger = ignite.contrib.handlers.wandb_logger.WandBLogger
+        WandBLogger(config = flatten_dict(settings))
+    else
+        nothing
+    end
 end
 
 # Throttle even to run every `period` seconds
