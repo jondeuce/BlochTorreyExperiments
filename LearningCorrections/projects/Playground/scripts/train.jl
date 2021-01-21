@@ -3,10 +3,10 @@
 ####
 
 using DrWatson: @quickactivate, projectdir
-@quickactivate "Working"
+@quickactivate "Playground"
 
-using Working
-using Working:
+using Playground
+using Playground:
     AbstractMetaDataSignal, MetaCPMGSignal, signal,
     mmd, logbandwidths, train_kernel!,
     arr_similar, arr32, arr64, zeros_similar, ones_similar, randn_similar, rand_similar, fill_similar,

@@ -163,6 +163,27 @@ const NamedTupleOfTuples{Ks,M,N} = NamedTuple{Ks, <:NTuple{M, <:NTuple{N}}}
 unzipnamedtuple(nt::NamedTupleOfTuples{Ks,M,N}) where {Ks,M,N} = ntuple(j -> NamedTuple{Ks}(ntuple(i -> nt[i][j], M)), N)
 Zygote.@adjoint unzipnamedtuple(nt::NamedTupleOfTuples{Ks,M,N}) where {Ks,M,N} = unzipnamedtuple(nt), Δ -> (zipnamedtuples(Δ),)
 
+function _zip_nt_test()
+    tup = ((a=[1.0],b=[2.0]), (a=[3.0],b=[4.0]))
+    nt = (a=([1.0],[3.0]), b=([2.0],[4.0]))
+    @assert zipnamedtuples(tup) == nt
+    @assert unzipnamedtuple(nt) == tup
+    @assert unzipnamedtuple(zipnamedtuples(tup)) == tup
+    @assert zipnamedtuples(unzipnamedtuple(nt)) == nt
+    modelgradcheck(tup; extrapolate = true, verbose = true) do
+        nt = zipnamedtuples(tup)
+        # sum(abs2, map(+, map(+, nt...)...)) # should work... make MWE and file issue?
+        sum(abs2, nt.a[1] + nt.a[2]) + sum(abs2, nt.b[1] + nt.b[2])
+    end
+    modelgradcheck(nt; extrapolate = true, verbose = true) do
+        tup = unzipnamedtuple(nt)
+        # sum(abs2, map(+, map(+, tup...)...)) # should work... make MWE and file issue?
+        sum(abs2, tup[1].a + tup[2].a) + sum(abs2, tup[1].b + tup[2].b)
+    end
+    # tup_out, J = Zygote.pullback(unzipnamedtuple, nt); @show J(tup_out)
+    # nt_out, J = Zygote.pullback(zipnamedtuples, tup); @show J(nt_out)
+end
+
 """
 NotTrainable(layer)
 

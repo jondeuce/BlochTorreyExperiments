@@ -1,4 +1,4 @@
-module Working
+module Playground
 
 include("fix/Reexport.jl") # workaround until Reexport v1.0 is tagged
 using .Reexport: @reexport, @importexport
@@ -114,4 +114,4 @@ function __init__()
     end
 end
 
-end # module Working
+end # module Playground

@@ -1,4 +1,4 @@
-using Working
+using Playground
 pyplot(size=(800,600))
 
 ismrm_dir = "/home/jdoucette/Documents/code/MWI-MMD-CVAE/ISMRM-2021/"

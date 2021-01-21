@@ -1,4 +1,4 @@
-using Working, Test
+using Playground, Test
 
 for N in 1:4
     Ts = [A{T,N} for A in [Array, CuArray] for T in [Float64, Float32]]
