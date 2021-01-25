@@ -170,12 +170,12 @@ function _zip_nt_test()
     @assert unzipnamedtuple(nt) == tup
     @assert unzipnamedtuple(zipnamedtuples(tup)) == tup
     @assert zipnamedtuples(unzipnamedtuple(nt)) == nt
-    modelgradcheck(tup; extrapolate = true, verbose = true) do
+    @assert modelgradcheck(tup; extrapolate = true, verbose = true) do
         nt = zipnamedtuples(tup)
         # sum(abs2, map(+, map(+, nt...)...)) # should work... make MWE and file issue?
         sum(abs2, nt.a[1] + nt.a[2]) + sum(abs2, nt.b[1] + nt.b[2])
     end
-    modelgradcheck(nt; extrapolate = true, verbose = true) do
+    @assert modelgradcheck(nt; extrapolate = true, verbose = true) do
         tup = unzipnamedtuple(nt)
         # sum(abs2, map(+, map(+, tup...)...)) # should work... make MWE and file issue?
         sum(abs2, tup[1].a + tup[2].a) + sum(abs2, tup[1].b + tup[2].b)

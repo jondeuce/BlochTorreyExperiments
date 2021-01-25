@@ -18,9 +18,9 @@ EvidenceLowerBound(x, μx0, σx) = sum(_cap.(elbo.(x, μx0, σx))) / size(μx0,2
 function _crossentropy_gradcheck_test()
     for T in [Float32, Float64]
         _rand() = one(T) + rand(T)
-        gradcheck(kldiv_unitnormal, _rand(), _rand(); extrapolate = false)
-        gradcheck(kldiv, _rand(), _rand(), _rand(), _rand(); extrapolate = false)
-        gradcheck(elbo, _rand(), _rand(), _rand(); extrapolate = false)
+        @assert gradcheck(kldiv_unitnormal, _rand(), _rand(); extrapolate = false)
+        @assert gradcheck(kldiv, _rand(), _rand(), _rand(), _rand(); extrapolate = false)
+        @assert gradcheck(elbo, _rand(), _rand(), _rand(); extrapolate = false)
     end
 end
 
@@ -84,11 +84,15 @@ function ChannelwiseSmoothReg(; type)
     end
 end
 
+elbo_laplace(x, μx0, σx) = abs(x - μx0) / σx + log(σx) + logtwo
+Zygote.@adjoint elbo_laplace(x, μx0, σx) = elbo_laplace(x, μx0, σx), Δ -> (Δ * sign(x - μx0) / σx, Δ * sign(μx0 - x) / σx, Δ * (σx - abs(x - μx0)) / σx^2)
+
 function VAEReg(vae_dec; type)
     type = Symbol(type)
     L1(X, Xdec, M) = sum(abs.(M .* (X .- Xdec))) / sum(M) # mean of recon error within mask M
     RiceLogL(X, (μXdec, σXdec), M) = -sum(M .* _cap.(_rician_logpdf_cuda.(X, μXdec, σXdec))) / sum(M) # mean negative Rician log likelihood within mask M
     GaussianLogL(X, (μXdec, σXdec), M) = sum(M .* _cap.(elbo.(X, μXdec, σXdec))) / sum(M) # mean negative Gaussian log likelihood within mask M
+    LaplaceLogL(X, (μXdec, σXdec), M) = sum(M .* _cap.(elbo_laplace.(X, μXdec, σXdec))) / sum(M) # mean negative Gaussian log likelihood within mask M
     if type === :L1
         decoder = vae_dec
         loss = L1
@@ -98,6 +102,9 @@ function VAEReg(vae_dec; type)
     elseif type === :Gaussian
         decoder = Flux.Chain(vae_dec, split_mean_std) # `vae_dec` handles exp/softplus/etc. for mean/std outputs; just split the output in half
         loss = GaussianLogL
+    elseif type === :Laplace
+        decoder = Flux.Chain(vae_dec, split_mean_std) # `vae_dec` handles exp/softplus/etc. for mean/std outputs; just split the output in half
+        loss = LaplaceLogL
     else
         error("Unknown regularization type: $type")
     end

@@ -40,6 +40,15 @@ fill_similar(x::AbstractArray, v, sz...) = fill_similar(typeof(x), v, sz...)
 fill_similar(::Type{<:AbstractArray{T}}, v, sz...) where {T} = Base.fill(T(v), sz...) # fallback
 fill_similar(::Type{<:CuArray{T}}, v, sz...) where {T} = CUDA.fill(T(v), sz...) # CUDA
 
+function with_cuda_allowscalar(f)
+    try
+        CUDA.allowscalar(true)
+        f()
+    finally
+        CUDA.allowscalar(false)
+    end
+end
+
 # Unzip array of structs into struct of arrays
 unzip(a) = map(x -> getfield.(a, x), fieldnames(eltype(a)))
 

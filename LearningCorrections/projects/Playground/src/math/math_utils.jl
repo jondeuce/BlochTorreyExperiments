@@ -258,19 +258,25 @@ function simple_fd_gradient!(g, f, x, lo = nothing, hi = nothing)
     return f₀
 end
 
-function fd_gradients(f, xs::Number...; extrapolate = true)
-    map(1:length(xs)) do i
+function fwd_gradients(f, xs...)
+    ntuple(length(xs)) do i
+        ∇ = xs[i] isa Number ? ForwardDiff.derivative : ForwardDiff.gradient
+        ∇(yi -> f(setindex!!(xs, yi, i)...), xs[i])
+    end
+end
+
+function fd_gradients(f, xs::Number...; extrapolate = true, breaktol = 2)
+    ntuple(length(xs)) do i
         fdm = FiniteDifferences.central_fdm(3, 1) # method
         fᵢ = y -> f(setindex!!(xs, y, i)...) # close over all j != i
         return extrapolate ?
-            first(FiniteDifferences.extrapolate_fdm(fdm, fᵢ, xs[i]; breaktol = 2)) : # Richardson extrapolation
+            first(FiniteDifferences.extrapolate_fdm(fdm, fᵢ, xs[i]; breaktol)) : # Richardson extrapolation
             fdm(fᵢ, xs[i])
     end
 end
 
-function fd_gradients(f, xs::AbstractArray...; extrapolate = true)
-    try
-        CUDA.allowscalar(true)
+function fd_gradients(f, xs::AbstractArray...; extrapolate = true, breaktol = 2)
+    with_cuda_allowscalar() do
         ∇s = map(zero, xs)
         for (x, ∇) in zip(xs, ∇s), i in 1:length(x)
             fdm = FiniteDifferences.central_fdm(3, 1) # method
@@ -278,19 +284,30 @@ function fd_gradients(f, xs::AbstractArray...; extrapolate = true)
             fᵢ = y -> (x[i] = y; out = f(xs...); x[i] = xᵢ; return Float64(out))
             h₀ = 0.1 * Float64(max(abs(xᵢ), one(xᵢ)))
             ∇[i] = extrapolate ?
-                first(FiniteDifferences.extrapolate_fdm(fdm, fᵢ, Float64(xᵢ), h₀; breaktol = 2)) : # Richardson extrapolation
+                first(FiniteDifferences.extrapolate_fdm(fdm, fᵢ, Float64(xᵢ), h₀; breaktol)) : # Richardson extrapolation
                 fdm(fᵢ, Float64(xᵢ))
         end
         return ∇s
-    finally
-        CUDA.allowscalar(false)
     end
 end
 
-function gradcheck(f, xs...; extrapolate = true, kwargs...)
-    ∇ad = Zygote.gradient(f, xs...)
-    ∇fd = fd_gradients(f, xs...; extrapolate)
-    @assert all(isapprox.(∇ad, ∇fd; kwargs...))
+function gradcheck(f, xs...; extrapolate = true, breaktol = 2, backward = true, forward = true, verbose = false, kwargs...)
+    @assert backward || forward
+    ∇fd = fd_gradients(f, xs...; extrapolate, breaktol)
+    bwdpassed = fwdpassed = true
+    if backward
+        ∇ad = Zygote.gradient(f, xs...)
+        bwdpassed &= all(isapprox.(∇ad, ∇fd; kwargs...))
+        verbose && !bwdpassed && @info "backward gradient failed", f(xs...), ∇ad, ∇fd
+    end
+    if forward
+        ∇ad = with_cuda_allowscalar() do
+            fwd_gradients(f, xs...)
+        end
+        fwdpassed &= all(isapprox.(∇ad, ∇fd; kwargs...))
+        verbose && !fwdpassed && @info "forward gradient failed", f(xs...), ∇ad, ∇fd
+    end
+    return bwdpassed && fwdpassed
 end
 
 function subset_indices_dict(ps::Flux.Params, subset = nothing)
@@ -304,24 +321,24 @@ function subset_indices_dict(ps::Flux.Params, subset = nothing)
     return Is
 end
 
-function fd_modelgradients(f, ps::Flux.Params, Is::Union{<:IdDict, Nothing} = nothing; extrapolate = true)
+function fd_modelgradients(f, ps::Flux.Params, Is::Union{<:IdDict, Nothing} = nothing; extrapolate = true, breaktol = 2)
     (Is !== nothing) && (ps = [view(p, Is[p]) for p in ps])
-    fd_gradients((args...,) -> f(), ps...; extrapolate)
+    fd_gradients((args...,) -> f(), ps...; extrapolate, breaktol)
 end
 
-function fd_modelgradients(f, m; extrapolate = true, subset = nothing)
+function fd_modelgradients(f, m; extrapolate = true, breaktol = 2, subset = nothing)
     ps = Flux.params(m)
     Is = subset_indices_dict(ps, subset)
-    fd_modelgradients(f, ps, Is; extrapolate)
+    fd_modelgradients(f, ps, Is; extrapolate, breaktol)
 end
 
-function modelgradcheck(f, m; extrapolate = true, subset = nothing, verbose = false, seed = nothing, kwargs...)
+function modelgradcheck(f, m; extrapolate = true, breaktol = 2, subset = nothing, verbose = false, seed = nothing, kwargs...)
     (seed !== nothing) && (Random.seed!(seed); CUDA.seed!(0))
     ps = m isa Flux.Params ? m : Flux.params(m)
     ℓ, J = Zygote.pullback(f, ps) # compute full gradient with backprop
     ∇ad = J(one(eltype(first(ps))))
     Is = subset_indices_dict(ps, subset)
-    ∇fd = fd_modelgradients(f, ps, Is; extrapolate) # compute subset of gradient with finite differences
+    ∇fd = fd_modelgradients(f, ps, Is; extrapolate, breaktol) # compute subset of gradient with finite differences
     ∇pairs = if (Is !== nothing)
         [(cpu(∇ad[p][Is[p]]), cpu(∇fd[i])) for (i,p) in enumerate(ps)] # move view of ∇ad to cpu to avoid scalar indexing into view
     else
@@ -352,16 +369,16 @@ function _softmax_test()
 
         @info "simple_softmax"
         Zygote.gradient(sumabs2(simple_softmax), c(x)) |> display
-        fd_gradients(sumabs2(simple_softmax), c(x); extrapolate = true) |> display
+        fd_gradients(sumabs2(simple_softmax), c(x); extrapolate = true, breaktol = 2) |> display
         ∇sumabs2(simple_softmax)(c(x)) |> display # true answer
-        gradcheck(sumabs2(simple_softmax), c(x); rtol = 1e-2, atol = 0, extrapolate = true)
+        @assert gradcheck(sumabs2(simple_softmax), c(x); rtol = 1e-2, atol = 0, extrapolate = true, breaktol = 2, backward = true, forward = true)
         println("")
 
         @info "Flux.softmax"
         Zygote.gradient(sumabs2(Flux.softmax), c(x)) |> display
-        fd_gradients(sumabs2(Flux.softmax), c(x); extrapolate = true) |> display
+        fd_gradients(sumabs2(Flux.softmax), c(x); extrapolate = true, breaktol = 2) |> display
         ∇sumabs2(Flux.softmax)(c(x)) |> display # true answer
-        gradcheck(sumabs2(Flux.softmax), c(x); rtol = 1e-2, atol = 0, extrapolate = true)
+        @assert gradcheck(sumabs2(Flux.softmax), c(x); rtol = 1e-2, atol = 0, extrapolate = true, breaktol = 2, backward = true, forward = true)
         println("")
     end
 end

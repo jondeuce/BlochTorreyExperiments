@@ -16,7 +16,7 @@ include("fix/Stacks/Stacks.jl") # workaround until Transformers is updated for j
 @reexport using BenchmarkTools: @btime
 @reexport using CUDA: CuArray, CuVector, CuMatrix
 @reexport using DataFrames: DataFrame, dropmissing
-@reexport using Distributions: Normal, Uniform, cdf, logpdf, pdf, log2π
+@reexport using Distributions: Normal, Uniform, cdf, logpdf, pdf, log2π, logtwo
 @reexport using DrWatson: @dict, @ntuple, projectdir
 @reexport using EllipsisNotation: (..)
 @reexport using FFTW: fft, ifft, rfft
@@ -69,13 +69,6 @@ include("models/setup.jl")
 #### Init
 
 function __init__()
-    # Environment variable defaults
-    get!(ENV, "JL_DISABLE_GPU", "0")
-    get!(ENV, "JL_CUDA_DEVICE", "0")
-    get!(ENV, "JL_WANDB_LOGGER", "0")
-    get!(ENV, "JL_ZERO_SUBNORMALS", "1")
-    get!(ENV, "JL_CHECKPOINT_FOLDER", "")
-
     # Python utilities
     try
         __pyinit__()
@@ -88,6 +81,18 @@ function __init__()
             rethrow(e)
         end
     end
+end
+
+function initenv()
+    # Plotting defaults
+    pyplot(size=(800,600))
+
+    # Environment variable defaults
+    get!(ENV, "JL_DISABLE_GPU", "0")
+    get!(ENV, "JL_CUDA_DEVICE", "0")
+    get!(ENV, "JL_WANDB_LOGGER", "0")
+    get!(ENV, "JL_ZERO_SUBNORMALS", "1")
+    get!(ENV, "JL_CHECKPOINT_FOLDER", "")
 
     # Use CUDA
     Flux.use_cuda[] = CUDA.functional() && ENV["JL_DISABLE_GPU"] != "1"
