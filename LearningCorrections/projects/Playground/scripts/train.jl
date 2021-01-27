@@ -14,7 +14,7 @@ using Playground:
     nsignal, signal_model, noiselevel, θlabels, θasciilabels, θunits, θlower, θupper, θerror, nnuissance, nmarginalized, nmodel, θmarginalized, θnuissance, θderived, θmodel, θsufficient,
     KL_and_ELBO, mv_normal_parameters, sample_columns, sample_mv_normal
 
-pyplot(size=(800,600))
+lib.initenv()
 
 lib.settings_template() = TOML.parse(
 """
@@ -25,7 +25,7 @@ lib.settings_template() = TOML.parse(
 
 [train]
     timeout     = 1e9 #TODO 10800.0
-    epochs      = 1000_000
+    epochs      = 50_000
     batchsize   = 256   #256 #512 #1024 #2048 #3072 #4096
     nbatches    = 100   # number of batches per epoch
     MMDCVAErate = 0     # Train combined MMD+CVAE loss every `MMDCVAErate` epochs
@@ -72,8 +72,9 @@ lib.settings_template() = TOML.parse(
     [opt.cvae]
         INHERIT = "%PARENT%"
         lambda_vae_data = 0.0 # Weighting of vae decoder regularization loss on real signals
-        lambda_vae_sim  = 1.0 # Weighting of vae decoder regularization loss on simulated signals
+        lambda_vae_sim  = 0.0 # Weighting of vae decoder regularization loss on simulated signals
         lambda_pseudo   = 0.0 # Weighting of pseudo label loss
+        tau_pseudo      = 0 # Time constant for CVAE moving average
     [opt.genatr]
         INHERIT = "%PARENT%" #TODO: 0.01 train generator more slowly
     [opt.discrim]
@@ -171,6 +172,7 @@ derived["genatr_latent_prior"] = !settings["train"]["DeepLatentPrior"] ? lib.ini
 derived["cvae_theta_prior"] = lib.derived_cvae_theta_prior(phys, derived["genatr_theta_prior"]; kws("arch", "genatr")...)
 derived["cvae_latent_prior"] = lib.derived_cvae_latent_prior(phys, derived["genatr_latent_prior"]; kws("arch", "genatr")...)
 derived["cvae"] = lib.derived_cvae(phys, models["enc1"], models["enc2"], models["dec"]; kws("arch")...)
+derived["mean_cvae"] = deepcopy(derived["cvae"])
 derived["vae_reg_loss"] = lib.VAEReg(models["vae_dec"]; type = settings["arch"]["vae_dec"]["regtype"])
 
 lib.save_snapshot!(settings, models)
@@ -227,7 +229,7 @@ function MMDlosses(Ymeta::AbstractMetaDataSignal)
         X, θ, Z = lib.sampleXθZ(phys, derived["cvae"], derived["genatr_theta_prior"], derived["genatr_latent_prior"], Ymeta; posterior_θ = false, posterior_Z = false) # sample θ and Z from the learned deep priors, differentiating through the sampling process and the physics model
     else
         Z = settings["train"]["DeepLatentPrior"]::Bool ? sample(derived["genatr_latent_prior"], Y) : Zygote.@ignore(sample(derived["genatr_latent_prior"], Y)) # differentiate through deep Z prior, else ignore
-        θ = settings["train"]["DeepThetaPrior"]::Bool ? sample(derived["genatr_theta_prior"], Y) : Zygote.@ignore(lib.sampleθZ(phys, derived["cvae"], derived["genatr_theta_prior"], derived["genatr_latent_prior"], Ymeta; posterior_θ = true, posterior_Z = true)[1]) # use CVAE posterior for θ prior; Z is ignored w/ `posterior_Z` arbitrary
+        θ = settings["train"]["DeepThetaPrior"]::Bool ? sample(derived["genatr_theta_prior"], Y) : Zygote.@ignore(lib.sampleθZ(phys, derived["cvae"], derived["genatr_theta_prior"], derived["genatr_latent_prior"], Ymeta; posterior_θ = true, posterior_Z = true)[1]) # sample θ from CVAE posterior; ignore Z posterior sample
         X = settings["train"]["DeepThetaPrior"]::Bool ? signal_model(phys, θ) : Zygote.@ignore(signal_model(phys, θ)) # differentiate through physics model if learning deep θ prior, else ignore
     end
 
@@ -254,6 +256,7 @@ function CVAElosses(Ymeta::AbstractMetaDataSignal; marginalize_Z)
     λ_vae_sim  = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "lambda_vae_sim", 0.0)::Float64)
     λ_vae_data = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "lambda_vae_data", 0.0)::Float64)
     λ_pseudo   = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "lambda_pseudo", 0.0)::Float64)
+    τ_pseudo   = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "tau_pseudo", 0)::Int)
     minkept    = Zygote.@ignore get!(settings["train"], "CVAEmask", 0)::Int
 
     # Sample X̂,θ,Z from priors
@@ -263,8 +266,7 @@ function CVAElosses(Ymeta::AbstractMetaDataSignal; marginalize_Z)
     X̂ = Zygote.@ignore lib.sampleX̂(models["genatr"], X, Z)
 
     # Cross-entropy loss function components
-    X̂mask   = Zygote.@ignore lib.signal_mask(X̂; minkept)
-    X̂masked = X̂mask .* X̂
+    X̂masked, X̂mask = lib.pad_and_mask_signal(X̂, nsignal(derived["cvae"]); minkept, maxkept = nsignal(derived["cvae"]))
     KLDiv, ELBO = KL_and_ELBO(derived["cvae"], X̂masked, θ, Z; marginalize_Z)
     ℓ = (; KLDiv, ELBO)
 
@@ -273,18 +275,22 @@ function CVAElosses(Ymeta::AbstractMetaDataSignal; marginalize_Z)
     end
 
     if λ_vae_data > 0
-        Ypadded = lib.pad_signal(signal(Ymeta), nsignal(derived["cvae"]))
-        Ymask   = Zygote.@ignore lib.signal_mask(Ypadded; minkept, maxkept = nsignal(Ymeta))
-        Ymasked = Ymask .* Ypadded
+        Ymasked, Ymask = lib.pad_and_mask_signal(signal(Ymeta), nsignal(derived["cvae"]); minkept, maxkept = nsignal(Ymeta))
         ℓ = push!!(ℓ, :VAEdata => λ_vae_data * derived["vae_reg_loss"](derived["cvae"], Ymasked, Ymask))
     end
 
-    #= Use inferred params as pseudolabels for Ymeta
-    θY, ZY = Zygote.@ignore lib.sampleθZ(phys, derived["cvae"], derived["cvae_theta_prior"], derived["cvae_latent_prior"], Ymeta; posterior_θ = true, posterior_Z = true) # draw pseudo θ and Z labels for Y
-    Ymasked = signal(Ymeta) .* Zygote.@ignore(lib.signal_mask(signal(Ymeta); minkept))
-    KLDivY, ELBOY = KL_and_ELBO(derived["cvae"], Ymasked, θY, ZY; marginalize_Z) # recover pseudo θ and Z labels
-    (; KLDiv, ELBO, KLDivPseudo = λ_pseudo * KLDivY, ELBOPseudo = λ_pseudo * ELBOY)
-    =#
+    # Use inferred params as pseudolabels for Ymeta
+    if λ_pseudo > 0
+        θY, ZY = Zygote.@ignore begin
+            pseudolabel_cvae = τ_pseudo > 0 ?
+                lib.movingaverage!(derived["mean_cvae"], derived["cvae"], τ_pseudo) : # pseudolabels generated from exponential moving average of cvae's
+                derived["cvae"] # pseudolabels generated from bare cvae
+            lib.sampleθZ(phys, pseudolabel_cvae, derived["cvae_theta_prior"], derived["cvae_latent_prior"], Ymeta; posterior_θ = true, posterior_Z = true, posterior_mode = true) # pseudo θ and Z labels for Y are given by cvae posterior modes
+        end
+        Ymasked, Ymask = lib.pad_and_mask_signal(signal(Ymeta), nsignal(derived["cvae"]); minkept, maxkept = nsignal(Ymeta))
+        KLDivY, ELBOY = KL_and_ELBO(derived["cvae"], Ymasked, θY, ZY; marginalize_Z) # recover pseudo θ and Z labels
+        ℓ = push!!(ℓ, :KLDivPseudo => λ_pseudo * KLDivY, :ELBOPseudo => λ_pseudo * ELBOY)
+    end
 
     return ℓ
 end

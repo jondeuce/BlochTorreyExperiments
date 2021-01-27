@@ -52,9 +52,9 @@ Zygote.@adjoint Flux.softplus(x::Real) = Flux.softplus(x), Δ -> (Δ * Flux.σ(x
 
 # Sample multivariate normal
 @inline sample_mv_normal((μ0, σ)) = sample_mv_normal(μ0, σ)
-@inline sample_mv_normal(μ::AbstractMatrix) = sample_mv_normal(split_dim1(μ)...)
-@inline sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ)))
-@inline sample_mv_normal(μ0::AbstractMatrix{T}, σ::AbstractMatrix{T}, nsamples::Int) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ))..., nsamples)
+@inline sample_mv_normal(μ::AbstractArray) = sample_mv_normal(split_dim1(μ)...)
+@inline sample_mv_normal(μ0::AbstractArray{T}, σ::AbstractArray{T}) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ)))
+@inline sample_mv_normal(μ0::AbstractArray{T}, σ::AbstractArray{T}, nsamples::Int) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ))..., nsamples)
 
 # One element
 @inline one_element(x) = one_element(typeof(x))

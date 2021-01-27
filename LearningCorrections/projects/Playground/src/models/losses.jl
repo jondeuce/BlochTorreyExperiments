@@ -84,15 +84,17 @@ function ChannelwiseSmoothReg(; type)
     end
 end
 
-elbo_laplace(x, μx0, σx) = abs(x - μx0) / σx + log(σx) + logtwo
+@inline elbo_laplace(x, μx0, σx) = abs(x - μx0) / σx + log(σx) + logtwo
 Zygote.@adjoint elbo_laplace(x, μx0, σx) = elbo_laplace(x, μx0, σx), Δ -> (Δ * sign(x - μx0) / σx, Δ * sign(μx0 - x) / σx, Δ * (σx - abs(x - μx0)) / σx^2)
+
+@inline elbo_rician(x, μx0, σx) = -_rician_logpdf_cuda(x, μx0, σx) # adjoint of `_rician_logpdf_cuda` is defined elsewhere
 
 function VAEReg(vae_dec; type)
     type = Symbol(type)
-    L1(X, Xdec, M) = sum(abs.(M .* (X .- Xdec))) / sum(M) # mean of recon error within mask M
-    RiceLogL(X, (μXdec, σXdec), M) = -sum(M .* _cap.(_rician_logpdf_cuda.(X, μXdec, σXdec))) / sum(M) # mean negative Rician log likelihood within mask M
-    GaussianLogL(X, (μXdec, σXdec), M) = sum(M .* _cap.(elbo.(X, μXdec, σXdec))) / sum(M) # mean negative Gaussian log likelihood within mask M
-    LaplaceLogL(X, (μXdec, σXdec), M) = sum(M .* _cap.(elbo_laplace.(X, μXdec, σXdec))) / sum(M) # mean negative Gaussian log likelihood within mask M
+    L1(X, Xdec, M) = sum(@. M * abs(X - Xdec)) / sum(M) # mean of recon error within mask M
+    RiceLogL(X, (μXdec, σXdec), M) = sum(@. M * _cap(elbo_rician(X, μXdec, σXdec))) / sum(M) # mean negative Rician log likelihood within mask M
+    GaussianLogL(X, (μXdec, σXdec), M) = sum(@. M * _cap(elbo(X, μXdec, σXdec))) / sum(M) # mean negative Gaussian log likelihood within mask M
+    LaplaceLogL(X, (μXdec, σXdec), M) = sum(@. M * _cap(elbo_laplace(X, μXdec, σXdec))) / sum(M) # mean negative Gaussian log likelihood within mask M
     if type === :L1
         decoder = vae_dec
         loss = L1

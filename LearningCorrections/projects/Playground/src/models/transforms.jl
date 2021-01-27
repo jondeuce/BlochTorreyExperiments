@@ -68,3 +68,10 @@ function augmentations(Xs::Union{<:Tuple, <:NamedTuple}; chunk::Int, flipsignals
     end
     Ys = map(X -> X[i,..], Xs) # tuple of transformed augmentations
 end
+
+function pad_and_mask_signal(Y::AbstractVecOrMat, n; minkept, maxkept)
+    Ypad  = pad_signal(Y, n)
+    M     = Zygote.@ignore signal_mask(Ypad; minkept, maxkept)
+    Ymask = M .* Ypad
+    return Ymask, M
+end

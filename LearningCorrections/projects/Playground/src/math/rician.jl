@@ -123,6 +123,7 @@ end
     if ax < 3.75f0
         y = (ax / 3.75f0)^2
         out = exp(-ax) * evalpoly(y, (1.0f0, 3.5156229f0, 3.0899424f0, 1.2067492f0, 0.2659732f0, 0.360768f-1, 0.45813f-2))
+        # out = exp(-ax) * evalpoly(y, (1.0000000f+0, 3.5156250f+0, 3.0899048f+0, 1.2069941f+0, 2.6520866f-1, 3.7294969f-2, 3.6420866f-3)) # derived from taylor series directly, but is less accurate; why the mismatch?
     else
         y = 3.75f0 / ax
         out = evalpoly(y, (0.39894228f0, 0.1328592f-1, 0.225319f-2, -0.157565f-2, 0.916281f-2, -0.2057706f-1, 0.2635537f-1, -0.1647633f-1, 0.392377f-2))
@@ -130,7 +131,7 @@ end
     end
     return out
 end
-@inline _logbesseli0_cuda_unsafe(x) = log(_besselix0_cuda_unsafe(x)) + abs(x) # since log(besselix(ν, x)) = log(Iν(x)) - |x|
+ChainRules.@scalar_rule(_besselix0_cuda_unsafe(x), _besselix1_cuda_unsafe(x) - sign(x) * Ω)
 
 "Approximation of besselix(1, x) = exp(-|x|) * besseli(1, x)"
 @inline function _besselix1_cuda_unsafe(x)
@@ -138,6 +139,7 @@ end
     if ax < 3.75f0
         y = (ax / 3.75f0)^2
         out = exp(-ax) * ax * evalpoly(y, (0.5f0, 0.87890594f0, 0.51498869f0, 0.15084934f0, 0.2658733f-1, 0.301532f-2, 0.32411f-3))
+        # out = exp(-ax) * ax * evalpoly(y, (5.0000000f-1, 8.7890625f-1, 5.1498413f-1, 1.5087426f-1, 2.6520865f-2, 3.1079140f-3, 2.6014904f-4)) # derived from taylor series directly, but is less accurate; why the mismatch?
     else
         y = 3.75f0 / ax
         out = evalpoly(y, (0.39894228f0, -0.3988024f-1, -0.362018f-2, 0.163801f-2, -0.1031555f-1, 0.2282967f-1, -0.2895312f-1, 0.1787654f-1, -0.420059f-2))
@@ -145,14 +147,11 @@ end
     end
     return x < 0 ? -out : out
 end
+
+@inline _logbesseli0_cuda_unsafe(x) = log(_besselix0_cuda_unsafe(x)) + abs(x) # since log(besselix(ν, x)) = log(Iν(x)) - |x|
 @inline _logbesseli1_cuda_unsafe(x) = log(_besselix1_cuda_unsafe(x)) + abs(x) # since log(besselix(ν, x)) = log(Iν(x)) - |x|
-
 @inline _laguerre½_cuda_unsafe(x) = (x < 0 ? one(x) : exp(x)) * ((1 - x) * _besselix0_cuda_unsafe(-x/2) - x * _besselix1_cuda_unsafe(-x/2))
-
-@inline _rician_mean_cuda(ν, σ) = (ϵ = 1f-6; return _rician_mean_cuda_unsafe(abs(ν) + ϵ, abs(σ) + ϵ))
-@inline _rician_mean_cuda_unsafe(ν, σ) = (tmp = σ * _laguerre½_cuda_unsafe(-ν^2 / 2σ^2); μ = sqrt(oftype(tmp, π)/2) * tmp; return μ)
-
-@inline _rician_logpdf_cuda(x, ν, σ) = (ϵ = 1f-6; return _rician_logpdf_cuda_unsafe(abs(x) + ϵ, abs(ν) + ϵ, abs(σ) + ϵ))
+@inline _rician_mean_cuda_unsafe(ν, σ) = sqrthalfπ * σ * _laguerre½_cuda_unsafe(-ν^2 / 2σ^2)
 @inline _rician_logpdf_cuda_unsafe(x, ν, σ) = _logbesseli0_cuda_unsafe(x*ν/σ^2) - (x^2 + ν^2)/(2*σ^2) + log(x/σ^2)
 
 # Define chain rule (Zygote > v"0.4.20" reads ChainRules directly)
@@ -162,3 +161,6 @@ ChainRules.@scalar_rule(
     # (c * (ν * r - x) + (1/x), c * (x * r - ν), c * (-2 * ν * x * r + x^2 + ν^2) / σ - 2/σ), # assumes strictly positive values
     (c * (ν * r - x) + (1/x), c * (x * r - ν), c * ((x - ν)^2 + 2 * ν * x * (1 - r)) / σ - 2/σ), # assumes strictly positive values
 )
+
+@inline _rician_mean_cuda(ν, σ) = (ϵ = 1f-6; return _rician_mean_cuda_unsafe(abs(ν) + ϵ, abs(σ) + ϵ)) # abs(⋅)+ϵ instead of e.g. max(⋅,ϵ) to avoid completely dropping gradient when <ϵ
+@inline _rician_logpdf_cuda(x, ν, σ) = (ϵ = 1f-6; return _rician_logpdf_cuda_unsafe(abs(x) + ϵ, abs(ν) + ϵ, abs(σ) + ϵ)) # abs(⋅)+ϵ instead of e.g. max(⋅,ϵ) to avoid completely dropping gradient when <ϵ

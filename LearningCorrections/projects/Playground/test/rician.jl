@@ -6,6 +6,8 @@ with_log_args(f) = function with_log_args_inner(logxs...)
     f(xs...)
 end
 
+#### Test approximation values
+
 for (ftrue, fapprox) in [
         (x -> lib._besselix(0.0, x), lib._besselix0_cuda_unsafe),
         (x -> lib._besselix(1.0, x), lib._besselix1_cuda_unsafe),
@@ -19,7 +21,26 @@ for (ftrue, fapprox) in [
     end
 end
 
-@testset "_rician_logpdf_cuda_unsafe" begin
+#### Test approximation gradients
+
+for (ftrue, fapprox) in [
+        (x -> lib._besselix(0.0, x), lib._besselix0_cuda_unsafe),
+        (x -> lib._besselix(1.0, x), lib._besselix1_cuda_unsafe),
+        # (lib._laguerre½, lib._laguerre½_cuda_unsafe),
+    ]
+    @testset "∇$fapprox" begin
+        for T in [Float32, Float64], logx in -3:3, sgn in [-1,1]
+            x = sgn * T(exp(logx))
+            @test lib.gradcheck(
+                with_log_args(fapprox), T(logx);
+                extrapolate = false, backward = true, forward = true, verbose = true,
+                rtol = 1e-3, atol = 1e-4,
+            )
+        end
+    end
+end
+
+@testset "∇_rician_logpdf_cuda_unsafe" begin
     logxs = -1:1
     for T in [Float32, Float64], logx in logxs, logν in logxs, logσ in logxs
         @test lib.gradcheck(

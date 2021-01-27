@@ -131,6 +131,26 @@ flattenchain(chain::Flux.Chain) = length(chain) == 1 ? flattenchain(chain[1]) : 
 flattenchain(chain) = chain
 
 """
+movingaverage!(mean_model, model, window)
+
+Accumulate moving average of parameters from `model` into `mean_model` with time constant `window` (units of update steps, need not be integral).
+The relative contribution of parameters from `k` updates ago to the average in `mean_model` is proportional to `exp(-k/window)`.
+"""
+function movingaverage!(mean_model, model, window)
+    μs = Flux.params(mean_model)
+    xs = Flux.params(model)
+    @assert length(μs) == length(xs)
+    for (μ, x) in zip(μs, xs)
+        movingaverage!(μ, x, window)
+    end
+    return mean_model
+end
+function movingaverage!(μ::AbstractArray, x::AbstractArray, τ)
+    α = Flux.ofeltype(μ, 1-exp(-1/τ))
+    @. μ = α * x + (1-α) * μ
+end
+
+"""
 CollectAsNamedTuple(keys...)
 """
 struct CollectAsNamedTuple{N,Ks} end

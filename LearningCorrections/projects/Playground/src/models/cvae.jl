@@ -24,15 +24,15 @@ nembedding(::CVAE{n,nθ,nθM,k,nz}) where {n,nθ,nθM,k,nz} = nz
 #### CVAE helpers
 ####
 
-@inline _split_at(x::AbstractMatrix, n::Int) = n == size(x,1) ? (x, similar(x, 0, size(x,2))) : (x[1:n,:], x[n+1:end,:])
-split_theta_latent(::CVAE{n,nθ,nθM,k,nz}, x::AbstractMatrix) where {n,nθ,nθM,k,nz} = _split_at(x, nθ)
-split_marginal_latent(::CVAE{n,nθ,nθM,k,nz}, x::AbstractMatrix) where {n,nθ,nθM,k,nz} = _split_at(x, nθM)
+@inline _split_at(x::AbstractVecOrMat, n::Int) = n == size(x,1) ? (x, similar(x, 0, size(x)[2:end]...)) : (x[1:n,..], x[n+1:end,..])
+split_theta_latent(::CVAE{n,nθ,nθM,k,nz}, x::AbstractVecOrMat) where {n,nθ,nθM,k,nz} = _split_at(x, nθ)
+split_marginal_latent(::CVAE{n,nθ,nθM,k,nz}, x::AbstractVecOrMat) where {n,nθ,nθM,k,nz} = _split_at(x, nθM)
 
 ####
 #### CVAE methods
 ####
 
-function pad_signal(Y::AbstractArray, n)
+function pad_signal(Y::AbstractVecOrMat, n)
     if size(Y,1) < n
         pad = zeros_similar(Y, n - size(Y,1), size(Y)[2:end]...)
         vcat(Y, pad)
@@ -44,11 +44,11 @@ function pad_signal(Y::AbstractArray, n)
 end
 pad_signal(::CVAE{n}, Y) where {n} = pad_signal(Y, n)
 
-function signal_mask(Y::AbstractMatrix; minkept::Int = firstindex(Y,1), maxkept::Int = lastindex(Y,1))
+function signal_mask(Y::AbstractVecOrMat; minkept::Int = firstindex(Y,1), maxkept::Int = lastindex(Y,1))
     # Create mask which randomly zeroes the tails of the columns of Y. That is, for each column `j` the mask satisfies
     # `m[i <= nⱼ, j] = 1` and `m[i > nⱼ, j] = 0`, with `minkept <= nⱼ <= maxkept` chosen randomly per column `j`
     Irows   = arr_similar(Y, collect(1:size(Y,1)))
-    Icutoff = arr_similar(Y, collect(rand(minkept:maxkept, 1, size(Y,2))))
+    Icutoff = arr_similar(Y, collect(rand(minkept:maxkept, 1, size(Y)[2:end]...)))
     mask    = arr_similar(Y, Irows .<= Icutoff)
     return mask
 end
@@ -78,22 +78,23 @@ function KL_and_ELBO(cvae::CVAE{n,nθ,nθM,k,nz}, Y, θ, Z; marginalize_Z::Bool)
     return (; KLDiv, ELBO)
 end
 
-sampleθZposterior(cvae::CVAE, Y) = (Ypad = pad_signal(cvae, Y); sampleθZposterior(cvae, Ypad, mv_normal_parameters(cvae, Ypad)...))
+sampleθZposterior(cvae::CVAE, Y; kwargs...) = (Ypad = pad_signal(cvae, Y); sampleθZposterior(cvae, Ypad, mv_normal_parameters(cvae, Ypad)...; kwargs...))
 
-function sampleθZposterior(cvae::CVAE, Y, μr0, σr)
+function sampleθZposterior(cvae::CVAE, Y, μr0, σr; mode = false)
+    #TODO: `mode` is probably not strictly the correct term, but in practice it should be something akin to the distribution mode since `μr0` is the most likely value for `zr` and `μx0` is the most likely value for `x` **conditional on `zr`**; likely there are counterexamples to this simple reasoning, though...
     Ypad = pad_signal(cvae, Y)
-    zr = sample_mv_normal(μr0, σr)
+    zr = mode ? μr0 : sample_mv_normal(μr0, σr)
     μx = cvae.D(Ypad,zr)
     μx0, σx = split_mean_softplus_std(μx)
-    x = sample_mv_normal(μx0, σx)
+    x = mode ? μx0 : sample_mv_normal(μx0, σx)
     θM, Z = split_marginal_latent(cvae, x)
     return θM, Z
 end
 
-function θZposterior_sampler(cvae::CVAE, Y)
+function θZposterior_sampler(cvae::CVAE, Y; kwargs...)
     Ypad = pad_signal(cvae, Y)
     @unpack μr0, σr = mv_normal_parameters(cvae, Ypad) # constant over posterior samples
-    θZposterior_sampler_inner() = sampleθZposterior(cvae, Ypad, μr0, σr)
+    θZposterior_sampler_inner() = sampleθZposterior(cvae, Ypad, μr0, σr; kwargs...)
     return θZposterior_sampler_inner
 end
 
@@ -117,17 +118,17 @@ end
 Flux.@functor DeepPrior
 Base.show(io::IO, ::DeepPrior{T,kϕ}) where {T,kϕ} = print(io, "DeepPrior$((;T,kϕ))")
 
-(p::DeepPrior{T,kϕ})(x::A) where {T, kϕ, A <: AbstractArray{T}} = p.prior(p.noisesource(A, kϕ, size(x,2))) # sample from distribution
+(p::DeepPrior{T,kϕ})(x::A) where {T, kϕ, A <: AbstractVecOrMat{T}} = p.prior(p.noisesource(A, kϕ, size(x,2))) # sample from distribution
 
 StatsBase.sample(p::DeepPrior{T}, n::Int) where {T} = StatsBase.sample(p, CuMatrix{T}, n) # default to sampling θ on the gpu
-StatsBase.sample(p::DeepPrior, Y::AbstractArray, n::Int = size(Y,2)) = StatsBase.sample(p, typeof(Y), n) # θ type is similar to Y type
-StatsBase.sample(p::DeepPrior{T,kϕ}, ::Type{A}, n::Int) where {T, kϕ, A <: AbstractArray{T}} = p.prior(p.noisesource(A, kϕ, n)) # sample from distribution
+StatsBase.sample(p::DeepPrior, Y::AbstractVecOrMat, n::Int = size(Y,2)) = StatsBase.sample(p, typeof(Y), n) # θ type is similar to Y type
+StatsBase.sample(p::DeepPrior{T,kϕ}, ::Type{A}, n::Int) where {T, kϕ, A <: AbstractVecOrMat{T}} = p.prior(p.noisesource(A, kϕ, n)) # sample from distribution
 
 #### CVAE + DeepPrior + AbstractMetaDataSignal methods
 
-function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; posterior_θ = true, posterior_Z = true)
+function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; posterior_θ = true, posterior_Z = true, posterior_mode = false)
     if posterior_θ || posterior_Z
-        return sampleθZ(phys, cvae, θprior, Zprior, Ymeta, mv_normal_parameters(cvae, signal(Ymeta))...; posterior_θ, posterior_Z)
+        return sampleθZ(phys, cvae, θprior, Zprior, Ymeta, mv_normal_parameters(cvae, signal(Ymeta))...; posterior_θ, posterior_Z, posterior_mode)
     else
         θ = sample(θprior, signal(Ymeta))
         Z = sample(Zprior, signal(Ymeta))
@@ -135,9 +136,9 @@ function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::D
     end
 end
 
-function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal, μr0, σr; posterior_θ = true, posterior_Z = true)
+function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal, μr0, σr; posterior_θ = true, posterior_Z = true, posterior_mode = false)
     if posterior_θ || posterior_Z
-        θMhat, Zhat = sampleθZposterior(cvae, signal(Ymeta), μr0, σr)
+        θMhat, Zhat = sampleθZposterior(cvae, signal(Ymeta), μr0, σr; mode = posterior_mode)
         Z = posterior_Z ? Zhat : sample(Zprior, signal(Ymeta))
         θ = if posterior_θ
             θMlo = arr_similar(θMhat, θmarginalized(phys, θlower(phys)))
@@ -153,22 +154,22 @@ function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::D
     return θ, Z
 end
 
-function θZ_sampler(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; posterior_θ = true, posterior_Z = true)
+function θZ_sampler(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...)
     @unpack μr0, σr = mv_normal_parameters(cvae, signal(Ymeta)) # constant over posterior samples
-    θZ_sampler_inner() = sampleθZ(phys, cvae, θprior, Zprior, Ymeta, μr0, σr; posterior_θ, posterior_Z)
+    θZ_sampler_inner() = sampleθZ(phys, cvae, θprior, Zprior, Ymeta, μr0, σr; kwargs...)
     return θZ_sampler_inner
 end
 
-function sampleXθZ(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; posterior_θ = true, posterior_Z = true)
+function sampleXθZ(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...)
     #TODO: can't differentiate through @timeit "sampleθZ"
     #TODO: can't differentiate through @timeit "signal_model"
-    θ, Z = sampleθZ(phys, cvae, θprior, Zprior, Ymeta; posterior_θ, posterior_Z)
+    θ, Z = sampleθZ(phys, cvae, θprior, Zprior, Ymeta; kwargs...)
     X = signal_model(phys, θ)
     (size(X,1) > nsignal(Ymeta)) && (X = X[1:nsignal(Ymeta),..])
     return X, θ, Z
 end
 
-sampleX(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; posterior_θ = true, posterior_Z = true) = sampleXθZ(phys, cvae, θprior, Zprior, Ymeta; posterior_θ, posterior_Z)[1]
+sampleX(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleXθZ(phys, cvae, θprior, Zprior, Ymeta; kwargs...)[1]
 
 ####
 #### Rician posterior state
@@ -176,15 +177,15 @@ sampleX(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Y
 
 sampleX̂(rice::RicianCorrector, X, Z = nothing, ninstances = nothing) = sample_rician_state(rice, X, Z, ninstances).X̂
 
-function sampleX̂θZ(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; posterior_θ = true, posterior_Z = true)
+function sampleX̂θZ(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...)
     #TODO: can't differentiate through @timeit "sampleXθZ"
     #TODO: can't differentiate through @timeit "sampleX̂"
-    X, θ, Z = sampleXθZ(phys, cvae, θprior, Zprior, Ymeta; posterior_θ, posterior_Z)
+    X, θ, Z = sampleXθZ(phys, cvae, θprior, Zprior, Ymeta; kwargs...)
     X̂ = sampleX̂(rice, X, Z)
     return X̂, θ, Z
 end
 
-sampleX̂(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; posterior_θ = true, posterior_Z = true) = sampleX̂θZ(phys, rice, cvae, θprior, Zprior, Ymeta; posterior_θ, posterior_Z)[1]
+sampleX̂(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleX̂θZ(phys, rice, cvae, θprior, Zprior, Ymeta; kwargs...)[1]
 
 function NegLogLikelihood(rice::RicianCorrector, Y::AbstractVecOrMat, μ0, σ)
     if typeof(rice) <: NormalizedRicianCorrector && (rice.normalizer !== nothing)
@@ -194,7 +195,7 @@ function NegLogLikelihood(rice::RicianCorrector, Y::AbstractVecOrMat, μ0, σ)
     -sum(_rician_logpdf_cuda.(Y, μ0, σ); dims = 1) # Rician negative log likelihood
 end
 
-function posterior_state(phys::PhysicsModel, rice::RicianCorrector, Y::AbstractVecOrMat, θ::AbstractMatrix, Z::AbstractMatrix)
+function posterior_state(phys::PhysicsModel, rice::RicianCorrector, Y::AbstractVecOrMat, θ::AbstractVecOrMat, Z::AbstractVecOrMat)
     X = signal_model(phys, θ)
     @unpack δ, ϵ, ν = rician_state(rice, X, Z)
     X, δ, ϵ, ν = clamp_dim1(Y, (X, δ, ϵ, ν))
