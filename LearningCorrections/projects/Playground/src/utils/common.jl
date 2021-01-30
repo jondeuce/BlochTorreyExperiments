@@ -55,12 +55,15 @@ unzip(a) = map(x -> getfield.(a, x), fieldnames(eltype(a)))
 # Display and return
 disp_ret(x; type = true, val = true) = (type && display(typeof(x)); val && display(x); (type || val) && println(""); x)
 
+# Check if dx approximately divides x
+is_approx_multiple_of(x, dx) = (n = round(Int, x/dx); x ≈ n * dx)
+
 ####
 #### Dict, (Named)Tuples
 ####
 
 # Map over dictionary values
-map_dict(f, d::Dict{K,V}) where {K,V} = Dict{K,V}(map(((k,v),) -> k => f(v), collect(d)))
+map_dict(f, d::Dict{K,V}) where {K,V} = Dict(map(((k,v),) -> k => f(v), collect(d)))
 
 # Differentiable summing of dictionary values
 sum_dict(d::Dict{K,V}) where {K,V} = sum(values(d))

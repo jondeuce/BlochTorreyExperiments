@@ -89,32 +89,34 @@ Zygote.@adjoint elbo_laplace(x, μx0, σx) = elbo_laplace(x, μx0, σx), Δ -> (
 
 @inline elbo_rician(x, μx0, σx) = -_rician_logpdf_cuda(x, μx0, σx) # adjoint of `_rician_logpdf_cuda` is defined elsewhere
 
-function VAEReg(vae_dec; type)
-    type = Symbol(type)
-    L1(X, Xdec, M) = sum(@. M * abs(X - Xdec)) / sum(M) # mean of recon error within mask M
-    RiceLogL(X, (μXdec, σXdec), M) = sum(@. M * _cap(elbo_rician(X, μXdec, σXdec))) / sum(M) # mean negative Rician log likelihood within mask M
-    GaussianLogL(X, (μXdec, σXdec), M) = sum(@. M * _cap(elbo(X, μXdec, σXdec))) / sum(M) # mean negative Gaussian log likelihood within mask M
-    LaplaceLogL(X, (μXdec, σXdec), M) = sum(@. M * _cap(elbo_laplace(X, μXdec, σXdec))) / sum(M) # mean negative Gaussian log likelihood within mask M
-    if type === :L1
+function VAEReg(vae_dec; regtype)
+    L1(Y, M, Ydec) = sum(@. M * abs(Y - Ydec)) / sum(M) # mean of recon error within mask M
+    RiceLogL(Y, M, (μYdec, σYdec)) = sum(@. M * _cap(elbo_rician(Y, μYdec, σYdec))) / sum(M) # mean negative Rician log likelihood within mask M
+    GaussianLogL(Y, M, (μYdec, σYdec)) = sum(@. M * _cap(elbo(Y, μYdec, σYdec))) / sum(M) # mean negative Gaussian log likelihood within mask M
+    LaplaceLogL(Y, M, (μYdec, σYdec)) = sum(@. M * _cap(elbo_laplace(Y, μYdec, σYdec))) / sum(M) # mean negative Gaussian log likelihood within mask M
+
+    regtype = Symbol(regtype)
+    (regtype === :None) && return nothing
+
+    if regtype === :L1
         decoder = vae_dec
-        loss = L1
-    elseif type === :Rician
+        vae_regloss = L1
+    elseif regtype === :Rician
         decoder = Flux.Chain(vae_dec, split_mean_std) # `vae_dec` handles exp/softplus/etc. for mean/std outputs; just split the output in half
-        loss = RiceLogL
-    elseif type === :Gaussian
+        vae_regloss = RiceLogL
+    elseif regtype === :Gaussian
         decoder = Flux.Chain(vae_dec, split_mean_std) # `vae_dec` handles exp/softplus/etc. for mean/std outputs; just split the output in half
-        loss = GaussianLogL
-    elseif type === :Laplace
+        vae_regloss = GaussianLogL
+    elseif regtype === :Laplace
         decoder = Flux.Chain(vae_dec, split_mean_std) # `vae_dec` handles exp/softplus/etc. for mean/std outputs; just split the output in half
-        loss = LaplaceLogL
+        vae_regloss = LaplaceLogL
     else
-        error("Unknown regularization type: $type")
+        error("Unknown VAE regularization type: $regtype")
     end
+
     Stack(
-        @nntopo((cvae,X,M) : (cvae,X) => (μr0,σr) => zr => Xdec : (X,Xdec,M) => loss),
-        mv_normal_parameters,
-        sample_mv_normal,
+        @nntopo((Y, M, z) : z => Ydec : (Y, M, Ydec) => vae_regloss),
         decoder,
-        loss,
+        vae_regloss,
     )
 end

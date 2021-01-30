@@ -631,24 +631,31 @@ end
 Print all output activations for a `Transformers.Stack` for debugging purposes
 """
 function stack_activations(m::Stack, xs...; verbose = false)
+    acts = Any[]
     _m = Stack(
         m.topo,
         map(enumerate(m.models)) do (i,f)
             function (args...,)
-                @info "layer $i", "NaN params: $(any([any(isnan, p) for p in Flux.params(f)]))", "Inf params: $(any([any(isinf, p) for p in Flux.params(f)]))", typeof(f)
-                for (j,arg) in enumerate(args)
-                    @info "layer $i", "input $j", "NaN: $(any(isnan, arg))", "Inf: $(any(isinf, arg))", typeof(arg), size(arg)
-                    verbose && display(arg)
+                if verbose
+                    @info "layer $i", "NaN params: $(any([any(isnan, p) for p in Flux.params(f)]))", "Inf params: $(any([any(isinf, p) for p in Flux.params(f)]))", typeof(f)
+                    for (j,arg) in enumerate(args)
+                        @info "layer $i", "input $j", "NaN: $(any(isnan, arg))", "Inf: $(any(isinf, arg))", typeof(arg), size(arg)
+                        display(arg)
+                    end
                 end
                 y = f(args...)
-                @info "layer $i", "output", "NaN: $(any(isnan, y))", "Inf: $(any(isinf, y))", typeof(y), size(y)
-                verbose && display(y)
-                println("")
+                push!(acts, y)
+                if verbose
+                    @info "layer $i", "output", "NaN: $(any(isnan, y))", "Inf: $(any(isinf, y))", typeof(y), size(y)
+                    display(y)
+                    println("")
+                end
                 return y
             end
         end...
     )
-    _m(xs...)
+    out = _m(xs...)
+    return acts
 end
 
 """

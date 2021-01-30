@@ -348,13 +348,21 @@ rician_params(c::ClosedFormToyCosineModel, θ, W = nothing) = signal_model(c, θ
 ####
 
 # CPMG image with default params for DECAES
-@with_kw struct CPMGImage{T}
+@with_kw_noshow struct CPMGImage{T}
     data::Array{T,4} # Image data as (row, col, slice, echo) (Required)
     t2mapopts::DECAES.T2mapOptions{Float64} # Image properties (Required)
     t2partopts::DECAES.T2partOptions{Float64} # Analysis properties (Required)
     partitions::Dict{Symbol,Matrix{T}} = Dict()
     indices::Dict{Symbol,Vector{CartesianIndex{3}}} = Dict()
     meta::Dict{Symbol,Any} = Dict()
+end
+function Base.show(io::IO, img::CPMGImage{T}) where {T}
+    print(io, "CPMGImage{$T}(")
+    print(io, "data = "); summary(io, img.data); print(io, ", ")
+    print(io, join(("$k = $v" for (k,v) in Dict(:nTE => img.t2mapopts.nTE, :TE => img.t2mapopts.TE)), ", ")); print(io, ", ")
+    print(io, join(("n$k = $(size(v,2))" for (k,v) in img.partitions), ", "))
+    # print(io, join(("partitions[:$k] = $(summary(v))" for (k,v) in img.partitions), ", "))
+    print(io, ")")
 end
 
 nsignal(img::CPMGImage) = size(img.data, 4)
@@ -371,6 +379,10 @@ function CPMGImage(info::NamedTuple; seed::Int)
     Inonmask = findall(dropdims(any((x ->  isnan(x) ||  iszero(x)).(data); dims = 4); dims = 4)) # compliment of mask indices
     ishuffle = randperm(MersenneTwister(seed), length(Imask)) # shuffle indices before splitting to train/test/val
 
+    res = data[Imask, :] |> vec |> sort |> unique! |> sort! |> diff |> minimum # resolution of quantization
+    @assert all(is_approx_multiple_of.(data, res)) # assert quantization condition holds
+    data[Imask, :] .+= (-res/2) .+ res .* rand(MersenneTwister(seed), Float32, length(Imask), size(data, 4)) # pepper data with (fixed) zero-mean random noise at the resolution limit to avoid quantization issues
+    @assert all(data[Imask, :] .>= res/2) # signals within the mask contain no zeroes by definition, so this is just a sanity check
     data[Inonmask, :] .= NaN # set signals outside of mask to NaN
     data ./= maximum(data; dims = 4) # data[1:1,..] #TODO: normalize by mean? sum? maximum? first echo?
 

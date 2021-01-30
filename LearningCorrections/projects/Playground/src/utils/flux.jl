@@ -2,33 +2,65 @@
 #### Functors
 ####
 
-function fwalk_(f, x, isleaf = Functors.isleaf, depth = 1)
-    if isleaf(x)
-        f(depth, missing, x)
-    else
-        func = Flux.functor(x)[1]
-        foreach(pairs(func)) do (k,y)
-            f(depth,k,y)
-            fwalk_(f, y, isleaf, depth+1)
-        end
+struct WalkState{V, K, P}
+    value::V
+    key::K
+    parent::P
+    depth::Int
+    isleaf::Bool
+end
+
+function fwalk_(f, x, isleaf = Functors.isleaf)
+    root_state = WalkState(x, missing, missing, 0, isleaf(x))
+    f(root_state)
+    fwalk_(f, root_state, isleaf)
+end
+
+function fwalk_(f, d::Dict, isleaf = Functors.isleaf)
+    root_state = WalkState(d, missing, missing, 0, false)
+    for (k, v) in d
+        child_state = WalkState(v, k, root_state, 1, isleaf(v))
+        f(child_state)
+        fwalk_(f, child_state, isleaf)
+    end
+end
+
+function fwalk_(f, parent_state::WalkState, isleaf)
+    func, _ = Flux.functor(parent_state.value)
+    foreach(pairs(func)) do (child_key, child_value)
+        child_state = WalkState(child_value, child_key, parent_state, parent_state.depth + 1, isleaf(child_value))
+        f(child_state)
+        fwalk_(f, child_state, isleaf)
     end
     nothing
 end
 
 function find_model_param(m, x)
-    keychain = Any[]
-    done = false
-    fwalk_(m) do depth, name, p
-        done && return
-        if depth > length(keychain)
-            push!(keychain, name)
-        else
-            keychain[depth] = name
+    keychain = nothing
+    found = false
+    fwalk_(m) do state
+        found && return
+        if x === state.value && state.isleaf # ensure leaf value, since we are looking for leaf parameters
+            found = true
+            keychain = Any[]
+            while state.depth != 0
+                pushfirst!(keychain, state.key)
+                state = state.parent
+            end
         end
-        done = name === missing && x === p
-        done && resize!(keychain, depth-1)
     end
     return keychain
+end
+
+function _test_find_model_param()
+    m_aliased = Flux.Dense(2,2)
+    m = Flux.Chain(Flux.Chain(Flux.Dense(1,2), m_aliased, m_aliased), Flux.Dense(2,1))
+    @assert find_model_param(m, m[1][1].W) == [1, 1, :W]
+    @assert find_model_param(m, m[1][2].b) == [1, 2, :b]
+    @assert find_model_param(m, m[2].b) == [2, :b]
+    @assert find_model_param(m, m[1][2].b) == find_model_param(m, m[1][3].b) == [1, 2, :b] # aliased params returns first found
+    @assert find_model_param(m, m[1][2].W) == find_model_param(m, m[1][3].W) == [1, 2, :W] # aliased params returns first found
+    @assert find_model_param(Dict(:m => m), m[1][1].W) == [:m, 1, 1, :W]
 end
 
 function fmap_(f, x, isleaf = Functors.isleaf; cache = IdDict())

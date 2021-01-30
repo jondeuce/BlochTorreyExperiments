@@ -12,7 +12,7 @@ using Playground:
     arr_similar, arr32, arr64, zeros_similar, ones_similar, randn_similar, rand_similar, fill_similar,
     add_noise_instance, rician_params,
     nsignal, signal_model, noiselevel, θlabels, θasciilabels, θunits, θlower, θupper, θerror, nnuissance, nmarginalized, nmodel, θmarginalized, θnuissance, θderived, θmodel, θsufficient,
-    KL_and_ELBO, mv_normal_parameters, sample_columns, sample_mv_normal
+    KL_and_ELBO, sample_columns
 
 lib.initenv()
 
@@ -71,10 +71,11 @@ lib.settings_template() = TOML.parse(
     wdecay   = 0.0     # Weight decay
     [opt.cvae]
         INHERIT = "%PARENT%"
-        lambda_vae_data = 0.0 # Weighting of vae decoder regularization loss on real signals
-        lambda_vae_sim  = 0.0 # Weighting of vae decoder regularization loss on simulated signals
-        lambda_pseudo   = 0.0 # Weighting of pseudo label loss
-        tau_pseudo      = 0 # Time constant for CVAE moving average
+        lambda_vae_sim     = 0.0 # Weighting of vae decoder regularization loss on simulated signals
+        lambda_vae_data    = 0.0 # Weighting of vae decoder regularization loss on real signals
+        lambda_latent      = 0.0 # Weighting of latent space regularization
+        lambda_pseudo      = 0.0 # Weighting of pseudo label loss
+        tau_pseudo         = 0 # Time constant for CVAE moving average
     [opt.genatr]
         INHERIT = "%PARENT%" #TODO: 0.01 train generator more slowly
     [opt.discrim]
@@ -110,7 +111,7 @@ lib.settings_template() = TOML.parse(
         INHERIT = "%PARENT%"
     [arch.vae_dec]
         INHERIT = "%PARENT%"
-        regtype = "Gaussian" # "L1", "Gaussian", or "Rician"
+        regtype = "Rician" # VAE regularization ("L1", "Gaussian", "Rician", or "None")
     [arch.genatr]
         INHERIT     = "%PARENT%"
         hdim        = 64   #TODO
@@ -137,18 +138,21 @@ lib.settings_template() = TOML.parse(
 )
 
 lib.set_logdirname!()
-lib.clear_checkpointdir!()
+lib.clear_checkpointdir!() #TODO
 # lib.set_checkpointdir!(projectdir("log", "ignite-cvae-2021-01-05-T-13-45-23-425"))
+# lib.set_checkpointdir!(projectdir("wandb", "latest-run", "files")) #TODO
 
 settings = lib.load_settings()
-wandb_logger = lib.init_wandb_logger(settings; activate = true, dryrun = false, wandb_dir = projectdir())
+# wandb_logger = nothing #TODO
+wandb_logger = lib.init_wandb_logger(settings; activate = true, dryrun = false, wandb_dir = projectdir()) #TODO
 
 # phys = lib.EPGModel{Float32,false}(n = 64)
 @isdefined(phys) || (phys = lib.load_epgmodel_physics())
 
 kws(keys...) = Any[Symbol(k) => v for (k,v) in foldl(getindex, string.(keys); init = settings)]
 
-models = lib.load_checkpoint("current-models.bson")
+models = lib.load_checkpoint("current-models.jld2") #TODO
+# models = lib.load_checkpoint("failure-models.jld2") #TODO
 get!(models, "genatr") do; lib.init_isotropic_rician_generator(phys; kws("arch", "genatr")...); end
 get!(models, "theta_prior") do; !settings["train"]["DeepThetaPrior"] ? nothing : lib.init_deep_theta_prior(phys; kws("arch", "genatr")...); end
 get!(models, "latent_prior") do; !settings["train"]["DeepLatentPrior"] ? nothing : lib.init_deep_latent_prior(phys; kws("arch", "genatr")...); end
@@ -173,7 +177,7 @@ derived["cvae_theta_prior"] = lib.derived_cvae_theta_prior(phys, derived["genatr
 derived["cvae_latent_prior"] = lib.derived_cvae_latent_prior(phys, derived["genatr_latent_prior"]; kws("arch", "genatr")...)
 derived["cvae"] = lib.derived_cvae(phys, models["enc1"], models["enc2"], models["dec"]; kws("arch")...)
 derived["mean_cvae"] = deepcopy(derived["cvae"])
-derived["vae_reg_loss"] = lib.VAEReg(models["vae_dec"]; type = settings["arch"]["vae_dec"]["regtype"])
+derived["vae_reg_loss"] = lib.VAEReg(models["vae_dec"]; regtype = settings["arch"]["vae_dec"]["regtype"])
 
 lib.save_snapshot!(settings, models)
 
@@ -255,6 +259,7 @@ end
 function CVAElosses(Ymeta::AbstractMetaDataSignal; marginalize_Z)
     λ_vae_sim  = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "lambda_vae_sim", 0.0)::Float64)
     λ_vae_data = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "lambda_vae_data", 0.0)::Float64)
+    λ_latent   = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "lambda_latent", 0.0)::Float64)
     λ_pseudo   = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "lambda_pseudo", 0.0)::Float64)
     τ_pseudo   = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "tau_pseudo", 0)::Int)
     minkept    = Zygote.@ignore get!(settings["train"], "CVAEmask", 0)::Int
@@ -267,29 +272,49 @@ function CVAElosses(Ymeta::AbstractMetaDataSignal; marginalize_Z)
 
     # Cross-entropy loss function components
     X̂masked, X̂mask = lib.pad_and_mask_signal(X̂, nsignal(derived["cvae"]); minkept, maxkept = nsignal(derived["cvae"]))
-    KLDiv, ELBO = KL_and_ELBO(derived["cvae"], X̂masked, θ, Z; marginalize_Z)
+    X̂state = lib.CVAETrainingState(derived["cvae"], X̂masked, θ, Z)
+    KLDiv, ELBO = KL_and_ELBO(X̂state; marginalize_Z)
     ℓ = (; KLDiv, ELBO)
 
     if λ_vae_sim > 0
-        ℓ = push!!(ℓ, :VAEsim => λ_vae_sim * derived["vae_reg_loss"](derived["cvae"], X̂masked, X̂mask))
+        ℓ = push!!(ℓ, :VAE => λ_vae_sim * derived["vae_reg_loss"](signal(X̂state), X̂mask, lib.sample_mv_normal(X̂state.μq0, X̂state.σq)))
+    end
+    if λ_latent > 0
+        # ℓ = push!!(ℓ, :LatentReg => λ_latent * -mean(log.(1f-8 .+ X̂state.σq)))
+        ℓ = push!!(ℓ, :LatentReg => λ_latent * lib.KLDivUnitNormal(X̂state.μq0, X̂state.σq))
+        # ℓ = push!!(ℓ, :LatentReg => λ_latent * lib.KLDivUnitNormal(X̂state.μr0, X̂state.σr))
     end
 
-    if λ_vae_data > 0
-        Ymasked, Ymask = lib.pad_and_mask_signal(signal(Ymeta), nsignal(derived["cvae"]); minkept, maxkept = nsignal(Ymeta))
-        ℓ = push!!(ℓ, :VAEdata => λ_vae_data * derived["vae_reg_loss"](derived["cvae"], Ymasked, Ymask))
-    end
-
-    # Use inferred params as pseudolabels for Ymeta
     if λ_pseudo > 0
-        θY, ZY = Zygote.@ignore begin
-            pseudolabel_cvae = τ_pseudo > 0 ?
-                lib.movingaverage!(derived["mean_cvae"], derived["cvae"], τ_pseudo) : # pseudolabels generated from exponential moving average of cvae's
-                derived["cvae"] # pseudolabels generated from bare cvae
+        # Use inferred params as pseudolabels for Ymeta
+        θPseudo, ZPseudo = Zygote.@ignore begin
+            pseudolabel_cvae = τ_pseudo > 0 ? derived["mean_cvae"] : derived["cvae"] # pseudolabels generated from exponential moving average of cvaes with time constant `τ_pseudo`
             lib.sampleθZ(phys, pseudolabel_cvae, derived["cvae_theta_prior"], derived["cvae_latent_prior"], Ymeta; posterior_θ = true, posterior_Z = true, posterior_mode = true) # pseudo θ and Z labels for Y are given by cvae posterior modes
         end
-        Ymasked, Ymask = lib.pad_and_mask_signal(signal(Ymeta), nsignal(derived["cvae"]); minkept, maxkept = nsignal(Ymeta))
-        KLDivY, ELBOY = KL_and_ELBO(derived["cvae"], Ymasked, θY, ZY; marginalize_Z) # recover pseudo θ and Z labels
-        ℓ = push!!(ℓ, :KLDivPseudo => λ_pseudo * KLDivY, :ELBOPseudo => λ_pseudo * ELBOY)
+        λ_pseudo = Zygote.@ignore begin
+            if τ_pseudo > 0 && @isdefined(trainer)
+                t = oftype(λ_pseudo, trainer.state.iteration)
+                λ_pseudo * (t < τ_pseudo ? zero(t) : -expm1(-(t-τ_pseudo)/τ_pseudo)) # exponential warmup of `λ_pseudo` weighting after `τ_pseudo` warmup steps
+            else
+                λ_pseudo
+            end
+        end
+
+        # CVAE loss from pseudolabels
+        # Ymasked, Ymask = lib.pad_and_mask_signal(signal(Ymeta), nsignal(derived["cvae"]); minkept, maxkept = nsignal(Ymeta))
+        Ymasked, Ymask = lib.pad_and_mask_signal(X̂, nsignal(derived["cvae"]); minkept, maxkept = nsignal(Ymeta)) #TODO try bootstrapping X̂ to see if it also fails...
+        Ystate = lib.CVAETrainingState(derived["cvae"], Ymasked, θPseudo, ZPseudo) # need not evaluate training state params
+        KLDivPseudo, ELBOPseudo = KL_and_ELBO(Ystate; marginalize_Z) # recover pseudo θ and Z labels
+        ℓ = push!!(ℓ, :KLDivPseudo => λ_pseudo * KLDivPseudo, :ELBOPseudo => λ_pseudo * ELBOPseudo)
+
+        if λ_vae_data > 0
+            ℓ = push!!(ℓ, :VAEPseudo => λ_pseudo * λ_vae_data * derived["vae_reg_loss"](signal(Ystate), Ymask, lib.sample_mv_normal(Ystate.μq0, Ystate.σq)))
+        end
+        if λ_latent > 0
+            # ℓ = push!!(ℓ, :LatentRegPseudo => λ_pseudo * λ_latent * -mean(log.(1f-8 .+ Ystate.σq)))
+            ℓ = push!!(ℓ, :LatentRegPseudo => λ_pseudo * λ_latent * lib.KLDivUnitNormal(Ystate.μq0, Ystate.σq))
+            # ℓ = push!!(ℓ, :LatentRegPseudo => λ_pseudo * λ_latent * lib.KLDivUnitNormal(Ystate.μr0, Ystate.σr))
+        end
     end
 
     return ℓ
@@ -357,8 +382,17 @@ function train_step(engine, batch)
             for _ in 1:settings["train"]["CVAEsteps"]
                 @timeit "forward" ℓ, back = Zygote.pullback(() -> sum(CVAElosses(Ytrainmeta; marginalize_Z = false)), ps) #TODO CUDA.@sync #TODO marginalize_Z
                 @timeit "reverse" gs = back(one(ℓ)) #TODO CUDA.@sync
+                #=
+                lib.terminate_on_bad_gradients(models, ps, gs) do
+                    saveprogress(@dict(models, logger); savefolder = logdir(), prefix = "failure-", ext = ".jld2")
+                    engine.terminate()
+                end
+                =#
                 @timeit "update!" Flux.Optimise.update!(optimizers["cvae"], ps, gs) #TODO CUDA.@sync
                 outputs["CVAE"] = ℓ
+            end
+            if (τ_pseudo = get!(settings["opt"]["cvae"], "tau_pseudo", 0)::Int) > 0
+                lib.movingaverage!(derived["mean_cvae"], derived["cvae"], τ_pseudo) # exponential moving average of cvaes
             end
         end
 
@@ -526,7 +560,7 @@ function compute_metrics(engine, batch; dataset)
                 Z = sample(derived["cvae_latent_prior"], signal(Ymeta))
                 X = lib.signal_model(phys, θ)
                 X̂ = lib.sampleX̂(models["genatr"], X, Z)
-                @unpack μr0, σr, μq0, σq = lib.mv_normal_parameters(derived["cvae"], X̂, θ, Z)
+                @unpack μr0, σr, μq0, σq = lib.CVAETrainingState(derived["cvae"], X̂, θ, Z)
                 activation_scale(z) = vcat(mean(z; dims=2), std(z; dims=2)) |> vec |> lib.cpu |> z -> @. log10(1e-3 + abs(z)) # distribution of mean/std of activations
                 mapreduce(activation_scale, vcat, (μr0, σr, μq0, σq))
             end
