@@ -18,8 +18,8 @@ noutput(R::RicianCorrector) = noutput(typeof(corrector(R)))
     R::Rtype
     normalizer::Ntype
     noisescale::Stype
-    NormalizedRicianCorrector(R::Rtype, nrm, scal) where {n, nz, Rtype <: RicianCorrector{n,nz}} = new{n, nz, Rtype, typeof(nrm), typeof(scal)}(R, nrm, scal)
 end
+NormalizedRicianCorrector(R::Rtype, nrm, scal) where {n, nz, Rtype <: RicianCorrector{n,nz}} = NormalizedRicianCorrector{n, nz, Rtype, typeof(nrm), typeof(scal)}(R, nrm, scal)
 
 const MaybeNormalizedRicianCorrector{n,nz} = Union{<:RicianCorrector{n,nz}, NormalizedRicianCorrector{n,nz}}
 
@@ -29,8 +29,9 @@ generator(R::NormalizedRicianCorrector) = R.R.G
 # G : [X; Z] ∈ 𝐑^(n+k) -> [δ; logϵ] ∈ 𝐑^2n
 @with_kw struct VectorRicianCorrector{n,nz,Gtype} <: RicianCorrector{n,nz}
     G::Gtype
-    VectorRicianCorrector{n,nz}(G) where {n,nz} = new{n,nz,typeof(G)}(G)
 end
+VectorRicianCorrector{n,nz}(G) where {n,nz} = VectorRicianCorrector{n,nz,typeof(G)}(G)
+
 Flux.@functor VectorRicianCorrector
 ninput(::Type{R}) where {R<:VectorRicianCorrector} = nsignal(R) + nlatent(R)
 noutput(::Type{R}) where {R<:VectorRicianCorrector} = 2 * nsignal(R)
@@ -39,8 +40,9 @@ noutput(::Type{R}) where {R<:VectorRicianCorrector} = 2 * nsignal(R)
 @with_kw struct FixedNoiseVectorRicianCorrector{n,nz,T,Gtype} <: RicianCorrector{n,nz}
     G::Gtype
     ϵ0::T
-    FixedNoiseVectorRicianCorrector{n,nz}(G,ϵ0) where {n,nz} = new{n,nz,typeof(ϵ0),typeof(G)}(G,ϵ0)
 end
+FixedNoiseVectorRicianCorrector{n,nz}(G,ϵ0) where {n,nz} = FixedNoiseVectorRicianCorrector{n,nz,typeof(ϵ0),typeof(G)}(G,ϵ0)
+
 Flux.@functor FixedNoiseVectorRicianCorrector
 ninput(::Type{R}) where {R<:FixedNoiseVectorRicianCorrector} = nsignal(R) + nlatent(R)
 noutput(::Type{R}) where {R<:FixedNoiseVectorRicianCorrector} = nsignal(R)
@@ -48,8 +50,9 @@ noutput(::Type{R}) where {R<:FixedNoiseVectorRicianCorrector} = nsignal(R)
 # G : Z ∈ 𝐑^k -> [δ; logϵ] ∈ 𝐑^2n
 @with_kw struct LatentVectorRicianCorrector{n,nz,Gtype} <: RicianCorrector{n,nz}
     G::Gtype
-    LatentVectorRicianCorrector{n,nz}(G) where {n,nz} = new{n,nz,typeof(G)}(G)
 end
+LatentVectorRicianCorrector{n,nz}(G) where {n,nz} = LatentVectorRicianCorrector{n,nz,typeof(G)}(G)
+
 Flux.@functor LatentVectorRicianCorrector
 ninput(::Type{R}) where {R<:LatentVectorRicianCorrector} = nlatent(R)
 noutput(::Type{R}) where {R<:LatentVectorRicianCorrector} = 2 * nsignal(R)
@@ -57,8 +60,9 @@ noutput(::Type{R}) where {R<:LatentVectorRicianCorrector} = 2 * nsignal(R)
 # G : Z ∈ 𝐑^k -> logϵ ∈ 𝐑^n with fixed δ = 0
 @with_kw struct LatentVectorRicianNoiseCorrector{n,nz,Gtype} <: RicianCorrector{n,nz}
     G::Gtype
-    LatentVectorRicianNoiseCorrector{n,nz}(G) where {n,nz} = new{n,nz,typeof(G)}(G)
 end
+LatentVectorRicianNoiseCorrector{n,nz}(G) where {n,nz} = LatentVectorRicianNoiseCorrector{n,nz,typeof(G)}(G)
+
 Flux.@functor LatentVectorRicianNoiseCorrector
 ninput(::Type{R}) where {R<:LatentVectorRicianNoiseCorrector} = nlatent(R)
 noutput(::Type{R}) where {R<:LatentVectorRicianNoiseCorrector} = nsignal(R)
@@ -66,8 +70,9 @@ noutput(::Type{R}) where {R<:LatentVectorRicianNoiseCorrector} = nsignal(R)
 # G : Z ∈ 𝐑^k -> logϵ ∈ 𝐑 with fixed δ = 0
 @with_kw struct LatentScalarRicianNoiseCorrector{n,nz,Gtype} <: RicianCorrector{n,nz}
     G::Gtype
-    LatentScalarRicianNoiseCorrector{n,nz}(G) where {n,nz} = new{n,nz,typeof(G)}(G)
 end
+LatentScalarRicianNoiseCorrector{n,nz}(G) where {n,nz} = LatentScalarRicianNoiseCorrector{n,nz,typeof(G)}(G)
+
 Flux.@functor LatentScalarRicianNoiseCorrector
 ninput(::Type{R}) where {R<:LatentScalarRicianNoiseCorrector} = nlatent(R)
 noutput(::Type{R}) where {R<:LatentScalarRicianNoiseCorrector} = 1
@@ -436,18 +441,17 @@ function CPMGImage(info::NamedTuple; seed::Int)
 end
 
 function t2_distributions!(img::CPMGImage)
-    img.meta[:decaes] = Dict{Symbol, Any}()
-    img.meta[:decaes][:t2maps], img.meta[:decaes][:t2dist], img.meta[:decaes][:t2parts] = (Dict{Symbol,Any}() for _ in 1:3)
-    img.meta[:decaes][:t2maps][:Y], img.meta[:decaes][:t2dist][:Y] = DECAES.T2mapSEcorr(img.data |> arr64, img.t2mapopts)
-    img.meta[:decaes][:t2parts][:Y] = DECAES.T2partSEcorr(img.meta[:decaes][:t2dist][:Y], img.t2partopts)
+    img.meta[:decaes] = Dict{Symbol, Any}(:t2maps => Dict{Symbol,Any}(), :t2dist => Dict{Symbol,Any}(), :t2parts => Dict{Symbol,Any}())
+    t2_distributions!(img, :Y => img.data)
     return img
 end
 function t2_distributions!(img::CPMGImage, X::P) where {P <: Pair{Symbol, <:AbstractTensor4D}}
     Xname, Xdata = X
     t2mapopts = DECAES.T2mapOptions(img.t2mapopts, MatrixSize = size(Xdata)[1:3])
     t2partopts = DECAES.T2partOptions(img.t2partopts, MatrixSize = size(Xdata)[1:3])
-    img.meta[:decaes][:t2maps][Xname], img.meta[:decaes][:t2dist][Xname] = DECAES.T2mapSEcorr(Xdata |> arr64, t2mapopts)
-    img.meta[:decaes][:t2parts][Xname] = DECAES.T2partSEcorr(img.meta[:decaes][:t2dist][Xname], t2partopts)
+    res = img.meta[:decaes]
+    res[:t2maps][Xname], res[:t2dist][Xname] = DECAES.T2mapSEcorr(Xdata |> arr64, t2mapopts)
+    res[:t2parts][Xname] = DECAES.T2partSEcorr(res[:t2dist][Xname], t2partopts)
     return img
 end
 t2_distributions!(img::CPMGImage, X::P) where {P <: Pair{Symbol, <:AbstractMatrix}} = t2_distributions!(img, X[1] => reshape(permutedims(X[2]), size(X[2],2), 1, 1, size(X[2],1)))
@@ -487,7 +491,6 @@ function initialize!(p::EPGModel{T,isfinite}; image_infos::AbstractVector{<:Name
     @assert !isfinite #TODO
     for info in image_infos
         image = CPMGImage(info; seed)
-        # t2_distributions!(image) #TODO
         push!(p.images, image)
     end
     #= TODO @assert !isfinite
@@ -499,6 +502,15 @@ function initialize!(p::EPGModel{T,isfinite}; image_infos::AbstractVector{<:Name
     =#
     empty!.((p.θ, p.X, p.Y))
     signal_histograms!(p)
+    
+    # t2_distributions!(p)
+    return p
+end
+
+function t2_distributions!(p::EPGModel)
+    for img in p.images
+        t2_distributions!(img)
+    end
     return p
 end
 

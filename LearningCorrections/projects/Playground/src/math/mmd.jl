@@ -6,15 +6,14 @@ abstract type MMDKernel{T} end
 
 struct FunctionKernel{T,F} <: MMDKernel{T}
     f::F
-    FunctionKernel{T}(f) where {T} = new{T,typeof(f)}(f)
 end
+FunctionKernel{T}(f) where {T} = FunctionKernel{T,typeof(f)}(f)
 Flux.functor(::Type{<:FunctionKernel{T}}, k) where {T} = (f = k.f,), k -> FunctionKernel{T}(k)
 (k::FunctionKernel)(Δ) = k.f(Δ)
 
 struct DeepExponentialKernel{T,N,A<:AbstractArray{T,N},F} <: MMDKernel{T}
     logσ::A
     phi::F
-    DeepExponentialKernel(logσ::AbstractArray, phi = identity) = new{eltype(logσ),ndims(logσ),typeof(logσ),typeof(phi)}(logσ, phi)
 end
 Flux.@functor DeepExponentialKernel
 logbandwidths(k::DeepExponentialKernel) = k.logσ
@@ -1345,7 +1344,7 @@ function mmd_perm_test_power(
     MMDvar = mean(mmdvar_samples) # var(mmd_samples) is less accurate for small nsamples
     MMDσ = √max(MMDvar, eps(typeof(MMDvar))/m^2) # ensure m^2 * MMDvar >= ϵ
     z = MMDsq / MMDσ - c_alpha / (m * MMDσ)
-    P_alpha_approx = cdf(Normal(), z) |> typeof(MMDsq)
+    P_alpha_approx = cdf(Gaussian(), z) |> typeof(MMDsq)
     P_alpha = count(MMDsq -> m * MMDsq > c_alpha, mmd_samples) / nsamples |> typeof(MMDsq)
 
     return @ntuple(alpha, m, c_alpha, P_alpha, P_alpha_approx, MMDsq, MMDvar, MMDσ, c_alpha_perms, mmd_samples, mmdvar_samples)
@@ -1431,7 +1430,7 @@ function mmd_perm_test_power_plot(perm_test_results; showplot = false)
         vline!(p, [m*MMDsq]; line = (2,:red,:dash), label = "m*MMD² mean (μ = $(s(m*MMDsq)))")
         vline!(p, m*MMDsq .+ [-m*MMDσ, m*MMDσ]; line = (2,:red,:dot), label = "±1σ bounds (σ = $(s(m*MMDσ)))")
         if m^2 * MMDvar > eps(typeof(MMDvar))
-            plot!(p, Normal(m*MMDsq, m*MMDσ); label = "m*MMD² distbn ~ N(μ,σ)", line = (3,:red))
+            plot!(p, Gaussian(m*MMDsq, m*MMDσ); label = "m*MMD² distbn ~ N(μ,σ)", line = (3,:red))
         end
 
         if length(mmd_samples) > 1
@@ -1478,7 +1477,7 @@ function combinatorial_kernel_opt(k::DeepExponentialKernel, X, Y, σbucket; batc
     for i in 1:maxiters
         inds = sample(eachindex(σbucket), length(logbandwidths(kbest)); replace)
         σnew = reshape(σbucket[inds], size(logbandwidths(kbest)))
-        knew = DeepExponentialKernel(σnew)
+        knew = DeepExponentialKernel(σnew, identity)
         mmdnew = mmdsamples(knew)
         t = HypothesisTests.UnequalVarianceTTest(Float64.(mmdnew), Float64.(mmdbest))
         p = HypothesisTests.pvalue(t)

@@ -7,6 +7,10 @@ const AbstractTensor4D{T} = AbstractArray{T,4}
 const CuTensor3D{T} = CuArray{T,3}
 const CuTensor4D{T} = CuArray{T,4}
 
+const PairOfTuples{N} = Pair{<:Tuple{Vararg{Any,N}}, <:Tuple{Vararg{Any,N}}}
+const NTupleOfNamedTuples{Ks,M,N} = NTuple{N,<:NamedTuple{Ks,<:NTuple{M}}}
+const NamedTupleOfNTuples{Ks,M,N} = NamedTuple{Ks, <:NTuple{M, <:NTuple{N}}}
+
 # Extend Flux.cpu and Flux.gpu
 for f in [:cpu, :gpu]
     @eval $f(x) = Flux.$f(x) # fallback to Flux.cpu/Flux.gpu
@@ -57,6 +61,9 @@ disp_ret(x; type = true, val = true) = (type && display(typeof(x)); val && displ
 
 # Check if dx approximately divides x
 is_approx_multiple_of(x, dx) = (n = round(Int, x/dx); x ≈ n * dx)
+
+# make_kwargs from dictionary of settings
+make_kwargs(settings, keys...) = Any[Symbol(k) => v for (k,v) in foldl(getindex, string.(keys); init = settings)]
 
 ####
 #### Dict, (Named)Tuples

@@ -5,8 +5,8 @@
 function settings_template end
 
 # Parse command line arguments into default settings
-function load_settings(args...; override = nothing)
-    settings = if isempty(checkpointdir())
+function load_settings(args...; force_new_settings = false, override = nothing)
+    settings = if isempty(checkpointdir()) || force_new_settings
         parse_args_from_template(settings_template(), args...)
     else
         TOML.parsefile(checkpointdir("settings.toml"))
@@ -169,13 +169,11 @@ function load_toyepgmodel_physics(; ntrain::Int, ntest::Int, nval::Int)
 end
 
 function load_epgmodel_physics(; max_numechos = 64, image_infos = nothing, seed = 0)
-    if (image_infos === nothing)
-        image_infos = [
-            (TE = 8e-3, refcon = 180.0, path = DrWatson.datadir("Example_48echo_8msTE", "data-in", "ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.mat")),
-            (TE = 7e-3, refcon = 180.0, path = DrWatson.datadir("Example_56echo_7msTE_CPMG", "data-in", "MW_TRAINING_001_WIP_CPMG56_CS_half_2_1.masked-image.mat")),
-        ]
-    end
     phys = EPGModel{Float32,false}(n = max_numechos)
+    (image_infos === nothing) && (image_infos = [
+        (TE = 8e-3, refcon = 180.0, path = DrWatson.datadir("Example_48echo_8msTE", "data-in", "ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.mat")),
+        (TE = 7e-3, refcon = 180.0, path = DrWatson.datadir("Example_56echo_7msTE_CPMG", "data-in", "MW_TRAINING_001_WIP_CPMG56_CS_half_2_1.masked-image.mat")),
+    ])
     initialize!(phys; image_infos, seed)
 end
 
@@ -183,19 +181,22 @@ end
 #### Physics generator
 ####
 
-init_μlogσ_bias(phys::PhysicsModel{Float32}; kwargs...) = (sz...) -> (sz2 = (sz[1]÷2, sz[2:end]...); vcat(zeros(Float32, sz2), 10 .* ones(Float32, sz2))) # initialize logσ bias >> 0 s.t. initial cvae loss does not blowup, since loss has 𝒪(1/σ²) and 𝒪(logσ) terms
-init_μxlogσx_slope(phys::PhysicsModel{Float32}; nlatent, kwargs...) = (sz...) -> (nθM = nmarginalized(phys); θMbd = θmarginalized(phys, θbounds(phys)); @assert(length(sz) == 1 && sz[1] == 2*(nθM + nlatent)); catscale_slope(NTuple{2,Float32}[θMbd; (-1,1); (9.5,10.5)], [ones(Int, nθM); nlatent; nθM + nlatent])) # [1] μθ[i] : (-1,1) -> θMbd[i], [2] μZ[i] : (-1,1) -> (-1,1), and [3] logσθ, logσZ : (-1,1) -> (9.5,10.5)
-init_μxlogσx_bias(phys::PhysicsModel{Float32}; nlatent, kwargs...) = (sz...) -> (nθM = nmarginalized(phys); θMbd = θmarginalized(phys, θbounds(phys)); @assert(length(sz) == 1 && sz[1] == 2*(nθM + nlatent)); catscale_slope(NTuple{2,Float32}[θMbd; (-1,1); (9.5,10.5)], [ones(Int, nθM); nlatent; nθM + nlatent]))
+function init_μlogσ_bias(::PhysicsModel{Float32}; kwargs...)
+    function (sz...)
+        sz2 = (sz[1]÷2, sz[2:end]...)
+        vcat(zeros(Float32, sz2), 10 .* ones(Float32, sz2)) # initialize logσ bias >> 0 s.t. initial cvae loss does not blowup, since loss has 𝒪(1/σ²) and 𝒪(logσ) terms
+    end
+end
 
 function init_rician_outputscale(phys::PhysicsModel{Float32}; nlatent, maxcorr, noisebounds, RiceGenType = LatentScalarRicianNoiseCorrector, kwargs...)
     n = nsignal(phys)
     δ = Float32(maxcorr)
     σbd = Float32.((noisebounds...,))
     OutputScale =
-        RiceGenType{n,nlatent} <: Union{<:VectorRicianCorrector, <:LatentVectorRicianCorrector} ? CatScale([(-δ, δ), σbd], [n,n]) :
-        RiceGenType{n,nlatent} <: FixedNoiseVectorRicianCorrector ? CatScale([(-δ, δ)], [n]) :
-        RiceGenType{n,nlatent} <: LatentVectorRicianNoiseCorrector ? CatScale([σbd], [n]) :
-        RiceGenType{n,nlatent} <: LatentScalarRicianNoiseCorrector ? CatScale([σbd], [1]) :
+        RiceGenType{n,nlatent} <: Union{<:VectorRicianCorrector, <:LatentVectorRicianCorrector} ? CatScale([(-1,1) => (-δ, δ), σbd], [n,n]) :
+        RiceGenType{n,nlatent} <: FixedNoiseVectorRicianCorrector ? CatScale([(-1,1) => (-δ, δ)], [n]) :
+        RiceGenType{n,nlatent} <: LatentVectorRicianNoiseCorrector ? CatScale([(-1,1) => σbd], [n]) :
+        RiceGenType{n,nlatent} <: LatentScalarRicianNoiseCorrector ? CatScale([(-1,1) => σbd], [1]) :
         error("Unsupported corrector type: $RiceGenType")
 end
 
@@ -204,8 +205,8 @@ function init_isotropic_rician_generator(phys::PhysicsModel{Float32}; kwargs...)
     # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
     n = nsignal(phys)
     R = LatentScalarRicianNoiseCorrector{n,1}(Flux.Chain(identity)) # Latent space outputs noise level directly
-    normalizer = X -> maximum(X; dims = 1) #TODO: normalize by mean? sum? maximum? first echo?
-    noisescale = X -> mean(X; dims = 1) #TODO: relative to mean? nothing?
+    normalizer = ApplyOverDims(maximum; dims = 1) #TODO: normalize by mean? sum? maximum? first echo?
+    noisescale = ApplyOverDims(mean; dims = 1) #TODO: relative to mean? nothing?
     NormalizedRicianCorrector(R, normalizer, noisescale) # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
 end
 
@@ -230,8 +231,8 @@ function init_vector_rician_generator(phys::PhysicsModel{Float32}; nlatent, maxc
         ) |> to32
     )
     # Rician generator mapping Z variables from prior space to Rician parameter space
-    normalizer = X -> maximum(X; dims = 1) #TODO: normalize by mean? sum? maximum? first echo?
-    noisescale = X -> mean(X; dims = 1) #TODO: relative to mean? nothing?
+    normalizer = ApplyOverDims(maximum; dims = 1) #TODO: normalize by mean? sum? maximum? first echo?
+    noisescale = ApplyOverDims(mean; dims = 1) #TODO: relative to mean? nothing?
     NormalizedRicianCorrector(R, normalizer, noisescale) # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
 end
 
@@ -268,7 +269,7 @@ function init_deep_theta_prior(phys::PhysicsModel{Float32}; ktheta, nhidden, hdi
     DeepPrior{Float32,ktheta}(
         Flux.Chain(
             MLP(ktheta => ntheta(phys), nhidden, hdim, σinner, tanh)...,
-            CatScale(θbounds(phys), ones(Int, ntheta(phys))),
+            CatScale(Ref((-1,1)) .=> θbounds(phys), ones(Int, ntheta(phys))),
         ),
         randn_similar,
     ) |> to32
@@ -313,25 +314,14 @@ end
 
 # models["dec"]
 function init_mlp_cvae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nlatent, kwargs...)
-    mlp = Flux.Chain(
-        MLP(nsignal(phys) + zdim => 2*(nmarginalized(phys) + nlatent), nhidden, hdim, Flux.relu, identity)...,
-        Flux.Diagonal(2*(nmarginalized(phys) + nlatent); initα = init_μxlogσx_slope(phys; nlatent), initβ = init_μxlogσx_bias(phys; nlatent)),
-    ) |> to32
+    mlp = MLP(nsignal(phys) + zdim => 2*(nmarginalized(phys) + nlatent), nhidden, hdim, Flux.relu, identity) |> to32 #TODO initb_last = init_μlogσ_bias(phys)
     Stack(@nntopo((Y,zr) => Yzr => μx), vcat, mlp) |> to32
 end
 
 # models["dec"]
 function init_xformer_cvae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nlatent, psize, head, hsize, nshards, chunksize, overlap, kwargs...)
-    mlp = Flux.Chain(
-        MLP(psize => 2*(nmarginalized(phys) + nlatent), 0, hdim, Flux.relu, identity),
-        Flux.Diagonal(2*(nmarginalized(phys) + nlatent); initα = init_μxlogσx_slope(phys; nlatent), initβ = init_μxlogσx_bias(phys; nlatent)),
-    ) |> to32
+    mlp = MLP(psize => 2*(nmarginalized(phys) + nlatent), 0, hdim, Flux.relu, identity) |> to32 #TODO initb_last = init_μlogσ_bias(phys)
     TransformerEncoder(mlp; nsignals = nsignal(phys), ntheta = 0, nlatent = zdim, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
-end
-
-# derived["cvae"]
-function derived_cvae(phys::PhysicsModel{Float32}, enc1, enc2, dec; nlatent, zdim, kwargs...)
-    CVAE{nsignal(phys),ntheta(phys),nmarginalized(phys),nlatent,zdim}(enc1, enc2, dec)
 end
 
 # models["vae_dec"]
@@ -340,6 +330,67 @@ function init_mlp_cvae_vae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim,
     noutput = nsignal(phys) * (regtype == "L1" ? 1 : 2)
     MLP(zdim => noutput, nhidden, hdim, Flux.relu, Flux.softplus) |> to32 # softplus both mean and std outputs, since both must be positive
 end
+
+# derived["cvae"]
+function derived_cvae(phys::PhysicsModel{Float32}, enc1, enc2, dec; nlatent, zdim, kwargs...)
+    # Flux.Diagonal(2*(nmarginalized(phys) + nlatent); initα = init_μxlogσx_slope(phys; nlatent), initβ = init_μxlogσx_bias(phys; nlatent))
+    ϵ = 10 * eps(Float32)
+    θbd = NTuple{2,Float32}.(θbounds(phys))
+    θ̄bd = NTuple{2,Float32}.(fill((ϵ, 1-ϵ), ntheta(phys)))
+    # posterior_dist = Kumaraswamy
+    posterior_dist = Gaussian
+    CVAE{nsignal(phys),ntheta(phys),nmarginalized(phys),nlatent,zdim}(enc1, enc2, dec, θbd, θ̄bd; posterior_dist)
+end
+
+# derived["cvae"]
+function load_pretrained_cvae(phys::PhysicsModel{Float32}; modelfolder, modelprefix = "best-")
+    settings = TOML.parsefile(joinpath(modelfolder, "settings.toml"))
+    models = FileIO.load(only(Glob.glob(modelprefix * "models.*", modelfolder)))["models"] |> deepcopy |> to32
+    @unpack enc1, enc2, dec = models
+    cvae = derived_cvae(phys, enc1, enc2, dec; make_kwargs(settings, "arch")...)
+end
+
+function pseudo_labels!(phys::EPGModel, cvae::CVAE; kwargs...)
+    for img in phys.images
+        pseudo_labels!(phys, cvae, img; kwargs...)
+    end
+    return phys
+end
+
+function pseudo_labels!(phys::EPGModel, cvae::CVAE, img::CPMGImage; nsamples = nothing, basesize = :)
+    for (Yname, Y) in img.partitions
+        get!(img.meta, :pseudolabels, Dict{Symbol,Any}())
+        get!(img.meta[:pseudolabels], Yname, Dict{Symbol,Any}())
+        Js = basesize === Colon() ? [Colon()] : Iterators.partition(1:size(Y,2), basesize)
+        θs, Zs = map(Js) do J
+            YJ = Y[:,J] |> todevice
+            if nsamples === nothing
+                # Use posterior mode, no explicit sampling
+                μθ, μZ = sampleθZ(phys, cvae, MetaCPMGSignal(phys, img, YJ); posterior_mode = true) .|> Flux.cpu
+            else
+                # Average over `nsamples` posterior draws
+                @assert nsamples::Int >= 1
+                θZ_sampler_instance = θZ_sampler(phys, cvae, MetaCPMGSignal(phys, img, YJ))
+                μθ, μZ = θZ_sampler_instance()
+                for _ in 2:nsamples
+                    θ, Z = θZ_sampler_instance()
+                    μθ .+= θ
+                    μZ .+= Z
+                end
+                μθ ./= nsamples
+                μZ ./= nsamples
+                return (μθ, μZ) .|> Flux.cpu
+            end
+        end |> unzip
+        img.meta[:pseudolabels][Yname][:theta] = reduce(hcat, θs)
+        img.meta[:pseudolabels][Yname][:latent] = reduce(hcat, Zs)
+    end
+    return img
+end
+
+####
+#### GANs
+####
 
 # models["discrim"]
 function init_mlp_discrim(phys::PhysicsModel{Float32}; ninput = nsignal(phys), hdim, nhidden, dropout, kwargs...)
@@ -356,8 +407,8 @@ function init_mmd_kernels(phys::PhysicsModel{Float32}; bwsizes, bwbounds, nbandw
         # Optionally embed `nchannel` input into `embeddingdim`-dimensional learned embedding space
         embedding = embeddingdim <= 0 ? identity : Flux.Chain(
             MLP(nchannel => embeddingdim, 0, hdim, Flux.relu, identity)...,
-            z -> Flux.normalise(z; dims = 1), # kernel bandwidths are sensitive to scale; normalize learned representations
-            z -> z .+ 0.1f0 .* randn_similar(z, size(z)...), # stochastic embedding prevents overfitting to Y data
+            ApplyOverDims(Flux.normalise; dims = 1), # kernel bandwidths are sensitive to scale; normalize learned representations
+            # z -> z .+ 0.1f0 .* randn_similar(z, size(z)...), # stochastic embedding prevents overfitting to Y data
         )
 
         # MMD kernel wrapper

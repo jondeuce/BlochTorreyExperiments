@@ -165,10 +165,9 @@ Convert tuple of named tuples (with matching keys) to named tuple of tuples, e.g
     ZipNamedTuples()(((a=1,b=2), (a=3,b=4))) == (a=(1,3), b=(2,4))
 """
 struct ZipNamedTuples end
-const TupleOfNamedTuples{Ks,M,N} = NTuple{N,<:NamedTuple{Ks,<:NTuple{M}}}
-(::ZipNamedTuples)(nts::TupleOfNamedTuples{Ks,M,N}) where {Ks,M,N} = zipnamedtuples(nts)
-zipnamedtuples(nts::TupleOfNamedTuples{Ks,M,N}) where {Ks,M,N} = NamedTuple{Ks}(ntuple(j -> ntuple(i -> nts[i][j], N), M))
-Zygote.@adjoint zipnamedtuples(nts::TupleOfNamedTuples{Ks,M,N}) where {Ks,M,N} = zipnamedtuples(nts), Δ -> (unzipnamedtuple(Δ),)
+(::ZipNamedTuples)(nts::NTupleOfNamedTuples{Ks,M,N}) where {Ks,M,N} = zipnamedtuples(nts)
+zipnamedtuples(nts::NTupleOfNamedTuples{Ks,M,N}) where {Ks,M,N} = NamedTuple{Ks}(ntuple(j -> ntuple(i -> nts[i][j], N), M))
+Zygote.@adjoint zipnamedtuples(nts::NTupleOfNamedTuples{Ks,M,N}) where {Ks,M,N} = zipnamedtuples(nts), Δ -> (unzipnamedtuple(Δ),)
 
 """
 UnzipNamedTuple()(nt)
@@ -178,10 +177,9 @@ Convert named tuple of tuples to tuple of named tuples, e.g.
     UnzipNamedTuple()((a=(1,3), b=(2,4))) == ((a=1,b=2), (a=3,b=4))
 """
 struct UnzipNamedTuple end
-const NamedTupleOfTuples{Ks,M,N} = NamedTuple{Ks, <:NTuple{M, <:NTuple{N}}}
-(::UnzipNamedTuple)(nt::NamedTupleOfTuples{Ks,M,N}) where {Ks,M,N} = unzipnamedtuple(nt)
-unzipnamedtuple(nt::NamedTupleOfTuples{Ks,M,N}) where {Ks,M,N} = ntuple(j -> NamedTuple{Ks}(ntuple(i -> nt[i][j], M)), N)
-Zygote.@adjoint unzipnamedtuple(nt::NamedTupleOfTuples{Ks,M,N}) where {Ks,M,N} = unzipnamedtuple(nt), Δ -> (zipnamedtuples(Δ),)
+(::UnzipNamedTuple)(nt::NamedTupleOfNTuples{Ks,M,N}) where {Ks,M,N} = unzipnamedtuple(nt)
+unzipnamedtuple(nt::NamedTupleOfNTuples{Ks,M,N}) where {Ks,M,N} = ntuple(j -> NamedTuple{Ks}(ntuple(i -> nt[i][j], M)), N)
+Zygote.@adjoint unzipnamedtuple(nt::NamedTupleOfNTuples{Ks,M,N}) where {Ks,M,N} = unzipnamedtuple(nt), Δ -> (zipnamedtuples(Δ),)
 
 function _zip_nt_test()
     tup = ((a=[1.0],b=[2.0]), (a=[3.0],b=[4.0]))
@@ -215,11 +213,19 @@ struct NotTrainable{F}
 end
 Flux.@functor NotTrainable # need functor for e.g. `fmap`
 Flux.trainable(::NotTrainable) = () # no trainable parameters
-(l::NotTrainable)(x...) = l.layer(x...)
+(l::NotTrainable)(xs...) = l.layer(xs...)
 Base.show(io::IO, l::NotTrainable) = (print(io, "NotTrainable("); print(io, l.layer); print(io, ")"))
 
-# Helper function for gradient operators
-ConstantFilter(args...; kwargs...) = NotTrainable(Flux.Chain(ChannelResize(1), Flux.Conv(args...; kwargs...), DenseResize()))
+```
+ApplyOverDims
+```
+struct ApplyOverDims{dims,F}
+    f::F
+end
+Flux.@functor ApplyOverDims
+ApplyOverDims(f; dims) = ApplyOverDims{dims,typeof(f)}(f)
+(a::ApplyOverDims{dims})(xs...) where {dims} = a.f(xs...; dims = dims)
+Base.show(io::IO, a::ApplyOverDims{dims}) where {dims} = (print(io, "ApplyOverDims("); print(io, a.f); print(io, ", dims = $dims)"))
 
 """
 CentralDifference()
@@ -230,6 +236,9 @@ along the first dimension of `d x b` inputs, producing `(d-2) x b` outputs.
 CentralDifference() = ConstantFilter(reshape(Float32[-1.0, 0.0, 1.0], 3, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
 ForwardDifference() = ConstantFilter(reshape(Float32[1.0, -1.0], 2, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
 BackwardDifference() = ConstantFilter(reshape(Float32[-1.0, 1.0], 2, 1, 1, 1), Float32[0.0], identity; stride = 1, pad = 0)
+
+# Helper functions for gradient operators
+ConstantFilter(args...; kwargs...) = NotTrainable(Flux.Chain(ChannelResize(1), Flux.Conv(args...; kwargs...), DenseResize()))
 
 Id_matrix(n::Int) = convert(Matrix{Float32}, LinearAlgebra.I(n))
 FD_matrix(n::Int) = LinearAlgebra.diagm(n-1, n, 0 => -ones(Float32, n-1), 1 => ones(Float32, n-1))
@@ -266,18 +275,33 @@ Non-trainable wrapper of `Flux.Diagonal` layer. Output is `α .* x .+ β`.
 Scale(α = 1, β = zero(α)) = NotTrainable(Flux.Diagonal(α, β))
 
 """
-CatScale(bd::Vector{<:NTuple{2}}, n::Vector{Int})
+CatScale(intervals::Vector{<:PairOfTuples{2}}, n::Vector{Int})
 
 Create a `Scale` instance acting on inputs `x` of height `sum(n)`.
-An affine transformation is constructed which represents `length(n)` separate
-transformations of chunks of height `n[i]` of the input `x`.
-Each transformation is such that values in `(-1,1)` are mapped to `(bd[i][1], bd[i][2])`.
-Input/output bounds are not enforced.
+An affine transformation is constructed which represents `length(intervals) == length(n)`
+separate affine transformations to chunks of height `n[i]` of the input `x`.
+The `i`th pair of tuples `intervals[i]` defines an affine transformation such that
+the interval defined by the tuple `intervals[i][1]` is mapped to `intervals[i][2]`.
+
+For example,
+
+    CatScale([(-1,1) => (0,1), (0,1) => (1,-1)], [2, 4])
+
+applies the function `y = (x+1)/2` to the first 2 rows and `y = -2x+1`
+to the next 4 rows of the inputs with first dimension of height 6.
 """
-CatScale(bd::Vector{<:NTuple{2}}, n::Vector{Int}) = Scale(catscale_slope_and_bias(bd, n)...)
-catscale_slope_and_bias(bd::Vector{<:NTuple{2}}, n::Vector{Int}) = catscale_slope(bd, n), catscale_bias(bd, n)
-catscale_slope(bd::Vector{<:NTuple{2}}, n::Vector{Int}) = mapreduce(((bd, n)) -> fill((bd[2] - bd[1])/2, n), vcat, bd, n)
-catscale_bias(bd::Vector{<:NTuple{2}}, n::Vector{Int}) = mapreduce(((bd, n)) -> fill((bd[1] + bd[2])/2, n), vcat, bd, n)
+CatScale(intervals::AbstractVector, n::AbstractVector{Int}) = Scale(catscale_slope_and_bias(intervals, n)...)
+catscale_slope_and_bias(intervals::AbstractVector, n::AbstractVector{Int}) = catscale_slope(intervals, n), catscale_bias(intervals, n)
+catscale_slope(intervals::AbstractVector, n::AbstractVector{Int}) = mapreduce(((t, n)) -> fill(linear_xform_slope(t), n), vcat, intervals, n)
+catscale_bias(intervals::AbstractVector, n::AbstractVector{Int}) = mapreduce(((t, n)) -> fill(linear_xform_bias(t), n), vcat, intervals, n)
+
+@inline linear_xform_slope_and_bias(t) = linear_xform_slope_and_bias(_unpack_xform(t)...)
+@inline linear_xform_slope(t) = linear_xform_slope(_unpack_xform(t)...)
+@inline linear_xform_bias(t) = linear_xform_bias(_unpack_xform(t)...)
+@inline linear_xform_slope_and_bias(x1,x2,y1,y2) = linear_xform_slope(x1,x2,y1,y2), linear_xform_bias(x1,x2,y1,y2)
+@inline linear_xform_slope(x1,x2,y1,y2) = (y2 - y1) / (x2 - x1)
+@inline linear_xform_bias(x1,x2,y1,y2) = (y1*x2 - y2*x1) / (x2 - x1)
+@inline _unpack_xform(((x1,x2), (y1,y2))) = float.(promote(x1,x2,y1,y2))
 
 """
 wrapprint(io::IO, layer)
@@ -348,8 +372,8 @@ Applies `layers` to each element of a tuple input.
 """
 struct MultiInput{T<:Tuple}
     layers::T
-    MultiInput(xs...) = new{typeof(xs)}(xs)
 end
+MultiInput(xs...) = MultiInput{typeof(xs)}(xs)
 
 Flux.@forward MultiInput.layers Base.getindex, Base.length, Base.first, Base.last, Base.iterate, Base.lastindex
 
@@ -447,7 +471,7 @@ function MLP(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout =
     maybedropout(l) = dropout > 0 ? Flux.Chain(l, Flux.Dropout(dropout)) : l
     maybelayernorm(l) = layernorm ? Flux.Chain(l, Flux.LayerNorm(Dhid)) : l
     MaybeResidualDense() = skip ?
-        Flux.Chain(Flux.SkipConnection(Flux.Dense(Dhid, Dhid, identity; initW, initb), +), x -> σhid.(x)) : # x -> σhid.(x .+ W*x .+ b)
+        Flux.Chain(Flux.SkipConnection(Flux.Dense(Dhid, Dhid, identity; initW, initb), +), Base.BroadcastFunction(σhid)) : # x -> σhid.(x .+ W*x .+ b)
         Flux.Dense(Dhid, Dhid, σhid; initW, initb) # x -> σhid.(W*x .+ b)
     Flux.Chain(
         Flux.Dense(sz[1], Dhid, σhid; initW, initb) |> maybedropout |> maybelayernorm,
@@ -470,11 +494,11 @@ function BatchDenseConnection(
     )
     CD(σ = identity) = ChannelwiseDense(H, C=>C, σ).layers
     BN(σ = identity) = batchnorm ? Flux.BatchNorm(C, σ) : groupnorm ? Flux.GroupNorm(C, C÷2, σ) : identity
-    AF() = x -> σ.(x)
+    AF(σ) = Base.BroadcastFunction(σ)
     if mode === :pre
-        Flux.Chain(BN(), AF(), CD()..., BN(), AF(), CD()...)
+        Flux.Chain(BN(), AF(σ), CD()..., BN(), AF(σ), CD()...)
     elseif mode === :post
-        Flux.Chain(CD()..., BN(), AF(), CD()..., BN(), AF())
+        Flux.Chain(CD()..., BN(), AF(σ), CD()..., BN(), AF(σ))
     elseif mode === :hybrid
         Flux.Chain(BN(), CD(σ)..., BN(), CD()...)
     else
@@ -499,13 +523,13 @@ function BatchConvConnection(
     @assert numlayers >= 2 && !(groupnorm && batchnorm)
     CV(ch, σ = identity) = Flux.Conv(k, ch, σ; pad = (k.-1).÷2)
     BN(C,  σ = identity) = batchnorm ? Flux.BatchNorm(C, σ) : groupnorm ? Flux.GroupNorm(C, C÷2, σ) : identity
-    AF() = x -> σ.(x)
+    AF(σ) = Base.BroadcastFunction(σ)
     if mode === :pre
-        Flux.Chain(BN(ch[1]), AF(), CV(ch[1]=>ch[2]), vcat(([BN(ch[2]), AF(), CV(ch[2]=>ch[2])] for _ in 1:numlayers-2)...)..., BN(ch[2]), AF(), CV(ch[2]=>ch[2]))
+        Flux.Chain(BN(ch[1]), AF(σ), CV(ch[1]=>ch[2]), vcat(([BN(ch[2]), AF(σ), CV(ch[2]=>ch[2])] for _ in 1:numlayers-2)...)..., BN(ch[2]), AF(σ), CV(ch[2]=>ch[2]))
     elseif mode === :post
-        Flux.Chain(CV(ch[1]=>ch[1]), BN(ch[1]), AF(), vcat(([CV(ch[1]=>ch[1]), BN(ch[1]), AF()] for _ in 1:numlayers-2)...)..., CV(ch[1]=>ch[2]), BN(ch[2]), AF())
+        Flux.Chain(CV(ch[1]=>ch[1]), BN(ch[1]), AF(σ), vcat(([CV(ch[1]=>ch[1]), BN(ch[1]), AF(σ)] for _ in 1:numlayers-2)...)..., CV(ch[1]=>ch[2]), BN(ch[2]), AF(σ))
     elseif mode === :hybrid
-        Flux.Chain(BN(ch[1]), CV(ch[1]=>ch[1], σ),    vcat(([BN(ch[1]), CV(ch[1]=>ch[1], σ)]    for _ in 1:numlayers-2)...)..., BN(ch[1]), CV(ch[1]=>ch[2]))
+        Flux.Chain(BN(ch[1]), CV(ch[1]=>ch[1], σ),     vcat(([BN(ch[1]), CV(ch[1]=>ch[1], σ)]     for _ in 1:numlayers-2)...)..., BN(ch[1]), CV(ch[1]=>ch[2]))
     else
         error("Unknown BatchDenseConnection mode $mode")
     end

@@ -5,14 +5,19 @@ Architecture inspired by:
     "Bayesian parameter estimation using conditional variational autoencoders for gravitational-wave astronomy"
     https://arxiv.org/abs/1802.08797
 """
-struct CVAE{n,nθ,nθM,k,nz,E1,E2,D}
+struct CVAE{n,nθ,nθM,k,nz,Dist,E1,E2,D,B1,B2}
     E1 :: E1
     E2 :: E2
     D  :: D
-    CVAE{n,nθ,nθM,k,nz}(enc1::E1, enc2::E2, dec::D) where {n,nθ,nθM,k,nz,E1,E2,D} = new{n,nθ,nθM,k,nz,E1,E2,D}(enc1, enc2, dec)
+    θbd :: B1
+    θ̄bd :: B2
 end
+CVAE{n,nθ,nθM,k,nz}(enc1::E1, enc2::E2, dec::D, θbd::B1, θ̄bd::B2; posterior_dist::Type = Gaussian) where {n,nθ,nθM,k,nz,E1,E2,D,B1,B2} = CVAE{n,nθ,nθM,k,nz,posterior_dist,E1,E2,D,B1,B2}(enc1, enc2, dec, θbd, θ̄bd)
+
+const CVAEPosteriorDist{Dist} = CVAE{n,nθ,nθM,k,nz,Dist} where {n,nθ,nθM,k,nz}
+
 Flux.@functor CVAE
-Base.show(io::IO, ::CVAE{n,nθ,nθM,k,nz}) where {n,nθ,nθM,k,nz} = print(io, "CVAE$((;n,nθ,nθM,k,nz))")
+Base.show(io::IO, ::CVAE{n,nθ,nθM,k,nz,Dist}) where {n,nθ,nθM,k,nz,Dist} = print(io, "CVAE$((;n,nθ,nθM,k,nz,Dist))")
 
 nsignal(::CVAE{n,nθ,nθM,k,nz}) where {n,nθ,nθM,k,nz} = n
 ntheta(::CVAE{n,nθ,nθM,k,nz}) where {n,nθ,nθM,k,nz} = nθ
@@ -20,13 +25,24 @@ nmarginalized(::CVAE{n,nθ,nθM,k,nz}) where {n,nθ,nθM,k,nz} = nθM
 nlatent(::CVAE{n,nθ,nθM,k,nz}) where {n,nθ,nθM,k,nz} = k
 nembedding(::CVAE{n,nθ,nθM,k,nz}) where {n,nθ,nθM,k,nz} = nz
 
+function θ_linear_xform(::CVAE, θ, bd1, bd2)
+    slope, bias = Zygote.@ignore begin
+        bounds = bd1[1:size(θ,1)] .=> bd2[1:size(θ,1)]
+        slope, bias = unzip(linear_xform_slope_and_bias.(bounds))
+        arr_similar(θ, slope), arr_similar(θ, bias)
+    end
+    return slope .* θ .+ bias
+end
+θ_linear_normalize(cvae::CVAE, θ) = θ_linear_xform(cvae, θ, cvae.θbd, cvae.θ̄bd)
+θ̄_linear_unnormalize(cvae::CVAE, θ) = θ_linear_xform(cvae, θ, cvae.θ̄bd, cvae.θbd)
+
 ####
 #### CVAE helpers
 ####
 
-@inline _split_at(x::AbstractVecOrMat, n::Int) = n == size(x,1) ? (x, similar(x, 0, size(x)[2:end]...)) : (x[1:n,..], x[n+1:end,..])
-split_theta_latent(::CVAE{n,nθ,nθM,k,nz}, x::AbstractVecOrMat) where {n,nθ,nθM,k,nz} = _split_at(x, nθ)
-split_marginal_latent(::CVAE{n,nθ,nθM,k,nz}, x::AbstractVecOrMat) where {n,nθ,nθM,k,nz} = _split_at(x, nθM)
+@inline split_at(x::AbstractVecOrMat, n::Int) = n == size(x,1) ? (x, similar(x, 0, size(x)[2:end]...)) : (x[1:n,..], x[n+1:end,..])
+split_theta_latent(::CVAE{n,nθ,nθM,k,nz}, x::AbstractVecOrMat) where {n,nθ,nθM,k,nz} = split_at(x, nθ)
+split_marginal_latent(::CVAE{n,nθ,nθM,k,nz}, x::AbstractVecOrMat) where {n,nθ,nθM,k,nz} = split_at(x, nθM)
 
 ####
 #### CVAE methods
@@ -53,54 +69,117 @@ function signal_mask(Y::AbstractVecOrMat; minkept::Int = firstindex(Y,1), maxkep
     return mask
 end
 
-struct CVAETrainingState{n,nθ,nθM,k,nz,A}; Y::A; θ::A; Z::A; μr0::A; σr::A; μq0::A; σq::A; μx0::A; σx::A; end
+struct CVAETrainingState{C <: CVAE, A}
+    cvae::C
+    Y::A
+    θ̄::A
+    Z::A
+    μr0::A
+    σr::A
+    μq0::A
+    σq::A
+end
 
-function CVAETrainingState(cvae::CVAE{n,nθ,nθM,k,nz}, Y, θ, Z) where {n,nθ,nθM,k,nz}
+function CVAETrainingState(cvae::CVAE, Y, θ, Z)
     Ypad = pad_signal(cvae, Y)
+    θ̄ = θ_linear_normalize(cvae, θ)
     μr0, σr = split_mean_softplus_std(cvae.E1(Ypad))
-    μq0, σq = split_mean_softplus_std(cvae.E2(Ypad,θ,Z))
-    zq = sample_mv_normal(μq0, σq)
-    μx0, σx = split_mean_softplus_std(cvae.D(Ypad,zq))
-    return CVAETrainingState{n,nθ,nθM,k,nz,typeof(Ypad)}(Ypad, θ, Z, μr0, σr, μq0, σq, μx0, σx)
+    μq0, σq = split_mean_softplus_std(cvae.E2(Ypad,θ̄,Z))
+    return CVAETrainingState(cvae, Ypad, θ̄, Z, μr0, σr, μq0, σq)
 end
 signal(state::CVAETrainingState) = state.Y
 
-struct CVAEInferenceState{n,nθ,nθM,k,nz,A}; Y::A; μr0::A; σr::A; end
+struct CVAEInferenceState{C <: CVAE, A}
+    cvae::C
+    Y::A
+    μr0::A
+    σr::A
+end
 
-function CVAEInferenceState(cvae::CVAE{n,nθ,nθM,k,nz}, Y) where {n,nθ,nθM,k,nz}
+function CVAEInferenceState(cvae::CVAE, Y)
     Ypad = pad_signal(cvae, Y)
     μr = cvae.E1(Ypad)
     μr0, σr = split_mean_softplus_std(μr)
-    return CVAEInferenceState{n,nθ,nθM,k,nz,typeof(Ypad)}(Ypad, μr0, σr)
+    return CVAEInferenceState(cvae, Ypad, μr0, σr)
 end
 signal(state::CVAEInferenceState) = state.Y
 
-function KL_and_ELBO(state::CVAETrainingState{n,nθ,nθM,k,nz}; marginalize_Z::Bool) where {n,nθ,nθM,k,nz}
-    @unpack Y, θ, Z, μr0, σr, μq0, σq, μx0, σx = state
-    KLDiv = KLDivergence(μq0, σq, μr0, σr)
+function KLDivergence(state::CVAETrainingState)
+    @unpack μq0, σq, μr0, σr = state
+    KLDivGaussian(μq0, σq, μr0, σr)
+end
+
+function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) where {C <: CVAEPosteriorDist{Gaussian}}
+    @unpack cvae, Y, θ̄, Z, μq0, σq = state
+    nθM = nmarginalized(cvae)
+    zq = sample_mv_normal(μq0, σq)
+    μx0, σx = split_mean_softplus_std(cvae.D(Y,zq))
     ELBO = marginalize_Z ?
-        EvidenceLowerBound(θ[1:nθM,..], μx0[1:nθM,..], σx[1:nθM,..]) :
-        EvidenceLowerBound(vcat(θ[1:nθM,..], Z), μx0, σx)
+        NegLogLGaussian(θ̄[1:nθM,..], μx0[1:nθM,..], σx[1:nθM,..]) :
+        NegLogLGaussian(vcat(θ̄[1:nθM,..], Z), μx0, σx)
+end
+
+function split_kumaraswamy_and_gaussian(μx, nθM)
+    aθ′_μZ′, bθ′_σZ′ = split_dim1(μx) # μx = D(Y,zq) = [aθ′; μZ′; bθ′; σZ′]
+    aθ′, μZ′ = split_at(aθ′_μZ′, nθM) # size(aθ′,1) = nθM, size(μZ′,1) = nlatent
+    bθ′, σZ′ = split_at(bθ′_σZ′, nθM) # size(bθ′,1) = nθM, size(σZ′,1) = nlatent
+    aθ = 1 .+ Flux.softplus.(aθ′) # aθ > 0
+    bθ = 1 .+ Flux.softplus.(bθ′) # bθ > 0
+    μZ = μZ′ # no transform
+    σZ = Flux.softplus.(σZ′)
+    return (aθ, bθ, μZ, σZ)
+end
+
+function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) where {C <: CVAEPosteriorDist{Kumaraswamy}}
+    @unpack cvae, Y, θ̄, Z, μq0, σq = state
+    nθM = nmarginalized(cvae)
+    zq = sample_mv_normal(μq0, σq)
+    aθ, bθ, μZ, σZ = split_kumaraswamy_and_gaussian(cvae.D(Y,zq), nθM) # μx = D(Y,zq) = [aθ′; μZ′; bθ′; σZ′]
+    ELBO_θ = NegLogLKumaraswamy(θ̄[1:nθM,..], aθ, bθ)
+    if marginalize_Z
+        ELBO = ELBO_θ
+    else
+        ELBO = ELBO_θ + NegLogLGaussian(Z, μZ, σZ)
+    end
+end
+
+function KL_and_ELBO(state::CVAETrainingState; marginalize_Z::Bool)
+    KLDiv = KLDivergence(state)
+    ELBO = EvidenceLowerBound(state; marginalize_Z)
     return (; KLDiv, ELBO)
 end
+
 KL_and_ELBO(cvae::CVAE, Y, θ, Z; marginalize_Z::Bool) = KL_and_ELBO(CVAETrainingState(cvae, Y, θ, Z); marginalize_Z)
 
-sampleθZposterior(cvae::CVAE, Y; kwargs...) = sampleθZposterior(cvae, CVAEInferenceState(cvae, Y); kwargs...)
+sampleθZposterior(cvae::CVAE, Y; kwargs...) = sampleθZposterior(CVAEInferenceState(cvae, Y); kwargs...)
 
-function sampleθZposterior(cvae::CVAE, state::CVAEInferenceState; mode = false)
+function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C <: CVAEPosteriorDist{Gaussian}}
     #TODO: `mode` is probably not strictly the correct term, but in practice it should be something akin to the distribution mode since `μr0` is the most likely value for `zr` and `μx0` is the most likely value for `x` **conditional on `zr`**; likely there are counterexamples to this simple reasoning, though...
-    @unpack Y, μr0, σr = state
+    @unpack cvae, Y, μr0, σr = state
     zr = mode ? μr0 : sample_mv_normal(μr0, σr)
     μx = cvae.D(Y,zr)
     μx0, σx = split_mean_softplus_std(μx)
     x = mode ? μx0 : sample_mv_normal(μx0, σx)
-    θM, Z = split_marginal_latent(cvae, x)
+    θ̄M, Z = split_marginal_latent(cvae, x)
+    θM = θ̄_linear_unnormalize(cvae, θ̄M)
+    return θM, Z
+end
+
+function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C <: CVAEPosteriorDist{Kumaraswamy}}
+    #TODO: `mode` is probably not strictly the correct term, but in practice it should be something akin to the distribution mode since `μr0` is the most likely value for `zr` and `μx0` is the most likely value for `x` **conditional on `zr`**; likely there are counterexamples to this simple reasoning, though...
+    @unpack cvae, Y, μr0, σr = state
+    zr = mode ? μr0 : sample_mv_normal(μr0, σr)
+    μx = cvae.D(Y,zr)
+    aθ, bθ, μZ, σZ = split_kumaraswamy_and_gaussian(μx, nmarginalized(cvae))
+    θ̄M = mode ? mode_kumaraswamy(aθ, bθ) : sample_kumaraswamy(aθ, bθ)
+    Z = mode ? μZ : sample_mv_normal(μZ, σZ)
+    θM = θ̄_linear_unnormalize(cvae, θ̄M)
     return θM, Z
 end
 
 function θZposterior_sampler(cvae::CVAE, Y; kwargs...)
     state = CVAEInferenceState(cvae, Y) # constant over posterior samples
-    θZposterior_sampler_inner() = sampleθZposterior(cvae, state; kwargs...)
+    θZposterior_sampler_inner() = sampleθZposterior(state; kwargs...)
     return θZposterior_sampler_inner
 end
 
@@ -119,8 +198,9 @@ which generates samples ϕ ~ prior(ϕ) from kϕ-dimensional samples from noiseso
 struct DeepPrior{T,kϕ,FP,FN}
     prior :: FP
     noisesource :: FN
-    DeepPrior{T,kϕ}(prior::FP, noisesource::FN) where {T,kϕ,FP,FN} = new{T,kϕ,FP,FN}(prior, noisesource)
 end
+DeepPrior{T,kϕ}(prior::FP, noisesource::FN) where {T,kϕ,FP,FN} = DeepPrior{T,kϕ,FP,FN}(prior, noisesource)
+
 Flux.@functor DeepPrior
 Base.show(io::IO, ::DeepPrior{T,kϕ}) where {T,kϕ} = print(io, "DeepPrior$((;T,kϕ))")
 
@@ -130,9 +210,11 @@ StatsBase.sample(p::DeepPrior{T}, n::Int) where {T} = StatsBase.sample(p, CuMatr
 StatsBase.sample(p::DeepPrior, Y::AbstractVecOrMat, n::Int = size(Y,2)) = StatsBase.sample(p, typeof(Y), n) # θ type is similar to Y type
 StatsBase.sample(p::DeepPrior{T,kϕ}, ::Type{A}, n::Int) where {T, kϕ, A <: AbstractVecOrMat{T}} = p.prior(p.noisesource(A, kϕ, n)) # sample from distribution
 
-#### CVAE + DeepPrior + AbstractMetaDataSignal methods
+const MaybeDeepPrior = Union{Nothing, <:DeepPrior}
 
-function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; posterior_θ = true, posterior_Z = true, posterior_mode = false)
+#### CVAE + PhysicsModel + DeepPrior + AbstractMetaDataSignal methods
+
+function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zprior::MaybeDeepPrior, Ymeta::AbstractMetaDataSignal; posterior_θ = true, posterior_Z = true, posterior_mode = false)
     if posterior_θ || posterior_Z
         return sampleθZ(phys, cvae, θprior, Zprior, Ymeta, CVAEInferenceState(cvae, signal(Ymeta)); posterior_θ, posterior_Z, posterior_mode)
     else
@@ -141,15 +223,20 @@ function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::D
         return θ, Z
     end
 end
+sampleθZ(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleθZ(phys, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
 
-function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal, state::CVAEInferenceState; posterior_θ = true, posterior_Z = true, posterior_mode = false)
+function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zprior::MaybeDeepPrior, Ymeta::AbstractMetaDataSignal, state::CVAEInferenceState; posterior_θ = true, posterior_Z = true, posterior_mode = false)
     if posterior_θ || posterior_Z
-        θMhat, Zhat = sampleθZposterior(cvae, state; mode = posterior_mode)
-        Z = posterior_Z ? Zhat : sample(Zprior, signal(Ymeta))
+        θ̂M, Ẑ = sampleθZposterior(state; mode = posterior_mode)
+        Z = if posterior_Z
+            Ẑ
+        else
+            sample(Zprior, signal(Ymeta))
+        end
         θ = if posterior_θ
-            θMlo = arr_similar(θMhat, θmarginalized(phys, θlower(phys)))
-            θMhi = arr_similar(θMhat, θmarginalized(phys, θupper(phys)))
-            vcat(clamp.(θMhat, θMlo, θMhi), θnuissance(phys, Ymeta))
+            θMlo = arr_similar(θ̂M, θmarginalized(phys, θlower(phys)))
+            θMhi = arr_similar(θ̂M, θmarginalized(phys, θupper(phys)))
+            vcat(clamp.(θ̂M, θMlo, θMhi), θnuissance(phys, Ymeta))
         else
             sample(θprior, signal(Ymeta))
         end
@@ -159,14 +246,16 @@ function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::D
     end
     return θ, Z
 end
+sampleθZ(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal, state::CVAEInferenceState; kwargs...) = sampleθZ(phys, cvae, nothing, nothing, Ymeta, state; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
 
-function θZ_sampler(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...)
+function θZ_sampler(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zprior::MaybeDeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...)
     state = CVAEInferenceState(cvae, signal(Ymeta)) # constant over posterior samples
     θZ_sampler_inner() = sampleθZ(phys, cvae, θprior, Zprior, Ymeta, state; kwargs...)
     return θZ_sampler_inner
 end
+θZ_sampler(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = θZ_sampler(phys, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
 
-function sampleXθZ(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...)
+function sampleXθZ(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zprior::MaybeDeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...)
     #TODO: can't differentiate through @timeit "sampleθZ"
     #TODO: can't differentiate through @timeit "signal_model"
     θ, Z = sampleθZ(phys, cvae, θprior, Zprior, Ymeta; kwargs...)
@@ -174,8 +263,10 @@ function sampleXθZ(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::
     (size(X,1) > nsignal(Ymeta)) && (X = X[1:nsignal(Ymeta),..])
     return X, θ, Z
 end
+sampleXθZ(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleXθZ(phys, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
 
-sampleX(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleXθZ(phys, cvae, θprior, Zprior, Ymeta; kwargs...)[1]
+sampleX(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zprior::MaybeDeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleXθZ(phys, cvae, θprior, Zprior, Ymeta; kwargs...)[1]
+sampleX(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleX(phys, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
 
 ####
 #### Rician posterior state
@@ -183,15 +274,17 @@ sampleX(phys::PhysicsModel, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Y
 
 sampleX̂(rice::RicianCorrector, X, Z = nothing, ninstances = nothing) = sample_rician_state(rice, X, Z, ninstances).X̂
 
-function sampleX̂θZ(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...)
+function sampleX̂θZ(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, θprior::MaybeDeepPrior, Zprior::MaybeDeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...)
     #TODO: can't differentiate through @timeit "sampleXθZ"
     #TODO: can't differentiate through @timeit "sampleX̂"
     X, θ, Z = sampleXθZ(phys, cvae, θprior, Zprior, Ymeta; kwargs...)
     X̂ = sampleX̂(rice, X, Z)
     return X̂, θ, Z
 end
+sampleX̂θZ(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleX̂θZ(phys, rice, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
 
-sampleX̂(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, θprior::DeepPrior, Zprior::DeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleX̂θZ(phys, rice, cvae, θprior, Zprior, Ymeta; kwargs...)[1]
+sampleX̂(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, θprior::MaybeDeepPrior, Zprior::MaybeDeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleX̂θZ(phys, rice, cvae, θprior, Zprior, Ymeta; kwargs...)[1]
+sampleX̂(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleX̂(phys, rice, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
 
 function NegLogLikelihood(rice::RicianCorrector, Y::AbstractVecOrMat, μ0, σ)
     if typeof(rice) <: NormalizedRicianCorrector && (rice.normalizer !== nothing)
@@ -213,8 +306,6 @@ function posterior_state(
         phys::PhysicsModel,
         rice::RicianCorrector,
         cvae::CVAE,
-        θprior::DeepPrior,
-        Zprior::DeepPrior,
         Ymeta::AbstractMetaDataSignal{T};
         miniter = 5,
         maxiter = 100,
@@ -223,7 +314,7 @@ function posterior_state(
         verbose = false
     ) where {T}
 
-    θZ_sampler_instance = θZ_sampler(phys, cvae, θprior, Zprior, Ymeta; posterior_θ = true, posterior_Z = true)
+    θZ_sampler_instance = θZ_sampler(phys, cvae, Ymeta)
 
     function update(last_state, i)
         θnew, Znew = θZ_sampler_instance()

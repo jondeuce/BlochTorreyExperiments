@@ -6,23 +6,17 @@
 struct Rician{T<:Real} <: Distributions.ContinuousUnivariateDistribution
     ν::T
     σ::T
-    Rician{T}(ν::T, σ::T) where {T<:Real} = new{T}(ν, σ)
-end
-
-@inline function Rician(ν::T, σ::T; check_args = true) where {T <: Real}
-    check_args && Distributions.@check_args(Rician, σ >= zero(σ) && ν >= zero(ν))
-    return Rician{T}(ν, σ)
 end
 
 #### Outer constructors
 @inline Rician(ν::Real, σ::Real) = Rician(promote(ν, σ)...)
 @inline Rician(ν::Integer, σ::Integer) = Rician(float(ν), float(σ))
-@inline Rician(ν::T) where {T <: Real} = Rician(ν, one(T))
-@inline Rician() = Rician(0.0, 1.0, check_args = false)
+@inline Rician(ν::Real) = Rician(ν, one(typeof(ν)))
+@inline Rician() = Rician(0.0, 1.0)
 
 #### Conversions
 @inline Base.convert(::Type{Rician{T}}, ν::S, σ::S) where {T <: Real, S <: Real} = Rician(T(ν), T(σ))
-@inline Base.convert(::Type{Rician{T}}, d::Rician{S}) where {T <: Real, S <: Real} = Rician(T(d.ν), T(d.σ), check_args = false)
+@inline Base.convert(::Type{Rician{T}}, d::Rician{S}) where {T <: Real, S <: Real} = Rician(T(d.ν), T(d.σ))
 
 # Distributions.@distr_support Rician 0 Inf
 @inline Base.minimum(d::Union{Rician, Type{Rician}}) = 0

@@ -263,8 +263,6 @@ function mle_biexp_epg(
             phys,
             models["genatr"],
             derived["cvae"],
-            derived["genatr_theta_prior"],
-            derived["genatr_latent_prior"],
             Ymeta[:,batch];
             miniter = 1,
             maxiter = initial_iter,
@@ -508,7 +506,10 @@ function eval_mri_model(
     )
 
     inverter(Y; kwargs...) = mapreduce((x,y) -> map(hcat, x, y), enumerate(Iterators.partition(1:size(Y,2), batch_size))) do (batchnum, batch)
-        posterior_state(phys, models["genatr"], derived["cvae"], derived["genatr_theta_prior"], derived["genatr_latent_prior"], MetaCPMGSignal(phys, img, Y[:,batch]); verbose = false, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...)
+        posterior_state(
+            phys, models["genatr"], derived["cvae"], MetaCPMGSignal(phys, img, Y[:,batch]);
+            verbose = false, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...
+        )
     end
     saveplot(p, name, folder = savefolder) = map(suf -> savefig(p, joinpath(mkpath(folder), name * suf)), savetypes)
 
@@ -874,8 +875,6 @@ function peak_separation(
             phys,
             models["genatr"],
             derived["cvae"],
-            derived["genatr_theta_prior"],
-            derived["genatr_latent_prior"],
             Ymeta;
             miniter = cvae_iters,
             maxiter = cvae_iters,

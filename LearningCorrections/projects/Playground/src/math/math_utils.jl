@@ -45,7 +45,7 @@ uniform_range(N::Int) = N <= 1 ? zeros(N) : range(-1,1,length=N) |> collect
 @inline std_thresh(::AbstractArray{T}) where {T} = T(1e-6)
 @inline split_mean_std(μ::AbstractArray) = split_dim1(μ)
 @inline split_mean_exp_std(μ::AbstractArray) = ((μ0, logσ) = split_dim1(μ); return (μ0, exp.(logσ))) #TODO add `std_thresh(logσ)`? shouldn't be necessary with properly initialized weights etc...
-@inline split_mean_softplus_std(μ::AbstractArray) = ((μ0, invσ) = split_dim1(μ); return (μ0, Flux.softplus.(invσ))) #TODO add `std_thresh(invσ)`? shouldn't be necessary with properly initialized weights etc...
+@inline split_mean_softplus_std(μ::AbstractArray) = ((μ0, log⁺σ) = split_dim1(μ); return (μ0, Flux.softplus.(log⁺σ))) #TODO add `std_thresh(log⁺σ)`? shouldn't be necessary with properly initialized weights etc...
 
 # Temporary fix: https://github.com/FluxML/NNlib.jl/issues/254
 Zygote.@adjoint Flux.softplus(x::Real) = Flux.softplus(x), Δ -> (Δ * Flux.σ(x),)
@@ -53,8 +53,19 @@ Zygote.@adjoint Flux.softplus(x::Real) = Flux.softplus(x), Δ -> (Δ * Flux.σ(x
 # Sample multivariate normal
 @inline sample_mv_normal((μ0, σ)) = sample_mv_normal(μ0, σ)
 @inline sample_mv_normal(μ::AbstractArray) = sample_mv_normal(split_dim1(μ)...)
-@inline sample_mv_normal(μ0::AbstractArray{T}, σ::AbstractArray{T}) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ)))
-@inline sample_mv_normal(μ0::AbstractArray{T}, σ::AbstractArray{T}, nsamples::Int) where {T} = μ0 .+ σ .* randn_similar(σ, max.(size(μ0), size(σ))..., nsamples)
+@inline sample_mv_normal(μ0::AbstractArray{T}, σ::AbstractArray{T}) where {T} = sample_mv_normal(μ0, σ, randn_similar(σ, max.(size(μ0), size(σ))))
+@inline sample_mv_normal(μ0::AbstractArray{T}, σ::AbstractArray{T}, nsamples::Int) where {T} = sample_mv_normal(μ0, σ, randn_similar(σ, max.(size(μ0), size(σ))..., nsamples))
+@inline sample_mv_normal(μ0::AbstractArray{T}, σ::AbstractArray{T}, z::AbstractArray{T}) where {T} = @. μ0 + σ * z
+
+# Sample multivariate kumaraswamy
+@inline sample_kumaraswamy((a, b)) = sample_kumaraswamy(a, b)
+@inline sample_kumaraswamy(ab::AbstractArray) = sample_kumaraswamy(split_dim1(ab)...)
+@inline sample_kumaraswamy(a::AbstractArray{T}, b::AbstractArray{T}) where {T} = sample_kumaraswamy(a, b, randn_similar(b, max.(size(a), size(b))))
+@inline sample_kumaraswamy(a::AbstractArray{T}, b::AbstractArray{T}, nsamples::Int) where {T} = sample_kumaraswamy(a, b, randn_similar(b, max.(size(a), size(b))..., nsamples))
+@inline sample_kumaraswamy(a::AbstractArray{T}, b::AbstractArray{T}, u::AbstractArray{T}) where {T} = @. (1 - u^inv(b))^inv(a)
+
+# Mode of multivariate kumaraswamy
+@inline mode_kumaraswamy(a, b) = @. ((a-1)/(a*b-1))^inv(a)
 
 # One element
 @inline one_element(x) = one_element(typeof(x))

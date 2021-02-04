@@ -56,17 +56,18 @@ function init_wandb_logger(settings; activate = false, dryrun = true, wandb_dir 
     end
 end
 
-function terminate_on_bad_gradients(f, models, ps::Zygote.Params, gs::Zygote.Grads)
-    found_bad_grad = false
+function terminate_on_bad_params_or_gradients(f, models, ps::Zygote.Params, gs::Zygote.Grads)
+    found_bad = false
     for p in ps
-        !haskey(gs, p) && continue
-        length(p) == 0 && continue
-        (found_nan_grad = any(isnan.(gs[p]))) && @info "EXITING -- found NaN gradient: $(find_model_param(models, p))"
-        (found_inf_grad = any(isinf.(gs[p]))) && @info "EXITING -- found Inf gradient: $(find_model_param(models, p))"
-        found_bad_grad |= found_nan_grad || found_inf_grad
+        (!haskey(gs, p) || length(p) == 0 || (g = gs[p]; g === nothing)) && continue
+        (found_nan_grad  = any(isnan.(g))) && @info "EXITING -- found NaN gradient: $(find_model_param(models, p))"
+        (found_inf_grad  = any(isinf.(g))) && @info "EXITING -- found Inf gradient: $(find_model_param(models, p))"
+        (found_nan_param = any(isnan.(p))) && @info "EXITING -- found NaN parameter: $(find_model_param(models, p))"
+        (found_inf_param = any(isinf.(p))) && @info "EXITING -- found Inf parameter: $(find_model_param(models, p))"
+        found_bad |= found_nan_grad || found_inf_grad || found_nan_param || found_inf_param
     end
-    found_bad_grad && f()
-    return found_bad_grad
+    found_bad && f()
+    return found_bad
 end
 
 # Throttle even to run every `period` seconds
