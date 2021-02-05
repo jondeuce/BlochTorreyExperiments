@@ -43,7 +43,7 @@ end
 # @inline Distributions.entropy(d::Kumaraswamy) = ...
 
 #### Evaluation
-@inline Distributions.logpdf(d::Kumaraswamy, x::Real) = -log(d.a) - log(d.b) - (d.a-1)*log(x) - (d.b-1)*log(1-x^d.a)
+@inline Distributions.logpdf(d::Kumaraswamy, x::Real) = log(d.a) + log(d.b) + (d.a-1)*log(x) + (d.b-1)*log(1-x^d.a)
 @inline Distributions.pdf(d::Kumaraswamy, x::Real) = d.a * d.b * x^(d.a-1) * (1 - x^d.a)^(d.b-1)
 
 #### Sampling

@@ -120,22 +120,22 @@ function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) wh
 end
 
 function split_kumaraswamy_and_gaussian(μx, nθM)
-    aθ′_μZ′, bθ′_σZ′ = split_dim1(μx) # μx = D(Y,zq) = [aθ′; μZ′; bθ′; σZ′]
-    aθ′, μZ′ = split_at(aθ′_μZ′, nθM) # size(aθ′,1) = nθM, size(μZ′,1) = nlatent
-    bθ′, σZ′ = split_at(bθ′_σZ′, nθM) # size(bθ′,1) = nθM, size(σZ′,1) = nlatent
-    aθ = 1 .+ Flux.softplus.(aθ′) # aθ > 0
-    bθ = 1 .+ Flux.softplus.(bθ′) # bθ > 0
+    αθ′_μZ′, βθ′_σZ′ = split_dim1(μx) # μx = D(Y,zq) = [αθ′; μZ′; βθ′; σZ′]
+    αθ′, μZ′ = split_at(αθ′_μZ′, nθM) # size(αθ′,1) = nθM, size(μZ′,1) = nlatent
+    βθ′, σZ′ = split_at(βθ′_σZ′, nθM) # size(βθ′,1) = nθM, size(σZ′,1) = nlatent
+    αθ = αθ′ # no transform
+    βθ = βθ′ # no transform
     μZ = μZ′ # no transform
     σZ = Flux.softplus.(σZ′)
-    return (aθ, bθ, μZ, σZ)
+    return (αθ, βθ, μZ, σZ)
 end
 
 function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) where {C <: CVAEPosteriorDist{Kumaraswamy}}
     @unpack cvae, Y, θ̄, Z, μq0, σq = state
     nθM = nmarginalized(cvae)
     zq = sample_mv_normal(μq0, σq)
-    aθ, bθ, μZ, σZ = split_kumaraswamy_and_gaussian(cvae.D(Y,zq), nθM) # μx = D(Y,zq) = [aθ′; μZ′; bθ′; σZ′]
-    ELBO_θ = NegLogLKumaraswamy(θ̄[1:nθM,..], aθ, bθ)
+    αθ, βθ, μZ, σZ = split_kumaraswamy_and_gaussian(cvae.D(Y,zq), nθM) # μx = D(Y,zq) = [αθ′; μZ′; βθ′; σZ′]
+    ELBO_θ = NegLogLKumaraswamy(θ̄[1:nθM,..], αθ, βθ)
     if marginalize_Z
         ELBO = ELBO_θ
     else
@@ -170,8 +170,8 @@ function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C
     @unpack cvae, Y, μr0, σr = state
     zr = mode ? μr0 : sample_mv_normal(μr0, σr)
     μx = cvae.D(Y,zr)
-    aθ, bθ, μZ, σZ = split_kumaraswamy_and_gaussian(μx, nmarginalized(cvae))
-    θ̄M = mode ? mode_kumaraswamy(aθ, bθ) : sample_kumaraswamy(aθ, bθ)
+    αθ, βθ, μZ, σZ = split_kumaraswamy_and_gaussian(μx, nmarginalized(cvae))
+    θ̄M = mode ? mode_kumaraswamy(αθ, βθ) : sample_kumaraswamy(αθ, βθ)
     Z = mode ? μZ : sample_mv_normal(μZ, σZ)
     θM = θ̄_linear_unnormalize(cvae, θ̄M)
     return θM, Z

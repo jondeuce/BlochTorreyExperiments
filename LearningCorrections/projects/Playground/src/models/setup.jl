@@ -332,14 +332,12 @@ function init_mlp_cvae_vae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim,
 end
 
 # derived["cvae"]
-function derived_cvae(phys::PhysicsModel{Float32}, enc1, enc2, dec; nlatent, zdim, kwargs...)
+function derived_cvae(phys::PhysicsModel{Float32}, enc1, enc2, dec; nlatent, zdim, posterior, kwargs...)
     # Flux.Diagonal(2*(nmarginalized(phys) + nlatent); initα = init_μxlogσx_slope(phys; nlatent), initβ = init_μxlogσx_bias(phys; nlatent))
     ϵ = 10 * eps(Float32)
     θbd = NTuple{2,Float32}.(θbounds(phys))
     θ̄bd = NTuple{2,Float32}.(fill((ϵ, 1-ϵ), ntheta(phys)))
-    # posterior_dist = Kumaraswamy
-    posterior_dist = Gaussian
-    CVAE{nsignal(phys),ntheta(phys),nmarginalized(phys),nlatent,zdim}(enc1, enc2, dec, θbd, θ̄bd; posterior_dist)
+    CVAE{nsignal(phys),ntheta(phys),nmarginalized(phys),nlatent,zdim}(enc1, enc2, dec, θbd, θ̄bd; posterior_dist = posterior)
 end
 
 # derived["cvae"]

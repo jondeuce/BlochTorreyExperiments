@@ -53,19 +53,42 @@ Zygote.@adjoint Flux.softplus(x::Real) = Flux.softplus(x), Δ -> (Δ * Flux.σ(x
 # Sample multivariate normal
 @inline sample_mv_normal((μ0, σ)) = sample_mv_normal(μ0, σ)
 @inline sample_mv_normal(μ::AbstractArray) = sample_mv_normal(split_dim1(μ)...)
-@inline sample_mv_normal(μ0::AbstractArray{T}, σ::AbstractArray{T}) where {T} = sample_mv_normal(μ0, σ, randn_similar(σ, max.(size(μ0), size(σ))))
-@inline sample_mv_normal(μ0::AbstractArray{T}, σ::AbstractArray{T}, nsamples::Int) where {T} = sample_mv_normal(μ0, σ, randn_similar(σ, max.(size(μ0), size(σ))..., nsamples))
-@inline sample_mv_normal(μ0::AbstractArray{T}, σ::AbstractArray{T}, z::AbstractArray{T}) where {T} = @. μ0 + σ * z
+@inline sample_mv_normal(μ0::AbstractArray, σ::AbstractArray) = sample_mv_normal(μ0, σ, randn_similar(σ, max.(size(μ0), size(σ))))
+@inline sample_mv_normal(μ0::AbstractArray, σ::AbstractArray, nsamples::Int) = sample_mv_normal(μ0, σ, randn_similar(σ, max.(size(μ0), size(σ))..., nsamples))
+@inline sample_mv_normal(μ0::AbstractArray, σ::AbstractArray, z::AbstractArray) = @. μ0 + σ * z
 
 # Sample multivariate kumaraswamy
-@inline sample_kumaraswamy((a, b)) = sample_kumaraswamy(a, b)
-@inline sample_kumaraswamy(ab::AbstractArray) = sample_kumaraswamy(split_dim1(ab)...)
-@inline sample_kumaraswamy(a::AbstractArray{T}, b::AbstractArray{T}) where {T} = sample_kumaraswamy(a, b, randn_similar(b, max.(size(a), size(b))))
-@inline sample_kumaraswamy(a::AbstractArray{T}, b::AbstractArray{T}, nsamples::Int) where {T} = sample_kumaraswamy(a, b, randn_similar(b, max.(size(a), size(b))..., nsamples))
-@inline sample_kumaraswamy(a::AbstractArray{T}, b::AbstractArray{T}, u::AbstractArray{T}) where {T} = @. (1 - u^inv(b))^inv(a)
+@inline sample_kumaraswamy((α, β)) = sample_kumaraswamy(α, β)
+@inline sample_kumaraswamy(αβ::AbstractArray) = sample_kumaraswamy(split_dim1(αβ)...)
+@inline sample_kumaraswamy(α::AbstractArray, β::AbstractArray) = sample_kumaraswamy(α, β, rand_similar(β, max.(size(α), size(β))))
+@inline sample_kumaraswamy(α::AbstractArray, β::AbstractArray, nsamples::Int) = sample_kumaraswamy(α, β, rand_similar(β, max.(size(α), size(β))..., nsamples))
+@inline sample_kumaraswamy(α, β, u) = @. clamp(exp(softlog(-log(u)*exp(-β)/(1+exp(-β))) * exp(-α)/(1+exp(-α))), 0, 1)
 
 # Mode of multivariate kumaraswamy
-@inline mode_kumaraswamy(a, b) = @. ((a-1)/(a*b-1))^inv(a)
+@inline mode_kumaraswamy(α, β) = @. clamp(exp(-log((1+exp(-α)) * (1+exp(β)) - exp(-α)) / (1+exp(α))), 0, 1) # equivalent to `((a-1)/(a*b-1))^inv(a)` where `a = 1+exp(α)` and `b = 1+exp(β)`
+
+"""
+    @inline_cufunc f(x) = ...
+
+Create an two definitions of `f`: one as written using `@inline f(x) = ...`,
+and one which replaces `Base` functions used in definition of `f` with
+equivalent `CUDA` functions using `CUDA.@cufunc f(x) = ...`.
+"""
+macro inline_cufunc(ex)
+    Base.eval(__module__, :(@inline $ex))
+    Base.eval(__module__, :(CUDA.@cufunc $ex))
+end
+
+"""
+    softlog(x) = log(1-exp(-x))
+
+Logarithm softly bounded above by zero: softlog(x) → log(x) as x → 0⁺ and -exp(-x) as x → +∞.
+"""
+function softlog end
+function ∇softlog end
+@inline_cufunc softlog(x) = ifelse(x > 1, log1p(-exp(-x)), log(-expm1(-x)))
+@inline_cufunc ∇softlog(x) = inv(expm1(x))
+Zygote.@adjoint softlog(x) = softlog(x), Δ -> Δ * ∇softlog(x)
 
 # One element
 @inline one_element(x) = one_element(typeof(x))
