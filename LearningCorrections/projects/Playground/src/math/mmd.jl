@@ -1440,7 +1440,7 @@ function mmd_perm_test_power_plot(perm_test_results; showplot = false)
         showplot && (p !== nothing) && display(p)
         return p
     catch e
-        handleinterrupt(e; msg = "Error during permutation plot")
+        handle_interrupt(e; msg = "Error during permutation plot")
     end
 end
 

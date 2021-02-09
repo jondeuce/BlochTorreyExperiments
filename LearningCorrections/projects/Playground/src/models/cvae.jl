@@ -75,17 +75,17 @@ struct CVAETrainingState{C <: CVAE, A}
     θ̄::A
     Z::A
     μr0::A
-    σr::A
+    logσr::A
     μq0::A
-    σq::A
+    logσq::A
 end
 
 function CVAETrainingState(cvae::CVAE, Y, θ, Z)
     Ypad = pad_signal(cvae, Y)
     θ̄ = θ_linear_normalize(cvae, θ)
-    μr0, σr = split_mean_softplus_std(cvae.E1(Ypad))
-    μq0, σq = split_mean_softplus_std(cvae.E2(Ypad,θ̄,Z))
-    return CVAETrainingState(cvae, Ypad, θ̄, Z, μr0, σr, μq0, σq)
+    μr0, logσr = split_dim1(cvae.E1(Ypad))
+    μq0, logσq = split_dim1(cvae.E2(Ypad,θ̄,Z))
+    return CVAETrainingState(cvae, Ypad, θ̄, Z, μr0, logσr, μq0, logσq)
 end
 signal(state::CVAETrainingState) = state.Y
 
@@ -93,53 +93,49 @@ struct CVAEInferenceState{C <: CVAE, A}
     cvae::C
     Y::A
     μr0::A
-    σr::A
+    logσr::A
 end
 
 function CVAEInferenceState(cvae::CVAE, Y)
     Ypad = pad_signal(cvae, Y)
     μr = cvae.E1(Ypad)
-    μr0, σr = split_mean_softplus_std(μr)
-    return CVAEInferenceState(cvae, Ypad, μr0, σr)
+    μr0, logσr = split_dim1(μr)
+    return CVAEInferenceState(cvae, Ypad, μr0, logσr)
 end
 signal(state::CVAEInferenceState) = state.Y
 
 function KLDivergence(state::CVAETrainingState)
-    @unpack μq0, σq, μr0, σr = state
-    KLDivGaussian(μq0, σq, μr0, σr)
+    @unpack μq0, logσq, μr0, logσr = state
+    KLDivGaussian(μq0, logσq, μr0, logσr)
 end
 
 function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) where {C <: CVAEPosteriorDist{Gaussian}}
-    @unpack cvae, Y, θ̄, Z, μq0, σq = state
+    @unpack cvae, Y, θ̄, Z, μq0, logσq = state
     nθM = nmarginalized(cvae)
-    zq = sample_mv_normal(μq0, σq)
-    μx0, σx = split_mean_softplus_std(cvae.D(Y,zq))
+    zq = sample_mv_normal(μq0, exp.(logσq))
+    μx0, logσx = split_dim1(cvae.D(Y,zq))
     ELBO = marginalize_Z ?
-        NegLogLGaussian(θ̄[1:nθM,..], μx0[1:nθM,..], σx[1:nθM,..]) :
-        NegLogLGaussian(vcat(θ̄[1:nθM,..], Z), μx0, σx)
+        NegLogLGaussian(θ̄[1:nθM,..], μx0[1:nθM,..], logσx[1:nθM,..]) :
+        NegLogLGaussian(vcat(θ̄[1:nθM,..], Z), μx0, logσx)
 end
 
 function split_kumaraswamy_and_gaussian(μx, nθM)
-    αθ′_μZ′, βθ′_σZ′ = split_dim1(μx) # μx = D(Y,zq) = [αθ′; μZ′; βθ′; σZ′]
-    αθ′, μZ′ = split_at(αθ′_μZ′, nθM) # size(αθ′,1) = nθM, size(μZ′,1) = nlatent
-    βθ′, σZ′ = split_at(βθ′_σZ′, nθM) # size(βθ′,1) = nθM, size(σZ′,1) = nlatent
-    αθ = αθ′ # no transform
-    βθ = βθ′ # no transform
-    μZ = μZ′ # no transform
-    σZ = Flux.softplus.(σZ′)
-    return (αθ, βθ, μZ, σZ)
+    αθ_μZ, βθ_logσZ = split_dim1(μx) # μx = D(Y,zq) = [αθ; μZ; βθ; logσZ]
+    αθ, μZ = split_at(αθ_μZ, nθM) # size(αθ,1) = nθM, size(μZ,1) = nlatent
+    βθ, logσZ = split_at(βθ_logσZ, nθM) # size(βθ,1) = nθM, size(logσZ,1) = nlatent
+    return (αθ, βθ, μZ, logσZ)
 end
 
 function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) where {C <: CVAEPosteriorDist{Kumaraswamy}}
-    @unpack cvae, Y, θ̄, Z, μq0, σq = state
+    @unpack cvae, Y, θ̄, Z, μq0, logσq = state
     nθM = nmarginalized(cvae)
-    zq = sample_mv_normal(μq0, σq)
-    αθ, βθ, μZ, σZ = split_kumaraswamy_and_gaussian(cvae.D(Y,zq), nθM) # μx = D(Y,zq) = [αθ′; μZ′; βθ′; σZ′]
+    zq = sample_mv_normal(μq0, exp.(logσq))
+    αθ, βθ, μZ, logσZ = split_kumaraswamy_and_gaussian(cvae.D(Y,zq), nθM) # μx = D(Y,zq) = [αθ′; μZ′; βθ′; logσZ′]
     ELBO_θ = NegLogLKumaraswamy(θ̄[1:nθM,..], αθ, βθ)
     if marginalize_Z
         ELBO = ELBO_θ
     else
-        ELBO = ELBO_θ + NegLogLGaussian(Z, μZ, σZ)
+        ELBO = ELBO_θ + NegLogLGaussian(Z, μZ, logσZ)
     end
 end
 
@@ -155,11 +151,11 @@ sampleθZposterior(cvae::CVAE, Y; kwargs...) = sampleθZposterior(CVAEInferenceS
 
 function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C <: CVAEPosteriorDist{Gaussian}}
     #TODO: `mode` is probably not strictly the correct term, but in practice it should be something akin to the distribution mode since `μr0` is the most likely value for `zr` and `μx0` is the most likely value for `x` **conditional on `zr`**; likely there are counterexamples to this simple reasoning, though...
-    @unpack cvae, Y, μr0, σr = state
-    zr = mode ? μr0 : sample_mv_normal(μr0, σr)
+    @unpack cvae, Y, μr0, logσr = state
+    zr = mode ? μr0 : sample_mv_normal(μr0, exp.(logσr))
     μx = cvae.D(Y,zr)
-    μx0, σx = split_mean_softplus_std(μx)
-    x = mode ? μx0 : sample_mv_normal(μx0, σx)
+    μx0, logσx = split_dim1(μx)
+    x = mode ? μx0 : sample_mv_normal(μx0, exp.(logσx))
     θ̄M, Z = split_marginal_latent(cvae, x)
     θM = θ̄_linear_unnormalize(cvae, θ̄M)
     return θM, Z
@@ -167,12 +163,12 @@ end
 
 function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C <: CVAEPosteriorDist{Kumaraswamy}}
     #TODO: `mode` is probably not strictly the correct term, but in practice it should be something akin to the distribution mode since `μr0` is the most likely value for `zr` and `μx0` is the most likely value for `x` **conditional on `zr`**; likely there are counterexamples to this simple reasoning, though...
-    @unpack cvae, Y, μr0, σr = state
-    zr = mode ? μr0 : sample_mv_normal(μr0, σr)
+    @unpack cvae, Y, μr0, logσr = state
+    zr = mode ? μr0 : sample_mv_normal(μr0, exp.(logσr))
     μx = cvae.D(Y,zr)
-    αθ, βθ, μZ, σZ = split_kumaraswamy_and_gaussian(μx, nmarginalized(cvae))
+    αθ, βθ, μZ, logσZ = split_kumaraswamy_and_gaussian(μx, nmarginalized(cvae))
     θ̄M = mode ? mode_kumaraswamy(αθ, βθ) : sample_kumaraswamy(αθ, βθ)
-    Z = mode ? μZ : sample_mv_normal(μZ, σZ)
+    Z = mode ? μZ : sample_mv_normal(μZ, exp.(logσZ))
     θM = θ̄_linear_unnormalize(cvae, θ̄M)
     return θM, Z
 end
@@ -236,7 +232,7 @@ function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zpri
         θ = if posterior_θ
             θMlo = arr_similar(θ̂M, θmarginalized(phys, θlower(phys)))
             θMhi = arr_similar(θ̂M, θmarginalized(phys, θupper(phys)))
-            vcat(clamp.(θ̂M, θMlo, θMhi), θnuissance(phys, Ymeta))
+            vcat(clamp.(θ̂M, θMlo, θMhi), Zygote.@ignore(θnuissance(phys, Ymeta))) #TODO
         else
             sample(θprior, signal(Ymeta))
         end
@@ -288,17 +284,18 @@ sampleX̂(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, Ymeta::Abstract
 
 function NegLogLikelihood(rice::RicianCorrector, Y::AbstractVecOrMat, μ0, σ)
     if typeof(rice) <: NormalizedRicianCorrector && (rice.normalizer !== nothing)
-        Σμ = rice.normalizer(_rician_mean_cuda.(μ0, σ))
+        Σμ = rice.normalizer(mean_rician.(μ0, σ))
         μ0, σ = (μ0 ./ Σμ), (σ ./ Σμ)
     end
-    -sum(_rician_logpdf_cuda.(Y, μ0, σ); dims = 1) # Rician negative log likelihood
+    neglogL_rician.(Y, μ0, log.(σ)) # Rician negative log likelihood
 end
 
-function posterior_state(phys::PhysicsModel, rice::RicianCorrector, Y::AbstractVecOrMat, θ::AbstractVecOrMat, Z::AbstractVecOrMat)
+function posterior_state(phys::PhysicsModel, rice::RicianCorrector, Y::AbstractVecOrMat, θ::AbstractVecOrMat, Z::AbstractVecOrMat; accum_loss = nothing)
     X = signal_model(phys, θ)
     @unpack δ, ϵ, ν = rician_state(rice, X, Z)
     X, δ, ϵ, ν = clamp_dim1(Y, (X, δ, ϵ, ν))
-    ℓ = reshape(NegLogLikelihood(rice, Y, ν, ϵ), 1, :)
+    ℓ = NegLogLikelihood(rice, Y, ν, ϵ)
+    (accum_loss !== nothing) && (ℓ = accum_loss(ℓ))
     return (; Y, θ, Z, X, δ, ϵ, ν, ℓ)
 end
 
@@ -324,9 +321,9 @@ function posterior_state(
         if mode === :mean
             θnew = (last_state === nothing) ? θnew : T(1/i) .* θnew .+ T(1-1/i) .* θlast
             Znew = (last_state === nothing) ? Znew : T(1/i) .* Znew .+ T(1-1/i) .* Zlast
-            new_state = posterior_state(phys, rice, signal(Ymeta), θnew, Znew)
+            new_state = posterior_state(phys, rice, signal(Ymeta), θnew, Znew; accum_loss = ℓ -> sum(ℓ; dims = 1))
         elseif mode === :maxlikelihood
-            new_state = posterior_state(phys, rice, signal(Ymeta), θnew, Znew)
+            new_state = posterior_state(phys, rice, signal(Ymeta), θnew, Znew; accum_loss = ℓ -> sum(ℓ; dims = 1))
             if (last_state !== nothing)
                 mask = new_state.ℓ .< last_state.ℓ
                 new_state = map(new_state, last_state) do new, last

@@ -146,7 +146,7 @@ function movingaverage!(mean_model, model, window)
     return mean_model
 end
 function movingaverage!(μ::AbstractArray, x::AbstractArray, τ)
-    α = Flux.ofeltype(μ, 1-exp(-1/τ))
+    α = ofeltype(μ, 1-exp(-1/τ))
     @. μ = α * x + (1-α) * μ
 end
 
@@ -693,14 +693,14 @@ function model_summary(io::IO, models::AbstractDict)
         (i < length(models)) && println(io, "")
     end
 end
-function model_summary(models::AbstractDict, filename = nothing)
-    @info "Model summary..."
+function model_summary(models::AbstractDict; filename = nothing, verbose = true)
+    verbose && @info "Model summary..."
     (filename !== nothing) && open(filename, "w") do file
         model_summary(file, models)
     end
-    model_summary(stdout, models)
+    verbose && model_summary(stdout, models)
 end
-model_summary(model, filename = nothing) = model_summary(Dict("" => model), filename)
+model_summary(model; kwargs...) = model_summary(Dict("" => model); kwargs...)
 
 """
 Print model parameters following `_model_summary`

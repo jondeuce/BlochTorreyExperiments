@@ -44,14 +44,9 @@ fill_similar(x::AbstractArray, v, sz...) = fill_similar(typeof(x), v, sz...)
 fill_similar(::Type{<:AbstractArray{T}}, v, sz...) where {T} = Base.fill(T(v), sz...) # fallback
 fill_similar(::Type{<:CuArray{T}}, v, sz...) where {T} = CUDA.fill(T(v), sz...) # CUDA
 
-function with_cuda_allowscalar(f)
-    try
-        CUDA.allowscalar(true)
-        f()
-    finally
-        CUDA.allowscalar(false)
-    end
-end
+@inline ofeltype(x, y) = convert(float(eltype(x)), y)
+@inline oftypefloat(x, y) = oftype(float(x), y)
+@inline epseltype(x) = eps(float(eltype(x)))
 
 # Unzip array of structs into struct of arrays
 unzip(a) = map(x -> getfield.(a, x), fieldnames(eltype(a)))
@@ -157,7 +152,7 @@ function capture_stdout(f)
 end
 
 # Save and print settings file
-function savesettings(settings::AbstractDict; filename = nothing, verbose = true)
+function save_settings(settings::AbstractDict; filename = nothing, verbose = true)
     if (filename !== nothing)
         @assert endswith(filename, ".toml")
         mkpath(dirname(filename))
@@ -169,30 +164,30 @@ function savesettings(settings::AbstractDict; filename = nothing, verbose = true
     return settings
 end
 
-function saveprogress(savedata::AbstractDict; savefolder, ext, prefix = "", suffix = "")
+function save_progress(savedata::AbstractDict; savefolder, ext, prefix = "", suffix = "")
     for (key, data) in savedata
         try
             filename = joinpath(mkpath(savefolder), prefix * string(key) * suffix * ext)
             data = Dict{String,Any}(string(key) => deepcopy(cpu(data)))
             FileIO.save(filename, data)
         catch e
-            handleinterrupt(e; msg = "Error saving progress for data: $key")
+            handle_interrupt(e; msg = "Error saving progress for data: $key")
         end
     end
 end
 
-function saveplots(plothandles::AbstractDict; savefolder, prefix = "", suffix = "", ext = ".png")
+function save_plots(plothandles::AbstractDict; savefolder, prefix = "", suffix = "", ext = ".png")
     for (name, p) in plothandles
         (p === nothing) && continue
         try
             savefig(p, joinpath(mkpath(savefolder), prefix * string(name) * suffix * ext))
         catch e
-            handleinterrupt(e; msg = "Error saving plot ($name)")
+            handle_interrupt(e; msg = "Error saving plot ($name)")
         end
     end
 end
 
-function handleinterrupt(e; msg = "Error")
+function handle_interrupt(e; msg = "Error")
     if e isa InterruptException
         @info "User interrupt"
     elseif e isa Flux.Optimise.StopException

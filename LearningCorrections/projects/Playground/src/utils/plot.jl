@@ -225,7 +225,7 @@ function plot_gan_loss(logger, cb_state, phys; window = 100, lrdroprate = typema
         showplot && (p !== nothing) && display(p)
         return p
     catch e
-        handleinterrupt(e; msg = "Error making gan loss plot")
+        handle_interrupt(e; msg = "Error making gan loss plot")
     end
 end
 
@@ -257,7 +257,7 @@ function plot_rician_model(logger, cb_state, phys; bandwidths = nothing, showplo
         showplot && (p !== nothing) && display(p)
         return p
     catch e
-        handleinterrupt(e; msg = "Error making Rician model plot")
+        handle_interrupt(e; msg = "Error making Rician model plot")
     end
 end
 
@@ -275,7 +275,7 @@ function plot_rician_signals(logger, cb_state, phys; showplot = false, nsignals 
         showplot && (p !== nothing) && display(p)
         return p
     catch e
-        handleinterrupt(e; msg = "Error making Rician signal plot")
+        handle_interrupt(e; msg = "Error making Rician signal plot")
     end
 end
 
@@ -293,7 +293,7 @@ function plot_rician_model_fits(logger, cb_state, phys; showplot = false)
         showplot && (p !== nothing) && display(p)
         return p
     catch e
-        handleinterrupt(e; msg = "Error making Rician signal plot")
+        handle_interrupt(e; msg = "Error making Rician signal plot")
     end
 end
 
@@ -323,7 +323,7 @@ function plot_mmd_losses(logger, cb_state, phys; window = 100, lrdroprate = type
         showplot && (p !== nothing) && display(p)
         return p
     catch e
-        handleinterrupt(e; msg = "Error making MMD losses plot")
+        handle_interrupt(e; msg = "Error making MMD losses plot")
     end
 end
 
@@ -383,7 +383,7 @@ function plot_rician_inference(logger, cb_state, phys; window = 100, showplot = 
         showplot && (p !== nothing) && display(p)
         return p
     catch e
-        handleinterrupt(e; msg = "Error making θ inference plot")
+        handle_interrupt(e; msg = "Error making θ inference plot")
     end
 end
 
@@ -415,7 +415,7 @@ function plot_all_logger_losses(logger, cb_state, phys;
         showplot && (p !== nothing) && display(p)
         return p
     catch e
-        handleinterrupt(e; msg = "Error making Rician signal plot")
+        handle_interrupt(e; msg = "Error making Rician signal plot")
     end
 end
 

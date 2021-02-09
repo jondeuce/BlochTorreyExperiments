@@ -291,24 +291,24 @@ end
 
 # models["enc1"]
 function init_mlp_cvae_enc1(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, kwargs...)
-    MLP(nsignal(phys) => 2*zdim, nhidden, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias(phys)) |> to32
+    MLP(nsignal(phys) => 2*zdim, nhidden, hdim, Flux.relu, identity) |> to32
 end
 
 # models["enc1"]
 function init_xformer_cvae_enc1(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, psize, head, hsize, nshards, chunksize, overlap, kwargs...)
-    mlp = MLP(psize => 2*zdim, 0, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias(phys)) |> to32
+    mlp = MLP(psize => 2*zdim, 0, hdim, Flux.relu, identity) |> to32
     TransformerEncoder(mlp; nsignals = nsignal(phys), ntheta = 0, nlatent = 0, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
 end
 
 # models["enc2"]
 function init_mlp_cvae_enc2(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nlatent, kwargs...)
-    mlp = MLP(nsignal(phys) + ntheta(phys) + nlatent => 2*zdim, nhidden, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias(phys)) |> to32
+    mlp = MLP(nsignal(phys) + ntheta(phys) + nlatent => 2*zdim, nhidden, hdim, Flux.relu, identity) |> to32
     Stack(@nntopo((X,θ,Z) => XθZ => μq), vcat, mlp) |> to32
 end
 
 # models["enc2"]
 function init_xformer_cvae_enc2(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nlatent, psize, head, hsize, nshards, chunksize, overlap, kwargs...)
-    mlp = MLP(psize => 2*zdim, 0, hdim, Flux.relu, identity; initb_last = init_μlogσ_bias(phys)) |> to32
+    mlp = MLP(psize => 2*zdim, 0, hdim, Flux.relu, identity) |> to32
     TransformerEncoder(mlp; nsignals = nsignal(phys), ntheta = ntheta(phys), nlatent, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
 end
 
@@ -326,9 +326,9 @@ end
 
 # models["vae_dec"]
 function init_mlp_cvae_vae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, regtype, kwargs...)
-    # Output is either `nsignal` channel outputs directly for "L1", or `nsignal` mean/std pairs for "Rician" or "Gaussian"
+    # Output is either `nsignal` channel outputs directly for "L1", or `nsignal` mean/log-std pairs for "Rician", "Gaussian", etc.
     noutput = nsignal(phys) * (regtype == "L1" ? 1 : 2)
-    MLP(zdim => noutput, nhidden, hdim, Flux.relu, Flux.softplus) |> to32 # softplus both mean and std outputs, since both must be positive
+    MLP(zdim => noutput, nhidden, hdim, Flux.relu, identity) |> to32
 end
 
 # derived["cvae"]
@@ -337,7 +337,8 @@ function derived_cvae(phys::PhysicsModel{Float32}, enc1, enc2, dec; nlatent, zdi
     ϵ = 10 * eps(Float32)
     θbd = NTuple{2,Float32}.(θbounds(phys))
     θ̄bd = NTuple{2,Float32}.(fill((ϵ, 1-ϵ), ntheta(phys)))
-    CVAE{nsignal(phys),ntheta(phys),nmarginalized(phys),nlatent,zdim}(enc1, enc2, dec, θbd, θ̄bd; posterior_dist = posterior)
+    posterior_dist = posterior == "Kumaraswamy" ? Kumaraswamy : Gaussian
+    CVAE{nsignal(phys),ntheta(phys),nmarginalized(phys),nlatent,zdim}(enc1, enc2, dec, θbd, θ̄bd; posterior_dist)
 end
 
 # derived["cvae"]
@@ -436,16 +437,38 @@ end
 #### Snapshot
 ####
 
-function save_snapshot!(settings, models)
-    savepath = mkpath(logdir())
-    settings_filename = joinpath(savepath, "settings.toml")
-    summary_filename = joinpath(savepath, "model-summary.txt")
-    for file in readdir(Glob.glob"*.jl", @__DIR__)
-        cp(file, joinpath(savepath, basename(file)); force = true)
-    end
-    model_summary(models, summary_filename)
-    savesettings(settings; filename = settings_filename, verbose = false)
+function save_snapshot(settings, models; savepath = nothing, savedirs = ["src", "test", "scripts"])
+    # Save simulation settings and summary of model
+    savepath = (savepath === nothing) ? mkpath(logdir()) : mkpath(savepath)
+    save_settings(settings; filename = joinpath(savepath, "settings.toml"), verbose = false)
+    model_summary(models; filename = joinpath(savepath, "model-summary.txt"), verbose = false)
+    save_project_code(joinpath(savepath, "project"))
     return nothing
+end
+
+function save_project_code(
+        savepath;
+        saveitems = ["src", "test", "scripts", "Project.toml", "Manifest.toml"],
+        newuuid = true,
+    )
+    # Save project code
+    mkpath(savepath)
+    for path in projectdir.(saveitems)
+        cp(path, joinpath(savepath, basename(path)))
+    end
+    if newuuid
+        replace_projectfile_uuid(joinpath(savepath, "Project.toml"))
+    end
+end
+
+function replace_projectfile_uuid(projectfile)
+    prj = TOML.parsefile(projectfile)
+    prj["deps"] = sort(prj["deps"]) # sort dependency list for consistency with Pkg
+    prj["uuid"] = string(UUIDs.uuid4()) # generate new uuid
+    open(projectfile; write = true) do io
+        TOML.print(io, prj)
+    end
+    return prj
 end
 
 nothing

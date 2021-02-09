@@ -8,7 +8,7 @@ include("fix/Stacks/Stacks.jl") # workaround until Transformers is updated for j
 
 #### Import/export dependency names
 
-@importexport import ArgParse, BSON, BangBang, BenchmarkTools, BlackBoxOptim, CUDA, ChainRules, Conda, DECAES, DataFrames, Dates, Distributions, DrWatson, EllipsisNotation, FFTW, FileIO, FiniteDifferences, Flux, ForwardDiff, Functors, Glob, HypothesisTests, JLD2, LaTeXStrings, LinearAlgebra, LoopVectorization, NLopt, NNlib, Optim, Parameters, Pkg, PrettyTables, PyCall, PyPlot, Random, SpecialFunctions, StatsBase, StatsPlots, Suppressor, TOML, TimerOutputs, Tullio, UnicodePlots, Zygote
+@importexport import ArgParse, BSON, BangBang, BenchmarkTools, BlackBoxOptim, CUDA, ChainRules, Conda, DECAES, DataFrames, Dates, Distributions, DrWatson, EllipsisNotation, FFTW, FileIO, FiniteDifferences, Flux, ForwardDiff, Functors, Glob, HypothesisTests, JLD2, LaTeXStrings, LinearAlgebra, LoopVectorization, NLopt, NNlib, Optim, Parameters, Pkg, PrettyTables, PyCall, PyPlot, Random, ReadableRegex, SpecialFunctions, StatsBase, StatsPlots, Suppressor, TOML, TimerOutputs, Tullio, UUIDs, UnicodePlots, Zygote
 
 #### Dependencies' symbols
 
@@ -52,10 +52,10 @@ include("utils/ignite.jl")
 include("utils/flux.jl")
 include("utils/plot.jl")
 
+include("math/math_utils.jl")
 include("math/rician.jl")
 include("math/kumaraswamy.jl")
 include("math/batched_math.jl")
-include("math/math_utils.jl")
 include("math/mmd.jl")
 
 include("models/physics.jl")

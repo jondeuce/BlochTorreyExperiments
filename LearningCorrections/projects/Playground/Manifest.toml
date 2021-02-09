@@ -1115,6 +1115,11 @@ git-tree-sha1 = "37d210f612d70f3f7d57d488cb3b6eff56ad4e41"
 uuid = "c84ed2f1-dad5-54f0-aa8e-dbefe2724439"
 version = "0.4.0"
 
+[[ReadableRegex]]
+git-tree-sha1 = "befcfa33f50688319571a770be4a55114b71d70a"
+uuid = "cbbcb084-453d-4c4c-b292-e315607ba6a4"
+version = "0.3.2"
+
 [[RecipesBase]]
 git-tree-sha1 = "b3fb709f3c97bfc6e948be68beeecb55a0b340ae"
 uuid = "3cdcf5f2-1ef4-517c-9805-6587b60abb01"

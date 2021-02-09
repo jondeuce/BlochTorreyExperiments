@@ -40,11 +40,11 @@ for (ftrue, fapprox) in [
     end
 end
 
-@testset "∇_rician_logpdf_cuda_unsafe" begin
+@testset "∇neglogL_rician_unsafe" begin
     logxs = -1:1
     for T in [Float32, Float64], logx in logxs, logν in logxs, logσ in logxs
         @test lib.gradcheck(
-            with_log_args(lib._rician_logpdf_cuda_unsafe), T(logx), T(logν), T(logσ);
+            with_log_args(lib.neglogL_rician_unsafe), T(logx), T(logν), T(logσ);
             extrapolate = false, backward = true, forward = true, verbose = true,
             rtol = 1e-3, atol = 1e-4,
         )

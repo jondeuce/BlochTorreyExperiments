@@ -260,6 +260,37 @@ function frob_norm2(X::AbstractArray)
 end
 
 ####
+#### Gradient definitions
+####
+
+function mforwarddiff_from_scalar_rule(fname, fargs, Δi, i)
+    # Create template function of one argument which takes gradient w.r.t. the i'th input
+    f_args = ntuple(j -> j == i ? :($(fargs[i])::ForwardDiff.Dual{T,V,N}) : :($(fargs[j])), length(fargs))
+    frule_args = ntuple(j -> j == i ? :(ForwardDiff.value($(fargs[i]))) : :($(fargs[j])), length(fargs))
+    frule_Δargs = ntuple(j -> j == i ? Δi : ChainRules.DoesNotExist(), length(fargs))
+    y, ẏ = gensym(), gensym()
+    return :(
+        function $fname($(f_args...)) where {T,V,N}
+            # Use `frule` defined by `@scalar_rule`
+            $y, $ẏ = ChainRules.frule((ChainRules.NO_FIELDS, $(frule_Δargs...)), $fname, $(frule_args...))
+            return ForwardDiff.Dual{T,V,N}($y, $ẏ * ForwardDiff.partials($(fargs[i])))
+        end
+    )
+end
+
+macro forwarddiff_from_scalar_rule(f, Δargs = nothing)
+    @assert f.head === :call && (Δargs === nothing || (Δargs.head === :tuple && length(f.args) == 1 + length(Δargs.args)))
+    fname, fargs = esc(f.args[1]), f.args[2:end]
+    (Δargs === nothing) && (Δargs = Expr(:tuple, ones(Int,length(fargs))...))
+    ex = Expr(:block)
+    for (i,Δi) in enumerate(Δargs.args)
+        Δi === :nothing && continue
+        push!(ex.args, mforwarddiff_from_scalar_rule(fname, fargs, Δi, i))
+    end
+    return ex
+end
+
+####
 #### Gradient testing
 ####
 
@@ -310,19 +341,17 @@ function fd_gradients(f, xs::Number...; extrapolate = true, breaktol = 2)
 end
 
 function fd_gradients(f, xs::AbstractArray...; extrapolate = true, breaktol = 2)
-    with_cuda_allowscalar() do
-        ∇s = map(zero, xs)
-        for (x, ∇) in zip(xs, ∇s), i in 1:length(x)
-            fdm = FiniteDifferences.central_fdm(3, 1) # method
-            xᵢ = x[i]
-            fᵢ = y -> (x[i] = y; out = f(xs...); x[i] = xᵢ; return Float64(out))
-            h₀ = 0.1 * Float64(max(abs(xᵢ), one(xᵢ)))
-            ∇[i] = extrapolate ?
-                first(FiniteDifferences.extrapolate_fdm(fdm, fᵢ, Float64(xᵢ), h₀; breaktol)) : # Richardson extrapolation
-                fdm(fᵢ, Float64(xᵢ))
-        end
-        return ∇s
+    ∇s = map(zero, xs)
+    CUDA.@allowscalar for (x, ∇) in zip(xs, ∇s), i in 1:length(x)
+        fdm = FiniteDifferences.central_fdm(3, 1) # method
+        xᵢ = x[i]
+        fᵢ = y -> (x[i] = y; out = f(xs...); x[i] = xᵢ; return Float64(out))
+        h₀ = 0.1 * Float64(max(abs(xᵢ), one(xᵢ)))
+        ∇[i] = extrapolate ?
+            first(FiniteDifferences.extrapolate_fdm(fdm, fᵢ, Float64(xᵢ), h₀; breaktol)) : # Richardson extrapolation
+            fdm(fᵢ, Float64(xᵢ))
     end
+    return ∇s
 end
 
 function gradcheck(f, xs...; extrapolate = true, breaktol = 2, backward = true, forward = true, verbose = false, kwargs...)
@@ -332,14 +361,12 @@ function gradcheck(f, xs...; extrapolate = true, breaktol = 2, backward = true, 
     if backward
         ∇ad = Zygote.gradient(f, xs...)
         bwdpassed &= all(isapprox.(∇ad, ∇fd; kwargs...))
-        verbose && !bwdpassed && @info "backward gradient failed", f(xs...), ∇ad, ∇fd
+        verbose && !bwdpassed && @info "backward gradient failed", f(xs...), ∇ad, ∇fd, maximum(map((∇1,∇2) -> maximum(abs, ∇1.-∇2), ∇ad, ∇fd))
     end
     if forward
-        ∇ad = with_cuda_allowscalar() do
-            fwd_gradients(f, xs...)
-        end
+        ∇ad = CUDA.@allowscalar fwd_gradients(f, xs...)
         fwdpassed &= all(isapprox.(∇ad, ∇fd; kwargs...))
-        verbose && !fwdpassed && @info "forward gradient failed", f(xs...), ∇ad, ∇fd
+        verbose && !fwdpassed && @info "forward gradient failed", f(xs...), ∇ad, ∇fd, maximum(map((∇1,∇2) -> maximum(abs, ∇1.-∇2), ∇ad, ∇fd))
     end
     return bwdpassed && fwdpassed
 end

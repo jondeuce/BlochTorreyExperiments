@@ -32,10 +32,10 @@ function mle_biexp_epg_noise_only(
     end
 
     (initial_ϵ === nothing) && (initial_ϵ = sqrt.(mean(abs2, X .- Y; dims = 1)))
-    (initial_s === nothing) && (initial_s = inv.(maximum(_rician_mean_cuda.(X, initial_ϵ); dims = 1))) # ones_similar(X, 1, size(X,2))
+    (initial_s === nothing) && (initial_s = inv.(maximum(mean_rician.(X, initial_ϵ); dims = 1))) # ones_similar(X, 1, size(X,2))
     @assert size(X) == size(Y) && size(initial_ϵ) == size(initial_s) == (1, size(X,2))
 
-    initial_loss  = -sum(_rician_logpdf_cuda.(Y, initial_s .* X, initial_s .* initial_ϵ); dims = 1)
+    initial_loss  = sum(neglogL_rician.(Y, initial_s .* X, log.(initial_s .* initial_ϵ)); dims = 1)
     initial_guess = (
         ϵ = initial_ϵ |> arr64,
         s = initial_s |> arr64,
@@ -72,15 +72,17 @@ function mle_biexp_epg_noise_only(
     )
 
     function f(work, x::Vector{Float64})
-        δ₀ = sqrt(eps(Float64))
         @inbounds begin
-            ϵ  = exp(x[1])
-            s  = exp(x[2])
-            ϵi = max(s * ϵ, δ₀)
-            ℓ  = 0.0
+            δ₀    = √eps(Float64)
+            logϵ  = x[1]
+            logs  = x[2]
+            s     = exp(logs)
+            logϵi = logs + logϵ # log(s*ϵ)
+            ℓ     = 0.0
             for i in eachindex(work.Xj)
+                yi = work.Yj[i]
                 νi = max(s * work.Xj[i], δ₀)
-                ℓ -= _rician_logpdf_cuda(work.Yj[i], νi, ϵi) # Rician negative log likelihood
+                ℓ += neglogL_rician(yi, νi, logϵi) # Rician negative log likelihood
             end
             return ℓ
         end
@@ -158,7 +160,7 @@ function _test_mle_biexp_epg_noise_only(phys::BiexpEPGModel, derived; nsamples =
     initial_ϵ = init_epsilon ?
         rician_params(models["genatr"], X, Z)[2][1:1,:] : # use true answer as initial guess (for sanity check)
         sqrt.(mean(abs2, X .- X̂; dims = 1))
-    initial_s = inv.(maximum(_rician_mean_cuda.(X, initial_ϵ); dims = 1)) # ones_similar(X, 1, size(X,2))
+    initial_s = inv.(maximum(mean_rician.(X, initial_ϵ); dims = 1)) # ones_similar(X, 1, size(X,2))
 
     init, res = mle_biexp_epg_noise_only(
         X, X̂, initial_ϵ, initial_s;
@@ -194,7 +196,7 @@ function _test_noiselevel()
         ν, ϵ = rician_params(G, X, Z)
         X̂ = add_noise_instance(G, X, ϵ)
         # vcat(exp.(Z) .* G.noisescale(X), ϵ) |> display
-        NegLogLikelihood(G, X̂, ν, ϵ) |> display
+        NegLogLikelihood(G, X̂, ν, ϵ) |> ℓ -> sum(ℓ; dims = 1) |> display
         NegLogLikelihood(G, X̂, ν, ϵ) |> mean |> display
     end
     let
@@ -202,7 +204,7 @@ function _test_noiselevel()
         ν = add_correction(G, X, δ)
         X̂ = add_noise_instance(G, X, ϵ)
         # vcat(exp.(Z) .* G.noisescale(X), ϵ) |> display
-        reshape(NegLogLikelihood(G, X̂, ν, ϵ), 1, :) |> display
+        reshape(NegLogLikelihood(G, X̂, ν, ϵ), 1, :) |> ℓ -> sum(ℓ; dims = 1) |> display
         reshape(NegLogLikelihood(G, X̂, ν, ϵ), 1, :) |> mean |> display
     end
     let
@@ -219,13 +221,13 @@ function _test_noiselevel()
             quantile(abs.(Z3 .- Z) |> vec |> arr64, 0.1:0.1:0.9)',
         ) |> display
         vcat(
-            reshape(NegLogLikelihood(G, X̂, ν, ϵ1), 1, :),
-            reshape(NegLogLikelihood(G, X̂, ν, ϵ2), 1, :),
-            reshape(NegLogLikelihood(G, X̂, ν, ϵ3), 1, :),
+            reshape(sum(NegLogLikelihood(G, X̂, ν, ϵ1); dims = 1), 1, :),
+            reshape(sum(NegLogLikelihood(G, X̂, ν, ϵ2); dims = 1), 1, :),
+            reshape(sum(NegLogLikelihood(G, X̂, ν, ϵ3); dims = 1), 1, :),
         ) |> display
-        reshape(NegLogLikelihood(G, X̂, ν, ϵ1), 1, :) |> mean |> display
-        reshape(NegLogLikelihood(G, X̂, ν, ϵ2), 1, :) |> mean |> display
-        reshape(NegLogLikelihood(G, X̂, ν, ϵ3), 1, :) |> mean |> display
+        reshape(sum(NegLogLikelihood(G, X̂, ν, ϵ1); dims = 1), 1, :) |> mean |> display
+        reshape(sum(NegLogLikelihood(G, X̂, ν, ϵ2); dims = 1), 1, :) |> mean |> display
+        reshape(sum(NegLogLikelihood(G, X̂, ν, ϵ3); dims = 1), 1, :) |> mean |> display
         display(vcat(fit_state.ℓ))
         display(mean(fit_state.ℓ))
     end
@@ -296,7 +298,7 @@ function mle_biexp_epg(
 
     initial_guess = batched_posterior_state(Ymeta)
     initial_guess = setindex!!(initial_guess, exp.(mean(log.(initial_guess.ϵ); dims = 1)), :ϵ)
-    initial_guess = setindex!!(initial_guess, inv.(maximum(_rician_mean_cuda.(initial_guess.X, initial_guess.ϵ); dims = 1)), :s)
+    initial_guess = setindex!!(initial_guess, inv.(maximum(mean_rician.(initial_guess.X, initial_guess.ϵ); dims = 1)), :s)
     initial_guess = map(arr64, initial_guess)
 
     lower_bounds  = [θmarginalized(phys, θlower(phys)); -Inf; -Inf] |> arr64
@@ -364,22 +366,23 @@ function mle_biexp_epg(
 
     function f(work, x::Vector{Float64})
         @inbounds begin
-            l  = sqrt(eps(Float64))
-            θ  = x_to_θ(work, x) # θ = α, β, η, δ1, δ2, δ0
-            ϵ  = exp(x[end-1])
-            s  = exp(x[end])
-            ψ  = θmodel(phys, θ...) # ψ = alpha, refcon, T2short, T2long, Ashort, Along, T1, TE
-            X  = _signal_model_f64(phys, work.epg, ψ)
-            sX = 0.0
+            δ₀     = √eps(Float64)
+            θ      = x_to_θ(work, x) # θ = α, β, η, δ1, δ2, δ0
+            logϵ   = x[end-1]
+            logs   = x[end]
+            s      = exp(logs)
+            ψ      = θmodel(phys, θ...) # ψ = alpha, refcon, T2short, T2long, Ashort, Along, T1, TE
+            X      = _signal_model_f64(phys, work.epg, ψ)
+            sX     = 0.0
             @simd for i in eachindex(X)
                 sX = max(X[i], sX)
             end
-            sX = s / sX # normalize X to maximum 1 and scale by s
-            ϵi = max(s * ϵ, l) # hoist outside loop
-            ℓ  = 0.0
+            sX     = s / sX # normalize X to maximum 1 and scale by s
+            logϵi  = logs + logϵ # hoist outside loop
+            ℓ      = 0.0
             @simd for i in eachindex(work.Y)
-                νi = max(sX * X[i], l)
-                ℓ -= _rician_logpdf_cuda(work.Y[i], νi, ϵi) # Rician negative log likelihood
+                νi = max(sX * X[i], δ₀)
+                ℓ += neglogL_rician(work.Y[i], νi, logϵi) # Rician negative log likelihood
             end
             return ℓ
         end
@@ -538,7 +541,7 @@ function eval_mri_model(
     end
 
     mle_image_state = let
-        mle_image_results = Glob.readdir(Glob.glob"mle-image-mask-results-final-*.mat", mle_image_path) |> only |> DECAES.MAT.matread
+        mle_image_results = readdir(Glob.glob"mle-image-mask-results-final-*.mat", mle_image_path) |> only |> DECAES.MAT.matread
         θ = mle_image_results["theta"] |> to32
         ϵ = reshape(exp.(mle_image_results["logepsilon"] |> to32), 1, :)
         ℓ = reshape(mle_image_results["loss"] |> to32, 1, :) # negative log-likelihood loss
@@ -765,8 +768,8 @@ function eval_mri_model(
 
     # Error tables
     let
-        mle_sim_data = Glob.readdir(Glob.glob"mle-simulated-mask-data-*.mat", mle_sim_path) |> only |> DECAES.MAT.matread
-        mle_sim_results = Glob.readdir(Glob.glob"mle-simulated-mask-results-final-*.mat", mle_sim_path) |> only |> DECAES.MAT.matread
+        mle_sim_data = readdir(Glob.glob"mle-simulated-mask-data-*.mat", mle_sim_path) |> only |> DECAES.MAT.matread
+        mle_sim_results = readdir(Glob.glob"mle-simulated-mask-results-final-*.mat", mle_sim_path) |> only |> DECAES.MAT.matread
 
         Ytrue, X̂true, Xtrue, θtrue, Ztrue = getindex.(Ref(mle_sim_data), ("Y", "Xhat", "X", "theta", "Z"))
         θtrue_derived = θtrue |> θderived_cpu
