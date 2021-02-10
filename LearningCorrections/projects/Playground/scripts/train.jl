@@ -2,18 +2,9 @@
 #### Settings
 ####
 
-using DrWatson: @quickactivate, projectdir
+using DrWatson: @quickactivate
 @quickactivate "Playground"
-
 using Playground
-using Playground:
-    AbstractMetaDataSignal, MetaCPMGSignal, signal,
-    mmd, logbandwidths, train_kernel!,
-    arr_similar, arr32, arr64, zeros_similar, ones_similar, randn_similar, rand_similar, fill_similar,
-    add_noise_instance, rician_params,
-    nsignal, signal_model, noiselevel, θlabels, θasciilabels, θunits, θlower, θupper, θerror, nnuissance, nmarginalized, nmodel, θmarginalized, θnuissance, θderived, θmodel, θsufficient,
-    KL_and_ELBO, sample_columns
-
 lib.initenv()
 
 lib.settings_template() = TOML.parse(
@@ -138,62 +129,81 @@ lib.settings_template() = TOML.parse(
 """
 )
 
+settings = lib.load_settings(force_new_settings = true)
+wandb_logger = lib.init_wandb_logger(settings; activate = true, dryrun = false, wandb_dir = lib.projectdir())
+
 lib.set_logdirname!()
-lib.clear_checkpointdir!() #TODO
-# lib.set_checkpointdir!(projectdir("log", "ignite-cvae-2021-01-05-T-13-45-23-425"))
-# lib.set_checkpointdir!(projectdir("wandb", "latest-run", "files")) #TODO
-# lib.set_checkpointdir!(only(Glob.glob("run-*-3igrugah/files", projectdir("wandb")))) #TODO
+lib.clear_checkpointdir!()
+# lib.set_checkpointdir!(lib.projectdir("log", "ignite-cvae-2021-01-05-T-13-45-23-425"))
+# lib.set_checkpointdir!(lib.projectdir("wandb", "latest-run", "files"))
+# lib.set_checkpointdir!(only(Glob.glob("run-*-3igrugah/files", lib.projectdir("wandb"))))
+# lib.set_checkpointdir!(only(Glob.glob("run-*-2e9prscm/files", lib.projectdir("wandb"))))
 
-# settings = lib.load_settings()
-settings = lib.load_settings(force_new_settings = true) #TODO
+lib.@save_expression lib.logdir("build_physics.jl") function build_physics()
+    # isdefined(Main, :phys) ? Main.phys : lib.EPGModel{Float32,false}(n = 64)
+    isdefined(Main, :phys) ? Main.phys : lib.load_epgmodel_physics()
+end
 
-# wandb_logger = nothing #TODO
-wandb_logger = lib.init_wandb_logger(settings; activate = true, dryrun = false, wandb_dir = projectdir()) #TODO
+lib.@save_expression lib.logdir("build_models.jl") function build_models(
+        phys,
+        settings,
+        models = Dict{String,Any}(),
+        derived = Dict{String,Any}()
+    )
+    kws(keys...) = lib.make_kwargs(settings, keys...)
 
-# phys = lib.EPGModel{Float32,false}(n = 64)
-@isdefined(phys) || (phys = lib.load_epgmodel_physics())
+    get!(models, "genatr") do; lib.init_isotropic_rician_generator(phys; kws("arch", "genatr")...); end
+    get!(models, "theta_prior") do; !settings["train"]["DeepThetaPrior"] ? nothing : lib.init_deep_theta_prior(phys; kws("arch", "genatr")...); end
+    get!(models, "latent_prior") do; !settings["train"]["DeepLatentPrior"] ? nothing : lib.init_deep_latent_prior(phys; kws("arch", "genatr")...); end
+    get!(models, "enc1") do; lib.init_mlp_cvae_enc1(phys; kws("arch", "enc1")...); end
+    get!(models, "enc2") do; lib.init_mlp_cvae_enc2(phys; kws("arch", "enc2")...); end
+    get!(models, "dec") do; lib.init_mlp_cvae_dec(phys; kws("arch", "dec")...); end
+    get!(models, "vae_dec") do; lib.init_mlp_cvae_vae_dec(phys; kws("arch", "vae_dec")...); end
+    get!(models, "discrim") do; lib.init_mlp_discrim(phys; kws("arch", "discrim")..., ninput = lib.domain_transforms_sum_outlengths(phys; kws("train", "augment")...)); end
+    get!(models, "kernel") do; lib.init_mmd_kernels(phys; kws("arch", "kernel")..., bwsizes = lib.domain_transforms_outlengths(phys; kws("train", "augment")...)); end
 
-kws(keys...) = lib.make_kwargs(settings, keys...)
+    derived["domain_transforms"] = lib.DomainTransforms(phys; kws("train", "augment")...)
+    derived["augmentations"] = lib.Augmentations(; kws("train", "transform")...)
+    derived["forwarddiff"] = lib.ForwardDifference() |> to32
+    derived["laplacian"] = lib.Laplacian() |> to32
+    derived["L1grad"] = lib.DepthwiseSmoothReg(; type = :L1grad) |> to32
+    derived["L2diff"] = lib.ChannelwiseSmoothReg(; type = :L2diff) |> to32
+    # derived["encoderspace"] = lib.NotTrainable(lib.flattenchain(Flux.Chain(models["enc1"], lib.split_mean_exp_std, lib.sample_mv_normal))) # non-trainable sampling of encoder signal representations
+    derived["genatr_theta_prior"] = !settings["train"]["DeepThetaPrior"] ? lib.init_default_theta_prior(phys; kws("arch", "genatr")...) : models["theta_prior"]
+    derived["genatr_latent_prior"] = !settings["train"]["DeepLatentPrior"] ? lib.init_default_latent_prior(phys; kws("arch", "genatr")...) : models["latent_prior"]
+    derived["cvae_theta_prior"] = lib.derived_cvae_theta_prior(phys, derived["genatr_theta_prior"]; kws("arch", "genatr")...)
+    derived["cvae_latent_prior"] = lib.derived_cvae_latent_prior(phys, derived["genatr_latent_prior"]; kws("arch", "genatr")...)
+    derived["cvae"] = lib.derived_cvae(phys, models["enc1"], models["enc2"], models["dec"]; kws("arch")...)
+    # derived["mean_cvae"] = deepcopy(derived["cvae"])
+    # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = lib.checkpointdir(), modelprefix = "best-")
+    # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = lib.projectdir("log", "2021-02-03-T-18-03-53-316"), modelprefix = "current-")
+    # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-1jt2z1ry/files", lib.projectdir("wandb"))), modelprefix = "best-")
+    # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-3igrugah/files", lib.projectdir("wandb"))), modelprefix = "best-")
+    derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-2e9prscm/files", lib.projectdir("wandb"))), modelprefix = "best-")
+    derived["vae_reg_loss"] = lib.VAEReg(models["vae_dec"]; regtype = settings["arch"]["vae_dec"]["regtype"])
 
-models = lib.load_checkpoint("current-models.jld2") #TODO
-get!(models, "genatr") do; lib.init_isotropic_rician_generator(phys; kws("arch", "genatr")...); end
-get!(models, "theta_prior") do; !settings["train"]["DeepThetaPrior"] ? nothing : lib.init_deep_theta_prior(phys; kws("arch", "genatr")...); end
-get!(models, "latent_prior") do; !settings["train"]["DeepLatentPrior"] ? nothing : lib.init_deep_latent_prior(phys; kws("arch", "genatr")...); end
-get!(models, "enc1") do; lib.init_mlp_cvae_enc1(phys; kws("arch", "enc1")...); end
-get!(models, "enc2") do; lib.init_mlp_cvae_enc2(phys; kws("arch", "enc2")...); end
-get!(models, "dec") do; lib.init_mlp_cvae_dec(phys; kws("arch", "dec")...); end
-get!(models, "vae_dec") do; lib.init_mlp_cvae_vae_dec(phys; kws("arch", "vae_dec")...); end
-get!(models, "discrim") do; lib.init_mlp_discrim(phys; kws("arch", "discrim")..., ninput = lib.domain_transforms_sum_outlengths(phys; kws("train", "augment")...)); end
-get!(models, "kernel") do; lib.init_mmd_kernels(phys; kws("arch", "kernel")..., bwsizes = lib.domain_transforms_outlengths(phys; kws("train", "augment")...)); end
+    return models, derived
+end
 
-derived = Dict{String,Any}()
-derived["domain_transforms"] = lib.DomainTransforms(phys; kws("train", "augment")...)
-derived["augmentations"] = lib.Augmentations(; kws("train", "transform")...)
-derived["forwarddiff"] = lib.ForwardDifference() |> to32
-derived["laplacian"] = lib.Laplacian() |> to32
-derived["L1grad"] = lib.DepthwiseSmoothReg(; type = :L1grad) |> to32
-derived["L2diff"] = lib.ChannelwiseSmoothReg(; type = :L2diff) |> to32
-# derived["encoderspace"] = lib.NotTrainable(lib.flattenchain(Flux.Chain(models["enc1"], lib.split_mean_exp_std, lib.sample_mv_normal))) # non-trainable sampling of encoder signal representations
-derived["genatr_theta_prior"] = !settings["train"]["DeepThetaPrior"] ? lib.init_default_theta_prior(phys; kws("arch", "genatr")...) : models["theta_prior"]
-derived["genatr_latent_prior"] = !settings["train"]["DeepLatentPrior"] ? lib.init_default_latent_prior(phys; kws("arch", "genatr")...) : models["latent_prior"]
-derived["cvae_theta_prior"] = lib.derived_cvae_theta_prior(phys, derived["genatr_theta_prior"]; kws("arch", "genatr")...)
-derived["cvae_latent_prior"] = lib.derived_cvae_latent_prior(phys, derived["genatr_latent_prior"]; kws("arch", "genatr")...)
-derived["cvae"] = lib.derived_cvae(phys, models["enc1"], models["enc2"], models["dec"]; kws("arch")...)
-# derived["mean_cvae"] = deepcopy(derived["cvae"]) #TODO
-# derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = lib.checkpointdir(), modelprefix = "best-")
-# derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = projectdir("log", "2021-02-03-T-18-03-53-316"), modelprefix = "current-")
-derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-1jt2z1ry/files", projectdir("wandb"))), modelprefix = "best-")
-# derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-3igrugah/files", projectdir("wandb"))), modelprefix = "best-")
-derived["vae_reg_loss"] = lib.VAEReg(models["vae_dec"]; regtype = settings["arch"]["vae_dec"]["regtype"])
+lib.@save_expression lib.logdir("build_optimizers.jl") function build_optimizers(
+        phys,
+        settings,
+        models,
+        optimizers = Dict{String,Any}()
+    )
+    kws(keys...) = lib.make_kwargs(settings, keys...)
+    optimizers["mmd"] = lib.init_optimizer(Flux.ADAM; kws("opt", "mmd")...)
+    optimizers["cvae"] = lib.init_optimizer(Flux.ADAM; kws("opt", "cvae")...)
+    optimizers["genatr"] = lib.init_optimizer(Flux.ADAM; kws("opt", "genatr")...)
+    optimizers["discrim"] = lib.init_optimizer(Flux.ADAM; kws("opt", "discrim")...)
+    optimizers["kernel"] = map(_ -> lib.init_optimizer(Flux.ADAM; kws("opt", "kernel")...), models["kernel"])
+    return optimizers
+end
 
+phys = build_physics()
+models, derived = build_models(phys, settings, lib.load_checkpoint("current-models.jld2"))
+optimizers = build_optimizers(phys, settings, models)
 lib.save_snapshot(settings, models)
-
-optimizers = Dict{String,Any}()
-optimizers["mmd"] = lib.init_optimizer(Flux.ADAM; kws("opt", "mmd")...)
-optimizers["cvae"] = lib.init_optimizer(Flux.ADAM; kws("opt", "cvae")...)
-optimizers["genatr"] = lib.init_optimizer(Flux.ADAM; kws("opt", "genatr")...)
-optimizers["discrim"] = lib.init_optimizer(Flux.ADAM; kws("opt", "discrim")...)
-optimizers["kernel"] = map(_ -> lib.init_optimizer(Flux.ADAM; kws("opt", "kernel")...), models["kernel"])
 
 ####
 #### Augmentations
@@ -231,8 +241,8 @@ end
 ####
 
 # Maximum mean discrepency (m*MMD^2) loss
-function MMDlosses(Ymeta::AbstractMetaDataSignal)
-    Y = signal(Ymeta)
+function MMDlosses(Ymeta::lib.AbstractMetaDataSignal)
+    Y = lib.signal(Ymeta)
     λ_ϵ = Zygote.@ignore eltype(Y)(get!(settings["opt"]["mmd"], "lambda_eps", 0.0)::Float64)
     λ_∂ϵ∂Z = Zygote.@ignore eltype(Y)(get!(settings["opt"]["mmd"], "lambda_deps_dz", 0.0)::Float64)
 
@@ -241,14 +251,14 @@ function MMDlosses(Ymeta::AbstractMetaDataSignal)
     else
         Z = settings["train"]["DeepLatentPrior"]::Bool ? sample(derived["genatr_latent_prior"], Y) : Zygote.@ignore(sample(derived["genatr_latent_prior"], Y)) # differentiate through deep Z prior, else ignore
         θ = settings["train"]["DeepThetaPrior"]::Bool ? sample(derived["genatr_theta_prior"], Y) : Zygote.@ignore(lib.sampleθZ(phys, derived["cvae"], derived["genatr_theta_prior"], derived["genatr_latent_prior"], Ymeta; posterior_θ = true, posterior_Z = true)[1]) # sample θ from CVAE posterior; ignore Z posterior sample
-        X = settings["train"]["DeepThetaPrior"]::Bool ? signal_model(phys, θ) : Zygote.@ignore(signal_model(phys, θ)) # differentiate through physics model if learning deep θ prior, else ignore
+        X = settings["train"]["DeepThetaPrior"]::Bool ? lib.signal_model(phys, θ) : Zygote.@ignore(lib.signal_model(phys, θ)) # differentiate through physics model if learning deep θ prior, else ignore
     end
 
     # Differentiate through generator corrections `sampleX̂`
     @unpack X̂, ϵ = lib.sample_rician_state(models["genatr"], X, Z)
     X̂s, Ys = augment_and_transform(lib.clamp_dim1(Y, X̂), Y)
     ℓ = map(models["kernel"], X̂s, Ys) do k, X, Y
-        size(Y,2) * mmd(k, X, Y)
+        size(Y,2) * lib.mmd(k, X, Y)
     end
 
     # Regularization
@@ -263,29 +273,29 @@ end
 ####
 
 # Conditional variational autoencoder losses
-function CVAElosses(Ymeta::AbstractMetaDataSignal, θPseudo = nothing, ZPseudo = nothing; marginalize_Z)
-    λ_vae_sim  = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "lambda_vae_sim", 0.0)::Float64)
-    λ_vae_data = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "lambda_vae_data", 0.0)::Float64)
-    λ_latent   = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "lambda_latent", 0.0)::Float64)
-    λ_pseudo   = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "lambda_pseudo", 0.0)::Float64)
-    τ_pseudo   = Zygote.@ignore eltype(signal(Ymeta))(get!(settings["opt"]["cvae"], "tau_pseudo", 0.0)::Float64)
+function CVAElosses(Ymeta::lib.AbstractMetaDataSignal, θPseudo = nothing, ZPseudo = nothing; marginalize_Z)
+    λ_vae_sim  = Zygote.@ignore eltype(Ymeta)(get!(settings["opt"]["cvae"], "lambda_vae_sim", 0.0)::Float64)
+    λ_vae_data = Zygote.@ignore eltype(Ymeta)(get!(settings["opt"]["cvae"], "lambda_vae_data", 0.0)::Float64)
+    λ_latent   = Zygote.@ignore eltype(Ymeta)(get!(settings["opt"]["cvae"], "lambda_latent", 0.0)::Float64)
+    λ_pseudo   = Zygote.@ignore eltype(Ymeta)(get!(settings["opt"]["cvae"], "lambda_pseudo", 0.0)::Float64)
+    τ_pseudo   = Zygote.@ignore eltype(Ymeta)(get!(settings["opt"]["cvae"], "tau_pseudo", 0.0)::Float64)
     minkept    = Zygote.@ignore get!(settings["train"], "CVAEmask", 0)::Int
 
     # Sample X̂,θ,Z from priors
-    θ = Zygote.@ignore sample(derived["cvae_theta_prior"], signal(Ymeta))
-    Z = Zygote.@ignore sample(derived["cvae_latent_prior"], signal(Ymeta))
-    X = Zygote.@ignore signal_model(phys, θ)
+    θ = Zygote.@ignore sample(derived["cvae_theta_prior"], lib.signal(Ymeta))
+    Z = Zygote.@ignore sample(derived["cvae_latent_prior"], lib.signal(Ymeta))
+    X = Zygote.@ignore lib.signal_model(phys, θ)
     X̂ = Zygote.@ignore lib.sampleX̂(models["genatr"], X, Z)
 
     # Cross-entropy loss function components
-    X̂masked, X̂mask = lib.pad_and_mask_signal(X̂, nsignal(derived["cvae"]); minkept, maxkept = nsignal(derived["cvae"]))
+    X̂masked, X̂mask = lib.pad_and_mask_signal(X̂, lib.nsignal(derived["cvae"]); minkept, maxkept = lib.nsignal(derived["cvae"]))
     X̂state = lib.CVAETrainingState(derived["cvae"], X̂masked, θ, Z)
-    KLDiv, ELBO = KL_and_ELBO(X̂state; marginalize_Z)
+    KLDiv, ELBO = lib.KL_and_ELBO(X̂state; marginalize_Z)
     ℓ = (; KLDiv, ELBO)
 
     if λ_vae_sim > 0
-        ℓ = push!!(ℓ, :VAE => λ_vae_sim * derived["vae_reg_loss"](signal(X̂state), X̂mask, lib.sample_mv_normal(X̂state.μq0, exp.(X̂state.logσq))))
-        # ℓ = push!!(ℓ, :VAE => λ_vae_sim * derived["vae_reg_loss"](signal(X̂state), X̂mask, lib.sample_mv_normal(X̂state.μr0, exp.(X̂state.logσr))))
+        ℓ = push!!(ℓ, :VAE => λ_vae_sim * derived["vae_reg_loss"](lib.signal(X̂state), X̂mask, lib.sample_mv_normal(X̂state.μq0, exp.(X̂state.logσq))))
+        # ℓ = push!!(ℓ, :VAE => λ_vae_sim * derived["vae_reg_loss"](lib.signal(X̂state), X̂mask, lib.sample_mv_normal(X̂state.μr0, exp.(X̂state.logσr))))
     end
     if λ_latent > 0
         ℓ = push!!(ℓ, :LatentReg => λ_latent * lib.EnsembleKLDivUnitGaussian(X̂state.μq0, X̂state.logσq))
@@ -311,18 +321,17 @@ function CVAElosses(Ymeta::AbstractMetaDataSignal, θPseudo = nothing, ZPseudo =
         =#
 
         # CVAE pseudo-state
-        Ymasked, Ymask = lib.pad_and_mask_signal(signal(Ymeta), nsignal(derived["cvae"]); minkept, maxkept = nsignal(Ymeta))
-        # Ymasked, Ymask = lib.pad_and_mask_signal(X̂, nsignal(derived["cvae"]); minkept, maxkept = nsignal(Ymeta)) #TODO try bootstrapping X̂ to see if it also fails...
+        Ymasked, Ymask = lib.pad_and_mask_signal(lib.signal(Ymeta), lib.nsignal(derived["cvae"]); minkept, maxkept = lib.nsignal(Ymeta))
+        # Ymasked, Ymask = lib.pad_and_mask_signal(X̂, lib.nsignal(derived["cvae"]); minkept, maxkept = lib.nsignal(Ymeta)) #TODO try bootstrapping X̂ to see if it also fails...
         Ystate = lib.CVAETrainingState(derived["cvae"], Ymasked, θPseudo, ZPseudo)
 
-        if true
-            # CVAE loss from pseudolabels
-            KLDivPseudo, ELBOPseudo = KL_and_ELBO(Ystate; marginalize_Z) # recover pseudo θ and Z labels
-            ℓ = push!!(ℓ, :KLDivPseudo => λ_pseudo * KLDivPseudo, :ELBOPseudo => λ_pseudo * ELBOPseudo)
-        end
+        # CVAE loss from pseudolabels
+        KLDivPseudo, ELBOPseudo = lib.KL_and_ELBO(Ystate; marginalize_Z) # recover pseudo θ and Z labels
+        ℓ = push!!(ℓ, :KLDivPseudo => λ_pseudo * KLDivPseudo, :ELBOPseudo => λ_pseudo * ELBOPseudo)
+
         if λ_vae_data > 0
-            ℓ = push!!(ℓ, :VAEPseudo => λ_pseudo * λ_vae_data * derived["vae_reg_loss"](signal(Ystate), Ymask, lib.sample_mv_normal(Ystate.μq0, exp.(Ystate.logσq))))
-            # ℓ = push!!(ℓ, :VAEPseudo => λ_pseudo * λ_vae_data * derived["vae_reg_loss"](signal(Ystate), Ymask, lib.sample_mv_normal(Ystate.μr0, exp.(Ystate.logσr))))
+            ℓ = push!!(ℓ, :VAEPseudo => λ_pseudo * λ_vae_data * derived["vae_reg_loss"](lib.signal(Ystate), Ymask, lib.sample_mv_normal(Ystate.μq0, exp.(Ystate.logσq))))
+            # ℓ = push!!(ℓ, :VAEPseudo => λ_pseudo * λ_vae_data * derived["vae_reg_loss"](lib.signal(Ystate), Ymask, lib.sample_mv_normal(Ystate.μr0, exp.(Ystate.logσr))))
         end
         if λ_latent > 0
             ℓ = push!!(ℓ, :LatentRegPseudo => λ_pseudo * λ_latent * lib.EnsembleKLDivUnitGaussian(Ystate.μq0, Ystate.logσq))
@@ -330,13 +339,13 @@ function CVAElosses(Ymeta::AbstractMetaDataSignal, θPseudo = nothing, ZPseudo =
 
         #=
         if λ_latent > 0
-            # Ymasked, Ymask = lib.pad_and_mask_signal(signal(Ymeta), nsignal(derived["cvae"]); minkept = nsignal(Ymeta), maxkept = nsignal(Ymeta))
-            Ymasked, Ymask = lib.pad_and_mask_signal(signal(Ymeta), nsignal(derived["cvae"]); minkept, maxkept = nsignal(Ymeta))
+            # Ymasked, Ymask = lib.pad_and_mask_signal(lib.signal(Ymeta), lib.nsignal(derived["cvae"]); minkept = lib.nsignal(Ymeta), maxkept = lib.nsignal(Ymeta))
+            Ymasked, Ymask = lib.pad_and_mask_signal(lib.signal(Ymeta), lib.nsignal(derived["cvae"]); minkept, maxkept = lib.nsignal(Ymeta))
             Ystate = lib.CVAEInferenceState(derived["cvae"], Ymasked)
 
             #=
             Ŷstate = Zygote.@ignore begin
-                ŶPseudo = lib.sampleX̂(models["genatr"], signal_model(phys, θPseudo), ZPseudo) # Noisy instance of fitted signal from pseudo labels
+                ŶPseudo = lib.sampleX̂(models["genatr"], lib.signal_model(phys, θPseudo), ZPseudo) # Noisy instance of fitted signal from pseudo labels
                 lib.CVAEInferenceState(derived["cvae"], Ymask .* ŶPseudo) # Use same mask as Ystate above
             end
 
@@ -346,14 +355,14 @@ function CVAElosses(Ymeta::AbstractMetaDataSignal, θPseudo = nothing, ZPseudo =
             #=
             if λ_vae_data > 0
                 # Reconstruct Ŷstate signal from Ystate encoder samples
-                ℓ = push!!(ℓ, :VAEPseudo => λ_pseudo * λ_vae_data * derived["vae_reg_loss"](signal(Ŷstate), Ymask, lib.sample_mv_normal(Ystate.μr0, exp.(Ystate.logσr))))
+                ℓ = push!!(ℓ, :VAEPseudo => λ_pseudo * λ_vae_data * derived["vae_reg_loss"](lib.signal(Ŷstate), Ymask, lib.sample_mv_normal(Ystate.μr0, exp.(Ystate.logσr))))
             end
             =#
 
             if λ_vae_data > 0
                 Ystate_detached = lib.CVAEInferenceState(derived["mean_cvae"], Ystate.Y, Ystate.μr0, Ystate.logσr)
                 θMode, ZMode = lib.sampleθZ(phys, derived["mean_cvae"], Ymeta, Ystate_detached; posterior_θ = true, posterior_Z = true, posterior_mode = true)
-                post_state = lib.posterior_state(phys, models["genatr"], signal(Ymeta), θMode, ZMode)
+                post_state = lib.posterior_state(phys, models["genatr"], lib.signal(Ymeta), θMode, ZMode)
                 Ystate_VAEFitLogL = sum(Ymask .* lib.pad_signal(post_state.ℓ, size(Ymask,1))) / sum(Ymask)
                 ℓ = push!!(ℓ, :VAEPseudo => λ_pseudo * λ_vae_data * Ystate_VAEFitLogL)
             end
@@ -395,13 +404,15 @@ function sample_batch(dataset::Symbol; batchsize::Int, img_idx = nothing)
     Ys = img.partitions[dataset]
     J = sample(1:size(Ys,2), batchsize; replace = false)
     Y = Ys[:,J] |> to32
-    Ymeta = MetaCPMGSignal(phys, img, Y)
+    Ymeta = lib.MetaCPMGSignal(phys, img, Y)
     θPseudo = !haskey(derived, "pretrained_cvae") ? nothing : (img.meta[:pseudolabels][dataset][:theta][:,J] |> to32)
     ZPseudo = !haskey(derived, "pretrained_cvae") ? nothing : (img.meta[:pseudolabels][dataset][:latent][:,J] |> to32)
     return out = (; img_idx, img, Y, Ymeta, θPseudo, ZPseudo)
 end
 
 function train_step(engine, batch)
+    trainer.should_terminate && return Dict{Any,Any}() #TODO
+
     @unpack Y, Ymeta, θPseudo, ZPseudo = sample_batch(:train; batchsize = settings["train"]["batchsize"])
     outputs = Dict{Any,Any}()
 
@@ -485,8 +496,8 @@ function train_step(engine, batch)
 
         # Train MMD kernels
         train_k && @timeit "kernel" let #TODO CUDA.@sync
-            noisyclamp!(x::AbstractArray{T}, lo, hi, ϵ) where {T} = clamp!(x .+ T(ϵ) .* randn_similar(x, size(x)...), T(lo), T(hi))
-            restrict!(k) = noisyclamp!(logbandwidths(k), -Inf, Inf, settings["arch"]["kernel"]["clampnoise"])
+            noisyclamp!(x::AbstractArray{T}, lo, hi, ϵ) where {T} = clamp!(x .+ T(ϵ) .* lib.randn_similar(x, size(x)...), T(lo), T(hi))
+            restrict!(k) = noisyclamp!(lib.logbandwidths(k), -Inf, Inf, settings["arch"]["kernel"]["clampnoise"])
             aug_types, aug_Ys = augment_and_transform(Y) |> first |> Y -> (keys(Y), values(Y)) # augment data
             opts = (get_kernel_opt(aug) for aug in aug_types) # unique optimizer per augmentation
             kernels = (get_mmd_kernel(aug, size(Y,1)) for (aug, Y) in zip(aug_types, aug_Ys)) # unique kernel per augmentation
@@ -495,7 +506,7 @@ function train_step(engine, batch)
                 @timeit "sample Y2" Y2 = lib.sampleY(phys, settings["train"]["batchsize"]::Int; dataset = :train) |> to32 # draw another Y sample
                 aug_X̂s, aug_Ys2 = augment_and_transform(X̂, Y2) .|> values # augment data + simulated data
                 for (aug, kernel, aug_X̂, aug_Y, aug_Y2, opt) in zip(aug_types, kernels, aug_X̂s, aug_Ys, aug_Ys2, opts)
-                    @timeit "$aug" train_kernel!(
+                    @timeit "$aug" lib.train_kernel!(
                         kernel, aug_X̂, aug_Y, opt, aug_Y2;
                         restrict! = restrict!, kernelloss = settings["opt"]["kernel"]["loss"]::String, kernelsteps = 1
                     )
@@ -518,35 +529,37 @@ function fit_cvae(Ymeta; marginalize_Z)
     if false #TODO marginalize_Z
         # If Z is marginalized over, fit noise directly via MLE
         @timeit "mle noise fit" begin
-            mle_init, mle_res = mle_biexp_epg_noise_only(ν, signal(Ymeta); verbose = true, batch_size = size(signal(Ymeta), 2), checkpoint = false, dryrun = true, dryrunsamples = nothing)
-            ℓ .= arr_similar(ν, mle_res.loss)'
-            ϵ .= arr_similar(ν, mle_res.logepsilon)' .|> exp
+            mle_init, mle_res = mle_biexp_epg_noise_only(ν, lib.signal(Ymeta); verbose = true, batch_size = size(lib.signal(Ymeta), 2), checkpoint = false, dryrun = true, dryrunsamples = nothing)
+            ℓ .= lib.arr_similar(ν, mle_res.loss)'
+            ϵ .= lib.arr_similar(ν, mle_res.logepsilon)' .|> exp
             # Z .= 0 #TODO marginalize_Z # Z is filled with garbage
-            X̂ = add_noise_instance(models["genatr"], ν, ϵ)
+            X̂ = lib.add_noise_instance(models["genatr"], ν, ϵ)
         end
     else
         # Add noise (Z-dependent, i.e. ϵ = ϵ(Z))
-        X̂ = add_noise_instance(models["genatr"], ν, ϵ)
+        X̂ = lib.add_noise_instance(models["genatr"], ν, ϵ)
     end
 
-    return (; Y = signal(Ymeta), X̂, θ, Z, X, δ, ϵ, ν, ℓ, mle_init, mle_res)
+    return (; Y = lib.signal(Ymeta), X̂, θ, Z, X, δ, ϵ, ν, ℓ, mle_init, mle_res)
 end
 
 function fit_metrics(Ymeta, Ymeta_fit_state, θtrue, Ztrue)
     @unpack X̂, θ, Z, X, δ, ϵ, ν, ℓ = Ymeta_fit_state
-    all_rmse = sqrt.(mean(abs2, signal(Ymeta) .- ν; dims = 1)) |> lib.cpu |> vec |> copy
+    all_rmse = sqrt.(mean(abs2, lib.signal(Ymeta) .- ν; dims = 1)) |> lib.cpu |> vec |> copy
     all_logL = ℓ |> lib.cpu |> vec |> copy
     rmse, logL = mean(all_rmse), mean(all_logL)
-    theta_err = (θtrue === nothing) ? missing : mean(abs, θerror(phys, θtrue, θ); dims = 2) |> lib.cpu |> vec |> copy
+    theta_err = (θtrue === nothing) ? missing : mean(abs, lib.θerror(phys, θtrue, θ); dims = 2) |> lib.cpu |> vec |> copy
     Z_err = (Ztrue === nothing) ? missing : mean(abs, Ztrue .- Z; dims = 2) |> lib.cpu |> vec |> copy
 
     metrics = (; all_rmse, all_logL, rmse, logL, theta_err, Z_err, rmse_true = missing, logL_true = missing)
-    cache_cb_args = (signal(Ymeta), θ, Z, X, δ, ϵ, ν, X̂, missing) # νtrue
+    cache_cb_args = (lib.signal(Ymeta), θ, Z, X, δ, ϵ, ν, X̂, missing) # νtrue
 
     return metrics, cache_cb_args
 end
 
 function compute_metrics(engine, batch; dataset)
+    trainer.should_terminate && return Dict{Any,Any}()
+
     @timeit "compute metrics" begin #TODO CUDA.@sync
         # Update callback state
         get!(cb_state, "start_time", time())
@@ -572,7 +585,7 @@ function compute_metrics(engine, batch; dataset)
         # Invert Y and make Xs
         @unpack img_idx, img, Y, Ymeta, θPseudo, ZPseudo = sample_batch(:val; batchsize = settings["eval"]["batchsize"], img_idx = mod1(engine.state.iteration, length(phys.images)))
         Y_fit_state = fit_cvae(Ymeta; marginalize_Z = false) #TODO marginalize_Z
-        X̂meta = MetaCPMGSignal(phys, img, Y_fit_state.X̂) # Perform inference on X̂, the noisy best fit to Y
+        X̂meta = lib.MetaCPMGSignal(phys, img, Y_fit_state.X̂) # Perform inference on X̂, the noisy best fit to Y
         X̂_fit_state = fit_cvae(X̂meta; marginalize_Z = false) #TODO marginalize_Z
 
         let
@@ -591,8 +604,8 @@ function compute_metrics(engine, batch; dataset)
             accum!((; loss))
 
             CVAE_Acts = let
-                θ = sample(derived["cvae_theta_prior"], signal(Ymeta))
-                Z = sample(derived["cvae_latent_prior"], signal(Ymeta))
+                θ = sample(derived["cvae_theta_prior"], lib.signal(Ymeta))
+                Z = sample(derived["cvae_latent_prior"], lib.signal(Ymeta))
                 X = lib.signal_model(phys, θ)
                 X̂ = lib.sampleX̂(models["genatr"], X, Z)
                 @unpack μr0, logσr, μq0, logσq = lib.CVAETrainingState(derived["cvae"], X̂, θ, Z)

@@ -202,6 +202,7 @@ end
 
 abstract type AbstractMetaDataSignal{T} end
 
+Base.eltype(::AbstractMetaDataSignal{T}) where {T} = T
 signal(Ymeta::AbstractMetaDataSignal) = Ymeta.Y # fallback
 nsignal(Ymeta::AbstractMetaDataSignal) = size(signal(Ymeta), 1) # fallback
 θnuissance(Ymeta::AbstractMetaDataSignal) = zeros_similar(signal(Ymeta), 0, size(signal(Ymeta))[2:end]...) # fallback
@@ -533,7 +534,7 @@ function θnuissance(p::BiexpEPGModel, Ymeta::MetaCPMGSignal)
     @unpack T1bd, TEbd = p
     logτ1lo, logτ1hi = log(T1bd[1] / TEbd[2]), log(T1bd[2] / TEbd[1])
     TE, T1 = echotime(Ymeta.img), T1time(Ymeta.img)
-    δ0 = (log(T1 / TE) - logτ1lo) / (logτ1hi - logτ1lo) |> eltype(signal(Ymeta))
+    δ0 = (log(T1 / TE) - logτ1lo) / (logτ1hi - logτ1lo) |> eltype(Ymeta)
     fill_similar(signal(Ymeta), δ0, 1, size(signal(Ymeta))[2:end]...)
 end
 

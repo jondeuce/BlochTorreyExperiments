@@ -263,17 +263,29 @@ end
 #### Gradient definitions
 ####
 
-function mforwarddiff_from_scalar_rule(fname, fargs, Δi, i)
+@inline _propagate_user_derivative(f, df, x::D) where {D <: ForwardDiff.Dual} = D(f(ForwardDiff.value(x)), df(ForwardDiff.value(x)) * ForwardDiff.partials(x))
+@inline _propagate_user_derivative(fdf, x::D) where {D <: ForwardDiff.Dual} = ((fx, dfx) = fdf(ForwardDiff.value(x)); D(fx, dfx * ForwardDiff.partials(x)))
+
+macro dual_gradient(f, df)
+    return :($(esc(f))(x::ForwardDiff.Dual) = _propagate_user_derivative($(esc(f)), $(esc(df)), x))
+end
+
+macro primal_dual_gradient(f, fdf)
+    return :($(esc(f))(x::ForwardDiff.Dual) = _propagate_user_derivative($(esc(fdf)), x))
+end
+
+#=
+function mforwarddiff_from_scalar_rule(fname, fargs, i)
     # Create template function of one argument which takes gradient w.r.t. the i'th input
-    f_args = ntuple(j -> j == i ? :($(fargs[i])::ForwardDiff.Dual{T,V,N}) : :($(fargs[j])), length(fargs))
+    f_args = ntuple(j -> j == i ? :($(fargs[i])::D) : :($(fargs[j])::Real), length(fargs))
     frule_args = ntuple(j -> j == i ? :(ForwardDiff.value($(fargs[i]))) : :($(fargs[j])), length(fargs))
-    frule_Δargs = ntuple(j -> j == i ? Δi : ChainRules.DoesNotExist(), length(fargs))
+    frule_Δargs = ntuple(j -> j == i ? 1 : 0, length(fargs))
     y, ẏ = gensym(), gensym()
     return :(
-        function $fname($(f_args...)) where {T,V,N}
+        function $fname($(f_args...)) where {D <: ForwardDiff.Dual}
             # Use `frule` defined by `@scalar_rule`
             $y, $ẏ = ChainRules.frule((ChainRules.NO_FIELDS, $(frule_Δargs...)), $fname, $(frule_args...))
-            return ForwardDiff.Dual{T,V,N}($y, $ẏ * ForwardDiff.partials($(fargs[i])))
+            return D($y, $ẏ * ForwardDiff.partials($(fargs[i])))
         end
     )
 end
@@ -281,14 +293,15 @@ end
 macro forwarddiff_from_scalar_rule(f, Δargs = nothing)
     @assert f.head === :call && (Δargs === nothing || (Δargs.head === :tuple && length(f.args) == 1 + length(Δargs.args)))
     fname, fargs = esc(f.args[1]), f.args[2:end]
-    (Δargs === nothing) && (Δargs = Expr(:tuple, ones(Int,length(fargs))...))
+    Δargs = Δargs === nothing ? ones(Int, length(fargs)) : Δargs.args
     ex = Expr(:block)
-    for (i,Δi) in enumerate(Δargs.args)
+    for (i,Δi) in enumerate(Δargs)
         Δi === :nothing && continue
-        push!(ex.args, mforwarddiff_from_scalar_rule(fname, fargs, Δi, i))
+        push!(ex.args, mforwarddiff_from_scalar_rule(fname, fargs, i))
     end
     return ex
 end
+=#
 
 ####
 #### Gradient testing

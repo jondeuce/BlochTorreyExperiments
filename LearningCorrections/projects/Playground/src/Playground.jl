@@ -17,7 +17,7 @@ include("fix/Stacks/Stacks.jl") # workaround until Transformers is updated for j
 @reexport using CUDA: CuArray, CuVector, CuMatrix
 @reexport using DataFrames: DataFrame, dropmissing
 @reexport using Distributions: Gaussian, Uniform, cdf, logpdf, pdf, log2π, logtwo, sqrthalfπ
-@reexport using DrWatson: @dict, @ntuple, projectdir
+@reexport using DrWatson: @dict, @ntuple, datadir, projectdir, scriptsdir, srcdir
 @reexport using EllipsisNotation: (..)
 @reexport using FFTW: fft, ifft, rfft
 @reexport using LaTeXStrings: @L_str, latexstring
@@ -106,7 +106,7 @@ function initenv()
     use_wandb_logger[] = ENV["JL_WANDB_LOGGER"] == "1"
 
     # Load model from checkpoint folder
-    if isempty(ENV["JL_CHECKPOINT_FOLDER"])
+    if !isempty(ENV["JL_CHECKPOINT_FOLDER"])
         set_checkpointdir!(ENV["JL_CHECKPOINT_FOLDER"])
     else
         clear_checkpointdir!()

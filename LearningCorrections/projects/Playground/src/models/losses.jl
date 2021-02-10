@@ -4,11 +4,12 @@
 
 #### Ensemble of gaussian distributions
 
-"Return Gaussian distbn which matches the mean and variance of an equally weighted ensemble of the input distributions"
-function ensemble_of_gaussians(μ, logσ)
+"Gaussian distribution which matches the mean and variance of an equally weighted ensemble of the input Gaussian distributions along dimension `dims`"
+function ensemble_of_gaussians(μ, logσ; dims = :)
     # Fast version
-    μ̄ = mean(μ)
-    logσ̄ = log(mean(@. exp(2logσ) + (μ - μ̄)^2)) / 2
+    μ̄ = mean(μ; dims)
+    σ̄² = mean(@. exp(2logσ) + (μ - μ̄)^2; dims)
+    logσ̄ = @. log(σ̄²)/2
     return μ̄, logσ̄
 
     #= Numerically stable version
@@ -111,7 +112,6 @@ ChainRules.@scalar_rule(
 @inline_cufunc ∂x_neglogL_rician_unsafe(x, ν, σ, σ⁻², z, r) = σ⁻² * (x - ν * r) - 1/x
 @inline_cufunc ∂ν_neglogL_rician_unsafe(x, ν, σ, σ⁻², z, r) = σ⁻² * (ν - x * r)
 @inline_cufunc ∂σ_neglogL_rician_unsafe(x, ν, σ, σ⁻², z, r) = (2 - σ⁻² * ((x - ν)^2 + 2 * ν * x * (1 - r))) / σ
-@forwarddiff_from_scalar_rule neglogL_rician_unsafe(x, ν, σ)
 =#
 
 @inline_cufunc neglogL_rician_unsafe(x, ν, logσ) = 2logσ - log(x) + exp(-2logσ) * (x^2 + ν^2)/2 - _logbesseli0_cuda_unsafe(exp(-2logσ) * x * ν)
@@ -125,7 +125,6 @@ ChainRules.@scalar_rule(
 @inline_cufunc ∂x_neglogL_rician_unsafe(x, ν, logσ, σ⁻², z, r) = σ⁻² * (x - ν * r) - 1/x
 @inline_cufunc ∂ν_neglogL_rician_unsafe(x, ν, logσ, σ⁻², z, r) = σ⁻² * (ν - x * r)
 @inline_cufunc ∂logσ_neglogL_rician_unsafe(x, ν, logσ, σ⁻², z, r) = 2 - σ⁻² * ((x - ν)^2 + 2 * ν * x * (1 - r))
-@forwarddiff_from_scalar_rule neglogL_rician_unsafe(x, ν, logσ)
 
 #### Rician mean
 

@@ -9,8 +9,8 @@ end
 #### Test approximation values
 
 for (ftrue, fapprox) in [
-        (x -> lib._besselix(0.0, x), lib._besselix0_cuda_unsafe),
-        (x -> lib._besselix(1.0, x), lib._besselix1_cuda_unsafe),
+        (x -> lib._besselix0(x), lib._besselix0_cuda_unsafe),
+        (x -> lib._besselix1(x), lib._besselix1_cuda_unsafe),
         (lib._laguerre½, lib._laguerre½_cuda_unsafe),
     ]
     @testset "$fapprox" begin
@@ -24,8 +24,8 @@ end
 #### Test approximation gradients
 
 for (ftrue, fapprox) in [
-        (x -> lib._besselix(0.0, x), lib._besselix0_cuda_unsafe),
-        (x -> lib._besselix(1.0, x), lib._besselix1_cuda_unsafe),
+        (x -> lib._besselix0(x), lib._besselix0_cuda_unsafe),
+        (x -> lib._besselix1(x), lib._besselix1_cuda_unsafe),
         # (lib._laguerre½, lib._laguerre½_cuda_unsafe),
     ]
     @testset "∇$fapprox" begin

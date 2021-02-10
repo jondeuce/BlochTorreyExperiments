@@ -32,14 +32,17 @@ end
 @inline Base.eltype(::Type{Rician{T}}) where {T} = T
 
 #### Laguerre/Bessel functions
-@inline_cufunc _besselix(ν::Real, x::Real) = besselix(oftype(float(x), ν), float(x)) # besselix(ν, x) = Iν(x) * exp(-|x|)
+@inline_cufunc _besselix(ν::Real, x::Real) = besselix(oftypefloat(x, ν), float(x)) # besselix(ν, x) = Iν(x) * exp(-|x|)
+@inline_cufunc _besselix0(x::Real) = _besselix(0, x)
+@inline_cufunc _besselix1(x::Real) = _besselix(1, x)
+@inline_cufunc _besselix2(x::Real) = _besselix(2, x)
 @inline_cufunc _logbesseli(ν::Real, x::Real) = log(_besselix(ν, x)) + abs(x) # since log(besselix(ν, x)) = log(Iν(x)) - |x|
 @inline_cufunc _logbesseli0(x::Real) = _logbesseli(0, x)
 @inline_cufunc _logbesseli1(x::Real) = _logbesseli(1, x)
 @inline_cufunc _logbesseli2(x::Real) = _logbesseli(2, x)
-@inline_cufunc _besseli1i0m1(x::Real) = _besselix(1, x) / _besselix(0, x) - 1
-@inline_cufunc _besseli2i0(x::Real) = _besselix(2, x) / _besselix(0, x)
-@inline_cufunc _laguerre½(x::Real) = ifelse(x < 0, one(x), exp(x)) * ((1 - x) * _besselix(0, -x/2) - x * _besselix(1, -x/2)) # besselix(ν, ±x/2) = Iν(±x/2) * exp(-|±x/2|) = Iν(-x/2) * exp(∓x/2)
+@inline_cufunc _besseli1i0m1(x::Real) = _besselix1(x) / _besselix0(x) - 1
+@inline_cufunc _besseli2i0(x::Real) = _besselix2(x) / _besselix0(x)
+@inline_cufunc _laguerre½(x::Real) = ifelse(x < 0, one(x), exp(x)) * ((1 - x) * _besselix0(-x/2) - x * _besselix1(-x/2)) # besselix(ν, ±x/2) = Iν(±x/2) * exp(-|±x/2|) = Iν(-x/2) * exp(∓x/2)
 
 #### Statistics
 @inline Distributions.mean(d::Rician) = d.σ * sqrt(pi/2) * _laguerre½(-d.ν^2 / 2d.σ^2)
@@ -105,15 +108,25 @@ end
 
 @inline_cufunc ∂x_besselix(ν::Real, x::Real, Ω::Real) = (_besselix(ν - 1, x) + _besselix(ν + 1, x)) / 2 - sign(x) * Ω
 ChainRules.@scalar_rule _besselix(ν::Real, x::Real) (ChainRules.DoesNotExist(), ∂x_besselix(ν, x, Ω))
-@forwarddiff_from_scalar_rule _besselix(ν, x) (nothing, 1)
+
+@inline_cufunc ∂x_besselix0(x::Real, Ω::Real) = _besselix1(x) - sign(x) * Ω
+@inline_cufunc f_∂x_besselix0(x::Real) = (Ω = _besselix0(x); return (Ω, ∂x_besselix0(x, Ω)))
+ChainRules.@scalar_rule _besselix0(x::Real) ∂x_besselix0(x, Ω)
+@primal_dual_gradient _besselix0 f_∂x_besselix0
+
+@inline_cufunc ∂x_besselix1(x::Real, Ω::Real) = (_besselix0(x) + _besselix2(x))/2 - sign(x) * Ω
+@inline_cufunc f_∂x_besselix1(x::Real) = (Ω = _besselix1(x); return (Ω, ∂x_besselix1(x, Ω)))
+ChainRules.@scalar_rule _besselix1(x::Real) ∂x_besselix1(x, Ω)
+@primal_dual_gradient _besselix1 f_∂x_besselix1
 
 @inline_cufunc ∂x_besselix0_cuda_unsafe(x::Real, Ω::Real) = _besselix1_cuda_unsafe(x) - sign(x) * Ω
+@inline_cufunc f_∂x_besselix0_cuda_unsafe(x::Real) = (Ω = _besselix0_cuda_unsafe(x); return (Ω, ∂x_besselix0_cuda_unsafe(x, Ω)))
 ChainRules.@scalar_rule _besselix0_cuda_unsafe(x::Real) ∂x_besselix0_cuda_unsafe(x, Ω)
-@forwarddiff_from_scalar_rule _besselix0_cuda_unsafe(x)
+@primal_dual_gradient _besselix0_cuda_unsafe f_∂x_besselix0_cuda_unsafe
 
 @inline_cufunc ∂x_laguerre½_cuda_unsafe(x::Real) = ifelse(x < 0, one(x), exp(x)) * (_besselix1_cuda_unsafe(x/2) - _besselix0_cuda_unsafe(x/2)) / 2
 ChainRules.@scalar_rule _laguerre½_cuda_unsafe(x::Real) ∂x_laguerre½_cuda_unsafe(x)
-@forwarddiff_from_scalar_rule _laguerre½_cuda_unsafe(x)
+@dual_gradient _laguerre½_cuda_unsafe ∂x_laguerre½_cuda_unsafe
 
 #### Misc. derivatives
 

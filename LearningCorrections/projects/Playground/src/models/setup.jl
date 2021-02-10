@@ -150,9 +150,9 @@ const use_wandb_logger = Ref(false)
 
 const _logdirname = Ref("")
 set_logdirname!(dirname) = !use_wandb_logger[] && (_logdirname[] = basename(dirname))
-set_logdirname!() = !use_wandb_logger[] && basename(mkpath(projectdir("log", set_logdirname!(getnow()))))
+set_logdirname!() = !use_wandb_logger[] && basename(mkpath(DrWatson.projectdir("log", set_logdirname!(getnow()))))
 get_logdirname() = !use_wandb_logger[] ? (isempty(_logdirname[]) ? set_logdirname!() : _logdirname[]) : basename(logdir())
-logdir(args...) = !use_wandb_logger[] ? projectdir("log", get_logdirname(), args...) : joinpath(wandb.run.dir, args...)
+logdir(args...) = !use_wandb_logger[] ? DrWatson.projectdir("log", get_logdirname(), args...) : joinpath(wandb.run.dir, args...)
 
 const _checkpointdir = Ref("")
 set_checkpointdir!(dir) = _checkpointdir[] = dir
@@ -453,7 +453,7 @@ function save_project_code(
     )
     # Save project code
     mkpath(savepath)
-    for path in projectdir.(saveitems)
+    for path in DrWatson.projectdir.(saveitems)
         cp(path, joinpath(savepath, basename(path)))
     end
     if newuuid
@@ -469,6 +469,16 @@ function replace_projectfile_uuid(projectfile)
         TOML.print(io, prj)
     end
     return prj
+end
+
+macro save_expression(filename, ex)
+    quote
+        local fname = $(esc(filename))
+        open(fname; write = true) do io
+            println(io, $(string(ex)))
+        end
+        $(esc(ex))
+    end
 end
 
 nothing
