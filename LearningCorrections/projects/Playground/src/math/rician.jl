@@ -72,32 +72,53 @@ function _besselix0_cuda_unsafe end
 "Approximation of besselix(1, x) = exp(-|x|) * besseli(1, x)"
 function _besselix1_cuda_unsafe end
 
-@inline_cufunc function _besselix0_cuda_unsafe(x)
+@inline function _besselix0_cuda_unsafe(x)
     ax = abs(x)
-    if ax < 3.75f0
-        y = (ax / 3.75f0)^2
-        out = exp(-ax) * evalpoly(y, (1.0f0, 3.5156229f0, 3.0899424f0, 1.2067492f0, 0.2659732f0, 0.360768f-1, 0.45813f-2))
-        # out = exp(-ax) * evalpoly(y, (1.0000000f+0, 3.5156250f+0, 3.0899048f+0, 1.2069941f+0, 2.6520866f-1, 3.7294969f-2, 3.6420866f-3)) # derived from taylor series directly, but is less accurate; why the mismatch?
-    else
-        y = 3.75f0 / ax
-        out = evalpoly(y, (0.39894228f0, 0.1328592f-1, 0.225319f-2, -0.157565f-2, 0.916281f-2, -0.2057706f-1, 0.2635537f-1, -0.1647633f-1, 0.392377f-2))
-        out /= sqrt(ax)
-    end
-    return out
+    y1 = (ax / 3.75f0)^2
+    y1 = exp(-ax) * evalpoly(y1, (1.0f0, 3.5156229f0, 3.0899424f0, 1.2067492f0, 0.2659732f0, 0.360768f-1, 0.45813f-2))
+    y2 = 3.75f0 / ax
+    y2 = evalpoly(y2, (0.39894228f0, 0.1328592f-1, 0.225319f-2, -0.157565f-2, 0.916281f-2, -0.2057706f-1, 0.2635537f-1, -0.1647633f-1, 0.392377f-2))
+    y2 /= sqrt(ax)
+    return LoopVectorization.VectorizationBase.vifelse(ax < 3.75f0, y1, y2)
 end
 
-@inline_cufunc function _besselix1_cuda_unsafe(x)
+@cufunc function _besselix0_cuda_unsafe(x)
     ax = abs(x)
     if ax < 3.75f0
         y = (ax / 3.75f0)^2
-        out = exp(-ax) * ax * evalpoly(y, (0.5f0, 0.87890594f0, 0.51498869f0, 0.15084934f0, 0.2658733f-1, 0.301532f-2, 0.32411f-3))
-        # out = exp(-ax) * ax * evalpoly(y, (5.0000000f-1, 8.7890625f-1, 5.1498413f-1, 1.5087426f-1, 2.6520865f-2, 3.1079140f-3, 2.6014904f-4)) # derived from taylor series directly, but is less accurate; why the mismatch?
+        y = exp(-ax) * evalpoly(y, (1.0f0, 3.5156229f0, 3.0899424f0, 1.2067492f0, 0.2659732f0, 0.360768f-1, 0.45813f-2))
+        # y = exp(-ax) * evalpoly(y, (1.0000000f+0, 3.5156250f+0, 3.0899048f+0, 1.2069941f+0, 2.6520866f-1, 3.7294969f-2, 3.6420866f-3)) # derived from taylor series directly, but is less accurate; why the mismatch?
     else
         y = 3.75f0 / ax
-        out = evalpoly(y, (0.39894228f0, -0.3988024f-1, -0.362018f-2, 0.163801f-2, -0.1031555f-1, 0.2282967f-1, -0.2895312f-1, 0.1787654f-1, -0.420059f-2))
-        out /= sqrt(ax)
+        y = evalpoly(y, (0.39894228f0, 0.1328592f-1, 0.225319f-2, -0.157565f-2, 0.916281f-2, -0.2057706f-1, 0.2635537f-1, -0.1647633f-1, 0.392377f-2))
+        y /= sqrt(ax)
     end
-    return x < 0 ? -out : out
+    return y
+end
+
+@inline function _besselix1_cuda_unsafe(x)
+    ax = abs(x)
+    y1 = (ax / 3.75f0)^2
+    y1 = exp(-ax) * ax * evalpoly(y1, (0.5f0, 0.87890594f0, 0.51498869f0, 0.15084934f0, 0.2658733f-1, 0.301532f-2, 0.32411f-3))
+    y2 = 3.75f0 / ax
+    y2 = evalpoly(y2, (0.39894228f0, -0.3988024f-1, -0.362018f-2, 0.163801f-2, -0.1031555f-1, 0.2282967f-1, -0.2895312f-1, 0.1787654f-1, -0.420059f-2))
+    y2 /= sqrt(ax)
+    y = LoopVectorization.VectorizationBase.vifelse(ax < 3.75f0, y1, y2)
+    return LoopVectorization.VectorizationBase.vifelse(x < 0, -y, y)
+end
+
+@cufunc function _besselix1_cuda_unsafe(x)
+    ax = abs(x)
+    if ax < 3.75f0
+        y = (ax / 3.75f0)^2
+        y = exp(-ax) * ax * evalpoly(y, (0.5f0, 0.87890594f0, 0.51498869f0, 0.15084934f0, 0.2658733f-1, 0.301532f-2, 0.32411f-3))
+        # y = exp(-ax) * ax * evalpoly(y, (5.0000000f-1, 8.7890625f-1, 5.1498413f-1, 1.5087426f-1, 2.6520865f-2, 3.1079140f-3, 2.6014904f-4)) # derived from taylor series directly, but is less accurate; why the mismatch?
+    else
+        y = 3.75f0 / ax
+        y = evalpoly(y, (0.39894228f0, -0.3988024f-1, -0.362018f-2, 0.163801f-2, -0.1031555f-1, 0.2282967f-1, -0.2895312f-1, 0.1787654f-1, -0.420059f-2))
+        y /= sqrt(ax)
+    end
+    return x < 0 ? -y : y
 end
 
 @inline_cufunc _logbesseli0_cuda_unsafe(x) = log(_besselix0_cuda_unsafe(x)) + abs(x) # since log(besselix(ν, x)) = log(Iν(x)) - |x|

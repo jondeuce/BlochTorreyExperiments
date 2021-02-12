@@ -17,7 +17,6 @@ function mle_biexp_epg_noise_only(
         opt_alg       = :LD_SLSQP, # Rough algorithm ranking: [:LD_SLSQP, :LD_LBFGS, :LD_CCSAQ, :LD_AUGLAG, :LD_MMA] (Note: :LD_LBFGS fails to converge with tolerance looser than ~ 1e-4)
         opt_args      = Dict{Symbol,Any}(),
     )
-    @assert dryrun || (savefolder !== nothing)
     matsavetime = getnow()
     matsave(filename, data) = DECAES.MAT.matwrite(joinpath(mkpath(savefolder), filename * "-" * matsavetime * ".mat"), data)
 
@@ -90,7 +89,7 @@ function mle_biexp_epg_noise_only(
 
     function fg!(work, x::Vector{Float64}, g::Vector{Float64})
         if length(g) > 0
-            simple_fd_gradient!(g, y -> f(work, y), x)
+            simple_fd_gradient!(g, _x -> f(work, _x), x)
         else
             f(work, x)
         end
@@ -233,29 +232,109 @@ function _test_noiselevel()
     end
 end
 
+function mle_biexp_epg_θ_to_x(work::W, θ::A) where {W, A <: VecOrTupleMaybeDualF64}
+    @inbounds begin
+        @unpack logτ2lo, logτ2hi, logτ2lo′, logτ2hi′ = work
+        α, β, η, δ1, δ2 = θ[1], θ[2], θ[3], θ[4], θ[5]
+        t   = 1e-12
+        δ1′ = clamp(logτ2lo + (logτ2hi - logτ2lo) * δ1, logτ2lo′ + t, logτ2hi′ - t)
+        δ2′ = clamp(logτ2lo + (logτ2hi - logτ2lo) * (δ1 + δ2 * (1 - δ1)), logτ2lo′ + t, logτ2hi′ - t)
+        z1  = (δ1′ - logτ2lo′) / (logτ2hi′ - logτ2lo′)
+        z2  = ((δ2′ - logτ2lo′) / (logτ2hi′ - logτ2lo′) - z1) / (1 - z1)
+        return α, β, η, z1, z2
+    end
+end
+
+function mle_biexp_epg_x_to_θ(work::W, x::A) where {W, A <: VecOrTupleMaybeDualF64}
+    @inbounds begin
+        @unpack logτ2lo, logτ2hi, logτ2lo′, logτ2hi′, δ0 = work
+        α, β, η, z1, z2 = x[1], x[2], x[3], x[4], x[5]
+        δ1 = ((logτ2lo′ - logτ2lo) + (logτ2hi′ - logτ2lo′) * z1) / (logτ2hi - logτ2lo)
+        δ2 = (((logτ2lo′ - logτ2lo) + (logτ2hi′ - logτ2lo′) * (z1 + z2 * (1 - z1))) / (logτ2hi - logτ2lo) - δ1) / (1 - δ1)
+        return α, β, η, δ1, δ2, δ0
+    end
+end
+
+function mle_biexp_epg_θ_to_ψ(work::W, θ::A) where {W, A <: VecOrTupleMaybeDualF64}
+    @inbounds begin
+        @unpack logτ2lo, logτ2hi, logτ1lo, logτ1hi = work
+        α, β, η, δ1, δ2, δ0 = θ[1], θ[2], θ[3], θ[4], θ[5], θ[6]
+        T21 = exp(logτ2lo + (logτ2hi - logτ2lo) * δ1)
+        T22 = exp(logτ2lo + (logτ2hi - logτ2lo) * (δ1 + δ2 * (1 - δ1)))
+        T1 = exp(logτ1lo + (logτ1hi - logτ1lo) * δ0)
+        return α, β, T21, T22, η, 1-η, T1, one(T1)
+    end
+end
+
+@inline mle_biexp_epg_work(work::W, ::Type{Float64}) where {W} = work.epg
+@inline mle_biexp_epg_work(work::W, ::Type{D}) where {W, D <: Dual64} = work.∇epg
+
+function f_mle_biexp_epg!(work::W, x::Vector{D}) where {W, D <: MaybeDualF64}
+    @inbounds begin
+        δ₀     = √eps(Float64)
+        θ      = mle_biexp_epg_x_to_θ(work, x) # θ = α, β, η, δ1, δ2, δ0
+        logϵ   = x[end-1]
+        logs   = x[end]
+        s      = exp(logs)
+        ψ      = mle_biexp_epg_θ_to_ψ(work, θ) # ψ = alpha, refcon, T2short, T2long, Ashort, Along, T1, TE
+        epg    = mle_biexp_epg_work(work, D)
+        X      = _biexp_epg_model_f64!(epg.dc, epg, ψ)
+        sX     = zero(D)
+        @avx for i in eachindex(X)
+            sX = max(X[i], sX)
+        end
+        sX     = s / sX # normalize X to maximum 1 and scale by s
+        logϵi  = logs + logϵ # hoist outside loop
+        ℓ      = zero(D)
+        @avx for i in eachindex(work.Y)
+            νi = max(sX * X[i], δ₀)
+            ℓ += neglogL_rician_unsafe(work.Y[i], νi, logϵi) # Rician negative log likelihood
+        end
+        return ℓ
+    end
+end
+
+function fg_mle_biexp_epg!(work::W, x::Vector{Float64}, g::Vector{Float64}) where {W}
+    if length(g) > 0
+        # simple_fd_gradient!(g, _x -> f_mle_biexp_epg!(work, _x), x, work.xlo, work.xhi)
+        ForwardDiff.gradient!(work.∇res, _x -> f_mle_biexp_epg!(work, _x), x, work.∇cfg)
+        y  = ForwardDiff.DiffResults.value(work.∇res)
+        ∇y = ForwardDiff.DiffResults.gradient(work.∇res)
+        @avx for i in eachindex(g, ∇y)
+            g[i] = ∇y[i]
+        end
+        return y
+    else
+        return f_mle_biexp_epg!(work, x)
+    end
+end
+
 function mle_biexp_epg(
         phys::BiexpEPGModel,
-        models,
-        derived,
+        rice::RicianCorrector,
+        cvae::CVAE,
         img::CPMGImage;
-        data_source   = :image, # One of :image, :simulated
-        data_subset   = :mask,  # One of :mask, :val, :train, :test
-        batch_size    = 128 * Threads.nthreads(),
-        initial_iter  = 10,
-        verbose       = true,
-        checkpoint    = false,
-        dryrun        = false,
-        dryrunsamples = batch_size,
-        dryrunshuffle = true,
-        savefolder    = nothing,
-        opt_alg       = :LD_SLSQP, # Rough algorithm ranking: [:LD_SLSQP, :LD_LBFGS, :LD_CCSAQ, :LD_AUGLAG, :LD_MMA] (Note: :LD_LBFGS fails to converge with tolerance looser than ~ 1e-4)
-        opt_args      = Dict{Symbol,Any}(),
+        data_source        = :image, # One of :image, :simulated
+        data_subset        = :mask,  # One of :mask, :val, :train, :test
+        batch_size         = 128 * Threads.nthreads(),
+        initial_iter       = 10,
+        initial_guess_only = false,
+        noisebounds        = (-Inf, Inf),
+        scalebounds        = (-Inf, Inf),
+        verbose            = true,
+        checkpoint         = false,
+        dryrun             = false,
+        dryrunsamples      = batch_size,
+        dryrunshuffle      = true,
+        dryrunseed         = 0,
+        savefolder         = nothing,
+        opt_alg            = :LD_SLSQP, # Rough algorithm ranking: [:LD_SLSQP, :LD_LBFGS, :LD_CCSAQ, :LD_AUGLAG, :LD_MMA] (Note: :LD_LBFGS fails to converge with tolerance looser than ~ 1e-4)
+        opt_args           = Dict{Symbol,Any}(),
     )
     @assert data_source ∈ (:image, :simulated)
     @assert data_subset ∈ (:mask, :val, :train, :test)
-    @assert dryrun || (savefolder !== nothing)
     matsavetime = getnow()
-    matsave(filename, data) = DECAES.MAT.matwrite(joinpath(mkpath(savefolder), filename * "-" * matsavetime * ".mat"), data)
+    matsave(filename, data) = (savefolder !== nothing) && DECAES.MAT.matwrite(joinpath(mkpath(savefolder), filename * "-" * matsavetime * ".mat"), data)
 
     batched_posterior_state(Ymeta) = mapreduce(
             (x,y) -> map(hcat, x, y),
@@ -263,14 +342,14 @@ function mle_biexp_epg(
         ) do (batchnum, batch)
         posterior_state(
             phys,
-            models["genatr"],
-            derived["cvae"],
+            rice,
+            cvae,
             Ymeta[:,batch];
             miniter = 1,
             maxiter = initial_iter,
             alpha   = 0.0,
             verbose = false,
-            mode    = :maxlikelihood,
+            mode    = :mode, #:maxlikelihood,
         )
     end
 
@@ -279,7 +358,7 @@ function mle_biexp_epg(
         image_indices = img.indices[data_subset]
         if dryrun && (dryrunsamples !== nothing)
             I = dryrunshuffle ?
-                sample(MersenneTwister(0), 1:length(image_indices), dryrunsamples; replace = dryrunsamples > length(image_indices)) :
+                sample(MersenneTwister(dryrunseed), 1:length(image_indices), dryrunsamples; replace = dryrunsamples > length(image_indices)) :
                 1:min(length(image_indices), dryrunsamples)
             image_indices = image_indices[I]
         end
@@ -290,58 +369,48 @@ function mle_biexp_epg(
             arr64(image_data), MetaCPMGSignal(phys, img, image_data)
         else # data_source === :simulated
             mock_image_state = batched_posterior_state(MetaCPMGSignal(phys, img, image_data))
-            mock_image_data  = sampleX̂(models["genatr"], mock_image_state.X, mock_image_state.Z)
+            mock_image_data  = sampleX̂(rice, mock_image_state.X, mock_image_state.Z)
             !dryrun && matsave("mle-$data_source-$data_subset-data", Dict{String,Any}("X" => arr64(mock_image_state.X), "theta" => arr64(mock_image_state.θ), "Z" => arr64(mock_image_state.Z), "Xhat" => arr64(mock_image_data), "Y" => arr64(image_data)))
             arr64(mock_image_data), MetaCPMGSignal(phys, img, mock_image_data)
         end
     end
 
     initial_guess = batched_posterior_state(Ymeta)
-    initial_guess = setindex!!(initial_guess, exp.(mean(log.(initial_guess.ϵ); dims = 1)), :ϵ)
-    initial_guess = setindex!!(initial_guess, inv.(maximum(mean_rician.(initial_guess.X, initial_guess.ϵ); dims = 1)), :s)
+    initial_guess = setindex!!(initial_guess, exp.(clamp.(mean(log.(initial_guess.ϵ); dims = 1), noisebounds...)), :ϵ)
+    initial_guess = setindex!!(initial_guess, clamp.(inv.(maximum(mean_rician.(initial_guess.X, initial_guess.ϵ); dims = 1)), scalebounds...), :s)
     initial_guess = map(arr64, initial_guess)
 
-    lower_bounds  = [θmarginalized(phys, θlower(phys)); -Inf; -Inf] |> arr64
-    upper_bounds  = [θmarginalized(phys, θupper(phys)); +Inf; +Inf] |> arr64
-
-    function θ_to_x(work, θ::Union{<:AbstractVector{Float64},<:NTuple{<:Any,Float64}})
-        @inbounds begin
-            @unpack logτ0, logτ1, logτ0′, logτ1′ = work
-            α, β, η, δ1, δ2 = θ[1], θ[2], θ[3], θ[4], θ[5]
-            t   = 1e-12
-            δ1′ = clamp(logτ0 + (logτ1 - logτ0) * δ1, logτ0′ + t, logτ1′ - t)
-            δ2′ = clamp(logτ0 + (logτ1 - logτ0) * (δ1 + δ2 * (1 - δ1)), logτ0′ + t, logτ1′ - t)
-            z1  = (δ1′ - logτ0′) / (logτ1′ - logτ0′)
-            z2  = ((δ2′ - logτ0′) / (logτ1′ - logτ0′) - z1) / (1 - z1)
-            return α, β, η, z1, z2
-        end
+    # Optionally return initial guess only
+    if initial_guess_only
+        return initial_guess, nothing
     end
 
-    function x_to_θ(work, x::Union{<:AbstractVector{Float64},<:NTuple{<:Any,Float64}})
-        @inbounds begin
-            @unpack logτ0, logτ1, logτ0′, logτ1′, δ0 = work
-            α, β, η, z1, z2 = x[1], x[2], x[3], x[4], x[5]
-            δ1 = ((logτ0′ - logτ0) + (logτ1′ - logτ0′) * z1) / (logτ1 - logτ0)
-            δ2 = (((logτ0′ - logτ0) + (logτ1′ - logτ0′) * (z1 + z2 * (1 - z1))) / (logτ1 - logτ0) - δ1) / (1 - δ1)
-            return α, β, η, δ1, δ2, δ0
-        end
-    end
+    num_optvars   = nmarginalized(phys) + 2
+    lower_bounds  = [θmarginalized(phys, θlower(phys)); noisebounds[1]; scalebounds[1]] |> arr64
+    upper_bounds  = [θmarginalized(phys, θupper(phys)); noisebounds[2]; scalebounds[2]] |> arr64
 
     work_spaces = map(1:Threads.nthreads()) do _
-        @unpack TEbd, T2bd = phys
+        @unpack TEbd, T2bd, T1bd = phys
         (
-            Y   = zeros(nsignal(img)) |> arr64,
-            x0  = zeros(nmarginalized(phys) + 2) |> arr64,
-            logτ0  = log(T2bd[1] / TEbd[2]) |> Float64,
-            logτ1  = log(T2bd[2] / TEbd[1]) |> Float64,
-            logτ0′ = log(T2bd[1] / echotime(img)) |> Float64,
-            logτ1′ = log(T2bd[2] / echotime(img)) |> Float64,
-            δ0  = initial_guess.θ[end,1] |> Float64,
-            epg = BiexpEPGModelWork(phys),
-            opt = let
-                opt = NLopt.Opt(opt_alg, nmarginalized(phys) + 2)
-                opt.lower_bounds  = lower_bounds
-                opt.upper_bounds  = upper_bounds
+            Y        = zeros(nsignal(img)),
+            x0       = zeros(num_optvars),
+            xlo      = copy(lower_bounds),
+            xhi      = copy(upper_bounds),
+            logτ2lo  = log(T2bd[1] / TEbd[2]) |> Float64,
+            logτ2hi  = log(T2bd[2] / TEbd[1]) |> Float64,
+            logτ1lo  = log(T1bd[1] / TEbd[2]) |> Float64,
+            logτ1hi  = log(T1bd[2] / TEbd[1]) |> Float64,
+            logτ2lo′ = log(T2bd[1] / echotime(img)) |> Float64,
+            logτ2hi′ = log(T2bd[2] / echotime(img)) |> Float64,
+            δ0       = initial_guess.θ[end,1] |> Float64,
+            epg      = BiexpEPGModelWork(phys, Val(nsignal(img)), Float64),
+            ∇epg     = BiexpEPGModelWork(phys, Val(nsignal(img)), ForwardDiff.Dual{Nothing, Float64, num_optvars}),
+            ∇res     = ForwardDiff.DiffResults.GradientResult(zeros(num_optvars)),
+            ∇cfg     = ForwardDiff.GradientConfig(nothing, zeros(num_optvars), ForwardDiff.Chunk(num_optvars)),
+            opt      = let
+                opt = NLopt.Opt(opt_alg, num_optvars)
+                opt.lower_bounds  = copy(lower_bounds)
+                opt.upper_bounds  = copy(upper_bounds)
                 opt.xtol_rel      = 1e-8
                 opt.ftol_rel      = 1e-8
                 opt.maxeval       = 250
@@ -355,6 +424,7 @@ function mle_biexp_epg(
     end
 
     results = (
+        signalfit  = fill(NaN, size(Y)...),
         theta      = fill(NaN, ntheta(phys), size(Y,2)),
         logepsilon = fill(NaN, size(Y,2)),
         logscale   = fill(NaN, size(Y,2)),
@@ -364,42 +434,19 @@ function mle_biexp_epg(
         solvetime  = fill(NaN, size(Y,2)),
     )
 
-    function f(work, x::Vector{Float64})
-        @inbounds begin
-            δ₀     = √eps(Float64)
-            θ      = x_to_θ(work, x) # θ = α, β, η, δ1, δ2, δ0
-            logϵ   = x[end-1]
-            logs   = x[end]
-            s      = exp(logs)
-            ψ      = θmodel(phys, θ...) # ψ = alpha, refcon, T2short, T2long, Ashort, Along, T1, TE
-            X      = _signal_model_f64(phys, work.epg, ψ)
-            sX     = 0.0
-            @simd for i in eachindex(X)
-                sX = max(X[i], sX)
-            end
-            sX     = s / sX # normalize X to maximum 1 and scale by s
-            logϵi  = logs + logϵ # hoist outside loop
-            ℓ      = 0.0
-            @simd for i in eachindex(work.Y)
-                νi = max(sX * X[i], δ₀)
-                ℓ += neglogL_rician(work.Y[i], νi, logϵi) # Rician negative log likelihood
-            end
-            return ℓ
-        end
-    end
-
-    function fg!(work, x::Vector{Float64}, g::Vector{Float64})
-        if length(g) > 0
-            simple_fd_gradient!(g, y -> f(work, y), x, lower_bounds, upper_bounds)
-        else
-            f(work, x)
-        end
-    end
-
     #= Benchmarking
-    work_spaces[1].Y .= rand(nsignal(phys))
-    @info "Timing function..."; @btime( $f( $( work_spaces[1] ), $( (lower_bounds .+ upper_bounds) ./ 2 ) ) ) |> display
-    @info "Timing gradient..."; @btime( $fg!( $( work_spaces[1] ), $( (lower_bounds .+ upper_bounds) ./ 2 ), $( zeros(ntheta(phys) + 1) ) ) ) |> display
+    work              = work_spaces[1]
+    work.Y           .= Y[:,1]
+    work.x0[1:end-2] .= mle_biexp_epg_θ_to_x(work, view(initial_guess.θ, :, 1))
+    work.x0[end-1]    = log(initial_guess.ϵ[1])
+    work.x0[end]      = log(initial_guess.s[1])
+    g                 = zeros(num_optvars)
+    @show ForwardDiff.gradient!(work.∇res, x -> f_mle_biexp_epg!(work, x), work.x0, work.∇cfg)
+    @show fg_mle_biexp_epg!(work, work.x0, g); @show(g)
+    @info "Timing function..."; @btime( f_mle_biexp_epg!($work, $(work.x0)) ) |> display
+    @info "Timing ForwardDiff gradient..."; @btime( ForwardDiff.gradient!($(work.∇res), x -> f_mle_biexp_epg!($work, x), $(work.x0), $(work.∇cfg)) ) |> display
+    @info "Timing gradient..."; @btime( fg_mle_biexp_epg!($work, $(work.x0), $g) ) |> display
+    return nothing
     =#
 
     start_time = time()
@@ -410,22 +457,24 @@ function mle_biexp_epg(
         batchtime = @elapsed Threads.@sync for j in batch
             Threads.@spawn @inbounds begin
                 work = work_spaces[Threads.threadid()]
-                work.Y                .= Y[:,j]
-                work.x0[1:end-2]      .= θ_to_x(work, view(initial_guess.θ, :, j))
-                work.x0[end-1]         = log(initial_guess.ϵ[j])
-                work.x0[end]           = log(initial_guess.s[j])
-                work.opt.min_objective = (x, g) -> fg!(work, x, g)
+                work.Y                 .= Y[:,j]
+                work.x0[1:end-2]       .= mle_biexp_epg_θ_to_x(work, view(initial_guess.θ, :, j))
+                work.x0[end-1]          = log(initial_guess.ϵ[j])
+                work.x0[end]            = log(initial_guess.s[j])
+                work.opt.min_objective  = (x, g) -> fg_mle_biexp_epg!(work, x, g)
+                initial_guess.ℓ[j]      = f_mle_biexp_epg!(work, work.x0) #TODO: can save a small amount of time by deleting this, but probably worth it, since previous ℓ[j] is an approximation from posterior_state
 
-                initial_guess.ℓ[j] = f(work, work.x0) #TODO: can save a small amount of time by deleting this, but probably worth it, since previous ℓ[j] is an approximation from posterior_state
+                solvetime               = @elapsed (minf, minx, ret) = NLopt.optimize(work.opt, work.x0)
+                f_mle_biexp_epg!(work, minx) # update `work` with solution
 
-                solvetime              = @elapsed (minf, minx, ret) = NLopt.optimize(work.opt, work.x0)
-                results.theta[:,j]    .= x_to_θ(work, minx)
-                results.logepsilon[j]  = minx[end-1]
-                results.logscale[j]    = minx[end]
-                results.loss[j]        = minf
-                results.retcode[j]     = Base.eval(NLopt, ret) |> Int #TODO cleaner way to convert Symbol to enum?
-                results.numevals[j]    = work.opt.numevals
-                results.solvetime[j]   = solvetime
+                results.signalfit[:,j] .= work.epg.dc ./ maximum(work.epg.dc)
+                results.theta[:,j]     .= mle_biexp_epg_x_to_θ(work, minx)
+                results.logepsilon[j]   = minx[end-1]
+                results.logscale[j]     = minx[end]
+                results.loss[j]         = minf
+                results.retcode[j]      = Base.eval(NLopt, ret) |> Int #TODO cleaner way to convert Symbol to enum?
+                results.numevals[j]     = work.opt.numevals
+                results.solvetime[j]    = solvetime
             end
         end
 
@@ -450,11 +499,11 @@ function mle_biexp_epg(
     return initial_guess, results
 end
 
-function _test_mle_biexp_epg(phys::BiexpEPGModel, derived, img::CPMGImage; dryrunsamples = 10240, kwargs...)
+function _test_mle_biexp_epg(phys::BiexpEPGModel, models, derived, img::CPMGImage; dryrunsamples = 10240, kwargs...)
     init, res = mle_biexp_epg(
         phys,
-        nothing,
-        derived,
+        models["genatr"],
+        derived["cvae"],
         img;
         verbose       = true,
         checkpoint    = false,

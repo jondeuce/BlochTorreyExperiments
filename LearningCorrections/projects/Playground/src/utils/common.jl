@@ -11,6 +11,11 @@ const PairOfTuples{N} = Pair{<:Tuple{Vararg{Any,N}}, <:Tuple{Vararg{Any,N}}}
 const NTupleOfNamedTuples{Ks,M,N} = NTuple{N,<:NamedTuple{Ks,<:NTuple{M}}}
 const NamedTupleOfNTuples{Ks,M,N} = NamedTuple{Ks, <:NTuple{M, <:NTuple{N}}}
 
+const Dual64 = ForwardDiff.Dual{Tag, Float64} where {Tag}
+const MaybeDualF64 = Union{Float64, <:Dual64}
+const VecOrTupleF64 = Union{<:AbstractVector{Float64}, <:Tuple{Vararg{Float64}}}
+const VecOrTupleMaybeDualF64 = Union{<:AbstractVector{<:MaybeDualF64}, <:Tuple{Vararg{<:MaybeDualF64}}}
+
 # Extend Flux.cpu and Flux.gpu
 for f in [:cpu, :gpu]
     @eval $f(x) = Flux.$f(x) # fallback to Flux.cpu/Flux.gpu
@@ -63,6 +68,12 @@ make_kwargs(settings, keys...) = Any[Symbol(k) => v for (k,v) in foldl(getindex,
 ####
 #### Dict, (Named)Tuples
 ####
+
+# Find locations of all `needles` within `haystack`. Will error if not found
+function findall_contains(haystack::AbstractArray, needles::AbstractArray)
+    hashmap = Dict(haystack .=> eachindex(haystack))
+    (I -> hashmap[I]).(needles)
+end
 
 # Map over dictionary values
 map_dict(f, d::Dict{K,V}) where {K,V} = Dict(map(((k,v),) -> k => f(v), collect(d)))

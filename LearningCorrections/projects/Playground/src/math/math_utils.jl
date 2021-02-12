@@ -2,9 +2,6 @@
 #### Math utils
 ####
 
-#TODO: `acosd` gets coerced to Float64 by Zygote on reverse pass; file bug?
-_acosd_cuda(x::AbstractArray{T}) where {T} = clamp.(T(57.29577951308232) .* acos.(x), T(0.0), T(180.0)) # 180/π ≈ 57.29577951308232
-
 # Soft minimum between `x` and `y` with sharpness `k`
 @inline softmin(x,y,k) = (m = min(x,y); return m - log(exp((m-x)/k) + exp((m-y)/k))/k)
 
@@ -21,6 +18,21 @@ function sigmoid_weights_fun(x::CuArray{T}, k::Number = T(0.1)) where {T}
     σ = T(abs(erfinv(1 - 2k)))
     y = @. (1 + CUDA.erf(σ * x)) / 2 #TODO: need to explicitly call CUDA.erf here... bug?
 end
+
+"smoothstep(x) = x^2 * (3 - 2x) (See: https://en.wikipedia.org/wiki/Smoothstep)"
+smoothstep(x) = (x = float(x); x <= 0 ? zero(x) : x >= 1 ? one(x) : x^2 * (3 - 2x))
+
+"smoothstep(x) = x^3 * (6x^2 - 15x + 10) (See: https://en.wikipedia.org/wiki/Smoothstep#Variations)"
+smootherstep(x) = (x = float(x); x <= 0 ? zero(x) : x >= 1 ? one(x) : x^3 * evalpoly(x, (10, -15, 6)))
+
+warmup(f, t, τ, δ = zero(t)) = t <= δ ? zero(float(t)) : f((t-δ)/τ)
+cooldown(f, t, τ, δ = zero(t)) = t <= δ ? one(float(t)) : f((t-δ)/τ)
+exp_warmup(t, τ, δ = zero(t)) = warmup(x -> -expm1(-x), t, τ, δ)
+exp_cooldown(t, τ, δ = zero(t)) = cooldown(x -> exp(-x), t, τ, δ)
+smoothstep_warmup(t, τ, δ = zero(t)) = warmup(smoothstep, t, τ, δ)
+smoothstep_cooldown(t, τ, δ = zero(t)) = cooldown(x -> 1 - smoothstep(x), t, τ, δ)
+cos_warmup(t, τ, δ = zero(t)) = warmup(x -> x <= 1 ? (1-cos(π*x))/2 : one(float(x)), t, τ, δ)
+cos_cooldown(t, τ, δ = zero(t)) = cooldown(x -> x <= 1 ? (1+cos(π*x))/2 : zero(float(x)), t, τ, δ)
 
 # Mix two functions
 sample_union(f1, f2, p1, x::AbstractMatrix) = p1 >= 1 ? f1(x) : p1 <= 0 ? f2(x) : sample_union(f1(x), f2(x), p1)
@@ -192,7 +204,8 @@ function mix_columns(X::AbstractMatrix, Y::AbstractMatrix)
 end
 
 function sample_columns(X::AbstractMatrix, batchsize; replace = false)
-    X[:, sample(1:size(X,2), batchsize; replace = replace)]
+    J = sample(1:size(X,2), batchsize; replace)
+    return X[:,J], J
 end
 
 function column_mse(X::AbstractVecOrMat, Y::AbstractVecOrMat, i, j)

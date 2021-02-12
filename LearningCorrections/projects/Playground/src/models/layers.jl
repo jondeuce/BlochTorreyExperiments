@@ -146,8 +146,12 @@ function movingaverage!(mean_model, model, window)
     return mean_model
 end
 function movingaverage!(μ::AbstractArray, x::AbstractArray, τ)
-    α = ofeltype(μ, 1-exp(-1/τ))
-    @. μ = α * x + (1-α) * μ
+    if τ ≤ 0
+        @. μ = x # "moving average" with window size zero is just a copy
+    else
+        α = ofeltype(μ, -expm1(-1/τ))
+        @. μ = α * x + (1-α) * μ
+    end
 end
 
 """
@@ -461,6 +465,25 @@ function (a::ApplyAsMatrix)(X::AbstractArray)
 end
 
 """
+PReLU
+
+Parametric Rectified Linear Unit (PReLU)
+See [Delving Deep into Rectifiers: Surpassing Human-Level Performance on ImageNet Classification](https://arxiv.org/pdf/1502.01852v1.pdf)
+"""
+struct PReLU{A <: AbstractArray}
+    a::A
+end
+
+PReLU(sz::Int...; inita = (i...) -> fill(0.25f0, i...)) = PReLU(inita(sz))
+PReLU(; kwargs...) = PReLU(1; kwargs...)
+
+Flux.@functor PReLU
+
+(p::PReLU)(x) = max.(p.a .* x, x)
+
+Base.show(io::IO, p::PReLU) = print(io, "PReLU(", join(size(p.a), ","), ")")
+
+"""
 MLP
 
 Multi-layer perceptron mapping inputs with height `sz[1]` to outputs with height `sz[2]`.
@@ -468,15 +491,21 @@ Multi-layer perceptron mapping inputs with height `sz[1]` to outputs with height
 use activation `σhid` and the last layer uses activation `σout`. 
 """
 function MLP(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout = identity; skip = false, dropout = false, layernorm = false, initW = Flux.glorot_uniform, initb = Flux.zeros, initW_last = initW, initb_last = initb)
+    σfactory(f) =
+        f === identity ? () -> () :
+        f isa Base.BroadcastFunction ? () -> (f,) : # Thunk returning fixed BroadcastFunction
+        f isa Tuple ? () -> (f[1](f[2:end]...),) : # Assume f[1] is a factory returning structs which take array inputs, and f[2:end] are the arguments; thunk returns new instance with each call
+        () -> (Base.BroadcastFunction(f),) # Assume f is scalar function capable of broadcasting; thunk returns BroadcastFunction wrapping f
     maybedropout(l) = dropout > 0 ? Flux.Chain(l, Flux.Dropout(dropout)) : l
     maybelayernorm(l) = layernorm ? Flux.Chain(l, Flux.LayerNorm(Dhid)) : l
-    MaybeResidualDense() = skip ?
-        Flux.Chain(Flux.SkipConnection(Flux.Dense(Dhid, Dhid, identity; initW, initb), +), Base.BroadcastFunction(σhid)) : # x -> σhid.(x .+ W*x .+ b)
-        Flux.Dense(Dhid, Dhid, σhid; initW, initb) # x -> σhid.(W*x .+ b)
+    Dense(in, out, f; kwargs...) = Flux.Chain(Flux.Dense(in, out, identity; kwargs...), σfactory(f)()...)
+    MaybeResidualDense(in, out, f; kwargs...) = skip ?
+        Flux.Chain(Flux.SkipConnection(Dense(in, out, identity; kwargs...), +), σfactory(f)()...) : # x -> f.(x .+ W*x .+ b)
+        Dense(in, out, f; kwargs...) # x -> f.(W*x .+ b)
     Flux.Chain(
-        Flux.Dense(sz[1], Dhid, σhid; initW, initb) |> maybedropout |> maybelayernorm,
-        [MaybeResidualDense() |> maybedropout |> maybelayernorm for _ in 1:Nhid]...,
-        Flux.Dense(Dhid, sz[2], σout; initW = initW_last, initb = initb_last),
+        Dense(sz[1], Dhid, σhid; initW, initb) |> maybedropout |> maybelayernorm,
+        [MaybeResidualDense(Dhid, Dhid, σhid; initW, initb) |> maybedropout |> maybelayernorm for _ in 1:Nhid]...,
+        Dense(Dhid, sz[2], σout; initW = initW_last, initb = initb_last),
     ) |> flattenchain
 end
 

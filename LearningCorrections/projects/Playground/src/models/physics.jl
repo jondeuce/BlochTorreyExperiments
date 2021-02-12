@@ -224,7 +224,7 @@ const ClosedFormAbstractToyModel{T,isfinite} = ClosedForm{<:AbstractToyModel{T,i
 const MaybeClosedFormAbstractToyModel{T,isfinite} = Union{<:AbstractToyModel{T,isfinite}, <:ClosedFormAbstractToyModel{T,isfinite}}
 
 # Default samplers for models with data stored in `θ`, `X`, `Y` fields
-_sample_data(d::Dict, n::Union{Int, Symbol}; dataset::Symbol) = n === :all ? d[dataset] : sample_columns(d[dataset], n)
+_sample_data(d::Dict, n::Union{Int, Symbol}; dataset::Symbol) = n === :all ? d[dataset] : sample_columns(d[dataset], n)[1]
 sampleθ(p::MaybeClosedForm, n::Union{Int, Symbol};              dataset::Symbol) = _sample_data(physicsmodel(p).θ, n; dataset)
 sampleX(p::MaybeClosedForm, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = _sample_data(physicsmodel(p).X, n; dataset)
 sampleY(p::MaybeClosedForm, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = _sample_data(physicsmodel(p).Y, n; dataset)
@@ -744,8 +744,6 @@ end
 
 #### CPU DECAES signal model
 
-const MaybeDualF64 = Union{Float64, <:ForwardDiff.Dual{Nothing, Float64}}
-
 struct BiexpEPGModelWork{T <: MaybeDualF64, ETL, A <: AbstractVector{T}, W1 <: DECAES.AbstractEPGWorkspace{T,ETL}, W2 <: DECAES.AbstractEPGWorkspace{T,ETL}}
     dc::A
     short_work::W1
@@ -759,21 +757,21 @@ function BiexpEPGModelWork(c::MaybeClosedFormBiexpEPGModel, ::Val{ETL} = Val(nsi
     BiexpEPGModelWork(dc, short_work, long_work)
 end
 
-function _signal_model_f64!(dc::AbstractVector{T}, c::MaybeClosedFormBiexpEPGModel, work::BiexpEPGModelWork{T,ETL}, args::NTuple{NARGS,T}) where {T <: MaybeDualF64, ETL, NARGS}
-    @assert NARGS == nmodel(physicsmodel(c))
+function _biexp_epg_model_f64!(dc::AbstractVector{T}, work::BiexpEPGModelWork{T,ETL}, args::NTuple{8,MaybeDualF64}) where {T <: MaybeDualF64, ETL}
     @inbounds begin
         alpha, refcon, T2short, T2long, Ashort, Along, T1, TE = args
-        o1  = DECAES.EPGOptions{T,ETL}(alpha, TE, T2short, T1, refcon)
-        o2  = DECAES.EPGOptions{T,ETL}(alpha, TE, T2long, T1, refcon)
+        o1  = DECAES.EPGOptions(ETL, alpha, TE, T2short, T1, refcon)
+        o2  = DECAES.EPGOptions(ETL, alpha, TE, T2long, T1, refcon)
         dc1 = DECAES.EPGdecaycurve!(work.short_work, o1) # short component
         dc2 = DECAES.EPGdecaycurve!(work.long_work, o2) # long component
-        for i in 1:ETL
+        @avx for i in 1:ETL
             dc[i] = Ashort * dc1[i] + Along * dc2[i]
         end
     end
     return dc
 end
-_signal_model_f64(c::MaybeClosedFormBiexpEPGModel, work::BiexpEPGModelWork{T,ETL}, args::NTuple{NARGS,<:MaybeDualF64}) where {T, ETL, NARGS} = _signal_model_f64!(work.dc, c, work, args)
+@inline _signal_model_f64!(dc::AbstractVector{T}, c::MaybeClosedFormBiexpEPGModel, work::BiexpEPGModelWork{T,ETL}, args::NTuple{N,MaybeDualF64}) where {T <: MaybeDualF64, ETL, N} = (@assert N == nmodel(physicsmodel(c)); _biexp_epg_model_f64!(dc, work, args))
+@inline _signal_model_f64(c::MaybeClosedFormBiexpEPGModel, work::BiexpEPGModelWork{T,ETL}, args::NTuple{N,MaybeDualF64}) where {T, ETL, N} = (@assert N == nmodel(physicsmodel(c)); _signal_model_f64!(work.dc, c, work, args))
 
 function _signal_model_f64_jacobian_setup(c::MaybeClosedFormBiexpEPGModel)
     nargs = nmodel(physicsmodel(c))

@@ -311,7 +311,9 @@ function posterior_state(
         verbose = false
     ) where {T}
 
-    θZ_sampler_instance = θZ_sampler(phys, cvae, Ymeta)
+    (mode === :mode) && (miniter = maxiter = 1)
+    θZ_sampler_instance = θZ_sampler(phys, cvae, Ymeta; posterior_mode = mode === :mode)
+    new_posterior_state(θnew, Znew) = posterior_state(phys, rice, signal(Ymeta), θnew, Znew; accum_loss = ℓ -> sum(ℓ; dims = 1))
 
     function update(last_state, i)
         θnew, Znew = θZ_sampler_instance()
@@ -321,9 +323,11 @@ function posterior_state(
         if mode === :mean
             θnew = (last_state === nothing) ? θnew : T(1/i) .* θnew .+ T(1-1/i) .* θlast
             Znew = (last_state === nothing) ? Znew : T(1/i) .* Znew .+ T(1-1/i) .* Zlast
-            new_state = posterior_state(phys, rice, signal(Ymeta), θnew, Znew; accum_loss = ℓ -> sum(ℓ; dims = 1))
+            new_state = new_posterior_state(θnew, Znew)
+        elseif mode === :mode
+            new_state = new_posterior_state(θnew, Znew)
         elseif mode === :maxlikelihood
-            new_state = posterior_state(phys, rice, signal(Ymeta), θnew, Znew; accum_loss = ℓ -> sum(ℓ; dims = 1))
+            new_state = new_posterior_state(θnew, Znew)
             if (last_state !== nothing)
                 mask = new_state.ℓ .< last_state.ℓ
                 new_state = map(new_state, last_state) do new, last
@@ -338,7 +342,7 @@ function posterior_state(
         p = (last_state === nothing) ? nothing :
             HypothesisTests.pvalue(
                 HypothesisTests.UnequalVarianceTTest(
-                    map(x -> x |> cpu |> vec |> Vector{Float64}, (new_state.ℓ, last_state.ℓ))...
+                    map(x -> x |> Flux.cpu |> vec |> Vector{Float64}, (new_state.ℓ, last_state.ℓ))...
                 )
             )
 

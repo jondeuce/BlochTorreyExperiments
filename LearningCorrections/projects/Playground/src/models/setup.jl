@@ -206,7 +206,7 @@ function init_isotropic_rician_generator(phys::PhysicsModel{Float32}; kwargs...)
     n = nsignal(phys)
     R = LatentScalarRicianNoiseCorrector{n,1}(Flux.Chain(identity)) # Latent space outputs noise level directly
     normalizer = ApplyOverDims(maximum; dims = 1) #TODO: normalize by mean? sum? maximum? first echo?
-    noisescale = ApplyOverDims(mean; dims = 1) #TODO: relative to mean? nothing?
+    noisescale = nothing # ApplyOverDims(mean; dims = 1) #TODO: relative to mean? nothing?
     NormalizedRicianCorrector(R, normalizer, noisescale) # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
 end
 
@@ -232,7 +232,7 @@ function init_vector_rician_generator(phys::PhysicsModel{Float32}; nlatent, maxc
     )
     # Rician generator mapping Z variables from prior space to Rician parameter space
     normalizer = ApplyOverDims(maximum; dims = 1) #TODO: normalize by mean? sum? maximum? first echo?
-    noisescale = ApplyOverDims(mean; dims = 1) #TODO: relative to mean? nothing?
+    noisescale = nothing # ApplyOverDims(mean; dims = 1) #TODO: relative to mean? nothing?
     NormalizedRicianCorrector(R, normalizer, noisescale) # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
 end
 
@@ -291,36 +291,42 @@ end
 
 # models["enc1"]
 function init_mlp_cvae_enc1(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, kwargs...)
-    MLP(nsignal(phys) => 2*zdim, nhidden, hdim, Flux.relu, identity) |> to32
+    σact = Flux.relu # Flux.leakyrelu # Flux.swish
+    MLP(nsignal(phys) => 2*zdim, nhidden, hdim, σact, identity) |> to32
 end
 
 # models["enc1"]
 function init_xformer_cvae_enc1(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, psize, head, hsize, nshards, chunksize, overlap, kwargs...)
-    mlp = MLP(psize => 2*zdim, 0, hdim, Flux.relu, identity) |> to32
+    σact = Flux.relu # Flux.leakyrelu # Flux.swish
+    mlp = MLP(psize => 2*zdim, 0, hdim, σact, identity) |> to32
     TransformerEncoder(mlp; nsignals = nsignal(phys), ntheta = 0, nlatent = 0, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
 end
 
 # models["enc2"]
 function init_mlp_cvae_enc2(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nlatent, kwargs...)
-    mlp = MLP(nsignal(phys) + ntheta(phys) + nlatent => 2*zdim, nhidden, hdim, Flux.relu, identity) |> to32
+    σact = Flux.relu # Flux.leakyrelu # Flux.swish
+    mlp = MLP(nsignal(phys) + ntheta(phys) + nlatent => 2*zdim, nhidden, hdim, σact, identity) |> to32
     Stack(@nntopo((X,θ,Z) => XθZ => μq), vcat, mlp) |> to32
 end
 
 # models["enc2"]
 function init_xformer_cvae_enc2(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nlatent, psize, head, hsize, nshards, chunksize, overlap, kwargs...)
-    mlp = MLP(psize => 2*zdim, 0, hdim, Flux.relu, identity) |> to32
+    σact = Flux.relu # Flux.leakyrelu # Flux.swish
+    mlp = MLP(psize => 2*zdim, 0, hdim, σact, identity) |> to32
     TransformerEncoder(mlp; nsignals = nsignal(phys), ntheta = ntheta(phys), nlatent, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
 end
 
 # models["dec"]
 function init_mlp_cvae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nlatent, kwargs...)
-    mlp = MLP(nsignal(phys) + zdim => 2*(nmarginalized(phys) + nlatent), nhidden, hdim, Flux.relu, identity) |> to32 #TODO initb_last = init_μlogσ_bias(phys)
+    σact = Flux.relu # Flux.leakyrelu # Flux.swish
+    mlp = MLP(nsignal(phys) + zdim => 2*(nmarginalized(phys) + nlatent), nhidden, hdim, σact, identity) |> to32 #TODO initb_last = init_μlogσ_bias(phys)
     Stack(@nntopo((Y,zr) => Yzr => μx), vcat, mlp) |> to32
 end
 
 # models["dec"]
 function init_xformer_cvae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nlatent, psize, head, hsize, nshards, chunksize, overlap, kwargs...)
-    mlp = MLP(psize => 2*(nmarginalized(phys) + nlatent), 0, hdim, Flux.relu, identity) |> to32 #TODO initb_last = init_μlogσ_bias(phys)
+    σact = Flux.relu # Flux.leakyrelu # Flux.swish
+    mlp = MLP(psize => 2*(nmarginalized(phys) + nlatent), 0, hdim, σact, identity) |> to32 #TODO initb_last = init_μlogσ_bias(phys)
     TransformerEncoder(mlp; nsignals = nsignal(phys), ntheta = 0, nlatent = zdim, psize, nshards, chunksize, overlap, head, hsize, hdim, nhidden) |> to32
 end
 
@@ -328,7 +334,8 @@ end
 function init_mlp_cvae_vae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, regtype, kwargs...)
     # Output is either `nsignal` channel outputs directly for "L1", or `nsignal` mean/log-std pairs for "Rician", "Gaussian", etc.
     noutput = nsignal(phys) * (regtype == "L1" ? 1 : 2)
-    MLP(zdim => noutput, nhidden, hdim, Flux.relu, identity) |> to32
+    σact = Flux.relu # Flux.leakyrelu # Flux.swish
+    MLP(zdim => noutput, nhidden, hdim, σact, identity) |> to32
 end
 
 # derived["cvae"]
@@ -349,41 +356,47 @@ function load_pretrained_cvae(phys::PhysicsModel{Float32}; modelfolder, modelpre
     cvae = derived_cvae(phys, enc1, enc2, dec; make_kwargs(settings, "arch")...)
 end
 
-function pseudo_labels!(phys::EPGModel, cvae::CVAE; kwargs...)
+function pseudo_labels!(phys::EPGModel, rice::RicianCorrector, cvae::CVAE; kwargs...)
     for img in phys.images
-        pseudo_labels!(phys, cvae, img; kwargs...)
+        pseudo_labels!(phys, rice, cvae, img; kwargs...)
     end
     return phys
 end
 
-function pseudo_labels!(phys::EPGModel, cvae::CVAE, img::CPMGImage; nsamples = nothing, basesize = :)
-    for (Yname, Y) in img.partitions
-        get!(img.meta, :pseudolabels, Dict{Symbol,Any}())
-        get!(img.meta[:pseudolabels], Yname, Dict{Symbol,Any}())
-        Js = basesize === Colon() ? [Colon()] : Iterators.partition(1:size(Y,2), basesize)
-        θs, Zs = map(Js) do J
-            YJ = Y[:,J] |> todevice
-            if nsamples === nothing
-                # Use posterior mode, no explicit sampling
-                μθ, μZ = sampleθZ(phys, cvae, MetaCPMGSignal(phys, img, YJ); posterior_mode = true) .|> Flux.cpu
-            else
-                # Average over `nsamples` posterior draws
-                @assert nsamples::Int >= 1
-                θZ_sampler_instance = θZ_sampler(phys, cvae, MetaCPMGSignal(phys, img, YJ))
-                μθ, μZ = θZ_sampler_instance()
-                for _ in 2:nsamples
-                    θ, Z = θZ_sampler_instance()
-                    μθ .+= θ
-                    μZ .+= Z
-                end
-                μθ ./= nsamples
-                μZ ./= nsamples
-                return (μθ, μZ) .|> Flux.cpu
-            end
-        end |> unzip
-        img.meta[:pseudolabels][Yname][:theta] = reduce(hcat, θs)
-        img.meta[:pseudolabels][Yname][:latent] = reduce(hcat, Zs)
+function pseudo_labels!(phys::EPGModel, rice::RicianCorrector, cvae::CVAE, img::CPMGImage; initial_guess_only = false, force_recompute = true, batch_size = 1024 * Threads.nthreads(), kwargs...)
+    # Optionally skip cecomputing
+    haskey(img.meta, :pseudolabels) && !force_recompute && return img
+
+    # Perform MLE fit on all signals within mask
+    initial_guess, results = mle_biexp_epg(
+        phys, rice, cvae, img;
+        initial_guess_only, batch_size, data_source = :image, data_subset = :mask, kwargs...
+    )
+
+    img.meta[:pseudolabels] = Dict{Symbol,Any}()
+    img.meta[:pseudolabels][:mask] = Dict{Symbol,Any}()
+    if initial_guess_only
+        img.meta[:pseudolabels][:mask][:signalfit] = initial_guess.X |> arr32
+        img.meta[:pseudolabels][:mask][:theta] = initial_guess.θ |> arr32
+        img.meta[:pseudolabels][:mask][:latent] = initial_guess.Z |> arr32
+    else
+        X, θ, logϵ = (results.signalfit, results.theta, permutedims(results.logepsilon)) .|> arr32
+        img.meta[:pseudolabels][:mask][:signalfit] = X
+        img.meta[:pseudolabels][:mask][:theta] = θ
+        img.meta[:pseudolabels][:mask][:latent] = # ϵ = exp(Z) * scale => Z = logϵ - log(scale)
+            rice.noisescale === nothing ? logϵ : logϵ .- log.(rice.noisescale(X))
     end
+
+    # Copy results from within mask into relevant test/train/val partitions
+    for (Ypart, Y) in img.partitions
+        Ypart === :mask && continue
+        img.meta[:pseudolabels][Ypart] = Dict{Symbol,Any}()
+        J = findall_contains(img.indices[:mask], img.indices[Ypart])
+        for res in [:signalfit, :theta, :latent]
+            img.meta[:pseudolabels][Ypart][res] = img.meta[:pseudolabels][:mask][res][:,J]
+        end
+    end
+
     return img
 end
 
@@ -454,7 +467,7 @@ function save_project_code(
     # Save project code
     mkpath(savepath)
     for path in DrWatson.projectdir.(saveitems)
-        cp(path, joinpath(savepath, basename(path)))
+        cp(path, joinpath(savepath, basename(path)); force = true)
     end
     if newuuid
         replace_projectfile_uuid(joinpath(savepath, "Project.toml"))

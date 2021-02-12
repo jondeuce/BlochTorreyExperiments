@@ -22,7 +22,7 @@ for model_path in readdir(joinpath(ismrm_dir, "models"); join = true)
         for data_source in (:image, :simulated), data_subset in (:mask,)
             @info "image $i / $(length(phys.images)) -- data source: $data_source -- data_subset: $data_subset"
             @time global init, res = mle_biexp_epg(
-                phys, models, derived, img;
+                phys, models["genatr"], derived["cvae"], img;
                 data_source, data_subset,
                 verbose = true, checkpoint = false, dryrun = false, batch_size = 12*1024,
                 savefolder = joinpath(ismrm_dir, "analysis", basename(model_path), "mle_inference_image_$i"),

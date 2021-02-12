@@ -1469,7 +1469,7 @@ end
 ####
 function combinatorial_kernel_opt(k::DeepExponentialKernel, X, Y, σbucket; batchsize::Int, nsamples::Int, maxiters::Int, replace::Bool = true, verbose::Bool = false, pthresh = 1/batchsize)
     mmdsamples(knew) = map(1:nsamples) do _
-        Xm, Ym = sample_columns(X, batchsize), sample_columns(Y, batchsize)
+        Xm, Ym = sample_columns(X, batchsize)[1], sample_columns(Y, batchsize)[1]
         batchsize * mmd(knew, Xm, Ym)
     end
     kbest = deepcopy(k)
