@@ -65,12 +65,21 @@ is_approx_multiple_of(x, dx) = (n = round(Int, x/dx); x ≈ n * dx)
 # make_kwargs from dictionary of settings
 make_kwargs(settings, keys...) = Any[Symbol(k) => v for (k,v) in foldl(getindex, string.(keys); init = settings)]
 
+# Draw `samples` items from `x` with optional shuffling. Sampling is done with replacement iff `samples > length(x)`
+function sample_maybeshuffle(x; shuffle = true, samples = Colon(), seed = 0)
+    (samples === Colon()) && (samples = length(x))
+    I = shuffle ?
+        sample(MersenneTwister(seed), 1:length(x), samples; replace = samples > length(x)) :
+        1:min(length(x), samples)
+    return x[I], I
+end
+
 ####
 #### Dict, (Named)Tuples
 ####
 
 # Find locations of all `needles` within `haystack`. Will error if not found
-function findall_contains(haystack::AbstractArray, needles::AbstractArray)
+function findall_within(haystack::AbstractArray, needles::AbstractArray)
     hashmap = Dict(haystack .=> eachindex(haystack))
     (I -> hashmap[I]).(needles)
 end

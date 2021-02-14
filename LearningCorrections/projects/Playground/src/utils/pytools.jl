@@ -47,6 +47,17 @@ end
 #### Installation
 ####
 
+function pip(args...)
+    pip_path = !Sys.iswindows() ? joinpath(Conda.ROOTENV, "bin", "pip") : joinpath(Conda.ROOTENV, "Scripts", "pip.exe")
+    str_args = reduce(vcat, [split(string(arg), " ") for arg in args])
+    cmd = Cmd([pip_path, String.(str_args)...])
+    run(cmd)
+end
+
+macro pip(args...)
+    :(pip($args...))
+end
+
 function __pyinstall__()
     # Install pip into conda environment
     Conda.add("pip")
@@ -60,14 +71,8 @@ function __pyinstall__()
     Conda.add("ignite"; channel = "pytorch")
 
     # Install wandb via pip (https://docs.wandb.com/quickstart)
-    #   pip install wandb
-    if !Sys.iswindows()
-        run(`$(joinpath(Conda.ROOTENV, "bin", "pip")) install wandb`)
-    else
-        run(`$(joinpath(Conda.ROOTENV, "Scripts", "pip.exe")) install wandb`)
-    end
+    @pip "install wandb"
 
     # Install hydra via pip (https://hydra.cc/docs/intro#installation)
-    #   pip install hydra-core --upgrade
-    # run(`$(joinpath(Conda.ROOTENV, "bin", "pip")) install hydra-core --upgrade`)
+    # @pip "install hydra-core --upgrade"
 end

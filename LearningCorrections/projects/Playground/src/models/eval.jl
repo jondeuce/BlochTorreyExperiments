@@ -9,23 +9,16 @@ function mle_biexp_epg_noise_only(
         initial_s     = nothing;
         batch_size    = 128 * Threads.nthreads(),
         verbose       = true,
-        checkpoint    = false,
         dryrun        = false,
-        dryrunsamples = nothing,
+        dryrunsamples = batch_size,
         dryrunshuffle = true,
-        savefolder    = nothing,
+        dryrunseed    = 0,
         opt_alg       = :LD_SLSQP, # Rough algorithm ranking: [:LD_SLSQP, :LD_LBFGS, :LD_CCSAQ, :LD_AUGLAG, :LD_MMA] (Note: :LD_LBFGS fails to converge with tolerance looser than ~ 1e-4)
         opt_args      = Dict{Symbol,Any}(),
     )
-    matsavetime = getnow()
-    matsave(filename, data) = DECAES.MAT.matwrite(joinpath(mkpath(savefolder), filename * "-" * matsavetime * ".mat"), data)
-
-    dryrun && (dryrunsamples !== nothing) && let
-        I = dryrunshuffle ?
-            sample(MersenneTwister(0), 1:size(Y,2), dryrunsamples; replace = dryrunsamples > size(Y,2)) :
-            1:min(size(Y,2), dryrunsamples)
-        X = X[:,I]
-        Y = Y[:,I]
+    dryrun && let
+        I, _ = sample_maybeshuffle(1:size(Y,2); shuffle = dryrunshuffle, samples = dryrunsamples, seed = dryrunseed)
+        X, Y = X[:,I], Y[:,I]
         (initial_ϵ !== nothing) && (initial_ϵ = initial_ϵ[:,I])
         (initial_s !== nothing) && (initial_s = initial_s[:,I])
     end
@@ -44,9 +37,11 @@ function mle_biexp_epg_noise_only(
 
     work_spaces = map(1:Threads.nthreads()) do _
         (
-            Xj  = zeros(size(X,1)),
-            Yj  = zeros(size(Y,1)),
-            x0  = zeros(2),
+            Xj   = zeros(size(X,1)),
+            Yj   = zeros(size(Y,1)),
+            x0   = zeros(2),
+            ∇res = ForwardDiff.DiffResults.GradientResult(zeros(2)),
+            ∇cfg = ForwardDiff.GradientConfig(nothing, zeros(2), ForwardDiff.Chunk(2)),
             opt = let
                 opt = NLopt.Opt(opt_alg, 2)
                 opt.xtol_rel      = 1e-8
@@ -70,17 +65,16 @@ function mle_biexp_epg_noise_only(
         solvetime  = fill(NaN, size(Y,2)),
     )
 
-    function f(work, x::Vector{Float64})
+    function f(work, x::Vector{D}) where {D <: MaybeDualF64}
         @inbounds begin
-            δ₀    = √eps(Float64)
             logϵ  = x[1]
             logs  = x[2]
             s     = exp(logs)
             logϵi = logs + logϵ # log(s*ϵ)
-            ℓ     = 0.0
-            for i in eachindex(work.Xj)
+            ℓ     = zero(D)
+            @avx for i in eachindex(work.Xj)
                 yi = work.Yj[i]
-                νi = max(s * work.Xj[i], δ₀)
+                νi = s * work.Xj[i]
                 ℓ += neglogL_rician(yi, νi, logϵi) # Rician negative log likelihood
             end
             return ℓ
@@ -89,7 +83,12 @@ function mle_biexp_epg_noise_only(
 
     function fg!(work, x::Vector{Float64}, g::Vector{Float64})
         if length(g) > 0
-            simple_fd_gradient!(g, _x -> f(work, _x), x)
+            # simple_fd_gradient!(g, _x -> f(work, _x), x)
+            ForwardDiff.gradient!(work.∇res, _x -> f(work, _x), x, work.∇cfg)
+            y  = ForwardDiff.DiffResults.value(work.∇res)
+            ∇y = ForwardDiff.DiffResults.gradient(work.∇res)
+            @avx g .= ∇y
+            return y
         else
             f(work, x)
         end
@@ -106,7 +105,7 @@ function mle_biexp_epg_noise_only(
     =#
 
     start_time = time()
-    batches = Iterators.partition(1:size(Y,2), batch_size)
+    batches = batch_size === Colon() ? [1:size(Y,2)] : Iterators.partition(1:size(Y,2), batch_size)
     BLAS.set_num_threads(1) # Prevent BLAS from stealing julia threads
 
     for (batchnum, batch) in enumerate(batches)
@@ -133,103 +132,18 @@ function mle_biexp_epg_noise_only(
         elapsed_time   = time() - start_time
         remaining_time = (elapsed_time / batchnum) * (length(batches) - batchnum)
         mle_per_second = batch[end] / elapsed_time
-        savetime       = @elapsed !dryrun && checkpoint && matsave("mle-$data_source-$data_subset-results-checkpoint", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # checkpoint progress
         verbose && @info "$batchnum / $(length(batches))" *
             " -- batch: $(DECAES.pretty_time(batchtime))" *
             " -- elapsed: $(DECAES.pretty_time(elapsed_time))" *
             " -- remaining: $(DECAES.pretty_time(remaining_time))" *
-            " -- save: $(round(savetime; digits = 2))s" *
             " -- rate: $(round(mle_per_second; digits = 2))Hz" *
             " -- initial loss: $(round(mean(initial_guess.ℓ[1,1:batch[end]]); digits = 2))" *
             " -- loss: $(round(mean(results.loss[1:batch[end]]); digits = 2))"
     end
 
-    !dryrun && matsave("mle-$data_source-$data_subset-results-final", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # save final results
     BLAS.set_num_threads(Threads.nthreads()) # Reset BLAS threads
 
     return initial_guess, results
-end
-
-function _test_mle_biexp_epg_noise_only(phys::BiexpEPGModel, derived; nsamples = 10240, init_epsilon = false)
-    θ = sample(derived["genatr_theta_prior"], nsamples)
-    Z = sample(derived["genatr_latent_prior"], nsamples)
-    X = signal_model(phys, θ)
-    X̂ = sampleX̂(models["genatr"], X, Z) #TODO
-
-    initial_ϵ = init_epsilon ?
-        rician_params(models["genatr"], X, Z)[2][1:1,:] : # use true answer as initial guess (for sanity check)
-        sqrt.(mean(abs2, X .- X̂; dims = 1))
-    initial_s = inv.(maximum(mean_rician.(X, initial_ϵ); dims = 1)) # ones_similar(X, 1, size(X,2))
-
-    init, res = mle_biexp_epg_noise_only(
-        X, X̂, initial_ϵ, initial_s;
-        verbose       = true,
-        checkpoint    = false,
-        dryrun        = true,
-        dryrunsamples = nsamples,
-        dryrunshuffle = false,
-    )
-
-    ϵ_true = Z .+ log.(models["genatr"].noisescale(X)); # logϵ = log(exp(Z) * noisescale(X)) = Z + log(noisescale(X))
-    println("initial log epsilon:"); display(log.(init.ϵ))
-    println("final log epsilon:"); display(res.logepsilon')
-    println("true log epsilon:"); display(ϵ_true); display(mean(abs, arr_similar(ϵ_true, res.logepsilon') .- ϵ_true))
-    println("")
-    println("initial log scale:"); display(log.(init.s))
-    println("final log scale:"); display(res.logscale')
-    println("")
-    println("initial loss:"); display(init.ℓ)
-    println("final loss:"); display(res.loss')
-    println("")
-    println("return codes:"); display(res.retcode')
-
-    return @ntuple(θ, Z, X, X̂, init, res)
-end
-
-function _test_noiselevel()
-    G = models["genatr"]
-    θ = sample(derived["genatr_theta_prior"], 10240)
-    Z = sample(derived["genatr_latent_prior"], 10240)
-    X = signal_model(phys, θ)
-    let
-        ν, ϵ = rician_params(G, X, Z)
-        X̂ = add_noise_instance(G, X, ϵ)
-        # vcat(exp.(Z) .* G.noisescale(X), ϵ) |> display
-        NegLogLikelihood(G, X̂, ν, ϵ) |> ℓ -> sum(ℓ; dims = 1) |> display
-        NegLogLikelihood(G, X̂, ν, ϵ) |> mean |> display
-    end
-    let
-        δ, ϵ = correction_and_noiselevel(G, X, Z)
-        ν = add_correction(G, X, δ)
-        X̂ = add_noise_instance(G, X, ϵ)
-        # vcat(exp.(Z) .* G.noisescale(X), ϵ) |> display
-        reshape(NegLogLikelihood(G, X̂, ν, ϵ), 1, :) |> ℓ -> sum(ℓ; dims = 1) |> display
-        reshape(NegLogLikelihood(G, X̂, ν, ϵ), 1, :) |> mean |> display
-    end
-    let
-        ν, ϵ = rician_params(G, X, Z)
-        X̂ = add_noise_instance(G, X, ϵ)
-        X̂meta = MetaCPMGSignal(phys, img, X̂)
-        fit_state = fit_cvae(X̂meta; marginalize_Z = false)
-        display(vcat(Z, fit_state.Z))
-        Z1, Z2, Z3 = fit_state.Z, fit_state.Z .- log.(G.noisescale(X)), fit_state.Z .+ log.(G.noisescale(X))
-        ϵ1, ϵ2, ϵ3 = exp.(Z1), exp.(Z2), exp.(Z3)
-        vcat(
-            quantile(abs.(Z1 .- Z) |> vec |> arr64, 0.1:0.1:0.9)',
-            quantile(abs.(Z2 .- Z) |> vec |> arr64, 0.1:0.1:0.9)',
-            quantile(abs.(Z3 .- Z) |> vec |> arr64, 0.1:0.1:0.9)',
-        ) |> display
-        vcat(
-            reshape(sum(NegLogLikelihood(G, X̂, ν, ϵ1); dims = 1), 1, :),
-            reshape(sum(NegLogLikelihood(G, X̂, ν, ϵ2); dims = 1), 1, :),
-            reshape(sum(NegLogLikelihood(G, X̂, ν, ϵ3); dims = 1), 1, :),
-        ) |> display
-        reshape(sum(NegLogLikelihood(G, X̂, ν, ϵ1); dims = 1), 1, :) |> mean |> display
-        reshape(sum(NegLogLikelihood(G, X̂, ν, ϵ2); dims = 1), 1, :) |> mean |> display
-        reshape(sum(NegLogLikelihood(G, X̂, ν, ϵ3); dims = 1), 1, :) |> mean |> display
-        display(vcat(fit_state.ℓ))
-        display(mean(fit_state.ℓ))
-    end
 end
 
 function mle_biexp_epg_θ_to_x(work::W, θ::A) where {W, A <: VecOrTupleMaybeDualF64}
@@ -266,12 +180,31 @@ function mle_biexp_epg_θ_to_ψ(work::W, θ::A) where {W, A <: VecOrTupleMaybeDu
     end
 end
 
+function mle_biexp_epg_x_regularization(work::W, x::A) where {W, A <: VecOrTupleMaybeDualF64}
+    @inbounds begin
+        @unpack xlo, xhi, σreg = work
+        α,   β,   η,   z1,   z2   = x[1],   x[2],   x[3],   x[4],   x[5]   # flip/refcon angles, mwf, and relative log T2 short/long
+        αlo, βlo, ηlo, z1lo, z2lo = xlo[1], xlo[2], xlo[3], xlo[4], xlo[5] # parameter lower bounds
+        αhi, βhi, ηhi, z1hi, z2hi = xhi[1], xhi[2], xhi[3], xhi[4], xhi[5] # parameter upper bounds
+        # Regularization is negative log-likelihood of a sum of Gaussian distributions centred on parameter interval lower/upper bounds.
+        # This biases parameters to prefer to be at one endpoint or the other in cases where the solution is ill-posed.
+        # Gaussian widths are equal to σreg * (interval width). Normalization constant is discarded.
+        R = (
+            ((α - αhi) / (αhi - αlo))^2 + # flip angle biased toward 180 deg
+            ((β - βhi) / (βhi - βlo))^2 + # refcon angle biased toward 180 deg
+            ((η - ηlo) / (ηhi - ηlo))^2 + # mwf biased toward 0%
+            ((z1 - z1lo) / (z1hi - z1lo))^2 + # (relative-)log T2 short biased lower
+            ((z2 - z2hi) / (z2hi - z2lo))^2   # (relative-)log T2 long biased higher
+        ) / (2 * σreg^2)
+        return R
+    end
+end
+
 @inline mle_biexp_epg_work(work::W, ::Type{Float64}) where {W} = work.epg
 @inline mle_biexp_epg_work(work::W, ::Type{D}) where {W, D <: Dual64} = work.∇epg
 
 function f_mle_biexp_epg!(work::W, x::Vector{D}) where {W, D <: MaybeDualF64}
     @inbounds begin
-        δ₀     = √eps(Float64)
         θ      = mle_biexp_epg_x_to_θ(work, x) # θ = α, β, η, δ1, δ2, δ0
         logϵ   = x[end-1]
         logs   = x[end]
@@ -279,18 +212,21 @@ function f_mle_biexp_epg!(work::W, x::Vector{D}) where {W, D <: MaybeDualF64}
         ψ      = mle_biexp_epg_θ_to_ψ(work, θ) # ψ = alpha, refcon, T2short, T2long, Ashort, Along, T1, TE
         epg    = mle_biexp_epg_work(work, D)
         X      = _biexp_epg_model_f64!(epg.dc, epg, ψ)
-        sX     = zero(D)
+        Xmax   = zero(D)
         @avx for i in eachindex(X)
-            sX = max(X[i], sX)
+            Xmax = max(X[i], Xmax)
         end
-        sX     = s / sX # normalize X to maximum 1 and scale by s
+        Xscale = s / Xmax # normalize X to maximum 1 and scale by s; hoist outside loop
         logϵi  = logs + logϵ # hoist outside loop
         ℓ      = zero(D)
         @avx for i in eachindex(work.Y)
-            νi = max(sX * X[i], δ₀)
-            ℓ += neglogL_rician_unsafe(work.Y[i], νi, logϵi) # Rician negative log likelihood
+            νi = Xscale * X[i]
+            ℓ += neglogL_rician(work.Y[i], νi, logϵi) # Rician negative log likelihood
         end
-        return ℓ
+        R      = mle_biexp_epg_x_regularization(work, x)
+        work.neglogL[] = ForwardDiff.value(ℓ)
+        work.reg[] = ForwardDiff.value(R)
+        return ℓ + R
     end
 end
 
@@ -300,13 +236,62 @@ function fg_mle_biexp_epg!(work::W, x::Vector{Float64}, g::Vector{Float64}) wher
         ForwardDiff.gradient!(work.∇res, _x -> f_mle_biexp_epg!(work, _x), x, work.∇cfg)
         y  = ForwardDiff.DiffResults.value(work.∇res)
         ∇y = ForwardDiff.DiffResults.gradient(work.∇res)
-        @avx for i in eachindex(g, ∇y)
-            g[i] = ∇y[i]
-        end
+        @avx g .= ∇y
         return y
     else
         return f_mle_biexp_epg!(work, x)
     end
+end
+
+function mle_biexp_epg_initial_guess(
+        phys::BiexpEPGModel,
+        rice::RicianCorrector,
+        cvae::CVAE,
+        img::CPMGImage;
+        data_source        = :image, # One of :image, :simulated
+        data_subset        = :mask,  # One of :mask, :val, :train, :test
+        noisebounds        = (-Inf, 0.0),
+        scalebounds        = (-Inf, Inf),
+        batch_size         = Colon(),
+        maxiter            = 10,
+        mode               = :mode,  # :maxlikelihood, :mean
+        verbose            = true,
+        dryrun             = false,
+        dryrunsamples      = batch_size,
+        dryrunshuffle      = true,
+        dryrunseed         = 0,
+    )
+    @assert data_source ∈ (:image, :simulated)
+    @assert data_subset ∈ (:mask, :val, :train, :test)
+
+    # MLE for whole image of simulated data
+    image_indices = img.indices[data_subset]
+    if dryrun
+        image_indices, _ = sample_maybeshuffle(image_indices; shuffle = dryrunshuffle, samples = dryrunsamples, seed = dryrunseed)
+    end
+    image_data = img.data[image_indices, :] |> to32 |> permutedims
+
+    if data_source === :image
+        Y = arr64(image_data)
+        Ymeta = MetaCPMGSignal(phys, img, image_data)
+    else # data_source === :simulated
+        mock_image_state = batched_posterior_state(MetaCPMGSignal(phys, img, image_data))
+        mock_image_data  = sampleX̂(rice, mock_image_state.X, mock_image_state.Z)
+        Y = arr64(mock_image_data)
+        Ymeta = MetaCPMGSignal(phys, img, mock_image_data)
+    end
+
+    batches = batch_size === Colon() ? [1:size(signal(Ymeta),2)] : Iterators.partition(1:size(signal(Ymeta),2), batch_size)
+    initial_guess = mapreduce((x,y) -> map(hcat, x, y), batches) do batch
+        posterior_state(
+            phys, rice, cvae, Ymeta[:,batch];
+            alpha = 0.0, miniter = 1, maxiter, verbose, mode,
+        )
+    end
+    initial_guess = setindex!!(initial_guess, exp.(clamp.(mean(log.(initial_guess.ϵ); dims = 1), noisebounds...)), :ϵ)
+    initial_guess = setindex!!(initial_guess, clamp.(inv.(maximum(mean_rician.(initial_guess.X, initial_guess.ϵ); dims = 1)), scalebounds...), :s)
+    initial_guess = map(arr64, initial_guess)
+    return initial_guess
 end
 
 function mle_biexp_epg(
@@ -314,71 +299,18 @@ function mle_biexp_epg(
         rice::RicianCorrector,
         cvae::CVAE,
         img::CPMGImage;
-        data_source        = :image, # One of :image, :simulated
-        data_subset        = :mask,  # One of :mask, :val, :train, :test
         batch_size         = 128 * Threads.nthreads(),
-        initial_iter       = 10,
+        initial_guess_args = Dict{Symbol,Any}(),
         initial_guess_only = false,
-        noisebounds        = (-Inf, Inf),
+        noisebounds        = (-Inf, 0.0),
         scalebounds        = (-Inf, Inf),
+        sigma_reg          = 0.5,
         verbose            = true,
-        checkpoint         = false,
-        dryrun             = false,
-        dryrunsamples      = batch_size,
-        dryrunshuffle      = true,
-        dryrunseed         = 0,
-        savefolder         = nothing,
         opt_alg            = :LD_SLSQP, # Rough algorithm ranking: [:LD_SLSQP, :LD_LBFGS, :LD_CCSAQ, :LD_AUGLAG, :LD_MMA] (Note: :LD_LBFGS fails to converge with tolerance looser than ~ 1e-4)
         opt_args           = Dict{Symbol,Any}(),
     )
-    @assert data_source ∈ (:image, :simulated)
-    @assert data_subset ∈ (:mask, :val, :train, :test)
-    matsavetime = getnow()
-    matsave(filename, data) = (savefolder !== nothing) && DECAES.MAT.matwrite(joinpath(mkpath(savefolder), filename * "-" * matsavetime * ".mat"), data)
 
-    batched_posterior_state(Ymeta) = mapreduce(
-            (x,y) -> map(hcat, x, y),
-            enumerate(Iterators.partition(1:size(signal(Ymeta),2), batch_size)),
-        ) do (batchnum, batch)
-        posterior_state(
-            phys,
-            rice,
-            cvae,
-            Ymeta[:,batch];
-            miniter = 1,
-            maxiter = initial_iter,
-            alpha   = 0.0,
-            verbose = false,
-            mode    = :mode, #:maxlikelihood,
-        )
-    end
-
-    # MLE for whole image of simulated data
-    Y, Ymeta = let
-        image_indices = img.indices[data_subset]
-        if dryrun && (dryrunsamples !== nothing)
-            I = dryrunshuffle ?
-                sample(MersenneTwister(dryrunseed), 1:length(image_indices), dryrunsamples; replace = dryrunsamples > length(image_indices)) :
-                1:min(length(image_indices), dryrunsamples)
-            image_indices = image_indices[I]
-        end
-        image_data = img.data[image_indices, :] |> to32 |> permutedims
-
-        if data_source === :image
-            !dryrun && matsave("mle-$data_source-$data_subset-data", Dict{String,Any}("Y" => arr64(image_data)))
-            arr64(image_data), MetaCPMGSignal(phys, img, image_data)
-        else # data_source === :simulated
-            mock_image_state = batched_posterior_state(MetaCPMGSignal(phys, img, image_data))
-            mock_image_data  = sampleX̂(rice, mock_image_state.X, mock_image_state.Z)
-            !dryrun && matsave("mle-$data_source-$data_subset-data", Dict{String,Any}("X" => arr64(mock_image_state.X), "theta" => arr64(mock_image_state.θ), "Z" => arr64(mock_image_state.Z), "Xhat" => arr64(mock_image_data), "Y" => arr64(image_data)))
-            arr64(mock_image_data), MetaCPMGSignal(phys, img, mock_image_data)
-        end
-    end
-
-    initial_guess = batched_posterior_state(Ymeta)
-    initial_guess = setindex!!(initial_guess, exp.(clamp.(mean(log.(initial_guess.ϵ); dims = 1), noisebounds...)), :ϵ)
-    initial_guess = setindex!!(initial_guess, clamp.(inv.(maximum(mean_rician.(initial_guess.X, initial_guess.ϵ); dims = 1)), scalebounds...), :s)
-    initial_guess = map(arr64, initial_guess)
+    initial_guess = mle_biexp_epg_initial_guess(phys, rice, cvae, img; noisebounds, scalebounds, verbose = false, initial_guess_args...)
 
     # Optionally return initial guess only
     if initial_guess_only
@@ -392,10 +324,14 @@ function mle_biexp_epg(
     work_spaces = map(1:Threads.nthreads()) do _
         @unpack TEbd, T2bd, T1bd = phys
         (
+            neglogL  = Ref(0.0),
+            reg      = Ref(0.0),
+            σreg     = sigma_reg |> Float64,
             Y        = zeros(nsignal(img)),
             x0       = zeros(num_optvars),
             xlo      = copy(lower_bounds),
             xhi      = copy(upper_bounds),
+            dx       = copy(upper_bounds .- lower_bounds),
             logτ2lo  = log(T2bd[1] / TEbd[2]) |> Float64,
             logτ2hi  = log(T2bd[2] / TEbd[1]) |> Float64,
             logτ1lo  = log(T1bd[1] / TEbd[2]) |> Float64,
@@ -423,15 +359,17 @@ function mle_biexp_epg(
         )
     end
 
+    num_signals, num_problems = size(initial_guess.Y)
     results = (
-        signalfit  = fill(NaN, size(Y)...),
-        theta      = fill(NaN, ntheta(phys), size(Y,2)),
-        logepsilon = fill(NaN, size(Y,2)),
-        logscale   = fill(NaN, size(Y,2)),
-        loss       = fill(NaN, size(Y,2)),
-        retcode    = fill(NaN, size(Y,2)),
-        numevals   = fill(NaN, size(Y,2)),
-        solvetime  = fill(NaN, size(Y,2)),
+        signalfit  = fill(NaN, num_signals, num_problems),
+        theta      = fill(NaN, ntheta(phys), num_problems),
+        logepsilon = fill(NaN, num_problems),
+        logscale   = fill(NaN, num_problems),
+        loss       = fill(NaN, num_problems),
+        reg        = fill(NaN, num_problems),
+        retcode    = fill(NaN, num_problems),
+        numevals   = fill(NaN, num_problems),
+        solvetime  = fill(NaN, num_problems),
     )
 
     #= Benchmarking
@@ -441,8 +379,8 @@ function mle_biexp_epg(
     work.x0[end-1]    = log(initial_guess.ϵ[1])
     work.x0[end]      = log(initial_guess.s[1])
     g                 = zeros(num_optvars)
-    @show ForwardDiff.gradient!(work.∇res, x -> f_mle_biexp_epg!(work, x), work.x0, work.∇cfg)
-    @show fg_mle_biexp_epg!(work, work.x0, g); @show(g)
+    # @show ForwardDiff.gradient!(work.∇res, x -> f_mle_biexp_epg!(work, x), work.x0, work.∇cfg)
+    # @show fg_mle_biexp_epg!(work, work.x0, g); @show(g)
     @info "Timing function..."; @btime( f_mle_biexp_epg!($work, $(work.x0)) ) |> display
     @info "Timing ForwardDiff gradient..."; @btime( ForwardDiff.gradient!($(work.∇res), x -> f_mle_biexp_epg!($work, x), $(work.x0), $(work.∇cfg)) ) |> display
     @info "Timing gradient..."; @btime( fg_mle_biexp_epg!($work, $(work.x0), $g) ) |> display
@@ -450,14 +388,14 @@ function mle_biexp_epg(
     =#
 
     start_time = time()
-    batches = Iterators.partition(1:size(Y,2), batch_size)
+    batches = Iterators.partition(1:num_problems, batch_size)
     BLAS.set_num_threads(1) # Prevent BLAS from stealing julia threads
 
     for (batchnum, batch) in enumerate(batches)
         batchtime = @elapsed Threads.@sync for j in batch
             Threads.@spawn @inbounds begin
                 work = work_spaces[Threads.threadid()]
-                work.Y                 .= Y[:,j]
+                work.Y                 .= initial_guess.Y[:,j]
                 work.x0[1:end-2]       .= mle_biexp_epg_θ_to_x(work, view(initial_guess.θ, :, j))
                 work.x0[end-1]          = log(initial_guess.ϵ[j])
                 work.x0[end]            = log(initial_guess.s[j])
@@ -471,7 +409,8 @@ function mle_biexp_epg(
                 results.theta[:,j]     .= mle_biexp_epg_x_to_θ(work, minx)
                 results.logepsilon[j]   = minx[end-1]
                 results.logscale[j]     = minx[end]
-                results.loss[j]         = minf
+                results.loss[j]         = work.neglogL[]
+                results.reg[j]          = work.reg[]
                 results.retcode[j]      = Base.eval(NLopt, ret) |> Int #TODO cleaner way to convert Symbol to enum?
                 results.numevals[j]     = work.opt.numevals
                 results.solvetime[j]    = solvetime
@@ -482,55 +421,19 @@ function mle_biexp_epg(
         elapsed_time   = time() - start_time
         remaining_time = (elapsed_time / batchnum) * (length(batches) - batchnum)
         mle_per_second = batch[end] / elapsed_time
-        savetime       = @elapsed !dryrun && checkpoint && matsave("mle-$data_source-$data_subset-results-checkpoint", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # checkpoint progress
         verbose && @info "$batchnum / $(length(batches))" *
             " -- batch: $(DECAES.pretty_time(batchtime))" *
             " -- elapsed: $(DECAES.pretty_time(elapsed_time))" *
             " -- remaining: $(DECAES.pretty_time(remaining_time))" *
-            " -- save: $(round(savetime; digits = 2))s" *
             " -- rate: $(round(mle_per_second; digits = 2))Hz" *
             " -- initial loss: $(round(mean(initial_guess.ℓ[1,1:batch[end]]); digits = 2))" *
-            " -- loss: $(round(mean(results.loss[1:batch[end]]); digits = 2))"
+            " -- loss: $(round(mean(results.loss[1:batch[end]]); digits = 2))" *
+            " -- reg: $(round(mean(results.reg[1:batch[end]]); digits = 2))"
     end
 
-    !dryrun && matsave("mle-$data_source-$data_subset-results-final", Dict{String,Any}(string(k) => copy(v) for (k,v) in pairs(results))) # save final results
     BLAS.set_num_threads(Threads.nthreads()) # Reset BLAS threads
 
     return initial_guess, results
-end
-
-function _test_mle_biexp_epg(phys::BiexpEPGModel, models, derived, img::CPMGImage; dryrunsamples = 10240, kwargs...)
-    init, res = mle_biexp_epg(
-        phys,
-        models["genatr"],
-        derived["cvae"],
-        img;
-        verbose       = true,
-        checkpoint    = false,
-        dryrun        = true,
-        dryrunsamples = dryrunsamples,
-        dryrunshuffle = false,
-        kwargs...,
-    )
-
-    println("initial theta:"); display(init.θ)
-    println("final theta:"); display(res.theta)
-    println("mean abs diff:"); display(mean(abs, init.θ .- res.theta; dims = 2))
-    println("initial log epsilon:"); display(log.(init.ϵ[1:1,:]))
-    println("final log epsilon:"); display(res.logepsilon')
-    println("mean abs diff:"); display(mean(abs, log.(init.ϵ[1:1,:]) .- res.logepsilon'))
-    println("")
-    println("initial log scale:"); display(log.(init.s[1:1,:]))
-    println("final log scale:"); display(res.logscale')
-    println("mean abs diff:"); display(mean(abs, log.(init.s[1:1,:]) .- res.logscale'))
-    println("")
-    println("initial loss:"); display(init.ℓ)
-    println("final loss:"); display(res.loss')
-    println("mean abs diff:"); display(mean(abs, init.ℓ .- res.loss'))
-    println("")
-    println("return codes:"); display(res.retcode')
-
-    return init, res
 end
 
 ####

@@ -62,11 +62,14 @@ lib.settings_template() = TOML.parse(
     wdecay   = 0.0     # Weight decay
     [opt.cvae]
         INHERIT = "%PARENT%"
-        lambda_vae_sim     = 0.0 # Weighting of vae decoder regularization loss on simulated signals
-        lambda_vae_data    = 0.0 # Weighting of vae decoder regularization loss on real signals
-        lambda_latent      = 0.0 # Weighting of latent space regularization
-        lambda_pseudo      = 0.0 # Weighting of pseudo label loss
-        tau_pseudo         = 0 # Time constant for CVAE moving average
+        gclip               = 0.0
+        lambda_vae_sim      = 0.0 # Weighting of vae decoder regularization loss on simulated signals
+        lambda_vae_data     = 0.0 # Weighting of vae decoder regularization loss on real signals
+        lambda_latent       = 0.0 # Weighting of latent space regularization
+        lambda_pseudo       = 1.0 # Weighting of pseudo label loss
+        tau_lambda_pseudo   = 0.0 # Time constant for `lambda_pseudo` factor (units of iterations)
+        delta_lambda_pseudo = 0.0 # Time delay for `lambda_pseudo` factor (units of iterations)
+        tau_cvae            = 0.0 # Time constant for CVAE moving average (units of iterations)
     [opt.genatr]
         INHERIT = "%PARENT%" #TODO: 0.01 train generator more slowly
     [opt.discrim]
@@ -113,7 +116,7 @@ lib.settings_template() = TOML.parse(
         prior_mix   = 0.0  #TODO Mix (possibly learned) genatr prior with `prior_mix` fraction of default prior
         leakyslope  = 0.0
         maxcorr     = 0.1
-        noisebounds = [-6.0, 0.0] #TODO
+        noisebounds = [-11.51292546497023, -2.302585092994046] # (natural-)log noise amplitude bounds; equivalent to 20 <= SNR <= 100, where log(eps) = -(SNR/20)*log(10)
     [arch.discrim]
         INHERIT     = "%PARENT%"
         hdim      = 0     #TODO
@@ -129,8 +132,9 @@ lib.settings_template() = TOML.parse(
 """
 )
 
+_DEBUG_ = false
 settings = lib.load_settings(force_new_settings = true)
-wandb_logger = lib.init_wandb_logger(settings; activate = true, dryrun = false, wandb_dir = lib.projectdir())
+wandb_logger = lib.init_wandb_logger(settings; activate = !_DEBUG_, dryrun = false, wandb_dir = lib.projectdir())
 
 lib.set_logdirname!()
 lib.clear_checkpointdir!()
@@ -138,6 +142,7 @@ lib.clear_checkpointdir!()
 # lib.set_checkpointdir!(lib.projectdir("wandb", "latest-run", "files"))
 # lib.set_checkpointdir!(only(Glob.glob("run-*-3igrugah/files", lib.projectdir("wandb"))))
 # lib.set_checkpointdir!(only(Glob.glob("run-*-2e9prscm/files", lib.projectdir("wandb"))))
+# lib.set_checkpointdir!(only(Glob.glob("run-*-373tj1p0/files", lib.projectdir("wandb")))) # failed run
 
 lib.@save_expression lib.logdir("build_physics.jl") function build_physics()
     # isdefined(Main, :phys) ? Main.phys : lib.EPGModel{Float32,false}(n = 64)
@@ -148,7 +153,7 @@ lib.@save_expression lib.logdir("build_models.jl") function build_models(
         phys,
         settings,
         models = Dict{String,Any}(),
-        derived = Dict{String,Any}()
+        derived = Dict{String,Any}(),
     )
     kws(keys...) = lib.make_kwargs(settings, keys...)
 
@@ -174,13 +179,25 @@ lib.@save_expression lib.logdir("build_models.jl") function build_models(
     derived["cvae_theta_prior"] = lib.derived_cvae_theta_prior(phys, derived["genatr_theta_prior"]; kws("arch", "genatr")...)
     derived["cvae_latent_prior"] = lib.derived_cvae_latent_prior(phys, derived["genatr_latent_prior"]; kws("arch", "genatr")...)
     derived["cvae"] = lib.derived_cvae(phys, models["enc1"], models["enc2"], models["dec"]; kws("arch")...)
-    # derived["mean_cvae"] = deepcopy(derived["cvae"])
-    # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = lib.checkpointdir(), modelprefix = "best-")
-    # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = lib.projectdir("log", "2021-02-03-T-18-03-53-316"), modelprefix = "current-")
-    # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-1jt2z1ry/files", lib.projectdir("wandb"))), modelprefix = "best-")
-    # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-3igrugah/files", lib.projectdir("wandb"))), modelprefix = "best-")
-    derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-2e9prscm/files", lib.projectdir("wandb"))), modelprefix = "best-")
+    derived["mean_cvae"] = deepcopy(derived["cvae"])
     derived["vae_reg_loss"] = lib.VAEReg(models["vae_dec"]; regtype = settings["arch"]["vae_dec"]["regtype"])
+
+    # Pseudo labels for Y data
+    # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = lib.checkpointdir(), modelprefix = "best-")
+    # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-1jt2z1ry/files", lib.projectdir("wandb"))), modelprefix = "best-")
+    # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-2e9prscm/files", lib.projectdir("wandb"))), modelprefix = "best-")
+
+    # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-38wajxo4/files", lib.projectdir("wandb"))), modelprefix = "best-")
+    # lib.pseudo_labels!(
+    #     phys, lib.NormalizedRicianCorrector(lib.corrector(models["genatr"]), lib.ApplyOverDims(maximum; dims = 1), lib.ApplyOverDims(mean; dims = 1)), derived["pretrained_cvae"],
+    #     new_noisescale = nothing, force_recompute = true, initial_guess_only = true, sigma_reg = 0.5, noisebounds = settings["arch"]["genatr"]["noisebounds"],
+    # )
+
+    # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-13pptz2h/files", lib.projectdir("wandb"))), modelprefix = "best-")
+    derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-15v0mdjw/files", lib.projectdir("wandb"))), modelprefix = "best-")
+    lib.pseudo_labels!(phys, models["genatr"], derived["pretrained_cvae"]; force_recompute = true, initial_guess_only = false, sigma_reg = 0.5, noisebounds = settings["arch"]["genatr"]["noisebounds"])
+
+    lib.verify_pseudo_labels(phys, models["genatr"])
 
     return models, derived
 end
@@ -189,7 +206,7 @@ lib.@save_expression lib.logdir("build_optimizers.jl") function build_optimizers
         phys,
         settings,
         models,
-        optimizers = Dict{String,Any}()
+        optimizers = Dict{String,Any}(),
     )
     kws(keys...) = lib.make_kwargs(settings, keys...)
     optimizers["mmd"] = lib.init_optimizer(Flux.ADAM; kws("opt", "mmd")...)
@@ -201,7 +218,9 @@ lib.@save_expression lib.logdir("build_optimizers.jl") function build_optimizers
 end
 
 phys = build_physics()
-models, derived = build_models(phys, settings, lib.load_checkpoint("current-models.jld2"))
+models, derived = build_models(phys, settings)
+# models, derived = build_models(phys, settings, lib.load_checkpoint("current-models.jld2"))
+# models, derived = build_models(phys, settings, lib.load_checkpoint("failure-models.jld2"))
 optimizers = build_optimizers(phys, settings, models)
 lib.save_snapshot(settings, models)
 
@@ -222,7 +241,7 @@ function Gloss(X,Z)
     X̂ = lib.sampleX̂(models["genatr"], X, Z)
     X̂s, = augment_and_transform(X̂)
     σ⁻¹PX̂ = models["discrim"](reduce(vcat, X̂s))
-    BCE_GX = lib.LogitBCEOne(σ⁻¹PX̂) # -log(D(G(Z))) (equivalent to log(1-D(G(Z))) in Goodfellow et al.)
+    BCE_GX = lib.LogitBCEOne(σ⁻¹PX̂) # -log(D(G(Z))) (analogous to log(1-D(G(Z))) in Goodfellow et al.)
     return (; BCE_GX)
 end
 
@@ -278,7 +297,8 @@ function CVAElosses(Ymeta::lib.AbstractMetaDataSignal, θPseudo = nothing, ZPseu
     λ_vae_data = Zygote.@ignore eltype(Ymeta)(get!(settings["opt"]["cvae"], "lambda_vae_data", 0.0)::Float64)
     λ_latent   = Zygote.@ignore eltype(Ymeta)(get!(settings["opt"]["cvae"], "lambda_latent", 0.0)::Float64)
     λ_pseudo   = Zygote.@ignore eltype(Ymeta)(get!(settings["opt"]["cvae"], "lambda_pseudo", 0.0)::Float64)
-    τ_pseudo   = Zygote.@ignore eltype(Ymeta)(get!(settings["opt"]["cvae"], "tau_pseudo", 0.0)::Float64)
+    τ_pseudo   = Zygote.@ignore eltype(Ymeta)(get!(settings["opt"]["cvae"], "tau_lambda_pseudo", 0.0)::Float64)
+    δ_pseudo   = Zygote.@ignore eltype(Ymeta)(get!(settings["opt"]["cvae"], "delta_lambda_pseudo", 0.0)::Float64)
     minkept    = Zygote.@ignore get!(settings["train"], "CVAEmask", 0)::Int
 
     # Sample X̂,θ,Z from priors
@@ -295,34 +315,27 @@ function CVAElosses(Ymeta::lib.AbstractMetaDataSignal, θPseudo = nothing, ZPseu
 
     if λ_vae_sim > 0
         ℓ = push!!(ℓ, :VAE => λ_vae_sim * derived["vae_reg_loss"](lib.signal(X̂state), X̂mask, lib.sample_mv_normal(X̂state.μq0, exp.(X̂state.logσq))))
-        # ℓ = push!!(ℓ, :VAE => λ_vae_sim * derived["vae_reg_loss"](lib.signal(X̂state), X̂mask, lib.sample_mv_normal(X̂state.μr0, exp.(X̂state.logσr))))
     end
     if λ_latent > 0
         ℓ = push!!(ℓ, :LatentReg => λ_latent * lib.EnsembleKLDivUnitGaussian(X̂state.μq0, X̂state.logσq))
     end
 
     if λ_pseudo > 0
-        λ_pseudo = Zygote.@ignore begin
-            if τ_pseudo > 0 && @isdefined(trainer)
-                t = oftype(λ_pseudo, trainer.state.iteration)
-                λ_pseudo * -expm1(-t/τ_pseudo) # exponential warmup of `λ_pseudo` over period `τ_pseudo`
-                # λ_pseudo * (t < τ_pseudo ? zero(t) : -expm1(-(t-τ_pseudo)/τ_pseudo)) # exponential warmup of `λ_pseudo` weighting after `τ_pseudo` warmup steps
-            else
-                λ_pseudo
-            end
+        λ_pseudo = Zygote.@ignore λ_pseudo * (τ_pseudo <= 0 || !@isdefined(trainer) ? one(λ_pseudo) : lib.cos_warmup(oftype(λ_pseudo, trainer.state.iteration), τ_pseudo, δ_pseudo))
+        if λ_pseudo == 0
+            ℓ = push!!(ℓ, :KLDivPseudo => zero(λ_pseudo), :ELBOPseudo => zero(λ_pseudo))
+            (λ_vae_data > 0) && (ℓ = push!!(ℓ, :VAEPseudo => zero(λ_pseudo)))
+            (λ_latent > 0) && (ℓ = push!!(ℓ, :LatentRegPseudo => zero(λ_pseudo)))
+            return ℓ
         end
 
         #=
-        # Use inferred params as pseudolabels for Ymeta
-        θPseudo, ZPseudo = Zygote.@ignore begin
-            cvae = τ_pseudo > 0 ? derived["mean_cvae"] : derived["cvae"] # pseudolabels generated from exponential moving average of cvaes with time constant `τ_pseudo`
-            lib.sampleθZ(phys, cvae, Ymeta; posterior_mode = true) # pseudo θ and Z labels for Y are given by cvae posterior modes
-        end
+        # Generate pseudolabels for Ymeta from exponential moving average of CVAEs with time constant `τ_cvae`
+        θPseudo, ZPseudo = Zygote.@ignore lib.sampleθZ(phys, derived["mean_cvae"], Ymeta; posterior_mode = true) # pseudo θ and Z labels for Y are given by cvae posterior modes
         =#
 
         # CVAE pseudo-state
         Ymasked, Ymask = lib.pad_and_mask_signal(lib.signal(Ymeta), lib.nsignal(derived["cvae"]); minkept, maxkept = lib.nsignal(Ymeta))
-        # Ymasked, Ymask = lib.pad_and_mask_signal(X̂, lib.nsignal(derived["cvae"]); minkept, maxkept = lib.nsignal(Ymeta)) #TODO try bootstrapping X̂ to see if it also fails...
         Ystate = lib.CVAETrainingState(derived["cvae"], Ymasked, θPseudo, ZPseudo)
 
         # CVAE loss from pseudolabels
@@ -331,7 +344,6 @@ function CVAElosses(Ymeta::lib.AbstractMetaDataSignal, θPseudo = nothing, ZPseu
 
         if λ_vae_data > 0
             ℓ = push!!(ℓ, :VAEPseudo => λ_pseudo * λ_vae_data * derived["vae_reg_loss"](lib.signal(Ystate), Ymask, lib.sample_mv_normal(Ystate.μq0, exp.(Ystate.logσq))))
-            # ℓ = push!!(ℓ, :VAEPseudo => λ_pseudo * λ_vae_data * derived["vae_reg_loss"](lib.signal(Ystate), Ymask, lib.sample_mv_normal(Ystate.μr0, exp.(Ystate.logσr))))
         end
         if λ_latent > 0
             ℓ = push!!(ℓ, :LatentRegPseudo => λ_pseudo * λ_latent * lib.EnsembleKLDivUnitGaussian(Ystate.μq0, Ystate.logσq))
@@ -401,17 +413,17 @@ haskey(derived, "pretrained_cvae") && lib.pseudo_labels!(phys, derived["pretrain
 function sample_batch(dataset::Symbol; batchsize::Int, img_idx = nothing)
     (img_idx === nothing) && (img_idx = rand(1:length(phys.images)))
     img = phys.images[img_idx]
-    Ys = img.partitions[dataset]
-    J = sample(1:size(Ys,2), batchsize; replace = false)
-    Y = Ys[:,J] |> to32
+    Y, J = lib.sample_columns(img.partitions[dataset], batchsize; replace = false)
+    Y = Y |> to32
     Ymeta = lib.MetaCPMGSignal(phys, img, Y)
+    XPseudo = !haskey(derived, "pretrained_cvae") ? nothing : (img.meta[:pseudolabels][dataset][:signalfit][:,J] |> to32)
     θPseudo = !haskey(derived, "pretrained_cvae") ? nothing : (img.meta[:pseudolabels][dataset][:theta][:,J] |> to32)
     ZPseudo = !haskey(derived, "pretrained_cvae") ? nothing : (img.meta[:pseudolabels][dataset][:latent][:,J] |> to32)
-    return out = (; img_idx, img, Y, Ymeta, θPseudo, ZPseudo)
+    return out = (; img_idx, img, Y, Ymeta, XPseudo, θPseudo, ZPseudo)
 end
 
 function train_step(engine, batch)
-    trainer.should_terminate && return Dict{Any,Any}() #TODO
+    # trainer.should_terminate && return Dict{Any,Any}() #TODO
 
     @unpack Y, Ymeta, θPseudo, ZPseudo = sample_batch(:train; batchsize = settings["train"]["batchsize"])
     outputs = Dict{Any,Any}()
@@ -450,13 +462,36 @@ function train_step(engine, batch)
                     lib.save_progress(@dict(models, logger); savefolder = lib.logdir(), prefix = "failure-", ext = ".jld2")
                     engine.terminate()
                 end
+                mod(trainer.state.iteration, 10 * 100) == 0 && let
+                    log∇ϵ = -6
+                    ∇ϵ = 10f0 ^ log∇ϵ
+                    # Gradient histograms
+                    plot(
+                        map(["enc1", "enc2", "dec", "vae_dec"]) do name
+                            ps_name = Flux.params(models[name])
+                            gs_gpu = [gs[p] for p in ps_name if gs[p] !== nothing]
+                            isempty(gs_gpu) && return plot(; title = L"%$name: $\log_{10}(10^{%$log∇ϵ} + |g|)$", titlefontsize = 14)
+                            gs_cpu = mapreduce(vec, vcat, gs_gpu) |> Flux.cpu
+                            log_gs_cpu = log10.(∇ϵ .+ abs.(gs_cpu))
+                            histogram(log_gs_cpu; title = L"%$name: $\log_{10}(10^{%$log∇ϵ} + |g|)$", titlefontsize = 14, xlim = (log∇ϵ - 0.5, 3.0))
+                        end...
+                    ) |> display
+                    #=
+                    # Check for zero gradients
+                    for name in ["enc1", "enc2", "dec", "vae_dec"], p in Flux.params(models[name])
+                        if any(iszero, gs[p])
+                            @info "Zero gradient: $(lib.find_model_param(models, p))"
+                        end
+                    end
+                    =#
+                end
                 =#
                 @timeit "update!" Flux.Optimise.update!(optimizers["cvae"], ps, gs) #TODO CUDA.@sync
                 outputs["CVAE"] = ℓ
             end
             if haskey(derived, "mean_cvae")
-                τ_pseudo = get!(settings["opt"]["cvae"], "tau_pseudo", 0.0)::Float64
-                (τ_pseudo > 0) && lib.movingaverage!(derived["mean_cvae"], derived["cvae"], τ_pseudo) # exponential moving average of cvaes
+                τ_cvae = get!(settings["opt"]["cvae"], "tau_cvae", 0.0)::Float64
+                (τ_cvae > 0) && lib.movingaverage!(derived["mean_cvae"], derived["cvae"], τ_cvae) # exponential moving average of cvaes
             end
         end
 
@@ -551,14 +586,17 @@ function fit_metrics(Ymeta, Ymeta_fit_state, θtrue, Ztrue)
     theta_err = (θtrue === nothing) ? missing : mean(abs, lib.θerror(phys, θtrue, θ); dims = 2) |> lib.cpu |> vec |> copy
     Z_err = (Ztrue === nothing) ? missing : mean(abs, Ztrue .- Z; dims = 2) |> lib.cpu |> vec |> copy
 
-    metrics = (; all_rmse, all_logL, rmse, logL, theta_err, Z_err, rmse_true = missing, logL_true = missing)
+    _, results = lib.mle_biexp_epg_noise_only(ν, lib.signal(Ymeta); batch_size = :, verbose = false)
+    logL_opt = mean(results.loss)
+
+    metrics = (; all_rmse, all_logL, rmse, logL, logL_opt, theta_err, Z_err, rmse_true = missing, logL_true = missing)
     cache_cb_args = (lib.signal(Ymeta), θ, Z, X, δ, ϵ, ν, X̂, missing) # νtrue
 
     return metrics, cache_cb_args
 end
 
 function compute_metrics(engine, batch; dataset)
-    trainer.should_terminate && return Dict{Any,Any}()
+    # trainer.should_terminate && return Dict{Any,Any}()
 
     @timeit "compute metrics" begin #TODO CUDA.@sync
         # Update callback state
@@ -670,7 +708,7 @@ function compute_metrics(engine, batch; dataset)
 end
 
 function makeplots(;showplot = false)
-    trainer.should_terminate && return Dict{Symbol,Any}()
+    # trainer.should_terminate && return Dict{Symbol,Any}()
     try
         Dict{Symbol, Any}(
             :ricemodel    => lib.plot_rician_model(logger, cb_state, phys; showplot, bandwidths = (filter(((k,v),) -> startswith(k, "logsigma"), collect(models)) |> logσs -> isempty(logσs) ? nothing : (x->lib.cpu(permutedims(x[2]))).(logσs))),

@@ -492,9 +492,9 @@ use activation `σhid` and the last layer uses activation `σout`.
 """
 function MLP(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout = identity; skip = false, dropout = false, layernorm = false, initW = Flux.glorot_uniform, initb = Flux.zeros, initW_last = initW, initb_last = initb)
     σfactory(f) =
-        f === identity ? () -> () :
-        f isa Base.BroadcastFunction ? () -> (f,) : # Thunk returning fixed BroadcastFunction
-        f isa Tuple ? () -> (f[1](f[2:end]...),) : # Assume f[1] is a factory returning structs which take array inputs, and f[2:end] are the arguments; thunk returns new instance with each call
+        f === identity ? () -> () : # Identity layers can be skipped
+        f isa Base.BroadcastFunction ? () -> (f,) : # Thunk just returns BroadcastFunction
+        f isa Tuple ? () -> (f[1](f[2:end]...),) : # Assume f[1] is a factory returning structs which take array inputs, and f[2:end] are factory arguments; thunk returns new instance with each call
         () -> (Base.BroadcastFunction(f),) # Assume f is scalar function capable of broadcasting; thunk returns BroadcastFunction wrapping f
     maybedropout(l) = dropout > 0 ? Flux.Chain(l, Flux.Dropout(dropout)) : l
     maybelayernorm(l) = layernorm ? Flux.Chain(l, Flux.LayerNorm(Dhid)) : l

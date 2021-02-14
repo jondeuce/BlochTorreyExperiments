@@ -363,41 +363,61 @@ function pseudo_labels!(phys::EPGModel, rice::RicianCorrector, cvae::CVAE; kwarg
     return phys
 end
 
-function pseudo_labels!(phys::EPGModel, rice::RicianCorrector, cvae::CVAE, img::CPMGImage; initial_guess_only = false, force_recompute = true, batch_size = 1024 * Threads.nthreads(), kwargs...)
+function pseudo_labels!(
+        phys::EPGModel, rice::RicianCorrector, cvae::CVAE, img::CPMGImage;
+        initial_guess_only = false, sigma_reg = 0.5, noisebounds = (-Inf, 0.0),
+        force_recompute = true, new_noisescale = rice.noisescale,
+    )
+
     # Optionally skip cecomputing
     haskey(img.meta, :pseudolabels) && !force_recompute && return img
 
     # Perform MLE fit on all signals within mask
     initial_guess, results = mle_biexp_epg(
         phys, rice, cvae, img;
-        initial_guess_only, batch_size, data_source = :image, data_subset = :mask, kwargs...
+        initial_guess_only, sigma_reg, noisebounds,
+        batch_size = 2048 * Threads.nthreads(),
+        initial_guess_args = (data_source = :image, data_subset = :mask, batch_size = 10240),
     )
 
-    img.meta[:pseudolabels] = Dict{Symbol,Any}()
-    img.meta[:pseudolabels][:mask] = Dict{Symbol,Any}()
+    labels = img.meta[:pseudolabels] = Dict{Symbol,Any}()
+    masklabels = img.meta[:pseudolabels][:mask] = Dict{Symbol,Any}()
+    logscale(scale, X) = scale === nothing ? 0 : log.(scale(X))
+
     if initial_guess_only
-        img.meta[:pseudolabels][:mask][:signalfit] = initial_guess.X |> arr32
-        img.meta[:pseudolabels][:mask][:theta] = initial_guess.θ |> arr32
-        img.meta[:pseudolabels][:mask][:latent] = initial_guess.Z |> arr32
+        masklabels[:signalfit] = initial_guess.X |> arr32
+        masklabels[:theta] = initial_guess.θ |> arr32
+        masklabels[:latent] = initial_guess.Z |> arr32
     else
         X, θ, logϵ = (results.signalfit, results.theta, permutedims(results.logepsilon)) .|> arr32
-        img.meta[:pseudolabels][:mask][:signalfit] = X
-        img.meta[:pseudolabels][:mask][:theta] = θ
-        img.meta[:pseudolabels][:mask][:latent] = # ϵ = exp(Z) * scale => Z = logϵ - log(scale)
-            rice.noisescale === nothing ? logϵ : logϵ .- log.(rice.noisescale(X))
+        masklabels[:signalfit] = X
+        masklabels[:theta] = θ
+        masklabels[:latent] = logϵ .- logscale(rice.noisescale, X) # ϵ = exp(Z) * scale => Z = logϵ - log(scale)
+    end
+    if new_noisescale !== rice.noisescale
+        X, Z = masklabels[:signalfit], masklabels[:latent]
+        masklabels[:latent] = Z .+ logscale(rice.noisescale, X) .- logscale(new_noisescale, X)
     end
 
     # Copy results from within mask into relevant test/train/val partitions
     for (Ypart, Y) in img.partitions
         Ypart === :mask && continue
-        img.meta[:pseudolabels][Ypart] = Dict{Symbol,Any}()
-        J = findall_contains(img.indices[:mask], img.indices[Ypart])
+        labels[Ypart] = Dict{Symbol,Any}()
+        J = findall_within(img.indices[:mask], img.indices[Ypart])
         for res in [:signalfit, :theta, :latent]
-            img.meta[:pseudolabels][Ypart][res] = img.meta[:pseudolabels][:mask][res][:,J]
+            labels[Ypart][res] = masklabels[res][:,J]
         end
     end
 
     return img
+end
+
+function verify_pseudo_labels(phys::EPGModel, rice::RicianCorrector)
+    for (i,img) in enumerate(phys.images)
+        @unpack theta, latent = img.meta[:pseudolabels][:mask]
+        state = lib.posterior_state(phys, rice, img.partitions[:mask], theta, latent; accum_loss = ℓ -> sum(ℓ; dims = 1))
+        @info "Image $i: loss = $(mean(state.ℓ)) ± $(std(state.ℓ))"
+    end
 end
 
 ####
