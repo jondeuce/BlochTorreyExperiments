@@ -209,16 +209,24 @@ end
 """
 NotTrainable(layer)
 
-Wraps the callable `layer` such that any parameters internal to `layer`
-are ignored by Flux during gradient calls.
+Wraps the callable `layer` such any that parameters internal to `layer`
+are treated as constant by Flux during training.
 """
 struct NotTrainable{F}
     layer::F
 end
 Flux.@functor NotTrainable # need functor for e.g. `fmap`
 Flux.trainable(::NotTrainable) = () # no trainable parameters
-(l::NotTrainable)(xs...) = l.layer(xs...)
 Base.show(io::IO, l::NotTrainable) = (print(io, "NotTrainable("); print(io, l.layer); print(io, ")"))
+
+(l::NotTrainable)(xs...) = whitebox_apply(l.layer, xs...)
+
+whitebox_apply(f, xs...) = f(xs...)
+
+Zygote.@adjoint function whitebox_apply(f, xs...)
+    y, J = Zygote.pullback(f, xs...)
+    y, Δ -> (nothing, J(Δ)...)
+end
 
 ```
 ApplyOverDims

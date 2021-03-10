@@ -85,7 +85,7 @@ lib.settings_template() = TOML.parse(
         loss  = "mmd"        # Kernel loss ("mmd", "tstatistic", or "mmd_diff")
 
 [arch]
-    posterior = "Gaussian" # "Kumaraswamy"
+    posterior = "Gaussian" # "TruncatedGaussian", "Gaussian", "Kumaraswamy"
     nlatent   = 1   # number of latent variables Z
     zdim      = 12  # embedding dimension of z
     hdim      = 512 # size of hidden layers
@@ -194,8 +194,9 @@ lib.@save_expression lib.logdir("build_models.jl") function build_models(
     # )
 
     # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-13pptz2h/files", lib.projectdir("wandb"))), modelprefix = "best-")
-    derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-15v0mdjw/files", lib.projectdir("wandb"))), modelprefix = "best-")
-    lib.pseudo_labels!(phys, models["genatr"], derived["pretrained_cvae"]; force_recompute = true, initial_guess_only = false, sigma_reg = 0.5, noisebounds = settings["arch"]["genatr"]["noisebounds"])
+    # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-15v0mdjw/files", lib.projectdir("wandb"))), modelprefix = "best-")
+    derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-1p14e3na/files", lib.projectdir("wandb"))), modelprefix = "best-")
+    lib.pseudo_labels!(phys, models["genatr"], derived["pretrained_cvae"]; force_recompute = false, initial_guess_only = false, sigma_reg = 0.5, noisebounds = settings["arch"]["genatr"]["noisebounds"])
 
     lib.verify_pseudo_labels(phys, models["genatr"])
 
@@ -423,7 +424,7 @@ function sample_batch(dataset::Symbol; batchsize::Int, img_idx = nothing)
 end
 
 function train_step(engine, batch)
-    # trainer.should_terminate && return Dict{Any,Any}() #TODO
+    trainer.should_terminate && return Dict{Any,Any}() #TODO
 
     @unpack Y, Ymeta, θPseudo, ZPseudo = sample_batch(:train; batchsize = settings["train"]["batchsize"])
     outputs = Dict{Any,Any}()
@@ -457,11 +458,13 @@ function train_step(engine, batch)
             for _ in 1:settings["train"]["CVAEsteps"]
                 @timeit "forward" ℓ, back = Zygote.pullback(() -> sum(CVAElosses(Ymeta, θPseudo, ZPseudo; marginalize_Z = false)), ps) #TODO CUDA.@sync #TODO marginalize_Z
                 @timeit "reverse" gs = back(one(ℓ)) #TODO CUDA.@sync
-                #=
-                lib.terminate_on_bad_params_or_gradients(models, ps, gs) do
-                    lib.save_progress(@dict(models, logger); savefolder = lib.logdir(), prefix = "failure-", ext = ".jld2")
-                    engine.terminate()
+                if _DEBUG_
+                    lib.terminate_on_bad_params_or_gradients(models, ps, gs) do
+                        lib.save_progress(@dict(models, logger); savefolder = lib.logdir(), prefix = "failure-", ext = ".jld2")
+                        engine.terminate()
+                    end
                 end
+                #=
                 mod(trainer.state.iteration, 10 * 100) == 0 && let
                     log∇ϵ = -6
                     ∇ϵ = 10f0 ^ log∇ϵ
@@ -596,7 +599,7 @@ function fit_metrics(Ymeta, Ymeta_fit_state, θtrue, Ztrue)
 end
 
 function compute_metrics(engine, batch; dataset)
-    # trainer.should_terminate && return Dict{Any,Any}()
+    trainer.should_terminate && return Dict{Any,Any}()
 
     @timeit "compute metrics" begin #TODO CUDA.@sync
         # Update callback state
@@ -708,7 +711,7 @@ function compute_metrics(engine, batch; dataset)
 end
 
 function makeplots(;showplot = false)
-    # trainer.should_terminate && return Dict{Symbol,Any}()
+    trainer.should_terminate && return Dict{Symbol,Any}()
     try
         Dict{Symbol, Any}(
             :ricemodel    => lib.plot_rician_model(logger, cb_state, phys; showplot, bandwidths = (filter(((k,v),) -> startswith(k, "logsigma"), collect(models)) |> logσs -> isempty(logσs) ? nothing : (x->lib.cpu(permutedims(x[2]))).(logσs))),

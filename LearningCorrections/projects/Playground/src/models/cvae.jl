@@ -41,8 +41,15 @@ end
 ####
 
 @inline split_at(x::AbstractVecOrMat, n::Int) = n == size(x,1) ? (x, similar(x, 0, size(x)[2:end]...)) : (x[1:n,..], x[n+1:end,..])
-split_theta_latent(::CVAE{n,nθ,nθM,k,nz}, x::AbstractVecOrMat) where {n,nθ,nθM,k,nz} = split_at(x, nθ)
-split_marginal_latent(::CVAE{n,nθ,nθM,k,nz}, x::AbstractVecOrMat) where {n,nθ,nθM,k,nz} = split_at(x, nθM)
+split_theta_latent(cvae::CVAE, x::AbstractVecOrMat) = split_at(x, ntheta(cvae))
+split_marginal_latent(cvae::CVAE, x::AbstractVecOrMat) = split_at(x, nmarginalized(cvae))
+
+function split_marginal_latent_pairs(cvae::CVAE, x::AbstractVecOrMat)
+    μ1θ_μ1Z, μ2θ_μ2Z = split_dim1(x) # x = [μ1θ; μ1Z; μ2θ; μ1Z]
+    μ1θ, μ1Z = split_marginal_latent(cvae, μ1θ_μ1Z) # size(μ1θ,1) = nθM, size(μ1Z,1) = nlatent
+    μ2θ, μ2Z = split_marginal_latent(cvae, μ2θ_μ2Z) # size(μ2θ,1) = nθM, size(μ2Z,1) = nlatent
+    return (μ1θ, μ2θ, μ1Z, μ2Z)
+end
 
 ####
 #### CVAE methods
@@ -113,24 +120,35 @@ function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) wh
     @unpack cvae, Y, θ̄, Z, μq0, logσq = state
     nθM = nmarginalized(cvae)
     zq = sample_mv_normal(μq0, exp.(logσq))
-    μx0, logσx = split_dim1(cvae.D(Y,zq))
+    μx0, logσx = split_dim1(cvae.D(Y, zq))
     ELBO = marginalize_Z ?
         NegLogLGaussian(θ̄[1:nθM,..], μx0[1:nθM,..], logσx[1:nθM,..]) :
         NegLogLGaussian(vcat(θ̄[1:nθM,..], Z), μx0, logσx)
 end
 
-function split_kumaraswamy_and_gaussian(μx, nθM)
-    αθ_μZ, βθ_logσZ = split_dim1(μx) # μx = D(Y,zq) = [αθ; μZ; βθ; logσZ]
-    αθ, μZ = split_at(αθ_μZ, nθM) # size(αθ,1) = nθM, size(μZ,1) = nlatent
-    βθ, logσZ = split_at(βθ_logσZ, nθM) # size(βθ,1) = nθM, size(logσZ,1) = nlatent
-    return (αθ, βθ, μZ, logσZ)
+function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) where {C <: CVAEPosteriorDist{TruncatedGaussian}}
+    @unpack cvae, Y, θ̄, Z, μq0, logσq = state
+    nθM = nmarginalized(cvae)
+    zq = sample_mv_normal(μq0, exp.(logσq))
+    μx = cvae.D(Y, zq) # μx = D(Y, zq) = [μθ̄M; μZ; logσθ̄M; logσZ]
+    μθ̄M, logσθ̄M, μZ, logσZ = split_marginal_latent_pairs(cvae, μx)
+    θ̄Mlo = Zygote.@ignore arr_similar(μθ̄M, (x->x[1]).(cvae.θ̄bd[1:nθM,..]))
+    θ̄Mhi = Zygote.@ignore arr_similar(μθ̄M, (x->x[2]).(cvae.θ̄bd[1:nθM,..]))
+    # μθ̄M = clamp.(μθ̄M, θ̄Mlo, θ̄Mhi) #TODO
+    ELBO_θ = NegLogLTruncatedGaussian(θ̄[1:nθM,..], μθ̄M, logσθ̄M, θ̄Mlo, θ̄Mhi)
+    if marginalize_Z
+        ELBO = ELBO_θ
+    else
+        ELBO = ELBO_θ + NegLogLGaussian(Z, μZ, logσZ)
+    end
 end
 
 function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) where {C <: CVAEPosteriorDist{Kumaraswamy}}
     @unpack cvae, Y, θ̄, Z, μq0, logσq = state
     nθM = nmarginalized(cvae)
     zq = sample_mv_normal(μq0, exp.(logσq))
-    αθ, βθ, μZ, logσZ = split_kumaraswamy_and_gaussian(cvae.D(Y,zq), nθM) # μx = D(Y,zq) = [αθ′; μZ′; βθ′; logσZ′]
+    μx = cvae.D(Y, zq) # μx = D(Y, zq) = [αθ; μZ; βθ; logσZ]
+    αθ, βθ, μZ, logσZ = split_marginal_latent_pairs(cvae, μx)
     ELBO_θ = NegLogLKumaraswamy(θ̄[1:nθM,..], αθ, βθ)
     if marginalize_Z
         ELBO = ELBO_θ
@@ -153,10 +171,27 @@ function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C
     #TODO: `mode` is probably not strictly the correct term, but in practice it should be something akin to the distribution mode since `μr0` is the most likely value for `zr` and `μx0` is the most likely value for `x` **conditional on `zr`**; likely there are counterexamples to this simple reasoning, though...
     @unpack cvae, Y, μr0, logσr = state
     zr = mode ? μr0 : sample_mv_normal(μr0, exp.(logσr))
-    μx = cvae.D(Y,zr)
+    μx = cvae.D(Y, zr)
     μx0, logσx = split_dim1(μx)
     x = mode ? μx0 : sample_mv_normal(μx0, exp.(logσx))
     θ̄M, Z = split_marginal_latent(cvae, x)
+    θM = θ̄_linear_unnormalize(cvae, θ̄M)
+    return θM, Z
+end
+
+function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C <: CVAEPosteriorDist{TruncatedGaussian}}
+    #TODO: `mode` is probably not strictly the correct term, but in practice it should be something akin to the distribution mode since `μr0` is the most likely value for `zr` and `μx0` is the most likely value for `x` **conditional on `zr`**; likely there are counterexamples to this simple reasoning, though...
+    @unpack cvae, Y, μr0, logσr = state
+    nθM = nmarginalized(cvae)
+    zr = mode ? μr0 : sample_mv_normal(μr0, exp.(logσr))
+    μx = cvae.D(Y, zr)
+    μθ̄M, logσθ̄M, μZ, logσZ = split_marginal_latent_pairs(cvae, μx)
+    θ̄Mlo = Zygote.@ignore arr_similar(μθ̄M, (x->x[1]).(cvae.θ̄bd[1:nθM,..]))
+    θ̄Mhi = Zygote.@ignore arr_similar(μθ̄M, (x->x[2]).(cvae.θ̄bd[1:nθM,..]))
+    # μθ̄M = clamp.(μθ̄M, θ̄Mlo, θ̄Mhi) #TODO
+    # θ̄M = mode ? μθ̄M : sample_trunc_mv_normal(μθ̄M, exp.(logσθ̄M), θ̄Mlo, θ̄Mhi) #TODO
+    θ̄M = mode ? clamp.(μθ̄M, θ̄Mlo, θ̄Mhi) : sample_trunc_mv_normal(μθ̄M, exp.(logσθ̄M), θ̄Mlo, θ̄Mhi)
+    Z = mode ? μZ : sample_mv_normal(μZ, exp.(logσZ))
     θM = θ̄_linear_unnormalize(cvae, θ̄M)
     return θM, Z
 end
@@ -165,8 +200,8 @@ function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C
     #TODO: `mode` is probably not strictly the correct term, but in practice it should be something akin to the distribution mode since `μr0` is the most likely value for `zr` and `μx0` is the most likely value for `x` **conditional on `zr`**; likely there are counterexamples to this simple reasoning, though...
     @unpack cvae, Y, μr0, logσr = state
     zr = mode ? μr0 : sample_mv_normal(μr0, exp.(logσr))
-    μx = cvae.D(Y,zr)
-    αθ, βθ, μZ, logσZ = split_kumaraswamy_and_gaussian(μx, nmarginalized(cvae))
+    μx = cvae.D(Y, zr)
+    αθ, βθ, μZ, logσZ = split_marginal_latent_pairs(cvae, μx)
     θ̄M = mode ? mode_kumaraswamy(αθ, βθ) : sample_kumaraswamy(αθ, βθ)
     Z = mode ? μZ : sample_mv_normal(μZ, exp.(logσZ))
     θM = θ̄_linear_unnormalize(cvae, θ̄M)
@@ -232,7 +267,7 @@ function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zpri
         θ = if posterior_θ
             θMlo = arr_similar(θ̂M, θmarginalized(phys, θlower(phys)))
             θMhi = arr_similar(θ̂M, θmarginalized(phys, θupper(phys)))
-            vcat(clamp.(θ̂M, θMlo, θMhi), Zygote.@ignore(θnuissance(phys, Ymeta))) #TODO
+            vcat(clamp.(θ̂M, θMlo, θMhi), Zygote.@ignore(θnuissance(phys, Ymeta))) #TODO Zygote.@ignore necessary?
         else
             sample(θprior, signal(Ymeta))
         end

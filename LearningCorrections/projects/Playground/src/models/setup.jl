@@ -343,8 +343,11 @@ function derived_cvae(phys::PhysicsModel{Float32}, enc1, enc2, dec; nlatent, zdi
     # Flux.Diagonal(2*(nmarginalized(phys) + nlatent); initα = init_μxlogσx_slope(phys; nlatent), initβ = init_μxlogσx_bias(phys; nlatent))
     ϵ = 10 * eps(Float32)
     θbd = NTuple{2,Float32}.(θbounds(phys))
-    θ̄bd = NTuple{2,Float32}.(fill((ϵ, 1-ϵ), ntheta(phys)))
-    posterior_dist = posterior == "Kumaraswamy" ? Kumaraswamy : Gaussian
+    θ̄bd = NTuple{2,Float32}.(fill((ϵ, 1-ϵ), length(θbd)))
+    posterior_dist =
+        posterior == "Kumaraswamy" ? Kumaraswamy :
+        posterior == "TruncatedGaussian" ? TruncatedGaussian :
+        Gaussian
     CVAE{nsignal(phys),ntheta(phys),nmarginalized(phys),nlatent,zdim}(enc1, enc2, dec, θbd, θ̄bd; posterior_dist)
 end
 

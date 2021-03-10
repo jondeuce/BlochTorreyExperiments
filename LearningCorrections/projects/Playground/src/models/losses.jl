@@ -25,21 +25,11 @@ end
 
 #### KL divergence between Gaussian and unit Gaussian
 
-#=
-@inline_cufunc kldiv_unitgaussian(μ, σ) = (σ^2 + μ^2 - 1) / 2  - log(σ)
-Zygote.@adjoint kldiv_unitgaussian(μ, σ) = kldiv_unitgaussian(μ, σ), Δ -> (Δ * μ, Δ * (σ - inv(σ)))
-=#
-
 @inline_cufunc kldiv_unitgaussian(μ, logσ) = (expm1(2logσ) + μ^2) / 2  - logσ
 Zygote.@adjoint kldiv_unitgaussian(μ, logσ) = kldiv_unitgaussian(μ, logσ), Δ -> Δ .* ∇kldiv_unitgaussian(μ, logσ)
 @inline_cufunc ∇kldiv_unitgaussian(μ, logσ) = (μ, expm1(2logσ))
 
 #### KL divergence between Gaussians
-
-#=
-@inline_cufunc kldiv_gaussian(μq0, σq, μr0, σr) = ((σq / σr)^2 + ((μr0 - μq0) / σr)^2 - 1) / 2 - log(σq / σr)
-Zygote.@adjoint kldiv_gaussian(μq0, σq, μr0, σr) = kldiv_gaussian(μq0, σq, μr0, σr), Δ -> (Δ * (μq0 - μr0) / σr^2, Δ * (σq / σr - σr / σq) / σr, Δ * (μr0 - μq0) / σr^2, Δ * (σr^2 - (μr0 - μq0)^2 - σq^2) / σr^3)
-=#
 
 @inline_cufunc kldiv_gaussian(μq0, logσq, μr0, logσr) = (expm1(2*(logσq-logσr)) + exp(-2logσr) * (μr0 - μq0)^2) / 2 - (logσq - logσr)
 Zygote.@adjoint kldiv_gaussian(μq0, logσq, μr0, logσr) = kldiv_gaussian(μq0, logσq, μr0, logσr), Δ -> Δ .* ∇kldiv_gaussian(μq0, logσq, μr0, logσr)
@@ -53,35 +43,155 @@ end
 
 #### Gaussian negative log-likelihood
 
+@inline_cufunc neglogL_gaussian(x, μ, logσ) = ((exp(-logσ) * (x - μ))^2 + log2π) / 2 + logσ
+Zygote.@adjoint neglogL_gaussian(x, μ, logσ) = neglogL_gaussian(x, μ, logσ), Δ -> Δ .* ∇neglogL_gaussian(x, μ, logσ)
+@inline_cufunc function ∇neglogL_gaussian(x, μ, logσ)
+    ∂x = exp(-2logσ) * (x - μ)
+    ∂μ = -∂x
+    ∂logσ = 1 - ∂x * (x - μ)
+    (∂x, ∂μ, ∂logσ)
+end
+
+#### Truncated Gaussian negative log-likelihood
+
+function _test_trunc_gaussian_log_Z(; verbose = false, lo = -30, hi = 30)
+    vals = exp.(lo:hi)
+    vals = [-reverse(vals); vals]
+    for i in 1:length(vals), j in i+1:length(vals), T in [Float64, Float32]
+        α, β = T(vals[i]), T(vals[j])
+        verbose && @info "α:      $α"
+        verbose && @info "β:      $β"
+        logẐ = trunc_gaussian_log_Z(α, β)
+        logZ = trunc_gaussian_log_Z(big(α), big(β))
+        errZ = abs(logZ - logẐ) / abs(logZ)
+        verbose && @info "approx: $logẐ"
+        verbose && @info "true:   $logZ"
+        verbose && @info "error:  $errZ"
+        verbose && println("")
+        ϵ = eps(T)^(2//3)
+        @assert logẐ isa T # correct type
+        @assert errZ < ϵ || (logZ < floatmin(T) && logẐ == 0) # error less than thresh, or zero if underflow
+    end
+end
+
 #=
-@inline_cufunc neglogL_gaussian(x, μx0, σx) = (((x - μx0) / σx)^2 + log2π) / 2 + log(σx)
-Zygote.@adjoint neglogL_gaussian(x, μx0, σx) = neglogL_gaussian(x, μx0, σx), Δ -> (Δ * (x - μx0) / σx^2, Δ * (μx0 - x) / σx^2, Δ * (σx^2 - (x - μx0)^2) / σx^3)
+@inline_cufunc function trunc_gaussian_log_Z(α, β)
+    # Compute log(Φ(β) - Φ(α)) = log(½(erf(β/√2) - erf(α/√2))) in a numerically stable way. Φ(x) = ½(1+erf(x/√2)) is the standard normal cdf
+    α, β = invsqrt2 * α, invsqrt2 * β
+    if β < 0
+        α, β = -β, -α
+    end
+    if α < 0
+        if β < 1
+            log((erf(β) + erf(-α))/2)
+        else
+            log1p(-(erfc(β) + erfc(-α))/2)
+        end
+    else
+        if β < 1
+            log((erf(β) - erf(α))/2)
+        else
+            log(erfcx(α) - exp((α-β)*(α+β)) * erfcx(β)) - α^2 - logtwo
+        end
+    end
+end
+
+@inline_cufunc function neglogL_trunc_gaussian(x, μ, logσ, a, b)
+    σ⁻¹ = exp(-logσ) # inv(σ)
+    return ((σ⁻¹ * (x - μ))^2 + log2π) / 2 + logσ + trunc_gaussian_log_Z(σ⁻¹ * (a - μ), σ⁻¹ * (b - μ))
+end
+
+Zygote.@adjoint neglogL_trunc_gaussian(x, μ, logσ, a, b) = neglogL_trunc_gaussian(x, μ, logσ, a, b), Δ -> Δ .* ∇neglogL_trunc_gaussian(x, μ, logσ, a, b)
+
+@inline_cufunc function ∇neglogL_trunc_gaussian(x, μ, logσ, a, b)
+    σ⁻¹ = exp(-logσ) # inv(σ)
+    α, β = σ⁻¹ * (a - μ), σ⁻¹ * (b - μ)
+    logZ = trunc_gaussian_log_Z(α, β)
+    logϕa = -(α^2 + log2π) / 2
+    logϕb = -(β^2 + log2π) / 2
+    ∂a = -exp(logϕa - logσ - logZ)
+    ∂b = exp(logϕb - logσ - logZ)
+    ∂x = σ⁻¹^2 * (x - μ)
+    ∂μ = -∂x - (∂a + ∂b)
+    ∂logσ = 1 - ∂x * (x - μ) + (α * exp(logϕa - logZ) - β * exp(logϕb - logZ))
+    (∂x, ∂μ, ∂logσ, ∂a, ∂b)
+end
 =#
 
-@inline_cufunc neglogL_gaussian(x, μx0, logσx) = (exp(-2logσx) * (x - μx0)^2 + log2π) / 2 + logσx
-Zygote.@adjoint neglogL_gaussian(x, μx0, logσx) = neglogL_gaussian(x, μx0, logσx), Δ -> Δ .* ∇neglogL_gaussian(x, μx0, logσx)
-@inline_cufunc function ∇neglogL_gaussian(x, μx0, logσx)
-    ∂x = exp(-2logσx) * (x - μx0)
-    ∂μx0 = -∂x
-    ∂logσx = 1 - ∂x * (x - μx0)
-    (∂x, ∂μx0, ∂logσx)
+function trunc_gaussian_log_Z(α::Number, β::Number)
+    # Compute log(Φ(β) - Φ(α)) = log(½(erf(β/√2) - erf(α/√2))) in a numerically stable way. Φ(x) = ½(1+erf(x/√2)) is the standard normal cdf
+    α, β = invsqrt2 * α, invsqrt2 * β
+    if β < 0
+        α, β = -β, -α
+    end
+    if α < 0
+        if β < 1
+            log((erf(β) + erf(-α))/2)
+        else
+            log1p(-(erfc(β) + erfc(-α))/2)
+        end
+    else
+        if β < 1
+            log((erf(β) - erf(α))/2)
+        else
+            log(erfcx(α) - exp((α-β)*(α+β)) * erfcx(β)) - α^2 - logtwo
+        end
+    end
+end
+trunc_gaussian_log_Z(α::AbstractArray, β::AbstractArray) = trunc_gaussian_log_Z.(α, β)
+
+function trunc_gaussian_log_Z(α′::CuArray, β′::CuArray)
+    # Compute log(Φ(β) - Φ(α)) = log(½(erf(β/√2) - erf(α/√2))) in a numerically stable way. Φ(x) = ½(1+erf(x/√2)) is the standard normal cdf
+    α = @. invsqrt2 * ifelse(β′ < 0, -β′, α′)
+    β = @. invsqrt2 * ifelse(β′ < 0, -α′, β′)
+    @. ifelse(
+        α < 0,
+        ifelse(
+            β < 1,
+            CUDA.log((CUDA.erf(β) + CUDA.erf(-α))/2),
+            CUDA.log1p(-(CUDA.erfc(β) + CUDA.erfc(-α))/2),
+        ),
+        ifelse(
+            β < 1,
+            CUDA.log((CUDA.erf(β) - CUDA.erf(α))/2),
+            CUDA.log(CUDA.erfcx(α) - CUDA.exp((α-β)*(α+β)) * CUDA.erfcx(β)) - α^2 - logtwo,
+        )
+    )
+end
+
+function neglogL_trunc_gaussian(x, μ, logσ, a, b)
+    σ⁻¹ = @. exp(-logσ) # inv(σ)
+    logZ = trunc_gaussian_log_Z(σ⁻¹ .* (a .- μ), σ⁻¹ .* (b .- μ))
+    return @. ((σ⁻¹ * (x - μ))^2 + log2π) / 2 + logσ + logZ
+end
+
+Zygote.@adjoint neglogL_trunc_gaussian(x, μ, logσ, a, b) = neglogL_trunc_gaussian(x, μ, logσ, a, b), Δ -> ∇neglogL_trunc_gaussian(Δ, x, μ, logσ, a, b)
+
+function ∇neglogL_trunc_gaussian(Δ, x, μ, logσ, a, b)
+    σ⁻¹ = @. exp(-logσ) # inv(σ)
+    α = @. σ⁻¹ * (a - μ)
+    β = @. σ⁻¹ * (b - μ)
+    logZ = trunc_gaussian_log_Z(α, β)
+    logϕa = @. -(α^2 + log2π) / 2
+    logϕb = @. -(β^2 + log2π) / 2
+    ∂a = @. -exp(logϕa - logσ - logZ)
+    ∂b = @. exp(logϕb - logσ - logZ)
+    ∂x = @. σ⁻¹^2 * (x - μ)
+    ∂μ = @. -∂x - (∂a + ∂b)
+    ∂logσ = @. 1 - ∂x * (x - μ) + (α * exp(logϕa - logZ) - β * exp(logϕb - logZ))
+    (Δ .* ∂x, Δ .* ∂μ, Δ .* ∂logσ, Δ .* ∂a, Δ .* ∂b)
 end
 
 #### Laplace negative log-likelihood
 
-#=
-@inline_cufunc neglogL_laplace(x, μx0, σx) = abs(x - μx0) / σx + log(σx) + logtwo
-Zygote.@adjoint neglogL_laplace(x, μx0, σx) = neglogL_laplace(x, μx0, σx), Δ -> (Δ * sign(x - μx0) / σx, Δ * sign(μx0 - x) / σx, Δ * (σx - abs(x - μx0)) / σx^2)
-=#
-
-@inline_cufunc neglogL_laplace(x, μx0, logσx) = exp(-logσx) * abs(x - μx0) + logσx + logtwo
-Zygote.@adjoint neglogL_laplace(x, μx0, logσx) = neglogL_laplace(x, μx0, logσx), Δ -> Δ .* ∇neglogL_laplace(x, μx0, logσx)
-@inline_cufunc function ∇neglogL_laplace(x, μx0, logσx)
-    e⁻ˢ = exp(-logσx)
-    ∂x = e⁻ˢ * sign(x - μx0)
-    ∂μx0 = -∂x
-    ∂logσx = 1 - e⁻ˢ * abs(x - μx0)
-    (∂x, ∂μx0, ∂logσx)
+@inline_cufunc neglogL_laplace(x, μ, logσ) = exp(-logσ) * abs(x - μ) + logσ + logtwo
+Zygote.@adjoint neglogL_laplace(x, μ, logσ) = neglogL_laplace(x, μ, logσ), Δ -> Δ .* ∇neglogL_laplace(x, μ, logσ)
+@inline_cufunc function ∇neglogL_laplace(x, μ, logσ)
+    e⁻ˢ = exp(-logσ)
+    ∂x = e⁻ˢ * sign(x - μ)
+    ∂μ = -∂x
+    ∂logσ = 1 - e⁻ˢ * abs(x - μ)
+    (∂x, ∂μ, ∂logσ)
 end
 
 #### Kumaraswamy negative log-likelihood
@@ -99,20 +209,6 @@ Zygote.@adjoint neglogL_kumaraswamy(x, α, β) = neglogL_kumaraswamy(x, α, β),
 end
 
 #### Rician negative log-likelihood
-
-#=
-@inline_cufunc neglogL_rician_unsafe(x, ν, σ) = 2*log(σ) - log(x) + (x^2 + ν^2)/(2*σ^2) - _logbesseli0_cuda_unsafe(x*ν/σ^2)
-@inline_cufunc neglogL_rician(x, ν, σ; ϵ = epseltype(x)) = neglogL_rician_unsafe(max(x,ϵ), max(ν,ϵ), max(σ,ϵ)) # abs(⋅)+ϵ retains some gradient informating, whereas max(⋅,ϵ) drops gradient when <ϵ; which is preferred?
-
-ChainRules.@scalar_rule(
-    neglogL_rician_unsafe(x, ν, σ),
-    @setup(σ⁻² = inv(σ^2), z = σ⁻²*x*ν, r = _besselix1_cuda_unsafe(z) / _besselix0_cuda_unsafe(z)),
-    (∂x_neglogL_rician_unsafe(x, ν, σ, σ⁻², z, r), ∂ν_neglogL_rician_unsafe(x, ν, σ, σ⁻², z, r), ∂σ_neglogL_rician_unsafe(x, ν, σ, σ⁻², z, r)), # assumes strictly positive values
-)
-@inline_cufunc ∂x_neglogL_rician_unsafe(x, ν, σ, σ⁻², z, r) = σ⁻² * (x - ν * r) - 1/x
-@inline_cufunc ∂ν_neglogL_rician_unsafe(x, ν, σ, σ⁻², z, r) = σ⁻² * (ν - x * r)
-@inline_cufunc ∂σ_neglogL_rician_unsafe(x, ν, σ, σ⁻², z, r) = (2 - σ⁻² * ((x - ν)^2 + 2 * ν * x * (1 - r))) / σ
-=#
 
 @inline_cufunc neglogL_rician_unsafe(x, ν, logσ) = 2logσ - log(x) + exp(-2logσ) * (x^2 + ν^2)/2 - _logbesseli0_cuda_unsafe(exp(-2logσ) * x * ν)
 @inline_cufunc neglogL_rician(x, ν, logσ; ϵ = epseltype(x), logϵ = log(epseltype(x))) = neglogL_rician_unsafe(max(x,ϵ), max(ν,ϵ), max(logσ,logϵ)) # abs(⋅)+ϵ retains some gradient informating, whereas max(⋅,ϵ) drops gradient when <ϵ; which is preferred?
@@ -132,31 +228,26 @@ ChainRules.@scalar_rule(
 @inline_cufunc mean_rician(ν, σ; ϵ = epseltype(ν)) = mean_rician_unsafe(max(ν,ϵ), max(σ,ϵ)) # abs(⋅)+ϵ instead of e.g. max(⋅,ϵ) to avoid completely dropping gradient when <ϵ
 
 #### Scalar losses (scalar functions of entire arrays)
-EnsembleKLDivUnitGaussian(μ, logσ) = KLDivUnitGaussian(ensemble_of_gaussians(μ, logσ)...) # fit single Gaussian to (equally weighted) ensemble of Gaussians (arrays μ, logσ), and take KL divergence of this fitted Gaussian with a unit Gaussian
+
+EnsembleKLDivUnitGaussian(μ, logσ; dims = :) = KLDivUnitGaussian(ensemble_of_gaussians(μ, logσ; dims)...) # fit single Gaussian to (equally weighted) ensemble of Gaussians (arrays μ, logσ), and take KL divergence of this fitted Gaussian with a unit Gaussian
 
 #### Arraywise losses (sum of individual elementwise losses)
 
 @inline_cufunc _cap(x) = min(x, oftype(x, 1000))
 @inline_cufunc _expcap(x) = min(x, oftype(x, 20))
-# KLDivUnitGaussian(μ, σ) = sum(_cap.(kldiv_unitgaussian.(μ, σ))) / size(μ,2) # KL-divergence between approximation posterior and N(0, 1) prior (Note: sum over dims=1, mean over dims=2)
-# KLDivGaussian(μq0, σq, μr0, σr) = sum(_cap.(kldiv_gaussian.(μq0, σq, μr0, σr))) / size(μq0,2) # KL-divergence (Note: sum over dims=1, mean over dims=2)
-# NegLogLGaussian(x, μx0, σx) = sum(_cap.(neglogL_gaussian.(x, μx0, σx))) / size(μx0,2) # Negative log-likelihood for Gaussian (Note: sum over dims=1, mean over dims=2)
 KLDivUnitGaussian(μ, logσ) = sum(_cap.(kldiv_unitgaussian.(μ, logσ))) / size(μ,2) # KL-divergence between approximation posterior and N(0, 1) prior (Note: sum over dims=1, mean over dims=2)
 KLDivGaussian(μq0, logσq, μr0, logσr) = sum(_cap.(kldiv_gaussian.(μq0, logσq, μr0, logσr))) / size(μq0,2) # KL-divergence (Note: sum over dims=1, mean over dims=2)
-NegLogLGaussian(x, μx0, logσx) = sum(_cap.(neglogL_gaussian.(x, μx0, logσx))) / size(μx0,2) # Negative log-likelihood for Gaussian (Note: sum over dims=1, mean over dims=2)
-NegLogLRician(x, μx0, logσx) = sum(_cap.(neglogL_rician.(x, μx0, logσx))) / size(μx0,2) # Negative log-likelihood for Rician (Note: sum over dims=1, mean over dims=2)
+NegLogLGaussian(x, μ, logσ) = sum(_cap.(neglogL_gaussian.(x, μ, logσ))) / size(μ,2) # Negative log-likelihood for Gaussian (Note: sum over dims=1, mean over dims=2)
+NegLogLTruncatedGaussian(x, μ, logσ, a, b) = sum(_cap.(neglogL_trunc_gaussian(x, μ, logσ, a, b))) / size(μ,2) # Negative log-likelihood for truncated Gaussian (Note: sum over dims=1, mean over dims=2)
+NegLogLRician(x, μ, logσ) = sum(_cap.(neglogL_rician.(x, μ, logσ))) / size(μ,2) # Negative log-likelihood for Rician (Note: sum over dims=1, mean over dims=2)
 NegLogLKumaraswamy(x, α, β) = sum(_cap.(neglogL_kumaraswamy.(x, _expcap.(α), _expcap.(β)))) / size(α,2) # Negative log-likelihood for Kumaraswamy (Note: sum over dims=1, mean over dims=2)
 
 function _crossentropy_gradcheck_test()
     for T in [Float32, Float64]
-        # @assert gradcheck((μ, σ′) -> kldiv_unitgaussian(μ, exp(σ′)), randn(T), randn(T); extrapolate = false, verbose = true)
-        # @assert gradcheck((μq0, σq′, μr0, σr′) -> kldiv_gaussian(μq0, exp(σq′), μr0, exp(σr′)), randn(T), randn(T), randn(T), randn(T); extrapolate = false, verbose = true)
-        # @assert gradcheck((x, μx0, σx′) -> neglogL_gaussian(x, μx0, exp(σx′)), randn(T), randn(T), randn(T); extrapolate = false, verbose = true)
-        # @assert gradcheck((x, μx0, σx′) -> neglogL_laplace(x, μx0, exp(σx′)), randn(T), randn(T), randn(T); extrapolate = false, verbose = true)
-        # @assert gradcheck(neglogL_rician, exp(randn(T)), exp(randn(T)), exp(randn(T)); extrapolate = false, verbose = true)
         @assert gradcheck(kldiv_unitgaussian, randn(T), randn(T); extrapolate = false, verbose = true)
         @assert gradcheck(kldiv_gaussian, randn(T), randn(T), randn(T), randn(T); extrapolate = false, verbose = true)
         @assert gradcheck(neglogL_gaussian, randn(T), randn(T), randn(T); extrapolate = false, verbose = true)
+        @assert gradcheck(neglogL_trunc_gaussian, randn(T), randn(T), randn(T), sort(randn(T,2))...; extrapolate = false, verbose = true)
         @assert gradcheck(neglogL_kumaraswamy, Flux.σ(randn(T)), randn(T), randn(T); extrapolate = false, verbose = true)
         @assert gradcheck(neglogL_laplace, randn(T), randn(T), randn(T); extrapolate = false, verbose = true)
         @assert gradcheck(neglogL_rician, exp(randn(T)), exp(randn(T)), randn(T); extrapolate = false, verbose = true)

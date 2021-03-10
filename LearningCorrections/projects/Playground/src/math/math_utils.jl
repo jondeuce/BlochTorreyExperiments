@@ -67,11 +67,15 @@ Zygote.@adjoint Flux.softplus(x::Real) = Flux.softplus(x), Δ -> (Δ * Flux.σ(x
 @inline sample_mv_normal(μ::AbstractArray) = sample_mv_normal(split_dim1(μ)...)
 @inline sample_mv_normal(μ0::AbstractArray, σ::AbstractArray) = sample_mv_normal(μ0, σ, randn_similar(σ, max.(size(μ0), size(σ))))
 @inline sample_mv_normal(μ0::AbstractArray, σ::AbstractArray, nsamples::Int) = sample_mv_normal(μ0, σ, randn_similar(σ, max.(size(μ0), size(σ))..., nsamples))
-@inline sample_mv_normal(μ0::AbstractArray, σ::AbstractArray, z::AbstractArray) = @. μ0 + σ * z
+@inline sample_mv_normal(μ0, σ, z) = @. μ0 + σ * z
+
+@inline sample_trunc_mv_normal((μ0, σ, a, b)) = sample_trunc_mv_normal(μ0, σ, a, b)
+@inline sample_trunc_mv_normal(μ0::AbstractArray, σ::AbstractArray, a, b) = sample_trunc_mv_normal(μ0, σ, a, b, rand_similar(σ, max.(size(μ0), size(σ))))
+@inline sample_trunc_mv_normal(μ0::AbstractArray, σ::AbstractArray, a, b, nsamples::Int) = sample_trunc_mv_normal(μ0, σ, a, b, rand_similar(σ, max.(size(μ0), size(σ))..., nsamples))
+@inline sample_trunc_mv_normal(μ0, σ, a, b, u; ϵ = epseltype(μ0)) = @. clamp(μ0 + σ * Φ⁻¹(clamp(Φ((a-μ0)/σ) + u * (Φ((b-μ0)/σ) - Φ((a-μ0)/σ)), ϵ, 1-ϵ)), a, b)
 
 # Sample multivariate kumaraswamy
 @inline sample_kumaraswamy((α, β)) = sample_kumaraswamy(α, β)
-@inline sample_kumaraswamy(αβ::AbstractArray) = sample_kumaraswamy(split_dim1(αβ)...)
 @inline sample_kumaraswamy(α::AbstractArray, β::AbstractArray) = sample_kumaraswamy(α, β, rand_similar(β, max.(size(α), size(β))))
 @inline sample_kumaraswamy(α::AbstractArray, β::AbstractArray, nsamples::Int) = sample_kumaraswamy(α, β, rand_similar(β, max.(size(α), size(β))..., nsamples))
 @inline sample_kumaraswamy(α, β, u) = @. clamp(exp(softlog(-log(u)*exp(-β)/(1+exp(-β))) * exp(-α)/(1+exp(-α))), 0, 1)
@@ -90,6 +94,23 @@ macro inline_cufunc(ex)
     Base.eval(__module__, :(@inline $ex))
     Base.eval(__module__, :(CUDA.@cufunc $ex))
 end
+
+# TODO: CUDA.cufunc() only looks to replace Base functions by default; manually specify replacements for replace erf, erfc, ...
+for (f, cu_f) in [
+        SpecialFunctions.erf => CUDA.erf,
+        SpecialFunctions.erfc => CUDA.erfc,
+        SpecialFunctions.erfcx => CUDA.erfcx,
+        Distributions.normcdf => CUDA.normcdf,
+        Distributions.norminvcdf => CUDA.normcdfinv,
+    ]
+    @eval CUDA.cufunc(::typeof($f)) = $cu_f
+    push!(CUDA.cufuncs(), Symbol(f))
+    unique!(CUDA.cufuncs())
+end
+
+# Sample multivariate truncated normal
+@inline_cufunc Φ(x) = normcdf(x)
+@inline_cufunc Φ⁻¹(p) = norminvcdf(p)
 
 """
     softlog(x) = log(1-exp(-x))

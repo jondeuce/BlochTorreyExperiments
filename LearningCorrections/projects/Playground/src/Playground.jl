@@ -16,7 +16,7 @@ include("fix/Stacks/Stacks.jl") # workaround until Transformers is updated for j
 @reexport using BenchmarkTools: @btime
 @reexport using CUDA: @cufunc, CuArray, CuVector, CuMatrix
 @reexport using DataFrames: DataFrame, dropmissing
-@reexport using Distributions: Gaussian, Uniform, cdf, logpdf, pdf, log2π, logtwo, sqrthalfπ
+@reexport using Distributions: Gaussian, Uniform, cdf, logpdf, pdf, normcdf, norminvcdf, log2π, logtwo, sqrtπ, sqrthalfπ, invsqrt2, invsqrt2π
 @reexport using DrWatson: @dict, @ntuple, datadir, projectdir, scriptsdir, srcdir
 @reexport using EllipsisNotation: (..)
 @reexport using FFTW: fft, ifft, rfft
@@ -26,7 +26,7 @@ include("fix/Stacks/Stacks.jl") # workaround until Transformers is updated for j
 @reexport using Parameters: @unpack, @with_kw, @with_kw_noshow
 @reexport using PyCall: @py_str, PyCall, PyDict, PyNULL, PyObject, pycall, pyimport
 @reexport using Random: MersenneTwister, randperm, randperm!
-@reexport using SpecialFunctions: besseli, besselix, erf, erfinv
+@reexport using SpecialFunctions: besseli, besselix, erf, erfc, erfcx, erfinv
 @reexport using Statistics: mean, median, quantile, std, var
 @reexport using StatsBase: Histogram, UnitWeights, mean_and_std, sample
 @reexport using Suppressor: @suppress
@@ -55,6 +55,7 @@ include("utils/plot.jl")
 include("math/math_utils.jl")
 include("math/rician.jl")
 include("math/kumaraswamy.jl")
+include("math/truncatedgaussian.jl")
 include("math/batched_math.jl")
 include("math/mmd.jl")
 
