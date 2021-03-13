@@ -16,7 +16,7 @@ CVAE{n,nθ,nθM,k,nz}(enc1::E1, enc2::E2, dec::D, θbd::B1, θ̄bd::B2; posterio
 
 const CVAEPosteriorDist{Dist} = CVAE{n,nθ,nθM,k,nz,Dist} where {n,nθ,nθM,k,nz}
 
-Flux.@functor CVAE
+Flux.functor(::Type{<:CVAE{n,nθ,nθM,k,nz,Dist}}, c) where {n,nθ,nθM,k,nz,Dist} = (E1 = c.E1, E2 = c.E2, D = c.D, θbd = c.θbd, θ̄bd = c.θ̄bd,), fs -> CVAE{n,nθ,nθM,k,nz}(fs...; posterior_dist = Dist)
 Base.show(io::IO, ::CVAE{n,nθ,nθM,k,nz,Dist}) where {n,nθ,nθM,k,nz,Dist} = print(io, "CVAE$((;n,nθ,nθM,k,nz,Dist))")
 
 nsignal(::CVAE{n,nθ,nθM,k,nz}) where {n,nθ,nθM,k,nz} = n
@@ -232,7 +232,7 @@ struct DeepPrior{T,kϕ,FP,FN}
 end
 DeepPrior{T,kϕ}(prior::FP, noisesource::FN) where {T,kϕ,FP,FN} = DeepPrior{T,kϕ,FP,FN}(prior, noisesource)
 
-Flux.@functor DeepPrior
+Flux.functor(::Type{<:DeepPrior{T,kϕ}}, p) where {T,kϕ} = (prior = p.prior, noisesource = p.noisesource,), fs -> DeepPrior{T,kϕ}(fs...)
 Base.show(io::IO, ::DeepPrior{T,kϕ}) where {T,kϕ} = print(io, "DeepPrior$((;T,kϕ))")
 
 (p::DeepPrior{T,kϕ})(x::A) where {T, kϕ, A <: AbstractVecOrMat{T}} = p.prior(p.noisesource(A, kϕ, size(x,2))) # sample from distribution

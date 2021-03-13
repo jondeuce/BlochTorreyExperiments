@@ -764,7 +764,7 @@ function _biexp_epg_model_f64!(dc::AbstractVector{T}, work::BiexpEPGModelWork{T,
         o2  = DECAES.EPGOptions(ETL, alpha, TE, T2long, T1, refcon)
         dc1 = DECAES.EPGdecaycurve!(work.short_work, o1) # short component
         dc2 = DECAES.EPGdecaycurve!(work.long_work, o2) # long component
-        @avx for i in 1:ETL
+        @simd for i in 1:ETL #TODO @avx?
             dc[i] = Ashort * dc1[i] + Along * dc2[i]
         end
     end

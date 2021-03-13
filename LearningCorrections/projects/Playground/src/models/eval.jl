@@ -72,7 +72,7 @@ function mle_biexp_epg_noise_only(
             s     = exp(logs)
             logϵi = logs + logϵ # log(s*ϵ)
             ℓ     = zero(D)
-            @avx for i in eachindex(work.Xj)
+            @simd for i in eachindex(work.Xj) #TODO @avx?
                 yi = work.Yj[i]
                 νi = s * work.Xj[i]
                 ℓ += neglogL_rician(yi, νi, logϵi) # Rician negative log likelihood
@@ -213,13 +213,13 @@ function f_mle_biexp_epg!(work::W, x::Vector{D}) where {W, D <: MaybeDualF64}
         epg    = mle_biexp_epg_work(work, D)
         X      = _biexp_epg_model_f64!(epg.dc, epg, ψ)
         Xmax   = zero(D)
-        @avx for i in eachindex(X)
+        @simd for i in eachindex(X) #TODO @avx?
             Xmax = max(X[i], Xmax)
         end
         Xscale = s / Xmax # normalize X to maximum 1 and scale by s; hoist outside loop
         logϵi  = logs + logϵ # hoist outside loop
         ℓ      = zero(D)
-        @avx for i in eachindex(work.Y)
+        @simd for i in eachindex(work.Y) #TODO @avx?
             νi = Xscale * X[i]
             ℓ += neglogL_rician(work.Y[i], νi, logϵi) # Rician negative log likelihood
         end

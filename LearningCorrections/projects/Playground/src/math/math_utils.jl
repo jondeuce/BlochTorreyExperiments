@@ -62,6 +62,17 @@ uniform_range(N::Int) = N <= 1 ? zeros(N) : range(-1,1,length=N) |> collect
 # Temporary fix: https://github.com/FluxML/NNlib.jl/issues/254
 Zygote.@adjoint Flux.softplus(x::Real) = Flux.softplus(x), Δ -> (Δ * Flux.σ(x),)
 
+# Temporary fix: cudnn softmax adjoint is slow?
+fast_softmax(A; dims = 1) = Flux.softmax(A; dims)
+Zygote.@adjoint function fast_softmax(A; dims = 1)
+    y = fast_softmax(A; dims)
+    return y, function (Δ)
+        ∂A = Δ .* y
+        ∂A .-= y .* sum(∂A; dims)
+        return (∂A,)
+    end
+end
+
 # Sample multivariate normal
 @inline sample_mv_normal((μ0, σ)) = sample_mv_normal(μ0, σ)
 @inline sample_mv_normal(μ::AbstractArray) = sample_mv_normal(split_dim1(μ)...)
@@ -486,7 +497,7 @@ function _softmax_test()
         Zygote.gradient(sumabs2(Flux.softmax), c(x)) |> display
         fd_gradients(sumabs2(Flux.softmax), c(x); extrapolate = true, breaktol = 2) |> display
         ∇sumabs2(Flux.softmax)(c(x)) |> display # true answer
-        @assert gradcheck(sumabs2(Flux.softmax), c(x); rtol = 1e-2, atol = 0, extrapolate = true, breaktol = 2, backward = true, forward = true)
+        @assert gradcheck(sumabs2(Flux.softmax), c(x); rtol = 1e-2, atol = 0, extrapolate = true, breaktol = 2, backward = true, forward = false) #TODO cudnn calls fail with duals
         println("")
     end
 end

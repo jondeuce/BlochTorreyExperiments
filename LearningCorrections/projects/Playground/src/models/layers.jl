@@ -35,7 +35,7 @@ ishyperleaf(m::Flux.Dense{<:Any, <:AbstractMatrix, <:AbstractVector}) = true
 ishyperleaf(m::Flux.Diagonal{<:AbstractVector}) = true
 
 hyperify1(m) = m # fallback
-hyperify1(m::Flux.Dense{<:Any, <:AbstractMatrix, <:AbstractVector}) = BatchedDense(copy(reshape(m.W, size(m.W)..., 1)), copy(reshape(m.b, size(m.b, 1), 1, 1)), m.σ)
+hyperify1(m::Flux.Dense{<:Any, <:AbstractMatrix, <:AbstractVector}) = BatchedDense(copy(reshape(m.weight, size(m.weight)..., 1)), copy(reshape(m.bias, size(m.bias, 1), 1, 1)), m.σ)
 hyperify1(m::Flux.Diagonal{<:AbstractVector}) = BatchedDiagonal(copy(reshape(m.α, size(m.α, 1), 1)), copy(reshape(m.β, size(m.β, 1), 1)))
 hyperify(m) = fmap_(hyperify1, m, ishyperleaf)
 
@@ -45,16 +45,16 @@ Same as `Flux.Dense`, except `W` and `b` act along batch dimensions:
     y[:,k] = σ.(W[:,:,k] * x[:,k] .+ b[:,:,k])
 """
 struct BatchedDense{F,S<:AbstractTensor3D,T<:AbstractTensor3D}
-    W::S
-    b::T
+    weight::S
+    bias::T
     σ::F
 end
 Flux.@functor BatchedDense
 BatchedDense(W, b) = BatchedDense(W, b, identity)
-Base.show(io::IO, l::BatchedDense) = print(io, "BatchedDense(", size(l.W, 2), ", ", size(l.W, 1), (l.σ === identity ? () : (", ", l.σ))..., ")")
+Base.show(io::IO, l::BatchedDense) = print(io, "BatchedDense(", size(l.weight, 2), ", ", size(l.weight, 1), (l.σ === identity ? () : (", ", l.σ))..., ")")
 
 function (a::BatchedDense)(x::AbstractVecOrMat)
-    W, b, σ = a.W, a.b, a.σ
+    W, b, σ = a.weight, a.bias, a.σ
     sz = size(x)
     x = reshape(x, sz[1], 1, :) # treat dims > 1 as batch dimensions
     x = σ.(Flux.batched_mul(W, x) .+ b)
@@ -228,6 +228,40 @@ Zygote.@adjoint function whitebox_apply(f, xs...)
     y, Δ -> (nothing, J(Δ)...)
 end
 
+function _test_not_trainable()
+    x = rand(Float32, 1)
+    shared1 = Flux.Dense(1, 1, Flux.σ)
+    shared2 = Flux.Dense(1, 1, identity)
+    shared3 = Flux.Dense(1, 1, identity)
+    m = Flux.Chain(shared1, shared2, shared3)
+    m̂ = Flux.Chain(shared1, NotTrainable(shared2), shared3)
+    # m̂ = Flux.Chain(shared1, x -> Zygote.@ignore(shared2(x)), shared3) # fails
+    ps = Flux.params(m)
+    gs = Zygote.gradient(() -> sum(abs2, 1f0 .+ m(x)), ps)
+    ĝs = Zygote.gradient(() -> sum(abs2, 1f0 .+ m̂(x)), ps)
+    # ĝs = Zygote.gradient(() -> sum(abs2, Zygote.@ignore(m(x))), ps)
+    return hcat(Any[gs[p] for p in ps], Any[ĝs[p] for p in ps])
+    # dm = Zygote.gradient(m -> sum(abs2, 1f0 .+ m(x) .- m̂(x)), m)
+    # dm̂ = Zygote.gradient(m̂ -> sum(abs2, 1f0 .+ m(x) .- m̂(x)), m̂)
+    # return Any[dm, dm̂]
+    mx = m(x)
+    losses = [
+        () -> sum(abs2, 1.0f0 .+ m(x) .- m(x)), # gradient == 0
+        () -> sum(abs2, 1.0f0 .+ m(x) .- mx), # gradient != 0; mx := m(x) is fixed
+        () -> sum(abs2, 1.0f0 .+ m(x) .- m̂(x)), # gradient != 0 if NotTrainable does its job
+        () -> sum(abs2, 1.0f0 .+ m(x) .- Zygote.@ignore(m(x))), # gradient != 0
+    ]
+    grads = map(enumerate(losses)) do (i,loss)
+        # dm = Zygote.gradient(loss, m)
+        gs = Zygote.gradient(loss, ps)
+        ∇s = Any[gs[p] for p in ps]
+        @info i; show(∇s); println("")
+        ∇s
+    end
+    # @assert all(g -> all(g .== 0), grads[1])
+    # [grads[i] .≈ grads[j] for i in 2:length(grads) for j in i+1:length(grads)]
+end
+
 ```
 ApplyOverDims
 ```
@@ -334,6 +368,16 @@ Non-trainable layer which simply prints the current size.
 """
 printsize(x) = (@show size(x); x)
 PrintSize() = x -> printsize(x)
+
+"""
+Resize(dims...)
+
+Non-trainable layer which reshapes input argument `x` as `reshape(x, dims...)`.
+"""
+struct Resize{dims} end
+Resize(dims...) = Resize{dims}()
+Base.show(io::IO, ::Resize{dims}) where {dims} = print(io, "Resize(" * join(dims, ", ") * ")")
+(r::Resize{dims})(x) where {dims} = reshape(x, dims...)
 
 """
 DenseResize()
@@ -504,12 +548,16 @@ function MLP(sz::Pair{Int,Int}, Nhid::Int, Dhid::Int, σhid = Flux.relu, σout =
         f isa Base.BroadcastFunction ? () -> (f,) : # Thunk just returns BroadcastFunction
         f isa Tuple ? () -> (f[1](f[2:end]...),) : # Assume f[1] is a factory returning structs which take array inputs, and f[2:end] are factory arguments; thunk returns new instance with each call
         () -> (Base.BroadcastFunction(f),) # Assume f is scalar function capable of broadcasting; thunk returns BroadcastFunction wrapping f
-    maybedropout(l) = dropout > 0 ? Flux.Chain(l, Flux.Dropout(dropout)) : l
-    maybelayernorm(l) = layernorm ? Flux.Chain(l, Flux.LayerNorm(Dhid)) : l
-    Dense(in, out, f; kwargs...) = Flux.Chain(Flux.Dense(in, out, identity; kwargs...), σfactory(f)()...)
-    MaybeResidualDense(in, out, f; kwargs...) = skip ?
-        Flux.Chain(Flux.SkipConnection(Dense(in, out, identity; kwargs...), +), σfactory(f)()...) : # x -> f.(x .+ W*x .+ b)
-        Dense(in, out, f; kwargs...) # x -> f.(W*x .+ b)
+    maybedropout(l) =
+        dropout > 0 ? Flux.Chain(l, Flux.Dropout(dropout)) : l
+    maybelayernorm(l) =
+        layernorm ? Flux.Chain(l, Flux.LayerNorm(Dhid)) : l
+    Dense(in, out, f; kwargs...) =
+        Flux.Chain(Flux.Dense(in, out, identity; kwargs...), σfactory(f)()...)
+    MaybeResidualDense(in, out, f; kwargs...) =
+        skip ?
+            Flux.Chain(Flux.SkipConnection(Dense(in, out, identity; kwargs...), +), σfactory(f)()...) : # x -> f.(x .+ W*x .+ b)
+            Dense(in, out, f; kwargs...) # x -> f.(W*x .+ b)
     Flux.Chain(
         Dense(sz[1], Dhid, σhid; initW, initb) |> maybedropout |> maybelayernorm,
         [MaybeResidualDense(Dhid, Dhid, σhid; initW, initb) |> maybedropout |> maybelayernorm for _ in 1:Nhid]...,
@@ -810,6 +858,11 @@ end
 # Arrays
 function _model_summary(io::IO, model::AbstractArray; depth::Int = 0, pre = "", suf = "")
     print(io, _getprefix(depth, pre, suf * "size " * string(size(model)) * " " * string(typeof(model))))
+end
+
+# Resize
+function _model_summary(io::IO, model::Resize; depth::Int = 0, pre = "", suf = "")
+    print(io, _getprefix(depth, pre, suf * repr(model)))
 end
 
 # Print as scalars (Numbers, Symbols, ...)

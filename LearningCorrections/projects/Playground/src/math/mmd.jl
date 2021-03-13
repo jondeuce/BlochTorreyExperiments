@@ -8,7 +8,7 @@ struct FunctionKernel{T,F} <: MMDKernel{T}
     f::F
 end
 FunctionKernel{T}(f) where {T} = FunctionKernel{T,typeof(f)}(f)
-Flux.functor(::Type{<:FunctionKernel{T}}, k) where {T} = (f = k.f,), k -> FunctionKernel{T}(k)
+Flux.functor(::Type{<:FunctionKernel{T}}, k) where {T} = (f = k.f,), f -> FunctionKernel{T}(f)
 (k::FunctionKernel)(Δ) = k.f(Δ)
 
 struct DeepExponentialKernel{T,N,A<:AbstractArray{T,N},F} <: MMDKernel{T}

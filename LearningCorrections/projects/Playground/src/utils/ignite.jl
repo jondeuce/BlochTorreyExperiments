@@ -56,19 +56,26 @@ function init_wandb_logger(settings; activate = false, dryrun = true, wandb_dir 
     end
 end
 
-function terminate_on_bad_params_or_gradients(f, models, ps::Zygote.Params, gs::Zygote.Grads)
+function on_bad_params_or_gradients(f, models, ps::Zygote.Params, gs::Zygote.Grads; verbose = true)
     found_bad = false
     for p in ps
-        (!haskey(gs, p) || length(p) == 0 || (g = gs[p]; g === nothing)) && continue
-        (found_nan_grad  = any(isnan, g)) && @info "EXITING -- found NaN gradient: $(find_model_param(models, p))"
-        (found_inf_grad  = any(isinf, g)) && @info "EXITING -- found Inf gradient: $(find_model_param(models, p))"
-        (found_nan_param = any(isnan, p)) && @info "EXITING -- found NaN parameter: $(find_model_param(models, p))"
-        (found_inf_param = any(isinf, p)) && @info "EXITING -- found Inf parameter: $(find_model_param(models, p))"
-        found_bad |= found_nan_grad || found_inf_grad || found_nan_param || found_inf_param
+        if length(p) > 0
+            found_nan_grad = found_inf_grad = found_nan_param = found_inf_param = false
+            (found_nan_param = any(isnan, p)) && verbose && @info "Found NaN parameter: $(find_model_param(models, p))"
+            (found_inf_param = any(isinf, p)) && verbose && @info "Found Inf parameter: $(find_model_param(models, p))"
+            if haskey(gs, p) && (g = gs[p]; g !== nothing)
+                (found_nan_grad = any(isnan, g)) && verbose && @info "Found NaN gradient: $(find_model_param(models, p))"
+                (found_inf_grad = any(isinf, g)) && verbose && @info "Found Inf gradient: $(find_model_param(models, p))"
+            end
+            found_bad |= found_nan_grad || found_inf_grad || found_nan_param || found_inf_param
+        end
     end
     found_bad && f()
     return found_bad
 end
+on_bad_params_or_gradients(f, models, ps::Zygote.Params; kwargs...) = on_bad_params_or_gradients(f, models, ps, Zygote.Grads(IdDict(), ps); kwargs...)
+on_bad_params_or_gradients(f, models; kwargs...) = on_bad_params_or_gradients(f, models, Flux.params(models); kwargs...)
+on_bad_params_or_gradients(f, models::Dict; kwargs...) = on_bad_params_or_gradients(f, models, Flux.params(values(models)...); kwargs...)
 
 # Throttle even to run every `period` seconds
 function throttler_event_filter(period = 0.0)

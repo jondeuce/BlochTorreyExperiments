@@ -92,12 +92,10 @@ lib.settings_template() = TOML.parse(
     skip      = false # skip connection
     layernorm = false # layer normalization following dense layer
     nhidden   = 4    # number of hidden layers
-    head      = 4    # number of attention heads
-    psize     = 128 # transformer input size
-    hsize     = 32  # hidden size of multihead attention (hsize == psize ÷ head keeps num. params constant w.r.t head)
-    nshards   = 8   # number of signal projection shards
-    chunksize = 0   # nshards  == (nsignals - chunksize) ÷ (chunksize - overlap) + 1
-    overlap   = 0   # nsignals == nshards * (chunksize - overlap) + overlap
+    esize     = 128 # transformer input embedding size
+    nheads    = 4   # number of attention heads
+    headsize  = 4   # projection head size
+    seqlength = 8   # number of signal projection shards
     [arch.enc1]
         INHERIT = "%PARENT%"
     [arch.enc2]
@@ -196,8 +194,8 @@ lib.@save_expression lib.logdir("build_models.jl") function build_models(
     # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-13pptz2h/files", lib.projectdir("wandb"))), modelprefix = "best-")
     # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-15v0mdjw/files", lib.projectdir("wandb"))), modelprefix = "best-")
     derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-1p14e3na/files", lib.projectdir("wandb"))), modelprefix = "best-")
-    lib.pseudo_labels!(phys, models["genatr"], derived["pretrained_cvae"]; force_recompute = false, initial_guess_only = false, sigma_reg = 0.5, noisebounds = settings["arch"]["genatr"]["noisebounds"])
 
+    lib.pseudo_labels!(phys, models["genatr"], derived["pretrained_cvae"]; force_recompute = false, initial_guess_only = false, sigma_reg = 0.5, noisebounds = settings["arch"]["genatr"]["noisebounds"])
     lib.verify_pseudo_labels(phys, models["genatr"])
 
     return models, derived
@@ -458,13 +456,13 @@ function train_step(engine, batch)
             for _ in 1:settings["train"]["CVAEsteps"]
                 @timeit "forward" ℓ, back = Zygote.pullback(() -> sum(CVAElosses(Ymeta, θPseudo, ZPseudo; marginalize_Z = false)), ps) #TODO CUDA.@sync #TODO marginalize_Z
                 @timeit "reverse" gs = back(one(ℓ)) #TODO CUDA.@sync
+                #=
                 if _DEBUG_
-                    lib.terminate_on_bad_params_or_gradients(models, ps, gs) do
+                    lib.on_bad_params_or_gradients(models, ps, gs) do
                         lib.save_progress(@dict(models, logger); savefolder = lib.logdir(), prefix = "failure-", ext = ".jld2")
                         engine.terminate()
                     end
                 end
-                #=
                 mod(trainer.state.iteration, 10 * 100) == 0 && let
                     log∇ϵ = -6
                     ∇ϵ = 10f0 ^ log∇ϵ
@@ -777,6 +775,7 @@ trainer.add_event_handler(
     Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["checkpointperiod"])),
     @j2p function (engine)
         @timeit "checkpoint" let models = lib.cpu(models)
+            lib.on_bad_params_or_gradients(engine.terminate, models) && return nothing
             @timeit "save current model" lib.save_progress(@dict(models, logger); savefolder = lib.logdir(), prefix = "current-", ext = ".jld2")
             @timeit "make current plots" plothandles = makeplots()
             @timeit "save current plots" lib.save_plots(plothandles; savefolder = lib.logdir(), prefix = "current-")
@@ -792,6 +791,7 @@ trainer.add_event_handler(
         losses = logger[logger.dataset .=== :val, loss_metric] |> skipmissing |> collect
         if !isempty(losses) && (length(losses) == 1 || losses[end] < minimum(losses[1:end-1]))
             @timeit "save best progress" let models = lib.cpu(models)
+                lib.on_bad_params_or_gradients(engine.terminate, models) && return nothing
                 @timeit "save best model" lib.save_progress(@dict(models, logger); savefolder = lib.logdir(), prefix = "best-", ext = ".jld2")
                 @timeit "make best plots" plothandles = makeplots()
                 @timeit "save best plots" lib.save_plots(plothandles; savefolder = lib.logdir(), prefix = "best-")

@@ -8,7 +8,7 @@ include("fix/Stacks/Stacks.jl") # workaround until Transformers is updated for j
 
 #### Import/export dependency names
 
-@importexport import ArgParse, BSON, BangBang, BenchmarkTools, BlackBoxOptim, CUDA, ChainRules, Conda, DECAES, DataFrames, Dates, Distributions, DrWatson, EllipsisNotation, FFTW, FileIO, FiniteDifferences, Flux, ForwardDiff, Functors, Glob, HypothesisTests, JLD2, LaTeXStrings, LinearAlgebra, LoopVectorization, NLopt, NNlib, Optim, Parameters, Pkg, PrettyTables, PyCall, PyPlot, Random, ReadableRegex, SpecialFunctions, StatsBase, StatsPlots, Suppressor, TOML, TimerOutputs, Tullio, UUIDs, UnicodePlots, Zygote
+@importexport import ArgParse, BSON, BangBang, BenchmarkTools, BlackBoxOptim, CUDA, ChainRules, Conda, DECAES, DataFrames, Dates, Distributions, DrWatson, EllipsisNotation, FFTW, FileIO, FiniteDifferences, Flux, ForwardDiff, Functors, Glob, HypothesisTests, JLD2, LaTeXStrings, LinearAlgebra, LoopVectorization, NLopt, NNlib, OMEinsum, Optim, Parameters, Pkg, PrettyTables, PyCall, PyPlot, Random, ReadableRegex, SpecialFunctions, StatsBase, StatsPlots, Suppressor, TOML, TimerOutputs, Tullio, UUIDs, UnicodePlots, Zygote
 
 #### Dependencies' symbols
 
@@ -23,6 +23,7 @@ include("fix/Stacks/Stacks.jl") # workaround until Transformers is updated for j
 @reexport using LaTeXStrings: @L_str, latexstring
 @reexport using LinearAlgebra: BLAS, diag, diagm, dot, mul!, norm, normalize, tr, ×, ⋅
 @reexport using LoopVectorization: @avx
+@reexport using OMEinsum: @ein, @ein_str
 @reexport using Parameters: @unpack, @with_kw, @with_kw_noshow
 @reexport using PyCall: @py_str, PyCall, PyDict, PyNULL, PyObject, pycall, pyimport
 @reexport using Random: MersenneTwister, randperm, randperm!

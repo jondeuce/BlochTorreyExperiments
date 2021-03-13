@@ -1,139 +1,166 @@
-"""
-    LinearProjection(in::Int, out::Int)
-"""
-struct LinearProjection{W}
-    W :: W
-end
-Flux.@functor LinearProjection
-LinearProjection(in::Int, out::Int) = LinearProjection(Flux.glorot_uniform(out, in))
-(e::LinearProjection)(x) = e.W * x
+# Multihead Attention
 
 """
-    SignalProjector(; psize::Int, chunksize::Int, overlap::Int, nfeatures::Int, nsignals::Int)
+    MultiheadAttention(insize::Int, args...) = MultiheadAttention(insize => insize, args...)
+    MultiheadAttention(sizes::Pair{Int,Int}, nheads::Int, headsize::Int = sizes[1] ÷ nheads)
+
+Multihead dot product attention layer. `nheads` is the number of attention heads,
+`insize` is the input embedding size, `headsize` is the size of the input embedding
+following the projection layer for each head, `outsize` is the output embedding size.
 """
-struct SignalProjector{PX, PY, E0, S}
-    PX :: PX
-    PY :: PY
-    E0 :: E0
-    shape :: S
+struct MultiheadAttention{Q<:Flux.Dense, K<:Flux.Dense, V<:Flux.Dense, O<:Flux.Dense}
+    insize::Int
+    outsize::Int
+    nheads::Int
+    headsize::Int
+    iqproj::Q
+    ikproj::K
+    ivproj::V
+    oproj::O
 end
-Flux.@functor SignalProjector
-Flux.trainable(e::SignalProjector) = (e.PX, e.PY, e.E0)
-Base.show(io::IO, ::SignalProjector) = print(io, "SignalProjector()")
+Base.show(io::IO, mh::MultiheadAttention) = print(io, "MultiheadAttention($(mh.insize)=>$(mh.outsize), nheads=$(mh.nheads), headsize=$(mh.headsize))")
 
-function SignalProjector(; psize::Int, nshards::Int, nfeatures::Int, nsignals::Int)
-    PX = nfeatures <= 0 ? nothing : Flux.Chain(LinearProjection(nfeatures, psize), X -> reshape(X, psize, 1, :))
-    PY = Flux.Chain(LinearProjection(nsignals, psize * nshards), Y -> reshape(Y, psize, nshards, :))
-    E0 = Flux.glorot_uniform(psize, 1 + nshards + ifelse(nfeatures > 0, 1, 0))
-    shape = (; psize, nshards, nfeatures, nsignals)
-    SignalProjector(PX, PY, E0, shape)
+Flux.functor(mh::MultiheadAttention) = (mh.iqproj, mh.ikproj, mh.ivproj, mh.oproj), w -> MultiheadAttention(mh.insize, mh.outsize, mh.nheads, mh.headsize, w...)
+
+MultiheadAttention(insize::Int, args...) = MultiheadAttention(insize => insize, args...)
+MultiheadAttention(sizes::Pair{Int,Int}, nheads::Int, headsize::Int = sizes[1] ÷ nheads) =
+    MultiheadAttention(
+        sizes..., nheads, headsize,
+        Flux.Dense(sizes[1], headsize * nheads),
+        Flux.Dense(sizes[1], headsize * nheads),
+        Flux.Dense(sizes[1], headsize * nheads),
+        Flux.Dense(headsize * nheads, sizes[2]),
+    )
+
+(mh::MultiheadAttention)(query, key, value) = attention(mh, query, key, value)
+(mh::MultiheadAttention)(x) = attention(mh, x, x, x) # self-attention
+
+function attention(mh::MultiheadAttention, Q::AbstractMatrix{T}, K::AbstractMatrix{T}, V::AbstractMatrix{T}) where {T}
+    seqlength = size(Q,2)
+    QP = reshape(mh.iqproj(Q), :, mh.nheads, seqlength) # size(QP) == (headsize, nheads, seqlength)
+    KP = reshape(mh.ikproj(K), :, mh.nheads, seqlength)
+    VP = reshape(mh.ivproj(V), :, mh.nheads, seqlength)
+
+    @ein A[i,j,h] := KP[k,h,i] * QP[k,h,j]
+    scale = 1/sqrt(T(mh.headsize))
+    A = fast_softmax(scale .* A; dims = 1)
+    @ein score[i,h,j] := VP[i,h,k] * A[k,j,h]
+
+    mh.oproj(reshape(score, mh.headsize * mh.nheads, seqlength))
 end
 
-function (e::SignalProjector)(Y::AbstractMatrix, X::Union{Nothing, <:AbstractMatrix} = nothing)
-    Zclass = zeros_similar(Y, e.shape.psize, 1, size(Y,2))
-    Yenc = e.PY(Y) # [nY x b] -> [p x mY x b]
-    Z0 = if (X !== nothing)
-        Xenc = e.PX(X) # [nX x b] -> [p x 1 x b]
-        hcat(Zclass, Yenc, Xenc) # [p x (1 + mY + 1) x b]
-    else
-        hcat(Zclass, Yenc) # [p x (1 + mY) x b]
-    end
-    return Z0 .+ e.E0
+function attention(mh::MultiheadAttention, Q::AbstractTensor3D{T}, K::AbstractTensor3D{T}, V::AbstractTensor3D{T}) where {T}
+    seqlength, batchsize = size(Q,2), size(Q,3)
+    QP = reshape(mh.iqproj(Q), :, mh.nheads, seqlength, batchsize) # size(QP) == (headsize, nheads, seqlength, batchsize)
+    KP = reshape(mh.ikproj(K), :, mh.nheads, seqlength, batchsize)
+    VP = reshape(mh.ivproj(V), :, mh.nheads, seqlength, batchsize)
+
+    @ein A[i,j,h,b] := KP[k,h,i,b] * QP[k,h,j,b]
+    scale = 1/sqrt(T(mh.headsize))
+    A = fast_softmax(scale .* A; dims = 1)
+    @ein score[i,h,j,b] := VP[i,h,k,b] * A[k,j,h,b]
+
+    mh.oproj(reshape(score, mh.headsize * mh.nheads, seqlength, batchsize))
 end
-(e::SignalProjector)(Y::AbstractVector) = dropdims(e(reshape(Y, length(Y), 1), nothing); dims = 3)
-(e::SignalProjector)(Y::AbstractVector, X::AbstractVector) = dropdims(e(reshape(Y, length(Y), 1), reshape(X, length(X), 1)); dims = 3)
+
+function _attention_test(;
+        nheads = 3, # number of attention heads
+        insize = 7, # input size, i.e. embedding dimension size
+        headsize = 4, # projection size, i.e. length of vectors for attention inner products
+        outsize = 6, # output embedding size
+        seqlength = 11,
+        batchsize = 64,
+    )
+    mh = MultiheadAttention(insize => outsize, nheads, headsize) |> gpu
+    mh_xf = TransformersMHA.MultiheadAttention(mh.nheads, mh.iqproj, mh.ikproj, mh.ivproj, mh.oproj)
+    as3D(f, xs::AbstractMatrix...) = dropdims(f(map(x -> reshape(x, size(x)..., 1), xs)...); dims = 3)
+
+    Q,K,V = [CUDA.rand(insize, seqlength) for _ in 1:3]
+    @assert mh(Q,K,V) ≈ mh_xf(Q,K,V) ≈ as3D(mh,Q,K,V) ≈ as3D(mh_xf,Q,K,V)
+    @btime CUDA.@sync $mh($Q,$K,$V)
+    @btime CUDA.@sync $mh_xf($Q,$K,$V)
+    @btime CUDA.@sync Zygote.gradient(() -> sum($mh($Q,$K,$V)), $(Flux.params(mh)))
+    # @btime CUDA.@sync Zygote.gradient(() -> sum($mh_xf($Q,$K,$V)), $(Flux.params(mh))) #TODO Zygote errors, something about PermutedDimsArray?
+
+    Q,K,V = [CUDA.rand(insize, seqlength, batchsize) for _ in 1:3]
+    @assert mh(Q,K,V) ≈ mh_xf(Q,K,V)
+    @btime CUDA.@sync $mh($Q,$K,$V)
+    @btime CUDA.@sync $mh_xf($Q,$K,$V)
+    @btime CUDA.@sync Zygote.gradient(() -> sum($mh($Q,$K,$V)), $(Flux.params(mh)))
+    # @btime CUDA.@sync Zygote.gradient(() -> sum($mh_xf($Q,$K,$V)), $(Flux.params(mh))) #TODO Zygote errors, something about PermutedDimsArray?
+end
 
 """
-    SignalEncoder(; psize::Int, chunksize::Int, overlap::Int, nfeatures::Int, nsignals::Int)
+    Transformer(insize::Int, nheads::Int, hiddensize::Int; act = relu)
+    Transformer(nheads::Int, insize::Int, headsize::Int, hiddensize::Int; act = relu)
+
+Transformer encoder layer. `insize` is the input embedding size, `nheads` is the number of attention heads,
+`headsize` is the size of the input projection for each head, with default value `div(insize, nheads)` if unspecified,
+`hiddensize` is the number of hidden nodes in the positionwise feedforward layer, and `act` the corresponding activation function.
 """
-struct SignalEncoder{DX <: AbstractArray, EY <: AbstractArray, E0<: AbstractArray, S}
-    DX :: DX
-    EY :: EY
-    E0 :: E0
-    shape :: S
+struct Transformer{MH<:MultiheadAttention, MHN, FF, FFN}
+    mh::MH
+    mhn::MHN
+    ff::FF
+    ffn::FFN
 end
-Flux.@functor SignalEncoder
-Flux.trainable(e::SignalEncoder) = (e.DX, e.EY, e.E0)
-Base.show(io::IO, ::SignalEncoder) = print(io, "SignalEncoder()")
+Flux.@functor Transformer
 
-function SignalEncoder(; psize::Int, chunksize::Int, overlap::Int, nfeatures::Int, nsignals::Int)
-    nshards = (nsignals - chunksize) ÷ (chunksize - overlap) + 1
-    @assert nsignals == nshards * (chunksize - overlap) + overlap
-    DX = Flux.glorot_uniform(psize, nfeatures)
-    EY = Flux.glorot_uniform(psize, chunksize)
-    E0 = Flux.glorot_uniform(psize, 1 + nshards + nfeatures)
-    shape = (; psize, nshards, nfeatures, chunksize, overlap)
-    SignalEncoder(DX, EY, E0, shape)
+function Transformer(insize::Int, nheads::Int, hiddensize::Int; kwargs...)
+    @assert rem(insize, nheads) == 0
+    Transformer(insize, nheads, div(insize, nheads), hiddensize; kwargs...)
 end
 
-function (e::SignalEncoder)(Y::AbstractMatrix, X::Union{Nothing, <:AbstractMatrix} = nothing)
-    @unpack psize, nshards, nfeatures, chunksize, overlap = e.shape
-    nbatches = size(Y,2)
-    Yshard = shard_array(Y, chunksize, overlap) # [nY x b] -> [cY x mY x b]
-    Yenc = e.EY * reshape(Yshard, chunksize, nshards * nbatches) # [cY x mY x b] -> [cY x mY*b] -> [p x mY*b]
-    Yenc = reshape(Yenc, psize, nshards, nbatches) # [p x mY*b] -> [p x mY x b]
-    Zclass = zeros_similar(Y, psize, 1, nbatches)
-    Z0 = if (X !== nothing)
-        Xenc = e.DX .* reshape(X, 1, nfeatures, nbatches) # [mX x b] -> [1 x mX x b] -> [p x mX x b]
-        hcat(Zclass, Yenc, Xenc) # [p x (1 + mY + mX) x b]
-    else
-        hcat(Zclass, Yenc) # [p x (1 + mY + mX) x b] =  # [p x (1 + mY) x b]
-    end
-    return Z0 .+ e.E0
+Transformer(insize::Int, nheads::Int, headsize::Int, hiddensize::Int; act = Flux.relu) = Transformer(
+    MultiheadAttention(insize, nheads, headsize),
+    Flux.LayerNorm(insize),
+    MLP(insize => insize, 0, hiddensize, act, identity),
+    Flux.LayerNorm(insize),
+)
+
+function (xf::Transformer)(x::AbstractArray)
+    y = xf.mhn(x + xf.mh(x))
+    return xf.ffn(y + xf.ff(y))
 end
-(e::SignalEncoder)(Y::AbstractVector) = dropdims(e(reshape(Y, length(Y), 1), nothing); dims = 3)
-(e::SignalEncoder)(Y::AbstractVector, X::AbstractVector) = dropdims(e(reshape(Y, length(Y), 1), reshape(X, length(X), 1)); dims = 3)
 
 """
 Basic Transformer encoder with learned positional embedding
 """
-function TransformerEncoder(
-        MLPHead = nothing;
-        head::Int, hsize::Int, hdim::Int, nhidden::Int,
-        psize::Int, nshards::Int, chunksize::Int, overlap::Int,
-        nsignals::Int, ntheta::Int, nlatent::Int
+function TransformerEncoder(;
+        esize::Int, nheads::Int, headsize::Int, hdim::Int, seqlength::Int, nhidden::Int,
+        insizes::Tuple{Vararg{Int}}, outsize::Int,
     )
+    @assert esize * seqlength >= sum(insizes) # positional encoding output should retain at least as many datapoints as input
+    @assert esize <= nheads * headsize # projection head layers should conserve datapoints
 
-    topology = if ntheta == 0 && nlatent == 0
-        @nntopo(
-            Y : # Input (nY × b)
-            Y => E : # SignalProjector (psize × _ × b)
-            E => H : # Transformer encoder (psize × _ × b)
-            H => A : # Extract "class" token activations (psize × b)
-            A => C # MLP head mapping "class" embedding to output (nout x b)
+    if length(insizes) == 1
+        topology = @nntopo(
+            Y :        # input signals
+            Y  => E  : # positional embedding
+            E  => R1 : # resize
+            R1 => T  : # transformer layers
+            T  => R2 : # resize
+            R2 => Z    # dense reduction
         )
-    elseif ntheta == 0 || nlatent == 0
-        @nntopo(
-            (Y,X) : # Inputs (nY × b), (mX x b)
-            (Y,X) => E : # SignalProjector (psize × _ × b)
-            E => H : # Transformer encoder (psize × _ × b)
-            H => A : # Extract "class" token activations (psize × b)
-            A => C # MLP head mapping "class" embedding to output (nout x b)
-        )
+        top = ()
     else
-        @nntopo(
-            (Y,θ,Z) : # Inputs (nY × b), (nθ x b), (nZ x b)
-            (θ,Z) => X : # Concatenate θ,Z inputs (nY × b), (mX x b)
-            (Y,X) => E : # SignalProjector (psize × _ × b)
-            E => H : # Transformer encoder (psize × _ × b)
-            H => A : # Extract "class" token activations (psize × b)
-            A => C # MLP head mapping "class" embedding to output (nout x b)
-        )
+        inputs = "(" * join(["Y$i" for i in 1:length(insizes)], ", ") * ")"
+        topology = NNTopo("$(inputs) => V => E => R1 => T => R2 => Z")
+        top = (vcat,)
     end
 
     xf = Stack(
         topology,
-        (ntheta != 0 && nlatent != 0 ? [vcat] : [])...,
-        # SignalEncoder(; psize, chunksize, overlap, nsignals, nfeatures = ntheta + nlatent),
-        SignalProjector(; psize, nshards, nsignals, nfeatures = ntheta + nlatent),
-        Flux.Chain(map(1:nhidden) do _
-            # TODO: Transformer
-            Transformer(psize, head, hsize, hdim; future = true, act = Flux.relu, pdrop = 0.0)
-        end...),
-        H -> H[:, 1, :],
-        (MLPHead === nothing) ? identity : MLPHead,
+        top..., # Collect input arguments
+        # Flux.Dense(sum(insizes), esize * seqlength), # Positional encoding
+        MLP(sum(insizes) => esize * seqlength, 0, hdim, Flux.relu, identity), # Positional encoding
+        Resize(esize, seqlength, :), # Resize
+        Flux.Chain(
+            [Transformer(esize, nheads, headsize, hdim) for _ in 1:nhidden]...
+        ),
+        Resize(esize * seqlength, :), # Resize
+        MLP(esize * seqlength => outsize, 0, hdim, Flux.relu, identity), # Dense reduction
     )
-    Flux.fmap(Flux.testmode!, xf) # Force dropout layers inactive
 end
 
 """
@@ -159,15 +186,3 @@ function shard_array(Y::AbstractVecOrMat, chunksize::Int, overlap::Int)
     I = CartesianIndex.(chunk .+ offset')
     return Y[I,..]
 end
-
-#=
-let
-    img_idx, img, Ytrain, Ytrainmeta = (sample_batch(:train)...,) # .|> deepcopy
-    ps = Flux.params(models["enc1"], models["enc2"], models["dec"]) # |> deepcopy
-    ℓ, back = Zygote.pullback(() -> sum(CVAElosses(Ytrainmeta; marginalize_Z = false)), ps)
-
-    # @btime sum(CVAElosses($Ytrainmeta; marginalize_Z = false)) #TODO CUDA.@sync
-    # @btime Zygote.pullback(() -> sum(CVAElosses($Ytrainmeta; marginalize_Z = false)), $ps) #TODO CUDA.@sync
-    @btime $back(one(eltype($phys))) #TODO CUDA.@sync
-end
-=#

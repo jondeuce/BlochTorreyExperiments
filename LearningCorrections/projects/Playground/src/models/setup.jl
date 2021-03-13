@@ -354,7 +354,7 @@ end
 # derived["cvae"]
 function load_pretrained_cvae(phys::PhysicsModel{Float32}; modelfolder, modelprefix = "best-")
     settings = TOML.parsefile(joinpath(modelfolder, "settings.toml"))
-    models = FileIO.load(only(Glob.glob(modelprefix * "models.*", modelfolder)))["models"] |> deepcopy |> to32
+    models = load_model(only(Glob.glob(modelprefix * "models.*", modelfolder)), "models") |> deepcopy |> to32
     @unpack enc1, enc2, dec = models
     cvae = derived_cvae(phys, enc1, enc2, dec; make_kwargs(settings, "arch")...)
 end
@@ -451,16 +451,9 @@ function init_mmd_kernels(phys::PhysicsModel{Float32}; bwsizes, bwbounds, nbandw
     end
 end
 
-function load_checkpoint(filename)
-    isempty(checkpointdir()) && return Dict{String, Any}()
-    try
-        FileIO.load(checkpointdir(filename))["models"] |> deepcopy |> to32
-    catch e
-        @warn "Error loading checkpoint from $(checkpointdir())"
-        @warn sprint(showerror, e, catch_backtrace())
-        return Dict{String, Any}()
-    end
-end
+####
+#### Optimizers
+####
 
 function init_optimizer(otype = Flux.ADAM; lr = 0.0, gclip = 0.0, wdecay = 0.0, kwargs...)
     os = Any[otype(lr)]
@@ -472,6 +465,30 @@ end
 ####
 #### Snapshot
 ####
+
+load_model(args...; kwargs...) = fix_model_deprecations(FileIO.load(args...; kwargs...))
+
+fix_model_deprecations(v) = Flux.fmap(v; exclude = x -> parentmodule(typeof(x)) === JLD2.ReconstructedTypes) do x
+    Tname = string(nameof(typeof(x))) # `Base.typename` fails for JLD2.ReconstructedTypes types? Must use `string(nameof(typeof(x)))`
+    if occursin("Flux.Dense{typeof(identity)", Tname)
+        # Flux renamed :W and :b fields to :weight and :bias
+        Flux.Dense(x.W, x.b) #TODO general case w/ non-identity activation; last I checked, reconstructed `x` did not have `:σ` field for some reason?
+    else
+        error("Cannot reconstruct type: $Tname")
+    end
+end
+fix_model_deprecations(d::Dict) = map_dict(fix_model_deprecations, d)
+
+function load_checkpoint(filename)
+    isempty(checkpointdir()) && return Dict{String, Any}()
+    try
+        load_model(checkpointdir(filename), "models") |> deepcopy |> to32
+    catch e
+        @warn "Error loading checkpoint from $(checkpointdir())"
+        @warn sprint(showerror, e, catch_backtrace())
+        return Dict{String, Any}()
+    end
+end
 
 function save_snapshot(settings, models; savepath = nothing, savedirs = ["src", "test", "scripts"])
     # Save simulation settings and summary of model

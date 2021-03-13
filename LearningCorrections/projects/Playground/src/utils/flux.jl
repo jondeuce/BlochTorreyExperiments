@@ -55,12 +55,12 @@ end
 function _test_find_model_param()
     m_aliased = Flux.Dense(2,2)
     m = Flux.Chain(Flux.Chain(Flux.Dense(1,2), m_aliased, m_aliased), Flux.Dense(2,1))
-    @assert find_model_param(m, m[1][1].W) == [1, 1, :W]
-    @assert find_model_param(m, m[1][2].b) == [1, 2, :b]
-    @assert find_model_param(m, m[2].b) == [2, :b]
-    @assert find_model_param(m, m[1][2].b) == find_model_param(m, m[1][3].b) == [1, 2, :b] # aliased params returns first found
-    @assert find_model_param(m, m[1][2].W) == find_model_param(m, m[1][3].W) == [1, 2, :W] # aliased params returns first found
-    @assert find_model_param(Dict(:m => m), m[1][1].W) == [:m, 1, 1, :W]
+    @assert find_model_param(m, m[1][1].weight) == [1, 1, :weight]
+    @assert find_model_param(m, m[1][2].bias) == [1, 2, :bias]
+    @assert find_model_param(m, m[2].bias) == [2, :bias]
+    @assert find_model_param(m, m[1][2].bias) == find_model_param(m, m[1][3].bias) == [1, 2, :bias] # aliased params returns first found
+    @assert find_model_param(m, m[1][2].weight) == find_model_param(m, m[1][3].weight) == [1, 2, :weight] # aliased params returns first found
+    @assert find_model_param(Dict(:m => m), m[1][1].weight) == [:m, 1, 1, :weight]
 end
 
 function fmap_(f, x, isleaf = Functors.isleaf; cache = IdDict())
