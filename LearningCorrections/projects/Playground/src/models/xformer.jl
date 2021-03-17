@@ -131,36 +131,24 @@ function TransformerEncoder(;
         insizes::Tuple{Vararg{Int}}, outsize::Int,
     )
     @assert esize * seqlength >= sum(insizes) # positional encoding output should retain at least as many datapoints as input
-    @assert esize <= nheads * headsize # projection head layers should conserve datapoints
+    # @assert esize <= nheads * headsize # projection head layers should conserve datapoints
 
-    if length(insizes) == 1
-        topology = @nntopo(
-            Y :        # input signals
-            Y  => E  : # positional embedding
-            E  => R1 : # resize
-            R1 => T  : # transformer layers
-            T  => R2 : # resize
-            R2 => Z    # dense reduction
-        )
-        top = ()
-    else
-        inputs = "(" * join(["Y$i" for i in 1:length(insizes)], ", ") * ")"
-        topology = NNTopo("$(inputs) => V => E => R1 => T => R2 => Z")
-        top = (vcat,)
-    end
-
-    xf = Stack(
-        topology,
-        top..., # Collect input arguments
-        # Flux.Dense(sum(insizes), esize * seqlength), # Positional encoding
-        MLP(sum(insizes) => esize * seqlength, 0, hdim, Flux.relu, identity), # Positional encoding
+    xf = Flux.Chain(
+        # Flux.Dense(sum(insizes), esize * seqlength), # Linear positional encoding
+        MLP(sum(insizes) => esize * seqlength, 0, hdim, Flux.relu, identity), # Non-linear positional encoding
         Resize(esize, seqlength, :), # Resize
-        Flux.Chain(
-            [Transformer(esize, nheads, headsize, hdim) for _ in 1:nhidden]...
-        ),
+        [Transformer(esize, nheads, headsize, hdim) for _ in 1:nhidden]..., # Transformer layers
         Resize(esize * seqlength, :), # Resize
         MLP(esize * seqlength => outsize, 0, hdim, Flux.relu, identity), # Dense reduction
-    )
+    ) |> flattenchain
+
+    if length(insizes) == 1
+        return xf
+    else
+        input_names = join(["X$i" for i in 1:length(insizes)], ", ") # input arg names = (X1, X2, ..., XN)
+        topology = NNTopo("($input_names) => V => Y") # vcat input args and forward to transformer
+        return Stack(topology, vcat, xf)
+    end
 end
 
 """

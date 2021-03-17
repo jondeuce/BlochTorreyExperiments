@@ -528,7 +528,8 @@ struct MetaCPMGSignal{T, P <: BiexpEPGModel{T}, I <: CPMGImage{T}, A <: Abstract
     Y::A
 end
 MetaCPMGSignal(::P, img::I, Y::A) where {T, P <: BiexpEPGModel{T}, I <: CPMGImage{T}, A <: AbstractArray{T}} = MetaCPMGSignal{T,P,I,A}(img, Y)
-Base.getindex(Ymeta::MetaCPMGSignal{T,P,I}, i...) where {T,P,I} = (Ynew = getindex(Ymeta.Y, i...); MetaCPMGSignal{T,P,I,typeof(Ynew)}(Ymeta.img, Ynew))
+MetaCPMGSignal(Ymeta::MetaCPMGSignal{T,P,I}, Y::A) where {T, P <: BiexpEPGModel{T}, I <: CPMGImage{T}, A <: AbstractArray{T}} = MetaCPMGSignal{T,P,I,A}(Ymeta.img, Y)
+Base.getindex(Ymeta::MetaCPMGSignal{T,P,I}, i...) where {T,P,I} = MetaCPMGSignal(Ymeta, getindex(Ymeta.Y, i...))
 
 function θnuissance(p::BiexpEPGModel, Ymeta::MetaCPMGSignal)
     @unpack T1bd, TEbd = p

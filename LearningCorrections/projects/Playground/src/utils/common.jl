@@ -40,6 +40,7 @@ arr64(x::AbstractArray) = arr_similar(Array{Float64}, x)
 # rand_similar and randn_similar
 for f in [:zeros, :ones, :rand, :randn]
     f_similar = Symbol(f, :_similar)
+    @eval $f_similar(x::AbstractArray) = $f_similar(typeof(x), size(x)...)
     @eval $f_similar(x::AbstractArray, sz...) = $f_similar(typeof(x), sz...)
     @eval $f_similar(::Type{<:AbstractArray{T}}, sz...) where {T} = Zygote.ignore(() -> Base.$f(T, sz...)) # fallback
     @eval $f_similar(::Type{<:CuArray{T}}, sz...) where {T} = Zygote.ignore(() -> CUDA.$f(T, sz...)) # CUDA
