@@ -2,11 +2,14 @@
 #### MLE inference
 ####
 
+
 function mle_biexp_epg_noise_only(
         X::AbstractVecOrMat,
         Y::AbstractVecOrMat,
         initial_ϵ     = nothing,
         initial_s     = nothing;
+        freeze_ϵ      = false,
+        freeze_s      = false,
         batch_size    = 128 * Threads.nthreads(),
         verbose       = true,
         dryrun        = false,
@@ -16,6 +19,9 @@ function mle_biexp_epg_noise_only(
         opt_alg       = :LD_SLSQP, # Rough algorithm ranking: [:LD_SLSQP, :LD_LBFGS, :LD_CCSAQ, :LD_AUGLAG, :LD_MMA] (Note: :LD_LBFGS fails to converge with tolerance looser than ~ 1e-4)
         opt_args      = Dict{Symbol,Any}(),
     )
+    @assert size(X) == size(Y)
+    @assert !(freeze_ϵ && freeze_s) # must be optimizing at least one
+
     dryrun && let
         I, _ = sample_maybeshuffle(1:size(Y,2); shuffle = dryrunshuffle, samples = dryrunsamples, seed = dryrunseed)
         X, Y = X[:,I], Y[:,I]
@@ -23,10 +29,13 @@ function mle_biexp_epg_noise_only(
         (initial_s !== nothing) && (initial_s = initial_s[:,I])
     end
 
-    (initial_ϵ === nothing) && (initial_ϵ = sqrt.(mean(abs2, X .- Y; dims = 1)))
-    (initial_s === nothing) && (initial_s = inv.(maximum(mean_rician.(X, initial_ϵ); dims = 1))) # ones_similar(X, 1, size(X,2))
-    @assert size(X) == size(Y) && size(initial_ϵ) == size(initial_s) == (1, size(X,2))
-
+    if initial_ϵ === nothing
+        initial_ϵ = sqrt.(mean(abs2, X .- Y; dims = 1))
+    end
+    if initial_s === nothing
+        initial_s = inv.(maximum(mean_rician.(X, initial_ϵ); dims = 1))
+        # initial_s = ones_similar(X, 1, size(X,2))
+    end
     initial_loss  = sum(neglogL_rician.(Y, initial_s .* X, log.(initial_s .* initial_ϵ)); dims = 1)
     initial_guess = (
         ϵ = initial_ϵ |> arr64,
@@ -35,15 +44,20 @@ function mle_biexp_epg_noise_only(
     )
     X, Y = (X, Y) .|> arr64
 
+    # Number of non-frozen variables to optimize
+    noptvars = !freeze_ϵ + !freeze_s
+
     work_spaces = map(1:Threads.nthreads()) do _
         (
-            Xj   = zeros(size(X,1)),
-            Yj   = zeros(size(Y,1)),
-            x0   = zeros(2),
-            ∇res = ForwardDiff.DiffResults.GradientResult(zeros(2)),
-            ∇cfg = ForwardDiff.GradientConfig(nothing, zeros(2), ForwardDiff.Chunk(2)),
-            opt = let
-                opt = NLopt.Opt(opt_alg, 2)
+            Xj    = zeros(size(X,1)),
+            Yj    = zeros(size(Y,1)),
+            x0    = zeros(noptvars),
+            logϵ0 = Ref(0.0),
+            logs0 = Ref(0.0),
+            ∇res  = ForwardDiff.DiffResults.GradientResult(zeros(noptvars)),
+            ∇cfg  = ForwardDiff.GradientConfig(nothing, zeros(noptvars), ForwardDiff.Chunk(noptvars)),
+            opt   = let
+                opt = NLopt.Opt(opt_alg, noptvars)
                 opt.xtol_rel      = 1e-8
                 opt.ftol_rel      = 1e-8
                 opt.maxeval       = 250
@@ -67,8 +81,8 @@ function mle_biexp_epg_noise_only(
 
     function f(work, x::Vector{D}) where {D <: MaybeDualF64}
         @inbounds begin
-            logϵ  = x[1]
-            logs  = x[2]
+            logϵ  = freeze_ϵ ? work.logϵ0[] : freeze_s ? x[1] : x[1]
+            logs  = freeze_s ? work.logs0[] : freeze_ϵ ? x[1] : x[2]
             s     = exp(logs)
             logϵi = logs + logϵ # log(s*ϵ)
             ℓ     = zero(D)
@@ -97,9 +111,9 @@ function mle_biexp_epg_noise_only(
     #= Benchmarking
     work_spaces[1].Xj .= X[:,1]
     work_spaces[1].Yj .= Y[:,1]
-    work_spaces[1].x0 .= log.(vcat(initial_guess.ϵ[1:1,1], initial_guess.s[1:1,1]))
+    work_spaces[1].x0 .= freeze_ϵ ? log.(initial_guess.s[1:1,1]) : freeze_s ? log.(initial_guess.ϵ[1:1,1]) : log.(vcat(initial_guess.ϵ[1:1,1], initial_guess.s[1:1,1]))
     @info "Calling function..."; l = f( work_spaces[1], work_spaces[1].x0 ); @show l
-    @info "Calling gradient..."; g = zeros(2); l = fg!( work_spaces[1], work_spaces[1].x0, g ); @show l, g
+    @info "Calling gradient..."; g = zeros(noptvars); l = fg!( work_spaces[1], work_spaces[1].x0, g ); @show l, g
     @info "Timing function..."; @btime( $f( $( work_spaces[1] ), $( work_spaces[1].x0 ) ) )
     @info "Timing gradient..."; @btime( $fg!( $( work_spaces[1] ), $( work_spaces[1].x0 ), $( g ) ) )
     =#
@@ -114,13 +128,14 @@ function mle_biexp_epg_noise_only(
                 work = work_spaces[Threads.threadid()]
                 work.Xj               .= X[:,j]
                 work.Yj               .= Y[:,j]
-                work.x0[1]             = log(initial_guess.ϵ[1,j])
-                work.x0[2]             = log(initial_guess.s[1,j])
+                work.logϵ0[]           = log(initial_guess.ϵ[1,j])
+                work.logs0[]           = log(initial_guess.s[1,j])
+                work.x0               .= freeze_ϵ ? work.logs0[] : freeze_s ? work.logϵ0[] : (work.logϵ0[], work.logs0[])
                 work.opt.min_objective = (x, g) -> fg!(work, x, g)
 
                 solvetime              = @elapsed (minf, minx, ret) = NLopt.optimize(work.opt, work.x0)
-                results.logepsilon[j]  = minx[1]
-                results.logscale[j]    = minx[2]
+                results.logepsilon[j]  = freeze_ϵ ? work.logϵ0[] : freeze_s ? minx[1] : minx[1]
+                results.logscale[j]    = freeze_s ? work.logs0[] : freeze_ϵ ? minx[1] : minx[2]
                 results.loss[j]        = minf
                 results.retcode[j]     = Base.eval(NLopt, ret) |> Int #TODO cleaner way to convert Symbol to enum?
                 results.numevals[j]    = work.opt.numevals
@@ -195,7 +210,7 @@ function mle_biexp_epg_x_regularization(work::W, x::A) where {W, A <: VecOrTuple
             ((η - ηlo) / (ηhi - ηlo))^2 + # mwf biased toward 0%
             ((z1 - z1lo) / (z1hi - z1lo))^2 + # (relative-)log T2 short biased lower
             ((z2 - z2hi) / (z2hi - z2lo))^2   # (relative-)log T2 long biased higher
-        ) / (2 * σreg^2)
+        ) / (2 * σreg^2) # regularization strength
         return R
     end
 end

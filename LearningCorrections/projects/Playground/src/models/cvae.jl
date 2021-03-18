@@ -317,7 +317,7 @@ sampleX̂θZ(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, Ymeta::Abstr
 sampleX̂(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, θprior::MaybeDeepPrior, Zprior::MaybeDeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleX̂θZ(phys, rice, cvae, θprior, Zprior, Ymeta; kwargs...)[1]
 sampleX̂(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleX̂(phys, rice, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
 
-function NegLogLikelihood(rice::RicianCorrector, Y::AbstractVecOrMat, μ0, σ)
+function NegLogLikelihood(::PhysicsModel, rice::RicianCorrector, Y::AbstractVecOrMat, μ0, σ)
     if typeof(rice) <: NormalizedRicianCorrector && (rice.normalizer !== nothing)
         Σμ = rice.normalizer(mean_rician.(μ0, σ))
         μ0, σ = (μ0 ./ Σμ), (σ ./ Σμ)
@@ -325,11 +325,18 @@ function NegLogLikelihood(rice::RicianCorrector, Y::AbstractVecOrMat, μ0, σ)
     neglogL_rician.(Y, μ0, log.(σ)) # Rician negative log likelihood
 end
 
+function NegLogLikelihood(::EPGModel, rice::RicianCorrector, Y::AbstractVecOrMat, μ0, σ)
+    # Likelihood is "maximimally generous" w.r.t. normalization factor, i.e. we perform MLE to find optimal scaling factor
+    _, results = mle_biexp_epg_noise_only(μ0, Y, σ; freeze_ϵ = true, freeze_s = false, verbose = false)
+    logs = arr_similar(Y, permutedims(results.logscale))
+    neglogL_rician.(Y, exp.(logs) .* μ0, logs .+ log.(σ)) # Rician negative log likelihood
+end
+
 function posterior_state(phys::PhysicsModel, rice::RicianCorrector, Y::AbstractVecOrMat, θ::AbstractVecOrMat, Z::AbstractVecOrMat; accum_loss = nothing)
     X = signal_model(phys, θ)
     @unpack δ, ϵ, ν = rician_state(rice, X, Z)
     X, δ, ϵ, ν = clamp_dim1(Y, (X, δ, ϵ, ν))
-    ℓ = NegLogLikelihood(rice, Y, ν, ϵ)
+    ℓ = NegLogLikelihood(phys, rice, Y, ν, ϵ)
     (accum_loss !== nothing) && (ℓ = accum_loss(ℓ))
     return (; Y, θ, Z, X, δ, ϵ, ν, ℓ)
 end

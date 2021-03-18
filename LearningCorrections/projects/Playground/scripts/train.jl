@@ -307,6 +307,7 @@ function CVAElosses(Ymeta::lib.AbstractMetaDataSignal, θPseudo = nothing, ZPseu
     δ_pseudo   = Zygote.@ignore eltype(Ymeta)(get!(settings["opt"]["cvae"], "delta_lambda_pseudo", 0.0)::Float64)
     minkept    = Zygote.@ignore get!(settings["train"], "CVAEmask", 0)::Int
 
+    #=
     # Sample X̂,θ,Z from priors
     θ = Zygote.@ignore sample(derived["cvae_theta_prior"], lib.signal(Ymeta))
     Z = Zygote.@ignore sample(derived["cvae_latent_prior"], lib.signal(Ymeta))
@@ -325,13 +326,15 @@ function CVAElosses(Ymeta::lib.AbstractMetaDataSignal, θPseudo = nothing, ZPseu
     if λ_latent > 0
         ℓ = push!!(ℓ, :LatentReg => λ_latent * lib.EnsembleKLDivUnitGaussian(X̂state.μq0, X̂state.logσq))
     end
+    =#
+    ℓ = (; KLDiv = zero(eltype(Ymeta)), ELBO = zero(eltype(Ymeta)))
 
     if λ_pseudo > 0
         λ_pseudo = Zygote.@ignore λ_pseudo * (τ_pseudo <= 0 || !@isdefined(trainer) ? one(λ_pseudo) : lib.cos_warmup(oftype(λ_pseudo, trainer.state.iteration), τ_pseudo, δ_pseudo))
         if λ_pseudo == 0
-            ℓ = push!!(ℓ, :KLDivPseudo => zero(λ_pseudo), :ELBOPseudo => zero(λ_pseudo))
-            (λ_vae_data > 0) && (ℓ = push!!(ℓ, :VAEPseudo => zero(λ_pseudo)))
-            (λ_latent > 0) && (ℓ = push!!(ℓ, :LatentRegPseudo => zero(λ_pseudo)))
+            ℓ = push!!(ℓ, :KLDivPseudo => zero(eltype(Ymeta)), :ELBOPseudo => zero(eltype(Ymeta)))
+            (λ_vae_data > 0) && (ℓ = push!!(ℓ, :VAEPseudo => zero(eltype(Ymeta))))
+            (λ_latent > 0) && (ℓ = push!!(ℓ, :LatentRegPseudo => zero(eltype(Ymeta))))
             return ℓ
         end
 
