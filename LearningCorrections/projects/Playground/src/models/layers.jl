@@ -83,6 +83,20 @@ function (a::BatchedDiagonal)(x::AbstractVecOrMat)
 end
 
 """
+Learnable layer containing hidden state. `(h::HiddenState)(xs...)` returns the hidden state for any input(s).
+"""
+struct HiddenState{A}
+    h::A
+end
+Flux.@functor HiddenState
+Base.show(io::IO, h::HiddenState{<:AbstractArray}) = print(io, "HiddenState(", join(size(h.h), ","), ")")
+Base.show(io::IO, h::HiddenState) = print(io, "HiddenState(h = ", repr(h.h), ")")
+
+HiddenState(sz::Int...; init = Flux.glorot_uniform) = HiddenState(init(sz...))
+
+(h::HiddenState)(xs...) = h.h
+
+"""
 batchsize(x::AbstractArray)
 
 Returns the size of the last dimension if ndims(x) >= 2, else returns 1.

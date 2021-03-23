@@ -63,9 +63,12 @@ function on_bad_params_or_gradients(f, models, ps::Zygote.Params, gs::Zygote.Gra
             found_nan_grad = found_inf_grad = found_nan_param = found_inf_param = false
             (found_nan_param = any(isnan, p)) && verbose && @info "Found NaN parameter: $(find_model_param(models, p))"
             (found_inf_param = any(isinf, p)) && verbose && @info "Found Inf parameter: $(find_model_param(models, p))"
-            if haskey(gs, p) && (g = gs[p]; g !== nothing)
-                (found_nan_grad = any(isnan, g)) && verbose && @info "Found NaN gradient: $(find_model_param(models, p))"
-                (found_inf_grad = any(isinf, g)) && verbose && @info "Found Inf gradient: $(find_model_param(models, p))"
+            if haskey(gs, p)
+                g = gs[p]
+                if g !== nothing
+                    (found_nan_grad = any(isnan, g)) && verbose && @info "Found NaN gradient: $(find_model_param(models, p))"
+                    (found_inf_grad = any(isinf, g)) && verbose && @info "Found Inf gradient: $(find_model_param(models, p))"
+                end
             end
             found_bad |= found_nan_grad || found_inf_grad || found_nan_param || found_inf_param
         end
@@ -73,7 +76,7 @@ function on_bad_params_or_gradients(f, models, ps::Zygote.Params, gs::Zygote.Gra
     found_bad && f()
     return found_bad
 end
-on_bad_params_or_gradients(f, models, ps::Zygote.Params; kwargs...) = on_bad_params_or_gradients(f, models, ps, Zygote.Grads(IdDict(), ps); kwargs...)
+on_bad_params_or_gradients(f, models, ps::Zygote.Params; kwargs...) = on_bad_params_or_gradients(f, models, ps, Zygote.Grads(IdDict(ps .=> nothing), ps); kwargs...)
 on_bad_params_or_gradients(f, models; kwargs...) = on_bad_params_or_gradients(f, models, Flux.params(models); kwargs...)
 on_bad_params_or_gradients(f, models::Dict; kwargs...) = on_bad_params_or_gradients(f, models, Flux.params(values(models)...); kwargs...)
 

@@ -27,12 +27,28 @@ to32(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float32},
 to64(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float64}, xi) : xi, todevice(x))
 
 arr_similar(x::AbstractArray, y::AbstractArray) = arr_similar(typeof(x), y)
-arr_similar(::Type{<:AbstractArray{T}}, y::AbstractArray) where {T} = convert(Array{T}, y)
-arr_similar(::Type{<:AbstractArray{T}}, y::CuArray{T}) where {T} = convert(Array{T}, y) #TODO: CuArray -> Array works directly if eltypes are equal
-arr_similar(::Type{<:AbstractArray{T1}}, y::CuArray{T2}) where {T1,T2} = convert(Array{T1}, y |> cpu) #TODO: CuArray -> Array falls back to scalar indexing with unequal eltypes
-arr_similar(::Type{<:CuArray{T1}}, y::CuArray{T2}) where {T1,T2} = convert(CuArray{T1}, y) #TODO: Needed for disambiguation
-arr_similar(::Type{<:CuArray{T}}, y::AbstractArray) where {T} = convert(CuArray{T}, y)
+# arr_similar(::Type{<:AbstractArray{T}}, y::AbstractArray) where {T} = convert(Array{T}, y)
+# arr_similar(::Type{<:AbstractArray{T}}, y::CuArray{T}) where {T} = convert(Array{T}, y) #TODO: CuArray -> Array works directly if eltypes are equal
+# arr_similar(::Type{<:AbstractArray{T1}}, y::CuArray{T2}) where {T1,T2} = convert(Array{T1}, y |> cpu) #TODO: CuArray -> Array falls back to scalar indexing with unequal eltypes
+# arr_similar(::Type{<:CuArray{T1}}, y::CuArray{T2}) where {T1,T2} = convert(CuArray{T1}, y) #TODO: Needed for disambiguation
+# arr_similar(::Type{<:CuArray{T}}, y::AbstractArray) where {T} = convert(CuArray{T}, y |> gpu)
+arr_similar(::Type{<:AbstractArray{T}}, y::AbstractArray) where {T} = T.(y) # fallback
+arr_similar(::Type{<:AbstractArray{T}}, y::CuArray) where {T} = T.(y |> cpu)
+arr_similar(::Type{<:CuArray{T}}, y::AbstractArray) where {T} = T.(y |> gpu)
+arr_similar(::Type{<:CuArray{T}}, y::CuArray) where {T} = T.(y)
 Zygote.@adjoint arr_similar(::Type{Tx}, y::Ty) where {Tx <: AbstractArray, Ty <: AbstractArray} = arr_similar(Tx, y), Δ -> (nothing, arr_similar(Ty, Δ)) # preserve input type on backward pass
+
+function _test_arr_similar()
+    for f1 in [rand, CUDA.rand], f2 in [rand, CUDA.rand], T1 in [Float32, Float64], T2 in [Float32, Float64], sz in [(1,), (1,1), (1,1,1)]
+        x = f1(T1, sz)
+        y = f2(T2, sz)
+        # @info f1, f2, T1, T2, sz
+        @assert typeof(arr_similar(x, y)) == typeof(x)
+        @assert typeof(arr_similar(y, x)) == typeof(y)
+        @assert isapprox(cpu(arr_similar(x, y)), cpu(y); rtol = eps(Float32))
+        @assert isapprox(cpu(arr_similar(y, x)), cpu(x); rtol = eps(Float32))
+    end
+end
 
 arr32(x::AbstractArray) = arr_similar(Array{Float32}, x)
 arr64(x::AbstractArray) = arr_similar(Array{Float64}, x)

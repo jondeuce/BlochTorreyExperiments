@@ -91,11 +91,13 @@ lib.settings_template() = TOML.parse(
     hdim      = 512 # size of hidden layers
     skip      = false # skip connection
     layernorm = false # layer normalization following dense layer
-    nhidden   = 4    # number of hidden layers
-    esize     = 128 # transformer input embedding size
-    nheads    = 4   # number of attention heads
-    headsize  = 4   # projection head size
-    seqlength = 8   # number of signal projection shards
+    nhidden   = 2   # number of hidden layers
+    esize     = 32  # transformer input embedding size
+    nheads    = 8   # number of attention heads
+    headsize  = 8   # projection head size
+    seqlength = 64  # number of signal projection shards
+    qseqlength= 8   # number of query shards for Perceiver
+    share     = false # share parameters between recurrent Perceiver layers
     [arch.enc1]
         INHERIT = "%PARENT%"
     [arch.enc2]
@@ -307,7 +309,6 @@ function CVAElosses(Ymeta::lib.AbstractMetaDataSignal, θPseudo = nothing, ZPseu
     δ_pseudo   = Zygote.@ignore eltype(Ymeta)(get!(settings["opt"]["cvae"], "delta_lambda_pseudo", 0.0)::Float64)
     minkept    = Zygote.@ignore get!(settings["train"], "CVAEmask", 0)::Int
 
-    #=
     # Sample X̂,θ,Z from priors
     θ = Zygote.@ignore sample(derived["cvae_theta_prior"], lib.signal(Ymeta))
     Z = Zygote.@ignore sample(derived["cvae_latent_prior"], lib.signal(Ymeta))
@@ -326,8 +327,9 @@ function CVAElosses(Ymeta::lib.AbstractMetaDataSignal, θPseudo = nothing, ZPseu
     if λ_latent > 0
         ℓ = push!!(ℓ, :LatentReg => λ_latent * lib.EnsembleKLDivUnitGaussian(X̂state.μq0, X̂state.logσq))
     end
-    =#
+    #=
     ℓ = (; KLDiv = zero(eltype(Ymeta)), ELBO = zero(eltype(Ymeta)))
+    =#
 
     if λ_pseudo > 0
         λ_pseudo = Zygote.@ignore λ_pseudo * (τ_pseudo <= 0 || !@isdefined(trainer) ? one(λ_pseudo) : lib.cos_warmup(oftype(λ_pseudo, trainer.state.iteration), τ_pseudo, δ_pseudo))

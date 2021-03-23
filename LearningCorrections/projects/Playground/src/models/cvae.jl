@@ -319,16 +319,21 @@ sampleX̂(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, Ymeta::Abstract
 
 function NegLogLikelihood(::PhysicsModel, rice::RicianCorrector, Y::AbstractVecOrMat, μ0, σ)
     if typeof(rice) <: NormalizedRicianCorrector && (rice.normalizer !== nothing)
-        Σμ = rice.normalizer(mean_rician.(μ0, σ))
-        μ0, σ = (μ0 ./ Σμ), (σ ./ Σμ)
+        # Approximate the normalization factor as the normalization factor of the mean signal.
+        # For gaussian noise mean signal = μ0, but for rician noise mean signal ~ sqrt(μ0^2 + σ^2), at least when μ0 >> σ
+        s = inv.(rice.normalizer(mean_rician.(μ0, σ)))
+        neglogL_rician.(Y, s .* μ0, log.(s .* σ)) # Rician negative log likelihood
+    else
+        neglogL_rician.(Y, μ0, log.(σ)) # Rician negative log likelihood
     end
-    neglogL_rician.(Y, μ0, log.(σ)) # Rician negative log likelihood
 end
 
 function NegLogLikelihood(::EPGModel, rice::RicianCorrector, Y::AbstractVecOrMat, μ0, σ)
     # Likelihood is "maximimally generous" w.r.t. normalization factor, i.e. we perform MLE to find optimal scaling factor
-    _, results = mle_biexp_epg_noise_only(μ0, Y, σ; freeze_ϵ = true, freeze_s = false, verbose = false)
-    logs = arr_similar(Y, permutedims(results.logscale))
+    logs = Zygote.@ignore begin
+        _, results = mle_biexp_epg_noise_only(μ0, Y, σ; freeze_ϵ = true, freeze_s = false, verbose = false)
+        arr_similar(Y, permutedims(results.logscale))
+    end
     neglogL_rician.(Y, exp.(logs) .* μ0, logs .+ log.(σ)) # Rician negative log likelihood
 end
 

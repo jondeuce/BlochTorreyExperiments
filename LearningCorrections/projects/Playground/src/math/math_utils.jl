@@ -62,10 +62,17 @@ uniform_range(N::Int) = N <= 1 ? zeros(N) : range(-1,1,length=N) |> collect
 # Temporary fix: https://github.com/FluxML/NNlib.jl/issues/254
 Zygote.@adjoint Flux.softplus(x::Real) = Flux.softplus(x), Δ -> (Δ * Flux.σ(x),)
 
+# Temporary fix: softmax broken for CuArray? (fixed on CUDA master; https://github.com/FluxML/Flux.jl/issues/1425, https://github.com/JuliaGPU/CUDA.jl/issues/599)
+fast_softmax(x; dims = 1) = Flux.softmax(x; dims)
+# function fast_softmax(x::AbstractArray; dims = 1)
+#     y = exp.(x .- maximum(x; dims))
+#     y ./= sum(y; dims)
+#     return y
+# end
+
 # Temporary fix: cudnn softmax adjoint is slow?
-fast_softmax(A; dims = 1) = Flux.softmax(A; dims)
-Zygote.@adjoint function fast_softmax(A; dims = 1)
-    y = fast_softmax(A; dims)
+Zygote.@adjoint function fast_softmax(x; dims = 1)
+    y = fast_softmax(x; dims)
     return y, function (Δ)
         ∂A = Δ .* y
         ∂A .-= y .* sum(∂A; dims)

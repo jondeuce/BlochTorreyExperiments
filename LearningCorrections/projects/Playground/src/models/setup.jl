@@ -296,8 +296,8 @@ function init_mlp_cvae_enc1(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, kw
 end
 
 # models["enc1"]
-function init_xformer_cvae_enc1(phys::PhysicsModel{Float32}; hdim, zdim, nlatent, nhidden, esize, nheads, headsize, seqlength, kwargs...)
-    TransformerEncoder(; esize, nheads, headsize, hdim, seqlength, nhidden, insizes = (nsignal(phys),), outsize = 2*zdim) |> to32
+function init_xformer_cvae_enc1(phys::PhysicsModel{Float32}; hdim, zdim, nlatent, nhidden, esize, nheads, headsize, seqlength, qseqlength, share, kwargs...)
+    TransformerEncoder(; esize, nheads, headsize, hdim, seqlength, qseqlength, share, nhidden, insizes = (nsignal(phys),), outsize = 2*zdim) |> to32
 end
 
 # models["enc2"]
@@ -308,8 +308,8 @@ function init_mlp_cvae_enc2(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nl
 end
 
 # models["enc2"]
-function init_xformer_cvae_enc2(phys::PhysicsModel{Float32}; hdim, zdim, nlatent, nhidden, esize, nheads, headsize, seqlength, kwargs...)
-    TransformerEncoder(; esize, nheads, headsize, hdim, seqlength, nhidden, insizes = (nsignal(phys), ntheta(phys), nlatent), outsize = 2*zdim) |> to32
+function init_xformer_cvae_enc2(phys::PhysicsModel{Float32}; hdim, zdim, nlatent, nhidden, esize, nheads, headsize, seqlength, qseqlength, share, kwargs...)
+    TransformerEncoder(; esize, nheads, headsize, hdim, seqlength, qseqlength, share, nhidden, insizes = (nsignal(phys), ntheta(phys), nlatent), outsize = 2*zdim) |> to32
 end
 
 # models["dec"]
@@ -320,8 +320,8 @@ function init_mlp_cvae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nla
 end
 
 # models["dec"]
-function init_xformer_cvae_dec(phys::PhysicsModel{Float32}; hdim, zdim, nlatent, nhidden, esize, nheads, headsize, seqlength, kwargs...)
-    TransformerEncoder(; esize, nheads, headsize, hdim, seqlength, nhidden, insizes = (nsignal(phys), zdim), outsize = 2*(nmarginalized(phys) + nlatent)) |> to32
+function init_xformer_cvae_dec(phys::PhysicsModel{Float32}; hdim, zdim, nlatent, nhidden, esize, nheads, headsize, seqlength, qseqlength, share, kwargs...)
+    TransformerEncoder(; esize, nheads, headsize, hdim, seqlength, qseqlength, share, nhidden, insizes = (nsignal(phys), zdim), outsize = 2*(nmarginalized(phys) + nlatent)) |> to32
 end
 
 # models["vae_dec"]
