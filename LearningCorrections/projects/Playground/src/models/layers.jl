@@ -63,6 +63,36 @@ function (a::BatchedDense)(x::AbstractVecOrMat)
 end
 
 """
+Similar to `Flux.Dense`, except the weight matrix acts on the channel dimension,
+i.e. as an outer product from the right:
+
+    y[i..., j, k] = σ.(x[i..., c, k] * W[c,j] .+ b[i..., j])
+"""
+struct ChannelwiseDense{F, M <: AbstractMatrix, B}
+    weight::M
+    bias::B
+    σ::F
+end
+Flux.@functor ChannelwiseDense
+
+ChannelwiseDense(in::Int, (cin,cout)::Pair{Int,Int}, σ = identity; initW = Flux.glorot_uniform, initb = Flux.zeros) =
+    ChannelwiseDense(initW(cin, cout), initb(in, cout), σ)
+
+function (a::ChannelwiseDense)(x::AbstractTensor3D)
+    W, b, σ = a.weight, a.bias, a.σ
+    return σ.(Flux.batched_mul(x, W) .+ b)
+end
+(d::ChannelwiseDense)(x::AbstractArray{T,N}) where {T,N} = reshape(d(reshape(x, :, size(x,N-1), size(x,N))), size(x)[1:N-2]..., :, size(x,N))
+(d::ChannelwiseDense)(x::AbstractVecOrMat) = error("x must have dimension >= 3; x has ndims(x) = $(ndims(x)), typeof(x) = $(typeof(x))")
+
+function Base.show(io::IO, l::ChannelwiseDense)
+    print(io, "ChannelwiseDense(", size(l.bias, 1), ", ", size(l.weight, 1), "=>", size(l.weight, 2))
+    l.σ == identity || print(io, ", ", l.σ)
+    l.bias == Flux.Zeros() && print(io, "; bias = Zeros()")
+    print(io, ")")
+end
+
+"""
 Same as `Flux.Diagonal`, except `W` and `b` act along batch dimensions:
 
     y[:,k] = σ.(W[:,:,k] * x[:,k] .+ b[:,:,k])
@@ -486,16 +516,6 @@ DistributionUnion(d1, d2; p) = p <= 0 ? d2 : p >= 1 ? d1 : DistributionUnion(d1,
 (u::DistributionUnion)(x) = sample_union(u.d1, u.d2, eltype(x)(u.p), x)
 
 """
-ChannelwiseDense
-"""
-ChannelwiseDense(H::Int, ch::Pair, σ = identity) = Flux.Chain(DenseResize(), Flux.Dense(H*ch[1], H*ch[2], σ), ChannelResize(ch[2]))
-
-"""
-HeightwiseDense
-"""
-HeightwiseDense(H::Int, C::Int, σ = identity) = Flux.Chain(x -> reshape(x, H, :), Flux.Dense(H, H, σ), x -> reshape(x, H, 1, C, :))
-
-"""
 IdentitySkip
 
 `ResNet`-type skip-connection with identity shortcut.
@@ -591,15 +611,15 @@ function BatchDenseConnection(
         groupnorm::Bool = false,
         batchnorm::Bool = false,
     )
-    CD(σ = identity) = ChannelwiseDense(H, C=>C, σ).layers
+    CD(σ = identity) = ChannelwiseDense(H, C=>C, σ)
     BN(σ = identity) = batchnorm ? Flux.BatchNorm(C, σ) : groupnorm ? Flux.GroupNorm(C, C÷2, σ) : identity
     AF(σ) = Base.BroadcastFunction(σ)
     if mode === :pre
-        Flux.Chain(BN(), AF(σ), CD()..., BN(), AF(σ), CD()...)
+        Flux.Chain(BN(), AF(σ), CD(), BN(), AF(σ), CD())
     elseif mode === :post
-        Flux.Chain(CD()..., BN(), AF(σ), CD()..., BN(), AF(σ))
+        Flux.Chain(CD(), BN(), AF(σ), CD(), BN(), AF(σ))
     elseif mode === :hybrid
-        Flux.Chain(BN(), CD(σ)..., BN(), CD()...)
+        Flux.Chain(BN(), CD(σ)..., BN(), CD())
     else
         error("Unknown BatchDenseConnection mode $mode")
     end

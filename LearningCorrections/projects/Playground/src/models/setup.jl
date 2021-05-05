@@ -171,8 +171,8 @@ end
 function load_epgmodel_physics(; max_numechos = 64, image_infos = nothing, seed = 0)
     phys = EPGModel{Float32,false}(n = max_numechos)
     (image_infos === nothing) && (image_infos = [
-        (TE = 8e-3, refcon = 180.0, path = DrWatson.datadir("Example_48echo_8msTE", "data-in", "ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.mat")),
-        (TE = 7e-3, refcon = 180.0, path = DrWatson.datadir("Example_56echo_7msTE_CPMG", "data-in", "MW_TRAINING_001_WIP_CPMG56_CS_half_2_1.masked-image.mat")),
+        (TE = 8e-3, refcon = 180.0, path = DrWatson.datadir("images", "2019-10-28_48echo_8msTE_CPMG", "data-in", "ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.nii.gz")),
+        (TE = 7e-3, refcon = 180.0, path = DrWatson.datadir("images", "2019-09-22_56echo_7msTE_CPMG", "data-in", "MW_TRAINING_001_WIP_CPMG56_CS_half_2_1.masked-image.mat")),
     ])
     initialize!(phys; image_infos, seed)
 end

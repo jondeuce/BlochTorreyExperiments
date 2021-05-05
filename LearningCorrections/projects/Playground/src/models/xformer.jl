@@ -219,21 +219,42 @@ function TransformerEncoder(;
     )
     @assert esize * seqlength >= sum(insizes) # positional encoding output should retain at least as many datapoints as input
     # @assert esize <= nheads * headsize # projection head layers should conserve datapoints
-    outseqlength = qseqlength > 0 ? qseqlength : seqlength
 
-    xf = Flux.Chain(
-        # Flux.Dense(sum(insizes), esize * seqlength), # Linear positional encoding
-        MLP(sum(insizes) => esize * seqlength, 0, hdim, Flux.relu, identity), # Non-linear positional encoding
-        Resize(esize, seqlength, :), # Resize
-        if qseqlength > 0
-            [Perceiver(esize, nheads, headsize, hdim, qseqlength, nhidden; share)] # Perceiver layers
-        else
-            [Transformer(esize, nheads, headsize, hdim) for _ in 1:nhidden] # Transformer layers
-        end...,
+    # Positional encoding
+    if true
+        # Full (non-)linear mapping from `sum(insizes)` -> `esize * seqlength` dimensions w/ positional encoding
+        pos_encode = Flux.Chain(
+            Flux.Dense(sum(insizes), esize * seqlength), # Linear positional encoding
+            # MLP(sum(insizes) => esize * seqlength, 0, hdim, Flux.relu, identity), # Non-linear positional encoding
+            Resize(esize, seqlength, :), # Resize
+        )
+    else
+        # Factorized (non-)linear mapping from `sum(insizes)` -> `esize` -> `esize * seqlength` dimensions w/ positional encoding
+        pos_encode = Flux.Chain(
+            Resize(sum(insizes), 1, :), # Resize input to represent single channel/sequence token
+            ChannelwiseDense(sum(insizes), 1=>seqlength, identity), # linearly expand channel dimension/number of tokens + add positional encoding
+            # Flux.Dense(sum(insizes), esize), # Linear dimension reduction to token dimension size
+            MLP(sum(insizes) => esize, 0, hdim, Flux.relu, identity), # Non-linear dimension reduction to token dimension size
+        )
+    end
+
+    # Number of output tokens: qseqlength if using Perceiver, else just seqlength
+    is_perceiver = qseqlength > 0
+    if is_perceiver
+        xf_layers = Perceiver(esize, nheads, headsize, hdim, qseqlength, nhidden; share) # Perceiver builds `nhidden` layers internally
+    else
+        xf_layers = Flux.Chain([Transformer(esize, nheads, headsize, hdim) for _ in 1:nhidden]...) # Transformer layers
+    end
+
+    # MLP reducer to encoder space
+    outseqlength = is_perceiver ? qseqlength : seqlength
+    reducer = Flux.Chain(
         Resize(esize * outseqlength, :), # Resize
         MLP(esize * outseqlength => outsize, 0, hdim, Flux.relu, identity), # Dense reduction
-    ) |> flattenchain
+    )
 
+    # Build transformer encoder
+    xf = Flux.Chain(pos_encode, xf_layers, reducer) |> flattenchain
     if length(insizes) == 1
         return xf
     else

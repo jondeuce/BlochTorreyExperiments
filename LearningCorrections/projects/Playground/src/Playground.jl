@@ -69,6 +69,8 @@ include("models/losses.jl")
 include("models/eval.jl")
 include("models/setup.jl")
 
+include("fix/transformers_mha.jl")
+
 #### Init
 
 function __init__()
