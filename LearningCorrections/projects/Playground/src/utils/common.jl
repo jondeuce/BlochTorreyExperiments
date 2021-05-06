@@ -170,6 +170,54 @@ function breadth_first_iterator(tree::AbstractDict)
 end
 
 ####
+#### Multi-threading utils
+####
+
+function foreach_with_progress(f, foreach_, input::AbstractRange; dt = 1.0, checkpoint_cb = nothing, checkpoint_freq::Int = typemax(Int))
+
+    completed = falses(length(input))
+    completed_copy = copy(completed)
+    checkpoint_count = 1
+    ℓ = Threads.SpinLock()
+    p = ProgressMeter.Progress(length(input), dt)
+
+    @async foreach_(enumerate(input)) do (c,i)
+        f(i)
+        Threads.lock(ℓ) do
+            completed[c] = true
+        end
+    end
+
+    while true
+        sleep(dt)
+        Threads.lock(ℓ) do
+            completed_copy .= completed
+        end
+        if checkpoint_cb !== nothing && checkpoint_freq <= length(input)
+            while checkpoint_count <= length(input)
+                checkpoint_range      = checkpoint_count : min(checkpoint_count + checkpoint_freq - 1, length(input))
+                checkpoint_statuses   = @views completed_copy[checkpoint_range]
+                completed_inputs      = @views input[checkpoint_range]
+                if all(checkpoint_statuses)
+                    checkpoint_count = checkpoint_range[end] + 1
+                    Threads.lock(ℓ) do
+                        checkpoint_cb(completed_inputs)
+                    end
+                else
+                    break
+                end
+            end
+        end
+        total_completed = sum(completed_copy)
+        ProgressMeter.update!(p, total_completed)
+        total_completed === length(input) && break
+    end
+
+    return nothing
+end
+foreach_with_progress(f, input; kwargs...) = foreach_with_progress(f, ThreadPools.qbforeach, input; kwargs...)
+
+####
 #### IO, error handling
 ####
 

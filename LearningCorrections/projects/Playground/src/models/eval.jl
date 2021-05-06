@@ -1,7 +1,306 @@
 ####
+#### Abstract type dictionary for storing arbitrary caches by element type.
+#### Definition taken directly from the folks at RigidBodyDynamics.jl:
+####
+####    https://github.com/JuliaRobotics/RigidBodyDynamics.jl/blob/b9ef1d6974beff4d4fbe7dffc6dbfa65f71e0132/src/caches.jl#L1
+####
+#### Following discussions re: pre-allocating caches for Dual number types:
+####
+####    https://discourse.julialang.org/t/nlsolve-preallocated-forwarddiff-dual/13950
+####    https://github.com/JuliaRobotics/RigidBodyDynamics.jl/issues/548
+####    https://diffeq.sciml.ai/stable/basics/faq/#I-get-Dual-number-errors-when-I-solve-my-ODE-with-Rosenbrock-or-SDIRK-methods
+
+abstract type AbstractTypeDict end
+function valuetype end
+function makevalue end
+
+function Base.getindex(c::C, ::Type{T}) where {C<:AbstractTypeDict, T}
+    ReturnType = valuetype(C, T)
+    key = objectid(T)
+    @inbounds for i in eachindex(c.keys)
+        if c.keys[i] === key
+            return c.values[i]::ReturnType
+        end
+    end
+    value = makevalue(c, T)::ReturnType
+    push!(c.keys, key)
+    push!(c.values, value)
+    value::ReturnType
+end
+
+#### Array caches
+
+struct ArrayCache{N,Size} <: AbstractTypeDict
+    keys::Vector{UInt}
+    values::Vector{Array}
+end
+ArrayCache(Size::Int...) = ArrayCache(Size)
+ArrayCache(Size::NTuple{N,Int}) where {N} = ArrayCache{N,Size}([], [])
+@inline valuetype(::Type{ArrayCache{N,Size}}, ::Type{T}) where {T, N, Size} = Array{T,N}
+@inline makevalue(::ArrayCache{N,Size}, ::Type{T}) where {T, N, Size} = zeros(T, Size)
+
+#### EPGModel caches
+
+struct EPGModelWorkCache{ETL} <: AbstractTypeDict
+    keys::Vector{UInt}
+    values::Vector{DECAES.EPGWork_ReIm_DualMVector_Split}
+end
+EPGModelWorkCache(ETL::Int) = EPGModelWorkCache{ETL}([], [])
+@inline valuetype(::Type{EPGModelWorkCache{ETL}}, ::Type{T}) where {T, ETL} = DECAES.EPGWork_ReIm_DualMVector_Split{T, ETL, DECAES.MVector{ETL,DECAES.SVector{3,T}}, DECAES.MVector{ETL,T}}
+@inline makevalue(::EPGModelWorkCache{ETL}, ::Type{T}) where {T, ETL} = DECAES.EPGWork_ReIm_DualMVector_Split(T, ETL)
+
+#### BiexpEPGModel caches
+
+struct BiexpEPGModelWorkCache{ETL} <: AbstractTypeDict
+    keys::Vector{UInt}
+    values::Vector{BiexpEPGModelWork}
+end
+BiexpEPGModelWorkCache(ETL::Int) = BiexpEPGModelWorkCache{ETL}([], [])
+@inline valuetype(::Type{BiexpEPGModelWorkCache{ETL}}, ::Type{T}) where {T, ETL} = BiexpEPGModelWork{T, ETL, DECAES.MVector{ETL,T}, valuetype(EPGModelWorkCache{ETL}, T), valuetype(EPGModelWorkCache{ETL}, T)}
+@inline makevalue(::BiexpEPGModelWorkCache{ETL}, ::Type{T}) where {T, ETL} = BiexpEPGModelWork(T, ETL)
+
+function _test_epgwork_cache()
+    T = Float64
+    D = ForwardDiff.Dual{Nothing, Float64, 2}
+    cache = ArrayCache(1,2,1)
+    @btime $cache[$T]
+    @btime $cache[$D]
+    cache = EPGModelWorkCache(48)
+    @btime $cache[$T]
+    @btime $cache[$D]
+    cache = BiexpEPGModelWorkCache(48)
+    @btime $cache[$T]
+    @btime $cache[$D]
+end
+
+#=
+####
+#### Recursively reinterpret arrays in nested structures.
+#### Currently causes segfaults...
+####
+
+recurse_reinterpret(x, y::AbstractArray{T}) where {T} = recurse_reinterpret(x, T)
+recurse_reinterpret(x, y::AbstractArray{V}) where {T, N, V <: DECAES.SVector{N,T}} = recurse_reinterpret(x, T)
+
+recurse_reinterpret(x::AbstractArray{T1}, ::Type{T2}) where {T1, T2} = reinterpret(T2, x)
+recurse_reinterpret(x::AbstractArray{V1}, ::Type{T2}) where {T1, T2, N, V1 <: DECAES.SVector{N,T1}} = reinterpret(DECAES.SVector{N,T2}, x)
+
+function recurse_reinterpret(x, ::Type{T}) where {T}
+    func, re = Flux.functor(x)
+    return re(map(y -> recurse_reinterpret(y, T), func))
+end
+
+function Flux.functor(work::DECAES.EPGWork_ReIm_DualMVector_Split{<:Any, ETL}) where {ETL}
+    function EPGWork_ReIm_DualMVector_Split_functor(
+            MPSV₁::MPSVType,
+            MPSV₂::MPSVType,
+            decay_curve::DCType,
+        ) where {T, MPSVType <: AbstractVector{DECAES.SVector{3,T}}, DCType <: AbstractVector{T}}
+        return DECAES.EPGWork_ReIm_DualMVector_Split{T,ETL,MPSVType,DCType}(MPSV₁, MPSV₂, decay_curve)
+    end
+    return (work.MPSV₁, work.MPSV₂, work.decay_curve), caches -> EPGWork_ReIm_DualMVector_Split_functor(caches...)
+end
+
+function Flux.functor(work::BiexpEPGModelWork{<:Any, ETL}) where {ETL}
+    function BiexpEPGModelWork_functor(
+            dc::A,
+            short_work::W1,
+            long_work::W2,
+        ) where {T, A <: AbstractVector{T}, W1 <: DECAES.AbstractEPGWorkspace{T}, W2 <: DECAES.AbstractEPGWorkspace{T}}
+        return BiexpEPGModelWork{T,ETL,A,W1,W2}(dc, short_work, long_work)
+    end
+    return (work.dc, work.short_work, work.long_work), caches -> BiexpEPGModelWork_functor(caches...)
+end
+
+function _test_recurse_reinterp(phys)
+    D1 = ForwardDiff.Dual{Nothing, Float64, 2}
+    D2 = ForwardDiff.Dual{typeof(sin), Float64, 2}
+    work1 = BiexpEPGModelWork(phys, D1, EPGVectorWorkFactory)
+    @show typeof(work1)
+    work2 = recurse_reinterpret(work1, D2)
+    @show typeof(work2)
+    return work1
+end
+=#
+
+####
+#### MCMC inference
+####
+
+function mcmc_biexp_epg_work_factory(phys, img)
+    @unpack TEbd, T2bd, T1bd = phys
+    TE        = 1.0 # all times are relative to TE and unitless
+    T1        = T1time(img) / echotime(img) |> Float64
+    logτ2lo   = log(T2bd[1] / TEbd[2]) |> Float64
+    logτ2hi   = log(T2bd[2] / TEbd[1]) |> Float64
+    logτ1lo   = log(T1bd[1] / TEbd[2]) |> Float64
+    logτ1hi   = log(T1bd[2] / TEbd[1]) |> Float64
+    logτ2lo′  = log(T2bd[1] / echotime(img)) |> Float64
+    logτ2hi′  = log(T2bd[2] / echotime(img)) |> Float64
+    δ0        = (log(T1) - logτ1lo) / (logτ1hi - logτ1lo)
+    epg_cache = BiexpEPGModelWorkCache(nsignal(img))
+    return (; TEbd, T2bd, T1bd, TE, T1, logτ2lo, logτ2hi, logτ1lo, logτ1hi, logτ2lo′, logτ2hi′, δ0, epg_cache)
+end
+
+function biexp_epg_model_scaled!(work, α, β, η, δ1, δ2, logϵ, logs)
+    @unpack TE, T1, logτ2lo, logτ2hi, epg_cache = work
+    D      = promote_type(typeof(α), typeof(β), typeof(η), typeof(δ1), typeof(δ2), typeof(logϵ), typeof(logs))
+    epg    = epg_cache[D]
+    T21    = exp(logτ2lo + (logτ2hi - logτ2lo) * δ1)
+    T22    = exp(logτ2lo + (logτ2hi - logτ2lo) * (δ1 + δ2 * (1 - δ1)))
+    A1, A2 = η, 1-η
+    ϵ, s   = exp(logϵ), exp(logs)
+    ψ      = (α, β, T21, T22, A1, A2, T1, TE)
+    X      = _biexp_epg_model_f64!(epg.dc, epg, ψ)
+    Xmax   = zero(eltype(X))
+    @simd for i in eachindex(X)
+        Xmax = max(X[i], Xmax)
+    end
+    Xscale = s / Xmax
+    @simd for i in eachindex(X)
+        X[i] *= Xscale
+    end
+    return X
+end
+
+Turing.@model function mcmc_biexp_epg_model!(work, Y::AbstractVector{Float64})
+    α     ~ Distributions.TruncatedNormal(180.0, 45.0, 90.0, 180.0)
+    β     ~ Distributions.TruncatedNormal(180.0, 45.0, 90.0, 180.0)
+    η     ~ Distributions.TruncatedNormal(0.0, 0.5, 0.0, 1.0)
+    δ1    ~ Distributions.TruncatedNormal(0.0, 0.5, 0.0, 1.0)
+    δ2    ~ Distributions.TruncatedNormal(1.0, 0.5, 0.0, 1.0)
+    logϵ  ~ Distributions.Uniform(log(1e-5), log(1e-1)) # equivalent to 20 <= SNR <= 100
+    logs  ~ Distributions.Normal(0.0, 0.5)
+    X     = biexp_epg_model_scaled!(work, α, β, η, δ1, δ2, logϵ, logs)
+    logϵs = logϵ + logs
+    ϵs    = exp(logϵs)
+    for i in 1:length(Y)
+        logℒ = -neglogL_rician(Y[i], X[i], logϵs)
+        Turing.@addlogprob! logℒ
+        # Y[i] ~ Rician(X[i], ϵs)
+    end
+end
+
+function mcmc_biexp_epg(
+        phys;
+        img_idx         = 1,
+        dataset         = :val,
+        save            = true,
+        checkpoint      = save,
+        total_chains    = Colon(),
+        checkpoint_freq = 2048, # checkpoint every `checkpoint_freq` iterations
+        progress_freq   = 15.0, # update progress bar every `progress_freq` seconds
+    )
+
+    file_prefix(ischeckpoint) = (ischeckpoint ? "checkpoint_" : "") * "image-$(img_idx)_dataset-$(dataset)"
+    file_suffix(chains) = "$(lpad(chains[1].col, 7, '0'))-to-$(lpad(chains[end].col, 7, '0'))"
+
+    function save_chains(chains; ischeckpoint)
+        filename = file_prefix(ischeckpoint) * "_" * file_suffix(chains) * ".jld2"
+        FileIO.save(filename, Dict("chains" => chains))
+    end
+
+    function save_dataframe(chains; ischeckpoint)
+        filename = file_prefix(ischeckpoint) * "_" * file_suffix(chains) * ".csv"
+        chains_df = mapreduce(vcat, chains) do (col, index, chain)
+            df = DataFrame(chain)
+            df.dataset_col = fill(col, DataFrames.nrow(df))
+            df.image_x = fill(index[1], DataFrames.nrow(df))
+            df.image_y = fill(index[2], DataFrames.nrow(df))
+            df.image_z = fill(index[3], DataFrames.nrow(df))
+            return df
+        end
+        CSV.write(filename, chains_df)
+    end
+
+    img              = phys.images[img_idx]
+    ydata            = img.partitions[dataset] .|> Float64
+    yindices         = img.indices[dataset]
+    work_buffers     = [mcmc_biexp_epg_work_factory(phys, img) for _ in 1:Threads.nthreads()]
+
+    total_chains     = total_chains == Colon() ? size(ydata, 2) : total_chains
+    chains           = Any[nothing for _ in 1:total_chains]
+    checkpoint_cb    = !(save && checkpoint) ? nothing : Js -> save_dataframe(view(chains, Js); ischeckpoint = true)
+
+    Turing.setprogress!(false)
+    Turing.setchunksize(7)
+
+    foreach_with_progress(eachindex(chains); checkpoint_cb, checkpoint_freq, dt = progress_freq) do J
+        work  = work_buffers[Threads.threadid()]
+        Y     = ydata[:,J]
+        model = mcmc_biexp_epg_model!(work, Y)
+        chain = DECAES.tee_capture(suppress_terminal = true, suppress_logfile = true) do io
+            Turing.sample(model, Turing.NUTS(0.65), 100)
+        end
+        chains[J] = (; col = J, index = yindices[J], chain = chain)
+    end
+
+    save && save_dataframe(chains; ischeckpoint = false)
+    save && save_chains(chains; ischeckpoint = false)
+
+    return chains
+end
+
+function _test_mcmc()
+    # img = phys.images[img_idx]
+    # Y = img.partitions[dataset] .|> Float64
+    # X = img.meta[:pseudolabels][dataset][:signalfit] .|> Float64
+    # θ = img.meta[:pseudolabels][dataset][:theta] .|> Float64
+    # Z = img.meta[:pseudolabels][dataset][:latent] .|> Float64
+
+    # J, _ = sample_maybeshuffle(1:size(Y,2); shuffle = true, samples, seed)
+    # J = J[1] #TODO
+    # Y = Y[:,J] .|> Float64
+    # X = X[:,J] .|> Float64
+    # θ = θ[:,J] .|> Float64
+    # logϵ = Z[:,J] .|> Float64 # Z = log(ϵ)
+    # logs = log.(inv.(maximum(mean_rician.(X, exp.(logϵ)); dims = 1))) .|> Float64
+    # init_params = [θmarginalized(phys, θ); logϵ; logs]
+    # plot([Y biexp_epg_model_scaled!(init_params...)]) |> display
+
+    # df = DataFrame(chains[1][2])
+    # α, β, η, δ1, δ2, logϵ, logs = df[end, [:α, :β, :η, :δ1, :δ2, :logϵ, :logs]]
+    # xfit = biexp_epg_model_scaled!(work, α, β, η, δ1, δ2, logϵ, logs)
+    # plot([ydata[:,1] xfit]) |> display
+    # plot(chains[1][2]) |> display
+
+    return chains
+end
+
+####
 #### MLE inference
 ####
 
+function _test_mle_biexp_epg_noise_only(;
+        initial_ϵ = true, img_idx = 1, samples = 1024, seed = 0
+    )
+    img = Main.phys.images[img_idx]
+    dataset = :val
+    Y = img.partitions[dataset]
+    X = img.meta[:pseudolabels][dataset][:signalfit]
+    θ = img.meta[:pseudolabels][dataset][:theta]
+    Z = img.meta[:pseudolabels][dataset][:latent]
+    J, _ = sample_maybeshuffle(1:size(Y,2); shuffle = true, samples, seed)
+    Y = Y[:,J] |> to32
+    X = X[:,J] |> to32
+    θ = θ[:,J] |> to32
+    ϵ = exp.(Z[:,J] |> to32) # Z = log(ϵ)
+
+    @info "Neither frozen"
+    initial_guess, results = mle_biexp_epg_noise_only(X, Y, initial_ϵ ? ϵ : nothing; freeze_ϵ = false, freeze_s = false)
+
+    @info "scale frozen"
+    initial_guess, results = mle_biexp_epg_noise_only(X, Y, initial_ϵ ? ϵ : nothing; freeze_ϵ = false, freeze_s = true)
+    @assert vec(log.(initial_guess.s)) ≈ vec(results.logscale)
+
+    @info "epsilon frozen"
+    initial_guess, results = mle_biexp_epg_noise_only(X, Y, initial_ϵ ? ϵ : nothing; freeze_ϵ = true, freeze_s = false)
+    @assert vec(log.(initial_guess.ϵ)) ≈ vec(results.logepsilon)
+
+    @info "NegLogLikelihood"
+    ℓ = NegLogLikelihood(Main.phys, Main.models["genatr"], Y, X, ϵ)
+    sum(ℓ) / size(ℓ,2) |> mean |> display
+end
 
 function mle_biexp_epg_noise_only(
         X::AbstractVecOrMat,
@@ -354,8 +653,8 @@ function mle_biexp_epg(
             logτ2lo′ = log(T2bd[1] / echotime(img)) |> Float64,
             logτ2hi′ = log(T2bd[2] / echotime(img)) |> Float64,
             δ0       = initial_guess.θ[end,1] |> Float64,
-            epg      = BiexpEPGModelWork(phys, Val(nsignal(img)), Float64),
-            ∇epg     = BiexpEPGModelWork(phys, Val(nsignal(img)), ForwardDiff.Dual{Nothing, Float64, num_optvars}),
+            epg      = BiexpEPGModelWork(phys, Float64),
+            ∇epg     = BiexpEPGModelWork(phys, ForwardDiff.Dual{Nothing, Float64, num_optvars}),
             ∇res     = ForwardDiff.DiffResults.GradientResult(zeros(num_optvars)),
             ∇cfg     = ForwardDiff.GradientConfig(nothing, zeros(num_optvars), ForwardDiff.Chunk(num_optvars)),
             opt      = let
@@ -950,65 +1249,3 @@ function peak_separation(
 
     return (; settings, cvae_results, decaes_results)
 end
-
-####
-#### MCMC inference
-####
-
-#=
-TODO: implement MCMC
-
-#=
-Turing.@model turing_signal_model(
-        y,
-        correction_and_noiselevel,
-    ) = begin
-    freq   ~ Uniform(1/64,  1/32)
-    phase  ~ Uniform( 0.0,  pi/2)
-    offset ~ Uniform( 0.25,  0.5)
-    amp    ~ Uniform( 0.1,  0.25)
-    tconst ~ Uniform(16.0, 128.0)
-    # logeps ~ Uniform(-4.0,  -2.0)
-    # epsilon = 10^logeps
-
-    # Compute toy signal model without noise
-    x = toy_signal_model([freq, phase, offset, amp, tconst], nothing, 4)
-    yhat, ϵhat = correction_and_noiselevel(x)
-
-    # Model noise as Rician
-    for i in 1:length(y)
-        # ν, σ = x[i], epsilon
-        ν, σ = yhat[i], ϵhat[i]
-        y[i] ~ Rician(ν, σ)
-    end
-end
-=#
-
-function toy_theta_mcmc_inference(
-        y::AbstractVector,
-        correction_and_noiselevel,
-        callback = (y, chain) -> true,
-    )
-    model = function (x)
-        xhat, ϵhat = correction_and_noiselevel(x)
-        yhat = rand.(Rician.(xhat, ϵhat))
-        return yhat
-    end
-    res = signal_loglikelihood_inference(y, nothing, model)
-    theta0 = best_candidate(res)
-    while true
-        chain = sample(turing_signal_model(y, correction_and_noiselevel), NUTS(), 1000; verbose = true, init_theta = theta0)
-        # chain = psample(turing_signal_model(y, correction_and_noiselevel), NUTS(), 1000, 3; verbose = true, init_theta = theta0)
-        callback(y, chain) && return chain
-    end
-end
-
-function toy_theta_mcmc_inference(Y::AbstractMatrix, args...; kwargs...)
-    tasks = map(1:size(Y,2)) do j
-        Threads.@spawn signal_loglikelihood_inference(Y[:,j], initial_guess, args...; kwargs...)
-    end
-    return map(Threads.fetch, tasks)
-end
-
-TODO: implement MCMC
-=#

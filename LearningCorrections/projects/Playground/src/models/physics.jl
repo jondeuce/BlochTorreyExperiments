@@ -380,6 +380,7 @@ refcon(img::CPMGImage{T}) where {T} = T(img.t2mapopts.RefConAngle)
 function CPMGImage(info::NamedTuple; seed::Int)
     rng = Random.seed!(seed)
 
+    meta     = Dict{Symbol,Any}(:info => info)
     data     = convert(Array{Float32}, DECAES.load_image(info.path, Val(4)))
     Imask    = findall(dropdims(all((x -> !isnan(x) && !iszero(x)).(data); dims = 4); dims = 4)) # image is masked, keep signals without zero or NaN entries
     Inonmask = findall(dropdims(any((x ->  isnan(x) ||  iszero(x)).(data); dims = 4); dims = 4)) # compliment of mask indices
@@ -438,7 +439,7 @@ function CPMGImage(info::NamedTuple; seed::Int)
 
     Random.seed!(rng)
 
-    return CPMGImage{Float32}(; data, t2mapopts, t2partopts, partitions, indices)
+    return CPMGImage{Float32}(; data, t2mapopts, t2partopts, partitions, indices, meta)
 end
 
 function t2_distributions!(img::CPMGImage)
@@ -751,11 +752,24 @@ struct BiexpEPGModelWork{T <: MaybeDualF64, ETL, A <: AbstractVector{T}, W1 <: D
     long_work::W2
 end
 
-function BiexpEPGModelWork(c::MaybeClosedFormBiexpEPGModel, ::Val{ETL} = Val(nsignal(c)), ::Type{T} = Float64) where {ETL, T <: MaybeDualF64}
-    dc = DECAES.SizedVector{ETL}(zeros(T, ETL))
-    short_work = DECAES.EPGdecaycurve_work(T, ETL)
-    long_work = DECAES.EPGdecaycurve_work(T, ETL)
+function BiexpEPGModelWork(
+        ::Type{T},
+        ::Val{ETL},
+        EPGWorkFactory = DECAES.EPGdecaycurve_work,
+    ) where {ETL, T <: MaybeDualF64}
+    short_work = EPGWorkFactory(T, ETL)
+    long_work = EPGWorkFactory(T, ETL)
+    dc = copy(short_work.decay_curve)
     BiexpEPGModelWork(dc, short_work, long_work)
+end
+BiexpEPGModelWork(::Type{T}, ETL::Int, args...) where {T} = BiexpEPGModelWork(T, Val(ETL), args...)
+BiexpEPGModelWork(c::MaybeClosedFormBiexpEPGModel, ::Type{T} = Float64, args...) where {T} = BiexpEPGModelWork(T, Val(nsignal(c)), args...)
+
+function EPGVectorWorkFactory(T, ETL::Int)
+    mpsv₁ = zeros(DECAES.SVector{3,T}, ETL)
+    mpsv₂ = zeros(DECAES.SVector{3,T}, ETL)
+    dc = zeros(T, ETL)
+    DECAES.EPGWork_ReIm_DualMVector_Split{T,ETL,typeof(mpsv₁),typeof(dc)}(mpsv₁, mpsv₂, dc)
 end
 
 function _biexp_epg_model_f64!(dc::AbstractVector{T}, work::BiexpEPGModelWork{T,ETL}, args::NTuple{8,MaybeDualF64}) where {T <: MaybeDualF64, ETL}
@@ -779,8 +793,8 @@ function _signal_model_f64_jacobian_setup(c::MaybeClosedFormBiexpEPGModel)
     _y, _x, _gx = zeros(Float64, nsignal(c)), zeros(Float64, nargs), zeros(Float64, nargs)
     res = ForwardDiff.DiffResults.JacobianResult(_y, _x)
     cfg = ForwardDiff.JacobianConfig(nothing, _y, _x, ForwardDiff.Chunk(_x))
-    fwd_work = BiexpEPGModelWork(c, Val(nsignal(c)), Float64)
-    jac_work = BiexpEPGModelWork(c, Val(nsignal(c)), ForwardDiff.Dual{Nothing,Float64,nargs})
+    fwd_work = BiexpEPGModelWork(c, Float64)
+    jac_work = BiexpEPGModelWork(c, ForwardDiff.Dual{Nothing,Float64,nargs})
     function f!(y, x)
         work = eltype(y) == Float64 ? fwd_work : jac_work
         x̄ = ntuple(i -> @inbounds(x[i]), nargs)
