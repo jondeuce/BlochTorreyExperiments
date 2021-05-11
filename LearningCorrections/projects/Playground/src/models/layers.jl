@@ -193,7 +193,7 @@ function movingaverage!(μ::AbstractArray, x::AbstractArray, τ)
     if τ ≤ 0
         @. μ = x # "moving average" with window size zero is just a copy
     else
-        α = ofeltype(μ, -expm1(-1/τ))
+        α = ofeltypefloat(μ, -expm1(-1/τ))
         @. μ = α * x + (1-α) * μ
     end
 end

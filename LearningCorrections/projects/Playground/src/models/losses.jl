@@ -55,71 +55,38 @@ end
 #### Truncated Gaussian negative log-likelihood
 
 function _test_trunc_gaussian_log_Z(; verbose = false, lo = -30, hi = 30)
+    prnt(α, β, logẐ, logZ, verb) = verb && @info "
+    α:      $α
+    β:      $β
+    approx: $logẐ
+    true:   $logZ
+    error:  $(abs((logZ - logẐ) / logZ))"
+
     vals = exp.(lo:hi)
-    vals = [-reverse(vals); vals]
-    for i in 1:length(vals), j in i+1:length(vals), T in [Float64, Float32]
+    vals = [-reverse(vals); 0; vals]
+    for i in 1:length(vals), j in i+1:length(vals), T in [Float64, Float32], gpu in [true, false]
         α, β = T(vals[i]), T(vals[j])
-        verbose && @info "α:      $α"
-        verbose && @info "β:      $β"
-        logẐ = trunc_gaussian_log_Z(α, β)
+        if gpu
+            α′   = CuVector{T}(T[α])
+            β′   = CuVector{T}(T[β])
+            logẐ = trunc_gaussian_log_Z(α′, β′) |> sum
+        else
+            logẐ = trunc_gaussian_log_Z(α, β)
+        end
         logZ = trunc_gaussian_log_Z(big(α), big(β))
-        errZ = abs(logZ - logẐ) / abs(logZ)
-        verbose && @info "approx: $logẐ"
-        verbose && @info "true:   $logZ"
-        verbose && @info "error:  $errZ"
-        verbose && println("")
-        ϵ = eps(T)^(2//3)
-        @assert logẐ isa T # correct type
-        @assert errZ < ϵ || (logZ < floatmin(T) && logẐ == 0) # error less than thresh, or zero if underflow
-    end
-end
-
-#=
-@inline_cufunc function trunc_gaussian_log_Z(α, β)
-    # Compute log(Φ(β) - Φ(α)) = log(½(erf(β/√2) - erf(α/√2))) in a numerically stable way. Φ(x) = ½(1+erf(x/√2)) is the standard normal cdf
-    α, β = invsqrt2 * α, invsqrt2 * β
-    if β < 0
-        α, β = -β, -α
-    end
-    if α < 0
-        if β < 1
-            log((erf(β) + erf(-α))/2)
-        else
-            log1p(-(erfc(β) + erfc(-α))/2)
-        end
-    else
-        if β < 1
-            log((erf(β) - erf(α))/2)
-        else
-            log(erfcx(α) - exp((α-β)*(α+β)) * erfcx(β)) - α^2 - logtwo
+        prnt(α, β, logẐ, logZ, verbose)
+        try
+            @assert logẐ isa T # correct type
+            @assert isapprox(logZ, logẐ; rtol = 1*eps(T), atol = eps(T))
+        catch e
+            prnt(α, β, logẐ, logZ, true)
+            rethrow(e)
         end
     end
 end
-
-@inline_cufunc function neglogL_trunc_gaussian(x, μ, logσ, a, b)
-    σ⁻¹ = exp(-logσ) # inv(σ)
-    return ((σ⁻¹ * (x - μ))^2 + log2π) / 2 + logσ + trunc_gaussian_log_Z(σ⁻¹ * (a - μ), σ⁻¹ * (b - μ))
-end
-
-Zygote.@adjoint neglogL_trunc_gaussian(x, μ, logσ, a, b) = neglogL_trunc_gaussian(x, μ, logσ, a, b), Δ -> Δ .* ∇neglogL_trunc_gaussian(x, μ, logσ, a, b)
-
-@inline_cufunc function ∇neglogL_trunc_gaussian(x, μ, logσ, a, b)
-    σ⁻¹ = exp(-logσ) # inv(σ)
-    α, β = σ⁻¹ * (a - μ), σ⁻¹ * (b - μ)
-    logZ = trunc_gaussian_log_Z(α, β)
-    logϕa = -(α^2 + log2π) / 2
-    logϕb = -(β^2 + log2π) / 2
-    ∂a = -exp(logϕa - logσ - logZ)
-    ∂b = exp(logϕb - logσ - logZ)
-    ∂x = σ⁻¹^2 * (x - μ)
-    ∂μ = -∂x - (∂a + ∂b)
-    ∂logσ = 1 - ∂x * (x - μ) + (α * exp(logϕa - logZ) - β * exp(logϕb - logZ))
-    (∂x, ∂μ, ∂logσ, ∂a, ∂b)
-end
-=#
 
 function trunc_gaussian_log_Z(α::Number, β::Number)
-    # Compute log(Φ(β) - Φ(α)) = log(½(erf(β/√2) - erf(α/√2))) in a numerically stable way. Φ(x) = ½(1+erf(x/√2)) is the standard normal cdf
+    # Compute logZ = log(Φ(β) - Φ(α)) = log(½(erf(β/√2) - erf(α/√2))) in a numerically stable way. Φ(x) = ½(1+erf(x/√2)) is the standard normal cdf
     α, β = invsqrt2 * α, invsqrt2 * β
     if β < 0
         α, β = -β, -α
@@ -140,28 +107,106 @@ function trunc_gaussian_log_Z(α::Number, β::Number)
 end
 trunc_gaussian_log_Z(α::AbstractArray, β::AbstractArray) = trunc_gaussian_log_Z.(α, β)
 
-function trunc_gaussian_log_Z(α′::CuArray, β′::CuArray)
-    # Compute log(Φ(β) - Φ(α)) = log(½(erf(β/√2) - erf(α/√2))) in a numerically stable way. Φ(x) = ½(1+erf(x/√2)) is the standard normal cdf
-    α = @. invsqrt2 * ifelse(β′ < 0, -β′, α′)
-    β = @. invsqrt2 * ifelse(β′ < 0, -α′, β′)
+function trunc_gaussian_log_Z(α::CuArray, β::CuArray)
+    # Compute logZ = log(Φ(β) - Φ(α)) = log(½(erf(β/√2) - erf(α/√2))) in a numerically stable way. Φ(x) = ½(1+erf(x/√2)) is the standard normal cdf
+    α′ = @. invsqrt2 * ifelse(β < 0, -β, α)
+    β′ = @. invsqrt2 * ifelse(β < 0, -α, β)
     @. ifelse(
-        α < 0,
+        α′ < 0,
         ifelse(
-            β < 1,
-            CUDA.log((CUDA.erf(β) + CUDA.erf(-α))/2),
-            CUDA.log1p(-(CUDA.erfc(β) + CUDA.erfc(-α))/2),
+            β′ < 1,
+            CUDA.log((CUDA.erf(β′) + CUDA.erf(-α′))/2),
+            CUDA.log1p(-(CUDA.erfc(β′) + CUDA.erfc(-α′))/2),
         ),
         ifelse(
-            β < 1,
-            CUDA.log((CUDA.erf(β) - CUDA.erf(α))/2),
-            CUDA.log(CUDA.erfcx(α) - CUDA.exp((α-β)*(α+β)) * CUDA.erfcx(β)) - α^2 - logtwo,
-        )
+            β′ < 1,
+            CUDA.log((CUDA.erf(β′) - CUDA.erf(α′))/2),
+            CUDA.log(CUDA.erfcx(α′) - CUDA.exp((α′-β′)*(α′+β′)) * CUDA.erfcx(β′)) - α′^2 - logtwo,
+        ),
     )
 end
 
+@inline unsafe_trunc_gaussian_bound(::Type{Float64}) = 5.542594057802944          # abs(Φ⁻¹(sqrt(eps(Float64))))
+@inline unsafe_trunc_gaussian_bound(::Type{Float32}) = 3.3933098f0                # abs(Φ⁻¹(sqrt(eps(Float32))))
+@inline unsafe_trunc_gaussian_bound(::Type{T}) where {T} = abs(Φ⁻¹(sqrt(eps(T)))) # generic fallback
+@inline unsafe_trunc_gaussian_bound(::AbstractArray{T}) where {T} = unsafe_trunc_gaussian_bound(float(T))
+@inline unsafe_trunc_gaussian_bound(x::Real) = unsafe_trunc_gaussian_bound(float(typeof(x)))
+@inline unsafe_trunc_gaussian_bound(x::ForwardDiff.Dual) = unsafe_trunc_gaussian_bound(ForwardDiff.valtype(x))
+@inline unsafe_trunc_gaussian_clamp(x) = (bound = unsafe_trunc_gaussian_bound(x); @. clamp(x, -bound, bound))
+
+# NOTE: Likelihood `unsafe_trunc_gaussian_log_Z` assumes a <= μ <= b, and, via `unsafe_trunc_gaussian_bound`,
+#       rounds α=(μ-a)/σ and β=(b-μ)/σ values to -Inf/+Inf if they are too small/large, respectively, for numerical stability.
+#       Incorrect answers will be given if these assumptions are violated
+
+function unsafe_trunc_gaussian_log_Z(α, β)
+    logZ = trunc_gaussian_log_Z(α, β)
+    T    = typeof(logZ)
+    bd   = unsafe_trunc_gaussian_bound(T)
+    if α < -bd
+        if β > bd
+            zero(T) # Φ(α) ≈ 0, Φ(β) ≈ 1, log(Φ(β) - Φ(α)) ≈ 0
+        else
+            log1p(erf(invsqrt2 * β)) - logtwo # Φ(α) ≈ 0, log(Φ(β) - Φ(α)) ≈ log(Φ(β)) = log((1+erf(β/√2))/2)
+        end
+    else
+        if β > bd
+            log1p(-erf(invsqrt2 * α)) - logtwo # Φ(β) ≈ 1, log(Φ(β) - Φ(α)) ≈ log(1 - Φ(α)) = log((1-erf(α/√2))/2)
+        else
+            logZ # general case
+        end
+    end
+end
+unsafe_trunc_gaussian_log_Z(α::AbstractArray, β::AbstractArray) = unsafe_trunc_gaussian_log_Z.(α, β)
+
+function unsafe_trunc_gaussian_log_Z(α::CuArray, β::CuArray)
+    logZ  = trunc_gaussian_log_Z(α, β)
+    zero_ = ofeltypefloat(logZ, 0)
+    bd    = unsafe_trunc_gaussian_bound(eltype(logZ))
+    @. ifelse(
+        α < -bd,
+        ifelse(
+            β > bd,
+            zero_, # Φ(α) ≈ 0, Φ(β) ≈ 1, log(Φ(β) - Φ(α)) ≈ 0
+            log1p(erf(invsqrt2 * β)) - logtwo, # Φ(α) ≈ 0, log(Φ(β) - Φ(α)) ≈ log(Φ(β)) = log((1+erf(β/√2))/2)
+        ),
+        ifelse(
+            β > bd,
+            log1p(-erf(invsqrt2 * α)) - logtwo, # Φ(β) ≈ 1, log(Φ(β) - Φ(α)) ≈ log(1 - Φ(α)) = log((1-erf(α/√2))/2)
+            logZ, # general case
+        ),
+    )
+end
+
+Zygote.@adjoint function unsafe_trunc_gaussian_log_Z(α, β)
+    logZ = unsafe_trunc_gaussian_log_Z(α, β)
+    function ∇unsafe_trunc_gaussian_log_Z_inner(Δ)
+        ∇unsafe_trunc_gaussian_log_Z(Δ, α, β, logZ)
+    end
+    return logZ, ∇unsafe_trunc_gaussian_log_Z_inner
+end
+
+function ∇unsafe_trunc_gaussian_log_Z(Δ, α, β, logZ)
+    zero_ = ofeltypefloat(logZ, 0)
+    nrm_  = ofeltypefloat(logZ, invsqrt2π)
+    bd    = unsafe_trunc_gaussian_bound(eltype(logZ))
+    ∂α    = @. ifelse(α < -bd, zero_, -nrm_ * exp(-α^2/2 - logZ)) # ∂/∂α log(Φ(β) - Φ(α)) = -ϕ(α) / (Φ(β) - Φ(α)) = -ϕ(α) / exp(logZ)
+    ∂β    = @. ifelse(β >  bd, zero_,  nrm_ * exp(-β^2/2 - logZ)) # ∂/∂β log(Φ(β) - Φ(β)) = +ϕ(β) / (Φ(β) - Φ(β)) = +ϕ(β) / exp(logZ)
+    (Δ .* ∂α, Δ .* ∂β)
+end
+
 function neglogL_trunc_gaussian(x, μ, logσ, a, b)
-    σ⁻¹ = @. exp(-logσ) # inv(σ)
-    logZ = trunc_gaussian_log_Z(σ⁻¹ .* (a .- μ), σ⁻¹ .* (b .- μ))
+    logϕ = @. neglogL_gaussian(x, μ, logσ)
+    σ⁻¹  = @. exp(-logσ) # inv(σ)
+    logZ = unsafe_trunc_gaussian_log_Z(@.(σ⁻¹ * (a - μ)), @.(σ⁻¹ * (b - μ)))
+    return @. logϕ + logZ
+end
+
+#=
+function neglogL_trunc_gaussian(x, μ, logσ, a, b)
+    σ⁻¹  = @. exp(-logσ) # inv(σ)
+    α    = unsafe_trunc_gaussian_clamp(σ⁻¹ .* (a .- μ))
+    β    = unsafe_trunc_gaussian_clamp(σ⁻¹ .* (b .- μ))
+    logZ = trunc_gaussian_log_Z(α, β)
     return @. ((σ⁻¹ * (x - μ))^2 + log2π) / 2 + logσ + logZ
 end
 
@@ -169,8 +214,8 @@ Zygote.@adjoint neglogL_trunc_gaussian(x, μ, logσ, a, b) = neglogL_trunc_gauss
 
 function ∇neglogL_trunc_gaussian(Δ, x, μ, logσ, a, b)
     σ⁻¹ = @. exp(-logσ) # inv(σ)
-    α = @. σ⁻¹ * (a - μ)
-    β = @. σ⁻¹ * (b - μ)
+    α = unsafe_trunc_gaussian_clamp(@. σ⁻¹ * (a - μ))
+    β = unsafe_trunc_gaussian_clamp(@. σ⁻¹ * (b - μ))
     logZ = trunc_gaussian_log_Z(α, β)
     logϕa = @. -(α^2 + log2π) / 2
     logϕb = @. -(β^2 + log2π) / 2
@@ -181,6 +226,8 @@ function ∇neglogL_trunc_gaussian(Δ, x, μ, logσ, a, b)
     ∂logσ = @. 1 - ∂x * (x - μ) + (α * exp(logϕa - logZ) - β * exp(logϕb - logZ))
     (Δ .* ∂x, Δ .* ∂μ, Δ .* ∂logσ, Δ .* ∂a, Δ .* ∂b)
 end
+=#
+
 
 #### Laplace negative log-likelihood
 
@@ -232,22 +279,27 @@ ChainRules.@scalar_rule(
 EnsembleKLDivUnitGaussian(μ, logσ; dims = :) = KLDivUnitGaussian(ensemble_of_gaussians(μ, logσ; dims)...) # fit single Gaussian to (equally weighted) ensemble of Gaussians (arrays μ, logσ), and take KL divergence of this fitted Gaussian with a unit Gaussian
 
 #### Arraywise losses (sum of individual elementwise losses)
+@inline_cufunc _cap(f) = min(f, _capval(f))
+@inline_cufunc _capval(f) = oftype(float(f), 1000)
+@inline_cufunc _expcap(f) = min(f, _expcapval(f))
+@inline_cufunc _expcapval(f) = oftype(float(f), 20)
+@inline_cufunc _open_clampcap(f, x, a, b) = ifelse(a < x < b, min(f, _capval(f)), _capval(f))
+@inline_cufunc _closed_clampcap(f, x, a, b) = ifelse(a <= x <= b, min(f, _capval(f)), _capval(f))
 
-@inline_cufunc _cap(x) = min(x, oftype(x, 1000))
-@inline_cufunc _expcap(x) = min(x, oftype(x, 20))
 KLDivUnitGaussian(μ, logσ) = sum(_cap.(kldiv_unitgaussian.(μ, logσ))) / size(μ,2) # KL-divergence between approximation posterior and N(0, 1) prior (Note: sum over dims=1, mean over dims=2)
 KLDivGaussian(μq0, logσq, μr0, logσr) = sum(_cap.(kldiv_gaussian.(μq0, logσq, μr0, logσr))) / size(μq0,2) # KL-divergence (Note: sum over dims=1, mean over dims=2)
 NegLogLGaussian(x, μ, logσ) = sum(_cap.(neglogL_gaussian.(x, μ, logσ))) / size(μ,2) # Negative log-likelihood for Gaussian (Note: sum over dims=1, mean over dims=2)
-NegLogLTruncatedGaussian(x, μ, logσ, a, b) = sum(_cap.(neglogL_trunc_gaussian(x, μ, logσ, a, b))) / size(μ,2) # Negative log-likelihood for truncated Gaussian (Note: sum over dims=1, mean over dims=2)
-NegLogLRician(x, μ, logσ) = sum(_cap.(neglogL_rician.(x, μ, logσ))) / size(μ,2) # Negative log-likelihood for Rician (Note: sum over dims=1, mean over dims=2)
-NegLogLKumaraswamy(x, α, β) = sum(_cap.(neglogL_kumaraswamy.(x, _expcap.(α), _expcap.(β)))) / size(α,2) # Negative log-likelihood for Kumaraswamy (Note: sum over dims=1, mean over dims=2)
+NegLogLTruncatedGaussian(x, μ, logσ, a, b) = sum(_closed_clampcap.(neglogL_trunc_gaussian(x, μ, logσ, a, b), x, a, b)) / size(μ,2) # Negative log-likelihood for truncated Gaussian (Note: sum over dims=1, mean over dims=2)
+NegLogLRician(x, μ, logσ) = sum(_open_clampcap.(neglogL_rician.(x, μ, logσ), x, zero(float(x)), oftype(float(x), Inf))) / size(μ,2) # Negative log-likelihood for Rician (Note: sum over dims=1, mean over dims=2)
+NegLogLKumaraswamy(x, α, β) = sum(_open_clampcap.(neglogL_kumaraswamy.(x, _expcap.(α), _expcap.(β)), x, zero(float(x)), one(float(x)))) / size(α,2) # Negative log-likelihood for Kumaraswamy (Note: sum over dims=1, mean over dims=2)
 
 function _crossentropy_gradcheck_test()
     for T in [Float32, Float64]
         @assert gradcheck(kldiv_unitgaussian, randn(T), randn(T); extrapolate = false, verbose = true)
         @assert gradcheck(kldiv_gaussian, randn(T), randn(T), randn(T), randn(T); extrapolate = false, verbose = true)
         @assert gradcheck(neglogL_gaussian, randn(T), randn(T), randn(T); extrapolate = false, verbose = true)
-        @assert gradcheck(neglogL_trunc_gaussian, randn(T), randn(T), randn(T), sort(randn(T,2))...; extrapolate = false, verbose = true)
+        @assert gradcheck(unsafe_trunc_gaussian_log_Z, -abs(randn(T)), abs(randn(T)); extrapolate = false, verbose = true)
+        @assert gradcheck(neglogL_trunc_gaussian, ((a,μ,b) = sort(randn(T,3)); x = a+(b-a)*rand(T); logσ = randn(T); (x, logσ, μ, a, b))...; extrapolate = false, verbose = true)
         @assert gradcheck(neglogL_kumaraswamy, Flux.σ(randn(T)), randn(T), randn(T); extrapolate = false, verbose = true)
         @assert gradcheck(neglogL_laplace, randn(T), randn(T), randn(T); extrapolate = false, verbose = true)
         @assert gradcheck(neglogL_rician, exp(randn(T)), exp(randn(T)), randn(T); extrapolate = false, verbose = true)

@@ -441,10 +441,10 @@ function sample_batch(dataset::Symbol; batchsize::Int, img_idx = nothing)
         ZPseudo = ifelse.(mask, state.Z, ZPseudo)
         XPseudo = ifelse.(mask, state.X, XPseudo)
         ℓPseudo = ifelse.(mask, state.ℓ, ℓPseudo)
-        img.meta[:pseudolabels][dataset][:theta][:,J] = θPseudo |> Flux.cpu
-        img.meta[:pseudolabels][dataset][:latent][:,J] = ZPseudo |> Flux.cpu
-        img.meta[:pseudolabels][dataset][:signalfit][:,J] = XPseudo |> Flux.cpu
-        img.meta[:pseudolabels][dataset][:negloglikelihood][:,J] = ℓPseudo |> Flux.cpu
+        img.meta[:pseudolabels][dataset][:theta][:,J] = θPseudo |> lib.cpu
+        img.meta[:pseudolabels][dataset][:latent][:,J] = ZPseudo |> lib.cpu
+        img.meta[:pseudolabels][dataset][:signalfit][:,J] = XPseudo |> lib.cpu
+        img.meta[:pseudolabels][dataset][:negloglikelihood][:,J] = ℓPseudo |> lib.cpu
     elseif false #haskey(derived, "pretrained_cvae")
         θPseudo, ZPseudo = lib.sampleθZ(phys, derived["pretrained_cvae"], Ymeta; posterior_θ = true, posterior_Z = true, posterior_mode = false)
         XPseudo = lib.signal_model(phys, θPseudo)

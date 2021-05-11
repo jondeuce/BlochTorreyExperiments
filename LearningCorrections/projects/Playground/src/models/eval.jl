@@ -142,7 +142,7 @@ function mcmc_biexp_epg_work_factory(phys, img)
     return (; TEbd, T2bd, T1bd, TE, T1, logτ2lo, logτ2hi, logτ1lo, logτ1hi, logτ2lo′, logτ2hi′, δ0, epg_cache)
 end
 
-function biexp_epg_model_scaled!(work, α, β, η, δ1, δ2, logϵ, logs)
+function biexp_epg_model_scaled!(work, α, β, η, δ1, δ2, logϵ, logs, ::Val{normalized} = Val(true), ::Val{scaled} = Val(true)) where {normalized, scaled}
     @unpack TE, T1, logτ2lo, logτ2hi, epg_cache = work
     D      = promote_type(typeof(α), typeof(β), typeof(η), typeof(δ1), typeof(δ2), typeof(logϵ), typeof(logs))
     epg    = epg_cache[D]
@@ -152,14 +152,28 @@ function biexp_epg_model_scaled!(work, α, β, η, δ1, δ2, logϵ, logs)
     ϵ, s   = exp(logϵ), exp(logs)
     ψ      = (α, β, T21, T22, A1, A2, T1, TE)
     X      = _biexp_epg_model_f64!(epg.dc, epg, ψ)
-    Xmax   = zero(eltype(X))
-    @simd for i in eachindex(X)
-        Xmax = max(X[i], Xmax)
+
+    if normalized
+        Xmax = zero(eltype(X))
+        @simd for i in eachindex(X)
+            Xmax = max(X[i], Xmax)
+        end
+    else
+        Xmax = one(eltype(X))
     end
-    Xscale = s / Xmax
-    @simd for i in eachindex(X)
-        X[i] *= Xscale
+
+    if scaled
+        Xscale = s / Xmax
+    else
+        Xscale = inv(Xmax)
     end
+
+    if normalized || scaled
+        @simd for i in eachindex(X)
+            X[i] *= Xscale
+        end
+    end
+
     return X
 end
 
@@ -170,7 +184,7 @@ Turing.@model function mcmc_biexp_epg_model!(work, Y::AbstractVector{Float64})
     δ1    ~ Distributions.TruncatedNormal(0.0, 0.5, 0.0, 1.0)
     δ2    ~ Distributions.TruncatedNormal(1.0, 0.5, 0.0, 1.0)
     logϵ  ~ Distributions.Uniform(log(1e-5), log(1e-1)) # equivalent to 20 <= SNR <= 100
-    logs  ~ Distributions.Normal(0.0, 0.5)
+    logs  ~ Distributions.TruncatedNormal(0.0, 0.5, -2.5, 2.5)
     X     = biexp_epg_model_scaled!(work, α, β, η, δ1, δ2, logϵ, logs)
     logϵs = logϵ + logs
     ϵs    = exp(logϵs)
@@ -566,12 +580,12 @@ function mle_biexp_epg_initial_guess(
         data_subset        = :mask,  # One of :mask, :val, :train, :test
         noisebounds        = (-Inf, 0.0),
         scalebounds        = (-Inf, Inf),
-        batch_size         = Colon(),
+        gpu_batch_size     = 2048,
         maxiter            = 10,
         mode               = :mode,  # :maxlikelihood, :mean
         verbose            = true,
         dryrun             = false,
-        dryrunsamples      = batch_size,
+        dryrunsamples      = gpu_batch_size,
         dryrunshuffle      = true,
         dryrunseed         = 0,
     )
@@ -595,16 +609,16 @@ function mle_biexp_epg_initial_guess(
         Ymeta = MetaCPMGSignal(phys, img, mock_image_data)
     end
 
-    batches = batch_size === Colon() ? [1:size(signal(Ymeta),2)] : Iterators.partition(1:size(signal(Ymeta),2), batch_size)
+    batches = gpu_batch_size === Colon() ? [1:size(signal(Ymeta),2)] : Iterators.partition(1:size(signal(Ymeta),2), gpu_batch_size)
     initial_guess = mapreduce((x,y) -> map(hcat, x, y), batches) do batch
-        posterior_state(
+        state = posterior_state(
             phys, rice, cvae, Ymeta[:,batch];
             alpha = 0.0, miniter = 1, maxiter, verbose, mode,
         )
+        map(arr64, state)
     end
     initial_guess = setindex!!(initial_guess, exp.(clamp.(mean(log.(initial_guess.ϵ); dims = 1), noisebounds...)), :ϵ)
     initial_guess = setindex!!(initial_guess, clamp.(inv.(maximum(mean_rician.(initial_guess.X, initial_guess.ϵ); dims = 1)), scalebounds...), :s)
-    initial_guess = map(arr64, initial_guess)
     return initial_guess
 end
 
@@ -766,7 +780,7 @@ function eval_mri_model(
         savetypes = [".png"],
         mle_image_path = nothing,
         mle_sim_path = nothing,
-        batch_size = nothing,
+        gpu_batch_size = nothing,
         force_decaes = false,
         force_histograms = false,
         posterior_mode = :maxlikelihood,
@@ -774,7 +788,7 @@ function eval_mri_model(
         dataset = :val, # :val or (for final model comparison) :test
     )
 
-    inverter(Y; kwargs...) = mapreduce((x,y) -> map(hcat, x, y), enumerate(Iterators.partition(1:size(Y,2), batch_size))) do (batchnum, batch)
+    inverter(Y; kwargs...) = mapreduce((x,y) -> map(hcat, x, y), enumerate(Iterators.partition(1:size(Y,2), gpu_batch_size))) do (batchnum, batch)
         posterior_state(
             phys, models["genatr"], derived["cvae"], MetaCPMGSignal(phys, img, Y[:,batch]);
             verbose = false, alpha = 0.0, miniter = 1, maxiter = naverage, mode = posterior_mode, kwargs...

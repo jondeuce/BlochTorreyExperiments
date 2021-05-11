@@ -66,7 +66,8 @@ fill_similar(x::AbstractArray, v, sz...) = fill_similar(typeof(x), v, sz...)
 fill_similar(::Type{<:AbstractArray{T}}, v, sz...) where {T} = Base.fill(T(v), sz...) # fallback
 fill_similar(::Type{<:CuArray{T}}, v, sz...) where {T} = CUDA.fill(T(v), sz...) # CUDA
 
-@inline ofeltype(x, y) = convert(float(eltype(x)), y)
+@inline ofeltypefloat(x::Number, y) = oftypefloat(x, y)
+@inline ofeltypefloat(x, y) = convert(float(eltype(x)), y)
 @inline oftypefloat(x, y) = oftype(float(x), y)
 @inline epseltype(x) = eps(float(eltype(x)))
 

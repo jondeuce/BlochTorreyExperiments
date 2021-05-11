@@ -171,8 +171,9 @@ end
 function load_epgmodel_physics(; max_numechos = 64, image_infos = nothing, seed = 0)
     phys = EPGModel{Float32,false}(n = max_numechos)
     (image_infos === nothing) && (image_infos = [
-        (TE = 8e-3, refcon = 180.0, path = DrWatson.datadir("images", "2019-10-28_48echo_8msTE_CPMG", "data-in", "ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.nii.gz")),
-        (TE = 7e-3, refcon = 180.0, path = DrWatson.datadir("images", "2019-09-22_56echo_7msTE_CPMG", "data-in", "MW_TRAINING_001_WIP_CPMG56_CS_half_2_1.masked-image.mat")),
+        (TE =  8e-3, refcon = 180.0, path = DrWatson.datadir("images", "2019-10-28_48echo_8msTE_CPMG", "data-in", "ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.nii.gz")),
+        (TE =  7e-3, refcon = 180.0, path = DrWatson.datadir("images", "2019-09-22_56echo_7msTE_CPMG", "data-in", "MW_TRAINING_001_WIP_CPMG56_CS_half_2_1.masked-image.mat")),
+        (TE = 10e-3, refcon = 180.0, path = DrWatson.datadir("images", "2021-05-07_NeurIPS2021_64echo_10msTE_MockBiexpEPG_CPMG", "data-in", "simulated_image.mat")),
     ])
     initialize!(phys; image_infos, seed)
 end
@@ -370,11 +371,12 @@ function pseudo_labels!(
     haskey(img.meta, :pseudolabels) && !force_recompute && return img
 
     # Perform MLE fit on all signals within mask
+    @info img
     initial_guess, results = mle_biexp_epg(
         phys, rice, cvae, img;
         initial_guess_only, sigma_reg, noisebounds,
         batch_size = 2048 * Threads.nthreads(),
-        initial_guess_args = (data_source = :image, data_subset = :mask, batch_size = 10240),
+        initial_guess_args = (data_source = :image, data_subset = :mask, gpu_batch_size = 100_000),
     )
 
     labels = img.meta[:pseudolabels] = Dict{Symbol,Any}()
@@ -411,9 +413,122 @@ end
 
 function verify_pseudo_labels(phys::EPGModel, rice::RicianCorrector)
     for (i,img) in enumerate(phys.images)
-        @unpack theta, latent = img.meta[:pseudolabels][:mask]
-        state = lib.posterior_state(phys, rice, img.partitions[:mask], theta, latent; accum_loss = ℓ -> sum(ℓ; dims = 1))
-        @info "Image $i: loss = $(mean(state.ℓ)) ± $(std(state.ℓ))"
+        dataset = :mask
+        @unpack theta, latent = img.meta[:pseudolabels][dataset]
+        state = lib.posterior_state(phys, rice, img.partitions[dataset], theta, latent; accum_loss = ℓ -> sum(ℓ; dims = 1))
+        @info "Pseudo Labels log-likelihood (image = $i, dataset = $dataset):"
+        @info StatsBase.summarystats(vec(state.ℓ))
+    end
+end
+
+function load_mcmc_labels!(
+        phys::EPGModel{T},
+        img::CPMGImage{T};
+        force_reload = true,
+    ) where {T}
+    # Optionally skip reloading
+    haskey(img.meta, :mcmclabels) && !force_reload && return img
+    img.meta[:mcmclabels] = Dict{Symbol,Any}()
+
+    mcmcdir = joinpath(dirname(img.meta[:info].path), "..", "julia-mcmc-biexpepg")
+    if !isdir(mcmcdir)
+        @info "MCMC directory does not exist: $mcmcdir"
+        return img
+    end
+
+    for dataset in [:val, :train, :test]
+        # Load MCMC params
+        csv_file_lists = filter(!isempty, [
+            readdir(Glob.GlobMatch("image*_dataset-$(dataset)_*.csv"), mcmcdir),
+            readdir(Glob.GlobMatch("checkpoint*_dataset-$(dataset)_*.csv"), mcmcdir),
+        ])
+        if isempty(csv_file_lists)
+            @info "MCMC data for $dataset dataset does not exist: $mcmcdir"
+            continue
+        else
+            @info "Loading MCMC data for $dataset dataset..."
+        end
+
+        files = first(csv_file_lists)
+        mcmc_param_names = [:α, :β, :η, :δ1, :δ2, :logϵ, :logs]
+        num_params = length(mcmc_param_names)
+        num_signals = size(img.partitions[dataset], 2)
+        num_mcmc_samples = 100
+        params = fill(T(NaN), num_params, num_signals, num_mcmc_samples)
+
+        @time for file in files
+            df = CSV.read(file, DataFrame)
+            idx = CartesianIndex.(tuple.(df[!,:dataset_col], df[!,:iteration]))
+            params[:, idx] .= df[:, mcmc_param_names] |> Matrix |> permutedims
+        end
+
+        # Compute epg signal model
+        work_bufs = [mcmc_biexp_epg_work_factory(phys, img) for _ in 1:Threads.nthreads()]
+        X = zeros(Float64, nsignal(img), num_signals, num_mcmc_samples)
+        @time Threads.@threads for j in 1:num_signals
+            work = work_bufs[Threads.threadid()]
+            @inbounds for k in 1:num_mcmc_samples
+                α, β, η, δ1, δ2 = ntuple(i -> Float64(@inbounds params[i,j,k]), 5)
+                Xi = biexp_epg_model_scaled!(work, α, β, η, δ1, δ2, 0.0, 0.0, Val(true), Val(false))
+                @simd for i in 1:size(X,1)
+                    X[i,j,k] = Xi[i]
+                end
+            end
+        end
+
+        # Assign outputs
+        labels             = img.meta[:mcmclabels][dataset] = Dict{Symbol,Any}()
+        log_rel_T1         = work_bufs[1].δ0 |> T # marginalized parameter log(T1/TE)
+        labels[:theta]     = [params[1:5, :, :]; fill(log_rel_T1, 1, num_signals, num_mcmc_samples)] # θ = α, β, η, δ1, δ2, δ0
+        labels[:latent]    = params[6:6, :, :] # Z = logϵ
+        labels[:logscale]  = params[7:7, :, :] # logs
+        labels[:signalfit] = X .|> T
+    end
+
+    return img
+end
+
+function load_mcmc_labels!(phys::EPGModel; kwargs...)
+    for img in phys.images
+        load_mcmc_labels!(phys, img; kwargs...)
+    end
+    return phys
+end
+
+function verify_mcmc_labels(phys::EPGModel, rice::RicianCorrector)
+    for (i,img) in enumerate(phys.images)
+        dataset = :val
+        @unpack theta, latent = img.meta[:mcmclabels][dataset]
+        state = lib.posterior_state(phys, rice, img.partitions[dataset], theta[:,:,end], latent[:,:,end]; accum_loss = ℓ -> sum(ℓ; dims = 1))
+        @info "MCMC Labels log-likelihood (image = $i, dataset = $dataset):"
+        @info StatsBase.summarystats(vec(state.ℓ[:, 1:findlast(!isnan, state.ℓ[1,:]), :]))
+    end
+end
+
+function verify_mcmc_labels_directly(phys::EPGModel)
+    for (i,img) in enumerate(phys.images)
+        dataset = :val
+
+        @unpack signalfit, latent, logscale = img.meta[:mcmclabels][dataset]
+        Y = img.partitions[dataset]
+        X = signalfit
+        ℒ = zeros(1, size(X,2), size(X,3))
+
+        @time Threads.@threads for j in 1:size(X,2)
+            @inbounds for k in 1:size(X,3)
+                logϵ      = latent[1,j,k]
+                logs      = logscale[1,j,k]
+                logϵs     = logϵ + logs
+                ℓ         = zero(eltype(Y))
+                @simd for i in 1:size(Y,1)
+                    ℓ += neglogL_rician(Y[i,j], X[i,j,k], logϵs)
+                end
+                ℒ[1,j,k] = ℓ
+            end
+        end
+
+        @info "MCMC Labels log-likelihood directly (image = $i, dataset = $dataset):"
+        @info StatsBase.summarystats(vec(ℒ[:, 1:findlast(!isnan, ℒ[1,:,1]), :]))
     end
 end
 

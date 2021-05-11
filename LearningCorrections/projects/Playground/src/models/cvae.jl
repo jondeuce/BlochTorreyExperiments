@@ -40,7 +40,7 @@ end
 #### CVAE helpers
 ####
 
-@inline split_at(x::AbstractVecOrMat, n::Int) = n == size(x,1) ? (x, similar(x, 0, size(x)[2:end]...)) : (x[1:n,..], x[n+1:end,..])
+@inline split_at(x::AbstractVecOrMat, n::Int) = n == size(x,1) ? (x, similar(x, 0, size(x)[2:end]...)) : (x[1:n, ..], x[n+1:end, ..])
 split_theta_latent(cvae::CVAE, x::AbstractVecOrMat) = split_at(x, ntheta(cvae))
 split_marginal_latent(cvae::CVAE, x::AbstractVecOrMat) = split_at(x, nmarginalized(cvae))
 
@@ -49,6 +49,13 @@ function split_marginal_latent_pairs(cvae::CVAE, x::AbstractVecOrMat)
     μ1θ, μ1Z = split_marginal_latent(cvae, μ1θ_μ1Z) # size(μ1θ,1) = nθM, size(μ1Z,1) = nlatent
     μ2θ, μ2Z = split_marginal_latent(cvae, μ2θ_μ2Z) # size(μ2θ,1) = nθM, size(μ2Z,1) = nlatent
     return (μ1θ, μ2θ, μ1Z, μ2Z)
+end
+
+function normalize_latent_state(::CVAE, μlogσ)
+    μ, logσ = split_dim1(μlogσ)
+    μ    = 2 .* tanh.(μ)         #    μ ∈ [-2,2]: prevent CVAE from "memorizing" inputs via mean latent embedding vectors which are far from zero
+    logσ = 2 .* tanh.(logσ) .- 2 # logσ ∈ [-4,0]: similarly, prevent CVAE from "memorizing" inputs via latent embedding vectors which are nearly constant, i.e. have zero variance
+    return μ, logσ
 end
 
 ####
@@ -90,8 +97,10 @@ end
 function CVAETrainingState(cvae::CVAE, Y, θ, Z)
     Ypad = pad_signal(cvae, Y)
     θ̄ = θ_linear_normalize(cvae, θ)
-    μr0, logσr = split_dim1(cvae.E1(Ypad))
-    μq0, logσq = split_dim1(cvae.E2(Ypad,θ̄,Z))
+    μr = cvae.E1(Ypad)
+    μq = cvae.E2(Ypad, θ̄, Z)
+    μr0, logσr = normalize_latent_state(cvae, μr)
+    μq0, logσq = normalize_latent_state(cvae, μq)
     return CVAETrainingState(cvae, Ypad, θ̄, Z, μr0, logσr, μq0, logσq)
 end
 signal(state::CVAETrainingState) = state.Y
@@ -106,7 +115,7 @@ end
 function CVAEInferenceState(cvae::CVAE, Y)
     Ypad = pad_signal(cvae, Y)
     μr = cvae.E1(Ypad)
-    μr0, logσr = split_dim1(μr)
+    μr0, logσr = normalize_latent_state(cvae, μr)
     return CVAEInferenceState(cvae, Ypad, μr0, logσr)
 end
 signal(state::CVAEInferenceState) = state.Y
@@ -122,8 +131,8 @@ function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) wh
     zq = sample_mv_normal(μq0, exp.(logσq))
     μx0, logσx = split_dim1(cvae.D(Y, zq))
     ELBO = marginalize_Z ?
-        NegLogLGaussian(θ̄[1:nθM,..], μx0[1:nθM,..], logσx[1:nθM,..]) :
-        NegLogLGaussian(vcat(θ̄[1:nθM,..], Z), μx0, logσx)
+        NegLogLGaussian(θ̄[1:nθM, ..], μx0[1:nθM, ..], logσx[1:nθM, ..]) :
+        NegLogLGaussian(vcat(θ̄[1:nθM, ..], Z), μx0, logσx)
 end
 
 function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) where {C <: CVAEPosteriorDist{TruncatedGaussian}}
@@ -131,11 +140,11 @@ function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) wh
     nθM = nmarginalized(cvae)
     zq = sample_mv_normal(μq0, exp.(logσq))
     μx = cvae.D(Y, zq) # μx = D(Y, zq) = [μθ̄M; μZ; logσθ̄M; logσZ]
-    μθ̄M, logσθ̄M, μZ, logσZ = split_marginal_latent_pairs(cvae, μx)
-    θ̄Mlo = Zygote.@ignore arr_similar(μθ̄M, (x->x[1]).(cvae.θ̄bd[1:nθM,..]))
-    θ̄Mhi = Zygote.@ignore arr_similar(μθ̄M, (x->x[2]).(cvae.θ̄bd[1:nθM,..]))
-    # μθ̄M = clamp.(μθ̄M, θ̄Mlo, θ̄Mhi) #TODO
-    ELBO_θ = NegLogLTruncatedGaussian(θ̄[1:nθM,..], μθ̄M, logσθ̄M, θ̄Mlo, θ̄Mhi)
+    θ̄Mlo = Zygote.@ignore arr_similar(μx, (x->x[1]).(cvae.θ̄bd[1:nθM, ..]))
+    θ̄Mhi = Zygote.@ignore arr_similar(μx, (x->x[2]).(cvae.θ̄bd[1:nθM, ..]))
+    σ⁻¹μθ̄M, logσθ̄M, μZ, logσZ = split_marginal_latent_pairs(cvae, μx)
+    μθ̄M  = clamp.(θ̄Mlo .+ (θ̄Mhi .- θ̄Mlo) .* Flux.σ.(σ⁻¹μθ̄M), θ̄Mlo, θ̄Mhi) # transform from unbounded σ⁻¹μθ̄M ∈ ℝ^nθ to bounded interval [θ̄Mlo, θ̄Mhi]^nθ
+    ELBO_θ = NegLogLTruncatedGaussian(θ̄[1:nθM, ..], μθ̄M, logσθ̄M, θ̄Mlo, θ̄Mhi)
     if marginalize_Z
         ELBO = ELBO_θ
     else
@@ -149,7 +158,7 @@ function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) wh
     zq = sample_mv_normal(μq0, exp.(logσq))
     μx = cvae.D(Y, zq) # μx = D(Y, zq) = [αθ; μZ; βθ; logσZ]
     αθ, βθ, μZ, logσZ = split_marginal_latent_pairs(cvae, μx)
-    ELBO_θ = NegLogLKumaraswamy(θ̄[1:nθM,..], αθ, βθ)
+    ELBO_θ = NegLogLKumaraswamy(θ̄[1:nθM, ..], αθ, βθ)
     if marginalize_Z
         ELBO = ELBO_θ
     else
@@ -185,12 +194,11 @@ function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C
     nθM = nmarginalized(cvae)
     zr = mode ? μr0 : sample_mv_normal(μr0, exp.(logσr))
     μx = cvae.D(Y, zr)
-    μθ̄M, logσθ̄M, μZ, logσZ = split_marginal_latent_pairs(cvae, μx)
-    θ̄Mlo = Zygote.@ignore arr_similar(μθ̄M, (x->x[1]).(cvae.θ̄bd[1:nθM,..]))
-    θ̄Mhi = Zygote.@ignore arr_similar(μθ̄M, (x->x[2]).(cvae.θ̄bd[1:nθM,..]))
-    # μθ̄M = clamp.(μθ̄M, θ̄Mlo, θ̄Mhi) #TODO
-    # θ̄M = mode ? μθ̄M : sample_trunc_mv_normal(μθ̄M, exp.(logσθ̄M), θ̄Mlo, θ̄Mhi) #TODO
-    θ̄M = mode ? clamp.(μθ̄M, θ̄Mlo, θ̄Mhi) : sample_trunc_mv_normal(μθ̄M, exp.(logσθ̄M), θ̄Mlo, θ̄Mhi)
+    θ̄Mlo = Zygote.@ignore arr_similar(μx, (x->x[1]).(cvae.θ̄bd[1:nθM, ..]))
+    θ̄Mhi = Zygote.@ignore arr_similar(μx, (x->x[2]).(cvae.θ̄bd[1:nθM, ..]))
+    σ⁻¹μθ̄M, logσθ̄M, μZ, logσZ = split_marginal_latent_pairs(cvae, μx)
+    μθ̄M  = clamp.(θ̄Mlo .+ (θ̄Mhi .- θ̄Mlo) .* Flux.σ.(σ⁻¹μθ̄M), θ̄Mlo, θ̄Mhi) # transform from unbounded σ⁻¹μθ̄M ∈ ℝ^nθ to bounded interval [θ̄Mlo, θ̄Mhi]^nθ
+    θ̄M = mode ? μθ̄M : sample_trunc_mv_normal(μθ̄M, exp.(logσθ̄M), θ̄Mlo, θ̄Mhi)
     Z = mode ? μZ : sample_mv_normal(μZ, exp.(logσZ))
     θM = θ̄_linear_unnormalize(cvae, θ̄M)
     return θM, Z
@@ -291,7 +299,7 @@ function sampleXθZ(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zpr
     #TODO: can't differentiate through @timeit "signal_model"
     θ, Z = sampleθZ(phys, cvae, θprior, Zprior, Ymeta; kwargs...)
     X = signal_model(phys, θ)
-    (size(X,1) > nsignal(Ymeta)) && (X = X[1:nsignal(Ymeta),..])
+    (size(X,1) > nsignal(Ymeta)) && (X = X[1:nsignal(Ymeta), ..])
     return X, θ, Z
 end
 sampleXθZ(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleXθZ(phys, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
@@ -389,7 +397,7 @@ function posterior_state(
         p = (last_state === nothing) ? nothing :
             HypothesisTests.pvalue(
                 HypothesisTests.UnequalVarianceTTest(
-                    map(x -> x |> Flux.cpu |> vec |> Vector{Float64}, (new_state.ℓ, last_state.ℓ))...
+                    map(x -> x |> cpu |> vec |> Vector{Float64}, (new_state.ℓ, last_state.ℓ))...
                 )
             )
 
