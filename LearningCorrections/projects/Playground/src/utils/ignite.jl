@@ -57,7 +57,13 @@ function init_wandb_logger(settings; activate = false, dryrun = true, wandb_dir 
 end
 
 function on_bad_params_or_gradients(f, models, ps::Zygote.Params, gs::Zygote.Grads; verbose = true)
-    found_bad = false
+    # Perform quick initial check: summing all parameters/gradients will return Inf or NaN if and only if any of the elements are Inf or NaN
+    pg_sum    = sum([sum(p) for p in ps])
+    pg_sum    = sum([sum(g) for g in gs if g !== nothing]; init = pg_sum)
+    found_bad = isnan(pg_sum) || isinf(pg_sum)
+    !found_bad && return false
+
+    # Evidently, the check haskey(gs, p) is very expensive relative to any(isnan, ...) or any(isinf, ...), hence the above fast check before reaching this loop
     for p in ps
         if length(p) > 0
             found_nan_grad = found_inf_grad = found_nan_param = found_inf_param = false

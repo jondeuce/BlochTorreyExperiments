@@ -126,9 +126,9 @@ function trunc_gaussian_log_Z(α::CuArray, β::CuArray)
     )
 end
 
-@inline unsafe_trunc_gaussian_bound(::Type{Float64}) = 5.542594057802944          # abs(Φ⁻¹(sqrt(eps(Float64))))
-@inline unsafe_trunc_gaussian_bound(::Type{Float32}) = 3.3933098f0                # abs(Φ⁻¹(sqrt(eps(Float32))))
-@inline unsafe_trunc_gaussian_bound(::Type{T}) where {T} = abs(Φ⁻¹(sqrt(eps(T)))) # generic fallback
+@inline unsafe_trunc_gaussian_bound(::Type{Float64}) = 8.12589066470191     # abs(Φ⁻¹(eps(Float64)))
+@inline unsafe_trunc_gaussian_bound(::Type{Float32}) = 5.166578f0           # abs(Φ⁻¹(eps(Float32)))
+@inline unsafe_trunc_gaussian_bound(::Type{T}) where {T} = abs(Φ⁻¹(eps(T))) # generic fallback
 @inline unsafe_trunc_gaussian_bound(::AbstractArray{T}) where {T} = unsafe_trunc_gaussian_bound(float(T))
 @inline unsafe_trunc_gaussian_bound(x::Real) = unsafe_trunc_gaussian_bound(float(typeof(x)))
 @inline unsafe_trunc_gaussian_bound(x::ForwardDiff.Dual) = unsafe_trunc_gaussian_bound(ForwardDiff.valtype(x))

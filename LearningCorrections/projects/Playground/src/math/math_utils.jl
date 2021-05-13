@@ -81,16 +81,30 @@ Zygote.@adjoint function fast_softmax(x; dims = 1)
 end
 
 # Sample multivariate normal
+@inline sample_uniform((lo, hi)) = sample_uniform(lo, hi)
+@inline sample_uniform(μ::AbstractArray) = sample_uniform(split_dim1(μ)...)
+@inline sample_uniform(lo::AbstractArray, hi::AbstractArray) = sample_uniform(lo, hi, rand_similar(hi, max.(size(lo), size(hi))))
+@inline sample_uniform(lo::AbstractArray, hi::AbstractArray, nsamples::Int) = sample_uniform(lo, hi, rand_similar(hi, max.(size(lo), size(hi))..., nsamples))
+@inline sample_uniform(lo, hi, u) = @. lo + (hi - lo) * u
+
+# Sample multivariate normal
 @inline sample_mv_normal((μ0, σ)) = sample_mv_normal(μ0, σ)
 @inline sample_mv_normal(μ::AbstractArray) = sample_mv_normal(split_dim1(μ)...)
 @inline sample_mv_normal(μ0::AbstractArray, σ::AbstractArray) = sample_mv_normal(μ0, σ, randn_similar(σ, max.(size(μ0), size(σ))))
 @inline sample_mv_normal(μ0::AbstractArray, σ::AbstractArray, nsamples::Int) = sample_mv_normal(μ0, σ, randn_similar(σ, max.(size(μ0), size(σ))..., nsamples))
 @inline sample_mv_normal(μ0, σ, z) = @. μ0 + σ * z
 
+# Sample multivariate truncated normal
 @inline sample_trunc_mv_normal((μ0, σ, a, b)) = sample_trunc_mv_normal(μ0, σ, a, b)
 @inline sample_trunc_mv_normal(μ0::AbstractArray, σ::AbstractArray, a, b) = sample_trunc_mv_normal(μ0, σ, a, b, rand_similar(σ, max.(size(μ0), size(σ))))
 @inline sample_trunc_mv_normal(μ0::AbstractArray, σ::AbstractArray, a, b, nsamples::Int) = sample_trunc_mv_normal(μ0, σ, a, b, rand_similar(σ, max.(size(μ0), size(σ))..., nsamples))
-@inline sample_trunc_mv_normal(μ0, σ, a, b, u; ϵ = epseltype(μ0)) = @. clamp(μ0 + σ * Φ⁻¹(clamp(Φ((a-μ0)/σ) + u * (Φ((b-μ0)/σ) - Φ((a-μ0)/σ)), ϵ, 1-ϵ)), a, b)
+@inline function sample_trunc_mv_normal(μ0, σ, a, b, u; ϵ = epseltype(μ0))
+    Φlo = Φ.((a.-μ0)./σ) # cdf range lower bound for inverse method
+    Φhi = Φ.((b.-μ0)./σ) # cdf range upper bound for inverse method
+    p   = clamp.(sample_uniform.(Φlo, Φhi, u), ϵ, 1-ϵ) # random samples within desired cdf range
+    z   = Φ⁻¹.(p) # invert cdf to get truncated gaussian samples (standardized, i.e. for μ=0, σ=1)
+    return clamp.(μ0 .+ σ .* z, a, b) # scale and shift to desired range
+end
 
 # Sample multivariate kumaraswamy
 @inline sample_kumaraswamy((α, β)) = sample_kumaraswamy(α, β)
@@ -100,6 +114,194 @@ end
 
 # Mode of multivariate kumaraswamy
 @inline mode_kumaraswamy(α, β) = @. clamp(exp(-log((1+exp(-α)) * (1+exp(β)) - exp(-α)) / (1+exp(α))), 0, 1) # equivalent to `((a-1)/(a*b-1))^inv(a)` where `a = 1+exp(α)` and `b = 1+exp(β)`
+
+"""
+Compute, between two one-dimensional distributions `u` and `v`,
+whose respective CDFs are `U` and `V`, the statistical distance
+that is defined as:
+
+        lₚ(u,v) = (∫|U-V|^p)^(1/p)
+
+p is a positive parameter; p = 1 gives the Wasserstein distance,
+p = 2 gives the energy distance.
+
+c.f. https://github.com/scipy/scipy/blob/4ec4ab8d6ccc1cdb34b84fdcb66fde2cc0210dbf/scipy/stats/stats.py#L7861
+"""
+function cdf_distance end
+
+function cdf_distance(p, u_values, v_values, u_weights = nothing, v_weights = nothing)
+    u_sorter = sortperm(u_values)
+    v_sorter = sortperm(v_values)
+    u_sorted = u_values[u_sorter]
+    v_sorted = v_values[v_sorter]
+    all_values = sort!(vcat(u_values, v_values))
+
+    # Compute the differences between pairs of successive values of u and v.
+    deltas = diff(all_values)
+
+    # Get the respective positions of the values of u and v among the values of both distributions.
+    u_cdf_indices = [searchsortedlast(u_sorted, all_values[i]) for i in 1:length(all_values)-1]
+    v_cdf_indices = [searchsortedlast(v_sorted, all_values[i]) for i in 1:length(all_values)-1]
+
+    # Calculate the CDFs of u and v using their weights, if specified.
+    if u_weights === nothing
+        u_cdf = u_cdf_indices ./ length(u_values)
+    else
+        u_sorted_cumweights = vcat(zero(eltype(u_weights)), cumsum(u_weights[u_sorter]))
+        u_cdf = u_sorted_cumweights[1 .+ u_cdf_indices] ./ u_sorted_cumweights[end]
+    end
+
+    if v_weights === nothing
+        v_cdf = v_cdf_indices ./ length(v_values)
+    else
+        v_sorted_cumweights = vcat(zero(eltype(v_weights)), cumsum(v_weights[v_sorter]))
+        v_cdf = v_sorted_cumweights[1 .+ v_cdf_indices] ./ v_sorted_cumweights[end]
+    end
+    # @assert (u_cdf[1]   == 0) ⊻ (v_cdf[1]   == 0)
+    # @assert (u_cdf[end] == 1) ⊻ (v_cdf[end] == 1)
+    # @assert issorted(u_cdf) && issorted(v_cdf)
+
+    # Compute the value of the integral based on the CDFs.
+    map(p) do p
+        if p == 1
+            sum(@. abs(u_cdf - v_cdf) * deltas)
+        elseif p == 2
+            sqrt(sum(@. (u_cdf - v_cdf)^2 * deltas))
+        else
+            sum(@. abs(u_cdf - v_cdf)^p * deltas)^inv(p)
+        end
+    end
+end
+
+struct CDFDistanceBuffer{T}
+    n::Int
+    u::Vector{T}
+    v::Vector{T}
+    u_sorter::Vector{Int}
+    v_sorter::Vector{Int}
+    all_values::Vector{T}
+    deltas::Vector{T}
+    u_cdf_indices::Vector{Int}
+    v_cdf_indices::Vector{Int}
+    u_sorted_cumweights::Vector{T}
+    v_sorted_cumweights::Vector{T}
+    u_cdf::Vector{T}
+    v_cdf::Vector{T}
+end
+function CDFDistanceBuffer(u::AbstractVector{T}, v::AbstractVector{T}) where {T}
+    @assert length(u) == length(v)
+    n = length(u)
+    CDFDistanceBuffer(n, copy(u), copy(v), zeros(Int, n), zeros(Int, n), zeros(T, 2n), zeros(T, 2n-1), zeros(Int, 2n-1), zeros(Int, 2n-1), zeros(T, n+1), zeros(T, n+1), zeros(T, 2n-1), zeros(T, 2n-1))
+end
+
+function cdf_distance!(buf::CDFDistanceBuffer, p, u_values, v_values, u_weights = nothing, v_weights = nothing)
+    sortperm!(buf.u_sorter, u_values)
+    sortperm!(buf.v_sorter, v_values)
+    @inbounds for i in 1:buf.n
+        buf.u[i] = u_values[buf.u_sorter[i]]
+        buf.v[i] = v_values[buf.v_sorter[i]]
+    end
+
+    copyto!(@views(buf.all_values[begin : buf.n]), buf.u)
+    copyto!(@views(buf.all_values[buf.n+1 : end]), buf.v)
+    sort!(buf.all_values)
+
+    # Compute the differences between pairs of successive values of u and v.
+    @inbounds for i in 1:length(buf.all_values)-1
+        buf.deltas[i] = buf.all_values[i+1] - buf.all_values[i]
+    end
+
+    # Get the respective positions of the values of u and v among the values of both distributions.
+    @inbounds for i in 1:length(buf.all_values)-1
+        buf.u_cdf_indices[i] = searchsortedlast(buf.u, buf.all_values[i])
+        buf.v_cdf_indices[i] = searchsortedlast(buf.v, buf.all_values[i])
+    end
+
+    # Calculate the CDFs of u and v using their weights, if specified.
+    if u_weights === nothing
+        @inbounds buf.u_cdf .= buf.u_cdf_indices ./ buf.n
+    else
+        buf.u_sorted_cumweights[1] = 0
+        @inbounds for i in 1:length(buf.u_sorted_cumweights)-1
+            buf.u_sorted_cumweights[i+1] = buf.u_sorted_cumweights[i] + u_weights[buf.u_sorter[i]]
+        end
+        @inbounds for i in 1:length(buf.u_cdf_indices)
+            buf.u_cdf[i] = buf.u_sorted_cumweights[1+buf.u_cdf_indices[i]] / buf.u_sorted_cumweights[end]
+        end
+    end
+
+    if v_weights === nothing
+        @inbounds buf.v_cdf .= buf.v_cdf_indices ./ buf.n
+    else
+        buf.v_sorted_cumweights[1] = 0
+        @inbounds for i in 1:length(buf.v_sorted_cumweights)-1
+            buf.v_sorted_cumweights[i+1] = buf.v_sorted_cumweights[i] + v_weights[buf.v_sorter[i]]
+        end
+        @inbounds for i in 1:length(buf.v_cdf_indices)
+            buf.v_cdf[i] = buf.v_sorted_cumweights[1+buf.v_cdf_indices[i]] / buf.v_sorted_cumweights[end]
+        end
+    end
+    # @assert (buf.u_cdf[1]   == 0) ⊻ (buf.v_cdf[1]   == 0)
+    # @assert (buf.u_cdf[end] == 1) ⊻ (buf.v_cdf[end] == 1)
+    # @assert issorted(buf.u_cdf) && issorted(buf.v_cdf)
+
+    # Compute the value of the integral based on the CDFs.
+    map(p) do p
+        if p == 1
+            sum(i -> abs(buf.u_cdf[i] - buf.v_cdf[i]) * buf.deltas[i], 1:2*buf.n-1)
+        elseif p == 2
+            sqrt(sum(i -> (buf.u_cdf[i] - buf.v_cdf[i])^2 * buf.deltas[i], 1:2*buf.n-1))
+        else
+            sum(i -> abs(buf.u_cdf[i] - buf.v_cdf[i])^p * buf.deltas[i], 1:2*buf.n-1)^inv(p)
+        end
+    end
+end
+
+"""
+Compute the first Wasserstein distance between two 1D distributions.
+
+c.f. https://github.com/scipy/scipy/blob/4ec4ab8d6ccc1cdb34b84fdcb66fde2cc0210dbf/scipy/stats/stats.py#L7701
+"""
+wasserstein_distance(u_values, v_values, u_weights = nothing, v_weights = nothing) = wasserstein_distance!(CDFDistanceBuffer(u_values, v_values), u_values, v_values, u_weights, v_weights)
+wasserstein_distance!(buf::CDFDistanceBuffer, u_values, v_values, u_weights = nothing, v_weights = nothing) = cdf_distance!(buf, 1, u_values, v_values, u_weights, v_weights)
+
+"""
+Compute the energy distance between two 1D distributions.
+
+c.f. https://github.com/scipy/scipy/blob/4ec4ab8d6ccc1cdb34b84fdcb66fde2cc0210dbf/scipy/stats/stats.py#L7778
+"""
+energy_distance(u_values, v_values, u_weights = nothing, v_weights = nothing) = energy_distance!(CDFDistanceBuffer(u_values, v_values), u_values, v_values, u_weights, v_weights)
+energy_distance!(buf::CDFDistanceBuffer, u_values, v_values, u_weights = nothing, v_weights = nothing) = sqrt2 * cdf_distance!(buf, 2, u_values, v_values, u_weights, v_weights)
+
+function _test_cdf_distance(; bench = false)
+    cnt = 0
+    while true
+        n = (bench && cnt == 0) ? 100 : rand(1:5)
+        u = randn(n)
+        v = randn(n)
+        uw = rand(n)
+        vw = rand(n)
+        buf = CDFDistanceBuffer(u,v)
+        @assert wasserstein_distance(u,v) ≈ scipy.stats.wasserstein_distance(u,v)
+        @assert wasserstein_distance(u,v,uw,vw) ≈ scipy.stats.wasserstein_distance(u,v,uw,vw)
+        @assert wasserstein_distance!(buf,u,v) ≈ scipy.stats.wasserstein_distance(u,v)
+        @assert wasserstein_distance!(buf,u,v,uw,vw) ≈ scipy.stats.wasserstein_distance(u,v,uw,vw)
+        @assert energy_distance(u,v) ≈ scipy.stats.energy_distance(u,v)
+        @assert energy_distance(u,v,uw,vw) ≈ scipy.stats.energy_distance(u,v,uw,vw)
+        @assert energy_distance!(buf,u,v) ≈ scipy.stats.energy_distance(u,v)
+        @assert energy_distance!(buf,u,v,uw,vw) ≈ scipy.stats.energy_distance(u,v,uw,vw)
+
+        if bench && cnt == 0
+            @btime wasserstein_distance!($buf,$u,$v)
+            @btime wasserstein_distance($u,$v)
+            @btime scipy.stats.wasserstein_distance($u,$v)
+            @btime energy_distance!($buf,$u,$v,$uw,$vw)
+            @btime energy_distance($u,$v,$uw,$vw)
+            @btime scipy.stats.energy_distance($u,$v,$uw,$vw)
+        end
+        ((cnt += 1) >= 1000) && break
+    end
+end
 
 """
     @inline_cufunc f(x) = ...

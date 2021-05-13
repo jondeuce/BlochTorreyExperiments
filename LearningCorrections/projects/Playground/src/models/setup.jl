@@ -206,8 +206,8 @@ function init_isotropic_rician_generator(phys::PhysicsModel{Float32}; kwargs...)
     # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
     n = nsignal(phys)
     R = LatentScalarRicianNoiseCorrector{n,1}(Flux.Chain(identity)) # Latent space outputs noise level directly
-    normalizer = ApplyOverDims(maximum; dims = 1) #TODO: normalize by mean? sum? maximum? first echo?
-    noisescale = nothing # ApplyOverDims(mean; dims = 1) #TODO: relative to mean? nothing?
+    normalizer = ApplyOverDims(maximum; dims = 1)
+    noisescale = nothing
     NormalizedRicianCorrector(R, normalizer, noisescale) # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
 end
 
@@ -232,8 +232,8 @@ function init_vector_rician_generator(phys::PhysicsModel{Float32}; nlatent, maxc
         ) |> to32
     )
     # Rician generator mapping Z variables from prior space to Rician parameter space
-    normalizer = ApplyOverDims(maximum; dims = 1) #TODO: normalize by mean? sum? maximum? first echo?
-    noisescale = nothing # ApplyOverDims(mean; dims = 1) #TODO: relative to mean? nothing?
+    normalizer = ApplyOverDims(maximum; dims = 1)
+    noisescale = nothing
     NormalizedRicianCorrector(R, normalizer, noisescale) # Wrapped generator produces 𝐑^2n outputs parameterizing n Rician distributions
 end
 
@@ -293,24 +293,24 @@ end
 # models["enc1"]
 function init_mlp_cvae_enc1(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, kwargs...)
     σact = Flux.relu # Flux.leakyrelu # Flux.swish
-    MLP(nsignal(phys) => 2*zdim, nhidden, hdim, σact, identity) |> to32
+    mlp = Flux.Chain(MLP(nsignal(phys) => 2*zdim, nhidden, hdim, σact, identity), CVAELatentTransform(zdim)) |> flattenchain |> to32
 end
 
 # models["enc1"]
 function init_xformer_cvae_enc1(phys::PhysicsModel{Float32}; hdim, zdim, nlatent, nhidden, esize, nheads, headsize, seqlength, qseqlength, share, kwargs...)
-    TransformerEncoder(; esize, nheads, headsize, hdim, seqlength, qseqlength, share, nhidden, insizes = (nsignal(phys),), outsize = 2*zdim) |> to32
+    TransformerEncoder(CVAELatentTransform(zdim); esize, nheads, headsize, hdim, seqlength, qseqlength, share, nhidden, insizes = (nsignal(phys),), outsize = 2*zdim) |> to32
 end
 
 # models["enc2"]
 function init_mlp_cvae_enc2(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nlatent, kwargs...)
     σact = Flux.relu # Flux.leakyrelu # Flux.swish
-    mlp = MLP(nsignal(phys) + ntheta(phys) + nlatent => 2*zdim, nhidden, hdim, σact, identity) |> to32
+    mlp = Flux.Chain(MLP(nsignal(phys) + ntheta(phys) + nlatent => 2*zdim, nhidden, hdim, σact, identity), CVAELatentTransform(zdim)) |> flattenchain |> to32
     Stack(@nntopo((X,θ,Z) => XθZ => μq), vcat, mlp) |> to32
 end
 
 # models["enc2"]
 function init_xformer_cvae_enc2(phys::PhysicsModel{Float32}; hdim, zdim, nlatent, nhidden, esize, nheads, headsize, seqlength, qseqlength, share, kwargs...)
-    TransformerEncoder(; esize, nheads, headsize, hdim, seqlength, qseqlength, share, nhidden, insizes = (nsignal(phys), ntheta(phys), nlatent), outsize = 2*zdim) |> to32
+    TransformerEncoder(CVAELatentTransform(zdim); esize, nheads, headsize, hdim, seqlength, qseqlength, share, nhidden, insizes = (nsignal(phys), ntheta(phys), nlatent), outsize = 2*zdim) |> to32
 end
 
 # models["dec"]
@@ -354,17 +354,17 @@ function load_pretrained_cvae(phys::PhysicsModel{Float32}; modelfolder, modelpre
     cvae = derived_cvae(phys, enc1, enc2, dec; make_kwargs(settings, "arch")...)
 end
 
-function pseudo_labels!(phys::EPGModel, rice::RicianCorrector, cvae::CVAE; kwargs...)
+function pseudo_labels!(phys::EPGModel, cvae::CVAE; kwargs...)
     for img in phys.images
-        pseudo_labels!(phys, rice, cvae, img; kwargs...)
+        pseudo_labels!(phys, cvae, img; kwargs...)
     end
     return phys
 end
 
 function pseudo_labels!(
-        phys::EPGModel, rice::RicianCorrector, cvae::CVAE, img::CPMGImage;
-        initial_guess_only = false, sigma_reg = 0.5, noisebounds = (-Inf, 0.0),
-        force_recompute = true, new_noisescale = rice.noisescale,
+        phys::EPGModel, cvae::CVAE, img::CPMGImage;
+        initial_guess_only = false, sigma_reg = 0.5,
+        force_recompute = true,
     )
 
     # Optionally skip cecomputing
@@ -373,29 +373,30 @@ function pseudo_labels!(
     # Perform MLE fit on all signals within mask
     @info img
     initial_guess, results = mle_biexp_epg(
-        phys, rice, cvae, img;
-        initial_guess_only, sigma_reg, noisebounds,
+        phys, cvae, img;
         batch_size = 2048 * Threads.nthreads(),
-        initial_guess_args = (data_source = :image, data_subset = :mask, gpu_batch_size = 100_000),
+        verbose    = true,
+        sigma_reg,
+        initial_guess_only,
+        initial_guess_args = (
+            refine_init_logϵ = true,
+            refine_init_logs = true,
+            verbose          = false,
+            data_subset      = :mask,
+            gpu_batch_size   = 100_000,
+        ),
     )
 
     labels = img.meta[:pseudolabels] = Dict{Symbol,Any}()
     masklabels = img.meta[:pseudolabels][:mask] = Dict{Symbol,Any}()
-    logscale(scale, X) = scale === nothing ? 0 : log.(scale(X))
 
     if initial_guess_only
         masklabels[:signalfit] = initial_guess.X |> arr32
         masklabels[:theta] = initial_guess.θ |> arr32
-        masklabels[:latent] = initial_guess.Z |> arr32
     else
-        X, θ, logϵ = (results.signalfit, results.theta, permutedims(results.logepsilon)) .|> arr32
+        X, θ = (results.signalfit, results.theta) .|> arr32
         masklabels[:signalfit] = X
         masklabels[:theta] = θ
-        masklabels[:latent] = logϵ .- logscale(rice.noisescale, X) # ϵ = exp(Z) * scale => Z = logϵ - log(scale)
-    end
-    if new_noisescale !== rice.noisescale
-        X, Z = masklabels[:signalfit], masklabels[:latent]
-        masklabels[:latent] = Z .+ logscale(rice.noisescale, X) .- logscale(new_noisescale, X)
     end
 
     # Copy results from within mask into relevant test/train/val partitions
@@ -403,7 +404,7 @@ function pseudo_labels!(
         Ypart === :mask && continue
         labels[Ypart] = Dict{Symbol,Any}()
         J = findall_within(img.indices[:mask], img.indices[Ypart])
-        for res in [:signalfit, :theta, :latent]
+        for res in [:signalfit, :theta]
             labels[Ypart][res] = masklabels[res][:,J]
         end
     end
@@ -411,42 +412,43 @@ function pseudo_labels!(
     return img
 end
 
-function verify_pseudo_labels(phys::EPGModel, rice::RicianCorrector)
+function verify_pseudo_labels(phys::EPGModel)
     for (i,img) in enumerate(phys.images)
         dataset = :mask
-        @unpack theta, latent = img.meta[:pseudolabels][dataset]
-        state = lib.posterior_state(phys, rice, img.partitions[dataset], theta, latent; accum_loss = ℓ -> sum(ℓ; dims = 1))
+        @unpack theta = img.meta[:pseudolabels][dataset]
+        Ymeta = MetaCPMGSignal(phys, img, img.partitions[dataset])
+        ℓ = loglikelihood(phys, Ymeta, theta)
         @info "Pseudo Labels log-likelihood (image = $i, dataset = $dataset):"
-        @info StatsBase.summarystats(vec(state.ℓ))
+        @info StatsBase.summarystats(vec(ℓ))
     end
 end
 
 function load_mcmc_labels!(
-        phys::EPGModel{T},
-        img::CPMGImage{T};
+        phys::EPGModel{T};
         force_reload = true,
     ) where {T}
-    # Optionally skip reloading
-    haskey(img.meta, :mcmclabels) && !force_reload && return img
-    img.meta[:mcmclabels] = Dict{Symbol,Any}()
 
-    mcmcdir = joinpath(dirname(img.meta[:info].path), "..", "julia-mcmc-biexpepg")
-    if !isdir(mcmcdir)
-        @info "MCMC directory does not exist: $mcmcdir"
-        return img
-    end
+    for (i,img) in enumerate(phys.images), dataset in [:val] #[:val, :train, :test]
+        # Optionally skip reloading
+        haskey(img.meta, :mcmclabels) && !force_reload && continue
+        img.meta[:mcmclabels] = Dict{Symbol,Any}()
 
-    for dataset in [:val, :train, :test]
+        mcmcdir = joinpath(dirname(img.meta[:info].path), "..", "julia-mcmc-biexpepg")
+        if !isdir(mcmcdir)
+            @info "MCMC directory does not exist: $mcmcdir"
+            continue
+        end
+
         # Load MCMC params
         csv_file_lists = filter(!isempty, [
             readdir(Glob.GlobMatch("image*_dataset-$(dataset)_*.csv"), mcmcdir),
             readdir(Glob.GlobMatch("checkpoint*_dataset-$(dataset)_*.csv"), mcmcdir),
         ])
         if isempty(csv_file_lists)
-            @info "MCMC data for $dataset dataset does not exist: $mcmcdir"
+            @info "MCMC data for does not exist (image = $i, dataset = $dataset): $mcmcdir"
             continue
         else
-            @info "Loading MCMC data for $dataset dataset..."
+            @info "Loading MCMC data (image = $i, dataset = $dataset):"
         end
 
         files = first(csv_file_lists)
@@ -454,81 +456,35 @@ function load_mcmc_labels!(
         num_params = length(mcmc_param_names)
         num_signals = size(img.partitions[dataset], 2)
         num_mcmc_samples = 100
-        params = fill(T(NaN), num_params, num_signals, num_mcmc_samples)
+        theta = fill(T(NaN), num_params, num_signals, num_mcmc_samples)
 
+        # Load mcmc samples
         @time for file in files
             df = CSV.read(file, DataFrame)
             idx = CartesianIndex.(tuple.(df[!,:dataset_col], df[!,:iteration]))
-            params[:, idx] .= df[:, mcmc_param_names] |> Matrix |> permutedims
+            theta[:, idx] .= df[:, mcmc_param_names] |> Matrix |> permutedims
         end
 
         # Compute epg signal model
-        work_bufs = [mcmc_biexp_epg_work_factory(phys, img) for _ in 1:Threads.nthreads()]
-        X = zeros(Float64, nsignal(img), num_signals, num_mcmc_samples)
-        @time Threads.@threads for j in 1:num_signals
-            work = work_bufs[Threads.threadid()]
-            @inbounds for k in 1:num_mcmc_samples
-                α, β, η, δ1, δ2 = ntuple(i -> Float64(@inbounds params[i,j,k]), 5)
-                Xi = biexp_epg_model_scaled!(work, α, β, η, δ1, δ2, 0.0, 0.0, Val(true), Val(false))
-                @simd for i in 1:size(X,1)
-                    X[i,j,k] = Xi[i]
-                end
-            end
-        end
+        @time X = signal_model(phys, img, theta[:,:,end])
 
         # Assign outputs
         labels             = img.meta[:mcmclabels][dataset] = Dict{Symbol,Any}()
-        log_rel_T1         = work_bufs[1].δ0 |> T # marginalized parameter log(T1/TE)
-        labels[:theta]     = [params[1:5, :, :]; fill(log_rel_T1, 1, num_signals, num_mcmc_samples)] # θ = α, β, η, δ1, δ2, δ0
-        labels[:latent]    = params[6:6, :, :] # Z = logϵ
-        labels[:logscale]  = params[7:7, :, :] # logs
+        labels[:theta]     = theta # θ = α, β, η, δ1, δ2, logϵ, logs
         labels[:signalfit] = X .|> T
     end
 
-    return img
+    return nothing
 end
 
-function load_mcmc_labels!(phys::EPGModel; kwargs...)
-    for img in phys.images
-        load_mcmc_labels!(phys, img; kwargs...)
-    end
-    return phys
-end
-
-function verify_mcmc_labels(phys::EPGModel, rice::RicianCorrector)
+function verify_mcmc_labels(phys::EPGModel)
     for (i,img) in enumerate(phys.images)
         dataset = :val
-        @unpack theta, latent = img.meta[:mcmclabels][dataset]
-        state = lib.posterior_state(phys, rice, img.partitions[dataset], theta[:,:,end], latent[:,:,end]; accum_loss = ℓ -> sum(ℓ; dims = 1))
+        @unpack theta = img.meta[:mcmclabels][dataset]
+        Ymeta = MetaCPMGSignal(phys, img, img.partitions[dataset])
+        ℓ = loglikelihood(phys, Ymeta, theta[:,:,end])
         @info "MCMC Labels log-likelihood (image = $i, dataset = $dataset):"
-        @info StatsBase.summarystats(vec(state.ℓ[:, 1:findlast(!isnan, state.ℓ[1,:]), :]))
-    end
-end
-
-function verify_mcmc_labels_directly(phys::EPGModel)
-    for (i,img) in enumerate(phys.images)
-        dataset = :val
-
-        @unpack signalfit, latent, logscale = img.meta[:mcmclabels][dataset]
-        Y = img.partitions[dataset]
-        X = signalfit
-        ℒ = zeros(1, size(X,2), size(X,3))
-
-        @time Threads.@threads for j in 1:size(X,2)
-            @inbounds for k in 1:size(X,3)
-                logϵ      = latent[1,j,k]
-                logs      = logscale[1,j,k]
-                logϵs     = logϵ + logs
-                ℓ         = zero(eltype(Y))
-                @simd for i in 1:size(Y,1)
-                    ℓ += neglogL_rician(Y[i,j], X[i,j,k], logϵs)
-                end
-                ℒ[1,j,k] = ℓ
-            end
-        end
-
-        @info "MCMC Labels log-likelihood directly (image = $i, dataset = $dataset):"
-        @info StatsBase.summarystats(vec(ℒ[:, 1:findlast(!isnan, ℒ[1,:,1]), :]))
+        @info StatsBase.summarystats(vec(ℓ[:, 1:findlast(!isnan, ℓ[1,:]), :]))
     end
 end
 

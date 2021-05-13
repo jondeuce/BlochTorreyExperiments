@@ -213,7 +213,8 @@ end
 """
 Basic Transformer encoder with learned positional embedding
 """
-function TransformerEncoder(;
+function TransformerEncoder(
+        tail_network = nothing;
         esize::Int, nheads::Int, headsize::Int, hdim::Int, seqlength::Int, nhidden::Int, qseqlength::Int = 0, share::Bool = false,
         insizes::Tuple{Vararg{Int}}, outsize::Int,
     )
@@ -251,6 +252,7 @@ function TransformerEncoder(;
     reducer = Flux.Chain(
         Resize(esize * outseqlength, :), # Resize
         MLP(esize * outseqlength => outsize, 0, hdim, Flux.relu, identity), # Dense reduction
+        (tail_network === nothing ? () : (tail_network,))..., # Append `tail_network` following reduction
     )
 
     # Build transformer encoder

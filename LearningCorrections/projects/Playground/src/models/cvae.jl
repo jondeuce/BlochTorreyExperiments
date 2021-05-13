@@ -36,11 +36,19 @@ end
 θ_linear_normalize(cvae::CVAE, θ) = θ_linear_xform(cvae, θ, cvae.θbd, cvae.θ̄bd)
 θ̄_linear_unnormalize(cvae::CVAE, θ) = θ_linear_xform(cvae, θ, cvae.θ̄bd, cvae.θbd)
 
+# Layer which transforms matrix of [μ′; logσ′] ∈ [ℝ^nz; ℝ^nz] to bounded intervals [μ; logσ] ∈ [𝒟μ^nz; 𝒟logσ^nz]:
+#      μ bounded: prevent CVAE from "memorizing" inputs via mean latent embedding vectors which are far from zero
+#   logσ bounded: similarly, prevent CVAE from "memorizing" inputs via latent embedding vectors which are nearly constant, i.e. have zero variance
+CVAELatentTransform(nz, 𝒟μ = (-2,2), 𝒟logσ = (-4,0)) = Flux.Chain(
+    Base.BroadcastFunction(tanh),
+    CatScale([(-1,1) => 𝒟μ, (-1,1) => 𝒟logσ], [nz, nz]),
+)
+
 ####
 #### CVAE helpers
 ####
 
-@inline split_at(x::AbstractVecOrMat, n::Int) = n == size(x,1) ? (x, similar(x, 0, size(x)[2:end]...)) : (x[1:n, ..], x[n+1:end, ..])
+@inline split_at(x::AbstractVecOrMat, n::Int) = n == size(x,1) ? (x, zeros_similar(x, 0, size(x)[2:end]...)) : (x[1:n, ..], x[n+1:end, ..])
 split_theta_latent(cvae::CVAE, x::AbstractVecOrMat) = split_at(x, ntheta(cvae))
 split_marginal_latent(cvae::CVAE, x::AbstractVecOrMat) = split_at(x, nmarginalized(cvae))
 
@@ -49,13 +57,6 @@ function split_marginal_latent_pairs(cvae::CVAE, x::AbstractVecOrMat)
     μ1θ, μ1Z = split_marginal_latent(cvae, μ1θ_μ1Z) # size(μ1θ,1) = nθM, size(μ1Z,1) = nlatent
     μ2θ, μ2Z = split_marginal_latent(cvae, μ2θ_μ2Z) # size(μ2θ,1) = nθM, size(μ2Z,1) = nlatent
     return (μ1θ, μ2θ, μ1Z, μ2Z)
-end
-
-function normalize_latent_state(::CVAE, μlogσ)
-    μ, logσ = split_dim1(μlogσ)
-    μ    = 2 .* tanh.(μ)         #    μ ∈ [-2,2]: prevent CVAE from "memorizing" inputs via mean latent embedding vectors which are far from zero
-    logσ = 2 .* tanh.(logσ) .- 2 # logσ ∈ [-4,0]: similarly, prevent CVAE from "memorizing" inputs via latent embedding vectors which are nearly constant, i.e. have zero variance
-    return μ, logσ
 end
 
 ####
@@ -94,13 +95,13 @@ struct CVAETrainingState{C <: CVAE, A}
     logσq::A
 end
 
-function CVAETrainingState(cvae::CVAE, Y, θ, Z)
+function CVAETrainingState(cvae::CVAE, Y, θ, Z = zeros_similar(θ, 0, size(θ,2)))
     Ypad = pad_signal(cvae, Y)
     θ̄ = θ_linear_normalize(cvae, θ)
     μr = cvae.E1(Ypad)
     μq = cvae.E2(Ypad, θ̄, Z)
-    μr0, logσr = normalize_latent_state(cvae, μr)
-    μq0, logσq = normalize_latent_state(cvae, μq)
+    μr0, logσr = split_dim1(μr)
+    μq0, logσq = split_dim1(μq)
     return CVAETrainingState(cvae, Ypad, θ̄, Z, μr0, logσr, μq0, logσq)
 end
 signal(state::CVAETrainingState) = state.Y
@@ -115,7 +116,7 @@ end
 function CVAEInferenceState(cvae::CVAE, Y)
     Ypad = pad_signal(cvae, Y)
     μr = cvae.E1(Ypad)
-    μr0, logσr = normalize_latent_state(cvae, μr)
+    μr0, logσr = split_dim1(μr)
     return CVAEInferenceState(cvae, Ypad, μr0, logσr)
 end
 signal(state::CVAEInferenceState) = state.Y
@@ -125,7 +126,7 @@ function KLDivergence(state::CVAETrainingState)
     KLDivGaussian(μq0, logσq, μr0, logσr)
 end
 
-function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) where {C <: CVAEPosteriorDist{Gaussian}}
+function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool = nlatent(state.cvae) == 0) where {C <: CVAEPosteriorDist{Gaussian}}
     @unpack cvae, Y, θ̄, Z, μq0, logσq = state
     nθM = nmarginalized(cvae)
     zq = sample_mv_normal(μq0, exp.(logσq))
@@ -135,7 +136,7 @@ function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) wh
         NegLogLGaussian(vcat(θ̄[1:nθM, ..], Z), μx0, logσx)
 end
 
-function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) where {C <: CVAEPosteriorDist{TruncatedGaussian}}
+function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool = nlatent(state.cvae) == 0) where {C <: CVAEPosteriorDist{TruncatedGaussian}}
     @unpack cvae, Y, θ̄, Z, μq0, logσq = state
     nθM = nmarginalized(cvae)
     zq = sample_mv_normal(μq0, exp.(logσq))
@@ -152,7 +153,7 @@ function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) wh
     end
 end
 
-function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) where {C <: CVAEPosteriorDist{Kumaraswamy}}
+function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool = nlatent(state.cvae) == 0) where {C <: CVAEPosteriorDist{Kumaraswamy}}
     @unpack cvae, Y, θ̄, Z, μq0, logσq = state
     nθM = nmarginalized(cvae)
     zq = sample_mv_normal(μq0, exp.(logσq))
@@ -166,13 +167,13 @@ function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool) wh
     end
 end
 
-function KL_and_ELBO(state::CVAETrainingState; marginalize_Z::Bool)
+function KL_and_ELBO(state::CVAETrainingState; marginalize_Z::Bool = nlatent(state.cvae) == 0)
     KLDiv = KLDivergence(state)
     ELBO = EvidenceLowerBound(state; marginalize_Z)
     return (; KLDiv, ELBO)
 end
 
-KL_and_ELBO(cvae::CVAE, Y, θ, Z; marginalize_Z::Bool) = KL_and_ELBO(CVAETrainingState(cvae, Y, θ, Z); marginalize_Z)
+KL_and_ELBO(cvae::CVAE, Y, θ, Z = zeros_similar(θ, 0, size(θ,2)); marginalize_Z::Bool = nlatent(cvae) == 0) = KL_and_ELBO(CVAETrainingState(cvae, Y, θ, Z); marginalize_Z)
 
 sampleθZposterior(cvae::CVAE, Y; kwargs...) = sampleθZposterior(CVAEInferenceState(cvae, Y); kwargs...)
 
@@ -199,7 +200,7 @@ function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C
     σ⁻¹μθ̄M, logσθ̄M, μZ, logσZ = split_marginal_latent_pairs(cvae, μx)
     μθ̄M  = clamp.(θ̄Mlo .+ (θ̄Mhi .- θ̄Mlo) .* Flux.σ.(σ⁻¹μθ̄M), θ̄Mlo, θ̄Mhi) # transform from unbounded σ⁻¹μθ̄M ∈ ℝ^nθ to bounded interval [θ̄Mlo, θ̄Mhi]^nθ
     θ̄M = mode ? μθ̄M : sample_trunc_mv_normal(μθ̄M, exp.(logσθ̄M), θ̄Mlo, θ̄Mhi)
-    Z = mode ? μZ : sample_mv_normal(μZ, exp.(logσZ))
+    Z = mode || nlatent(state.cvae) == 0 ? μZ : sample_mv_normal(μZ, exp.(logσZ))
     θM = θ̄_linear_unnormalize(cvae, θ̄M)
     return θM, Z
 end
@@ -211,7 +212,7 @@ function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C
     μx = cvae.D(Y, zr)
     αθ, βθ, μZ, logσZ = split_marginal_latent_pairs(cvae, μx)
     θ̄M = mode ? mode_kumaraswamy(αθ, βθ) : sample_kumaraswamy(αθ, βθ)
-    Z = mode ? μZ : sample_mv_normal(μZ, exp.(logσZ))
+    Z = mode || nlatent(state.cvae) == 0 ? μZ : sample_mv_normal(μZ, exp.(logσZ))
     θM = θ̄_linear_unnormalize(cvae, θ̄M)
     return θM, Z
 end
@@ -298,7 +299,7 @@ function sampleXθZ(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zpr
     #TODO: can't differentiate through @timeit "sampleθZ"
     #TODO: can't differentiate through @timeit "signal_model"
     θ, Z = sampleθZ(phys, cvae, θprior, Zprior, Ymeta; kwargs...)
-    X = signal_model(phys, θ)
+    X = signal_model(phys, Ymeta, θ)
     (size(X,1) > nsignal(Ymeta)) && (X = X[1:nsignal(Ymeta), ..])
     return X, θ, Z
 end
@@ -306,6 +307,16 @@ sampleXθZ(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs
 
 sampleX(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zprior::MaybeDeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleXθZ(phys, cvae, θprior, Zprior, Ymeta; kwargs...)[1]
 sampleX(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleX(phys, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
+
+function posterior_state(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; accum_loss = ℓ -> sum(ℓ; dims = 1), kwargs...)
+    θ, Z = sampleθZ(phys, cvae, Ymeta; posterior_θ = true, posterior_Z = true, posterior_mode = false, kwargs...)
+    X = signal_model(phys, Ymeta, θ)
+    X = clamp_dim1(signal(Ymeta), X)
+    X̂ = add_noise_instance(phys, X, θ)
+    ℓ = loglikelihood(phys, signal(Ymeta), X, θ; accum_loss) #TODO make a loglikelihood
+    ϵ = noiselevel(phys, θ)
+    return (; Y = signal(Ymeta), X̂, θ, Z, X, ϵ, ν = X, δ = zeros_similar(X, 1, size(X,2)), ℓ)
+end
 
 ####
 #### Rician posterior state
@@ -339,13 +350,13 @@ end
 function NegLogLikelihood(::EPGModel, rice::RicianCorrector, Y::AbstractVecOrMat, μ0, σ)
     # Likelihood is "maximimally generous" w.r.t. normalization factor, i.e. we perform MLE to find optimal scaling factor
     logs = Zygote.@ignore begin
-        _, results = mle_biexp_epg_noise_only(μ0, Y, σ; freeze_ϵ = true, freeze_s = false, verbose = false)
+        _, results = mle_biexp_epg_noise_only(μ0, Y, log.(σ); freeze_logϵ = true, freeze_logs = false, verbose = false)
         arr_similar(Y, permutedims(results.logscale))
     end
     neglogL_rician.(Y, exp.(logs) .* μ0, logs .+ log.(σ)) # Rician negative log likelihood
 end
 
-function posterior_state(phys::PhysicsModel, rice::RicianCorrector, Y::AbstractVecOrMat, θ::AbstractVecOrMat, Z::AbstractVecOrMat; accum_loss = nothing)
+function posterior_state(phys::PhysicsModel, rice::RicianCorrector, Y::AbstractVecOrMat, θ::AbstractVecOrMat, Z::AbstractVecOrMat; accum_loss = ℓ -> sum(ℓ; dims = 1))
     X = signal_model(phys, θ)
     @unpack δ, ϵ, ν = rician_state(rice, X, Z)
     X, δ, ϵ, ν = clamp_dim1(Y, (X, δ, ϵ, ν))

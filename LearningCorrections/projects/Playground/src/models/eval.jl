@@ -286,14 +286,14 @@ end
 ####
 
 function _test_mle_biexp_epg_noise_only(;
-        initial_ϵ = true, img_idx = 1, samples = 1024, seed = 0
+        initial_logϵ = true, img_idx = 1, samples = 1024, seed = 0
     )
     img = Main.phys.images[img_idx]
     dataset = :val
     Y = img.partitions[dataset]
     X = img.meta[:pseudolabels][dataset][:signalfit]
     θ = img.meta[:pseudolabels][dataset][:theta]
-    Z = img.meta[:pseudolabels][dataset][:latent]
+    Z = img.meta[:pseudolabels][dataset][:latent] #TODO
     J, _ = sample_maybeshuffle(1:size(Y,2); shuffle = true, samples, seed)
     Y = Y[:,J] |> to32
     X = X[:,J] |> to32
@@ -301,15 +301,15 @@ function _test_mle_biexp_epg_noise_only(;
     ϵ = exp.(Z[:,J] |> to32) # Z = log(ϵ)
 
     @info "Neither frozen"
-    initial_guess, results = mle_biexp_epg_noise_only(X, Y, initial_ϵ ? ϵ : nothing; freeze_ϵ = false, freeze_s = false)
+    initial_guess, results = mle_biexp_epg_noise_only(X, Y, initial_logϵ ? log.(ϵ) : nothing; freeze_logϵ = false, freeze_logs = false)
 
     @info "scale frozen"
-    initial_guess, results = mle_biexp_epg_noise_only(X, Y, initial_ϵ ? ϵ : nothing; freeze_ϵ = false, freeze_s = true)
-    @assert vec(log.(initial_guess.s)) ≈ vec(results.logscale)
+    initial_guess, results = mle_biexp_epg_noise_only(X, Y, initial_logϵ ? log.(ϵ) : nothing; freeze_logϵ = false, freeze_logs = true)
+    @assert vec(initial_guess.logs) ≈ vec(results.logscale)
 
     @info "epsilon frozen"
-    initial_guess, results = mle_biexp_epg_noise_only(X, Y, initial_ϵ ? ϵ : nothing; freeze_ϵ = true, freeze_s = false)
-    @assert vec(log.(initial_guess.ϵ)) ≈ vec(results.logepsilon)
+    initial_guess, results = mle_biexp_epg_noise_only(X, Y, initial_logϵ ? log.(ϵ) : nothing; freeze_logϵ = true, freeze_logs = false)
+    @assert vec(initial_guess.logϵ) ≈ vec(results.logepsilon)
 
     @info "NegLogLikelihood"
     ℓ = NegLogLikelihood(Main.phys, Main.models["genatr"], Y, X, ϵ)
@@ -319,10 +319,12 @@ end
 function mle_biexp_epg_noise_only(
         X::AbstractVecOrMat,
         Y::AbstractVecOrMat,
-        initial_ϵ     = nothing,
-        initial_s     = nothing;
-        freeze_ϵ      = false,
-        freeze_s      = false,
+        initial_logϵ  = nothing,
+        initial_logs  = nothing;
+        freeze_logϵ   = false,
+        freeze_logs   = false,
+        logϵ_bounds   = nothing,
+        logs_bounds   = nothing,
         batch_size    = 128 * Threads.nthreads(),
         verbose       = true,
         dryrun        = false,
@@ -333,32 +335,32 @@ function mle_biexp_epg_noise_only(
         opt_args      = Dict{Symbol,Any}(),
     )
     @assert size(X) == size(Y)
-    @assert !(freeze_ϵ && freeze_s) # must be optimizing at least one
+    @assert !(freeze_logϵ && freeze_logs) # must be optimizing at least one
 
     dryrun && let
         I, _ = sample_maybeshuffle(1:size(Y,2); shuffle = dryrunshuffle, samples = dryrunsamples, seed = dryrunseed)
         X, Y = X[:,I], Y[:,I]
-        (initial_ϵ !== nothing) && (initial_ϵ = initial_ϵ[:,I])
-        (initial_s !== nothing) && (initial_s = initial_s[:,I])
+        (initial_logϵ !== nothing) && (initial_logϵ = initial_logϵ[:,I])
+        (initial_logs !== nothing) && (initial_logs = initial_logs[:,I])
     end
 
-    if initial_ϵ === nothing
-        initial_ϵ = sqrt.(mean(abs2, X .- Y; dims = 1))
-    end
-    if initial_s === nothing
-        initial_s = inv.(maximum(mean_rician.(X, initial_ϵ); dims = 1))
-        # initial_s = ones_similar(X, 1, size(X,2))
-    end
-    initial_loss  = sum(neglogL_rician.(Y, initial_s .* X, log.(initial_s .* initial_ϵ)); dims = 1)
+    # Initial guess
+    (initial_logϵ === nothing) && (initial_logϵ = log.(sqrt.(mean(abs2, X .- Y; dims = 1))))
+    (initial_logs === nothing) && (initial_logs = .-log.(maximum(mean_rician.(X, exp.(initial_logϵ)); dims = 1)))
+    initial_loss  = sum(neglogL_rician.(Y, exp.(initial_logs) .* X, initial_logs .+ initial_logϵ); dims = 1)
     initial_guess = (
-        ϵ = initial_ϵ |> arr64,
-        s = initial_s |> arr64,
-        ℓ = initial_loss |> arr64,
+        logϵ = initial_logϵ |> arr64,
+        logs = initial_logs |> arr64,
+        ℓ    = initial_loss |> arr64,
     )
     X, Y = (X, Y) .|> arr64
 
-    # Number of non-frozen variables to optimize
-    noptvars = !freeze_ϵ + !freeze_s
+    # Setup
+    noptvars     = !freeze_logϵ + !freeze_logs
+    logϵ_bounds  = logϵ_bounds === nothing ? (-Inf, Inf) : logϵ_bounds
+    logs_bounds  = logs_bounds === nothing ? (-Inf, Inf) : logs_bounds
+    lower_bounds = Float64[]; !freeze_logϵ && push!(lower_bounds, logϵ_bounds[1]); !freeze_logs && push!(lower_bounds, logs_bounds[1])
+    upper_bounds = Float64[]; !freeze_logϵ && push!(upper_bounds, logϵ_bounds[2]); !freeze_logs && push!(upper_bounds, logs_bounds[2])
 
     work_spaces = map(1:Threads.nthreads()) do _
         (
@@ -375,6 +377,8 @@ function mle_biexp_epg_noise_only(
                 opt.ftol_rel      = 1e-8
                 opt.maxeval       = 250
                 opt.maxtime       = 1.0
+                opt.lower_bounds  = lower_bounds
+                opt.upper_bounds  = upper_bounds
                 for (k,v) in opt_args
                     setproperty!(opt, k, v)
                 end
@@ -394,15 +398,15 @@ function mle_biexp_epg_noise_only(
 
     function f(work, x::Vector{D}) where {D <: MaybeDualF64}
         @inbounds begin
-            logϵ  = freeze_ϵ ? work.logϵ0[] : freeze_s ? x[1] : x[1]
-            logs  = freeze_s ? work.logs0[] : freeze_ϵ ? x[1] : x[2]
+            logϵ  = freeze_logϵ ? work.logϵ0[] : freeze_logs ? x[1] : x[1]
+            logs  = freeze_logs ? work.logs0[] : freeze_logϵ ? x[1] : x[2]
             s     = exp(logs)
-            logϵi = logs + logϵ # log(s*ϵ)
+            logϵs = logs + logϵ # log(s*ϵ)
             ℓ     = zero(D)
             @simd for i in eachindex(work.Xj) #TODO @avx?
                 yi = work.Yj[i]
                 νi = s * work.Xj[i]
-                ℓ += neglogL_rician(yi, νi, logϵi) # Rician negative log likelihood
+                ℓ += neglogL_rician(yi, νi, logϵs) # Rician negative log likelihood
             end
             return ℓ
         end
@@ -424,7 +428,7 @@ function mle_biexp_epg_noise_only(
     #= Benchmarking
     work_spaces[1].Xj .= X[:,1]
     work_spaces[1].Yj .= Y[:,1]
-    work_spaces[1].x0 .= freeze_ϵ ? log.(initial_guess.s[1:1,1]) : freeze_s ? log.(initial_guess.ϵ[1:1,1]) : log.(vcat(initial_guess.ϵ[1:1,1], initial_guess.s[1:1,1]))
+    work_spaces[1].x0 .= freeze_logϵ ? initial_guess.logs[1:1,1] : freeze_logs ? initial_guess.logϵ[1:1,1] : vcat(initial_guess.logϵ[1:1,1], initial_guess.logs[1:1,1])
     @info "Calling function..."; l = f( work_spaces[1], work_spaces[1].x0 ); @show l
     @info "Calling gradient..."; g = zeros(noptvars); l = fg!( work_spaces[1], work_spaces[1].x0, g ); @show l, g
     @info "Timing function..."; @btime( $f( $( work_spaces[1] ), $( work_spaces[1].x0 ) ) )
@@ -441,14 +445,14 @@ function mle_biexp_epg_noise_only(
                 work = work_spaces[Threads.threadid()]
                 work.Xj               .= X[:,j]
                 work.Yj               .= Y[:,j]
-                work.logϵ0[]           = log(initial_guess.ϵ[1,j])
-                work.logs0[]           = log(initial_guess.s[1,j])
-                work.x0               .= freeze_ϵ ? work.logs0[] : freeze_s ? work.logϵ0[] : (work.logϵ0[], work.logs0[])
+                work.logϵ0[]           = initial_guess.logϵ[1,j]
+                work.logs0[]           = initial_guess.logs[1,j]
+                work.x0               .= freeze_logϵ ? work.logs0[] : freeze_logs ? work.logϵ0[] : (work.logϵ0[], work.logs0[])
                 work.opt.min_objective = (x, g) -> fg!(work, x, g)
 
                 solvetime              = @elapsed (minf, minx, ret) = NLopt.optimize(work.opt, work.x0)
-                results.logepsilon[j]  = freeze_ϵ ? work.logϵ0[] : freeze_s ? minx[1] : minx[1]
-                results.logscale[j]    = freeze_s ? work.logs0[] : freeze_ϵ ? minx[1] : minx[2]
+                results.logepsilon[j]  = freeze_logϵ ? work.logϵ0[] : freeze_logs ? minx[1] : minx[1]
+                results.logscale[j]    = freeze_logs ? work.logs0[] : freeze_logϵ ? minx[1] : minx[2]
                 results.loss[j]        = minf
                 results.retcode[j]     = Base.eval(NLopt, ret) |> Int #TODO cleaner way to convert Symbol to enum?
                 results.numevals[j]    = work.opt.numevals
@@ -477,43 +481,45 @@ end
 function mle_biexp_epg_θ_to_x(work::W, θ::A) where {W, A <: VecOrTupleMaybeDualF64}
     @inbounds begin
         @unpack logτ2lo, logτ2hi, logτ2lo′, logτ2hi′ = work
-        α, β, η, δ1, δ2 = θ[1], θ[2], θ[3], θ[4], θ[5]
+        α, β, η, δ1, δ2, logϵ, logs = θ[1], θ[2], θ[3], θ[4], θ[5], θ[6], θ[7]
         t   = 1e-12
         δ1′ = clamp(logτ2lo + (logτ2hi - logτ2lo) * δ1, logτ2lo′ + t, logτ2hi′ - t)
         δ2′ = clamp(logτ2lo + (logτ2hi - logτ2lo) * (δ1 + δ2 * (1 - δ1)), logτ2lo′ + t, logτ2hi′ - t)
         z1  = (δ1′ - logτ2lo′) / (logτ2hi′ - logτ2lo′)
         z2  = ((δ2′ - logτ2lo′) / (logτ2hi′ - logτ2lo′) - z1) / (1 - z1)
-        return α, β, η, z1, z2
+        return α, β, η, z1, z2, logϵ, logs
     end
 end
 
 function mle_biexp_epg_x_to_θ(work::W, x::A) where {W, A <: VecOrTupleMaybeDualF64}
     @inbounds begin
         @unpack logτ2lo, logτ2hi, logτ2lo′, logτ2hi′, δ0 = work
-        α, β, η, z1, z2 = x[1], x[2], x[3], x[4], x[5]
+        α, β, η, z1, z2, logϵ, logs = x[1], x[2], x[3], x[4], x[5], x[6], x[7]
         δ1 = ((logτ2lo′ - logτ2lo) + (logτ2hi′ - logτ2lo′) * z1) / (logτ2hi - logτ2lo)
         δ2 = (((logτ2lo′ - logτ2lo) + (logτ2hi′ - logτ2lo′) * (z1 + z2 * (1 - z1))) / (logτ2hi - logτ2lo) - δ1) / (1 - δ1)
-        return α, β, η, δ1, δ2, δ0
+        return α, β, η, δ1, δ2, logϵ, logs
     end
 end
 
 function mle_biexp_epg_θ_to_ψ(work::W, θ::A) where {W, A <: VecOrTupleMaybeDualF64}
     @inbounds begin
-        @unpack logτ2lo, logτ2hi, logτ1lo, logτ1hi = work
-        α, β, η, δ1, δ2, δ0 = θ[1], θ[2], θ[3], θ[4], θ[5], θ[6]
+        @unpack logτ2lo, logτ2hi, logτ1lo, logτ1hi, δ0 = work
+        α, β, η, δ1, δ2, logϵ, logs = θ[1], θ[2], θ[3], θ[4], θ[5], θ[6], θ[7]
         T21 = exp(logτ2lo + (logτ2hi - logτ2lo) * δ1)
         T22 = exp(logτ2lo + (logτ2hi - logτ2lo) * (δ1 + δ2 * (1 - δ1)))
+        A21 = η
+        A22 = 1 - η
         T1 = exp(logτ1lo + (logτ1hi - logτ1lo) * δ0)
-        return α, β, T21, T22, η, 1-η, T1, one(T1)
+        return α, β, T21, T22, A21, A22, T1, one(T1)
     end
 end
 
 function mle_biexp_epg_x_regularization(work::W, x::A) where {W, A <: VecOrTupleMaybeDualF64}
     @inbounds begin
         @unpack xlo, xhi, σreg = work
-        α,   β,   η,   z1,   z2   = x[1],   x[2],   x[3],   x[4],   x[5]   # flip/refcon angles, mwf, and relative log T2 short/long
-        αlo, βlo, ηlo, z1lo, z2lo = xlo[1], xlo[2], xlo[3], xlo[4], xlo[5] # parameter lower bounds
-        αhi, βhi, ηhi, z1hi, z2hi = xhi[1], xhi[2], xhi[3], xhi[4], xhi[5] # parameter upper bounds
+        α,   β,   η,   z1,   z2,   logϵ,   logs   =   x[1],   x[2],   x[3],   x[4],   x[5],   x[6],   x[7] # flip/refcon angles, mwf, and relative log T2 short/long
+        αlo, βlo, ηlo, z1lo, z2lo, logϵlo, logslo = xlo[1], xlo[2], xlo[3], xlo[4], xlo[5], xlo[6], xlo[7] # parameter lower bounds
+        αhi, βhi, ηhi, z1hi, z2hi, logϵhi, logshi = xhi[1], xhi[2], xhi[3], xhi[4], xhi[5], xhi[6], xhi[7] # parameter upper bounds
         # Regularization is negative log-likelihood of a sum of Gaussian distributions centred on parameter interval lower/upper bounds.
         # This biases parameters to prefer to be at one endpoint or the other in cases where the solution is ill-posed.
         # Gaussian widths are equal to σreg * (interval width). Normalization constant is discarded.
@@ -522,7 +528,8 @@ function mle_biexp_epg_x_regularization(work::W, x::A) where {W, A <: VecOrTuple
             ((β - βhi) / (βhi - βlo))^2 + # refcon angle biased toward 180 deg
             ((η - ηlo) / (ηhi - ηlo))^2 + # mwf biased toward 0%
             ((z1 - z1lo) / (z1hi - z1lo))^2 + # (relative-)log T2 short biased lower
-            ((z2 - z2hi) / (z2hi - z2lo))^2   # (relative-)log T2 long biased higher
+            ((z2 - z2hi) / (z2hi - z2lo))^2 +  # (relative-)log T2 long biased higher
+            logs^2 # scale biased to be near zero
         ) / (2 * σreg^2) # regularization strength
         return R
     end
@@ -531,11 +538,11 @@ end
 @inline mle_biexp_epg_work(work::W, ::Type{Float64}) where {W} = work.epg
 @inline mle_biexp_epg_work(work::W, ::Type{D}) where {W, D <: Dual64} = work.∇epg
 
-function f_mle_biexp_epg!(work::W, x::Vector{D}) where {W, D <: MaybeDualF64}
+function f_mle_biexp_epg!(work::W, x::Vector{D}, ::Val{verbose} = Val(false)) where {W, D <: MaybeDualF64, verbose}
     @inbounds begin
-        θ      = mle_biexp_epg_x_to_θ(work, x) # θ = α, β, η, δ1, δ2, δ0
-        logϵ   = x[end-1]
-        logs   = x[end]
+        θ      = mle_biexp_epg_x_to_θ(work, x) # θ = α, β, η, z1, z2, logϵ, logs
+        logϵ   = θ[end-1]
+        logs   = θ[end]
         s      = exp(logs)
         ψ      = mle_biexp_epg_θ_to_ψ(work, θ) # ψ = alpha, refcon, T2short, T2long, Ashort, Along, T1, TE
         epg    = mle_biexp_epg_work(work, D)
@@ -560,7 +567,6 @@ end
 
 function fg_mle_biexp_epg!(work::W, x::Vector{Float64}, g::Vector{Float64}) where {W}
     if length(g) > 0
-        # simple_fd_gradient!(g, _x -> f_mle_biexp_epg!(work, _x), x, work.xlo, work.xhi)
         ForwardDiff.gradient!(work.∇res, _x -> f_mle_biexp_epg!(work, _x), x, work.∇cfg)
         y  = ForwardDiff.DiffResults.value(work.∇res)
         ∇y = ForwardDiff.DiffResults.gradient(work.∇res)
@@ -573,13 +579,11 @@ end
 
 function mle_biexp_epg_initial_guess(
         phys::BiexpEPGModel,
-        rice::RicianCorrector,
         cvae::CVAE,
         img::CPMGImage;
-        data_source        = :image, # One of :image, :simulated
         data_subset        = :mask,  # One of :mask, :val, :train, :test
-        noisebounds        = (-Inf, 0.0),
-        scalebounds        = (-Inf, Inf),
+        refine_init_logϵ   = false,
+        refine_init_logs   = false,
         gpu_batch_size     = 2048,
         maxiter            = 10,
         mode               = :mode,  # :maxlikelihood, :mean
@@ -589,7 +593,6 @@ function mle_biexp_epg_initial_guess(
         dryrunshuffle      = true,
         dryrunseed         = 0,
     )
-    @assert data_source ∈ (:image, :simulated)
     @assert data_subset ∈ (:mask, :val, :train, :test)
 
     # MLE for whole image of simulated data
@@ -599,55 +602,58 @@ function mle_biexp_epg_initial_guess(
     end
     image_data = img.data[image_indices, :] |> to32 |> permutedims
 
-    if data_source === :image
-        Y = arr64(image_data)
-        Ymeta = MetaCPMGSignal(phys, img, image_data)
-    else # data_source === :simulated
-        mock_image_state = batched_posterior_state(MetaCPMGSignal(phys, img, image_data))
-        mock_image_data  = sampleX̂(rice, mock_image_state.X, mock_image_state.Z)
-        Y = arr64(mock_image_data)
-        Ymeta = MetaCPMGSignal(phys, img, mock_image_data)
-    end
-
+    Ymeta = MetaCPMGSignal(phys, img, image_data)
     batches = gpu_batch_size === Colon() ? [1:size(signal(Ymeta),2)] : Iterators.partition(1:size(signal(Ymeta),2), gpu_batch_size)
     initial_guess = mapreduce((x,y) -> map(hcat, x, y), batches) do batch
-        state = posterior_state(
-            phys, rice, cvae, Ymeta[:,batch];
-            alpha = 0.0, miniter = 1, maxiter, verbose, mode,
-        )
+        state = posterior_state(phys, cvae, Ymeta[:,batch])
         map(arr64, state)
     end
-    initial_guess = setindex!!(initial_guess, exp.(clamp.(mean(log.(initial_guess.ϵ); dims = 1), noisebounds...)), :ϵ)
-    initial_guess = setindex!!(initial_guess, clamp.(inv.(maximum(mean_rician.(initial_guess.X, initial_guess.ϵ); dims = 1)), scalebounds...), :s)
+
+    if refine_init_logϵ || refine_init_logs
+        _, refined_results = mle_biexp_epg_noise_only(
+            initial_guess.X |> arr64,
+            signal(Ymeta)   |> arr64,
+            refine_init_logϵ ? initial_guess.θ[6:6,:] |> arr64 : nothing,
+            refine_init_logs ? initial_guess.θ[7:7,:] |> arr64 : nothing;
+            freeze_logϵ = !refine_init_logϵ,
+            freeze_logs = !refine_init_logs,
+            logϵ_bounds = θbounds(phys)[6],
+            logs_bounds = θbounds(phys)[7],
+            verbose     = verbose,
+        )
+        refine_init_logϵ && (initial_guess.θ[6:6,:] .= arr_similar(initial_guess.θ, refined_results.logepsilon'))
+        refine_init_logs && (initial_guess.θ[7:7,:] .= arr_similar(initial_guess.θ, refined_results.logscale'))
+    end
     return initial_guess
 end
 
 function mle_biexp_epg(
         phys::BiexpEPGModel,
-        rice::RicianCorrector,
         cvae::CVAE,
         img::CPMGImage;
         batch_size         = 128 * Threads.nthreads(),
-        initial_guess_args = Dict{Symbol,Any}(),
-        initial_guess_only = false,
-        noisebounds        = (-Inf, 0.0),
-        scalebounds        = (-Inf, Inf),
         sigma_reg          = 0.5,
         verbose            = true,
+        initial_guess_only = false,
+        initial_guess_args = Dict{Symbol,Any}(
+            :refine_init_logϵ => true,
+            :refine_init_logs => true,
+            :verbose          => verbose,
+        ),
         opt_alg            = :LD_SLSQP, # Rough algorithm ranking: [:LD_SLSQP, :LD_LBFGS, :LD_CCSAQ, :LD_AUGLAG, :LD_MMA] (Note: :LD_LBFGS fails to converge with tolerance looser than ~ 1e-4)
         opt_args           = Dict{Symbol,Any}(),
     )
 
-    initial_guess = mle_biexp_epg_initial_guess(phys, rice, cvae, img; noisebounds, scalebounds, verbose = false, initial_guess_args...)
+    initial_guess = mle_biexp_epg_initial_guess(phys, cvae, img; initial_guess_args...)
 
     # Optionally return initial guess only
     if initial_guess_only
         return initial_guess, nothing
     end
 
-    num_optvars   = nmarginalized(phys) + 2
-    lower_bounds  = [θmarginalized(phys, θlower(phys)); noisebounds[1]; scalebounds[1]] |> arr64
-    upper_bounds  = [θmarginalized(phys, θupper(phys)); noisebounds[2]; scalebounds[2]] |> arr64
+    num_optvars   = nmarginalized(phys)
+    lower_bounds  = θmarginalized(phys, θlower(phys)) |> arr64
+    upper_bounds  = θmarginalized(phys, θupper(phys)) |> arr64
 
     work_spaces = map(1:Threads.nthreads()) do _
         @unpack TEbd, T2bd, T1bd = phys
@@ -666,9 +672,9 @@ function mle_biexp_epg(
             logτ1hi  = log(T1bd[2] / TEbd[1]) |> Float64,
             logτ2lo′ = log(T2bd[1] / echotime(img)) |> Float64,
             logτ2hi′ = log(T2bd[2] / echotime(img)) |> Float64,
-            δ0       = initial_guess.θ[end,1] |> Float64,
-            epg      = BiexpEPGModelWork(phys, Float64),
-            ∇epg     = BiexpEPGModelWork(phys, ForwardDiff.Dual{Nothing, Float64, num_optvars}),
+            δ0       = θnuissance(phys, img) |> Float64,
+            epg      = BiexpEPGModelWork(Float64, nsignal(img)),
+            ∇epg     = BiexpEPGModelWork(ForwardDiff.Dual{Nothing, Float64, num_optvars}, nsignal(img)),
             ∇res     = ForwardDiff.DiffResults.GradientResult(zeros(num_optvars)),
             ∇cfg     = ForwardDiff.GradientConfig(nothing, zeros(num_optvars), ForwardDiff.Chunk(num_optvars)),
             opt      = let
@@ -691,8 +697,6 @@ function mle_biexp_epg(
     results = (
         signalfit  = fill(NaN, num_signals, num_problems),
         theta      = fill(NaN, ntheta(phys), num_problems),
-        logepsilon = fill(NaN, num_problems),
-        logscale   = fill(NaN, num_problems),
         loss       = fill(NaN, num_problems),
         reg        = fill(NaN, num_problems),
         retcode    = fill(NaN, num_problems),
@@ -724,9 +728,7 @@ function mle_biexp_epg(
             Threads.@spawn @inbounds begin
                 work = work_spaces[Threads.threadid()]
                 work.Y                 .= initial_guess.Y[:,j]
-                work.x0[1:end-2]       .= mle_biexp_epg_θ_to_x(work, view(initial_guess.θ, :, j))
-                work.x0[end-1]          = log(initial_guess.ϵ[j])
-                work.x0[end]            = log(initial_guess.s[j])
+                work.x0                .= mle_biexp_epg_θ_to_x(work, view(initial_guess.θ, :, j))
                 work.opt.min_objective  = (x, g) -> fg_mle_biexp_epg!(work, x, g)
                 initial_guess.ℓ[j]      = f_mle_biexp_epg!(work, work.x0) #TODO: can save a small amount of time by deleting this, but probably worth it, since previous ℓ[j] is an approximation from posterior_state
 
@@ -735,8 +737,6 @@ function mle_biexp_epg(
 
                 results.signalfit[:,j] .= work.epg.dc ./ maximum(work.epg.dc)
                 results.theta[:,j]     .= mle_biexp_epg_x_to_θ(work, minx)
-                results.logepsilon[j]   = minx[end-1]
-                results.logscale[j]     = minx[end]
                 results.loss[j]         = work.neglogL[]
                 results.reg[j]          = work.reg[]
                 results.retcode[j]      = Base.eval(NLopt, ret) |> Int #TODO cleaner way to convert Symbol to enum?

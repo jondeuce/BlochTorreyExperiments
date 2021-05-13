@@ -62,6 +62,7 @@ for f in [:zeros, :ones, :rand, :randn]
     @eval $f_similar(::Type{<:CuArray{T}}, sz...) where {T} = Zygote.ignore(() -> CUDA.$f(T, sz...)) # CUDA
 end
 
+fill_similar(x::AbstractArray, v) = fill_similar(typeof(x), v, size(x)...)
 fill_similar(x::AbstractArray, v, sz...) = fill_similar(typeof(x), v, sz...)
 fill_similar(::Type{<:AbstractArray{T}}, v, sz...) where {T} = Base.fill(T(v), sz...) # fallback
 fill_similar(::Type{<:CuArray{T}}, v, sz...) where {T} = CUDA.fill(T(v), sz...) # CUDA

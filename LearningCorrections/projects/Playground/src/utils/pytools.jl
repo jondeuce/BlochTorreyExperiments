@@ -17,6 +17,8 @@ const torch = PyNULL()
 const wandb = PyNULL()
 const ignite = PyNULL()
 const logging = PyNULL()
+const scipy = PyNULL()
+const numpy = PyNULL()
 
 const plt = PyPlot
 rcParams = PyDict()
@@ -26,9 +28,12 @@ function __pyinit__()
     copy!(wandb, pyimport("wandb"))
     copy!(ignite, pyimport("ignite"))
     copy!(logging, pyimport("logging"))
+    copy!(scipy, pyimport("scipy"))
+    copy!(numpy, pyimport("numpy"))
 
     py"""
     from ignite.contrib.handlers.wandb_logger import *
+    from scipy import stats
     """
 
     global rcParams = PyDict(PyPlot.matplotlib."rcParams")

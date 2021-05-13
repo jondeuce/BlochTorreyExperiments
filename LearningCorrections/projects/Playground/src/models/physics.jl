@@ -177,7 +177,6 @@ nmodel(p::PhysicsModel) = ntheta(p)
 θderived(::PhysicsModel, θ) = θ
 θmodel(p::PhysicsModel, θ) = θmodel(p, θmarginalized(p, θ), θnuissance(p, θ))
 θmodel(::PhysicsModel, θM, θN) = θM
-θsufficient(::PhysicsModel, θ0) = θ0
 
 for m in [:model, :derived]
     for f in [:θlabels, :θasciilabels, :θunits, :θlower, :θupper]
@@ -225,9 +224,9 @@ const MaybeClosedFormAbstractToyModel{T,isfinite} = Union{<:AbstractToyModel{T,i
 
 # Default samplers for models with data stored in `θ`, `X`, `Y` fields
 _sample_data(d::Dict, n::Union{Int, Symbol}; dataset::Symbol) = n === :all ? d[dataset] : sample_columns(d[dataset], n)[1]
-sampleθ(p::MaybeClosedForm, n::Union{Int, Symbol};              dataset::Symbol) = _sample_data(physicsmodel(p).θ, n; dataset)
-sampleX(p::MaybeClosedForm, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = _sample_data(physicsmodel(p).X, n; dataset)
-sampleY(p::MaybeClosedForm, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = _sample_data(physicsmodel(p).Y, n; dataset)
+sampleθ(p::MaybeClosedForm, n::Union{Int, Symbol}; dataset::Symbol) = _sample_data(physicsmodel(p).θ, n; dataset)
+sampleX(p::MaybeClosedForm, n::Union{Int, Symbol}; dataset::Symbol) = _sample_data(physicsmodel(p).X, n; dataset)
+sampleY(p::MaybeClosedForm, n::Union{Int, Symbol}; dataset::Symbol) = _sample_data(physicsmodel(p).Y, n; dataset)
 
 function initialize!(p::AbstractToyModel{T,isfinite}; ntrain::Int, ntest::Int, nval::Int, seed::Int = 0) where {T,isfinite}
     rng = Random.seed!(seed)
@@ -257,8 +256,8 @@ function signal_histograms!(p::PhysicsModel; nbins = 100, normalize = nothing)
 end
 
 # X-sampler deliberately does not take W as argument; W is supposed to be hidden from the outside. Use signal_model directly to pass W
-sampleX(p::AbstractToyModel{T,false}, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) where {T} = sampleX(p, sampleθ(physicsmodel(p), n; dataset), ϵ)
-sampleX(p::MaybeClosedFormAbstractToyModel, θ, ϵ = nothing) = signal_model(p, θ, ϵ)
+sampleX(p::AbstractToyModel{T,false}, n::Union{Int, Symbol}; dataset::Symbol) where {T} = sampleX(p, sampleθ(physicsmodel(p), n; dataset))
+sampleX(p::MaybeClosedFormAbstractToyModel, θ) = signal_model(p, θ)
 
 # Fallback prior samplers
 sampleWprior(c::ClosedFormAbstractToyModel{T}, n::Union{Int, Symbol}) where {T} = sampleWprior(c, Matrix{T}, n)
@@ -296,17 +295,16 @@ sampleθprior(p::ToyModel{T}, ::Type{A}, n::Union{Int, Symbol}) where {T, A <: A
 noiselevel(c::ClosedFormToyModel, θ = nothing, W = nothing) = physicsmodel(c).ϵ0
 add_noise_instance(p::MaybeClosedFormToyModel, X, ϵ, ninstances = nothing) = _add_rician_noise_instance(X, ϵ, ninstances)
 
-function signal_model(p::MaybeClosedFormToyModel, θ::AbstractVecOrMat, ϵ = nothing, W = nothing)
+function signal_model(p::MaybeClosedFormToyModel, θ::AbstractVecOrMat, W = nothing)
     n = nsignal(p)
     β = beta(p)
     t = 0:n-1
     f, ϕ, a₀, a₁, τ = θ[1:1,:], θ[2:2,:], θ[3:3,:], θ[4:4,:], θ[5:5,:]
     X = @. (a₀ + a₁ * sin(2*(π*f)*t - ϕ)^β) * exp(-t/τ)
-    X̂ = add_noise_instance(p, X, ϵ)
-    return X̂
+    return X
 end
 
-rician_params(c::ClosedFormToyModel, θ, W = nothing) = signal_model(c, θ, nothing, W), noiselevel(c, θ, W)
+rician_params(c::ClosedFormToyModel, θ, W = nothing) = signal_model(c, θ, W), noiselevel(c, θ, W)
 
 ####
 #### Toy cosine model with latent variable controlling noise amplitude
@@ -338,16 +336,15 @@ sampleθprior(p::ToyCosineModel{T}, ::Type{A}, n::Union{Int, Symbol}) where {T, 
 noiselevel(c::ClosedFormToyCosineModel, θ = nothing, W = nothing) = ((lo,hi) = physicsmodel(c).ϵbd; return @. lo + W * (hi - lo))
 add_noise_instance(p::MaybeClosedFormToyCosineModel, X, ϵ, ninstances = nothing) = _add_rician_noise_instance(X, ϵ, ninstances)
 
-function signal_model(p::MaybeClosedFormToyCosineModel, θ::AbstractVecOrMat, ϵ = nothing, W = nothing)
+function signal_model(p::MaybeClosedFormToyCosineModel, θ::AbstractVecOrMat, W = nothing)
     n = nsignal(p)
     t = 0:n-1
     f, ϕ, a₀ = θ[1:1,:], θ[2:2,:], θ[3:3,:]
     X = @. 1 + a₀ * cos(2*(π*f)*t - ϕ)
-    X̂ = add_noise_instance(p, X, ϵ)
-    return X̂
+    return X
 end
 
-rician_params(c::ClosedFormToyCosineModel, θ, W = nothing) = signal_model(c, θ, nothing, W), noiselevel(c, θ, W)
+rician_params(c::ClosedFormToyCosineModel, θ, W = nothing) = signal_model(c, θ, W), noiselevel(c, θ, W)
 
 ####
 #### Biexponential EPG signal models
@@ -464,10 +461,11 @@ abstract type AbstractToyEPGModel{T,isfinite} <: AbstractToyModel{T,isfinite} en
 # Toy EPG model with latent variable controlling noise amplitude
 @with_kw struct ToyEPGModel{T,isfinite} <: AbstractToyEPGModel{T,isfinite}
     n::Int # maximum number of echoes (Required)
-    T1bd::NTuple{2,T} = (0.8, 1.2) # T1 relaxation bounds (s)
-    TEbd::NTuple{2,T} = (7e-3, 10e-3) # T2 echo spacing (s)
-    T2bd::NTuple{2,T} = TEbd .* (1, 200) # min/max allowable T2 (s)
-    ϵbd::NTuple{2,T} = (0.001, 0.01) # noise bound
+    τ1::Union{Nothing,T} = 1.0 / 10e-3   # fixed relative T1 time (Optional; if `nothing`, will be sampled uniformly from `T1bd`)
+    TEbd::NTuple{2,T} = (7e-3, 10e-3)    # T2 echo spacing (s) (only used for setting bounds on T2/TE and T1/TE)
+    T2bd::NTuple{2,T} = (10e-3, 1000e-3) # min/max allowable T2 (s) (only used for setting bounds on T2/TE)
+    T1bd::NTuple{2,T} = (0.8, 1.2)       # T1 relaxation bounds (s) (only used for setting bounds on T1/TE)
+    ϵbd::NTuple{2,T} = (0.001, 0.01)     # noise bound
     θ::Dict{Symbol,Matrix{T}} = Dict()
     X::Dict{Symbol,Matrix{T}} = Dict()
     Y::Dict{Symbol,Matrix{T}} = Dict()
@@ -476,18 +474,19 @@ end
 # EPG model using image data
 @with_kw struct EPGModel{T,isfinite} <: PhysicsModel{T,isfinite}
     n::Int # maximum number of echoes (Required)
-    T1bd::NTuple{2,T} = (0.8, 1.2) # T1 relaxation bounds (s)
-    TEbd::NTuple{2,T} = (7e-3, 10e-3) # T2 echo spacing (s)
-    T2bd::NTuple{2,T} = (10e-3, 1000e-3) # min/max allowable T2 (s)
+    τ1::Union{Nothing,T} = 1.0 / 10e-3   # fixed relative T1 time (Optional; if `nothing`, will be sampled uniformly from `T1bd`)
+    TEbd::NTuple{2,T} = (7e-3, 10e-3)    # T2 echo spacing (s) (only used for setting bounds on T2/TE and T1/TE)
+    T2bd::NTuple{2,T} = (10e-3, 1000e-3) # min/max allowable T2 (s) (only used for setting bounds on T2/TE)
+    T1bd::NTuple{2,T} = (0.8, 1.2)       # T1 relaxation bounds (s) (only used for setting bounds on T1/TE)
     θ::Dict{Symbol,Matrix{T}} = Dict()
     X::Dict{Symbol,Matrix{T}} = Dict()
     Y::Dict{Symbol,Matrix{T}} = Dict()
     images::Vector{CPMGImage{T}} = CPMGImage{T}[]
 end
 
-sampleθ(p::EPGModel, n::Union{Int, Symbol};              dataset::Symbol) = error("sampleθ not supported for EPGmodel")
-sampleX(p::EPGModel, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = error("sampleX not supported for EPGmodel")
-sampleY(p::EPGModel, n::Union{Int, Symbol}, ϵ = nothing; dataset::Symbol) = _sample_data(rand(p.images).partitions, n; dataset)
+sampleθ(p::EPGModel, n::Union{Int, Symbol}; dataset::Symbol) = error("sampleθ not supported for EPGmodel")
+sampleX(p::EPGModel, n::Union{Int, Symbol}; dataset::Symbol) = error("sampleX not supported for EPGmodel")
+sampleY(p::EPGModel, n::Union{Int, Symbol}; dataset::Symbol) = _sample_data(rand(p.images).partitions, n; dataset)
 
 function initialize!(p::EPGModel{T,isfinite}; image_infos::AbstractVector{<:NamedTuple}, seed::Int) where {T,isfinite}
     @assert !isfinite #TODO
@@ -532,73 +531,80 @@ MetaCPMGSignal(::P, img::I, Y::A) where {T, P <: BiexpEPGModel{T}, I <: CPMGImag
 MetaCPMGSignal(Ymeta::MetaCPMGSignal{T,P,I}, Y::A) where {T, P <: BiexpEPGModel{T}, I <: CPMGImage{T}, A <: AbstractArray{T}} = MetaCPMGSignal{T,P,I,A}(Ymeta.img, Y)
 Base.getindex(Ymeta::MetaCPMGSignal{T,P,I}, i...) where {T,P,I} = MetaCPMGSignal(Ymeta, getindex(Ymeta.Y, i...))
 
-function θnuissance(p::BiexpEPGModel, Ymeta::MetaCPMGSignal)
+function θnuissance(p::BiexpEPGModel{T}, τ1::T = p.τ1) where {T}
+    @assert τ1 !== nothing
     @unpack T1bd, TEbd = p
     logτ1lo, logτ1hi = log(T1bd[1] / TEbd[2]), log(T1bd[2] / TEbd[1])
-    TE, T1 = echotime(Ymeta.img), T1time(Ymeta.img)
-    δ0 = (log(T1 / TE) - logτ1lo) / (logτ1hi - logτ1lo) |> eltype(Ymeta)
-    fill_similar(signal(Ymeta), δ0, 1, size(signal(Ymeta))[2:end]...)
+    δ0 = (log(τ1) - logτ1lo) / (logτ1hi - logτ1lo)
+    return T(δ0)
+end
+θnuissance(p::BiexpEPGModel{T}, img::CPMGImage{T}) where {T} = θnuissance(p, T1time(img) / echotime(img))
+
+function θnuissance(p::BiexpEPGModel{T}, Ymeta::MetaCPMGSignal{T}) where {T}
+    if nnuissance(p) == 0
+        return zeros_similar(signal(Ymeta), 0, size(signal(Ymeta))[2:end]...)
+    else
+        return fill_similar(signal(Ymeta), θnuissance(p, Ymeta.img), 1, size(signal(Ymeta))[2:end]...)
+    end
 end
 
 nsignal(p::BiexpEPGModel) = p.n
-ntheta(p::BiexpEPGModel) = 6
-nnuissance(::BiexpEPGModel) = 1
-nmodel(::BiexpEPGModel) = 8
-θmarginalized(::BiexpEPGModel, θ) = θ[1:end-1,..]
-θnuissance(::BiexpEPGModel, θ) = θ[end:end,..]
+nnuissance(p::BiexpEPGModel) = Int(p.τ1 === nothing)
+ntheta(p::BiexpEPGModel) = 7 + nnuissance(p)
+nmodel(::BiexpEPGModel) = 10
+θmarginalized(p::BiexpEPGModel, θ) = nnuissance(p) == 0 ? θ : θ[1:nmarginalized(p), ..]
+θnuissance(p::BiexpEPGModel, θ) = nnuissance(p) == 0 ? zeros_similar(θ, 0, size(θ)[2:end]...) : θ[nmarginalized(p).+(1:nnuissance(p)), ..]
 
 nlatent(p::ToyEPGModel) = 1
 nlatent(p::EPGModel) = 0
 hasclosedform(p::ToyEPGModel) = true
 hasclosedform(p::EPGModel) = false
 
-θlabels(::BiexpEPGModel) = [L"\alpha", L"\beta", L"\eta", L"\delta_1", L"\delta_2", L"\delta_0"]
-θasciilabels(::BiexpEPGModel) = ["alpha", "refcon", "eta", "delta1", "delta2", "delta0"]
-θunits(::BiexpEPGModel) = ["deg", "deg", "a.u.", "a.u.", "a.u.", "a.u."]
-θlower(p::BiexpEPGModel{T}) where {T} = T[T( 90.0), T( 90.0), T(0.0), T(0.0), T(0.0), T(0.0)]
-θupper(p::BiexpEPGModel{T}) where {T} = T[T(180.0), T(180.0), T(1.0), T(1.0), T(1.0), T(1.0)]
-
-θmodel(c::MaybeClosedFormBiexpEPGModel, θM::AbstractVecOrMat, θN::AbstractVecOrMat) = θmodel(c, ntuple(i -> θM[i,:], nmarginalized(c))..., ntuple(i -> θN[i,:], nnuissance(c))...)
-θmodel(c::MaybeClosedFormBiexpEPGModel, θ::AbstractVecOrMat) = θmodel(c, ntuple(i -> θ[i,:], ntheta(physicsmodel(c)))...)
-
-function θmodel(c::MaybeClosedFormBiexpEPGModel, α, β, η, δ1, δ2, δ0)
-    # Parameterize by alpha, refcon, short amplitude, relative T2 long and T2 short δs
-    @unpack T1bd, TEbd, T2bd = physicsmodel(c)
-    logτ1lo, logτ1hi = log(T1bd[1] / TEbd[2]), log(T1bd[2] / TEbd[1])
-    logτ2lo, logτ2hi = log(T2bd[1] / TEbd[2]), log(T2bd[2] / TEbd[1])
-    alpha, refcon = α, β
-    Ashort, Along = η, 1 .- η
-    T2short = @. exp(logτ2lo + (logτ2hi - logτ2lo) * δ1)
-    T2long = @. exp(logτ2lo + (logτ2hi - logτ2lo) * (δ1 + δ2 * (1 - δ1)))
-    T1 = @. exp(logτ1lo + (logτ1hi - logτ1lo) * δ0)
-    TE = one.(T1) # Parameters are relative to TE; set TE=1
-    return alpha, refcon, T2short, T2long, Ashort, Along, T1, TE
-end
-
-θsufficient(c::MaybeClosedFormBiexpEPGModel, θ0::AbstractVecOrMat) = θsufficient(c, ntuple(i -> θ0[i,:], nmodel(physicsmodel(c)))...)
-
-function θsufficient(c::MaybeClosedFormBiexpEPGModel{T}, alpha, refcon, T2short, T2long, Ashort, Along, T1, TE) where {T}
-    logτ1lo, logτ1hi = log(T1bd[1] / TEbd[2]), log(T1bd[2] / TEbd[1])
-    logτ2lo, logτ2hi = log(T2bd[1] / TEbd[2]), log(T2bd[2] / TEbd[1])
-    α, β = alpha, refcon
-    η  = @. Ashort / (Ashort + Along)
-    δ1 = @. clamp((log(T2short / TE) - logτ2lo) / (logτ2hi - logτ2lo), zero(T), one(T))
-    δ2 = @. clamp(((log(T2long / TE) - logτ2lo) / (logτ2hi - logτ2lo) - δ1) / max(1 - δ1, eps(T)), zero(T), one(T))
-    δ0 = @. clamp((log(T1 / TE) - logτ1lo) / (logτ1hi - logτ1lo), zero(T), one(T))
-    return α, β, η, δ1, δ2, δ0
-end
+θlabels(p::BiexpEPGModel) = [L"\alpha", L"\beta", L"\eta", L"\delta_1", L"\delta_2", L"\log\epsilon", L"\log{s}", L"\delta_0"][1:ntheta(p)]
+θasciilabels(p::BiexpEPGModel) = ["alpha", "refcon", "eta", "delta1", "delta2", "logeps", "logscale", "delta0"][1:ntheta(p)]
+θunits(p::BiexpEPGModel) = ["deg", "deg", "a.u.", "a.u.", "a.u.", "a.u.", "a.u.", "a.u."][1:ntheta(p)]
+θlower(p::BiexpEPGModel{T}) where {T} = T[T( 90.0), T( 90.0), T(0.0), T(0.0), T(0.0), T(log(1e-5)), T(-2.5), T(0.0)][1:ntheta(p)]
+θupper(p::BiexpEPGModel{T}) where {T} = T[T(180.0), T(180.0), T(1.0), T(1.0), T(1.0), T(log(1e-1)), T(+2.5), T(1.0)][1:ntheta(p)]
 
 function sampleθprior(p::BiexpEPGModel{T}, ::Type{A}, n::Union{Int, Symbol}) where {T, A <: AbstractArray{T}}
     # Parameterize by alpha, refcon, short amplitude, relative T2 long and T2 short δs
-    αlo, βlo, ηlo, δ1lo, δ2lo, δ0lo = θlower(p)
-    αhi, βhi, ηhi, δ1hi, δ2hi, δ0hi = θupper(p)
-    α  = αlo .+ (αhi .- αlo) .* (x -> (1-exp(-3x))/(1-exp(T(-3)))).(rand_similar(A, 1, n)) # concave triangular distbn on (αlo, αhi); encourages less near αlo, more near αhi
-    β  = βlo .+ (βhi .- βlo) .* (x -> (1-exp(-3x))/(1-exp(T(-3)))).(rand_similar(A, 1, n)) # concave triangular distbn on (βlo, βhi); encourages less near βlo, more near βhi
-    η  = ((x,y) -> y < T(1/2) ? x : sqrt(x)).(rand_similar(A, 1, n), rand_similar(A, 1, n)) # union of uniform and triangular distbns on (0, 1)
-    δ1 = ((x,y) -> y < T(1/2) ? x : sqrt(x/4)).(rand_similar(A, 1, n), rand_similar(A, 1, n)) # union of uniform on (0, 1) and triangular distbns on (0, 1/2)
-    δ2 = rand_similar(A, 1, n) # uniform distbn on (0, 1)
-    δ0 = rand_similar(A, 1, n) # uniform distbn on (0, 1)
-    return vcat(α, β, η, δ1, δ2, δ0)
+    α    = sample_trunc_mv_normal(T(180.0), T(45.0), T(90.0), T(180.0), rand_similar(A, 1, n)) # truncated gaussian with mean at RHS, i.e. flip angle likely near 180 deg
+    β    = sample_trunc_mv_normal(T(180.0), T(45.0), T(90.0), T(180.0), rand_similar(A, 1, n)) # truncated gaussian with mean at RHS, i.e. refocusing control angle likely near 180 deg
+    η    = sample_trunc_mv_normal(  T(0.0),  T(0.5),  T(0.0),   T(1.0), rand_similar(A, 1, n)) # truncated gaussian with mean at LHS, i.e. short fraction likely to be small
+    δ1   = sample_trunc_mv_normal(  T(0.0),  T(0.5),  T(0.0),   T(1.0), rand_similar(A, 1, n)) # truncated gaussian with mean at LHS, i.e. short T2 more likely to be small
+    δ2   = sample_trunc_mv_normal(  T(1.0),  T(0.5),  T(0.0),   T(1.0), rand_similar(A, 1, n)) # truncated gaussian with mean at RHS, i.e. long T2 more likely to be large
+    logϵ = T(log(1e-5)) .+ (T(log(1e-1)) .- T(log(1e-5))) .* rand_similar(A, 1, n)             # log noise level uniformly between SNR = 20 and SNR = 100
+    logs = sample_trunc_mv_normal(  T(0.0),  T(0.5), T(-2.5),   T(2.5), rand_similar(A, 1, n)) # log scale factor uniformly between exp(-2.5) and exp(2.5); somewhat arbitrary
+    if nnuissance(p) == 0
+        return vcat(α, β, η, δ1, δ2, logϵ, logs)
+    else
+        δ0 = rand_similar(A, 1, n) # log relative T1 uniform (0, 1), i.e. log(T1) uniformly in [log(T1bd[1]), log(T1bd[2])]
+        return vcat(α, β, η, δ1, δ2, logϵ, logs, δ0)
+    end
+end
+
+θmodel(c::MaybeClosedFormBiexpEPGModel, θM::AbstractVecOrMat, θN::AbstractVecOrMat) = θmodel(c, ntuple(i -> θM[i,:], size(θM,1))..., ntuple(i -> θN[i,:], size(θN,1))...)
+θmodel(c::MaybeClosedFormBiexpEPGModel, θ::AbstractVecOrMat) = θmodel(c, ntuple(i -> θ[i,:], size(θ,1))...)
+
+function θmodel(c::MaybeClosedFormBiexpEPGModel, α, β, η, δ1, δ2, logϵ, logs, δ0 = nothing)
+    # Parameterize by alpha, refcon, short amplitude, relative T2 long and T2 short δs
+    @unpack T1bd, TEbd, T2bd = physicsmodel(c)
+    if δ0 === nothing
+        # δ0 is not a nuissance variable, i.e. T1 is fixed
+        @assert nnuissance(physicsmodel(c)) == 0
+        δ0 = fill_similar(α, θnuissance(physicsmodel(c)))
+    end
+    logτ1lo, logτ1hi = log(T1bd[1] / TEbd[2]), log(T1bd[2] / TEbd[1])
+    logτ2lo, logτ2hi = log(T2bd[1] / TEbd[2]), log(T2bd[2] / TEbd[1])
+    alpha   = α
+    refcon  = β
+    Ashort  = η
+    Along   = @. (1 - η)
+    T2short = @. exp(logτ2lo + (logτ2hi - logτ2lo) * δ1)
+    T2long  = @. exp(logτ2lo + (logτ2hi - logτ2lo) * (δ1 + δ2 * (1 - δ1)))
+    T1      = @. exp(logτ1lo + (logτ1hi - logτ1lo) * δ0)
+    TE      = one.(T1) # Parameters are relative to TE; set TE=1
+    return alpha, refcon, T2short, T2long, Ashort, Along, T1, TE
 end
 
 function θderived(
@@ -608,8 +614,9 @@ function θderived(
         SPcutoff::T = T(40e-3),
         SPwidth::T = T(20e-3),
     ) where {T}
-    alpha, refcon, eta, delta1, delta2, delta0 = ntuple(i -> θ[i,:], ntheta(physicsmodel(c)))
-    _, _, T2short, T2long, Ashort, Along, _, _ = θmodel(c, θ)
+    alpha, refcon, eta, delta1, delta2, logeps, logscale = ntuple(i -> θ[i,:], ntheta(physicsmodel(c)))
+    delta0 = nnuissance(c) == 0 ? fill_similar(θ[1:1,:], θnuissance(physicsmodel(c))) : θ[end,:]
+    _, _, T2short, T2long, Ashort, Along, _, _, _, _ = θmodel(c, θ)
     T2short, T2long = echotime(img) .* T2short, echotime(img) .* T2long # model params are unitless; convert to img timescale
     logT2short, logT2long = log.(T2short), log.(T2long)
     logT2bar = @. (Ashort * logT2short + Along * logT2long) / (Ashort + Along) # log of geometric mean weighted by Ashort, Along
@@ -619,7 +626,7 @@ function θderived(
     T2sgm = @. exp(wshort * Ashort * logT2short + wlong * Along * logT2long) * exp(-(wshort * Ashort + wlong * Along)) # geometric mean weighted by wshort * Ashort, wlong * Along
     T2mgm = @. exp((1 - wshort) * Ashort * logT2short + (1 - wlong) * Along * logT2long) * exp(-((1 - wshort) * Ashort + (1 - wlong) * Along)) # geometric mean weighted by (1 - wshort) * Ashort, (1 - wlong) * Along
     return (;
-        alpha, refcon, eta, delta1, delta2, delta0, # inference domain params
+        alpha, refcon, eta, delta1, delta2, logeps, logscale, delta0, # inference domain params
         T2short, T2long, Ashort, Along, # signal model params (without repeated alpha, refcon)
         logT2short, logT2long, logT2bar, T2bar, T2sgm, T2mgm, mwf, # misc. derived params
     )
@@ -637,10 +644,9 @@ end
 
 sampleWprior(c::ClosedFormToyEPGModel{T}, ::Type{A}, n::Union{Int, Symbol}) where {T, A <: AbstractArray{T}} = rand_similar(A, nlatent(physicsmodel(c)), n)
 
-function signal_model(p::MaybeClosedFormToyEPGModel, θ::AbstractVecOrMat, ϵ = nothing, W = nothing)
+function signal_model(p::MaybeClosedFormToyEPGModel, θ::AbstractVecOrMat, W = nothing)
     X, _ = rician_params(ClosedForm(p), θ, W)
-    X̂ = add_noise_instance(p, X, ϵ)
-    return X̂
+    return X
 end
 
 function rician_params(c::ClosedFormToyEPGModel{T}, θ, W = nothing) where {T}
@@ -654,22 +660,51 @@ noiselevel(c::ClosedFormToyEPGModel, θ = nothing, W = nothing) = rician_params(
 
 #### MRI data EPG model
 
-function signal_model(p::EPGModel, θ::AbstractVecOrMat, ϵ = nothing)
+function signal_model(p::EPGModel, θ::AbstractVecOrMat)
     X = _signal_model(p, θ)
-    X̂ = add_noise_instance(p, X, ϵ)
-    return X̂
+    return X
+end
+
+function signal_model(p::EPGModel{T}, img::CPMGImage{T}, θ::AbstractVecOrMat) where {T}
+    if nnuissance(p) == 0
+        θN = fill_similar(θ, θnuissance(p, img), 1, size(θ)[2:end]...)
+        return signal_model(p, vcat(θ, θN))
+    else
+        return signal_model(p, θ)
+    end
+end
+signal_model(p::EPGModel{T}, Ymeta::MetaCPMGSignal{T}, θ::AbstractVecOrMat) where {T} = signal_model(p, Ymeta.img, θ)
+
+function noiselevel(::EPGModel, θ)
+    logϵ, logs = θ[6:6, ..], θ[7:7, ..]
+    return @. exp.(logϵ .+ logs)
+end
+
+function loglikelihood(::EPGModel, Y, X, θ; accum_loss = ℓ -> sum(ℓ; dims = 1))
+    logϵs = θ[6:6, ..] .+ θ[7:7, ..]
+    ℓ = neglogL_rician.(Y, X, logϵs)
+    (accum_loss !== nothing) && (ℓ = accum_loss(ℓ))
+    return ℓ
+end
+
+function loglikelihood(p::EPGModel, Ymeta::MetaCPMGSignal, θ; kwargs...)
+    Y = signal(Ymeta)
+    X = signal_model(p, Ymeta, θ)
+    X = clamp_dim1(Y, X)
+    loglikelihood(p, Y, X, θ; kwargs...)
 end
 
 #### Common biexponential EPG model methods
 
-function add_noise_instance(p::MaybeClosedFormBiexpEPGModel, X, ϵ, ninstances = nothing)
-    X̂ = _add_rician_noise_instance(X, ϵ, ninstances)
-    return X̂ ./ maximum(X̂; dims = 1) #X̂[1:1,:] #TODO: normalize by mean? sum? maximum? first echo?
+function add_noise_instance(c::MaybeClosedFormBiexpEPGModel, X, θ, ninstances = nothing)
+    X̂ = _add_rician_noise_instance(X, noiselevel(physicsmodel(c), θ), ninstances)
+    return X̂
 end
 
 function _signal_model(c::MaybeClosedFormBiexpEPGModel, θ::AbstractVecOrMat)
-    X = _signal_model(c, θmodel(c, θ)...)
-    X = X ./ maximum(X; dims = 1) #X[1:1,:] #TODO: normalize by mean? sum? maximum? first echo?
+    X    = _signal_model(c, θmodel(c, θ)...)
+    logs = θ[7:7, ..]
+    X    = exp.(logs) .* X ./ maximum(X; dims = 1)
     return X
 end
 
@@ -680,8 +715,7 @@ _signal_model(c::MaybeClosedFormBiexpEPGModel{T}, args::CuVector{T}...) where {T
 
 function _signal_model_f64(c::MaybeClosedFormBiexpEPGModel, alpha::AbstractVector{Float64}, refcon::AbstractVector{Float64}, T2short::AbstractVector{Float64}, T2long::AbstractVector{Float64}, Ashort::AbstractVector{Float64}, Along::AbstractVector{Float64}, T1::AbstractVector{Float64}, TE::AbstractVector{Float64})
     args = (alpha, refcon, T2short, T2long, Ashort, Along, T1, TE)
-    @assert length(args) == nmodel(physicsmodel(c))
-    @assert all(==(length(args[1])), length.(args))
+    @assert all(length.(args) .== length(args[1]))
 
     nsignals, nsamples = nsignal(physicsmodel(c)), length(args[1])
     X = zeros(Float64, nsignals, nsamples)
@@ -697,8 +731,7 @@ end
 
 Zygote.@adjoint function _signal_model_f64(c::MaybeClosedFormBiexpEPGModel, alpha::AbstractVector{Float64}, refcon::AbstractVector{Float64}, T2short::AbstractVector{Float64}, T2long::AbstractVector{Float64}, Ashort::AbstractVector{Float64}, Along::AbstractVector{Float64}, T1::AbstractVector{Float64}, TE::AbstractVector{Float64})
     args = (alpha, refcon, T2short, T2long, Ashort, Along, T1, TE)
-    @assert length(args) == nmodel(physicsmodel(c))
-    @assert all(==(length(args[1])), length.(args))
+    @assert all(length.(args) .== length(args[1]))
 
     nsignals, nsamples, nargs = nsignal(c), length(args[1]), length(args)
     X = zeros(Float64, nsignals, nsamples)
@@ -720,11 +753,11 @@ Zygote.@adjoint function _signal_model_f64(c::MaybeClosedFormBiexpEPGModel, alph
     end
 end
 
-function _signal_model_grad_test(phys::MaybeClosedFormBiexpEPGModel)
-    alpha, refcon, T2short, T2long, Ashort, Along, T1, TE = θmodel(phys, eachrow(sampleθprior(phys, 10))...)
+function _signal_model_grad_test(p::MaybeClosedFormBiexpEPGModel)
+    alpha, refcon, T2short, T2long, Ashort, Along, T1, TE = θmodel(p, eachrow(sampleθprior(p, 10))...)
     args = (alpha, refcon, T2short, T2long, Ashort, Along, T1, TE)
 
-    f = (_args...) -> sum(abs2, _signal_model(phys, _args...))
+    f = (_args...) -> sum(abs2, _signal_model(p, _args...))
     g_zygote = Zygote.gradient(f, args...)
 
     g_finitediff = map(enumerate(args)) do (i,x)
@@ -785,8 +818,8 @@ function _biexp_epg_model_f64!(dc::AbstractVector{T}, work::BiexpEPGModelWork{T,
     end
     return dc
 end
-@inline _signal_model_f64!(dc::AbstractVector{T}, c::MaybeClosedFormBiexpEPGModel, work::BiexpEPGModelWork{T,ETL}, args::NTuple{N,MaybeDualF64}) where {T <: MaybeDualF64, ETL, N} = (@assert N == nmodel(physicsmodel(c)); _biexp_epg_model_f64!(dc, work, args))
-@inline _signal_model_f64(c::MaybeClosedFormBiexpEPGModel, work::BiexpEPGModelWork{T,ETL}, args::NTuple{N,MaybeDualF64}) where {T, ETL, N} = (@assert N == nmodel(physicsmodel(c)); _signal_model_f64!(work.dc, c, work, args))
+@inline _signal_model_f64!(dc::AbstractVector{T}, ::MaybeClosedFormBiexpEPGModel, work::BiexpEPGModelWork{T,ETL}, args::NTuple{N,MaybeDualF64}) where {T <: MaybeDualF64, ETL, N} = _biexp_epg_model_f64!(dc, work, args)
+@inline _signal_model_f64(c::MaybeClosedFormBiexpEPGModel, work::BiexpEPGModelWork{T,ETL}, args::NTuple{N,MaybeDualF64}) where {T, ETL, N} = _signal_model_f64!(work.dc, c, work, args)
 
 function _signal_model_f64_jacobian_setup(c::MaybeClosedFormBiexpEPGModel)
     nargs = nmodel(physicsmodel(c))
