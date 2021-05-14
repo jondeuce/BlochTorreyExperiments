@@ -415,7 +415,7 @@ function plot_all_logger_losses(logger, cb_state, phys;
         showplot && (p !== nothing) && display(p)
         return p
     catch e
-        handle_interrupt(e; msg = "Error making Rician signal plot")
+        handle_interrupt(e; msg = "Error making logger losses plot")
     end
 end
 

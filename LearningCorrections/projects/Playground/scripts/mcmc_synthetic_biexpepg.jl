@@ -35,19 +35,21 @@ function make_mock_image_data(; nsamples = 10, nsignal = 64, TEimage = 10e-3, se
     Threads.@threads for j in 1:nsamples
         X[:,j] .= lib.biexp_epg_model_scaled!(work[Threads.threadid()], α[j], β[j], η[j], δ1[j], δ2[j], logϵ[j], logs[j])
     end
-    X    = map(d -> rand(rng, d), lib.Rician.(X, exp.(logϵ')))
-    X  ./= maximum(X; dims = 1)
-    X    = permutedims(reshape(X, nsignal, nsamples, 1, 1), (2, 3, 4, 1))
+    X̂    = map(d -> rand(rng, d), lib.Rician.(X, exp.(logϵ')))
+    X̂max = maximum(X̂; dims = 1)
+    X̂    ./= X̂max # scale X̂ to maximum value 1
+    logs .-= log.(vec(X̂max)) # shift log scale accordingly
+    X̂    = permutedims(reshape(X̂, nsignal, nsamples, 1, 1), (2, 3, 4, 1))
     θ    = DataFrame((; α, β, η, δ1, δ2, logϵ, logs))
-    return θ, X
+    return θ, X̂
 end
 
 function make_mock_phys(; nsamples = 200_000, nsignal = 64, TEimage = 10e-3, seed = 0)
-    θ, X = make_mock_image_data(; nsamples, nsignal, TEimage, seed)
+    θ, X̂ = make_mock_image_data(; nsamples, nsignal, TEimage, seed)
     CSV.write("theta.csv", θ)
-    DECAES.MAT.matwrite("simulated_image.mat", Dict("data" => X))
+    DECAES.MAT.matwrite("simulated_image.mat", Dict("data" => X̂))
     phys = lib.EPGModel{Float32,false}(n = nsignal)
-    image_infos = [(TE = TEimage, refcon = 180.0, path = "simulated_image.mat")]
+    image_infos = [Dict("echotime" => TEimage, "refcon" => 180.0, "image_data_path" => "./simulated_image.mat")]
     lib.initialize!(phys; image_infos, seed)
     return phys
 end
@@ -56,18 +58,21 @@ end
 lib.save_project_code(joinpath(pwd(), "project"))
 
 # Perform mcmc
-lib.mcmc_biexp_epg(
-    make_mock_phys(;
-        nsamples    = 200_000,
-        nsignal     = 64,
-        TEimage     = 10e-3,
-        seed        = 0,
-    );
-    img_idx         = 1,
-    dataset         = :val,
-    save            = true,
-    checkpoint      = true,
-    total_chains    = Colon(),
-    checkpoint_freq = 2048, # checkpoint every `checkpoint_freq` iterations
-    progress_freq   = 15.0, # update progress bar every `progress_freq` seconds
+phys = make_mock_phys(;
+    nsamples    = 200_000,
+    nsignal     = 64,
+    TEimage     = 10e-3,
+    seed        = 0,
 )
+for dataset in [:val, :test, :train]
+    lib.mcmc_biexp_epg(
+        phys;
+        img_idx         = 1,
+        dataset         = dataset,
+        save            = true,
+        checkpoint      = true,
+        total_chains    = Colon(),
+        checkpoint_freq = 2048, # checkpoint every `checkpoint_freq` iterations
+        progress_freq   = 15.0, # update progress bar every `progress_freq` seconds
+    )
+end

@@ -26,6 +26,9 @@ todevice(x) = Flux.use_cuda[] ? gpu(x) : cpu(x)
 to32(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float32}, xi) : xi, todevice(x))
 to64(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float64}, xi) : xi, todevice(x))
 
+device_similar(::AbstractArray, y::AbstractArray) = y |> cpu
+device_similar(::CuArray, y::AbstractArray) = y |> gpu
+
 arr_similar(x::AbstractArray, y::AbstractArray) = arr_similar(typeof(x), y)
 # arr_similar(::Type{<:AbstractArray{T}}, y::AbstractArray) where {T} = convert(Array{T}, y)
 # arr_similar(::Type{<:AbstractArray{T}}, y::CuArray{T}) where {T} = convert(Array{T}, y) #TODO: CuArray -> Array works directly if eltypes are equal

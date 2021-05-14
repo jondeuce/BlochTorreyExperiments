@@ -2,12 +2,13 @@ using Playground
 pyplot(size=(800,600))
 
 ismrm_dir = "/home/jdoucette/Documents/code/MWI-MMD-CVAE/ISMRM-2021/"
-image_infos = [
-    (TE =  8e-3, refcon = 180.0, path = DrWatson.datadir("images", "2019-10-28_48echo_8msTE_CPMG", "data-in", "ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.nii.gz")),
-    (TE =  7e-3, refcon = 180.0, path = DrWatson.datadir("images", "2019-09-22_56echo_7msTE_CPMG", "data-in", "MW_TRAINING_001_WIP_CPMG56_CS_half_2_1.masked-image.mat")),
-    (TE = 10e-3, refcon = 150.0, path = DrWatson.datadir("images", "2020-03-31_Siemens_t2_mapping_se_mc_32echo_10msTE_120degRefCon", "0008_t2_mapping_se_mc_ms_32TE_single_slice_1E_masked_image_rotated.mat")),
-    (TE = 10e-3, refcon = 180.0, path = DrWatson.datadir("images", "2020-03-31_Siemens_t2_mapping_se_mc_32echo_10msTE_120degRefCon", "0008_t2_mapping_se_mc_ms_32TE_single_slice_1E_masked_image_rotated.mat")), # same image with deliberately wrong refcon
-]
+image_infos = lib.load_cpmg_info.([
+    DrWatson.datadir("images", "2019-10-28_48echo_8msTE_CPMG"),
+    DrWatson.datadir("images", "2019-09-22_56echo_7msTE_CPMG"),
+    DrWatson.datadir("images", "2020-03-31_Siemens_t2_mapping_se_mc_32echo_10msTE_120degRefCon"),
+    DrWatson.datadir("images", "2020-03-31_Siemens_t2_mapping_se_mc_32echo_10msTE_120degRefCon"), # same image, but refcon will be deliberately be set wrong for comparison
+])
+image_infos[end]["refcon"] = 180.0 # deliberately set wrong refcon
 
 #### MLE inference
 
@@ -22,7 +23,7 @@ for model_path in readdir(joinpath(ismrm_dir, "models"); join = true)
         for data_subset in (:mask,)
             @info "image $i / $(length(phys.images)) -- data_subset: $data_subset"
             @time global init, res = mle_biexp_epg(
-                phys, models["genatr"], derived["cvae"], img;
+                phys, img, derived["cvae"];
                 data_subset, verbose = true, checkpoint = false, dryrun = false, batch_size = 12*1024,
                 savefolder = joinpath(ismrm_dir, "analysis", basename(model_path), "mle_inference_image_$i"),
             )

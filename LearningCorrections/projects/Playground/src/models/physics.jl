@@ -374,19 +374,19 @@ T2range(img::CPMGImage{T}) where {T} = T.(img.t2mapopts.T2Range)
 T1time(img::CPMGImage{T}) where {T} = T(img.t2mapopts.T1)
 refcon(img::CPMGImage{T}) where {T} = T(img.t2mapopts.RefConAngle)
 
-function CPMGImage(info::NamedTuple; seed::Int)
+function CPMGImage(info::Dict; seed::Int)
     rng = Random.seed!(seed)
 
     meta     = Dict{Symbol,Any}(:info => info)
-    data     = convert(Array{Float32}, DECAES.load_image(info.path, Val(4)))
+    data     = convert(Array{Float32}, DECAES.load_image(joinpath(info["folder_path"], info["image_data_path"]), Val(4)))
     Imask    = findall(dropdims(all((x -> !isnan(x) && !iszero(x)).(data); dims = 4); dims = 4)) # image is masked, keep signals without zero or NaN entries
     Inonmask = findall(dropdims(any((x ->  isnan(x) ||  iszero(x)).(data); dims = 4); dims = 4)) # compliment of mask indices
     ishuffle = randperm(MersenneTwister(seed), length(Imask)) # shuffle indices before splitting to train/test/val
 
-    res = data[Imask, :] |> vec |> sort |> unique! |> sort! |> diff |> minimum # resolution of quantization
-    @assert all(is_approx_multiple_of.(data, res)) # assert quantization condition holds
-    data[Imask, :] .+= (-res/2) .+ res .* rand(MersenneTwister(seed), Float32, length(Imask), size(data, 4)) # pepper data with (fixed) zero-mean random noise at the resolution limit to avoid quantization issues
-    @assert all(data[Imask, :] .>= res/2) # signals within the mask contain no zeroes by definition, so this is just a sanity check
+    # res = data[Imask, :] |> vec |> sort |> unique! |> sort! |> diff |> minimum # resolution of quantization
+    # @assert all(is_approx_multiple_of.(data, res)) # assert quantization condition holds
+    # data[Imask, :] .+= (-res/2) .+ res .* rand(MersenneTwister(seed), Float32, length(Imask), size(data, 4)) # pepper data with (fixed) zero-mean random noise at the resolution limit to avoid quantization issues
+    # @assert all(data[Imask, :] .>= res/2) # signals within the mask contain no zeroes by definition, so this is just a sanity check
     data[Inonmask, :] .= NaN # set signals outside of mask to NaN
     data ./= maximum(data; dims = 4) # data[1:1,..] #TODO: normalize by mean? sum? maximum? first echo?
 
@@ -407,13 +407,13 @@ function CPMGImage(info::NamedTuple; seed::Int)
     t2mapopts = DECAES.T2mapOptions{Float64}(
         MatrixSize       = size(data)[1:3],
         nTE              = size(data)[4],
-        TE               = info.TE,
+        TE               = info["echotime"],
         T1               = 1.0,
-        T2Range          = (info.TE, 1.0),
+        T2Range          = (info["echotime"], 1.0),
         nT2              = 40,
         Threshold        = 0.0,
         Chi2Factor       = 1.02,
-        RefConAngle      = info.refcon,
+        RefConAngle      = info["refcon"],
         MinRefAngle      = 90.0, #TODO
         nRefAnglesMin    = 8,
         nRefAngles       = 8,
@@ -488,22 +488,17 @@ sampleθ(p::EPGModel, n::Union{Int, Symbol}; dataset::Symbol) = error("sampleθ 
 sampleX(p::EPGModel, n::Union{Int, Symbol}; dataset::Symbol) = error("sampleX not supported for EPGmodel")
 sampleY(p::EPGModel, n::Union{Int, Symbol}; dataset::Symbol) = _sample_data(rand(p.images).partitions, n; dataset)
 
-function initialize!(p::EPGModel{T,isfinite}; image_infos::AbstractVector{<:NamedTuple}, seed::Int) where {T,isfinite}
+function initialize!(p::EPGModel{T,isfinite}; image_folders::AbstractVector{String}, seed::Int) where {T,isfinite}
     @assert !isfinite #TODO
+    image_infos = lib.load_cpmg_info.(image_folders)
     for info in image_infos
+        if any(img -> basename(info["folder_path"]) == basename(img.meta[:info]["folder_path"]), p.images)
+            continue # image is already loaded
+        end
         image = CPMGImage(info; seed)
         push!(p.images, image)
     end
-    #= TODO @assert !isfinite
-    for d in (:train, :test, :val)
-        p.Y[d] = mapreduce(image -> image.partitions[d], hcat, p.images)
-        isfinite ? (p.θ[d] = sampleθprior(p, size(p.Y[d], 2))) : empty!(p.θ)
-        isfinite ? (p.X[d] = signal_model(p, p.θ[d])) : empty!(p.X)
-    end
-    =#
-    empty!.((p.θ, p.X, p.Y))
     signal_histograms!(p)
-    
     # t2_distributions!(p)
     return p
 end
@@ -563,8 +558,8 @@ hasclosedform(p::EPGModel) = false
 θlabels(p::BiexpEPGModel) = [L"\alpha", L"\beta", L"\eta", L"\delta_1", L"\delta_2", L"\log\epsilon", L"\log{s}", L"\delta_0"][1:ntheta(p)]
 θasciilabels(p::BiexpEPGModel) = ["alpha", "refcon", "eta", "delta1", "delta2", "logeps", "logscale", "delta0"][1:ntheta(p)]
 θunits(p::BiexpEPGModel) = ["deg", "deg", "a.u.", "a.u.", "a.u.", "a.u.", "a.u.", "a.u."][1:ntheta(p)]
-θlower(p::BiexpEPGModel{T}) where {T} = T[T( 90.0), T( 90.0), T(0.0), T(0.0), T(0.0), T(log(1e-5)), T(-2.5), T(0.0)][1:ntheta(p)]
-θupper(p::BiexpEPGModel{T}) where {T} = T[T(180.0), T(180.0), T(1.0), T(1.0), T(1.0), T(log(1e-1)), T(+2.5), T(1.0)][1:ntheta(p)]
+θlower(p::BiexpEPGModel{T}) where {T} = T[T( 90.0), T( 90.0), T(0.0), T(0.0), T(0.0), log(T(1e-5)), T(-2.5), T(0.0)][1:ntheta(p)]
+θupper(p::BiexpEPGModel{T}) where {T} = T[T(180.0), T(180.0), T(1.0), T(1.0), T(1.0), log(T(1e-1)), T(+2.5), T(1.0)][1:ntheta(p)]
 
 function sampleθprior(p::BiexpEPGModel{T}, ::Type{A}, n::Union{Int, Symbol}) where {T, A <: AbstractArray{T}}
     # Parameterize by alpha, refcon, short amplitude, relative T2 long and T2 short δs
@@ -573,7 +568,7 @@ function sampleθprior(p::BiexpEPGModel{T}, ::Type{A}, n::Union{Int, Symbol}) wh
     η    = sample_trunc_mv_normal(  T(0.0),  T(0.5),  T(0.0),   T(1.0), rand_similar(A, 1, n)) # truncated gaussian with mean at LHS, i.e. short fraction likely to be small
     δ1   = sample_trunc_mv_normal(  T(0.0),  T(0.5),  T(0.0),   T(1.0), rand_similar(A, 1, n)) # truncated gaussian with mean at LHS, i.e. short T2 more likely to be small
     δ2   = sample_trunc_mv_normal(  T(1.0),  T(0.5),  T(0.0),   T(1.0), rand_similar(A, 1, n)) # truncated gaussian with mean at RHS, i.e. long T2 more likely to be large
-    logϵ = T(log(1e-5)) .+ (T(log(1e-1)) .- T(log(1e-5))) .* rand_similar(A, 1, n)             # log noise level uniformly between SNR = 20 and SNR = 100
+    logϵ = log(T(1e-5)) .+ (log(T(1e-1)) .- log(T(1e-5))) .* rand_similar(A, 1, n)             # log noise level uniformly between SNR = 20 and SNR = 100
     logs = sample_trunc_mv_normal(  T(0.0),  T(0.5), T(-2.5),   T(2.5), rand_similar(A, 1, n)) # log scale factor uniformly between exp(-2.5) and exp(2.5); somewhat arbitrary
     if nnuissance(p) == 0
         return vcat(α, β, η, δ1, δ2, logϵ, logs)
@@ -581,6 +576,21 @@ function sampleθprior(p::BiexpEPGModel{T}, ::Type{A}, n::Union{Int, Symbol}) wh
         δ0 = rand_similar(A, 1, n) # log relative T1 uniform (0, 1), i.e. log(T1) uniformly in [log(T1bd[1]), log(T1bd[2])]
         return vcat(α, β, η, δ1, δ2, logϵ, logs, δ0)
     end
+end
+
+function neglogprior(::BiexpEPGModel, θ::AbstractArray{T}; accum = ℓ -> sum(ℓ; dims = 1)) where {T}
+    α, β, η, δ1, δ2, logϵ, logs = ntuple(i -> θ[i:i, ..], 7)
+    ℓ = [
+        neglogL_trunc_gaussian(α,  T(180.0), log(T(45.0)), T(90.0), T(180.0)) ;  # truncated gaussian prior log likelihood for α
+        neglogL_trunc_gaussian(β,  T(180.0), log(T(45.0)), T(90.0), T(180.0)) ;  # truncated gaussian prior log likelihood for β
+        neglogL_trunc_gaussian(η,    T(0.0),  log(T(0.5)),  T(0.0),   T(1.0)) ;  # truncated gaussian prior log likelihood for η
+        neglogL_trunc_gaussian(δ1,   T(0.0),  log(T(0.5)),  T(0.0),   T(1.0)) ;  # truncated gaussian prior log likelihood for δ1
+        neglogL_trunc_gaussian(δ2,   T(1.0),  log(T(0.5)),  T(0.0),   T(1.0)) ;  # truncated gaussian prior log likelihood for δ2
+        fill_similar(logϵ, log(log(T(1e-1)) - log(T(1e-5))))                  ;  # uniform prior log likelihood for logϵ
+        neglogL_trunc_gaussian(logs, T(0.0),  log(T(0.5)), T(-2.5),   T(2.5)) ;  # truncated gaussian prior log likelihood for logs
+    ]                                                                            # uniform prior log likelihood for δ0 equals log(1-0) = 0 and need not be explicitly included
+    (accum !== nothing) && (ℓ = accum(ℓ))
+    return ℓ
 end
 
 θmodel(c::MaybeClosedFormBiexpEPGModel, θM::AbstractVecOrMat, θN::AbstractVecOrMat) = θmodel(c, ntuple(i -> θM[i,:], size(θM,1))..., ntuple(i -> θN[i,:], size(θN,1))...)
@@ -668,7 +678,7 @@ end
 function signal_model(p::EPGModel{T}, img::CPMGImage{T}, θ::AbstractVecOrMat) where {T}
     if nnuissance(p) == 0
         θN = fill_similar(θ, θnuissance(p, img), 1, size(θ)[2:end]...)
-        return signal_model(p, vcat(θ, θN))
+        return signal_model(p, vcat(θ, θN))[1:nsignal(img), ..]
     else
         return signal_model(p, θ)
     end
@@ -680,18 +690,28 @@ function noiselevel(::EPGModel, θ)
     return @. exp.(logϵ .+ logs)
 end
 
-function loglikelihood(::EPGModel, Y, X, θ; accum_loss = ℓ -> sum(ℓ; dims = 1))
+function negloglikelihood(::EPGModel, Y, X, θ; accum = ℓ -> sum(ℓ; dims = 1))
     logϵs = θ[6:6, ..] .+ θ[7:7, ..]
     ℓ = neglogL_rician.(Y, X, logϵs)
-    (accum_loss !== nothing) && (ℓ = accum_loss(ℓ))
+    (accum !== nothing) && (ℓ = accum(ℓ))
     return ℓ
 end
 
-function loglikelihood(p::EPGModel, Ymeta::MetaCPMGSignal, θ; kwargs...)
-    Y = signal(Ymeta)
+function negloglikelihood(p::EPGModel, Ymeta::MetaCPMGSignal, θ::A; kwargs...) where {A <: AbstractArray}
+    θ  = arr_similar(signal(Ymeta), θ)
+    Y  = signal(Ymeta)
+    X  = signal_model(p, Ymeta, θ)
+    X  = clamp_dim1(Y, X)
+    ℓ  = negloglikelihood(p, Y, X, θ; kwargs...)
+    return arr_similar(A, ℓ)
+end
+
+function posterior_state(p::EPGModel, Ymeta::MetaCPMGSignal, θ, Z; accum_loss = ℓ -> sum(ℓ; dims = 1))
     X = signal_model(p, Ymeta, θ)
-    X = clamp_dim1(Y, X)
-    loglikelihood(p, Y, X, θ; kwargs...)
+    X = clamp_dim1(signal(Ymeta), X)
+    X̂ = add_noise_instance(p, X, θ)
+    ℓ = negloglikelihood(p, signal(Ymeta), X, θ; accum = accum_loss)
+    return (; Y = signal(Ymeta), X̂, X, θ, Z, ℓ)
 end
 
 #### Common biexponential EPG model methods

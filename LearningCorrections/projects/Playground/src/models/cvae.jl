@@ -5,18 +5,18 @@ Architecture inspired by:
     "Bayesian parameter estimation using conditional variational autoencoders for gravitational-wave astronomy"
     https://arxiv.org/abs/1802.08797
 """
-struct CVAE{n,nθ,nθM,k,nz,Dist,E1,E2,D,B1,B2}
-    E1 :: E1
-    E2 :: E2
-    D  :: D
-    θbd :: B1
-    θ̄bd :: B2
+struct CVAE{n,nθ,nθM,k,nz,Dist,E1,E2,D,F,F⁻¹}
+    E1  :: E1
+    E2  :: E2
+    D   :: D
+    f   :: F
+    f⁻¹ :: F⁻¹
 end
-CVAE{n,nθ,nθM,k,nz}(enc1::E1, enc2::E2, dec::D, θbd::B1, θ̄bd::B2; posterior_dist::Type = Gaussian) where {n,nθ,nθM,k,nz,E1,E2,D,B1,B2} = CVAE{n,nθ,nθM,k,nz,posterior_dist,E1,E2,D,B1,B2}(enc1, enc2, dec, θbd, θ̄bd)
+CVAE{n,nθ,nθM,k,nz}(enc1::E1, enc2::E2, dec::D, f::F, f⁻¹::F⁻¹; posterior_dist::Type = Gaussian) where {n,nθ,nθM,k,nz,E1,E2,D,F,F⁻¹} = CVAE{n,nθ,nθM,k,nz,posterior_dist,E1,E2,D,F,F⁻¹}(enc1, enc2, dec, f, f⁻¹)
 
 const CVAEPosteriorDist{Dist} = CVAE{n,nθ,nθM,k,nz,Dist} where {n,nθ,nθM,k,nz}
 
-Flux.functor(::Type{<:CVAE{n,nθ,nθM,k,nz,Dist}}, c) where {n,nθ,nθM,k,nz,Dist} = (E1 = c.E1, E2 = c.E2, D = c.D, θbd = c.θbd, θ̄bd = c.θ̄bd,), fs -> CVAE{n,nθ,nθM,k,nz}(fs...; posterior_dist = Dist)
+Flux.functor(::Type{<:CVAE{n,nθ,nθM,k,nz,Dist}}, c) where {n,nθ,nθM,k,nz,Dist} = (E1 = c.E1, E2 = c.E2, D = c.D, f = c.f, f⁻¹ = c.f⁻¹,), fs -> CVAE{n,nθ,nθM,k,nz}(fs...; posterior_dist = Dist)
 Base.show(io::IO, ::CVAE{n,nθ,nθM,k,nz,Dist}) where {n,nθ,nθM,k,nz,Dist} = print(io, "CVAE$((;n,nθ,nθM,k,nz,Dist))")
 
 nsignal(::CVAE{n,nθ,nθM,k,nz}) where {n,nθ,nθM,k,nz} = n
@@ -25,21 +25,55 @@ nmarginalized(::CVAE{n,nθ,nθM,k,nz}) where {n,nθ,nθM,k,nz} = nθM
 nlatent(::CVAE{n,nθ,nθM,k,nz}) where {n,nθ,nθM,k,nz} = k
 nembedding(::CVAE{n,nθ,nθM,k,nz}) where {n,nθ,nθM,k,nz} = nz
 
-function θ_linear_xform(::CVAE, θ, bd1, bd2)
-    slope, bias = Zygote.@ignore begin
-        bounds = bd1[1:size(θ,1)] .=> bd2[1:size(θ,1)]
-        slope, bias = unzip(linear_xform_slope_and_bias.(bounds))
-        arr_similar(θ, slope), arr_similar(θ, bias)
-    end
-    return slope .* θ .+ bias
+struct CVAETrainingState{C <: CVAE, A, S}
+    cvae::C
+    Ȳ::A
+    θ̄::A
+    Z̄::A
+    μr0::A
+    logσr::A
+    μq0::A
+    logσq::A
+    nrm_state::S
 end
-θ_linear_normalize(cvae::CVAE, θ) = θ_linear_xform(cvae, θ, cvae.θbd, cvae.θ̄bd)
-θ̄_linear_unnormalize(cvae::CVAE, θ) = θ_linear_xform(cvae, θ, cvae.θ̄bd, cvae.θbd)
+
+function CVAETrainingState(cvae::CVAE, Y, θ, Z = zeros_similar(θ, 0, size(θ,2)))
+    Ȳ, θ̄, Z̄, nrm_state = normalize(cvae, Y, θ, Z)
+    Ȳpad = pad_signal(cvae, Ȳ)
+    μr = cvae.E1(Ȳpad)
+    μq = cvae.E2(Ȳpad, θ̄, Z̄)
+    μr0, logσr = split_dim1(μr)
+    μq0, logσq = split_dim1(μq)
+    return CVAETrainingState(cvae, Ȳpad, θ̄, Z̄, μr0, logσr, μq0, logσq, nrm_state)
+end
+signal(state::CVAETrainingState) = state.Y
+
+struct CVAEInferenceState{C <: CVAE, A, S}
+    cvae::C
+    Ȳ::A
+    μr0::A
+    logσr::A
+    nrm_state::S
+end
+
+function CVAEInferenceState(cvae::CVAE, Y)
+    Ȳ, nrm_state = normalize(cvae, Y)
+    Ȳpad = pad_signal(cvae, Ȳ)
+    μr = cvae.E1(Ȳpad)
+    μr0, logσr = split_dim1(μr)
+    return CVAEInferenceState(cvae, Ȳpad, μr0, logσr, nrm_state)
+end
+signal(state::CVAEInferenceState) = state.Y
+
+LinearAlgebra.normalize(cvae::CVAE, Y) = cvae.f((Y,)) # returns (Ȳ, nrm_state)
+LinearAlgebra.normalize(cvae::CVAE, Y, θ, Z) = cvae.f((Y, θ, Z)) # returns (Ȳ, θ̄, Z̄, nrm_state)
+unnormalize(state::CVAETrainingState, θ̄M, Z̄) = state.cvae.f⁻¹((θ̄M, Z̄, state.nrm_state)) # returns (θM, Z)
+unnormalize(state::CVAEInferenceState, θ̄M, Z̄) = state.cvae.f⁻¹((θ̄M, Z̄, state.nrm_state)) # returns (θM, Z)
 
 # Layer which transforms matrix of [μ′; logσ′] ∈ [ℝ^nz; ℝ^nz] to bounded intervals [μ; logσ] ∈ [𝒟μ^nz; 𝒟logσ^nz]:
 #      μ bounded: prevent CVAE from "memorizing" inputs via mean latent embedding vectors which are far from zero
 #   logσ bounded: similarly, prevent CVAE from "memorizing" inputs via latent embedding vectors which are nearly constant, i.e. have zero variance
-CVAELatentTransform(nz, 𝒟μ = (-2,2), 𝒟logσ = (-4,0)) = Flux.Chain(
+CVAELatentTransform(nz, 𝒟μ = (-3,3), 𝒟logσ = (-6,0)) = Flux.Chain(
     Base.BroadcastFunction(tanh),
     CatScale([(-1,1) => 𝒟μ, (-1,1) => 𝒟logσ], [nz, nz]),
 )
@@ -58,10 +92,6 @@ function split_marginal_latent_pairs(cvae::CVAE, x::AbstractVecOrMat)
     μ2θ, μ2Z = split_marginal_latent(cvae, μ2θ_μ2Z) # size(μ2θ,1) = nθM, size(μ2Z,1) = nlatent
     return (μ1θ, μ2θ, μ1Z, μ2Z)
 end
-
-####
-#### CVAE methods
-####
 
 function pad_signal(Y::AbstractVecOrMat, n)
     if size(Y,1) < n
@@ -84,42 +114,9 @@ function signal_mask(Y::AbstractVecOrMat; minkept::Int = firstindex(Y,1), maxkep
     return mask
 end
 
-struct CVAETrainingState{C <: CVAE, A}
-    cvae::C
-    Y::A
-    θ̄::A
-    Z::A
-    μr0::A
-    logσr::A
-    μq0::A
-    logσq::A
-end
-
-function CVAETrainingState(cvae::CVAE, Y, θ, Z = zeros_similar(θ, 0, size(θ,2)))
-    Ypad = pad_signal(cvae, Y)
-    θ̄ = θ_linear_normalize(cvae, θ)
-    μr = cvae.E1(Ypad)
-    μq = cvae.E2(Ypad, θ̄, Z)
-    μr0, logσr = split_dim1(μr)
-    μq0, logσq = split_dim1(μq)
-    return CVAETrainingState(cvae, Ypad, θ̄, Z, μr0, logσr, μq0, logσq)
-end
-signal(state::CVAETrainingState) = state.Y
-
-struct CVAEInferenceState{C <: CVAE, A}
-    cvae::C
-    Y::A
-    μr0::A
-    logσr::A
-end
-
-function CVAEInferenceState(cvae::CVAE, Y)
-    Ypad = pad_signal(cvae, Y)
-    μr = cvae.E1(Ypad)
-    μr0, logσr = split_dim1(μr)
-    return CVAEInferenceState(cvae, Ypad, μr0, logσr)
-end
-signal(state::CVAEInferenceState) = state.Y
+####
+#### CVAE methods
+####
 
 function KLDivergence(state::CVAETrainingState)
     @unpack μq0, logσq, μr0, logσr = state
@@ -127,43 +124,41 @@ function KLDivergence(state::CVAETrainingState)
 end
 
 function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool = nlatent(state.cvae) == 0) where {C <: CVAEPosteriorDist{Gaussian}}
-    @unpack cvae, Y, θ̄, Z, μq0, logσq = state
+    @unpack cvae, Ȳ, θ̄, Z̄, μq0, logσq = state
     nθM = nmarginalized(cvae)
     zq = sample_mv_normal(μq0, exp.(logσq))
-    μx0, logσx = split_dim1(cvae.D(Y, zq))
+    μx0, logσx = split_dim1(cvae.D(Ȳ, zq))
     ELBO = marginalize_Z ?
         NegLogLGaussian(θ̄[1:nθM, ..], μx0[1:nθM, ..], logσx[1:nθM, ..]) :
-        NegLogLGaussian(vcat(θ̄[1:nθM, ..], Z), μx0, logσx)
+        NegLogLGaussian(vcat(θ̄[1:nθM, ..], Z̄), μx0, logσx)
 end
 
 function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool = nlatent(state.cvae) == 0) where {C <: CVAEPosteriorDist{TruncatedGaussian}}
-    @unpack cvae, Y, θ̄, Z, μq0, logσq = state
+    @unpack cvae, Ȳ, θ̄, Z̄, μq0, logσq = state
     nθM = nmarginalized(cvae)
     zq = sample_mv_normal(μq0, exp.(logσq))
-    μx = cvae.D(Y, zq) # μx = D(Y, zq) = [μθ̄M; μZ; logσθ̄M; logσZ]
-    θ̄Mlo = Zygote.@ignore arr_similar(μx, (x->x[1]).(cvae.θ̄bd[1:nθM, ..]))
-    θ̄Mhi = Zygote.@ignore arr_similar(μx, (x->x[2]).(cvae.θ̄bd[1:nθM, ..]))
-    σ⁻¹μθ̄M, logσθ̄M, μZ, logσZ = split_marginal_latent_pairs(cvae, μx)
-    μθ̄M  = clamp.(θ̄Mlo .+ (θ̄Mhi .- θ̄Mlo) .* Flux.σ.(σ⁻¹μθ̄M), θ̄Mlo, θ̄Mhi) # transform from unbounded σ⁻¹μθ̄M ∈ ℝ^nθ to bounded interval [θ̄Mlo, θ̄Mhi]^nθ
-    ELBO_θ = NegLogLTruncatedGaussian(θ̄[1:nθM, ..], μθ̄M, logσθ̄M, θ̄Mlo, θ̄Mhi)
+    μx = cvae.D(Ȳ, zq) # μx = D(Ȳ, zq) = [μθ̄M; μZ̄; logσθ̄M; logσZ̄]
+    σ⁻¹μθ̄M, logσθ̄M, μZ̄, logσZ̄ = split_marginal_latent_pairs(cvae, μx)
+    μθ̄M = tanh.(σ⁻¹μθ̄M) # transform from unbounded σ⁻¹μθ̄M ∈ ℝ^nθ to bounded interval [-1, 1]^nθ
+    ELBO_θ = NegLogLTruncatedGaussian(θ̄[1:nθM, ..], μθ̄M, logσθ̄M, -1, 1)
     if marginalize_Z
         ELBO = ELBO_θ
     else
-        ELBO = ELBO_θ + NegLogLGaussian(Z, μZ, logσZ)
+        ELBO = ELBO_θ + NegLogLGaussian(Z̄, μZ̄, logσZ̄)
     end
 end
 
 function EvidenceLowerBound(state::CVAETrainingState{C}; marginalize_Z::Bool = nlatent(state.cvae) == 0) where {C <: CVAEPosteriorDist{Kumaraswamy}}
-    @unpack cvae, Y, θ̄, Z, μq0, logσq = state
+    @unpack cvae, Ȳ, θ̄, Z̄, μq0, logσq = state
     nθM = nmarginalized(cvae)
     zq = sample_mv_normal(μq0, exp.(logσq))
-    μx = cvae.D(Y, zq) # μx = D(Y, zq) = [αθ; μZ; βθ; logσZ]
-    αθ, βθ, μZ, logσZ = split_marginal_latent_pairs(cvae, μx)
+    μx = cvae.D(Ȳ, zq) # μx = D(Ȳ, zq) = [αθ; μZ̄; βθ; logσZ̄]
+    αθ, βθ, μZ̄, logσZ̄ = split_marginal_latent_pairs(cvae, μx)
     ELBO_θ = NegLogLKumaraswamy(θ̄[1:nθM, ..], αθ, βθ)
     if marginalize_Z
         ELBO = ELBO_θ
     else
-        ELBO = ELBO_θ + NegLogLGaussian(Z, μZ, logσZ)
+        ELBO = ELBO_θ + NegLogLGaussian(Z̄, μZ̄, logσZ̄)
     end
 end
 
@@ -179,41 +174,39 @@ sampleθZposterior(cvae::CVAE, Y; kwargs...) = sampleθZposterior(CVAEInferenceS
 
 function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C <: CVAEPosteriorDist{Gaussian}}
     #TODO: `mode` is probably not strictly the correct term, but in practice it should be something akin to the distribution mode since `μr0` is the most likely value for `zr` and `μx0` is the most likely value for `x` **conditional on `zr`**; likely there are counterexamples to this simple reasoning, though...
-    @unpack cvae, Y, μr0, logσr = state
+    @unpack cvae, Ȳ, μr0, logσr = state
     zr = mode ? μr0 : sample_mv_normal(μr0, exp.(logσr))
-    μx = cvae.D(Y, zr)
+    μx = cvae.D(Ȳ, zr)
     μx0, logσx = split_dim1(μx)
     x = mode ? μx0 : sample_mv_normal(μx0, exp.(logσx))
-    θ̄M, Z = split_marginal_latent(cvae, x)
-    θM = θ̄_linear_unnormalize(cvae, θ̄M)
-    return θM, Z
+    θ̄M, Z̄ = split_marginal_latent(cvae, x)
+    θM, Z = unnormalize(state, θ̄M, Z̄)
+    return θM, Z̄
 end
 
 function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C <: CVAEPosteriorDist{TruncatedGaussian}}
     #TODO: `mode` is probably not strictly the correct term, but in practice it should be something akin to the distribution mode since `μr0` is the most likely value for `zr` and `μx0` is the most likely value for `x` **conditional on `zr`**; likely there are counterexamples to this simple reasoning, though...
-    @unpack cvae, Y, μr0, logσr = state
+    @unpack cvae, Ȳ, μr0, logσr = state
     nθM = nmarginalized(cvae)
     zr = mode ? μr0 : sample_mv_normal(μr0, exp.(logσr))
-    μx = cvae.D(Y, zr)
-    θ̄Mlo = Zygote.@ignore arr_similar(μx, (x->x[1]).(cvae.θ̄bd[1:nθM, ..]))
-    θ̄Mhi = Zygote.@ignore arr_similar(μx, (x->x[2]).(cvae.θ̄bd[1:nθM, ..]))
-    σ⁻¹μθ̄M, logσθ̄M, μZ, logσZ = split_marginal_latent_pairs(cvae, μx)
-    μθ̄M  = clamp.(θ̄Mlo .+ (θ̄Mhi .- θ̄Mlo) .* Flux.σ.(σ⁻¹μθ̄M), θ̄Mlo, θ̄Mhi) # transform from unbounded σ⁻¹μθ̄M ∈ ℝ^nθ to bounded interval [θ̄Mlo, θ̄Mhi]^nθ
-    θ̄M = mode ? μθ̄M : sample_trunc_mv_normal(μθ̄M, exp.(logσθ̄M), θ̄Mlo, θ̄Mhi)
-    Z = mode || nlatent(state.cvae) == 0 ? μZ : sample_mv_normal(μZ, exp.(logσZ))
-    θM = θ̄_linear_unnormalize(cvae, θ̄M)
+    μx = cvae.D(Ȳ, zr)
+    σ⁻¹μθ̄M, logσθ̄M, μZ̄, logσZ̄ = split_marginal_latent_pairs(cvae, μx)
+    μθ̄M = tanh.(σ⁻¹μθ̄M) # transform from unbounded σ⁻¹μθ̄M ∈ ℝ^nθ to bounded interval [-1, 1]^nθ
+    θ̄M = mode ? μθ̄M : sample_trunc_mv_normal(μθ̄M, exp.(logσθ̄M), -1, 1)
+    Z̄ = mode || nlatent(state.cvae) == 0 ? μZ̄ : sample_mv_normal(μZ̄, exp.(logσZ̄))
+    θM, Z = unnormalize(state, θ̄M, Z̄)
     return θM, Z
 end
 
 function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C <: CVAEPosteriorDist{Kumaraswamy}}
     #TODO: `mode` is probably not strictly the correct term, but in practice it should be something akin to the distribution mode since `μr0` is the most likely value for `zr` and `μx0` is the most likely value for `x` **conditional on `zr`**; likely there are counterexamples to this simple reasoning, though...
-    @unpack cvae, Y, μr0, logσr = state
+    @unpack cvae, Ȳ, μr0, logσr = state
     zr = mode ? μr0 : sample_mv_normal(μr0, exp.(logσr))
-    μx = cvae.D(Y, zr)
-    αθ, βθ, μZ, logσZ = split_marginal_latent_pairs(cvae, μx)
+    μx = cvae.D(Ȳ, zr)
+    αθ, βθ, μZ̄, logσZ̄ = split_marginal_latent_pairs(cvae, μx)
     θ̄M = mode ? mode_kumaraswamy(αθ, βθ) : sample_kumaraswamy(αθ, βθ)
-    Z = mode || nlatent(state.cvae) == 0 ? μZ : sample_mv_normal(μZ, exp.(logσZ))
-    θM = θ̄_linear_unnormalize(cvae, θ̄M)
+    Z̄ = mode || nlatent(state.cvae) == 0 ? μZ̄ : sample_mv_normal(μZ̄, exp.(logσZ̄))
+    θM, Z = unnormalize(state, θ̄M, Z̄)
     return θM, Z
 end
 
@@ -310,12 +303,98 @@ sampleX(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...
 
 function posterior_state(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; accum_loss = ℓ -> sum(ℓ; dims = 1), kwargs...)
     θ, Z = sampleθZ(phys, cvae, Ymeta; posterior_θ = true, posterior_Z = true, posterior_mode = false, kwargs...)
-    X = signal_model(phys, Ymeta, θ)
-    X = clamp_dim1(signal(Ymeta), X)
-    X̂ = add_noise_instance(phys, X, θ)
-    ℓ = loglikelihood(phys, signal(Ymeta), X, θ; accum_loss) #TODO make a loglikelihood
-    ϵ = noiselevel(phys, θ)
-    return (; Y = signal(Ymeta), X̂, θ, Z, X, ϵ, ν = X, δ = zeros_similar(X, 1, size(X,2)), ℓ)
+    posterior_state(phys, Ymeta, θ, Z; accum_loss)
+end
+
+@with_kw_noshow struct OnlineMetropolisSampler{T}
+    n::Int
+    θ::Array{T,3} # parameter values
+    neglogPXθ::Array{T,3} = fill(T(Inf), 1, size(θ, 2), n) # negative log likelihoods
+    neglogPθ::Array{T,3} = fill(T(Inf), 1, size(θ, 2), n) # negative log priors
+    i::Vector{Int} = ones(Int, size(θ, 2)) # current sample index
+end
+Base.show(io::IO, s::OnlineMetropolisSampler{T}) where {T} = print(io, "OnlineMetropolisSampler{T}(ntheta = $(size(s.θ,1)), ndata = $(size(s.θ,2)), nsamples = $(s.n))")
+
+buffer_indices(s::OnlineMetropolisSampler, J = 1:size(s.θ, 2)) = CartesianIndex.(J, mod1.(s.i[J], s.n))
+
+# c.f. https://stats.stackexchange.com/a/163790
+function update!(s::OnlineMetropolisSampler, θ′::A, neglogPXθ′::A, neglogPθ′::A, J = 1:size(s.θ, 2)) where {A <: AbstractMatrix}
+    # Extract copies of current theta, negative log likelihood, and negative log prior state
+    θ′         = arr_similar(s.θ, θ′)
+    neglogPXθ′ = arr_similar(s.θ, neglogPXθ′)
+    neglogPθ′  = arr_similar(s.θ, neglogPθ′)
+    idx        = buffer_indices(s, J)
+    θ          = s.θ[:, idx]
+    neglogPXθ  = s.neglogPXθ[:, idx]
+    neglogPθ   = s.neglogPθ[:, idx]
+
+    # Metropolis-Hastings acceptance ratio:
+    #        α = min(1, (PXθ′ * Pθ′) / (PXθ * Pθ))
+    # ==> logα = min(0, logPXθ′ + logPθ′ - logPXθ - logPθ)
+    logα       = @. min(0, neglogPXθ + neglogPθ - neglogPXθ′ - neglogPθ′)
+    accept     = vec(logα .> log.(rand_similar(logα)))
+
+    # Update theta, negative log likelihoods, and negative log priors with accepted points,
+    # increment sample counters, and copy updated values into sample caches
+    # accepted_slice = CartesianIndex.(J[accept], mod1.(s.i[J[accept]], s.n))
+    θ[:, accept]         .= θ′[:, accept]
+    neglogPXθ[:, accept] .= neglogPXθ′[:, accept]
+    neglogPθ[:, accept]  .= neglogPθ′[:, accept]
+    s.i[J]              .+= 1
+    idx                  .= buffer_indices(s, J)
+    s.θ[:, idx]          .= θ
+    s.neglogPXθ[:, idx]  .= neglogPXθ
+    s.neglogPθ[:, idx]   .= neglogPθ
+
+    return arr_similar(A, θ), arr_similar(A, neglogPXθ), arr_similar(A, neglogPθ)
+end
+
+function update!(s::OnlineMetropolisSampler, phys::EPGModel, cvae::CVAE, Ymeta::MetaCPMGSignal, args...; kwargs...)
+    θ′, _      = sampleθZ(phys, cvae, Ymeta; posterior_θ = true, posterior_Z = true, posterior_mode = false, kwargs...)
+    X′         = signal_model(phys, Ymeta, θ′)
+    neglogPXθ′ = negloglikelihood(phys, signal(Ymeta), X′, θ′)
+    neglogPθ′  = neglogprior(phys, θ′)
+    θ, ℓXθ, ℓθ = update!(s, θ′, neglogPXθ′, neglogPθ′, args...)
+    X          = signal_model(phys, Ymeta, θ)
+    return X, θ, ℓXθ, ℓθ
+end
+
+function _test_online_mh_sampler(phys::EPGModel)
+    ndata = 10
+    nsamples = 10000
+
+    # initialize sampler with uniformly random samples
+    θlo, θhi = θlower(phys), θupper(phys)
+    θ = reshape(sample_uniform(θlo, θhi, ndata * nsamples), :, ndata, nsamples)
+    s = OnlineMetropolisSampler{Float64}(n = nsamples, θ = θ)
+
+    # true answers
+    θ_plot = θlo .+ (θhi .- θlo) .* range(0,1,length=200)'
+    Pθ_plot = neglogprior(phys, θ_plot; accum = nothing) .|> neglogp -> exp(-neglogp)
+
+    while true
+        # draw uniform random guess and update sampler
+        J = rand(1:ndata÷2) : rand(ndata÷2+1:ndata)
+        θ′ = sample_uniform(θlo, θhi, length(J))
+        neglogPXθ′ = zeros_similar(θ′, 1, length(J)) # constant zero; we are just trying to reproduce the prior
+        neglogPθ′ = neglogprior(phys, θ′)
+        update!(s, θ′, neglogPXθ′, neglogPθ′, J)
+
+        # plot compared to expected prior pdf
+        if mod(s.i[1], nsamples÷2) == 0
+            plot(
+                map(1:7) do i
+                    p = plot()
+                    stephist!(p, s.θ[i, rand(1:ndata), :]; label = θlabels(phys)[i], normalized = :pdf)
+                    plot!(p, θ_plot[i, :], Pθ_plot[i, :]; label = :none)
+                    p
+                end...,
+                stephist(s.neglogPXθ[1, rand(1:ndata), :]; label = L"\log{P(X|\theta)}", normalized = :pdf),
+                stephist(s.neglogPθ[1, rand(1:ndata), :]; label = L"\log{P(\theta)}", normalized = :pdf);
+            ) |> display
+            sleep(0.1)
+        end
+    end
 end
 
 ####

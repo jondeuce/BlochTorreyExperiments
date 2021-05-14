@@ -168,14 +168,15 @@ function load_toyepgmodel_physics(; ntrain::Int, ntest::Int, nval::Int)
     initialize!(ToyEPGModel{Float32,true}(); ntrain, ntest, nval)
 end
 
-function load_epgmodel_physics(; max_numechos = 64, image_infos = nothing, seed = 0)
+function load_cpmg_info(folder_path::AbstractString)
+    folder_path = DrWatson.datadir("images", folder_path)
+    info = TOML.parsefile(joinpath(folder_path, "image_info.toml"))
+    info["folder_path"] = folder_path
+    return info
+end
+
+function load_epgmodel_physics(; max_numechos = 64)
     phys = EPGModel{Float32,false}(n = max_numechos)
-    (image_infos === nothing) && (image_infos = [
-        (TE =  8e-3, refcon = 180.0, path = DrWatson.datadir("images", "2019-10-28_48echo_8msTE_CPMG", "data-in", "ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.nii.gz")),
-        (TE =  7e-3, refcon = 180.0, path = DrWatson.datadir("images", "2019-09-22_56echo_7msTE_CPMG", "data-in", "MW_TRAINING_001_WIP_CPMG56_CS_half_2_1.masked-image.mat")),
-        (TE = 10e-3, refcon = 180.0, path = DrWatson.datadir("images", "2021-05-07_NeurIPS2021_64echo_10msTE_MockBiexpEPG_CPMG", "data-in", "simulated_image.mat")),
-    ])
-    initialize!(phys; image_infos, seed)
 end
 
 ####
@@ -335,15 +336,44 @@ end
 
 # derived["cvae"]
 function derived_cvae(phys::PhysicsModel{Float32}, enc1, enc2, dec; nlatent, zdim, posterior, kwargs...)
-    # Flux.Diagonal(2*(nmarginalized(phys) + nlatent); initα = init_μxlogσx_slope(phys; nlatent), initβ = init_μxlogσx_bias(phys; nlatent))
-    ϵ = 10 * eps(Float32)
-    θbd = NTuple{2,Float32}.(θbounds(phys))
-    θ̄bd = NTuple{2,Float32}.(fill((ϵ, 1-ϵ), length(θbd)))
+    sim(x,y) = Zygote.@ignore arr_similar(x, y)
+    clamp_scale(x,α,β,lo,hi) = clamp.(sim(x,α) .* x .+ sim(x,β), sim(x,lo), sim(x,hi))
+
+    nθ = ntheta(phys)
+    θlo = θlower(phys) .|> Float32
+    θhi = θupper(phys) .|> Float32
+    θ̄lo = -ones(Float32, nθ)
+    θ̄hi = +ones(Float32, nθ)
+    α, β = catscale_slope_and_bias([(θlo[i], θhi[i]) => (θ̄lo[i], θ̄hi[i]) for i in 1:nθ], ones(Int, nθ))
+    ᾱ, β̄ = catscale_slope_and_bias([(θ̄lo[i], θ̄hi[i]) => (θlo[i], θhi[i]) for i in 1:nθ], ones(Int, nθ))
+
+    function normalize_inputs(in::Tuple)
+        Y     = in[1]
+        Ym    = maximum(Y; dims = 1)
+        logYm = log.(Ym)
+        Ȳ     = Y ./ Ym; 
+        if length(in) == 1
+            return (Ȳ, logYm)
+        else
+            θ, Z = in[2], in[3]
+            θ̄ = clamp_scale(vcat(θ[1:6,..], θ[7:7,:] .- logYm), α, β, θ̄lo, θ̄hi)
+            Z̄ = Z
+            return (Ȳ, θ̄, Z̄, logYm)
+        end
+    end
+
+    function unnormalize_outputs(in::Tuple)
+        θ̄, Z̄, logYm = in
+        θ = clamp_scale(vcat(θ̄[1:6,..], θ̄[7:7,:] .+ logYm), ᾱ, β̄, θlo, θhi)
+        Z = Z̄
+        return (θ, Z)
+    end
+
     posterior_dist =
         posterior == "Kumaraswamy" ? Kumaraswamy :
         posterior == "TruncatedGaussian" ? TruncatedGaussian :
         Gaussian
-    CVAE{nsignal(phys),ntheta(phys),nmarginalized(phys),nlatent,zdim}(enc1, enc2, dec, θbd, θ̄bd; posterior_dist)
+    CVAE{nsignal(phys),ntheta(phys),nmarginalized(phys),nlatent,zdim}(enc1, enc2, dec, normalize_inputs, unnormalize_outputs; posterior_dist)
 end
 
 # derived["cvae"]
@@ -354,30 +384,78 @@ function load_pretrained_cvae(phys::PhysicsModel{Float32}; modelfolder, modelpre
     cvae = derived_cvae(phys, enc1, enc2, dec; make_kwargs(settings, "arch")...)
 end
 
-function pseudo_labels!(phys::EPGModel, cvae::CVAE; kwargs...)
+function initialize_pseudo_labels!(
+        phys::EPGModel{T}, cvae::Union{Nothing,<:CVAE} = nothing;
+        labelset = :prior,
+        npseudolabels = 100,
+        force_recompute = true,
+    ) where {T}
+
+    for (i,img) in enumerate(phys.images)
+        # Optionally skip cecomputing
+        haskey(img.meta, :pseudo_labels) && !force_recompute && continue
+        img.meta[:pseudo_labels] = Dict{Symbol,Any}()
+
+        for dataset in [:train, :val, :test]
+            if labelset === :mle
+                @unpack theta, signalfit = img.meta[:mle_labels][dataset]
+                theta = repeat(theta, 1, 1, npseudolabels)
+            elseif labelset === :mcmc
+                @unpack theta, signalfit = img.meta[:mcmc_labels][dataset]
+                theta = repeat(theta[:,:,end], 1, 1, npseudolabels) # note: this is only initializing the sampler buffer, which only tracks the latest theta; we start from the last mcmc sample
+            elseif labelset === :cvae
+                @assert cvae !== nothing
+                initial_guess = mle_biexp_epg_initial_guess(phys, img, cvae; data_subset = dataset, gpu_batch_size = 100_000)
+                theta, signalfit = initial_guess.θ, initial_guess.X
+                theta = repeat(theta, 1, 1, npseudolabels)
+            elseif labelset === :prior
+                initial_guess = mle_biexp_epg_initial_guess(phys, img, nothing; data_subset = dataset, gpu_batch_size = 100_000)
+                theta, signalfit = initial_guess.θ, initial_guess.X
+                theta = repeat(theta, 1, 1, npseudolabels)
+            else
+                error("Unknown labelset: $labelset")
+            end
+
+            # Assign outputs
+            labels                    = img.meta[:pseudo_labels][dataset] = Dict{Symbol,Any}()
+            Ymeta                     = MetaCPMGSignal(phys, img, img.partitions[dataset])
+            neglogPXθ                 = repeat(negloglikelihood(phys, Ymeta, theta[:,:,1]) .|> T, 1, 1, npseudolabels)
+            neglogPθ                  = repeat(neglogprior(phys, theta[:,:,1]) .|> T, 1, 1, npseudolabels)
+            labels[:theta]            = theta .|> T
+            labels[:signalfit]        = signalfit .|> T
+            labels[:mh_sampler]       = OnlineMetropolisSampler{T}(;
+                n         = npseudolabels, # number of pseudo mcmc samples
+                θ         = theta,         # pseudo mcmc samples
+                neglogPXθ = neglogPXθ,     # initial negative log likelihoods
+                neglogPθ  = neglogPθ,      # initial negative log priors
+            )
+        end
+    end
+end
+
+function compute_mle_labels!(phys::EPGModel, cvae::Union{Nothing,<:CVAE} = nothing; kwargs...)
     for img in phys.images
-        pseudo_labels!(phys, cvae, img; kwargs...)
+        compute_mle_labels!(phys, img, cvae; kwargs...)
     end
     return phys
 end
 
-function pseudo_labels!(
-        phys::EPGModel, cvae::CVAE, img::CPMGImage;
-        initial_guess_only = false, sigma_reg = 0.5,
+function compute_mle_labels!(
+        phys::EPGModel, img::CPMGImage, cvae::Union{Nothing,<:CVAE} = nothing;
+        sigma_reg = 0.5,
         force_recompute = true,
     )
 
     # Optionally skip cecomputing
-    haskey(img.meta, :pseudolabels) && !force_recompute && return img
+    haskey(img.meta, :mle_labels) && !force_recompute && return img
 
     # Perform MLE fit on all signals within mask
     @info img
     initial_guess, results = mle_biexp_epg(
-        phys, cvae, img;
+        phys, img, cvae;
         batch_size = 2048 * Threads.nthreads(),
         verbose    = true,
         sigma_reg,
-        initial_guess_only,
         initial_guess_args = (
             refine_init_logϵ = true,
             refine_init_logs = true,
@@ -387,17 +465,10 @@ function pseudo_labels!(
         ),
     )
 
-    labels = img.meta[:pseudolabels] = Dict{Symbol,Any}()
-    masklabels = img.meta[:pseudolabels][:mask] = Dict{Symbol,Any}()
-
-    if initial_guess_only
-        masklabels[:signalfit] = initial_guess.X |> arr32
-        masklabels[:theta] = initial_guess.θ |> arr32
-    else
-        X, θ = (results.signalfit, results.theta) .|> arr32
-        masklabels[:signalfit] = X
-        masklabels[:theta] = θ
-    end
+    labels = img.meta[:mle_labels] = Dict{Symbol,Any}()
+    masklabels = img.meta[:mle_labels][:mask] = Dict{Symbol,Any}()
+    masklabels[:signalfit] = results.signalfit |> arr32
+    masklabels[:theta] = results.theta |> arr32
 
     # Copy results from within mask into relevant test/train/val partitions
     for (Ypart, Y) in img.partitions
@@ -412,79 +483,87 @@ function pseudo_labels!(
     return img
 end
 
-function verify_pseudo_labels(phys::EPGModel)
-    for (i,img) in enumerate(phys.images)
-        dataset = :mask
-        @unpack theta = img.meta[:pseudolabels][dataset]
-        Ymeta = MetaCPMGSignal(phys, img, img.partitions[dataset])
-        ℓ = loglikelihood(phys, Ymeta, theta)
-        @info "Pseudo Labels log-likelihood (image = $i, dataset = $dataset):"
-        @info StatsBase.summarystats(vec(ℓ))
-    end
-end
-
 function load_mcmc_labels!(
         phys::EPGModel{T};
         force_reload = true,
     ) where {T}
 
-    for (i,img) in enumerate(phys.images), dataset in [:val] #[:val, :train, :test]
+    for (i,img) in enumerate(phys.images)
         # Optionally skip reloading
-        haskey(img.meta, :mcmclabels) && !force_reload && continue
-        img.meta[:mcmclabels] = Dict{Symbol,Any}()
+        haskey(img.meta, :mcmc_labels) && !force_reload && continue
+        img.meta[:mcmc_labels] = Dict{Symbol,Any}()
 
-        mcmcdir = joinpath(dirname(img.meta[:info].path), "..", "julia-mcmc-biexpepg")
-        if !isdir(mcmcdir)
-            @info "MCMC directory does not exist: $mcmcdir"
-            continue
+        for dataset in [:train, :val, :test]
+            if !haskey(img.meta[:info], "mcmc_labels_path")
+                @info "MCMC directory does not exist: $(img.meta[:info]["folder_path"])"
+                continue
+            end
+
+            # Load MCMC params
+            labels_file = filter(path -> startswith(basename(path), "dataset-$(dataset)"), img.meta[:info]["mcmc_labels_path"])
+            if isempty(labels_file)
+                @info "MCMC data for does not exist (image = $i, dataset = $dataset): $(img.meta[:info]["folder_path"])"
+                continue
+            else
+                labels_file = joinpath(img.meta[:info]["folder_path"], only(labels_file))
+                @info "Loading MCMC data (image = $i, dataset = $dataset):"
+            end
+
+            mcmc_param_names = ["alpha", "beta", "eta", "delta1", "delta2", "logepsilon", "logscale"]
+            num_params = length(mcmc_param_names)
+            num_signals = size(img.partitions[dataset], 2)
+            num_mcmc_samples = 100
+            theta = fill(T(NaN), num_params, num_signals, num_mcmc_samples)
+
+            # Load mcmc samples
+            @time labels_data = DECAES.MAT.matread(labels_file)
+            idx = CartesianIndex.(tuple.(labels_data["dataset_col"], labels_data["iteration"]))
+            theta[:, idx] .= reduce(vcat, [labels_data[p]' for p in mcmc_param_names])
+
+            # Compute epg signal model
+            @time X = signal_model(phys, img, theta[:,:,end])
+
+            # Assign outputs
+            labels             = img.meta[:mcmc_labels][dataset] = Dict{Symbol,Any}()
+            labels[:theta]     = theta # θ = α, β, η, δ1, δ2, logϵ, logs
+            labels[:signalfit] = X .|> T
         end
-
-        # Load MCMC params
-        csv_file_lists = filter(!isempty, [
-            readdir(Glob.GlobMatch("image*_dataset-$(dataset)_*.csv"), mcmcdir),
-            readdir(Glob.GlobMatch("checkpoint*_dataset-$(dataset)_*.csv"), mcmcdir),
-        ])
-        if isempty(csv_file_lists)
-            @info "MCMC data for does not exist (image = $i, dataset = $dataset): $mcmcdir"
-            continue
-        else
-            @info "Loading MCMC data (image = $i, dataset = $dataset):"
-        end
-
-        files = first(csv_file_lists)
-        mcmc_param_names = [:α, :β, :η, :δ1, :δ2, :logϵ, :logs]
-        num_params = length(mcmc_param_names)
-        num_signals = size(img.partitions[dataset], 2)
-        num_mcmc_samples = 100
-        theta = fill(T(NaN), num_params, num_signals, num_mcmc_samples)
-
-        # Load mcmc samples
-        @time for file in files
-            df = CSV.read(file, DataFrame)
-            idx = CartesianIndex.(tuple.(df[!,:dataset_col], df[!,:iteration]))
-            theta[:, idx] .= df[:, mcmc_param_names] |> Matrix |> permutedims
-        end
-
-        # Compute epg signal model
-        @time X = signal_model(phys, img, theta[:,:,end])
-
-        # Assign outputs
-        labels             = img.meta[:mcmclabels][dataset] = Dict{Symbol,Any}()
-        labels[:theta]     = theta # θ = α, β, η, δ1, δ2, logϵ, logs
-        labels[:signalfit] = X .|> T
     end
 
     return nothing
 end
 
+
+function verify_mle_labels(phys::EPGModel)
+    for (i,img) in enumerate(phys.images)
+        dataset = :val
+        @unpack theta, signalfit = img.meta[:mle_labels][dataset]
+        Y = img.partitions[dataset]
+        ℓ = negloglikelihood(phys, Y, signalfit, theta)
+        @info "MLE labels negative log-likelihood (image = $i, dataset = $dataset):"
+        @info StatsBase.summarystats(vec(ℓ))
+    end
+end
+
 function verify_mcmc_labels(phys::EPGModel)
     for (i,img) in enumerate(phys.images)
         dataset = :val
-        @unpack theta = img.meta[:mcmclabels][dataset]
-        Ymeta = MetaCPMGSignal(phys, img, img.partitions[dataset])
-        ℓ = loglikelihood(phys, Ymeta, theta[:,:,end])
-        @info "MCMC Labels log-likelihood (image = $i, dataset = $dataset):"
+        @unpack theta, signalfit = img.meta[:mcmc_labels][dataset]
+        Y = img.partitions[dataset]
+        ℓ = negloglikelihood(phys, Y, signalfit, theta[:,:,end])
+        @info "MCMC labels negative log-likelihood (image = $i, dataset = $dataset):"
         @info StatsBase.summarystats(vec(ℓ[:, 1:findlast(!isnan, ℓ[1,:]), :]))
+    end
+end
+
+function verify_pseudo_labels(phys::EPGModel)
+    for (i,img) in enumerate(phys.images)
+        dataset = :val
+        @unpack theta, signalfit, mh_sampler = img.meta[:pseudo_labels][dataset]
+        Y = img.partitions[dataset]
+        ℓ = negloglikelihood(phys, Y, signalfit, theta[:,:,end])
+        @info "Pseudo labels negative log-likelihood (image = $i, dataset = $dataset):"
+        @info StatsBase.summarystats(vec(ℓ))
     end
 end
 

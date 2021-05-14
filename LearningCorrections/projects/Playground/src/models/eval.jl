@@ -255,60 +255,36 @@ function mcmc_biexp_epg(
     return chains
 end
 
-function _test_mcmc()
-    # img = phys.images[img_idx]
-    # Y = img.partitions[dataset] .|> Float64
-    # X = img.meta[:pseudolabels][dataset][:signalfit] .|> Float64
-    # θ = img.meta[:pseudolabels][dataset][:theta] .|> Float64
-    # Z = img.meta[:pseudolabels][dataset][:latent] .|> Float64
-
-    # J, _ = sample_maybeshuffle(1:size(Y,2); shuffle = true, samples, seed)
-    # J = J[1] #TODO
-    # Y = Y[:,J] .|> Float64
-    # X = X[:,J] .|> Float64
-    # θ = θ[:,J] .|> Float64
-    # logϵ = Z[:,J] .|> Float64 # Z = log(ϵ)
-    # logs = log.(inv.(maximum(mean_rician.(X, exp.(logϵ)); dims = 1))) .|> Float64
-    # init_params = [θmarginalized(phys, θ); logϵ; logs]
-    # plot([Y biexp_epg_model_scaled!(init_params...)]) |> display
-
-    # df = DataFrame(chains[1][2])
-    # α, β, η, δ1, δ2, logϵ, logs = df[end, [:α, :β, :η, :δ1, :δ2, :logϵ, :logs]]
-    # xfit = biexp_epg_model_scaled!(work, α, β, η, δ1, δ2, logϵ, logs)
-    # plot([ydata[:,1] xfit]) |> display
-    # plot(chains[1][2]) |> display
-
-    return chains
-end
-
 ####
 #### MLE inference
 ####
 
 function _test_mle_biexp_epg_noise_only(;
-        initial_logϵ = true, img_idx = 1, samples = 1024, seed = 0
+        initial_logϵ = true, initial_logs = true,
+        img_idx = 1, samples = 1024, seed = 0
     )
-    img = Main.phys.images[img_idx]
+    phys = Main.phys
+    img = phys.images[img_idx]
     dataset = :val
     Y = img.partitions[dataset]
-    X = img.meta[:pseudolabels][dataset][:signalfit]
-    θ = img.meta[:pseudolabels][dataset][:theta]
-    Z = img.meta[:pseudolabels][dataset][:latent] #TODO
+    θ = img.meta[:pseudo_labels][dataset][:theta]
+    X = signal_model(phys, img, θ)
     J, _ = sample_maybeshuffle(1:size(Y,2); shuffle = true, samples, seed)
     Y = Y[:,J] |> to32
     X = X[:,J] |> to32
     θ = θ[:,J] |> to32
-    ϵ = exp.(Z[:,J] |> to32) # Z = log(ϵ)
+    logϵ = θ[6:6,:]
+    logs = θ[7:7,:]
 
     @info "Neither frozen"
-    initial_guess, results = mle_biexp_epg_noise_only(X, Y, initial_logϵ ? log.(ϵ) : nothing; freeze_logϵ = false, freeze_logs = false)
+    initial_guess, results = mle_biexp_epg_noise_only(X, Y, initial_logϵ ? logϵ : nothing, initial_logs ? logs : nothing; freeze_logϵ = false, freeze_logs = false)
 
     @info "scale frozen"
-    initial_guess, results = mle_biexp_epg_noise_only(X, Y, initial_logϵ ? log.(ϵ) : nothing; freeze_logϵ = false, freeze_logs = true)
+    initial_guess, results = mle_biexp_epg_noise_only(X, Y, initial_logϵ ? logϵ : nothing, initial_logs ? logs : nothing; freeze_logϵ = false, freeze_logs = true)
     @assert vec(initial_guess.logs) ≈ vec(results.logscale)
 
     @info "epsilon frozen"
-    initial_guess, results = mle_biexp_epg_noise_only(X, Y, initial_logϵ ? log.(ϵ) : nothing; freeze_logϵ = true, freeze_logs = false)
+    initial_guess, results = mle_biexp_epg_noise_only(X, Y, initial_logϵ ? logϵ : nothing, initial_logs ? logs : nothing; freeze_logϵ = true, freeze_logs = false)
     @assert vec(initial_guess.logϵ) ≈ vec(results.logepsilon)
 
     @info "NegLogLikelihood"
@@ -555,8 +531,8 @@ function f_mle_biexp_epg!(work::W, x::Vector{D}, ::Val{verbose} = Val(false)) wh
         logϵi  = logs + logϵ # hoist outside loop
         ℓ      = zero(D)
         @simd for i in eachindex(work.Y) #TODO @avx?
-            νi = Xscale * X[i]
-            ℓ += neglogL_rician(work.Y[i], νi, logϵi) # Rician negative log likelihood
+            X[i] *= Xscale
+            ℓ    += neglogL_rician(work.Y[i], X[i], logϵi) # Rician negative log likelihood
         end
         R      = mle_biexp_epg_x_regularization(work, x)
         work.neglogL[] = ForwardDiff.value(ℓ)
@@ -579,21 +555,19 @@ end
 
 function mle_biexp_epg_initial_guess(
         phys::BiexpEPGModel,
-        cvae::CVAE,
-        img::CPMGImage;
-        data_subset        = :mask,  # One of :mask, :val, :train, :test
+        img::CPMGImage,
+        cvae::Union{Nothing,<:CVAE} = nothing;
+        data_subset        = :mask,  # One of :mask, :train, :val, :test
         refine_init_logϵ   = false,
         refine_init_logs   = false,
         gpu_batch_size     = 2048,
-        maxiter            = 10,
-        mode               = :mode,  # :maxlikelihood, :mean
         verbose            = true,
         dryrun             = false,
         dryrunsamples      = gpu_batch_size,
         dryrunshuffle      = true,
         dryrunseed         = 0,
     )
-    @assert data_subset ∈ (:mask, :val, :train, :test)
+    @assert data_subset ∈ (:mask, :train, :val, :test)
 
     # MLE for whole image of simulated data
     image_indices = img.indices[data_subset]
@@ -605,7 +579,13 @@ function mle_biexp_epg_initial_guess(
     Ymeta = MetaCPMGSignal(phys, img, image_data)
     batches = gpu_batch_size === Colon() ? [1:size(signal(Ymeta),2)] : Iterators.partition(1:size(signal(Ymeta),2), gpu_batch_size)
     initial_guess = mapreduce((x,y) -> map(hcat, x, y), batches) do batch
-        state = posterior_state(phys, cvae, Ymeta[:,batch])
+        if cvae === nothing
+            θ = sampleθprior(phys, typeof(signal(Ymeta)), length(batch))
+            Z = zeros_similar(θ, 0, size(θ,2))
+            state = posterior_state(phys, Ymeta[:,batch], θ, Z)
+        else
+            state = posterior_state(phys, cvae, Ymeta[:,batch])
+        end
         map(arr64, state)
     end
 
@@ -624,17 +604,18 @@ function mle_biexp_epg_initial_guess(
         refine_init_logϵ && (initial_guess.θ[6:6,:] .= arr_similar(initial_guess.θ, refined_results.logepsilon'))
         refine_init_logs && (initial_guess.θ[7:7,:] .= arr_similar(initial_guess.θ, refined_results.logscale'))
     end
+
     return initial_guess
 end
 
 function mle_biexp_epg(
         phys::BiexpEPGModel,
-        cvae::CVAE,
-        img::CPMGImage;
+        img::CPMGImage,
+        cvae::Union{Nothing,<:CVAE} = nothing;
         batch_size         = 128 * Threads.nthreads(),
         sigma_reg          = 0.5,
         verbose            = true,
-        initial_guess_only = false,
+        initial_guess      = nothing,
         initial_guess_args = Dict{Symbol,Any}(
             :refine_init_logϵ => true,
             :refine_init_logs => true,
@@ -644,11 +625,9 @@ function mle_biexp_epg(
         opt_args           = Dict{Symbol,Any}(),
     )
 
-    initial_guess = mle_biexp_epg_initial_guess(phys, cvae, img; initial_guess_args...)
-
-    # Optionally return initial guess only
-    if initial_guess_only
-        return initial_guess, nothing
+    # Compute initial guess if not given
+    if initial_guess === nothing
+        initial_guess = mle_biexp_epg_initial_guess(phys, img, cvae; initial_guess_args...)
     end
 
     num_optvars   = nmarginalized(phys)
@@ -735,7 +714,7 @@ function mle_biexp_epg(
                 solvetime               = @elapsed (minf, minx, ret) = NLopt.optimize(work.opt, work.x0)
                 f_mle_biexp_epg!(work, minx) # update `work` with solution
 
-                results.signalfit[:,j] .= work.epg.dc ./ maximum(work.epg.dc)
+                results.signalfit[:,j] .= work.epg.dc
                 results.theta[:,j]     .= mle_biexp_epg_x_to_θ(work, minx)
                 results.loss[j]         = work.neglogL[]
                 results.reg[j]          = work.reg[]

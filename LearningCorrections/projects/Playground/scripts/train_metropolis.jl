@@ -10,9 +10,11 @@ lib.initenv()
 lib.settings_template() = TOML.parse(
 """
 [data]
-    ntrain = "auto" # 102_400
-    ntest  = "auto" # 10_240
-    nval   = "auto" # 10_240
+    image_folders = [
+        "2019-10-28_48echo_8msTE_CPMG",
+        "2019-09-22_56echo_7msTE_CPMG",
+        "2021-05-07_NeurIPS2021_64echo_10msTE_MockBiexpEPG_CPMG",
+    ]
 
 [train]
     timeout     = 1e9 #TODO 10800.0
@@ -139,20 +141,11 @@ wandb_logger = lib.init_wandb_logger(settings; activate = _WANDB_, dryrun = fals
 
 lib.set_logdirname!()
 lib.clear_checkpointdir!()
-# lib.set_checkpointdir!(lib.projectdir("log", "2021-05-09-T-22-28-54-342"))
-# lib.set_checkpointdir!(lib.projectdir("log", "ignite-cvae-2021-01-05-T-13-45-23-425"))
-# lib.set_checkpointdir!(lib.projectdir("wandb", "latest-run", "files"))
-# lib.set_checkpointdir!(only(Glob.glob("run-*-3igrugah/files", lib.projectdir("wandb"))))
-# lib.set_checkpointdir!(only(Glob.glob("run-*-2e9prscm/files", lib.projectdir("wandb"))))
-# lib.set_checkpointdir!(only(Glob.glob("run-*-373tj1p0/files", lib.projectdir("wandb")))) # failed run
+lib.set_checkpointdir!(lib.projectdir("log", "2021-05-13-T-18-23-18-980"))
 
 lib.@save_expression lib.logdir("build_physics.jl") function build_physics()
-    # isdefined(Main, :phys) ? Main.phys : lib.EPGModel{Float32,false}(n = 64)
     isdefined(Main, :phys) ? Main.phys : lib.load_epgmodel_physics()
 end
-
-# TODO:
-# sample_batch
 
 lib.@save_expression lib.logdir("build_models.jl") function build_models(
         phys,
@@ -162,7 +155,8 @@ lib.@save_expression lib.logdir("build_models.jl") function build_models(
     )
     kws(keys...) = lib.make_kwargs(settings, keys...)
 
-    get!(models, "genatr") do; lib.init_isotropic_rician_generator(phys; kws("arch", "genatr")...); end
+    lib.initialize!(phys; seed = 0, kws("data")...)
+
     get!(models, "enc1") do; lib.init_mlp_cvae_enc1(phys; kws("arch", "enc1")...); end
     get!(models, "enc2") do; lib.init_mlp_cvae_enc2(phys; kws("arch", "enc2")...); end
     get!(models, "dec") do; lib.init_mlp_cvae_dec(phys; kws("arch", "dec")...); end
@@ -171,21 +165,22 @@ lib.@save_expression lib.logdir("build_models.jl") function build_models(
     derived["cvae"] = lib.derived_cvae(phys, models["enc1"], models["enc2"], models["dec"]; kws("arch")...)
     derived["vae_reg_loss"] = lib.VAEReg(models["vae_dec"]; regtype = settings["arch"]["vae_dec"]["regtype"])
 
-    # Pseudo labels for Y data
-    # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = lib.checkpointdir(), modelprefix = "best-")
-    # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-1p14e3na/files", lib.projectdir("wandb"))), modelprefix = "best-")
+    # Estimate mle labels using maximum likelihood estimation from pretrained cvae
+    derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = lib.checkpointdir(), modelprefix = "best-")
+    lib.compute_mle_labels!(phys, derived["pretrained_cvae"]; force_recompute = false)
+    lib.verify_mle_labels(phys)
 
-    # # Estimate pseudo labels using maximum likelihood estimation from pretrained cvae
-    # lib.pseudo_labels!(phys, derived["pretrained_cvae"]; force_recompute = false, initial_guess_only = false)
-    # lib.verify_pseudo_labels(phys, models["genatr"])
-
-    # Initialize pseudo labels as junk using initial guess of untrained cvae, optionally refining with MLE if `initial_guess_only = false`
-    lib.pseudo_labels!(phys, derived["cvae"]; force_recompute = false, initial_guess_only = false)
-    lib.verify_pseudo_labels(phys)
+    # # Estimate mle labels using random initial guess form the prior
+    # lib.compute_mle_labels!(phys; force_recompute = false)
+    # lib.verify_mle_labels(phys)
 
     # load mcmc labels, if they exist
-    lib.load_mcmc_labels!(phys, force_reload = false)
+    lib.load_mcmc_labels!(phys; force_reload = false)
     lib.verify_mcmc_labels(phys)
+
+    # Initial pseudo labels
+    lib.initialize_pseudo_labels!(phys; labelset = :prior)
+    lib.verify_pseudo_labels(phys)
 
     return models, derived
 end
@@ -235,12 +230,6 @@ function CVAElosses(Ymeta::lib.AbstractMetaDataSignal, θPseudo = nothing)
         θ = lib.sampleθprior(phys, lib.signal(Ymeta))
         X = lib.signal_model(phys, Ymeta, θ)
         X̂ = lib.add_noise_instance(phys, X, θ)
-
-        # Normalize inputs
-        X̂max = maximum(X̂; dims = 1)
-        X̂  ./= X̂max # normalize input signal to have max value 1
-        θ[end:end, :] .-= log.(X̂max) # shift log(scale) parameter accordingly
-
         X̂, θ
     end
 
@@ -265,7 +254,7 @@ function CVAElosses(Ymeta::lib.AbstractMetaDataSignal, θPseudo = nothing)
         Ymasked, Ymask = lib.pad_and_mask_signal(lib.signal(Ymeta), lib.nsignal(derived["cvae"]); minkept, maxkept = lib.nsignal(Ymeta))
         Ystate = lib.CVAETrainingState(derived["cvae"], Ymasked, θPseudo)
 
-        # CVAE loss from pseudolabels
+        # CVAE loss from pseudo labels
         KLDivPseudo, ELBOPseudo = lib.KL_and_ELBO(Ystate) # recover pseudo θ
         ℓ = push!!(ℓ, :KLDivPseudo => λ_pseudo * KLDivPseudo, :ELBOPseudo => λ_pseudo * ELBOPseudo)
 
@@ -305,38 +294,13 @@ function sample_batch(dataset::Symbol; batchsize::Int, img_idx = nothing)
     Y = Y |> to32
     Ymeta = lib.MetaCPMGSignal(phys, img, Y)
     if true
-        get!(img.meta[:pseudolabels][dataset], :negloglikelihood) do
-            θ = img.meta[:pseudolabels][dataset][:theta]
-            lib.zeros_similar(θ, 1, size(θ,2)) .= Inf
-        end
-        θPseudo = img.meta[:pseudolabels][dataset][:theta][:,J] |> to32
-        # ZPseudo = img.meta[:pseudolabels][dataset][:latent][:,J] |> to32
-        XPseudo = img.meta[:pseudolabels][dataset][:signalfit][:,J] |> to32
-        ℓPseudo = img.meta[:pseudolabels][dataset][:negloglikelihood][:,J] |> to32
-        # state = lib.posterior_state(phys, models["genatr"], derived["cvae"], Ymeta; miniter = 1, maxiter = 1, alpha = 0.0, verbose = false, mode = :maxlikelihood)
-        state = cvae_posterior(Ymeta)
-        logα = ℓPseudo .- state.ℓ # α = L(Y|θnew) / L(Y|θold) = exp(-logL(Y|θold) - -logL(Y|θnew))
-        logu = log.(lib.rand_similar(ℓPseudo)) # acceptance threshold: u <= α, where u ~ Uniform(0,1)
-        mask = logu .<= logα
-        θPseudo = ifelse.(mask, state.θ, θPseudo)
-        # ZPseudo = state.Z
-        # ZPseudo = ifelse.(mask, state.Z, ZPseudo)
-        XPseudo = ifelse.(mask, state.X, XPseudo)
-        ℓPseudo = ifelse.(mask, state.ℓ, ℓPseudo)
-        img.meta[:pseudolabels][dataset][:theta][:,J] = θPseudo |> lib.cpu
-        # img.meta[:pseudolabels][dataset][:latent][:,J] = ZPseudo |> lib.cpu
-        img.meta[:pseudolabels][dataset][:signalfit][:,J] = XPseudo |> lib.cpu
-        img.meta[:pseudolabels][dataset][:negloglikelihood][:,J] = ℓPseudo |> lib.cpu
-        # if !all(ℓPseudo .< 0)
-        #     θPseudo = ZPseudo = XPseudo = nothing
-        # end
+        XPseudo, θPseudo, _, _ = lib.update!(img.meta[:pseudo_labels][dataset][:mh_sampler], phys, derived["cvae"], Ymeta, J)
     elseif false #haskey(derived, "pretrained_cvae")
         θPseudo, _ = lib.sampleθZ(phys, derived["pretrained_cvae"], Ymeta; posterior_θ = true, posterior_Z = true, posterior_mode = false)
         XPseudo = lib.signal_model(phys, Ymeta, θPseudo)
     elseif false
-        θPseudo = img.meta[:pseudolabels][dataset][:theta][:,J] |> to32
-        # ZPseudo = img.meta[:pseudolabels][dataset][:latent][:,J] |> to32
-        XPseudo = img.meta[:pseudolabels][dataset][:signalfit][:,J] |> to32
+        θPseudo = img.meta[:mle_labels][dataset][:theta][:,J] |> to32
+        XPseudo = img.meta[:mle_labels][dataset][:signalfit][:,J] |> to32
     else
         θPseudo = XPseudo = nothing
     end
@@ -388,21 +352,20 @@ function cvae_posterior(Ymeta; kwargs...)
 end
 
 function fit_metrics(Ymeta, Ymeta_fit_state, θtrue)
-    @unpack X̂, θ, X, δ, ϵ, ν, ℓ = Ymeta_fit_state
-    all_rmse = sqrt.(mean(abs2, lib.signal(Ymeta) .- ν; dims = 1)) |> lib.cpu |> vec |> copy
+    @unpack X̂, θ, X, ℓ = Ymeta_fit_state
+    all_rmse = sqrt.(mean(abs2, lib.signal(Ymeta) .- X; dims = 1)) |> lib.cpu |> vec |> copy
     all_logL = ℓ |> lib.cpu |> vec |> copy
     rmse, logL = mean(all_rmse), mean(all_logL)
     theta_err = (θtrue === nothing) ? missing : mean(abs, lib.θerror(phys, θtrue, θ); dims = 2) |> lib.cpu |> vec |> copy
 
     @timeit "mle noise fit" begin
-        _, results = lib.mle_biexp_epg_noise_only(ν, lib.signal(Ymeta); batch_size = :, verbose = false)
+        _, results = lib.mle_biexp_epg_noise_only(X, lib.signal(Ymeta); batch_size = :, verbose = false)
         logL_opt = mean(results.loss)
     end
 
     metrics = (; all_rmse, all_logL, rmse, logL, logL_opt, theta_err, rmse_true = missing, logL_true = missing)
-    cache_cb_args = (lib.signal(Ymeta), θ, X, δ, ϵ, ν, X̂, missing) # νtrue
 
-    return metrics, cache_cb_args
+    return metrics
 end
 
 function compute_metrics(engine, batch; dataset)
@@ -437,7 +400,11 @@ function compute_metrics(engine, batch; dataset)
         X̂_fit_state = cvae_posterior(X̂meta)
 
         # TODO: sampling likelihood
-        accum!((; Ysample_logL = mean(filter(!isinf, img.meta[:pseudolabels][dataset][:negloglikelihood]))))
+        let
+            s = img.meta[:pseudo_labels][dataset][:mh_sampler]
+            ℓ = s.neglogPXθ[:, lib.buffer_indices(s)]
+            accum!((; Ysample_logL = mean(filter(!isinf, vec(ℓ)))))
+        end
 
         let
             ℓ_CVAE = CVAElosses(Ymeta, θPseudo)
@@ -447,7 +414,7 @@ function compute_metrics(engine, batch; dataset)
 
         # Cache values for evaluating CVAE performance for estimating parameters of Y
         let
-            Y_metrics, Y_cache_cb_args = fit_metrics(Ymeta, Y_fit_state, θPseudo)
+            Y_metrics = fit_metrics(Ymeta, Y_fit_state, θPseudo)
             cb_state["metrics"]["all_Yhat_rmse"] = Y_metrics.all_rmse
             cb_state["metrics"]["all_Yhat_logL"] = Y_metrics.all_logL
             accum!(Dict(Symbol(:Yhat_, k) => v for (k,v) in pairs(Y_metrics) if k ∉ (:all_rmse, :all_logL) && !ismissing(v)))
@@ -455,7 +422,7 @@ function compute_metrics(engine, batch; dataset)
 
         # Cache values for evaluating CVAE performance for estimating parameters of X̂
         let
-            X̂_metrics, X̂_cache_cb_args = fit_metrics(X̂meta, X̂_fit_state, Y_fit_state.θ)
+            X̂_metrics = fit_metrics(X̂meta, X̂_fit_state, Y_fit_state.θ)
             cb_state["metrics"]["all_Xhat_rmse"] = X̂_metrics.all_rmse
             cb_state["metrics"]["all_Xhat_logL"] = X̂_metrics.all_logL
             accum!(Dict(Symbol(:Xhat_, k) => v for (k,v) in pairs(X̂_metrics) if k ∉ (:all_rmse, :all_logL) && !ismissing(v)))

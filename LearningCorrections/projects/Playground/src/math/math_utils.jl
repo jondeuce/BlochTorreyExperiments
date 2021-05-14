@@ -167,7 +167,13 @@ function cdf_distance(p, u_values, v_values, u_weights = nothing, v_weights = no
             sum(@. abs(u_cdf - v_cdf) * deltas)
         elseif p == 2
             sqrt(sum(@. (u_cdf - v_cdf)^2 * deltas))
-        else
+        elseif p == Inf
+            maximum(@. abs(u_cdf - v_cdf))
+        elseif p > 1
+            Δcdf_max = maximum(@. abs(u_cdf - v_cdf))
+            Δcdf_max == 0 ? zero(Δcdf_max) :
+                Δcdf_max * sum(@. (abs(u_cdf - v_cdf) / Δcdf_max)^p * deltas)^inv(p)
+        else # p < 1
             sum(@. abs(u_cdf - v_cdf)^p * deltas)^inv(p)
         end
     end
@@ -251,7 +257,13 @@ function cdf_distance!(buf::CDFDistanceBuffer, p, u_values, v_values, u_weights 
             sum(i -> abs(buf.u_cdf[i] - buf.v_cdf[i]) * buf.deltas[i], 1:2*buf.n-1)
         elseif p == 2
             sqrt(sum(i -> (buf.u_cdf[i] - buf.v_cdf[i])^2 * buf.deltas[i], 1:2*buf.n-1))
-        else
+        elseif p == Inf
+            maximum(i -> abs(buf.u_cdf[i] - buf.v_cdf[i]), 1:2*buf.n-1)
+        elseif p > 1
+            Δcdf_max = maximum(i -> abs(buf.u_cdf[i] - buf.v_cdf[i]), 1:2*buf.n-1)
+            Δcdf_max == 0 ? zero(Δcdf_max) :
+                Δcdf_max * sum(i -> (abs(buf.u_cdf[i] - buf.v_cdf[i]) / Δcdf_max)^p * buf.deltas[i], 1:2*buf.n-1)^inv(p)
+        else # p < 1
             sum(i -> abs(buf.u_cdf[i] - buf.v_cdf[i])^p * buf.deltas[i], 1:2*buf.n-1)^inv(p)
         end
     end
@@ -277,6 +289,7 @@ function _test_cdf_distance(; bench = false)
     cnt = 0
     while true
         n = (bench && cnt == 0) ? 100 : rand(1:5)
+        p = 10^rand()
         u = randn(n)
         v = randn(n)
         uw = rand(n)
@@ -290,6 +303,8 @@ function _test_cdf_distance(; bench = false)
         @assert energy_distance(u,v,uw,vw) ≈ scipy.stats.energy_distance(u,v,uw,vw)
         @assert energy_distance!(buf,u,v) ≈ scipy.stats.energy_distance(u,v)
         @assert energy_distance!(buf,u,v,uw,vw) ≈ scipy.stats.energy_distance(u,v,uw,vw)
+        @assert cdf_distance(p,u,v) ≈ cdf_distance!(buf,p,u,v)
+        @assert cdf_distance(p,u,v,uw,vw) ≈ cdf_distance!(buf,p,u,v,uw,vw)
 
         if bench && cnt == 0
             @btime wasserstein_distance!($buf,$u,$v)
