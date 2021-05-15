@@ -493,32 +493,34 @@ function load_mcmc_labels!(
         haskey(img.meta, :mcmc_labels) && !force_reload && continue
         img.meta[:mcmc_labels] = Dict{Symbol,Any}()
 
+        # Load MCMC params
+        labels_file = joinpath(img.meta[:info]["folder_path"], img.meta[:info]["mcmc_labels_path"])
+        if !isfile(labels_file)
+            @info "MCMC data for does not exist (image = $i): $(img.meta[:info]["folder_path"])"
+            continue
+        else
+            @info labels_file
+            @info "Loading MCMC data (image = $i):"
+        end
+        @time labels_data = DECAES.MAT.matread(labels_file)
+
+        mcmc_param_names  = ["alpha", "beta", "eta", "delta1", "delta2", "logepsilon", "logscale"]
+        num_params        = length(mcmc_param_names)
+        total_samples     = length(labels_data["iteration"])
+        samples_per_chain = maximum(labels_data["iteration"])
+        num_signals       = total_samples ÷ samples_per_chain
+        x_index           = labels_data["image_x"][1 : samples_per_chain : end]
+        y_index           = labels_data["image_y"][1 : samples_per_chain : end]
+        z_index           = labels_data["image_z"][1 : samples_per_chain : end]
+        labels_map        = Dict(CartesianIndex.(x_index, y_index, z_index) .=> 1:num_signals)
+
         for dataset in [:train, :val, :test]
-            if !haskey(img.meta[:info], "mcmc_labels_path")
-                @info "MCMC directory does not exist: $(img.meta[:info]["folder_path"])"
-                continue
+            # Fetch theta for each partition
+            theta = mapreduce(vcat, enumerate(mcmc_param_names)) do (i, param_name)
+                mapped_indices = (I -> labels_map[I]).(img.indices[dataset])
+                θ = reshape(labels_data[param_name], samples_per_chain, :)[:, mapped_indices] .|> T
+                θ = permutedims(reshape(θ, samples_per_chain, :, 1), (3,2,1))
             end
-
-            # Load MCMC params
-            labels_file = filter(path -> startswith(basename(path), "dataset-$(dataset)"), img.meta[:info]["mcmc_labels_path"])
-            if isempty(labels_file)
-                @info "MCMC data for does not exist (image = $i, dataset = $dataset): $(img.meta[:info]["folder_path"])"
-                continue
-            else
-                labels_file = joinpath(img.meta[:info]["folder_path"], only(labels_file))
-                @info "Loading MCMC data (image = $i, dataset = $dataset):"
-            end
-
-            mcmc_param_names = ["alpha", "beta", "eta", "delta1", "delta2", "logepsilon", "logscale"]
-            num_params = length(mcmc_param_names)
-            num_signals = size(img.partitions[dataset], 2)
-            num_mcmc_samples = 100
-            theta = fill(T(NaN), num_params, num_signals, num_mcmc_samples)
-
-            # Load mcmc samples
-            @time labels_data = DECAES.MAT.matread(labels_file)
-            idx = CartesianIndex.(tuple.(labels_data["dataset_col"], labels_data["iteration"]))
-            theta[:, idx] .= reduce(vcat, [labels_data[p]' for p in mcmc_param_names])
 
             # Compute epg signal model
             @time X = signal_model(phys, img, theta[:,:,end])

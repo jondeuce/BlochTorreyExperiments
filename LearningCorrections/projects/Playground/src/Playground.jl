@@ -90,7 +90,7 @@ end
 
 function initenv()
     # Plotting defaults
-    pyplot(size=(800,600))
+    pyplot(size=(1200,900))
 
     # Environment variable defaults
     get!(ENV, "JL_DISABLE_GPU", "0")

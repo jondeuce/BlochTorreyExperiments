@@ -336,7 +336,6 @@ function update!(s::OnlineMetropolisSampler, θ′::A, neglogPXθ′::A, neglogP
 
     # Update theta, negative log likelihoods, and negative log priors with accepted points,
     # increment sample counters, and copy updated values into sample caches
-    # accepted_slice = CartesianIndex.(J[accept], mod1.(s.i[J[accept]], s.n))
     θ[:, accept]         .= θ′[:, accept]
     neglogPXθ[:, accept] .= neglogPXθ′[:, accept]
     neglogPθ[:, accept]  .= neglogPθ′[:, accept]

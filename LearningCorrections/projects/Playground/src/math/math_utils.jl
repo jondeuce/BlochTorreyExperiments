@@ -196,8 +196,10 @@ struct CDFDistanceBuffer{T}
 end
 function CDFDistanceBuffer(u::AbstractVector{T}, v::AbstractVector{T}) where {T}
     @assert length(u) == length(v)
-    n = length(u)
-    CDFDistanceBuffer(n, copy(u), copy(v), zeros(Int, n), zeros(Int, n), zeros(T, 2n), zeros(T, 2n-1), zeros(Int, 2n-1), zeros(Int, 2n-1), zeros(T, n+1), zeros(T, n+1), zeros(T, 2n-1), zeros(T, 2n-1))
+    CDFDistanceBuffer{T}(length(u))
+end
+function CDFDistanceBuffer{T}(n::Int) where {T}
+    CDFDistanceBuffer(n, zeros(T, n), zeros(T, n), zeros(Int, n), zeros(Int, n), zeros(T, 2n), zeros(T, 2n-1), zeros(Int, 2n-1), zeros(Int, 2n-1), zeros(T, n+1), zeros(T, n+1), zeros(T, 2n-1), zeros(T, 2n-1))
 end
 
 function cdf_distance!(buf::CDFDistanceBuffer, p, u_values, v_values, u_weights = nothing, v_weights = nothing)
@@ -267,6 +269,24 @@ function cdf_distance!(buf::CDFDistanceBuffer, p, u_values, v_values, u_weights 
             sum(i -> abs(buf.u_cdf[i] - buf.v_cdf[i])^p * buf.deltas[i], 1:2*buf.n-1)^inv(p)
         end
     end
+end
+
+function cdf_distance(p::Tuple, θ₁::AbstractArray{T}, θ₂::AbstractArray{T,3}) where {T}
+    @assert size(θ₁) == size(θ₂)
+    ntheta, ndata, nsamples  = size(θ₁)
+    bufs = [(u = zeros(T, nsamples), v = zeros(T, nsamples), buf = CDFDistanceBuffer{T}(nsamples)) for _ in 1:Threads.nthreads()]
+    dists = fill(ntuple(_->zero(T), length(p)), ntheta, ndata)
+    DECAES.tforeach(1:ndata; blocksize = 4 * Threads.nthreads()) do j
+        @unpack u, v, buf = bufs[Threads.threadid()]
+        @inbounds for i in 1:ntheta
+            @simd for k in 1:nsamples
+                u[k] = θ₁[i, j, k]
+                v[k] = θ₂[i, j, k]
+            end
+            dists[i,j] = cdf_distance!(buf, p, u, v)
+        end
+    end
+    return dists
 end
 
 """
