@@ -6,6 +6,7 @@ using DrWatson: @quickactivate
 @quickactivate "Playground"
 using Playground
 lib.initenv()
+Plots.gr()
 
 lib.settings_template() = TOML.parse(
 """
@@ -112,12 +113,16 @@ lib.@save_expression lib.logdir("build_models.jl") function build_models(
     # lib.compute_mle_labels!(phys; force_recompute = false)
     # lib.verify_mle_labels(phys)
 
+    # load true labels, if they exist
+    lib.load_true_labels!(phys; force_reload = false)
+    lib.verify_true_labels(phys)
+
     # load mcmc labels, if they exist
-    lib.load_mcmc_labels!(phys; force_reload = true)
+    lib.load_mcmc_labels!(phys; force_reload = false)
     lib.verify_mcmc_labels(phys)
 
     # Initial pseudo labels
-    lib.initialize_pseudo_labels!(phys; labelset = :mcmc)
+    lib.initialize_pseudo_labels!(phys; labelset = :prior) #TODO make flag
     lib.verify_pseudo_labels(phys)
 
     return models, derived
@@ -141,6 +146,15 @@ models, derived = build_models(phys, settings)
 optimizers = build_optimizers(phys, settings, models)
 lib.save_snapshot(settings, models)
 
+# Global logger
+logger = DataFrame(
+    :epoch      => Int[],
+    :iter       => Int[],
+    :time       => Float64[],
+    :dataset    => Symbol[],
+    :img_idx    => Int[],
+)
+
 ####
 #### CVAE
 ####
@@ -153,14 +167,14 @@ function CVAElosses(Y, θ)
 
     # Cross-entropy loss function components
     Ymasked, Ymask = lib.pad_and_mask_signal(Y, lib.nsignal(derived["cvae"]); minkept = minkept, maxkept = lib.nsignal(derived["cvae"]))
-    Ystate = lib.CVAETrainingState(derived["cvae"], Ymasked, θ)
-    KLDiv, ELBO = lib.KL_and_ELBO(Ystate)
+    Ystate         = lib.CVAETrainingState(derived["cvae"], Ymasked, θ)
+    KLDiv, ELBO    = lib.KL_and_ELBO(Ystate)
     ℓ = (; KLDiv, ELBO)
 
     if λ_latent > 0
         # Regularize latent variables such that their distribution *across the dataset* tends toward unit normal
         Reg = lib.EnsembleKLDivUnitGaussian(Ystate.μq0, Ystate.logσq)
-        ℓ = push!!(ℓ, :LatentReg => λ_latent * Reg)
+        ℓ   = push!!(ℓ, :LatentReg => λ_latent * Reg)
     end
 
     if λ_vae_sim > 0
@@ -171,6 +185,86 @@ function CVAElosses(Y, θ)
     end
 
     return ℓ
+end
+
+# Update image pseudolabels
+function update_pseudolabels(; dataset::Symbol)
+    for img in phys.images
+        @unpack mh_sampler = img.meta[:pseudo_labels][dataset]
+        lib.update!(mh_sampler, phys, derived["cvae"], img; dataset, gpu_batch_size = 32768)
+    end
+end
+
+####
+#### Training
+####
+
+function sample_batch(batch; dataset::Symbol, batchsize::Int, signalfit::Bool = false)
+
+    # Batch contains an index into the list of images
+    img_idx = batch isa Int ? batch : only(lib.p2j_array(only(batch))) |> Int
+
+    if img_idx == 0
+        # Sentinel value signaling to use simulated data, generated from θ sampled from the prior
+        img = img_cols = Ymeta = nothing
+        θ = lib.sampleθprior(phys, Matrix{Float32}, batchsize)
+        X = lib.signal_model(phys, θ) # faster to run on cpu; move to gpu afterward
+        θ = θ |> to32
+        X = X |> to32
+        Y = lib.add_noise_instance(phys, X, θ)
+        Ymax = maximum(Y; dims = 1)
+        Y ./= Ymax
+        X ./= Ymax
+        θ[7:7, ..] .= clamp.(θ[7:7, ..] .- log.(Ymax), -2.5f0, 2.5f0)
+
+    else
+        # Sample signals from the image
+        img   = phys.images[img_idx]
+        Y_cpu, img_cols = lib.sample_columns(img.partitions[dataset], batchsize; replace = false)
+        Y     = Y_cpu |> to32
+        Ymeta = lib.MetaCPMGSignal(phys, img, Y)
+
+        if settings["train"]["labels"]["pseudo"]::Bool
+            # Train using pseudo labels from the Metropolis-Hastings sampler
+            @unpack mh_sampler = img.meta[:pseudo_labels][dataset]
+            let
+                θ′, _      = lib.sampleθZposterior(derived["cvae"], Y)
+                θ′_cpu     = θ′ |> lib.cpu
+                X′_cpu     = lib.signal_model(phys, img, θ′_cpu)
+                neglogPXθ′ = lib.negloglikelihood(phys, Y_cpu, X′_cpu, θ′_cpu)
+                neglogPθ′  = lib.neglogprior(phys, θ′_cpu)
+                lib.update!(mh_sampler, θ′_cpu, neglogPXθ′, neglogPθ′, img_cols)
+            end
+            θ = mh_sampler.θ[:, lib.buffer_indices(mh_sampler, img_cols)]
+            # θ, _, _ = rand(mh_sampler, img_cols)
+            X = !signalfit ? nothing : lib.signal_model(phys, θ) # faster to run on cpu; move to gpu afterward
+            θ = θ |> to32
+            X = !signalfit ? nothing : (X |> to32)
+
+        elseif settings["train"]["labels"]["mcmc"]::Bool
+            # Train using labels drawn from precomputed MCMC chains
+            θ = img.meta[:mcmc_labels][dataset][:theta][:, img_cols, rand(1:end)]
+            X = !signalfit ? nothing : lib.signal_model(phys, img, θ) # faster to run on cpu; move to gpu afterward
+            θ = θ |> to32
+            X = !signalfit ? nothing : (X |> to32)
+
+        elseif settings["train"]["labels"]["mle"]::Bool
+            # Train using precomputed MLE labels
+            θ = img.meta[:mle_labels][dataset][:theta][:, img_cols] |> to32
+            X = !signalfit ? nothing : img.meta[:mle_labels][dataset][:signalfit][:, img_cols] |> to32
+
+        elseif settings["train"]["labels"]["pretrained"]::Bool
+            # Train using pseudo labels drawn from a pretrained CVAE
+            @assert haskey(derived, "pretrained_cvae")
+            θ, _ = lib.sampleθZposterior(derived["pretrained_cvae"], signal(Ymeta))
+            X = !signalfit ? nothing : lib.signal_model(phys, img, θ) # theta already on gpu
+
+        else
+            error("No labels chosen")
+        end
+    end
+
+    return out = (; img, img_idx, img_cols, Ymeta, Y, X, θ)
 end
 
 function train_step(engine, batch)
@@ -215,77 +309,6 @@ function train_step(engine, batch)
     return outputs
 end
 
-####
-#### Training
-####
-
-# Global logger
-logger = DataFrame(
-    :epoch      => Int[],
-    :iter       => Int[],
-    :dataset    => Symbol[],
-    :img_idx    => Int[],
-    :time       => Float64[],
-)
-
-tensor_dataset(x) = torch.utils.data.TensorDataset(lib.j2p_array(x))
-image_indices_dataset(nbatches, use_simulated = true) = repeat(!use_simulated : length(phys.images), nbatches) |> tensor_dataset
-train_loader = torch.utils.data.DataLoader(image_indices_dataset(settings["train"]["nbatches"], settings["train"]["labels"]["simulated"]); shuffle = true)
-val_eval_loader = torch.utils.data.DataLoader(image_indices_dataset(settings["eval"]["nbatches"]); shuffle = false)
-train_eval_loader = torch.utils.data.DataLoader(image_indices_dataset(settings["eval"]["nbatches"]); shuffle = false)
-
-function sample_batch(batch; dataset::Symbol, batchsize::Int)
-
-    # Batch contains an index into the list of images
-    img_idx = batch isa Int ? batch : only(lib.p2j_array(only(batch))) |> Int
-
-    if img_idx == 0
-        # Sentinel value signaling to use simulated data, generated from θ sampled from the prior
-        img = img_cols = Ymeta = nothing
-        θ = lib.sampleθprior(phys, CuMatrix{Float32}, batchsize)
-        X = lib.signal_model(phys, θ)
-        Y = lib.add_noise_instance(phys, X, θ)
-        Ymax = maximum(Y; dims = 1)
-        Y ./= Ymax
-        X ./= Ymax
-        θ[7:7, ..] .= clamp.(θ[7:7, ..] .- log.(Ymax), -2.5f0, 2.5f0)
-
-    else
-        # Sample signals from the image
-        img = phys.images[img_idx]
-        Y, img_cols = lib.sample_columns(img.partitions[dataset], batchsize; replace = false)
-        Y = Y |> to32
-        Ymeta = lib.MetaCPMGSignal(phys, img, Y)
-
-        if settings["train"]["labels"]["pseudo"]::Bool
-            # Train using pseudo labels from the Metropolis-Hastings sampler
-            @unpack mh_sampler = img.meta[:pseudo_labels][dataset]
-            X, θ, _, _ = lib.update!(mh_sampler, phys, derived["cvae"], Ymeta, img_cols)
-
-        elseif settings["train"]["labels"]["mcmc"]::Bool
-            # Train using labels drawn from precomputed MCMC chains
-            θ = img.meta[:mcmc_labels][dataset][:theta][:, img_cols, rand(1:end)] |> to32
-            X = lib.signal_model(phys, Ymeta, θ)
-
-        elseif settings["train"]["labels"]["mle"]::Bool
-            # Train using precomputed MLE labels
-            θ = img.meta[:mle_labels][dataset][:theta][:, img_cols] |> to32
-            X = img.meta[:mle_labels][dataset][:signalfit][:, img_cols] |> to32
-
-        elseif settings["train"]["labels"]["pretrained"]::Bool
-            # Train using pseudo labels drawn from a pretrained CVAE
-            @assert haskey(derived, "pretrained_cvae")
-            θ, _ = lib.sampleθZ(phys, derived["pretrained_cvae"], Ymeta; posterior_θ = true, posterior_Z = true, posterior_mode = false)
-            X = lib.signal_model(phys, Ymeta, θ)
-
-        else
-            error("No labels chosen")
-        end
-    end
-
-    return out = (; img, img_idx, img_cols, Ymeta, Y, X, θ)
-end
-
 function compute_metrics(engine, batch; dataset)
     outputs = Dict{Any,Any}()
     trainer.should_terminate && return outputs
@@ -294,20 +317,36 @@ function compute_metrics(engine, batch; dataset)
         @unpack img, img_idx, img_cols, Ymeta, Y, X, θ = sample_batch(batch; dataset = dataset, batchsize = settings["eval"]["batchsize"]::Int)
     end
 
+    # helper function for cdf distances
+    function mcmc_cdf_distances(θ₁, θ₂)
+        dists    = lib.cdf_distance((1, 2), θ₁, θ₂) # array of tuples of ℓ₁ and ℓ₂ distances between the empirical cdf's
+        dists    = mean(reinterpret(DECAES.SVector{2,eltype(eltype(dists))}, dists); dims = 2) # mean over SVector's is defined, but not over Tuple's, hence the reinterpret
+        θ_widths = lib.θupper(phys) .- lib.θlower(phys)
+        ℓ₁       = (x->x[1]).(dists) ./ θ_widths # scale to range [0,1]
+        ℓ₂       = (x->x[2]).(dists) ./ sqrt.(θ_widths) # scale to range [0,1]
+        return (L1 = ℓ₁, L2 = ℓ₂)
+    end
+
     # Update callback state
     metrics = Dict{Symbol,Any}()
     metrics[:epoch]   = trainer.state.epoch
     metrics[:iter]    = trainer.state.iteration
+    metrics[:time]    = time()
     metrics[:dataset] = dataset
     metrics[:img_idx] = img_idx
-    metrics[:time]    = time()
 
     # Inference using CVAE
     @timeit "sample cvae" begin
-        θ′, _ = lib.sampleθZposterior(derived["cvae"], Y)
-        X′ = img_idx == 0 ? lib.signal_model(phys, θ′) : lib.signal_model(phys, Ymeta, θ′)
-        X′ = lib.clamp_dim1(Y, X′)
-        # Y′ = add_noise_instance(phys, X′, θ′)
+        θ′_sampler = lib.θZposterior_sampler(derived["cvae"], Y)
+        θ′_mode, _ = θ′_sampler(mode = true)
+        X′_mode    = img_idx == 0 ? lib.signal_model(phys, θ′_mode) : lib.signal_model(phys, img, θ′_mode)
+        X′_mode    = lib.clamp_dim1(Y, X′_mode)
+        Y′         = lib.add_noise_instance(phys, X′_mode, θ′_mode)
+        θ′_samples = zeros(Float32, size(θ′_mode)..., 100)
+        for i in 1:size(θ′_samples, 3)
+            local θ′, _ = θ′_sampler()
+            θ′_samples[:,:,i] .= θ′ |> lib.arr32
+        end
     end
 
     # CVAE losses
@@ -321,17 +360,22 @@ function compute_metrics(engine, batch; dataset)
 
     # Goodness of fit metrics for CVAE posterior samples
     @timeit "goodness of fit metrics" let
-        metrics[:CVAE_rmse] = sqrt(mean(abs2, Y .- X′))
-        metrics[:CVAE_logL] = mean(lib.negloglikelihood(phys, Y, X′, θ′))
+        metrics[:rmse_CVAE] = sqrt(mean(abs2, Y .- X′_mode))
+        metrics[:logL_CVAE] = mean(lib.negloglikelihood(phys, Y, X′_mode, θ′_mode))
     end
 
-    # Error metrics w.r.t true labels
-    img_idx === 0 && @timeit "true label metrics" let
-        # Record cdf distance metrics
-        θwidths = lib.θupper(phys) .- lib.θlower(phys)
-        θerrs   = abs.(θ .- θ′) |> lib.cpu
-        for (i, lab) in enumerate(lib.θasciilabels(phys))
-            metrics[Symbol("$(lab)_err")] = 100 * θerrs[i] / θwidths[i]
+    # CVAE parameter cdf distances w.r.t. ground truth mcmc
+    img_idx !== 0 && @timeit "cvae cdf distances" let
+        θ_mcmc  = img.meta[:mcmc_labels][dataset][:theta]
+        θ_dists = mcmc_cdf_distances(θ_mcmc[:, img_cols, :], θ′_samples)
+        for (i, lab) in enumerate(lib.θasciilabels(phys)), (ℓ_name, ℓ) in pairs(θ_dists)
+            metrics[Symbol("$(lab)_$(ℓ_name)_CVAE")] = ℓ[i]
+        end
+
+        @unpack mh_sampler = img.meta[:pseudo_labels][dataset]
+        θ_dists = mcmc_cdf_distances(mh_sampler.θ[:, img_cols, :], θ′_samples)
+        for (i, lab) in enumerate(lib.θasciilabels(phys)), (ℓ_name, ℓ) in pairs(θ_dists)
+            metrics[Symbol("$(lab)_$(ℓ_name)_Self")] = ℓ[i]
         end
     end
 
@@ -340,19 +384,38 @@ function compute_metrics(engine, batch; dataset)
         # Record current negative log likelihood of pseudo labels
         @unpack mh_sampler = img.meta[:pseudo_labels][dataset]
         neglogPXθ = mh_sampler.neglogPXθ[:, lib.buffer_indices(mh_sampler)]
-        metrics[:Pseudo_logL] = mean(filter(!isinf, vec(neglogPXθ)))
+        metrics[:logL_Pseudo] = mean(filter(!isinf, vec(neglogPXθ)))
 
         # Record cdf distance metrics
-        θwidths  = lib.θupper(phys) .- lib.θlower(phys)
-        θ_mcmc   = img.meta[:mcmc_labels][dataset][:theta]
-        θ_pseudo = mh_sampler.θ
-        dists    = lib.cdf_distance((1, 2), θ_mcmc, θ_pseudo)
-        dists    = mean(reinterpret(DECAES.SVector{2,eltype(θ_mcmc)}, dists); dims = 2) # reinterpret since mean over tuples isn't defined, but mean over SVector's is
-        ℓ₁       = (x->x[1]).(dists) ./ θwidths # scale to range [0,1]
-        ℓ₂       = (x->x[2]).(dists) ./ sqrt.(θwidths) # scale to range [0,1]
+        θ_mcmc  = img.meta[:mcmc_labels][dataset][:theta]
+        θ_dists = mcmc_cdf_distances(θ_mcmc, mh_sampler.θ)
+        for (i, lab) in enumerate(lib.θasciilabels(phys)), (ℓ_name, ℓ) in pairs(θ_dists)
+            metrics[Symbol("$(lab)_$(ℓ_name)_Pseudo")] = ℓ[i]
+        end
+    end
+
+    # Error metrics w.r.t true labels
+    haskey(img.meta, :true_labels) && @timeit "true label metrics" let
+        θ_true   = img.meta[:true_labels][dataset][:theta][:, img_cols]
+        θ_widths = lib.θupper(phys) .- lib.θlower(phys)
+
+        # Error of CVAE mode
+        θ_errs   = mean(abs, θ_true .- lib.cpu(θ′_mode); dims = 2)
         for (i, lab) in enumerate(lib.θasciilabels(phys))
-            metrics[Symbol("$(lab)_L1")] = ℓ₁[i]
-            metrics[Symbol("$(lab)_L2")] = ℓ₂[i]
+            metrics[Symbol("$(lab)_mode_CVAE")] = 100 * θ_errs[i] / θ_widths[i]
+        end
+
+        # Error of CVAE mean
+        θ_errs   = mean(abs, θ_true .- mean(θ′_samples; dims = 3); dims = 2)
+        for (i, lab) in enumerate(lib.θasciilabels(phys))
+            metrics[Symbol("$(lab)_mean_CVAE")] = 100 * θ_errs[i] / θ_widths[i]
+        end
+
+        # Error of mean pseudo labels
+        @unpack mh_sampler = img.meta[:pseudo_labels][dataset]
+        θ_errs   = mean(abs, θ_true .- mean(mh_sampler.θ[:, img_cols, :]; dims = 3); dims = 2)
+        for (i, lab) in enumerate(lib.θasciilabels(phys))
+            metrics[Symbol("$(lab)_mean_Pseudo")] = 100 * θ_errs[i] / θ_widths[i]
         end
     end
 
@@ -361,7 +424,7 @@ function compute_metrics(engine, batch; dataset)
 
     # Return metrics for W&B logging
     for (k,v) in metrics
-        k ∈ [:epoch, :iter, :dataset, :time] && continue # output non-housekeeping metrics
+        k ∈ [:epoch, :iter, :time, :dataset] && continue # output non-housekeeping metrics
         ismissing(v) && continue # return non-missing metrics (wandb cannot handle missing)
         outputs["$k"] = v
     end
@@ -371,28 +434,47 @@ end
 
 function make_plots(;showplot = false)
     trainer.should_terminate && return Dict{Symbol,Any}()
+    plots  = Dict{String, Any}()
+    groups = DataFrames.groupby(logger, [:dataset, :img_idx]) |> pairs
     try
-        plots  = Dict{String, Any}()
-        groups = DataFrames.groupby(logger, [:dataset, :img_idx]) |> pairs
         for (group_key, group) in groups
             ps = Any[]
-            cols_iterator = group[!, DataFrames.Not([:epoch, :iter, :dataset, :time, :img_idx])] |> eachcol |> pairs |> collect
+            cols_iterator = group[!, DataFrames.Not([:epoch, :iter, :time, :dataset, :img_idx])] |> eachcol |> pairs |> collect |> iter -> sort(iter; by = first)
             for (colname, col) in cols_iterator
-                I = findall(x -> !ismissing(x) && !isnan(x) && !isinf(x), col)
-                isempty(I) && continue
+                I   = (x -> !ismissing(x) && !isnan(x) && !isinf(x)).(col)
+                I .&= max(first(group.epoch), min(100, last(group.epoch)-100)) .<= group.epoch
+                !any(I) && continue
                 epochs, col = group.epoch[I], col[I]
-                p = plot(epochs, col; label = :none, title = "$colname", titlefontsize = 10)
-                !isempty(epochs) && first(epochs) >= 100 && Plots.xaxis!(p, xlims = (100, Inf))
-                !isempty(epochs) && last(epochs) >= 1000 && Plots.xaxis!(p, scale = :log10)
+                p = plot(
+                    epochs, col;
+                    label = :none, title = "$colname",
+                    titlefontsize = 10, xtickfontsize = 8, ytickfontsize = 8,
+                    xlims = (min(first(epochs), 100), last(epochs)),
+                    xscale = last(epochs) < 1000 ? :identity : :log10,
+                    xformatter = x -> round(Int, x),
+                )
                 push!(ps, p)
             end
-            plots["$(group_key.dataset)-losses-$(group_key.img_idx)"] = plot(ps...)
+            p = plot(ps...; size = max.((800,600), ceil(sqrt(length(ps))) .* (240,180)))
+            showplot && display(p)
+            plots["$(group_key.dataset)-losses-$(group_key.img_idx)"] = p
         end
         return plots
     catch e
         lib.handle_interrupt(e; msg = "Error plotting")
     end
 end
+
+####
+#### Data loaders, callbacks, and events
+####
+
+tensor_dataset(x) = torch.utils.data.TensorDataset(lib.j2p_array(x))
+image_indices_dataset(nbatches, use_simulated) = repeat(!use_simulated : length(phys.images), nbatches) |> tensor_dataset
+
+train_loader = torch.utils.data.DataLoader(image_indices_dataset(settings["train"]["nbatches"], settings["train"]["labels"]["simulated"]); shuffle = true)
+val_eval_loader = torch.utils.data.DataLoader(image_indices_dataset(settings["eval"]["nbatches"], settings["train"]["labels"]["simulated"]); shuffle = false)
+train_eval_loader = torch.utils.data.DataLoader(image_indices_dataset(settings["eval"]["nbatches"], settings["train"]["labels"]["simulated"]); shuffle = false)
 
 trainer = ignite.engine.Engine(@j2p (args...) -> @timeit "train step" train_step(args...))
 trainer.logger = ignite.utils.setup_logger("trainer")
@@ -402,10 +484,6 @@ val_evaluator.logger = ignite.utils.setup_logger("val_evaluator")
 
 train_evaluator = ignite.engine.Engine(@j2p (args...) -> @timeit "train metrics" compute_metrics(args...; dataset = :train))
 train_evaluator.logger = ignite.utils.setup_logger("train_evaluator")
-
-####
-#### Events
-####
 
 Events = ignite.engine.Events
 
@@ -424,11 +502,21 @@ trainer.add_event_handler(
     end
 )
 
-# Compute callback metrics
+# Update pseudolabels
+trainer.add_event_handler(
+    Events.EPOCH_COMPLETED(every = 10),
+    @j2p function (engine)
+        # @timeit "update train pseudo labels" update_pseudolabels(; dataset = :train) # updated during training
+        @timeit "update val pseudo labels" update_pseudolabels(; dataset = :val)
+    end
+)
+
+# Evaluator events
 trainer.add_event_handler(
     Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["valsaveperiod"])),
     @j2p (engine) -> val_evaluator.run(val_eval_loader)
 )
+
 trainer.add_event_handler(
     Events.STARTED | Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["trainsaveperiod"])),
     @j2p (engine) -> train_evaluator.run(train_eval_loader)
@@ -488,7 +576,9 @@ trainer.add_event_handler(
         @info sprint() do io
             println(io, "Log folder: $(lib.logdir())"); println(io, "\n")
             show(io, TimerOutputs.get_defaulttimer()); println(io, "\n")
-            show(io, last(logger[!,[names(logger)[1:4]; sort(names(logger)[5:end])]], 10)); println(io, "\n")
+            start_cols = [:epoch, :iter, :time, :dataset, :img_idx]
+            show_order = [start_cols; sort([Symbol(col) for col in names(logger) if Symbol(col) ∉ start_cols])]
+            show(io, last(logger[!, show_order], 10)); println(io, "\n")
         end
         (engine.state.epoch == 1) && TimerOutputs.reset_timer!() # throw out compilation timings
     end

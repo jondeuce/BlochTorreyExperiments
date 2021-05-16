@@ -496,7 +496,7 @@ function load_mcmc_labels!(
         # Load MCMC params
         labels_file = joinpath(img.meta[:info]["folder_path"], img.meta[:info]["mcmc_labels_path"])
         if !isfile(labels_file)
-            @info "MCMC data for does not exist (image = $i): $(img.meta[:info]["folder_path"])"
+            @info "MCMC data does not exist (image = $i): $(img.meta[:info]["folder_path"])"
             continue
         else
             @info labels_file
@@ -517,9 +517,9 @@ function load_mcmc_labels!(
         for dataset in [:train, :val, :test]
             # Fetch theta for each partition
             theta = mapreduce(vcat, enumerate(mcmc_param_names)) do (i, param_name)
-                mapped_indices = (I -> labels_map[I]).(img.indices[dataset])
-                θ = reshape(labels_data[param_name], samples_per_chain, :)[:, mapped_indices] .|> T
-                θ = permutedims(reshape(θ, samples_per_chain, :, 1), (3,2,1))
+                indices   = (I -> labels_map[I]).(img.indices[dataset])
+                θ         = reshape(labels_data[param_name], samples_per_chain, :)[:, indices] .|> T
+                θ         = permutedims(reshape(θ, samples_per_chain, :, 1), (3,2,1))
             end
 
             # Compute epg signal model
@@ -565,6 +565,18 @@ function verify_pseudo_labels(phys::EPGModel)
         Y = img.partitions[dataset]
         ℓ = negloglikelihood(phys, Y, signalfit, theta[:,:,end])
         @info "Pseudo labels negative log-likelihood (image = $i, dataset = $dataset):"
+        @info StatsBase.summarystats(vec(ℓ))
+    end
+end
+
+function verify_true_labels(phys::EPGModel)
+    for (i,img) in enumerate(phys.images)
+        dataset = :val
+        haskey(img.meta, :true_labels) || continue
+        @unpack theta, signalfit = img.meta[:true_labels][dataset]
+        Y = img.partitions[dataset]
+        ℓ = negloglikelihood(phys, Y, signalfit, theta)
+        @info "True labels negative log-likelihood (image = $i, dataset = $dataset):"
         @info StatsBase.summarystats(vec(ℓ))
     end
 end

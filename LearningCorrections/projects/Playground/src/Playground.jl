@@ -22,7 +22,7 @@ include("fix/Stacks/Stacks.jl") # workaround until Transformers is updated for j
 @reexport using FFTW: fft, ifft, rfft
 @reexport using LaTeXStrings: @L_str, latexstring
 @reexport using LinearAlgebra: BLAS, diag, diagm, dot, mul!, norm, normalize, tr, ×, ⋅
-@reexport using LoopVectorization: @avx
+@reexport using LoopVectorization: @avx, @avxt
 @reexport using OMEinsum: @ein, @ein_str
 @reexport using Parameters: @unpack, @with_kw, @with_kw_noshow
 @reexport using PyCall: @py_str, PyCall, PyDict, PyNULL, PyObject, pycall, pyimport

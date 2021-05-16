@@ -38,7 +38,7 @@ struct CVAETrainingState{C <: CVAE, A, S}
 end
 
 function CVAETrainingState(cvae::CVAE, Y, θ, Z = zeros_similar(θ, 0, size(θ,2)))
-    Ȳ, θ̄, Z̄, nrm_state = normalize(cvae, Y, θ, Z)
+    Ȳ, θ̄, Z̄, nrm_state = normalize_inputs(cvae, Y, θ, Z)
     Ȳpad = pad_signal(cvae, Ȳ)
     μr = cvae.E1(Ȳpad)
     μq = cvae.E2(Ȳpad, θ̄, Z̄)
@@ -57,7 +57,7 @@ struct CVAEInferenceState{C <: CVAE, A, S}
 end
 
 function CVAEInferenceState(cvae::CVAE, Y)
-    Ȳ, nrm_state = normalize(cvae, Y)
+    Ȳ, nrm_state = normalize_inputs(cvae, Y)
     Ȳpad = pad_signal(cvae, Ȳ)
     μr = cvae.E1(Ȳpad)
     μr0, logσr = split_dim1(μr)
@@ -65,10 +65,10 @@ function CVAEInferenceState(cvae::CVAE, Y)
 end
 signal(state::CVAEInferenceState) = state.Y
 
-LinearAlgebra.normalize(cvae::CVAE, Y) = cvae.f((Y,)) # returns (Ȳ, nrm_state)
-LinearAlgebra.normalize(cvae::CVAE, Y, θ, Z) = cvae.f((Y, θ, Z)) # returns (Ȳ, θ̄, Z̄, nrm_state)
-unnormalize(state::CVAETrainingState, θ̄M, Z̄) = state.cvae.f⁻¹((θ̄M, Z̄, state.nrm_state)) # returns (θM, Z)
-unnormalize(state::CVAEInferenceState, θ̄M, Z̄) = state.cvae.f⁻¹((θ̄M, Z̄, state.nrm_state)) # returns (θM, Z)
+normalize_inputs(cvae::CVAE, Y) = cvae.f((Y,)) # returns (Ȳ, nrm_state)
+normalize_inputs(cvae::CVAE, Y, θ, Z) = cvae.f((Y, θ, Z)) # returns (Ȳ, θ̄, Z̄, nrm_state)
+unnormalize_outputs(state::CVAETrainingState, θ̄M, Z̄) = state.cvae.f⁻¹((θ̄M, Z̄, state.nrm_state)) # returns (θM, Z)
+unnormalize_outputs(state::CVAEInferenceState, θ̄M, Z̄) = state.cvae.f⁻¹((θ̄M, Z̄, state.nrm_state)) # returns (θM, Z)
 
 # Layer which transforms matrix of [μ′; logσ′] ∈ [ℝ^nz; ℝ^nz] to bounded intervals [μ; logσ] ∈ [𝒟μ^nz; 𝒟logσ^nz]:
 #      μ bounded: prevent CVAE from "memorizing" inputs via mean latent embedding vectors which are far from zero
@@ -180,7 +180,7 @@ function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C
     μx0, logσx = split_dim1(μx)
     x = mode ? μx0 : sample_mv_normal(μx0, exp.(logσx))
     θ̄M, Z̄ = split_marginal_latent(cvae, x)
-    θM, Z = unnormalize(state, θ̄M, Z̄)
+    θM, Z = unnormalize_outputs(state, θ̄M, Z̄)
     return θM, Z̄
 end
 
@@ -194,7 +194,7 @@ function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C
     μθ̄M = tanh.(σ⁻¹μθ̄M) # transform from unbounded σ⁻¹μθ̄M ∈ ℝ^nθ to bounded interval [-1, 1]^nθ
     θ̄M = mode ? μθ̄M : sample_trunc_mv_normal(μθ̄M, exp.(logσθ̄M), -1, 1)
     Z̄ = mode || nlatent(state.cvae) == 0 ? μZ̄ : sample_mv_normal(μZ̄, exp.(logσZ̄))
-    θM, Z = unnormalize(state, θ̄M, Z̄)
+    θM, Z = unnormalize_outputs(state, θ̄M, Z̄)
     return θM, Z
 end
 
@@ -206,13 +206,13 @@ function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C
     αθ, βθ, μZ̄, logσZ̄ = split_marginal_latent_pairs(cvae, μx)
     θ̄M = mode ? mode_kumaraswamy(αθ, βθ) : sample_kumaraswamy(αθ, βθ)
     Z̄ = mode || nlatent(state.cvae) == 0 ? μZ̄ : sample_mv_normal(μZ̄, exp.(logσZ̄))
-    θM, Z = unnormalize(state, θ̄M, Z̄)
+    θM, Z = unnormalize_outputs(state, θ̄M, Z̄)
     return θM, Z
 end
 
-function θZposterior_sampler(cvae::CVAE, Y; kwargs...)
+function θZposterior_sampler(cvae::CVAE, Y)
     state = CVAEInferenceState(cvae, Y) # constant over posterior samples
-    θZposterior_sampler_inner() = sampleθZposterior(state; kwargs...)
+    θZposterior_sampler_inner(; kwargs...) = sampleθZposterior(state; kwargs...)
     return θZposterior_sampler_inner
 end
 
@@ -256,7 +256,7 @@ function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zpri
         return θ, Z
     end
 end
-sampleθZ(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleθZ(phys, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
+sampleθZ(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleθZ(phys, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true)
 
 function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zprior::MaybeDeepPrior, Ymeta::AbstractMetaDataSignal, state::CVAEInferenceState; posterior_θ = true, posterior_Z = true, posterior_mode = false)
     if posterior_θ || posterior_Z
@@ -279,14 +279,14 @@ function sampleθZ(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zpri
     end
     return θ, Z
 end
-sampleθZ(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal, state::CVAEInferenceState; kwargs...) = sampleθZ(phys, cvae, nothing, nothing, Ymeta, state; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
+sampleθZ(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal, state::CVAEInferenceState; kwargs...) = sampleθZ(phys, cvae, nothing, nothing, Ymeta, state; kwargs..., posterior_θ = true, posterior_Z = true)
 
-function θZ_sampler(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zprior::MaybeDeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...)
+function θZ_sampler(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zprior::MaybeDeepPrior, Ymeta::AbstractMetaDataSignal)
     state = CVAEInferenceState(cvae, signal(Ymeta)) # constant over posterior samples
-    θZ_sampler_inner() = sampleθZ(phys, cvae, θprior, Zprior, Ymeta, state; kwargs...)
+    θZ_sampler_inner(; kwargs...) = sampleθZ(phys, cvae, θprior, Zprior, Ymeta, state; kwargs...)
     return θZ_sampler_inner
 end
-θZ_sampler(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = θZ_sampler(phys, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
+θZ_sampler(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal) = θZ_sampler(phys, cvae, nothing, nothing, Ymeta)
 
 function sampleXθZ(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zprior::MaybeDeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...)
     #TODO: can't differentiate through @timeit "sampleθZ"
@@ -296,14 +296,14 @@ function sampleXθZ(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zpr
     (size(X,1) > nsignal(Ymeta)) && (X = X[1:nsignal(Ymeta), ..])
     return X, θ, Z
 end
-sampleXθZ(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleXθZ(phys, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
+sampleXθZ(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleXθZ(phys, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true)
 
 sampleX(phys::PhysicsModel, cvae::CVAE, θprior::MaybeDeepPrior, Zprior::MaybeDeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleXθZ(phys, cvae, θprior, Zprior, Ymeta; kwargs...)[1]
-sampleX(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleX(phys, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
+sampleX(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleX(phys, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true)
 
-function posterior_state(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; accum_loss = ℓ -> sum(ℓ; dims = 1), kwargs...)
+function posterior_state(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...)
     θ, Z = sampleθZ(phys, cvae, Ymeta; posterior_θ = true, posterior_Z = true, posterior_mode = false, kwargs...)
-    posterior_state(phys, Ymeta, θ, Z; accum_loss)
+    posterior_state(phys, Ymeta, θ, Z)
 end
 
 @with_kw_noshow struct OnlineMetropolisSampler{T}
@@ -315,47 +315,56 @@ end
 end
 Base.show(io::IO, s::OnlineMetropolisSampler{T}) where {T} = print(io, "OnlineMetropolisSampler{T}(ntheta = $(size(s.θ,1)), ndata = $(size(s.θ,2)), nsamples = $(s.n))")
 
-buffer_indices(s::OnlineMetropolisSampler, J = 1:size(s.θ, 2)) = CartesianIndex.(J, mod1.(s.i[J], s.n))
-
-# c.f. https://stats.stackexchange.com/a/163790
-function update!(s::OnlineMetropolisSampler, θ′::A, neglogPXθ′::A, neglogPθ′::A, J = 1:size(s.θ, 2)) where {A <: AbstractMatrix}
-    # Extract copies of current theta, negative log likelihood, and negative log prior state
-    θ′         = arr_similar(s.θ, θ′)
-    neglogPXθ′ = arr_similar(s.θ, neglogPXθ′)
-    neglogPθ′  = arr_similar(s.θ, neglogPθ′)
-    idx        = buffer_indices(s, J)
-    θ          = s.θ[:, idx]
-    neglogPXθ  = s.neglogPXθ[:, idx]
-    neglogPθ   = s.neglogPθ[:, idx]
-
-    # Metropolis-Hastings acceptance ratio:
-    #        α = min(1, (PXθ′ * Pθ′) / (PXθ * Pθ))
-    # ==> logα = min(0, logPXθ′ + logPθ′ - logPXθ - logPθ)
-    logα       = @. min(0, neglogPXθ + neglogPθ - neglogPXθ′ - neglogPθ′)
-    accept     = vec(logα .> log.(rand_similar(logα)))
-
-    # Update theta, negative log likelihoods, and negative log priors with accepted points,
-    # increment sample counters, and copy updated values into sample caches
-    θ[:, accept]         .= θ′[:, accept]
-    neglogPXθ[:, accept] .= neglogPXθ′[:, accept]
-    neglogPθ[:, accept]  .= neglogPθ′[:, accept]
-    s.i[J]              .+= 1
-    idx                  .= buffer_indices(s, J)
-    s.θ[:, idx]          .= θ
-    s.neglogPXθ[:, idx]  .= neglogPXθ
-    s.neglogPθ[:, idx]   .= neglogPθ
-
-    return arr_similar(A, θ), arr_similar(A, neglogPXθ), arr_similar(A, neglogPθ)
+buffer_index(s::OnlineMetropolisSampler, j::Int) = CartesianIndex(j, mod1(s.i[j], s.n))
+random_index(s::OnlineMetropolisSampler, j::Int) = CartesianIndex(j, rand(1:s.n))
+buffer_indices(s::OnlineMetropolisSampler, J = 1:size(s.θ, 2)) = buffer_index.((s,), J)
+random_indices(s::OnlineMetropolisSampler, J = 1:size(s.θ, 2)) = random_index.((s,), J)
+function Random.rand(s::OnlineMetropolisSampler, J = 1:size(s.θ, 2))
+    idx = random_indices(s, J)
+    return s.θ[:, idx], s.neglogPXθ[:, idx], s.neglogPθ[:, idx]
 end
 
-function update!(s::OnlineMetropolisSampler, phys::EPGModel, cvae::CVAE, Ymeta::MetaCPMGSignal, args...; kwargs...)
-    θ′, _      = sampleθZ(phys, cvae, Ymeta; posterior_θ = true, posterior_Z = true, posterior_mode = false, kwargs...)
-    X′         = signal_model(phys, Ymeta, θ′)
-    neglogPXθ′ = negloglikelihood(phys, signal(Ymeta), X′, θ′)
+# c.f. https://stats.stackexchange.com/a/163790
+function update!(s::OnlineMetropolisSampler, θ′::AbstractMatrix, neglogPXθ′::AbstractMatrix, neglogPθ′::AbstractMatrix, J = 1:size(s.θ, 2))
+    @assert size(θ′, 2) == size(neglogPXθ′, 2) == size(neglogPθ′, 2)
+    @assert size(neglogPXθ′, 1) == size(neglogPθ′, 1) == 1
+
+    # DECAES.tforeach(eachindex(J); blocksize = 16) do j
+    Threads.@threads for j in eachindex(J)
+        @inbounds begin
+            col        = J[j]
+            curr       = buffer_index(s, col)
+            s.i[col]  += 1
+            next       = buffer_index(s, col)
+
+            # Metropolis-Hastings acceptance ratio:
+            #        α = min(1, (PXθ′ * Pθ′) / (PXθ * Pθ))
+            # ==> logα = min(0, logPXθ′ + logPθ′ - logPXθ - logPθ)
+            logα       = min(0, s.neglogPXθ[1,curr] + s.neglogPθ[1,curr] - neglogPXθ′[1,j] - neglogPθ′[1,j])
+            accept     = logα > log(rand())
+
+            # Update theta, negative log likelihoods, and negative log priors with accepted points or current points
+            @inbounds for i in 1:size(θ′, 1)
+                s.θ[i,next]     = accept ? θ′[i,j]         : s.θ[i,curr]
+            end
+            s.neglogPXθ[1,next] = accept ? neglogPXθ′[1,j] : s.neglogPXθ[1,curr]
+            s.neglogPθ[1,next]  = accept ? neglogPθ′[1,j]  : s.neglogPθ[1,curr]
+        end
+    end
+end
+
+function update!(s::OnlineMetropolisSampler, phys::EPGModel{T}, cvae::CVAE, img::CPMGImage; dataset::Symbol, gpu_batch_size::Int) where {T}
+    Y         = img.partitions[dataset]
+    J_ranges  = collect(Iterators.partition(1:size(Y, 2), gpu_batch_size))
+    θ′        = zeros(T, ntheta(phys), size(Y, 2))
+    for (i, (Y_gpu,)) in enumerate(CUDA.CuIterator((Y[:, J],) for J in J_ranges))
+        θ′_gpu, _  = sampleθZposterior(cvae, Y_gpu)
+        θ′[:, J_ranges[i]] .= CUDA.adapt(Matrix{T}, θ′_gpu)
+    end
+    X′         = signal_model(phys, img, θ′)
+    neglogPXθ′ = negloglikelihood(phys, Y, X′, θ′)
     neglogPθ′  = neglogprior(phys, θ′)
-    θ, ℓXθ, ℓθ = update!(s, θ′, neglogPXθ′, neglogPθ′, args...)
-    X          = signal_model(phys, Ymeta, θ)
-    return X, θ, ℓXθ, ℓθ
+    update!(s, θ′, neglogPXθ′, neglogPθ′)
 end
 
 function _test_online_mh_sampler(phys::EPGModel)
@@ -369,11 +378,11 @@ function _test_online_mh_sampler(phys::EPGModel)
 
     # true answers
     θ_plot = θlo .+ (θhi .- θlo) .* range(0,1,length=200)'
-    Pθ_plot = neglogprior(phys, θ_plot; accum = nothing) .|> neglogp -> exp(-neglogp)
+    Pθ_plot = neglogpriors(phys, θ_plot) .|> neglogp -> exp(-neglogp)
 
     while true
         # draw uniform random guess and update sampler
-        J = rand(1:ndata÷2) : rand(ndata÷2+1:ndata)
+        J = 1:10 # rand(1:ndata÷4) : rand(3*(ndata÷4):ndata)
         θ′ = sample_uniform(θlo, θhi, length(J))
         neglogPXθ′ = zeros_similar(θ′, 1, length(J)) # constant zero; we are just trying to reproduce the prior
         neglogPθ′ = neglogprior(phys, θ′)
@@ -409,10 +418,10 @@ function sampleX̂θZ(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, θp
     X̂ = sampleX̂(rice, X, Z)
     return X̂, θ, Z
 end
-sampleX̂θZ(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleX̂θZ(phys, rice, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
+sampleX̂θZ(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleX̂θZ(phys, rice, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true)
 
 sampleX̂(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, θprior::MaybeDeepPrior, Zprior::MaybeDeepPrior, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleX̂θZ(phys, rice, cvae, θprior, Zprior, Ymeta; kwargs...)[1]
-sampleX̂(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleX̂(phys, rice, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true) # no prior passed -> posterior_θ = posterior_Z = true
+sampleX̂(phys::PhysicsModel, rice::RicianCorrector, cvae::CVAE, Ymeta::AbstractMetaDataSignal; kwargs...) = sampleX̂(phys, rice, cvae, nothing, nothing, Ymeta; kwargs..., posterior_θ = true, posterior_Z = true)
 
 function NegLogLikelihood(::PhysicsModel, rice::RicianCorrector, Y::AbstractVecOrMat, μ0, σ)
     if typeof(rice) <: NormalizedRicianCorrector && (rice.normalizer !== nothing)
@@ -456,11 +465,11 @@ function posterior_state(
     ) where {T}
 
     (mode === :mode) && (miniter = maxiter = 1)
-    θZ_sampler_instance = θZ_sampler(phys, cvae, Ymeta; posterior_mode = mode === :mode)
+    θZ_sampler_instance = θZ_sampler(phys, cvae, Ymeta)
     new_posterior_state(θnew, Znew) = posterior_state(phys, rice, signal(Ymeta), θnew, Znew; accum_loss = ℓ -> sum(ℓ; dims = 1))
 
     function update(last_state, i)
-        θnew, Znew = θZ_sampler_instance()
+        θnew, Znew = θZ_sampler_instance(posterior_mode = mode === :mode)
         θlast = (last_state === nothing) ? nothing : last_state.θ
         Zlast = (last_state === nothing) ? nothing : last_state.Z
 

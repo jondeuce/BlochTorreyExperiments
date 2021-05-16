@@ -578,7 +578,7 @@ function sampleθprior(p::BiexpEPGModel{T}, ::Type{A}, n::Union{Int, Symbol}) wh
     end
 end
 
-function neglogprior(::BiexpEPGModel, θ::AbstractArray{T}; accum = ℓ -> sum(ℓ; dims = 1)) where {T}
+function neglogpriors(::BiexpEPGModel, θ::AbstractArray{T}) where {T}
     α, β, η, δ1, δ2, logϵ, logs = ntuple(i -> θ[i:i, ..], 7)
     ℓ = [
         neglogL_trunc_gaussian(α,  T(180.0), log(T(45.0)), T(90.0), T(180.0)) ;  # truncated gaussian prior log likelihood for α
@@ -589,8 +589,25 @@ function neglogprior(::BiexpEPGModel, θ::AbstractArray{T}; accum = ℓ -> sum(�
         fill_similar(logϵ, log(log(T(1e-1)) - log(T(1e-5))))                  ;  # uniform prior log likelihood for logϵ
         neglogL_trunc_gaussian(logs, T(0.0),  log(T(0.5)), T(-2.5),   T(2.5)) ;  # truncated gaussian prior log likelihood for logs
     ]                                                                            # uniform prior log likelihood for δ0 equals log(1-0) = 0 and need not be explicitly included
-    (accum !== nothing) && (ℓ = accum(ℓ))
     return ℓ
+end
+
+neglogprior(p::BiexpEPGModel, θ::CuArray) = sum(neglogpriors(p, θ); dims = 1)
+
+function neglogprior(::BiexpEPGModel, θ::AbstractArray{T}) where {T}
+    ℓ = zeros(T, size(θ)[2:end])
+    Threads.@threads for J in eachindex(ℓ)
+        @inbounds ℓ[J] =
+            neglogL_trunc_gaussian(θ[1,J], T(180.0), log(T(45.0)), T(90.0), T(180.0)) + # truncated gaussian prior log likelihood for α
+            neglogL_trunc_gaussian(θ[2,J], T(180.0), log(T(45.0)), T(90.0), T(180.0)) + # truncated gaussian prior log likelihood for β
+            neglogL_trunc_gaussian(θ[3,J],   T(0.0),  log(T(0.5)),  T(0.0),   T(1.0)) + # truncated gaussian prior log likelihood for η
+            neglogL_trunc_gaussian(θ[4,J],   T(0.0),  log(T(0.5)),  T(0.0),   T(1.0)) + # truncated gaussian prior log likelihood for δ1
+            neglogL_trunc_gaussian(θ[5,J],   T(1.0),  log(T(0.5)),  T(0.0),   T(1.0)) + # truncated gaussian prior log likelihood for δ2
+            log(log(T(1e-1)) - log(T(1e-5)))                                          + # uniform prior log likelihood for logϵ
+            neglogL_trunc_gaussian(θ[7,J], T(0.0),  log(T(0.5)), T(-2.5),   T(2.5))     # truncated gaussian prior log likelihood for logs
+                                                                                        # uniform prior log likelihood for δ0 equals log(1-0) = 0 and need not be explicitly included
+    end
+    return reshape(ℓ, 1, :)
 end
 
 θmodel(c::MaybeClosedFormBiexpEPGModel, θM::AbstractVecOrMat, θN::AbstractVecOrMat) = θmodel(c, ntuple(i -> θM[i,:], size(θM,1))..., ntuple(i -> θN[i,:], size(θN,1))...)
@@ -680,7 +697,7 @@ function signal_model(p::EPGModel{T}, img::CPMGImage{T}, θ::AbstractVecOrMat) w
         θN = fill_similar(θ, θnuissance(p, img), 1, size(θ)[2:end]...)
         return signal_model(p, vcat(θ, θN))[1:nsignal(img), ..]
     else
-        return signal_model(p, θ)
+        return signal_model(p, θ)[1:nsignal(img), ..]
     end
 end
 signal_model(p::EPGModel{T}, Ymeta::MetaCPMGSignal{T}, θ::AbstractVecOrMat) where {T} = signal_model(p, Ymeta.img, θ)
@@ -690,27 +707,38 @@ function noiselevel(::EPGModel, θ)
     return @. exp.(logϵ .+ logs)
 end
 
-function negloglikelihood(::EPGModel, Y, X, θ; accum = ℓ -> sum(ℓ; dims = 1))
+function negloglikelihood(::EPGModel, Y::AbstractMatrix{T}, X::AbstractMatrix{T}, θ::AbstractMatrix{T}) where {T}
+    ℓ = zeros(T, size(Y,2))
+    Threads.@threads for j in 1:size(Y, 2)
+        Σ = zero(T)
+        logϵs = θ[6,j] + θ[7,j]
+        for i in 1:size(Y,1)
+            Σ += neglogL_rician(Y[i,j], X[i,j], logϵs)
+        end
+        ℓ[j] = Σ
+    end
+    return reshape(ℓ, 1, :)
+end
+
+function negloglikelihood(::EPGModel, Y::CuArray, X::CuArray, θ::CuArray)
     logϵs = θ[6:6, ..] .+ θ[7:7, ..]
-    ℓ = neglogL_rician.(Y, X, logϵs)
-    (accum !== nothing) && (ℓ = accum(ℓ))
+    ℓ = sum(neglogL_rician.(Y, X, logϵs); dims = 1)
     return ℓ
 end
 
 function negloglikelihood(p::EPGModel, Ymeta::MetaCPMGSignal, θ::A; kwargs...) where {A <: AbstractArray}
     θ  = arr_similar(signal(Ymeta), θ)
-    Y  = signal(Ymeta)
     X  = signal_model(p, Ymeta, θ)
-    X  = clamp_dim1(Y, X)
-    ℓ  = negloglikelihood(p, Y, X, θ; kwargs...)
+    X  = clamp_dim1(signal(Ymeta), X)
+    ℓ  = negloglikelihood(p, signal(Ymeta), X, θ; kwargs...)
     return arr_similar(A, ℓ)
 end
 
-function posterior_state(p::EPGModel, Ymeta::MetaCPMGSignal, θ, Z; accum_loss = ℓ -> sum(ℓ; dims = 1))
+function posterior_state(p::EPGModel, Ymeta::MetaCPMGSignal, θ, Z)
     X = signal_model(p, Ymeta, θ)
     X = clamp_dim1(signal(Ymeta), X)
     X̂ = add_noise_instance(p, X, θ)
-    ℓ = negloglikelihood(p, signal(Ymeta), X, θ; accum = accum_loss)
+    ℓ = negloglikelihood(p, signal(Ymeta), X, θ)
     return (; Y = signal(Ymeta), X̂, X, θ, Z, ℓ)
 end
 
@@ -721,10 +749,26 @@ function add_noise_instance(c::MaybeClosedFormBiexpEPGModel, X, θ, ninstances =
     return X̂
 end
 
-function _signal_model(c::MaybeClosedFormBiexpEPGModel, θ::AbstractVecOrMat)
+function _signal_model(c::MaybeClosedFormBiexpEPGModel, θ::CuArray)
     X    = _signal_model(c, θmodel(c, θ)...)
     logs = θ[7:7, ..]
     X    = exp.(logs) .* X ./ maximum(X; dims = 1)
+    return X
+end
+
+function _signal_model(c::MaybeClosedFormBiexpEPGModel, θ::AbstractArray)
+    X    = _signal_model(c, θmodel(c, θ)...) # multithreaded internally
+    Threads.@threads for J in CartesianIndices(size(X)[2:end])
+        Xmax = zero(eltype(X))
+        for i in 1:size(X, 1)
+            Xmax = max(X[i,J], Xmax)
+        end
+        logs   = θ[7,J]
+        Xscale = exp(logs) / Xmax
+        for i in 1:size(X, 1)
+            X[i,J] *= Xscale
+        end
+    end
     return X
 end
 
@@ -740,7 +784,8 @@ function _signal_model_f64(c::MaybeClosedFormBiexpEPGModel, alpha::AbstractVecto
     nsignals, nsamples = nsignal(physicsmodel(c)), length(args[1])
     X = zeros(Float64, nsignals, nsamples)
     work = [BiexpEPGModelWork(c) for _ in 1:Threads.nthreads()]
-    DECAES.tforeach(1:nsamples; blocksize = 16) do j
+    # DECAES.tforeach(1:nsamples; blocksize = 16) do j
+    Threads.@threads for j in 1:nsamples
         @inbounds begin
             _signal_model_f64!(view(X,:,j), c, work[Threads.threadid()], ntuple(i -> args[i][j], length(args)))
         end
@@ -758,7 +803,8 @@ Zygote.@adjoint function _signal_model_f64(c::MaybeClosedFormBiexpEPGModel, alph
     J = zeros(Float64, nsignals, nargs, nsamples)
     out = zeros(Float64, nargs, 1, nsamples)
     work = [_signal_model_f64_jacobian_setup(c) for _ in 1:Threads.nthreads()]
-    DECAES.tforeach(1:nsamples; blocksize = 16) do j
+    # DECAES.tforeach(1:nsamples; blocksize = 16) do j
+    Threads.@threads for j in 1:nsamples
         @inbounds begin
             f!, res, _, x, gx, cfg = work[Threads.threadid()]
             for i in 1:nargs; x[i] = args[i][j]; end
