@@ -32,10 +32,7 @@ lib.settings_template() = TOML.parse(
 
 [eval]
     batchsize          = 8192
-    stepsaveperiod     = 60.0
-    valmetricsperiod   = 300.0
-    trainmetricsperiod = 300.0
-    printperiod        = 120.0
+    evalmetricsperiod  = 300.0
     checkpointperiod   = 600.0
 
 [opt]
@@ -280,9 +277,9 @@ function train_step(engine, batch)
         ℓs = CVAElosses(Y, θ)
         Zygote.@ignore let
             for (k,v) in pairs(ℓs)
-                outputs["$k"] = v
+                outputs["$(k)_$(img_idx)"] = v # tag output metric with image index
             end
-            outputs["CVAE"] = sum(ℓs)
+            outputs["CVAE_$(img_idx)"] = sum(ℓs) # tag output metric with image index
         end
         return sum(ℓs)
     end
@@ -352,6 +349,7 @@ function compute_metrics(engine, batch; dataset::Symbol)
         end
     end
 
+    # MLE using CVAE mode as initial guess
     (img_idx != 0) && @timeit "compute mle" begin
         mle_init   = (; Y = lib.arr64(Y), θ = lib.arr64(θ′_mode))
         _, mle_res = lib.mle_biexp_epg(phys, img; initial_guess = mle_init, batch_size = Colon(), verbose = false)
@@ -368,7 +366,7 @@ function compute_metrics(engine, batch; dataset::Symbol)
     end
 
     # Goodness of fit metrics for CVAE posterior samples
-    @timeit "goodness of fit metrics" let
+    @timeit "cvae goodness of fit" let
         metrics[:rmse_CVAE] = sqrt(mean(abs2, Y .- X′_mode))
         metrics[:logL_CVAE] = mean(lib.negloglikelihood(phys, Y, X′_mode, θ′_mode))
     end
@@ -419,7 +417,7 @@ function compute_metrics(engine, batch; dataset::Symbol)
     for (k,v) in metrics
         k ∈ [:epoch, :iter, :time, :dataset] && continue # output non-housekeeping metrics
         ismissing(v) && continue # return non-missing metrics (wandb cannot handle missing)
-        outputs["$k"] = v
+        outputs["$(k)_$(img_idx)"] = v # tag output metric with image index
     end
 
     return outputs
@@ -517,12 +515,12 @@ trainer.add_event_handler(
 
 # Evaluator events
 trainer.add_event_handler(
-    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["valmetricsperiod"])),
+    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["evalmetricsperiod"])),
     @j2p (engine) -> val_evaluator.run(val_eval_loader)
 )
 
 trainer.add_event_handler(
-    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["trainmetricsperiod"])),
+    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["evalmetricsperiod"])),
     @j2p (engine) -> train_evaluator.run(train_eval_loader)
 )
 
@@ -541,7 +539,7 @@ trainer.add_event_handler(
 
 # Check for + save best model + logger + make plots
 trainer.add_event_handler(
-    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["checkpointperiod"])),
+    Events.TERMINATE | Events.EPOCH_COMPLETED,
     @j2p function (engine)
         is_best = false
         for (group_key, group) in pairs(DataFrames.groupby(logger[!, [:dataset, :img_idx, :CVAE]], [:dataset, :img_idx]))
@@ -563,9 +561,9 @@ trainer.add_event_handler(
 trainer.add_event_handler(
     Events.EPOCH_COMPLETED,
     @j2p lib.droplr_file_event(optimizers;
-        file = lib.logdir("droplr"),
-        lrrate = settings["opt"]["lrrate"]::Int,
-        lrdrop = settings["opt"]["lrdrop"]::Float64,
+        file     = lib.logdir("droplr"),
+        lrrate   = settings["opt"]["lrrate"]::Int,
+        lrdrop   = settings["opt"]["lrdrop"]::Float64,
         lrthresh = settings["opt"]["lrthresh"]::Float64,
     )
 )
@@ -578,14 +576,15 @@ trainer.add_event_handler(
 
 # Print TimerOutputs timings
 trainer.add_event_handler(
-    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["printperiod"])),
+    Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["evalmetricsperiod"])),
     @j2p function (engine)
         @info "Log folder: $(lib.logdir())"
         show(TimerOutputs.get_defaulttimer()); println("")
-        start_cols = [:epoch, :iter, :time, :dataset, :img_idx, :CVAE, :KLDiv, :ELBO, :LatentReg, :VAE, :logL_CVAE, :logL_MLE, :logL_Pseudo]
-        start_cols = filter(c -> String(c) ∈ names(logger), start_cols)
-        show_order = [start_cols; sort([Symbol(col) for col in names(logger) if Symbol(col) ∉ start_cols])]
-        display(last(logger[!, show_order], 10)); println("")
+        show_all_cols = false
+        start_cols    = [:epoch, :iter, :time, :dataset, :img_idx, :CVAE, :KLDiv, :ELBO, :LatentReg, :VAE, :logL_CVAE, :logL_MLE, :logL_Pseudo]
+        start_cols    = filter(c -> String(c) ∈ names(logger), start_cols)
+        show_order    = [start_cols; sort([Symbol(col) for col in names(logger) if Symbol(col) ∉ start_cols])]
+        display(last(logger[!, (show_all_cols ? show_order : start_cols)], 12)); println("")
         (engine.state.epoch == 1) && TimerOutputs.reset_timer!() # throw out compilation timings
     end
 )
@@ -606,9 +605,9 @@ trainer.add_event_handler(
 
 # Attach training/validation output handlers
 (wandb_logger !== nothing) && for (tag, engine, event_name) in [
-        (tag = "step",  engine = trainer,         event_name = Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["stepsaveperiod"]))), # computed each iteration; throttle recording
-        (tag = "train", engine = train_evaluator, event_name = Events.EPOCH_COMPLETED), # throttled above; record every epoch
-        (tag = "val",   engine = val_evaluator,   event_name = Events.EPOCH_COMPLETED), # throttled above; record every epoch
+        (tag = "step",  engine = trainer,         event_name = Events.EPOCH_COMPLETED),
+        (tag = "train", engine = train_evaluator, event_name = Events.ITERATION_COMPLETED),
+        (tag = "val",   engine = val_evaluator,   event_name = Events.ITERATION_COMPLETED),
     ]
     wandb_logger.attach_output_handler(
         engine;
