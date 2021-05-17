@@ -106,6 +106,13 @@ function findall_within(haystack::AbstractArray, needles::AbstractArray)
     (I -> hashmap[I]).(needles)
 end
 
+# Recursively try to access collection[keys[1]][...][keys[end]], returning `nothing` if any key ∈ keys does not exist
+function recursive_try_get(collection, keys)
+    foldl(keys; init = collection) do acc, key
+        acc === missing ? acc : get(acc, key, missing)
+    end
+end
+
 # Map over dictionary values
 map_dict(f, d::Dict{K,V}) where {K,V} = Dict(map(((k,v),) -> k => f(v), collect(d)))
 

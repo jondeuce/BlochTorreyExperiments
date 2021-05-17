@@ -24,7 +24,7 @@ function generate_arg_parser!(parser, leaf_settings, root_settings = leaf_settin
             props = Dict{Symbol,Any}(:default => deepcopy(v))
             if v isa AbstractVector
                 props[:arg_type] = eltype(v)
-                props[:nargs] = length(v)
+                props[:nargs] = '*'
             else
                 props[:arg_type] = typeof(v)
             end
@@ -147,6 +147,7 @@ end
 ####
 
 const use_wandb_logger = Ref(false)
+const train_debug = Ref(false)
 
 const _logdirname = Ref("")
 set_logdirname!(dirname) = !use_wandb_logger[] && (_logdirname[] = basename(dirname))
@@ -391,24 +392,24 @@ function initialize_pseudo_labels!(
         force_recompute = true,
     ) where {T}
 
-    for (i,img) in enumerate(phys.images)
+    for (i, img) in enumerate(phys.images)
         # Optionally skip cecomputing
         haskey(img.meta, :pseudo_labels) && !force_recompute && continue
         img.meta[:pseudo_labels] = Dict{Symbol,Any}()
 
         for dataset in [:train, :val, :test]
-            if labelset === :mle
+            if Symbol(labelset) === :mle
                 @unpack theta, signalfit = img.meta[:mle_labels][dataset]
                 theta = repeat(theta, 1, 1, npseudolabels)
-            elseif labelset === :mcmc
+            elseif Symbol(labelset) === :mcmc
                 @unpack theta, signalfit = img.meta[:mcmc_labels][dataset]
                 theta = repeat(theta[:,:,end], 1, 1, npseudolabels) # note: this is only initializing the sampler buffer, which only tracks the latest theta; we start from the last mcmc sample
-            elseif labelset === :cvae
+            elseif Symbol(labelset) === :cvae
                 @assert cvae !== nothing
                 initial_guess = mle_biexp_epg_initial_guess(phys, img, cvae; data_subset = dataset, gpu_batch_size = 100_000)
                 theta, signalfit = initial_guess.θ, initial_guess.X
                 theta = repeat(theta, 1, 1, npseudolabels)
-            elseif labelset === :prior
+            elseif Symbol(labelset) === :prior
                 initial_guess = mle_biexp_epg_initial_guess(phys, img, nothing; data_subset = dataset, gpu_batch_size = 100_000)
                 theta, signalfit = initial_guess.θ, initial_guess.X
                 theta = repeat(theta, 1, 1, npseudolabels)
@@ -424,7 +425,6 @@ function initialize_pseudo_labels!(
             labels[:theta]            = theta .|> T
             labels[:signalfit]        = signalfit .|> T
             labels[:mh_sampler]       = OnlineMetropolisSampler{T}(;
-                n         = npseudolabels, # number of pseudo mcmc samples
                 θ         = theta,         # pseudo mcmc samples
                 neglogPXθ = neglogPXθ,     # initial negative log likelihoods
                 neglogPθ  = neglogPθ,      # initial negative log priors
@@ -441,17 +441,17 @@ function compute_mle_labels!(phys::EPGModel, cvae::Union{Nothing,<:CVAE} = nothi
 end
 
 function compute_mle_labels!(
-        phys::EPGModel, img::CPMGImage, cvae::Union{Nothing,<:CVAE} = nothing;
+        phys::EPGModel{T}, img::CPMGImage{T}, cvae::Union{Nothing,<:CVAE} = nothing;
         sigma_reg = 0.5,
         force_recompute = true,
-    )
+    ) where {T}
 
     # Optionally skip cecomputing
     haskey(img.meta, :mle_labels) && !force_recompute && return img
 
     # Perform MLE fit on all signals within mask
     @info img
-    initial_guess, results = mle_biexp_epg(
+    _, results = mle_biexp_epg(
         phys, img, cvae;
         batch_size = 2048 * Threads.nthreads(),
         verbose    = true,
@@ -465,18 +465,24 @@ function compute_mle_labels!(
         ),
     )
 
-    labels = img.meta[:mle_labels] = Dict{Symbol,Any}()
-    masklabels = img.meta[:mle_labels][:mask] = Dict{Symbol,Any}()
-    masklabels[:signalfit] = results.signalfit |> arr32
-    masklabels[:theta] = results.theta |> arr32
+    # Copy results from within mask into relevant mask/train/val/test partitions
+    all_labels              = img.meta[:mle_labels] = Dict{Symbol,Any}()
+    mask_labels             = img.meta[:mle_labels][:mask] = Dict{Symbol,Any}()
+    mask_labels[:signalfit] = results.signalfit |> arr32
+    mask_labels[:theta]     = results.theta |> arr32
 
-    # Copy results from within mask into relevant test/train/val partitions
-    for (Ypart, Y) in img.partitions
-        Ypart === :mask && continue
-        labels[Ypart] = Dict{Symbol,Any}()
-        J = findall_within(img.indices[:mask], img.indices[Ypart])
-        for res in [:signalfit, :theta]
-            labels[Ypart][res] = masklabels[res][:,J]
+    for (dataset, _) in img.partitions
+        dataset === :mask && continue
+        indices             = findall_within(img.indices[:mask], img.indices[dataset])
+        labels              = all_labels[dataset] = Dict{Symbol,Any}()
+        labels[:theta]      = mask_labels[:theta][:,indices] .|> T
+        labels[:signalfit]  = mask_labels[:signalfit][:,indices] .|> T
+
+        # Errors w.r.t. true labels
+        if haskey(img.meta, :true_labels)
+            theta_true          = img.meta[:true_labels][dataset][:theta]
+            theta_mle           = labels[:theta]
+            labels[:theta_errs] = θ_errs_dict(phys, theta_true, theta_mle; suffix = "MLE")
         end
     end
 
@@ -488,7 +494,7 @@ function load_mcmc_labels!(
         force_reload = true,
     ) where {T}
 
-    for (i,img) in enumerate(phys.images)
+    for (i, img) in enumerate(phys.images)
         # Optionally skip reloading
         haskey(img.meta, :mcmc_labels) && !force_reload && continue
         img.meta[:mcmc_labels] = Dict{Symbol,Any}()
@@ -505,7 +511,6 @@ function load_mcmc_labels!(
         @time labels_data = DECAES.MAT.matread(labels_file)
 
         mcmc_param_names  = ["alpha", "beta", "eta", "delta1", "delta2", "logepsilon", "logscale"]
-        num_params        = length(mcmc_param_names)
         total_samples     = length(labels_data["iteration"])
         samples_per_chain = maximum(labels_data["iteration"])
         num_signals       = total_samples ÷ samples_per_chain
@@ -529,15 +534,83 @@ function load_mcmc_labels!(
             labels             = img.meta[:mcmc_labels][dataset] = Dict{Symbol,Any}()
             labels[:theta]     = theta # θ = α, β, η, δ1, δ2, logϵ, logs
             labels[:signalfit] = X .|> T
+
+            # Errors w.r.t. true labels
+            @time if haskey(img.meta, :true_labels)
+                theta_true          = img.meta[:true_labels][dataset][:theta]
+                theta_mcmc          = dropdims(mean(theta; dims = 3); dims = 3)
+                theta_mcmc          = clamp.(theta_mcmc, θlower(phys), θupper(phys)) # `mean` can cause `theta_mcmc` to overflow outside of bounds
+                mle_init            = (; Y = lib.arr64(img.partitions[dataset]), θ = lib.arr64(theta_mcmc))
+                _, mle_res          = lib.mle_biexp_epg(phys, img; initial_guess = mle_init, batch_size = Colon(), verbose = true)
+                theta_mle           = mle_res.theta
+                labels[:theta_errs] = Dict{Symbol,Any}()
+                θ_errs_dict!(labels[:theta_errs], phys, theta_true, theta_mcmc; suffix = "MCMC_mean")
+                θ_errs_dict!(labels[:theta_errs], phys, theta_true, theta_mle; suffix = "MCMC_mle")
+            end
         end
     end
 
     return nothing
 end
 
+function load_true_labels!(
+        phys::EPGModel{T};
+        force_reload = true,
+    ) where {T}
+
+    for (i, img) in enumerate(phys.images)
+        # Optionally skip reloading
+        haskey(img.meta, :true_labels) && !force_reload && continue
+
+        # Load MCMC params
+        labels_file =
+            !haskey(img.meta[:info], "true_labels_path") ? nothing :
+            joinpath(img.meta[:info]["folder_path"], img.meta[:info]["true_labels_path"])
+        if labels_file === nothing || !isfile(labels_file)
+            @info "True label data does not exist (image = $i): $(img.meta[:info]["folder_path"])"
+            continue
+        else
+            @info labels_file
+            @info "Loading true label data (image = $i):"
+            img.meta[:true_labels] = Dict{Symbol,Any}()
+        end
+        @time labels_data = DECAES.MAT.matread(labels_file)
+
+        param_names = ["alpha", "beta", "eta", "delta1", "delta2", "logepsilon", "logscale"]
+        num_signals = length(labels_data["alpha"])
+
+        for dataset in [:train, :val, :test]
+            theta = mapreduce(vcat, enumerate(param_names)) do (i, param_name)
+                J = findall_within(img.indices[:mask], img.indices[dataset])
+                θ = labels_data[param_name][J]' .|> T
+            end
+
+            # Compute epg signal model
+            @time X = signal_model(phys, img, theta)
+
+            # Assign outputs
+            labels             = img.meta[:true_labels][dataset] = Dict{Symbol,Any}()
+            labels[:theta]     = theta # θ = α, β, η, δ1, δ2, logϵ, logs
+            labels[:signalfit] = X .|> T
+        end
+    end
+
+    return nothing
+end
+
+function θ_errs_dict!(d::Dict{Symbol}, phys, θ_true, θ_approx; suffix)
+    θ_widths = θupper(phys) .- θlower(phys)
+    θ_errs   = mean(abs, θ_true .- θ_approx; dims = 2)
+    for (i, lab) in enumerate(θasciilabels(phys))
+        d[Symbol("$(lab)_err_$(suffix)")] = 100 * θ_errs[i] / θ_widths[i]
+    end
+    return d
+end
+θ_errs_dict(phys, θ_true, θ_approx; suffix) = θ_errs_dict!(Dict{Symbol,Any}(), phys, θ_true, θ_approx; suffix)
+
 
 function verify_mle_labels(phys::EPGModel)
-    for (i,img) in enumerate(phys.images)
+    for (i, img) in enumerate(phys.images)
         dataset = :val
         @unpack theta, signalfit = img.meta[:mle_labels][dataset]
         Y = img.partitions[dataset]
@@ -548,7 +621,7 @@ function verify_mle_labels(phys::EPGModel)
 end
 
 function verify_mcmc_labels(phys::EPGModel)
-    for (i,img) in enumerate(phys.images)
+    for (i, img) in enumerate(phys.images)
         dataset = :val
         @unpack theta, signalfit = img.meta[:mcmc_labels][dataset]
         Y = img.partitions[dataset]
@@ -559,7 +632,7 @@ function verify_mcmc_labels(phys::EPGModel)
 end
 
 function verify_pseudo_labels(phys::EPGModel)
-    for (i,img) in enumerate(phys.images)
+    for (i, img) in enumerate(phys.images)
         dataset = :val
         @unpack theta, signalfit, mh_sampler = img.meta[:pseudo_labels][dataset]
         Y = img.partitions[dataset]
@@ -570,7 +643,7 @@ function verify_pseudo_labels(phys::EPGModel)
 end
 
 function verify_true_labels(phys::EPGModel)
-    for (i,img) in enumerate(phys.images)
+    for (i, img) in enumerate(phys.images)
         dataset = :val
         haskey(img.meta, :true_labels) || continue
         @unpack theta, signalfit = img.meta[:true_labels][dataset]

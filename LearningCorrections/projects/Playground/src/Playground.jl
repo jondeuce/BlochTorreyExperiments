@@ -93,6 +93,7 @@ function initenv()
     pyplot(size=(1200,900))
 
     # Environment variable defaults
+    get!(ENV, "JL_TRAIN_DEBUG", "0")
     get!(ENV, "JL_DISABLE_GPU", "0")
     get!(ENV, "JL_CUDA_DEVICE", "0")
     get!(ENV, "JL_WANDB_LOGGER", "0")
@@ -108,6 +109,9 @@ function initenv()
 
     # Use WandB logger
     use_wandb_logger[] = ENV["JL_WANDB_LOGGER"] == "1"
+
+    # Debug mode
+    train_debug[] = ENV["JL_TRAIN_DEBUG"] == "1"
 
     # Load model from checkpoint folder
     if !isempty(ENV["JL_CHECKPOINT_FOLDER"])

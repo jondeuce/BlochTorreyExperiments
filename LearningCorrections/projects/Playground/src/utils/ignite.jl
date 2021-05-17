@@ -34,8 +34,11 @@ function terminate_on_error(f; msg = "")
 end
 
 # Initialize WandBLogger object
-function init_wandb_logger(settings; activate = false, dryrun = true, wandb_dir = DrWatson.projectdir())
-    if (use_wandb_logger[] = activate)
+function init_wandb_logger(settings; activate = nothing, dryrun = true, wandb_dir = DrWatson.projectdir())
+    if activate isa Bool
+        use_wandb_logger[] = activate
+    end
+    if use_wandb_logger[]
         # Collect WandB environment variables from settings file (unless already set) and copy to python environment
         WandBEnv = filter(((k,v),) -> startswith(k, "WANDB"), ENV)
         get!(WandBEnv, "WANDB_MODE", ifelse(dryrun, "dryrun", "run"))

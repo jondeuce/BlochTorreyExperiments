@@ -307,25 +307,28 @@ function posterior_state(phys::PhysicsModel, cvae::CVAE, Ymeta::AbstractMetaData
 end
 
 @with_kw_noshow struct OnlineMetropolisSampler{T}
-    n::Int
     θ::Array{T,3} # parameter values
-    neglogPXθ::Array{T,3} = fill(T(Inf), 1, size(θ, 2), n) # negative log likelihoods
-    neglogPθ::Array{T,3} = fill(T(Inf), 1, size(θ, 2), n) # negative log priors
-    i::Vector{Int} = ones(Int, size(θ, 2)) # current sample index
+    ntheta::Int           = size(θ, 1) # number of parameters per data point
+    ndata::Int            = size(θ, 2) # number of data points, i.e. each column of θ represents estimates for a separate datum Y
+    nsamples::Int         = size(θ, 3) # length of the Metropolis-Hastings MCMC chain which is recorded
+    i::Vector{Int}        = ones(Int, ndata) # current sample index in cyclical chain buffer θ
+    neglogPXθ::Array{T,3} = fill(T(Inf), 1, ndata, nsamples) # negative log likelihoods
+    neglogPθ::Array{T,3}  = fill(T(Inf), 1, ndata, nsamples) # negative log priors
 end
-Base.show(io::IO, s::OnlineMetropolisSampler{T}) where {T} = print(io, "OnlineMetropolisSampler{T}(ntheta = $(size(s.θ,1)), ndata = $(size(s.θ,2)), nsamples = $(s.n))")
+Base.show(io::IO, s::OnlineMetropolisSampler{T}) where {T} = print(io, "OnlineMetropolisSampler{$(T)}(ntheta = $(s.ntheta), ndata = $(s.ndata), nsamples = $(s.nsamples))")
 
-buffer_index(s::OnlineMetropolisSampler, j::Int) = CartesianIndex(j, mod1(s.i[j], s.n))
-random_index(s::OnlineMetropolisSampler, j::Int) = CartesianIndex(j, rand(1:s.n))
-buffer_indices(s::OnlineMetropolisSampler, J = 1:size(s.θ, 2)) = buffer_index.((s,), J)
-random_indices(s::OnlineMetropolisSampler, J = 1:size(s.θ, 2)) = random_index.((s,), J)
-function Random.rand(s::OnlineMetropolisSampler, J = 1:size(s.θ, 2))
+buffer_index(s::OnlineMetropolisSampler, j::Int) = CartesianIndex(j, mod1(s.i[j], s.nsamples))
+random_index(s::OnlineMetropolisSampler, j::Int) = CartesianIndex(j, rand(1:s.nsamples))
+buffer_indices(s::OnlineMetropolisSampler, J = 1:s.ndata) = buffer_index.((s,), J)
+random_indices(s::OnlineMetropolisSampler, J = 1:s.ndata) = random_index.((s,), J)
+function Random.rand(s::OnlineMetropolisSampler, J = 1:s.ndata)
     idx = random_indices(s, J)
     return s.θ[:, idx], s.neglogPXθ[:, idx], s.neglogPθ[:, idx]
 end
 
 # c.f. https://stats.stackexchange.com/a/163790
-function update!(s::OnlineMetropolisSampler, θ′::AbstractMatrix, neglogPXθ′::AbstractMatrix, neglogPθ′::AbstractMatrix, J = 1:size(s.θ, 2))
+function update!(s::OnlineMetropolisSampler, θ′::AbstractMatrix, neglogPXθ′::AbstractMatrix, neglogPθ′::AbstractMatrix, J = 1:s.ndata)
+    @assert size(θ′, 1) == s.ntheta
     @assert size(θ′, 2) == size(neglogPXθ′, 2) == size(neglogPθ′, 2)
     @assert size(neglogPXθ′, 1) == size(neglogPθ′, 1) == 1
 
@@ -374,7 +377,7 @@ function _test_online_mh_sampler(phys::EPGModel)
     # initialize sampler with uniformly random samples
     θlo, θhi = θlower(phys), θupper(phys)
     θ = reshape(sample_uniform(θlo, θhi, ndata * nsamples), :, ndata, nsamples)
-    s = OnlineMetropolisSampler{Float64}(n = nsamples, θ = θ)
+    s = OnlineMetropolisSampler{Float64}(θ = θ)
 
     # true answers
     θ_plot = θlo .+ (θhi .- θlo) .* range(0,1,length=200)'

@@ -699,7 +699,7 @@ function mle_biexp_epg(
     =#
 
     start_time = time()
-    batches = Iterators.partition(1:num_problems, batch_size)
+    batches = Iterators.partition(1:num_problems, batch_size === Colon() ? num_problems : batch_size)
     BLAS.set_num_threads(1) # Prevent BLAS from stealing julia threads
 
     for (batchnum, batch) in enumerate(batches)
@@ -709,7 +709,6 @@ function mle_biexp_epg(
                 work.Y                 .= initial_guess.Y[:,j]
                 work.x0                .= mle_biexp_epg_θ_to_x(work, view(initial_guess.θ, :, j))
                 work.opt.min_objective  = (x, g) -> fg_mle_biexp_epg!(work, x, g)
-                initial_guess.ℓ[j]      = f_mle_biexp_epg!(work, work.x0) #TODO: can save a small amount of time by deleting this, but probably worth it, since previous ℓ[j] is an approximation from posterior_state
 
                 solvetime               = @elapsed (minf, minx, ret) = NLopt.optimize(work.opt, work.x0)
                 f_mle_biexp_epg!(work, minx) # update `work` with solution
@@ -733,7 +732,7 @@ function mle_biexp_epg(
             " -- elapsed: $(DECAES.pretty_time(elapsed_time))" *
             " -- remaining: $(DECAES.pretty_time(remaining_time))" *
             " -- rate: $(round(mle_per_second; digits = 2))Hz" *
-            " -- initial loss: $(round(mean(initial_guess.ℓ[1,1:batch[end]]); digits = 2))" *
+            (!haskey(initial_guess, :ℓ) ? "" : " -- initial loss: $(round(mean(initial_guess.ℓ[1,1:batch[end]]); digits = 2))") *
             " -- loss: $(round(mean(results.loss[1:batch[end]]); digits = 2))" *
             " -- reg: $(round(mean(results.reg[1:batch[end]]); digits = 2))"
     end
