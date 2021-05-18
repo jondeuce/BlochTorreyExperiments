@@ -257,7 +257,15 @@ end
 
 #### Rician negative log-likelihood
 
-@inline_cufunc neglogL_rician_unsafe(x, ν, logσ) = 2logσ - log(x) + exp(-2logσ) * (x^2 + ν^2)/2 - _logbesseli0_cuda_unsafe(exp(-2logσ) * x * ν)
+@inline_cufunc function neglogL_rician_unsafe(x, ν, logσ)
+    σ⁻¹ = exp(-logσ)
+    x′, ν′ = σ⁻¹ * x, σ⁻¹ * ν
+    return ifelse(
+        x′ * ν′ < 1000,
+        2logσ - log(x) + (x′^2 + ν′^2)/2 - _logbesseli0_cuda_unsafe(x′ * ν′), # accurate for small x′ * ν′
+        logσ + ((x′-ν′)^2 + log(ν / x) + log2π)/2 - log1p(inv(8 * x′ * ν′)),  # for large x′ * ν′, use asymptotic form to avoid numerical issues
+    )
+end
 @inline_cufunc neglogL_rician(x, ν, logσ; ϵ = epseltype(x), logϵ = log(epseltype(x))) = neglogL_rician_unsafe(max(x,ϵ), max(ν,ϵ), max(logσ,logϵ)) # abs(⋅)+ϵ retains some gradient informating, whereas max(⋅,ϵ) drops gradient when <ϵ; which is preferred?
 
 ChainRules.@scalar_rule(

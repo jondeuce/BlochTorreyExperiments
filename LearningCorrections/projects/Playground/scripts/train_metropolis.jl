@@ -7,6 +7,7 @@ using DrWatson: @quickactivate
 using Playground
 lib.initenv()
 Plots.gr()
+Plots.GR.inline("png")
 
 lib.settings_template() = TOML.parse(
 """
@@ -64,7 +65,7 @@ lib.settings_template() = TOML.parse(
         INHERIT = "%PARENT%"
     [arch.vae_dec]
         INHERIT = "%PARENT%"
-        regtype = "Rician" # VAE regularization ("L1", "Gaussian", "Rician", or "None")
+        regtype = "Gaussian" # VAE regularization noise model ("L1", "Gaussian", "Rician", or "None")
 """
 )
 
@@ -73,8 +74,8 @@ wandb_logger = lib.init_wandb_logger(settings; dryrun = false, wandb_dir = lib.p
 
 lib.set_logdirname!()
 lib.clear_checkpointdir!()
-lib.set_checkpointdir!(lib.projectdir("log", "2021-05-13-T-18-23-18-980"))
-# derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-1p14e3na/files", lib.projectdir("wandb"))), modelprefix = "best-")
+# lib.set_checkpointdir!(lib.projectdir("log", "2021-05-13-T-18-23-18-980"))
+# lib.set_checkpointdir!(only(Glob.glob("run-*-38u6vppd/files", lib.projectdir("wandb"))))
 
 lib.@save_expression lib.logdir("build_physics.jl") function build_physics()
     isdefined(Main, :phys) ? Main.phys : lib.load_epgmodel_physics()
@@ -250,7 +251,7 @@ function sample_batch(batch; dataset::Symbol, batchsize::Int, signalfit::Bool = 
         elseif (cvae_key = settings["data"]["labels"]["image_labelset"]::String) ∈ ("cvae", "pretrained_cvae")
             # Use pseudo labels drawn from a pretrained CVAE
             @assert haskey(derived, cvae_key)
-            θ, _ = lib.sampleθZposterior(derived[cvae_key], signal(Ymeta))
+            θ, _ = lib.sampleθZposterior(derived[cvae_key], lib.signal(Ymeta))
             X = !signalfit ? nothing : lib.signal_model(phys, img, θ) # theta already on gpu
 
         else

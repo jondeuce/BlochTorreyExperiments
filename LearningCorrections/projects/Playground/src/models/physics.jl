@@ -383,12 +383,14 @@ function CPMGImage(info::Dict; seed::Int)
     Inonmask = findall(dropdims(any((x ->  isnan(x) ||  iszero(x)).(data); dims = 4); dims = 4)) # compliment of mask indices
     ishuffle = randperm(MersenneTwister(seed), length(Imask)) # shuffle indices before splitting to train/test/val
 
-    # res = data[Imask, :] |> vec |> sort |> unique! |> diff |> minimum # minimum difference between all sorted datapoints
-    # if res > 10 * eps(eltype(data)) && all(is_approx_multiple_of.(data, res)) # check for quantized images
-    #     @assert all(is_approx_multiple_of.(data, res)) # assert quantization condition holds
-    #     data[Imask, :] .+= (-res/2) .+ res .* rand(MersenneTwister(seed), Float32, length(Imask), size(data, 4)) # pepper data with (fixed) zero-mean random noise at the resolution limit to avoid quantization issues
-    #     @assert all(data[Imask, :] .>= res/2) # signals within the mask contain no zeroes by definition, so this is just a sanity check
-    # end
+    res = data[Imask, :] |> vec |> sort |> unique! |> diff |> minimum # minimum difference between all sorted datapoints
+    if res > 10 * eps(eltype(data)) && all(is_approx_multiple_of.(data, res)) # check for quantized images
+        @assert all(is_approx_multiple_of.(data, res)) # assert quantization condition holds
+        pepper_noise_level = res/10 # add noise below the resolution limit to avoid quantization issues
+        data[Imask, :] .+= pepper_noise_level .* (2 .* rand(MersenneTwister(seed), Float32, length(Imask), size(data, 4)) .- 1) # pepper data with (fixed) zero-mean random noise
+        @assert all(data[Imask, :] .>= res - pepper_noise_level) # signals within the mask contain no zeroes by definition, so this is just a sanity check
+        @assert !all(is_approx_multiple_of.(data, res)) # assert quantization condition holds
+    end
     data[Inonmask, :] .= NaN # set signals outside of mask to NaN
     data ./= maximum(data; dims = 4) # data[1:1,..] #TODO: normalize by mean? sum? maximum? first echo?
 

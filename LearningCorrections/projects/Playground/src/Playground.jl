@@ -16,7 +16,7 @@ include("fix/Stacks/Stacks.jl") # workaround until Transformers is updated for j
 @reexport using BenchmarkTools: @btime
 @reexport using CUDA: @cufunc, CuArray, CuVector, CuMatrix
 @reexport using DataFrames: DataFrame, dropmissing
-@reexport using Distributions: Gaussian, Uniform, cdf, logpdf, pdf, normcdf, norminvcdf, log2π, logtwo, sqrt2, sqrtπ, sqrthalfπ, invsqrt2, invsqrt2π
+@reexport using Distributions: Gaussian, Uniform, cdf, logpdf, pdf, normcdf, norminvcdf, log2π, logtwo, sqrt2, sqrt2π, sqrtπ, sqrthalfπ, invsqrt2, invsqrt2π
 @reexport using DrWatson: @dict, @ntuple, datadir, projectdir, scriptsdir, srcdir
 @reexport using EllipsisNotation: (..)
 @reexport using FFTW: fft, ifft, rfft

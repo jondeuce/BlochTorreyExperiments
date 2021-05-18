@@ -46,7 +46,7 @@ function CVAETrainingState(cvae::CVAE, Y, θ, Z = zeros_similar(θ, 0, size(θ,2
     μq0, logσq = split_dim1(μq)
     return CVAETrainingState(cvae, Ȳpad, θ̄, Z̄, μr0, logσr, μq0, logσq, nrm_state)
 end
-signal(state::CVAETrainingState) = state.Y
+signal(state::CVAETrainingState) = state.Ȳ
 
 struct CVAEInferenceState{C <: CVAE, A, S}
     cvae::C
@@ -63,7 +63,7 @@ function CVAEInferenceState(cvae::CVAE, Y)
     μr0, logσr = split_dim1(μr)
     return CVAEInferenceState(cvae, Ȳpad, μr0, logσr, nrm_state)
 end
-signal(state::CVAEInferenceState) = state.Y
+signal(state::CVAEInferenceState) = state.Ȳ
 
 normalize_inputs(cvae::CVAE, Y) = cvae.f((Y,)) # returns (Ȳ, nrm_state)
 normalize_inputs(cvae::CVAE, Y, θ, Z) = cvae.f((Y, θ, Z)) # returns (Ȳ, θ̄, Z̄, nrm_state)
