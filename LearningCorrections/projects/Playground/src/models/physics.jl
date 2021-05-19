@@ -453,7 +453,7 @@ function t2_distributions!(img::CPMGImage, X::P) where {P <: Pair{Symbol, <:Abst
     t2mapopts = DECAES.T2mapOptions(img.t2mapopts, MatrixSize = size(Xdata)[1:3])
     t2partopts = DECAES.T2partOptions(img.t2partopts, MatrixSize = size(Xdata)[1:3])
     res = img.meta[:decaes]
-    res[:t2maps][Xname], res[:t2dist][Xname] = DECAES.T2mapSEcorr(Xdata |> arr64, t2mapopts)
+    res[:t2maps][Xname], res[:t2dist][Xname] = DECAES.T2mapSEcorr(Xdata |> cpu64, t2mapopts)
     res[:t2parts][Xname] = DECAES.T2partSEcorr(res[:t2dist][Xname], t2partopts)
     return img
 end
@@ -778,8 +778,8 @@ end
 
 # Faster to compute forward/reverse pass on the CPU and convert back to GPU after... DECAES is just too fast (for typical batch sizes of ~1024, anyways)
 
-_signal_model(c::MaybeClosedFormBiexpEPGModel{T}, args::AbstractVector{T}...) where {T} = arr_similar(Matrix{T}, _signal_model_f64(c, map(arr64, args)...))
-_signal_model(c::MaybeClosedFormBiexpEPGModel{T}, args::CuVector{T}...) where {T} = arr_similar(CuMatrix{T}, _signal_model_f64(c, map(arr64, args)...))
+_signal_model(c::MaybeClosedFormBiexpEPGModel{T}, args::AbstractVector{T}...) where {T} = arr_similar(Matrix{T}, _signal_model_f64(c, map(cpu64, args)...))
+_signal_model(c::MaybeClosedFormBiexpEPGModel{T}, args::CuVector{T}...) where {T} = arr_similar(CuMatrix{T}, _signal_model_f64(c, map(cpu64, args)...))
 
 function _signal_model_f64(c::MaybeClosedFormBiexpEPGModel, alpha::AbstractVector{Float64}, refcon::AbstractVector{Float64}, T2short::AbstractVector{Float64}, T2long::AbstractVector{Float64}, Ashort::AbstractVector{Float64}, Along::AbstractVector{Float64}, T1::AbstractVector{Float64}, TE::AbstractVector{Float64})
     args = (alpha, refcon, T2short, T2long, Ashort, Along, T1, TE)
@@ -818,7 +818,7 @@ Zygote.@adjoint function _signal_model_f64(c::MaybeClosedFormBiexpEPGModel, alph
     end
 
     return X, function (Δ)
-        NNlib.batched_mul!(out, NNlib.BatchedTranspose(J), reshape(arr64(Δ), nsignals, 1, nsamples))
+        NNlib.batched_mul!(out, NNlib.BatchedTranspose(J), reshape(cpu64(Δ), nsignals, 1, nsamples))
         return (nothing, view(out,1,1,:), view(out,2,1,:), view(out,3,1,:), view(out,4,1,:), view(out,5,1,:), view(out,6,1,:), view(out,7,1,:), view(out,8,1,:))
     end
 end

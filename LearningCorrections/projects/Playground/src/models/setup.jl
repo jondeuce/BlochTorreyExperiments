@@ -231,7 +231,7 @@ function init_vector_rician_generator(phys::PhysicsModel{Float32}; nlatent, maxc
             # output scaling
             Z -> reshape(Z, n, :),                          # [1 x n*b] -> [n x b]
             OutputScale,
-        ) |> to32
+        ) |> gpu
     )
     # Rician generator mapping Z variables from prior space to Rician parameter space
     normalizer = ApplyOverDims(maximum; dims = 1)
@@ -263,7 +263,7 @@ function init_deep_latent_prior(phys::PhysicsModel{Float32}; nlatent, klatent, m
             init_rician_outputscale(phys; nlatent, maxcorr, noisebounds, RiceGenType = LatentScalarRicianNoiseCorrector),
         ),
         randn_similar,
-    ) |> to32
+    ) |> gpu
 end
 
 # models["theta_prior"]
@@ -275,7 +275,7 @@ function init_deep_theta_prior(phys::PhysicsModel{Float32}; ktheta, nhidden, hdi
             CatScale(Ref((-1,1)) .=> θbounds(phys), ones(Int, ntheta(phys))),
         ),
         randn_similar,
-    ) |> to32
+    ) |> gpu
 end
 
 function derived_cvae_theta_prior(phys::PhysicsModel{Float32}, θprior; prior_mix, kwargs...)
@@ -295,36 +295,36 @@ end
 # models["enc1"]
 function init_mlp_cvae_enc1(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, kwargs...)
     σact = Flux.relu # Flux.leakyrelu # Flux.swish
-    mlp = Flux.Chain(MLP(nsignal(phys) => 2*zdim, nhidden, hdim, σact, identity), CVAELatentTransform(zdim)) |> flattenchain |> to32
+    mlp = Flux.Chain(MLP(nsignal(phys) => 2*zdim, nhidden, hdim, σact, identity), CVAELatentTransform(zdim)) |> flattenchain |> gpu
 end
 
 # models["enc1"]
 function init_xformer_cvae_enc1(phys::PhysicsModel{Float32}; hdim, zdim, nlatent, nhidden, esize, nheads, headsize, seqlength, qseqlength, share, kwargs...)
-    TransformerEncoder(CVAELatentTransform(zdim); esize, nheads, headsize, hdim, seqlength, qseqlength, share, nhidden, insizes = (nsignal(phys),), outsize = 2*zdim) |> to32
+    TransformerEncoder(CVAELatentTransform(zdim); esize, nheads, headsize, hdim, seqlength, qseqlength, share, nhidden, insizes = (nsignal(phys),), outsize = 2*zdim) |> gpu
 end
 
 # models["enc2"]
 function init_mlp_cvae_enc2(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nlatent, kwargs...)
     σact = Flux.relu # Flux.leakyrelu # Flux.swish
-    mlp = Flux.Chain(MLP(nsignal(phys) + ntheta(phys) + nlatent => 2*zdim, nhidden, hdim, σact, identity), CVAELatentTransform(zdim)) |> flattenchain |> to32
-    Stack(@nntopo((X,θ,Z) => XθZ => μq), vcat, mlp) |> to32
+    mlp = Flux.Chain(MLP(nsignal(phys) + ntheta(phys) + nlatent => 2*zdim, nhidden, hdim, σact, identity), CVAELatentTransform(zdim)) |> flattenchain |> gpu
+    Stack(@nntopo((X,θ,Z) => XθZ => μq), vcat, mlp) |> gpu
 end
 
 # models["enc2"]
 function init_xformer_cvae_enc2(phys::PhysicsModel{Float32}; hdim, zdim, nlatent, nhidden, esize, nheads, headsize, seqlength, qseqlength, share, kwargs...)
-    TransformerEncoder(CVAELatentTransform(zdim); esize, nheads, headsize, hdim, seqlength, qseqlength, share, nhidden, insizes = (nsignal(phys), ntheta(phys), nlatent), outsize = 2*zdim) |> to32
+    TransformerEncoder(CVAELatentTransform(zdim); esize, nheads, headsize, hdim, seqlength, qseqlength, share, nhidden, insizes = (nsignal(phys), ntheta(phys), nlatent), outsize = 2*zdim) |> gpu
 end
 
 # models["dec"]
 function init_mlp_cvae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim, nlatent, kwargs...)
     σact = Flux.relu # Flux.leakyrelu # Flux.swish
-    mlp = MLP(nsignal(phys) + zdim => 2*(nmarginalized(phys) + nlatent), nhidden, hdim, σact, identity) |> to32 #TODO initb_last = init_μlogσ_bias(phys)
-    Stack(@nntopo((Y,zr) => Yzr => μx), vcat, mlp) |> to32
+    mlp = MLP(nsignal(phys) + zdim => 2*(nmarginalized(phys) + nlatent), nhidden, hdim, σact, identity) |> gpu #TODO initb_last = init_μlogσ_bias(phys)
+    Stack(@nntopo((Y,zr) => Yzr => μx), vcat, mlp) |> gpu
 end
 
 # models["dec"]
 function init_xformer_cvae_dec(phys::PhysicsModel{Float32}; hdim, zdim, nlatent, nhidden, esize, nheads, headsize, seqlength, qseqlength, share, kwargs...)
-    TransformerEncoder(; esize, nheads, headsize, hdim, seqlength, qseqlength, share, nhidden, insizes = (nsignal(phys), zdim), outsize = 2*(nmarginalized(phys) + nlatent)) |> to32
+    TransformerEncoder(; esize, nheads, headsize, hdim, seqlength, qseqlength, share, nhidden, insizes = (nsignal(phys), zdim), outsize = 2*(nmarginalized(phys) + nlatent)) |> gpu
 end
 
 # models["vae_dec"]
@@ -332,7 +332,7 @@ function init_mlp_cvae_vae_dec(phys::PhysicsModel{Float32}; hdim, nhidden, zdim,
     # Output is either `nsignal` channel outputs directly for "L1", or `nsignal` mean/log-std pairs for "Rician", "Gaussian", etc.
     noutput = nsignal(phys) * (regtype == "L1" ? 1 : 2)
     σact = Flux.relu # Flux.leakyrelu # Flux.swish
-    MLP(zdim => noutput, nhidden, hdim, σact, identity) |> to32
+    MLP(zdim => noutput, nhidden, hdim, σact, identity) |> gpu
 end
 
 # derived["cvae"]
@@ -380,7 +380,7 @@ end
 # derived["cvae"]
 function load_pretrained_cvae(phys::PhysicsModel{Float32}; modelfolder, modelprefix = "best-")
     settings = TOML.parsefile(joinpath(modelfolder, "settings.toml"))
-    models = load_model(only(Glob.glob(modelprefix * "models.*", modelfolder)), "models") |> deepcopy |> to32
+    models = load_model(only(Glob.glob(modelprefix * "models.*", modelfolder)), "models") |> deepcopy |> gpu
     @unpack enc1, enc2, dec = models
     cvae = derived_cvae(phys, enc1, enc2, dec; make_kwargs(settings, "arch")...)
 end
@@ -468,8 +468,8 @@ function compute_mle_labels!(
     # Copy results from within mask into relevant mask/train/val/test partitions
     all_labels              = img.meta[:mle_labels] = Dict{Symbol,Any}()
     mask_labels             = img.meta[:mle_labels][:mask] = Dict{Symbol,Any}()
-    mask_labels[:signalfit] = results.signalfit |> arr32
-    mask_labels[:theta]     = results.theta |> arr32
+    mask_labels[:signalfit] = results.signalfit |> cpu32
+    mask_labels[:theta]     = results.theta |> cpu32
 
     for (dataset, _) in img.partitions
         dataset === :mask && continue
@@ -540,7 +540,7 @@ function load_mcmc_labels!(
                 theta_true          = img.meta[:true_labels][dataset][:theta]
                 theta_mcmc          = dropdims(mean(theta; dims = 3); dims = 3)
                 theta_mcmc          = clamp.(theta_mcmc, θlower(phys), θupper(phys)) # `mean` can cause `theta_mcmc` to overflow outside of bounds
-                mle_init            = (; Y = lib.arr64(img.partitions[dataset]), θ = lib.arr64(theta_mcmc))
+                mle_init            = (; Y = lib.cpu64(img.partitions[dataset]), θ = lib.cpu64(theta_mcmc))
                 _, mle_res          = lib.mle_biexp_epg(phys, img; initial_guess = mle_init, batch_size = Colon(), verbose = true)
                 theta_mle           = mle_res.theta
                 labels[:theta_errs] = Dict{Symbol,Any}()
@@ -660,7 +660,7 @@ end
 
 # models["discrim"]
 function init_mlp_discrim(phys::PhysicsModel{Float32}; ninput = nsignal(phys), hdim, nhidden, dropout, kwargs...)
-    MLP(ninput => 1, nhidden, hdim, Flux.relu, identity; dropout) |> to32
+    MLP(ninput => 1, nhidden, hdim, Flux.relu, identity; dropout) |> gpu
 end
 
 # derived["kernel_$key"]
@@ -678,7 +678,7 @@ function init_mmd_kernels(phys::PhysicsModel{Float32}; bwsizes, bwbounds, nbandw
         )
 
         # MMD kernel wrapper
-        DeepExponentialKernel(logσ, embedding) |> to32
+        DeepExponentialKernel(logσ, embedding) |> gpu
     end
 end
 
@@ -713,7 +713,7 @@ fix_model_deprecations(d::Dict) = map_dict(fix_model_deprecations, d)
 function load_checkpoint(filename)
     isempty(checkpointdir()) && return Dict{String, Any}()
     try
-        load_model(checkpointdir(filename), "models") |> deepcopy |> to32
+        load_model(checkpointdir(filename), "models") |> deepcopy |> gpu
     catch e
         @warn "Error loading checkpoint from $(checkpointdir())"
         @warn sprint(showerror, e, catch_backtrace())

@@ -18,10 +18,14 @@ lib.settings_template() = TOML.parse(
         "2021-05-07_NeurIPS2021_64echo_10msTE_MockBiexpEPG_CPMG",
     ]
     [data.labels]
-        train_indices     = [0]          # image folders to use for training (0 = simulated data generated on the fly w/ CVAE trained using true labels)
+        train_indices     = [3]          # image folders to use for training (0 = simulated data generated on the fly w/ CVAE trained using true labels)
         eval_indices      = [0, 1, 2, 3] # image folders to use for evaluation (0 = simulated data generated on the fly)
         image_labelset    = "pseudo"     # label set used for the images is one of "pseudo", precomputed "mcmc", or "cvae"
         initialize_pseudo = "prior"      # initialize pseudo labels from "prior" or precomputed "mcmc"
+        burn_in_start     = 0.0
+        burn_in_min       = 0.0
+        burn_in_drop      = 0.0
+        burn_in_rate      = 1000.0
 
 [train]
     timeout   = 1e9
@@ -47,7 +51,7 @@ lib.settings_template() = TOML.parse(
         INHERIT       = "%PARENT%"
         gclip         = 0.0
         lambda_vae    = 0.0 # Weighting of vae decoder regularization loss on simulated signals
-        lambda_latent = 1.0 # Weighting of latent space regularization
+        lambda_latent = 0.0 # Weighting of latent space regularization
 
 [arch]
     posterior   = "TruncatedGaussian" # "TruncatedGaussian", "Gaussian", "Kumaraswamy"
@@ -149,6 +153,10 @@ logger = DataFrame(
     :img_idx    => Int[],
 )
 
+# Global trainer
+trainer = ignite.engine.Engine(@j2p (args...) -> @timeit "train step" train_step(args...))
+trainer.logger = ignite.utils.setup_logger("trainer")
+
 ####
 #### CVAE
 ####
@@ -181,17 +189,19 @@ function CVAElosses(Y, θ)
     return ℓ
 end
 
-# Update image pseudolabels
-function update_pseudolabels(; dataset::Symbol)
-    for img in phys.images
-        @unpack mh_sampler = img.meta[:pseudo_labels][dataset]
-        lib.update!(mh_sampler, phys, derived["cvae"], img; dataset, gpu_batch_size = 32768)
-    end
-end
-
 ####
 #### Training
 ####
+
+function update_trainer_state!()
+    t  = trainer.state.epoch
+    τ  = settings["data"]["labels"]["burn_in_rate"]
+    σ₀ = settings["data"]["labels"]["burn_in_start"]
+    σ₋ = settings["data"]["labels"]["burn_in_min"]
+    Δσ = settings["data"]["labels"]["burn_in_drop"]
+    σ  = max(σ₀ - Δσ * floor(Int, max(t, 0)/τ), σ₋)
+    trainer.state.burn_in = σ |> Float32
+end
 
 function sample_batch(batch; dataset::Symbol, batchsize::Int, signalfit::Bool = false)
 
@@ -203,8 +213,8 @@ function sample_batch(batch; dataset::Symbol, batchsize::Int, signalfit::Bool = 
         img = img_cols = Ymeta = nothing
         θ = lib.sampleθprior(phys, Matrix{Float32}, batchsize) # signal_model is faster on cpu; move to gpu afterward
         X = lib.signal_model(phys, θ) # faster on cpu; move to gpu afterward
-        θ = θ |> to32
-        X = X |> to32
+        θ = θ |> gpu
+        X = X |> gpu
         Y = lib.add_noise_instance(phys, X, θ)
 
         # Normalize Y, X, θ for CVAE
@@ -217,36 +227,31 @@ function sample_batch(batch; dataset::Symbol, batchsize::Int, signalfit::Bool = 
         # Sample signals from the image
         img   = phys.images[img_idx]
         Y_cpu, img_cols = lib.sample_columns(img.partitions[dataset], batchsize; replace = false)
-        Y     = Y_cpu |> to32
+        Y     = Y_cpu |> gpu
         Ymeta = lib.MetaCPMGSignal(phys, img, Y)
 
         if settings["data"]["labels"]["image_labelset"]::String == "pseudo"
             # Use pseudo labels from the Metropolis-Hastings sampler
             @unpack mh_sampler = img.meta[:pseudo_labels][dataset]
-            let
-                θ′, _      = lib.sampleθZposterior(derived["cvae"], Y)
-                θ′_cpu     = θ′ |> lib.cpu
-                X′_cpu     = lib.signal_model(phys, img, θ′_cpu)
-                neglogPXθ′ = lib.negloglikelihood(phys, Y_cpu, X′_cpu, θ′_cpu)
-                neglogPθ′  = lib.neglogprior(phys, θ′_cpu)
-                lib.update!(mh_sampler, θ′_cpu, neglogPXθ′, neglogPθ′, img_cols)
-            end
+            # burn_in = dataset === :train ? trainer.state.burn_in : nothing
+            burn_in = nothing
+            lib.update!(mh_sampler, phys, derived["cvae"], img, Y, Y_cpu; burn_in, img_cols)
             θ = mh_sampler.θ[:, lib.buffer_indices(mh_sampler, img_cols)]
             X = !signalfit ? nothing : lib.signal_model(phys, θ) # faster on cpu; move to gpu afterward
-            θ = θ |> to32
-            X = !signalfit ? nothing : (X |> to32)
+            θ = θ |> gpu
+            X = !signalfit ? nothing : (X |> gpu)
 
         elseif settings["data"]["labels"]["image_labelset"]::String == "mcmc"
             # Use labels drawn from precomputed MCMC chains
             θ = img.meta[:mcmc_labels][dataset][:theta][:, img_cols, rand(1:end)]
             X = !signalfit ? nothing : lib.signal_model(phys, img, θ) # faster on cpu; move to gpu afterward
-            θ = θ |> to32
-            X = !signalfit ? nothing : (X |> to32)
+            θ = θ |> gpu
+            X = !signalfit ? nothing : (X |> gpu)
 
         elseif settings["data"]["labels"]["image_labelset"]::String == "mle"
             # Use precomputed MLE labels
-            θ = img.meta[:mle_labels][dataset][:theta][:, img_cols] |> to32
-            X = !signalfit ? nothing : img.meta[:mle_labels][dataset][:signalfit][:, img_cols] |> to32
+            θ = img.meta[:mle_labels][dataset][:theta][:, img_cols] |> gpu
+            X = !signalfit ? nothing : img.meta[:mle_labels][dataset][:signalfit][:, img_cols] |> gpu
 
         elseif (cvae_key = settings["data"]["labels"]["image_labelset"]::String) ∈ ("cvae", "pretrained_cvae")
             # Use pseudo labels drawn from a pretrained CVAE
@@ -265,6 +270,7 @@ end
 function train_step(engine, batch)
     outputs = Dict{Any,Any}()
     trainer.should_terminate && return outputs
+    update_trainer_state!()
 
     @timeit "sample batch" begin
         @unpack img_idx, Y, θ = sample_batch(batch; dataset = :train, batchsize = settings["train"]["batchsize"]::Int)
@@ -291,7 +297,7 @@ function train_step(engine, batch)
     # Save model and abort in case of NaN and/or Inf parameters and/or gradients
     ENV["JL_TRAIN_DEBUG"] == "1" && @timeit "failure check" let
         lib.on_bad_params_or_gradients(models, ps, gs) do
-            batchdata = Dict("img_idx" => img_idx, "Y" => lib.cpu(Y), "θ" => lib.cpu(θ))
+            batchdata = Dict("img_idx" => img_idx, "Y" => lib.cpu32(Y), "θ" => lib.cpu32(θ))
             lib.save_progress(@dict(models, logger, batchdata); savefolder = lib.logdir(), prefix = "failure-", ext = ".jld2")
             engine.terminate()
         end
@@ -307,6 +313,7 @@ end
 function compute_metrics(engine, batch; dataset::Symbol)
     outputs = Dict{Any,Any}()
     trainer.should_terminate && return outputs
+    update_trainer_state!()
 
     @timeit "sample batch" begin
         @unpack img, img_idx, img_cols, Ymeta, Y, X, θ = sample_batch(batch; dataset = dataset, batchsize = settings["eval"]["batchsize"]::Int)
@@ -330,10 +337,12 @@ function compute_metrics(engine, batch; dataset::Symbol)
         return (L1 = ℓ₁, L2 = ℓ₂)
     end
 
-    # Update Metropolis-Hastings pseudo labels
+    # Update Metropolis-Hastings pseudo labels for entire dataset
     (img_idx != 0) && @timeit "update pseudo labels" begin
         @unpack mh_sampler = img.meta[:pseudo_labels][dataset]
-        lib.update!(mh_sampler, phys, derived["cvae"], img; dataset, gpu_batch_size = 32768)
+        # burn_in = dataset === :train ? trainer.state.burn_in : nothing
+        burn_in = nothing
+        lib.update!(mh_sampler, phys, derived["cvae"], img; dataset, burn_in, gpu_batch_size = 32768)
     end
 
     # Inference using CVAE
@@ -346,13 +355,13 @@ function compute_metrics(engine, batch; dataset::Symbol)
         θ′_samples = zeros(Float32, size(θ′_mode)..., 100)
         for i in 1:size(θ′_samples, 3)
             local θ′, _ = θ′_sampler()
-            θ′_samples[:,:,i] .= lib.cpu(θ′)
+            θ′_samples[:,:,i] .= lib.cpu32(θ′)
         end
     end
 
     # MLE using CVAE mode as initial guess
     (img_idx != 0) && @timeit "compute mle" begin
-        mle_init   = (; Y = lib.arr64(Y), θ = lib.arr64(θ′_mode))
+        mle_init   = (; Y = lib.cpu64(Y), θ = lib.cpu64(θ′_mode))
         _, mle_res = lib.mle_biexp_epg(phys, img; initial_guess = mle_init, batch_size = Colon(), verbose = false)
         metrics[:logL_MLE] = mean(mle_res.loss)
     end
@@ -402,8 +411,8 @@ function compute_metrics(engine, batch; dataset::Symbol)
 
     # Error metrics w.r.t true labels
     (img_idx == 0 || haskey(img.meta, :true_labels)) && @timeit "true label metrics" let
-        θ_true = img_idx == 0 ? lib.cpu(θ) : img.meta[:true_labels][dataset][:theta][:, img_cols]
-        lib.θ_errs_dict!(metrics, phys, θ_true, lib.cpu(θ′_mode); suffix = "CVAE_mode") # error of CVAE posterior mode
+        θ_true = img_idx == 0 ? lib.cpu32(θ) : img.meta[:true_labels][dataset][:theta][:, img_cols]
+        lib.θ_errs_dict!(metrics, phys, θ_true, lib.cpu32(θ′_mode); suffix = "CVAE_mode") # error of CVAE posterior mode
         lib.θ_errs_dict!(metrics, phys, θ_true, dropdims(mean(θ′_samples; dims = 3); dims = 3); suffix = "CVAE_mean") # error of CVAE posterior mean
         if img_idx != 0
             lib.θ_errs_dict!(metrics, phys, θ_true, mle_res.theta .|> Float32; suffix = "CVAE_mle") # error of MLE initialized with CVAE posterior sample
@@ -488,9 +497,6 @@ train_loader = data_loader(; loader_type = :train)
 val_eval_loader = data_loader(; loader_type = :eval)
 train_eval_loader = data_loader(; loader_type = :eval)
 
-trainer = ignite.engine.Engine(@j2p (args...) -> @timeit "train step" train_step(args...))
-trainer.logger = ignite.utils.setup_logger("trainer")
-
 val_evaluator = ignite.engine.Engine(@j2p (args...) -> @timeit "val metrics" compute_metrics(args...; dataset = :val))
 val_evaluator.logger = ignite.utils.setup_logger("val_evaluator")
 
@@ -529,7 +535,7 @@ trainer.add_event_handler(
 trainer.add_event_handler(
     Events.TERMINATE | Events.EPOCH_COMPLETED(event_filter = @j2p lib.throttler_event_filter(settings["eval"]["checkpointperiod"])),
     @j2p function (engine)
-        @timeit "checkpoint" let models = lib.cpu(models)
+        @timeit "checkpoint" let models = lib.cpu32(models)
             lib.on_bad_params_or_gradients(engine.terminate, models) && return nothing
             @timeit "save current model" lib.save_progress(@dict(models, logger); savefolder = lib.logdir(), prefix = "current-", ext = ".jld2")
             @timeit "make current plots" plothandles = make_plots()
@@ -547,13 +553,11 @@ trainer.add_event_handler(
             group_key.dataset === :val || continue
             is_best |= length(group.CVAE) >= 2 && group.CVAE[end] < minimum(group.CVAE[1:end-1])
         end
-        if is_best
-            @timeit "save best progress" let models = lib.cpu(models)
-                lib.on_bad_params_or_gradients(engine.terminate, models) && return nothing
-                @timeit "save best model" lib.save_progress(@dict(models, logger); savefolder = lib.logdir(), prefix = "best-", ext = ".jld2")
-                @timeit "make best plots" plothandles = make_plots()
-                @timeit "save best plots" lib.save_plots(plothandles; savefolder = lib.logdir(), prefix = "best-")
-            end
+        is_best && @timeit "save best progress" let models = lib.cpu32(models)
+            lib.on_bad_params_or_gradients(engine.terminate, models) && return nothing
+            @timeit "save best model" lib.save_progress(@dict(models, logger); savefolder = lib.logdir(), prefix = "best-", ext = ".jld2")
+            @timeit "make best plots" plothandles = make_plots()
+            @timeit "save best plots" lib.save_plots(plothandles; savefolder = lib.logdir(), prefix = "best-")
         end
     end
 )

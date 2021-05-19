@@ -16,45 +16,42 @@ const MaybeDualF64 = Union{Float64, <:Dual64}
 const VecOrTupleF64 = Union{<:AbstractVector{Float64}, <:Tuple{Vararg{Float64}}}
 const VecOrTupleMaybeDualF64 = Union{<:AbstractVector{<:MaybeDualF64}, <:Tuple{Vararg{<:MaybeDualF64}}}
 
-# Extend Flux.cpu and Flux.gpu
+# Recursively adapt storage type
+fmap_adapt(::Type{T}, x) where {T <: AbstractArray} = Flux.fmap(y -> _fmap_adapt(T, y), x)
+fmap_adapt(::Type{T}, x::AbstractArray) where {T <: AbstractArray} = _fmap_adapt(T, x)
+_fmap_adapt(::Type{T}, x::AbstractArray) where {T <: AbstractArray} = arr_similar(T, x)
+_fmap_adapt(::Type{T}, x) where {T <: AbstractArray} = x #fallback
+
+# Similar to Flux.cpu and Flux.gpu, but won't force conversion to Float32
+cpu(T, x) = fmap_adapt(Array{T}, x)
+gpu(T, x) = Flux.use_cuda[] ? fmap_adapt(CuArray{T}, x) : cpu(T, x)
+cpu(x) = cpu(Float64, x)
+gpu(x) = gpu(Float32, x)
+cpu64(x) = cpu(Float64, x)
+cpu32(x) = cpu(Float32, x)
+gpu64(x) = gpu(Float64, x)
+gpu32(x) = gpu(Float32, x)
+
+# Extend for non-fmap-able collections
 for f in [:cpu, :gpu]
-    @eval $f(x) = Flux.$f(x) # fallback to Flux.cpu/Flux.gpu
-    @eval $f(d::AbstractDict) = Dict(k => $f(v) for (k,v) in d)
+    @eval $f(T, d::AbstractDict) = Dict(k => $f(T, v) for (k,v) in d)
 end
 
-todevice(x) = Flux.use_cuda[] ? gpu(x) : cpu(x)
-to32(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float32}, xi) : xi, todevice(x))
-to64(x) = Flux.fmap(xi -> xi isa AbstractArray ? convert(AbstractArray{Float64}, xi) : xi, todevice(x))
-
-device_similar(::AbstractArray, y::AbstractArray) = y |> cpu
-device_similar(::CuArray, y::AbstractArray) = y |> gpu
-
 arr_similar(x::AbstractArray, y::AbstractArray) = arr_similar(typeof(x), y)
-# arr_similar(::Type{<:AbstractArray{T}}, y::AbstractArray) where {T} = convert(Array{T}, y)
-# arr_similar(::Type{<:AbstractArray{T}}, y::CuArray{T}) where {T} = convert(Array{T}, y) #TODO: CuArray -> Array works directly if eltypes are equal
-# arr_similar(::Type{<:AbstractArray{T1}}, y::CuArray{T2}) where {T1,T2} = convert(Array{T1}, y |> cpu) #TODO: CuArray -> Array falls back to scalar indexing with unequal eltypes
-# arr_similar(::Type{<:CuArray{T1}}, y::CuArray{T2}) where {T1,T2} = convert(CuArray{T1}, y) #TODO: Needed for disambiguation
-# arr_similar(::Type{<:CuArray{T}}, y::AbstractArray) where {T} = convert(CuArray{T}, y |> gpu)
-arr_similar(::Type{<:AbstractArray{T}}, y::AbstractArray) where {T} = T.(y) # fallback
-arr_similar(::Type{<:AbstractArray{T}}, y::CuArray) where {T} = T.(y |> cpu)
-arr_similar(::Type{<:CuArray{T}}, y::AbstractArray) where {T} = T.(y |> gpu)
-arr_similar(::Type{<:CuArray{T}}, y::CuArray) where {T} = T.(y)
+arr_similar(::Type{<:AbstractArray{T}}, y::AbstractArray) where {T} = CUDA.adapt(Array{T}, y) # fallback
+arr_similar(::Type{<:CuArray{T}}, y::AbstractArray) where {T} = CUDA.adapt(CuArray{T}, y)
 Zygote.@adjoint arr_similar(::Type{Tx}, y::Ty) where {Tx <: AbstractArray, Ty <: AbstractArray} = arr_similar(Tx, y), Δ -> (nothing, arr_similar(Ty, Δ)) # preserve input type on backward pass
 
 function _test_arr_similar()
     for f1 in [rand, CUDA.rand], f2 in [rand, CUDA.rand], T1 in [Float32, Float64], T2 in [Float32, Float64], sz in [(1,), (1,1), (1,1,1)]
         x = f1(T1, sz)
         y = f2(T2, sz)
-        # @info f1, f2, T1, T2, sz
         @assert typeof(arr_similar(x, y)) == typeof(x)
         @assert typeof(arr_similar(y, x)) == typeof(y)
-        @assert isapprox(cpu(arr_similar(x, y)), cpu(y); rtol = eps(Float32))
-        @assert isapprox(cpu(arr_similar(y, x)), cpu(x); rtol = eps(Float32))
+        @assert isapprox(cpu(arr_similar(x, y)), cpu(y); atol = T1 == T2 ? 0 : max(eps(T1), eps(T2)))
+        @assert isapprox(cpu(arr_similar(y, x)), cpu(x); atol = T1 == T2 ? 0 : max(eps(T1), eps(T2)))
     end
 end
-
-arr32(x::AbstractArray) = arr_similar(Array{Float32}, x)
-arr64(x::AbstractArray) = arr_similar(Array{Float64}, x)
 
 # rand_similar and randn_similar
 for f in [:zeros, :ones, :rand, :randn]

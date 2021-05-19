@@ -42,7 +42,7 @@ include("fix/Stacks/Stacks.jl") # workaround until Transformers is updated for j
 
 const lib = @__MODULE__
 export lib, plt, rcParams, torch, wandb, ignite, logging, scipy, numpy
-export @j2p, todevice, to32, to64
+export @j2p, cpu, gpu, cpu32, gpu32, cpu64, gpu64
 export AbstractTensor3D, AbstractTensor4D, CuTensor3D, CuTensor4D
 
 #### Includes

@@ -356,18 +356,29 @@ function update!(s::OnlineMetropolisSampler, θ′::AbstractMatrix, neglogPXθ�
     end
 end
 
-function update!(s::OnlineMetropolisSampler, phys::EPGModel{T}, cvae::CVAE, img::CPMGImage; dataset::Symbol, gpu_batch_size::Int) where {T}
+function update!(s::OnlineMetropolisSampler{T}, phys::EPGModel{T}, cvae::CVAE, img::CPMGImage, Y_gpu, Y_cpu = cpu(T, Y_gpu); burn_in, img_cols) where {T}
+    θ′, _ = sampleθZposterior(cvae, Y_gpu)
+    if burn_in !== nothing && burn_in > 0
+        θlo    = arr_similar(θ′, θlower(phys))
+        θup    = arr_similar(θ′, θupper(phys))
+        σ_mix  = T(burn_in) .* (θup .- θlo)
+        θ′    .= sample_trunc_mv_normal(θ′, σ_mix, θlo, θup)
+        # θ′    .= ifelse.(rand_similar(θ′) .> T(burn_in), θ′, θ′[:, Random.randperm(length(img_cols))])
+    end
+    θ′         = cpu(T, θ′)
+    X′         = signal_model(phys, img, θ′)
+    neglogPXθ′ = negloglikelihood(phys, Y_cpu, X′, θ′)
+    neglogPθ′  = neglogprior(phys, θ′)
+    update!(s, θ′, neglogPXθ′, neglogPθ′, img_cols)
+end
+
+function update!(s::OnlineMetropolisSampler{T}, phys::EPGModel{T}, cvae::CVAE, img::CPMGImage; dataset::Symbol, burn_in, gpu_batch_size::Int) where {T}
     Y         = img.partitions[dataset]
     J_ranges  = collect(Iterators.partition(1:size(Y, 2), gpu_batch_size))
-    θ′        = zeros(T, ntheta(phys), size(Y, 2))
     for (i, (Y_gpu,)) in enumerate(CUDA.CuIterator((Y[:, J],) for J in J_ranges))
-        θ′_gpu, _  = sampleθZposterior(cvae, Y_gpu)
-        θ′[:, J_ranges[i]] .= CUDA.adapt(Matrix{T}, θ′_gpu)
+        Y_cpu = Y[:, J_ranges[i]]
+        update!(s, phys, cvae, img, Y_gpu, Y_cpu; burn_in, img_cols = J_ranges[i])
     end
-    X′         = signal_model(phys, img, θ′)
-    neglogPXθ′ = negloglikelihood(phys, Y, X′, θ′)
-    neglogPθ′  = neglogprior(phys, θ′)
-    update!(s, θ′, neglogPXθ′, neglogPθ′)
 end
 
 function _test_online_mh_sampler(phys::EPGModel)

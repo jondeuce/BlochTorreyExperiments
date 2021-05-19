@@ -118,15 +118,14 @@ function user_input_event(Mod = Main)
         while true
             println("Enter valid Julia code:")
             s = chomp(readline())
-            ret = nothing
             try
-                ret = Mod.eval(Meta.parse(s))
+                display(Mod.eval(Meta.parse(s)))
             catch e
                 @warn sprint(showerror, e, catch_backtrace())
             end
-            println("Continue? [Y/n]:")
+            println("\nContinue? [Y/n]:")
             if lowercase(chomp(readline())) == "n"
-                return ret
+                return
             end
         end
     end

@@ -270,9 +270,9 @@ function _test_mle_biexp_epg_noise_only(;
     θ = img.meta[:pseudo_labels][dataset][:theta]
     X = signal_model(phys, img, θ)
     J, _ = sample_maybeshuffle(1:size(Y,2); shuffle = true, samples, seed)
-    Y = Y[:,J] |> to32
-    X = X[:,J] |> to32
-    θ = θ[:,J] |> to32
+    Y = Y[:,J] |> gpu
+    X = X[:,J] |> gpu
+    θ = θ[:,J] |> gpu
     logϵ = θ[6:6,:]
     logs = θ[7:7,:]
 
@@ -325,11 +325,11 @@ function mle_biexp_epg_noise_only(
     (initial_logs === nothing) && (initial_logs = .-log.(maximum(mean_rician.(X, exp.(initial_logϵ)); dims = 1)))
     initial_loss  = sum(neglogL_rician.(Y, exp.(initial_logs) .* X, initial_logs .+ initial_logϵ); dims = 1)
     initial_guess = (
-        logϵ = initial_logϵ |> arr64,
-        logs = initial_logs |> arr64,
-        ℓ    = initial_loss |> arr64,
+        logϵ = initial_logϵ |> cpu64,
+        logs = initial_logs |> cpu64,
+        ℓ    = initial_loss |> cpu64,
     )
-    X, Y = (X, Y) .|> arr64
+    X, Y = (X, Y) .|> cpu64
 
     # Setup
     noptvars     = !freeze_logϵ + !freeze_logs
@@ -574,7 +574,7 @@ function mle_biexp_epg_initial_guess(
     if dryrun
         image_indices, _ = sample_maybeshuffle(image_indices; shuffle = dryrunshuffle, samples = dryrunsamples, seed = dryrunseed)
     end
-    image_data = img.data[image_indices, :] |> to32 |> permutedims
+    image_data = img.data[image_indices, :] |> gpu |> permutedims
 
     Ymeta = MetaCPMGSignal(phys, img, image_data)
     batches = gpu_batch_size === Colon() ? [1:size(signal(Ymeta),2)] : Iterators.partition(1:size(signal(Ymeta),2), gpu_batch_size)
@@ -586,15 +586,15 @@ function mle_biexp_epg_initial_guess(
         else
             state = posterior_state(phys, cvae, Ymeta[:,batch])
         end
-        map(arr64, state)
+        map(cpu64, state)
     end
 
     if refine_init_logϵ || refine_init_logs
         _, refined_results = mle_biexp_epg_noise_only(
-            initial_guess.X |> arr64,
-            signal(Ymeta)   |> arr64,
-            refine_init_logϵ ? initial_guess.θ[6:6,:] |> arr64 : nothing,
-            refine_init_logs ? initial_guess.θ[7:7,:] |> arr64 : nothing;
+            initial_guess.X |> cpu64,
+            signal(Ymeta)   |> cpu64,
+            refine_init_logϵ ? initial_guess.θ[6:6,:] |> cpu64 : nothing,
+            refine_init_logs ? initial_guess.θ[7:7,:] |> cpu64 : nothing;
             freeze_logϵ = !refine_init_logϵ,
             freeze_logs = !refine_init_logs,
             logϵ_bounds = θbounds(phys)[6],
@@ -631,8 +631,8 @@ function mle_biexp_epg(
     end
 
     num_optvars   = nmarginalized(phys)
-    lower_bounds  = θmarginalized(phys, θlower(phys)) |> arr64
-    upper_bounds  = θmarginalized(phys, θupper(phys)) |> arr64
+    lower_bounds  = θmarginalized(phys, θlower(phys)) |> cpu64
+    upper_bounds  = θmarginalized(phys, θupper(phys)) |> cpu64
 
     work_spaces = map(1:Threads.nthreads()) do _
         @unpack TEbd, T2bd, T1bd = phys
@@ -800,9 +800,9 @@ function eval_mri_model(
 
     mle_image_state = let
         mle_image_results = readdir(Glob.glob"mle-image-mask-results-final-*.mat", mle_image_path) |> only |> DECAES.MAT.matread
-        θ = mle_image_results["theta"] |> to32
-        ϵ = reshape(exp.(mle_image_results["logepsilon"] |> to32), 1, :)
-        ℓ = reshape(mle_image_results["loss"] |> to32, 1, :) # negative log-likelihood loss
+        θ = mle_image_results["theta"] |> gpu
+        ϵ = reshape(exp.(mle_image_results["logepsilon"] |> gpu), 1, :)
+        ℓ = reshape(mle_image_results["loss"] |> gpu, 1, :) # negative log-likelihood loss
         X = signal_model(phys, θ)[1:nsignal(img), :]
         ν, δ, Z = X, nothing, nothing
         Y = add_noise_instance(phys, X, ϵ)
@@ -810,8 +810,8 @@ function eval_mri_model(
     end
 
     let
-        Y_test = img.partitions[dataset] |> to32
-        Y_train = img.partitions[:train] |> to32
+        Y_test = img.partitions[dataset] |> gpu
+        Y_train = img.partitions[:train] |> gpu
         Y_train_edges = Dict([k => v.edges[1] for (k,v) in img.meta[:histograms][:train]])
         cvae_image_state = inverter(Y_test; maxiter = 1, mode = posterior_mode)
 
@@ -962,7 +962,7 @@ function eval_mri_model(
 
     function θderived_cpu(θ)
         # named tuple of misc. parameters of interest derived from θ
-        map(arr64, θderived(phys, img, θ |> to32))
+        map(cpu64, θderived(phys, img, θ |> gpu))
     end
 
     function infer_θderived(Y)
@@ -980,7 +980,7 @@ function eval_mri_model(
         Imaskslices = filter(I -> I[slicedim] ∈ slices, img.indices[:mask])
         fill_maps(x) = (out = fill(NaN, size(Y)[1:3]); out[Islices] .= cpu(x); return out)
 
-        θcvae = infer_θderived(permutedims(Y[Islices,:]) |> to32)
+        θcvae = infer_θderived(permutedims(Y[Islices,:]) |> gpu)
         θmle = θderived_cpu(flat_image_to_flat_indices(mle_image_state.θ, Imaskslices))
 
         # DECAES heatmaps
@@ -1062,7 +1062,7 @@ function eval_mri_model(
             maxiter_lab = "$maxiter sample" * ifelse(maxiter > 1, "s", "")
             @info "Compute CVAE inference error ($maxiter_lab)..."
             cvae_errors = Dict{AbstractString, Float64}(all_row_labels .=> NaN)
-            cvae_errors["Time"]  = @elapsed cvae_state = inverter(X̂true |> to32; maxiter, mode)
+            cvae_errors["Time"]  = @elapsed cvae_state = inverter(X̂true |> gpu; maxiter, mode)
             cvae_errors["Time"] /= 60 # convert sec => min
             θcvae_derived = cvae_state.θ |> θderived_cpu
             for (lab, θt, θi) in zip(θderivedlabels(phys), θtrue_derived, θcvae_derived)
@@ -1129,7 +1129,7 @@ function peak_separation(
     X = _signal_model_f64(phys, args...)[1:nsignal(img), :]
     X = X ./ maximum(X; dims = 1)
     X̂ = add_noise_instance(phys, X, vec(settings.epsilon)')
-    X̂meta = MetaCPMGSignal(phys, img, X̂ |> to32)
+    X̂meta = MetaCPMGSignal(phys, img, X̂ |> gpu)
 
     function cvae_inference_state(Ymeta)
         state = posterior_state(
@@ -1150,14 +1150,14 @@ function peak_separation(
         Ydecaes = permutedims(reshape(signal(Ymeta), size(signal(Ymeta))..., 1, 1), (2,3,4,1)) # nTE x nbatch -> nbatch x 1 x 1 x nTE
         t2mapopts = DECAES.T2mapOptions(img.t2mapopts, MatrixSize = size(Ydecaes)[1:3])
         t2partopts = DECAES.T2partOptions(img.t2partopts, MatrixSize = size(Ydecaes)[1:3])
-        t2maps, t2dist = DECAES.T2mapSEcorr(Ydecaes |> arr64, t2mapopts)
+        t2maps, t2dist = DECAES.T2mapSEcorr(Ydecaes |> cpu64, t2mapopts)
         t2parts = DECAES.T2partSEcorr(t2dist, t2partopts) # size(t2dist) = nbatch x 1 x 1 x nT2
         (; t2maps, t2dist, t2parts)
     end
 
     cvae_results = let
         @unpack θ = cvae_inference_state(X̂meta)
-        (; T2short = arr64(reshape(θ.T2short, nT2, nSNR)), T2long = arr64(reshape(θ.T2long, nT2, nSNR)))
+        (; T2short = cpu64(reshape(θ.T2short, nT2, nSNR)), T2long = cpu64(reshape(θ.T2long, nT2, nSNR)))
     end
 
     #### T2 peaks plots
@@ -1199,15 +1199,15 @@ function peak_separation(
     # T2 distribution plots
     let
         i, j = 30, 50
-        X̂meta = MetaCPMGSignal(phys, img, repeat(reshape(X̂, :, nT2, nSNR)[:,i,j], 1, 1000) |> to32)
+        X̂meta = MetaCPMGSignal(phys, img, repeat(reshape(X̂, :, nT2, nSNR)[:,i,j], 1, 1000) |> gpu)
         cvae_θ = cvae_inference_state(X̂meta).θ
         @unpack t2maps, t2dist, t2parts = decaes_inference_state(X̂meta[:,1:1])
 
         saveplot(p, name) = map(suf -> savefig(p, joinpath(mkpath(savefolder), name * suf)), savetypes)
         T2short_lab, T2long_lab, SNR_lab = map(x->round(x;digits=1), (1000 * settings.T2short[i,j], 1000 * settings.T2long[i,j], settings.SNR[i,j]))
         let
-            T2 = 1000 .* vcat(cvae_θ.T2short, cvae_θ.T2long) |> vec |> arr64
-            A = vcat(cvae_θ.Ashort, cvae_θ.Along) |> vec |> arr64
+            T2 = 1000 .* vcat(cvae_θ.T2short, cvae_θ.T2long) |> vec |> cpu64
+            A = vcat(cvae_θ.Ashort, cvae_θ.Along) |> vec |> cpu64
             p = sticks(
                 T2, A;
                 label = L"$T_2$ Distribution", ylabel = L"$T_2$ Amplitude [a.u.]", xlabel = L"$T_2$ [ms]",
