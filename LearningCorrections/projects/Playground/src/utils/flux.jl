@@ -205,7 +205,7 @@ function update_optimizers!(f!, opts, args...; field::Symbol)
     end
 end
 
-function update_optimizers!(f!, optimizers::AbstractDict{<:AbstractString,Any}, args...; field::Symbol)
+function update_optimizers!(f!, optimizers::AbstractDict, args...; field::Symbol)
     for (name, opts) in optimizers
         update_optimizers!(f!, opts, name, args...; field)
     end

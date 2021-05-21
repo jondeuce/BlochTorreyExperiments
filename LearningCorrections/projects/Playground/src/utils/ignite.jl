@@ -153,9 +153,8 @@ function terminate_file_event(; file::AbstractString)
     end
 end
 
-function droplr_file_event(optimizers::AbstractDict{<:AbstractString,Any}; file::AbstractString, lrrate::Int, lrdrop, lrthresh)
-    pred(engine) = engine.state.epoch > 1 && mod(engine.state.epoch-1, lrrate) == 0
-    file_event(pred; file = file) do engine
+function droplr_file_event(optimizers::AbstractDict; file::AbstractString, lrdrop, lrthresh)
+    file_event(; file = file) do engine
         update_optimizers!(optimizers; field = :eta) do opt, name
             new_eta = max(opt.eta / lrdrop, lrthresh)
             if new_eta > lrthresh

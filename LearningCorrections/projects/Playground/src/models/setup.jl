@@ -538,13 +538,16 @@ function load_mcmc_labels!(
             # Errors w.r.t. true labels
             @time if haskey(img.meta, :true_labels)
                 theta_true          = img.meta[:true_labels][dataset][:theta]
-                theta_mcmc          = dropdims(mean(theta; dims = 3); dims = 3)
-                theta_mcmc          = clamp.(theta_mcmc, θlower(phys), θupper(phys)) # `mean` can cause `theta_mcmc` to overflow outside of bounds
-                mle_init            = (; Y = lib.cpu64(img.partitions[dataset]), θ = lib.cpu64(theta_mcmc))
+                theta_mcmc_mean     = dropdims(mean(theta; dims = 3); dims = 3)
+                theta_mcmc_mean     = clamp.(theta_mcmc_mean, θlower(phys), θupper(phys)) # `mean` can cause `theta_mcmc_mean` to overflow outside of bounds
+                theta_mcmc_med      = fast_median3(theta)
+                theta_mcmc_med      = clamp.(theta_mcmc_med, θlower(phys), θupper(phys)) # shouldn't be necessary for median, but just in case
+                mle_init            = (; Y = lib.cpu64(img.partitions[dataset]), θ = lib.cpu64(theta_mcmc_med))
                 _, mle_res          = lib.mle_biexp_epg(phys, img; initial_guess = mle_init, batch_size = Colon(), verbose = true)
                 theta_mle           = mle_res.theta
                 labels[:theta_errs] = Dict{Symbol,Any}()
-                θ_errs_dict!(labels[:theta_errs], phys, theta_true, theta_mcmc; suffix = "MCMC_mean")
+                θ_errs_dict!(labels[:theta_errs], phys, theta_true, theta_mcmc_mean; suffix = "MCMC_mean")
+                θ_errs_dict!(labels[:theta_errs], phys, theta_true, theta_mcmc_med; suffix = "MCMC_med")
                 θ_errs_dict!(labels[:theta_errs], phys, theta_true, theta_mle; suffix = "MCMC_mle")
             end
         end

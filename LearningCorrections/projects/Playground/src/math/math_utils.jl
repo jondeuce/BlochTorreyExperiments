@@ -70,6 +70,33 @@ fast_softmax(x; dims = 1) = Flux.softmax(x; dims)
 #     return y
 # end
 
+function fast_median3(x::AbstractArray{T,3}) where {T}
+    if size(x, 3) < 2
+        return copy(reshape(x, size(x, 1), size(x, 2)))
+    end
+    k       = size(x,3)
+    _kL     = k ÷ 2
+    _kR     = _kL + 1
+    _iseven = iseven(k)
+    out     = similar(x, size(x, 1), size(x, 2))
+    bufs    = [similar(x, size(x, 1), size(x, 3)) for _ in 1:Threads.nthreads()]
+    Threads.@threads for j in 1:size(x, 2)
+        @inbounds begin
+            y = bufs[Threads.threadid()]
+            copyto!(y, @views(x[:,j,:]))
+            sort!(y; dims = 2)
+            @simd for i in 1:size(x, 1)
+                if _iseven
+                    out[i,j] = (y[i,_kL] + y[i,_kR]) / 2
+                else
+                    out[i,j] = y[i,_kR]
+                end
+            end
+        end
+    end
+    return out
+end
+
 # Temporary fix: cudnn softmax adjoint is slow?
 Zygote.@adjoint function fast_softmax(x; dims = 1)
     y = fast_softmax(x; dims)
