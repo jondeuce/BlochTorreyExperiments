@@ -482,7 +482,7 @@ function compute_mle_labels!(
         if haskey(img.meta, :true_labels)
             theta_true          = img.meta[:true_labels][dataset][:theta]
             theta_mle           = labels[:theta]
-            labels[:theta_errs] = θ_errs_dict(phys, theta_true, theta_mle; suffix = "MLE")
+            labels[:theta_errs] = θ_rel_errs_dict(phys, theta_true .- theta_mle; suffix = "MLE")
         end
     end
 
@@ -546,9 +546,9 @@ function load_mcmc_labels!(
                 _, mle_res          = lib.mle_biexp_epg(phys, img; initial_guess = mle_init, batch_size = Colon(), verbose = true)
                 theta_mle           = mle_res.theta
                 labels[:theta_errs] = Dict{Symbol,Any}()
-                θ_errs_dict!(labels[:theta_errs], phys, theta_true, theta_mcmc_mean; suffix = "MCMC_mean")
-                θ_errs_dict!(labels[:theta_errs], phys, theta_true, theta_mcmc_med; suffix = "MCMC_med")
-                θ_errs_dict!(labels[:theta_errs], phys, theta_true, theta_mle; suffix = "MCMC_mle")
+                θ_rel_errs_dict!(labels[:theta_errs], phys, theta_true .- theta_mcmc_mean; suffix = "MCMC_mean")
+                θ_rel_errs_dict!(labels[:theta_errs], phys, theta_true .- theta_mcmc_med; suffix = "MCMC_med")
+                θ_rel_errs_dict!(labels[:theta_errs], phys, theta_true .- theta_mle; suffix = "MCMC_mle")
             end
         end
     end
@@ -601,15 +601,23 @@ function load_true_labels!(
     return nothing
 end
 
-function θ_errs_dict!(d::Dict{Symbol}, phys, θ_true, θ_approx; suffix)
-    θ_widths = θupper(phys) .- θlower(phys)
-    θ_errs   = mean(abs, θ_true .- θ_approx; dims = 2)
+function θ_errs_dict!(d::Dict{Symbol}, phys, θ_errs; suffix)
+    θ_errs = mean(θ_errs; dims = 2)
     for (i, lab) in enumerate(θasciilabels(phys))
-        d[Symbol("$(lab)_err_$(suffix)")] = 100 * θ_errs[i] / θ_widths[i]
+        d[Symbol("$(lab)_err_$(suffix)")] = θ_errs[i]
     end
     return d
 end
-θ_errs_dict(phys, θ_true, θ_approx; suffix) = θ_errs_dict!(Dict{Symbol,Any}(), phys, θ_true, θ_approx; suffix)
+θ_errs_dict(phys, θ_errs; suffix) = θ_errs_dict!(Dict{Symbol,Any}(), phys, θ_errs; suffix)
+
+function θ_rel_errs_dict!(d::Dict{Symbol}, phys, θ_diffs; suffix)
+    θ_widths = θupper(phys) .- θlower(phys)
+    θ_errs   = 100 .* abs.(θ_diffs) ./ θ_widths
+    θ_errs_dict!(d, phys, θ_errs; suffix)
+    return d
+end
+θ_rel_errs_dict(phys, θ_diffs; suffix) = θ_rel_errs_dict!(Dict{Symbol,Any}(), phys, θ_diffs; suffix)
+
 
 
 function verify_mle_labels(phys::EPGModel)

@@ -18,9 +18,9 @@ lib.settings_template() = TOML.parse(
         "2021-05-07_NeurIPS2021_64echo_10msTE_MockBiexpEPG_CPMG",
     ]
     [data.labels]
-        train_indices     = [0, 1, 2, 3]             # image folders to use for training (0 = simulated data generated on the fly, true labels passed to CVAE)
-        eval_indices      = [0, 1, 2, 3]             # image folders to use for evaluation (0 = simulated data generated on the fly)
-        train_fractions   = [0.25, 0.25, 0.25, 0.25] # training samples from `image[train_indices[i]]` are drawn with proportion `train_fractions[i]`
+        train_indices     = [0, 1, 2, 3] # image folders to use for training (0 = simulated data generated on the fly, true labels passed to CVAE)
+        eval_indices      = [0, 1, 2, 3] # image folders to use for evaluation (0 = simulated data generated on the fly)
+        train_fractions   = []           # training samples from `image[train_indices[i]]` are drawn with proportion `train_fractions[i]`; if empty, `train_indices` sampled uniformly
         image_labelset    = "pseudo"     # label set used for the images is one of "pseudo", precomputed "mcmc", or "cvae"
         initialize_pseudo = "prior"      # initialize pseudo labels from "prior" or precomputed "mcmc"
 
@@ -356,6 +356,7 @@ function compute_metrics(engine, batch; dataset::Symbol)
             local θ′, _ = θ′_sampler()
             θ′_samples[:,:,i] .= lib.cpu32(θ′)
         end
+        θ′_samples_q1, θ′_samples_q2, θ′_samples_q3 = lib.fast_quartiles3(θ′_samples)
     end
 
     # MLE using CVAE mode as initial guess
@@ -374,10 +375,11 @@ function compute_metrics(engine, batch; dataset::Symbol)
         end
     end
 
-    # Goodness of fit metrics for CVAE posterior samples
+    # Goodness of fit metrics, confidence intervals, etc. for CVAE posterior samples
     @timeit "cvae goodness of fit" let
         metrics[:rmse_CVAE] = sqrt(mean(abs2, Y .- X′_mode))
         metrics[:logL_CVAE] = mean(lib.negloglikelihood(phys, Y, X′_mode, θ′_mode))
+        lib.θ_rel_errs_dict!(metrics, phys, θ′_samples_q3 .- θ′_samples_q1; suffix = "CVAE_iqr") # CVAE samples' interquartile range
     end
 
     # CVAE parameter cdf distances w.r.t. ground truth mcmc
@@ -394,32 +396,41 @@ function compute_metrics(engine, batch; dataset::Symbol)
         end
     end
 
-    # Pseudo label metrics (note: these are over whole validation sets, not just this batch)
+    # Pseudo label metrics
     (img_idx > 0) && @timeit "pseudo label metrics" let
-        # Record current negative log likelihood of pseudo labels
+        # Record current negative log likelihood of pseudo labels  (note: these over datasets, not just this batch)
         neglogPXθ = mh_sampler.neglogPXθ[:, lib.buffer_indices(mh_sampler)]
         metrics[:logL_Pseudo] = mean(filter(!isinf, vec(neglogPXθ)))
 
-        # Record cdf distance metrics
+        # Record cdf distance metrics  (note: these over datasets, not just this batch)
         θ_mcmc  = img.meta[:mcmc_labels][dataset][:theta]
         θ_dists = mcmc_cdf_distances(θ_mcmc, mh_sampler.θ)
         for (i, lab) in enumerate(lib.θasciilabels(phys)), (ℓ_name, ℓ) in pairs(θ_dists)
             metrics[Symbol("$(lab)_$(ℓ_name)_Pseudo")] = ℓ[i]
         end
+
+        # Sample statistics
+        lib.θ_rel_errs_dict!(metrics, phys, lib.fast_iqr3(mh_sampler.θ[:, img_cols, :]); suffix = "Pseudo_iqr") # CVAE samples' interquartile range
     end
 
     # Error metrics w.r.t true labels
     (img_idx <= 0 || haskey(img.meta, :true_labels)) && @timeit "true label metrics" let
         θ_true = img_idx <= 0 ? lib.cpu32(θ) : img.meta[:true_labels][dataset][:theta][:, img_cols]
-        lib.θ_errs_dict!(metrics, phys, θ_true, lib.cpu32(θ′_mode); suffix = "CVAE_mode") # error of CVAE posterior mode
-        lib.θ_errs_dict!(metrics, phys, θ_true, dropdims(mean(θ′_samples; dims = 3); dims = 3); suffix = "CVAE_mean") # error of CVAE posterior mean
-        lib.θ_errs_dict!(metrics, phys, θ_true, lib.fast_median3(θ′_samples); suffix = "CVAE_med") # error of CVAE posterior median
+        lib.θ_rel_errs_dict!(metrics, phys, θ_true .- lib.cpu32(θ′_mode); suffix = "CVAE_mode") # error of CVAE posterior mode
+        lib.θ_rel_errs_dict!(metrics, phys, θ_true .- dropdims(mean(θ′_samples; dims = 3); dims = 3); suffix = "CVAE_mean") # error of CVAE posterior mean
+        lib.θ_rel_errs_dict!(metrics, phys, θ_true .- θ′_samples_q2; suffix = "CVAE_med") # error of CVAE posterior median
+        lib.θ_errs_dict!(metrics, phys, θ′_samples_q1 .< θ_true .< θ′_samples_q3; suffix = "CVAE_iqf") # fraction of IQR's which contain the true label
         if img_idx != 0
-            lib.θ_errs_dict!(metrics, phys, θ_true, mle_res.theta .|> Float32; suffix = "CVAE_mle") # error of MLE initialized with CVAE posterior sample
+            lib.θ_rel_errs_dict!(metrics, phys, θ_true .- (mle_res.theta .|> Float32); suffix = "CVAE_mle") # error of MLE initialized with CVAE posterior sample
         end
         if img_idx > 0
-            lib.θ_errs_dict!(metrics, phys, θ_true, dropdims(mean(mh_sampler.θ[:, img_cols, :]; dims = 3); dims = 3); suffix = "Pseudo_mean") # error of mean pseudo labels
-            lib.θ_errs_dict!(metrics, phys, θ_true, lib.fast_median3(mh_sampler.θ[:, img_cols, :]); suffix = "Pseudo_med") # error of median pseudo labels
+            let
+                θ′ = mh_sampler.θ[:, img_cols, :]
+                θ′_q1, θ′_q2, θ′_q3 = lib.fast_quartiles3(θ′)
+                lib.θ_rel_errs_dict!(metrics, phys, θ_true .- dropdims(mean(θ′; dims = 3); dims = 3); suffix = "Pseudo_mean") # error of mean pseudo labels
+                lib.θ_rel_errs_dict!(metrics, phys, θ_true .- θ′_q2; suffix = "Pseudo_med") # error of median pseudo labels
+                lib.θ_errs_dict!(metrics, phys, θ′_q1 .< θ_true .< θ′_q3; suffix = "Pseudo_iqf") # fraction of IQR's which contain the true label
+            end
         end
     end
 
@@ -486,7 +497,8 @@ function data_loader(; loader_type::Symbol)
     if loader_type === :train
         train_nbatches  = settings["train"]["nbatches"]::Int
         train_indices   = settings["data"]["labels"]["train_indices"]::Vector{Int}
-        train_fractions = settings["data"]["labels"]["train_fractions"]::Vector{Float64}
+        train_fractions = settings["data"]["labels"]["train_fractions"]::Vector
+        train_fractions = (isempty(train_fractions) ? ones(length(train_indices)) : train_fractions) |> x -> x ./ sum(x)
         sampler         = torch.utils.data.WeightedRandomSampler(train_fractions, replacement = true, num_samples = train_nbatches)
         torch.utils.data.DataLoader(train_indices, sampler = sampler)
     elseif loader_type === :eval
