@@ -184,10 +184,22 @@ function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C
     return θM, Z̄
 end
 
-function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C <: CVAEPosteriorDist{TruncatedGaussian}}
+# function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C <: CVAEPosteriorDist{TruncatedGaussian}}
+#     #TODO: `mode` is probably not strictly the correct term, but in practice it should be something akin to the distribution mode since `μr0` is the most likely value for `zr` and `μx0` is the most likely value for `x` **conditional on `zr`**; likely there are counterexamples to this simple reasoning, though...
+#     @unpack cvae, Ȳ, μr0, logσr = state
+#     zr = mode ? μr0 : sample_mv_normal(μr0, exp.(logσr))
+#     μx = cvae.D(Ȳ, zr)
+#     σ⁻¹μθ̄M, logσθ̄M, μZ̄, logσZ̄ = split_marginal_latent_pairs(cvae, μx)
+#     μθ̄M = tanh.(σ⁻¹μθ̄M) # transform from unbounded σ⁻¹μθ̄M ∈ ℝ^nθ to bounded interval [-1, 1]^nθ
+#     θ̄M = mode ? μθ̄M : sample_trunc_mv_normal(μθ̄M, exp.(logσθ̄M), -1, 1)
+#     Z̄ = mode || nlatent(state.cvae) == 0 ? μZ̄ : sample_mv_normal(μZ̄, exp.(logσZ̄))
+#     θM, Z = unnormalize_outputs(state, θ̄M, Z̄)
+#     return θM, Z
+# end
+
+function sampleθZposterior_state(state::CVAEInferenceState{C}; mode = false) where {C <: CVAEPosteriorDist{TruncatedGaussian}}
     #TODO: `mode` is probably not strictly the correct term, but in practice it should be something akin to the distribution mode since `μr0` is the most likely value for `zr` and `μx0` is the most likely value for `x` **conditional on `zr`**; likely there are counterexamples to this simple reasoning, though...
     @unpack cvae, Ȳ, μr0, logσr = state
-    nθM = nmarginalized(cvae)
     zr = mode ? μr0 : sample_mv_normal(μr0, exp.(logσr))
     μx = cvae.D(Ȳ, zr)
     σ⁻¹μθ̄M, logσθ̄M, μZ̄, logσZ̄ = split_marginal_latent_pairs(cvae, μx)
@@ -195,6 +207,12 @@ function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C
     θ̄M = mode ? μθ̄M : sample_trunc_mv_normal(μθ̄M, exp.(logσθ̄M), -1, 1)
     Z̄ = mode || nlatent(state.cvae) == 0 ? μZ̄ : sample_mv_normal(μZ̄, exp.(logσZ̄))
     θM, Z = unnormalize_outputs(state, θ̄M, Z̄)
+    return @ntuple(state, zr, μθ̄M, logσθ̄M, μZ̄, logσZ̄, θ̄M, Z̄, θM, Z)
+end
+
+function sampleθZposterior(state::CVAEInferenceState{C}; mode = false) where {C <: CVAEPosteriorDist{TruncatedGaussian}}
+    #TODO make proper CVAEPosteriorState struct
+    @unpack θM, Z = sampleθZposterior_state(state; mode)
     return θM, Z
 end
 
@@ -312,8 +330,10 @@ end
     ndata::Int            = size(θ, 2) # number of data points, i.e. each column of θ represents estimates for a separate datum Y
     nsamples::Int         = size(θ, 3) # length of the Metropolis-Hastings MCMC chain which is recorded
     i::Vector{Int}        = ones(Int, ndata) # current sample index in cyclical chain buffer θ
-    neglogPXθ::Array{T,3} = fill(T(Inf), 1, ndata, nsamples) # negative log likelihoods
-    neglogPθ::Array{T,3}  = fill(T(Inf), 1, ndata, nsamples) # negative log priors
+    accept::Array{Bool,3} = zeros(Bool, 1, ndata, nsamples) # records whether proposal was accepted or not
+    neglogPXθ::Array{T,3} = fill(T(Inf), 1, ndata, nsamples) # negative log likelihoods; initialize with Inf to guarantee acceptance of first sample
+    neglogPθ::Array{T,3}  = zeros(T, 1, ndata, nsamples) # negative log priors; initialization is moot due to neglogPXθ initialzed to Inf
+    neglogQθ::Array{T,3}  = zeros(T, 1, ndata, nsamples) # proposal distribution negative log likelihood; as opposed to standard MH, assumed to be independent of previous sample, i.e. Q(θ|θ′) ≡ Q(θ); initialization is moot due to neglogPXθ initialzed to Inf
 end
 Base.show(io::IO, s::OnlineMetropolisSampler{T}) where {T} = print(io, "OnlineMetropolisSampler{$(T)}(ntheta = $(s.ntheta), ndata = $(s.ndata), nsamples = $(s.nsamples))")
 
@@ -323,14 +343,14 @@ buffer_indices(s::OnlineMetropolisSampler, J = 1:s.ndata) = buffer_index.((s,), 
 random_indices(s::OnlineMetropolisSampler, J = 1:s.ndata) = random_index.((s,), J)
 function Random.rand(s::OnlineMetropolisSampler, J = 1:s.ndata)
     idx = random_indices(s, J)
-    return s.θ[:, idx], s.neglogPXθ[:, idx], s.neglogPθ[:, idx]
+    return s.θ[:, idx], s.neglogPXθ[:, idx], s.neglogPθ[:, idx], s.neglogQθ[:, idx]
 end
 
 # c.f. https://stats.stackexchange.com/a/163790
-function update!(s::OnlineMetropolisSampler, θ′::AbstractMatrix, neglogPXθ′::AbstractMatrix, neglogPθ′::AbstractMatrix, J = 1:s.ndata)
+function update!(s::OnlineMetropolisSampler, θ′::AbstractMatrix, neglogPXθ′::AbstractMatrix, neglogPθ′::AbstractMatrix, neglogQθ′::AbstractMatrix, J = 1:s.ndata)
     @assert size(θ′, 1) == s.ntheta
-    @assert size(θ′, 2) == size(neglogPXθ′, 2) == size(neglogPθ′, 2)
-    @assert size(neglogPXθ′, 1) == size(neglogPθ′, 1) == 1
+    @assert size(θ′, 2) == size(neglogPXθ′, 2) == size(neglogPθ′, 2) == size(neglogQθ′, 2)
+    @assert size(neglogPXθ′, 1) == size(neglogPθ′, 1) == size(neglogQθ′, 1) == 1
 
     # DECAES.tforeach(eachindex(J); blocksize = 16) do j
     Threads.@threads for j in eachindex(J)
@@ -341,28 +361,47 @@ function update!(s::OnlineMetropolisSampler, θ′::AbstractMatrix, neglogPXθ�
             next       = buffer_index(s, col)
 
             # Metropolis-Hastings acceptance ratio:
-            #        α = min(1, (PXθ′ * Pθ′) / (PXθ * Pθ))
-            # ==> logα = min(0, logPXθ′ + logPθ′ - logPXθ - logPθ)
-            logα       = min(0, s.neglogPXθ[1,curr] + s.neglogPθ[1,curr] - neglogPXθ′[1,j] - neglogPθ′[1,j])
+            #        α = min(1, (PXθ′ * Pθ′ * Qθ) / (PXθ * Pθ * Qθ′))
+            # ==> logα = min(0, logPXθ′ + logPθ′ + logQθ - logPXθ - logPθ - logQθ′)
+            logα       = min(0, s.neglogPXθ[1,curr] + s.neglogPθ[1,curr] + neglogQθ′[1,j] - neglogPXθ′[1,j] - neglogPθ′[1,j] - s.neglogQθ[1,curr])
             accept     = logα > log(rand())
 
             # Update theta, negative log likelihoods, and negative log priors with accepted points or current points
+            s.accept[1,next]    = accept
             @inbounds for i in 1:size(θ′, 1)
                 s.θ[i,next]     = accept ? θ′[i,j]         : s.θ[i,curr]
             end
             s.neglogPXθ[1,next] = accept ? neglogPXθ′[1,j] : s.neglogPXθ[1,curr]
             s.neglogPθ[1,next]  = accept ? neglogPθ′[1,j]  : s.neglogPθ[1,curr]
+            s.neglogQθ[1,next]  = accept ? neglogQθ′[1,j]  : s.neglogQθ[1,curr]
         end
     end
 end
 
-function update!(s::OnlineMetropolisSampler{T}, phys::EPGModel{T}, cvae::CVAE, img::CPMGImage, Y_gpu, Y_cpu = cpu(T, Y_gpu); img_cols) where {T}
-    θ′, _ = sampleθZposterior(cvae, Y_gpu)
-    θ′         = cpu(T, θ′)
+function update!(s::OnlineMetropolisSampler{T}, phys::EPGModel{T}, cvae::CVAEPosteriorDist{TruncatedGaussian}, img::CPMGImage, Y_gpu, Y_cpu = cpu(T, Y_gpu); img_cols) where {T}
+    # θ′, _ = sampleθZposterior(cvae, Y_gpu)
+    # θ′    = cpu(T, θ′)
+    post_state = sampleθZposterior_state(CVAEInferenceState(cvae, Y_gpu)) # return @ntuple(state, zr, μθ̄M, logσθ̄M, μZ̄, logσZ̄, θ̄M, Z̄, θM, Z)
+    θ′         = cpu(T, post_state.θM)
     X′         = signal_model(phys, img, θ′)
     neglogPXθ′ = negloglikelihood(phys, Y_cpu, X′, θ′)
     neglogPθ′  = neglogprior(phys, θ′)
-    update!(s, θ′, neglogPXθ′, neglogPθ′, img_cols)
+    neglogQθ′  = zeros_similar(neglogPθ′)
+    # neglogQθ′= cpu(T, sum(neglogL_trunc_gaussian(post_state.θ̄M, post_state.μθ̄M, post_state.logσθ̄M, -one(T), one(T)); dims = 1))
+
+    # NOTE: nevermind, don't do this; would need previous zr which corresponded with previous θ
+    # # Need to update proposal distribution (CVAE) likelihood for previous sample as well, since the proposal distribution has changed
+    # idx                = buffer_indices(s, img_cols)
+    # θ                  = gpu(T, s.θ[:, idx])
+    # Z                  = zeros_similar(θ, 0, size(θ, 2))
+    # _, θ̄, _, _         = normalize_inputs(cvae, Y_gpu, θ, Z)
+    # s.neglogQθ[:, idx] = cpu(T, sum(neglogL_trunc_gaussian(θ̄, post_state.μθ̄M, post_state.logσθ̄M, -one(T), one(T)); dims = 1))
+    # @show mean(neglogPXθ′)
+    # @show mean(neglogPθ′)
+    # @show mean(neglogQθ′)
+    # @show mean(s.neglogQθ[:, idx])
+
+    update!(s, θ′, neglogPXθ′, neglogPθ′, neglogQθ′, img_cols)
 end
 
 function update!(s::OnlineMetropolisSampler{T}, phys::EPGModel{T}, cvae::CVAE, img::CPMGImage; dataset::Symbol, gpu_batch_size::Int) where {T}
@@ -393,7 +432,8 @@ function _test_online_mh_sampler(phys::EPGModel)
         θ′ = sample_uniform(θlo, θhi, length(J))
         neglogPXθ′ = zeros_similar(θ′, 1, length(J)) # constant zero; we are just trying to reproduce the prior
         neglogPθ′ = neglogprior(phys, θ′)
-        update!(s, θ′, neglogPXθ′, neglogPθ′, J)
+        neglogQθ′ = zeros_similar(neglogPθ′)
+        update!(s, θ′, neglogPXθ′, neglogPθ′, neglogQθ′, J)
 
         # plot compared to expected prior pdf
         if mod(s.i[1], nsamples÷2) == 0

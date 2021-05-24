@@ -20,7 +20,7 @@ lib.settings_template() = TOML.parse(
     [data.labels]
         train_indices     = [0, 1, 2, 3] # image folders to use for training (0 = simulated data generated on the fly, true labels passed to CVAE)
         eval_indices      = [0, 1, 2, 3] # image folders to use for evaluation (0 = simulated data generated on the fly)
-        train_fractions   = []           # training samples from `image[train_indices[i]]` are drawn with proportion `train_fractions[i]`; if empty, `train_indices` sampled uniformly
+        train_fractions   = [1.0]        # training samples from `image[train_indices[i]]` are drawn with proportion `train_fractions[i]`; if empty, `train_indices` sampled uniformly
         image_labelset    = "pseudo"     # label set used for the images is one of "pseudo", precomputed "mcmc", or "cvae"
         initialize_pseudo = "prior"      # initialize pseudo labels from "prior" or precomputed "mcmc"
 
@@ -78,11 +78,7 @@ settings = lib.load_settings(force_new_settings = true)
 wandb_logger = lib.init_wandb_logger(settings; dryrun = false, wandb_dir = lib.projectdir())
 
 lib.set_logdirname!()
-if settings["checkpoint"]["folder"] == ""
-    lib.clear_checkpointdir!()
-else
-    lib.set_checkpointdir!(lib.projectdir(settings["checkpoint"]["folder"]))
-end
+lib.set_checkpointdir!(settings["checkpoint"]["folder"]::String == "" ? "" : lib.projectdir(settings["checkpoint"]["folder"]::String))
 
 lib.@save_expression lib.logdir("build_physics.jl") function build_physics()
     isdefined(Main, :phys) ? Main.phys : lib.load_epgmodel_physics()
@@ -399,8 +395,11 @@ function compute_metrics(engine, batch; dataset::Symbol)
     # Pseudo label metrics
     (img_idx > 0) && @timeit "pseudo label metrics" let
         # Record current negative log likelihood of pseudo labels  (note: these over datasets, not just this batch)
-        neglogPXθ = mh_sampler.neglogPXθ[:, lib.buffer_indices(mh_sampler)]
-        metrics[:logL_Pseudo] = mean(filter(!isinf, vec(neglogPXθ)))
+        buf_idx   = lib.buffer_indices(mh_sampler)
+        accept    = mh_sampler.accept[:, buf_idx]
+        neglogPXθ = mh_sampler.neglogPXθ[:, buf_idx]
+        metrics[:accept_Pseudo] = mean(vec(accept))
+        metrics[:logL_Pseudo]   = mean(filter(!isinf, vec(neglogPXθ)))
 
         # Record cdf distance metrics  (note: these over datasets, not just this batch)
         θ_mcmc  = img.meta[:mcmc_labels][dataset][:theta]
@@ -497,8 +496,8 @@ function data_loader(; loader_type::Symbol)
     if loader_type === :train
         train_nbatches  = settings["train"]["nbatches"]::Int
         train_indices   = settings["data"]["labels"]["train_indices"]::Vector{Int}
-        train_fractions = settings["data"]["labels"]["train_fractions"]::Vector
-        train_fractions = (isempty(train_fractions) ? ones(length(train_indices)) : train_fractions) |> x -> x ./ sum(x)
+        train_fractions = settings["data"]["labels"]["train_fractions"]::Vector{Float64}
+        train_fractions = (length(train_fractions) == 1 ? ones(length(train_indices)) : train_fractions) |> x -> x ./ sum(x)
         sampler         = torch.utils.data.WeightedRandomSampler(train_fractions, replacement = true, num_samples = train_nbatches)
         torch.utils.data.DataLoader(train_indices, sampler = sampler)
     elseif loader_type === :eval
