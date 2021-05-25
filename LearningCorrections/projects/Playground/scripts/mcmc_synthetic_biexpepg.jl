@@ -68,6 +68,7 @@ for dataset in [:val, :test, :train]
     lib.mcmc_biexp_epg(
         phys;
         img_idx         = 1,
+        num_samples     = 100,
         dataset         = dataset,
         save            = true,
         checkpoint      = true,

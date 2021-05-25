@@ -228,7 +228,6 @@ function ∇neglogL_trunc_gaussian(Δ, x, μ, logσ, a, b)
 end
 =#
 
-
 #### Laplace negative log-likelihood
 
 @inline_cufunc neglogL_laplace(x, μ, logσ) = exp(-logσ) * abs(x - μ) + logσ + logtwo

@@ -618,8 +618,6 @@ function θ_rel_errs_dict!(d::Dict{Symbol}, phys, θ_diffs; suffix)
 end
 θ_rel_errs_dict(phys, θ_diffs; suffix) = θ_rel_errs_dict!(Dict{Symbol,Any}(), phys, θ_diffs; suffix)
 
-
-
 function verify_mle_labels(phys::EPGModel)
     for (i, img) in enumerate(phys.images)
         dataset = :val

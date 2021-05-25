@@ -187,7 +187,7 @@ Turing.@model function mcmc_biexp_epg_model!(work, Y::AbstractVector{Float64})
     logs  ~ Distributions.TruncatedNormal(0.0, 0.5, -2.5, 2.5)
     X     = biexp_epg_model_scaled!(work, α, β, η, δ1, δ2, logϵ, logs)
     logϵs = logϵ + logs
-    ϵs    = exp(logϵs)
+    # ϵs  = exp(logϵs)
     for i in 1:length(Y)
         logℒ = -neglogL_rician(Y[i], X[i], logϵs)
         Turing.@addlogprob! logℒ
@@ -198,16 +198,19 @@ end
 function mcmc_biexp_epg(
         phys;
         img_idx         = 1,
+        num_samples     = 100,
         dataset         = :val,
+        total_chains    = Colon(),
+        seed            = 0,
+        shuffle         = total_chains !== Colon(),
         save            = true,
         checkpoint      = save,
-        total_chains    = Colon(),
         checkpoint_freq = 2048, # checkpoint every `checkpoint_freq` iterations
         progress_freq   = 15.0, # update progress bar every `progress_freq` seconds
     )
 
     file_prefix(ischeckpoint) = (ischeckpoint ? "checkpoint_" : "") * "image-$(img_idx)_dataset-$(dataset)"
-    file_suffix(chains) = "$(lpad(chains[1].col, 7, '0'))-to-$(lpad(chains[end].col, 7, '0'))"
+    file_suffix(chains) = "$(lpad(chains[1].chain_idx, 7, '0'))-to-$(lpad(chains[end].chain_idx, 7, '0'))"
 
     function save_chains(chains; ischeckpoint)
         filename = file_prefix(ischeckpoint) * "_" * file_suffix(chains) * ".jld2"
@@ -215,16 +218,22 @@ function mcmc_biexp_epg(
     end
 
     function save_dataframe(chains; ischeckpoint)
-        filename = file_prefix(ischeckpoint) * "_" * file_suffix(chains) * ".csv"
-        chains_df = mapreduce(vcat, chains) do (col, index, chain)
+        file_basename = file_prefix(ischeckpoint) * "_" * file_suffix(chains)
+        chains_df = mapreduce(vcat, chains) do (chain_idx, img_col, img_xyz, chain)
             df = DataFrame(chain)
-            df.dataset_col = fill(col, DataFrames.nrow(df))
-            df.image_x = fill(index[1], DataFrames.nrow(df))
-            df.image_y = fill(index[2], DataFrames.nrow(df))
-            df.image_z = fill(index[3], DataFrames.nrow(df))
+            df.dataset_col = fill(img_col, DataFrames.nrow(df))
+            df.image_x = fill(img_xyz[1], DataFrames.nrow(df))
+            df.image_y = fill(img_xyz[2], DataFrames.nrow(df))
+            df.image_z = fill(img_xyz[3], DataFrames.nrow(df))
             return df
         end
-        CSV.write(filename, chains_df)
+        # CSV.write(file_basename * ".csv", chains_df)
+
+        # Rename columns and save to .mat (Matlab variables cannot contain unicode chars)
+        df_names   = [:iteration, :image_x, :image_y, :image_z, :α, :β, :η, :δ1, :δ2, :logϵ, :logs]
+        mat_names  = ["iteration", "image_x", "image_y", "image_z", "alpha", "beta", "eta", "delta1", "delta2", "logepsilon", "logscale"]
+        mat_data   = Dict([k_mat => copy(getproperty(chains_df, k_df)) for (k_df, k_mat) in zip(df_names, mat_names)])
+        DECAES.MAT.matwrite(file_basename * ".mat", mat_data)
     end
 
     img              = phys.images[img_idx]
@@ -233,24 +242,26 @@ function mcmc_biexp_epg(
     work_buffers     = [mcmc_biexp_epg_work_factory(phys, img) for _ in 1:Threads.nthreads()]
 
     total_chains     = total_chains == Colon() ? size(ydata, 2) : total_chains
+    img_cols         = !shuffle ? (1:total_chains) : sample(MersenneTwister(seed), 1:size(ydata, 2), total_chains; replace = false)
     chains           = Any[nothing for _ in 1:total_chains]
     checkpoint_cb    = !(save && checkpoint) ? nothing : Js -> save_dataframe(view(chains, Js); ischeckpoint = true)
 
     Turing.setprogress!(false)
     Turing.setchunksize(7)
 
-    foreach_with_progress(eachindex(chains); checkpoint_cb, checkpoint_freq, dt = progress_freq) do J
+    foreach_with_progress(eachindex(img_cols); checkpoint_cb, checkpoint_freq, dt = progress_freq) do Jc
+        J     = img_cols[Jc]
         work  = work_buffers[Threads.threadid()]
         Y     = ydata[:,J]
         model = mcmc_biexp_epg_model!(work, Y)
         chain = DECAES.tee_capture(suppress_terminal = true, suppress_logfile = true) do io
-            Turing.sample(model, Turing.NUTS(0.65), 100)
+            Turing.sample(model, Turing.NUTS(0.65), num_samples)
         end
-        chains[J] = (; col = J, index = yindices[J], chain = chain)
+        chains[Jc] = (; chain_idx = Jc, img_col = J, img_xyz = yindices[J], chain = chain)
     end
 
-    save && save_dataframe(chains; ischeckpoint = false)
-    save && save_chains(chains; ischeckpoint = false)
+    save && (@info "Saving chains to .mat file..."; @time save_dataframe(chains; ischeckpoint = false))
+    save && (@info "Saving chains to .jld2 file..."; @time save_chains(chains; ischeckpoint = false))
 
     return chains
 end
