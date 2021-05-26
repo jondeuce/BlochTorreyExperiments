@@ -402,7 +402,7 @@ function initialize_pseudo_labels!(
                 @unpack theta, signalfit = img.meta[:mle_labels][dataset]
                 theta = repeat(theta, 1, 1, npseudolabels)
             elseif Symbol(labelset) === :mcmc
-                @unpack theta, signalfit = img.meta[:mcmc_labels][dataset]
+                @unpack theta, signalfit = img.meta[:mcmc_labels_100][dataset]
                 theta = repeat(theta[:,:,end], 1, 1, npseudolabels) # note: this is only initializing the sampler buffer, which only tracks the latest theta; we start from the last mcmc sample
             elseif Symbol(labelset) === :cvae
                 @assert cvae !== nothing
@@ -494,19 +494,20 @@ function load_mcmc_labels!(
         force_reload = true,
     ) where {T}
 
-    for (i, img) in enumerate(phys.images)
+    for (img_idx, img) in enumerate(phys.images), mcmc_labels_path in [:mcmc_labels_100, :mcmc_labels_3000]
         # Optionally skip reloading
-        haskey(img.meta, :mcmc_labels) && !force_reload && continue
-        img.meta[:mcmc_labels] = Dict{Symbol,Any}()
+        haskey(img.meta, mcmc_labels_path) && !force_reload && continue
+        !haskey(img.meta[:info], String(mcmc_labels_path)) && continue
+        img.meta[mcmc_labels_path] = Dict{Symbol,Any}()
 
         # Load MCMC params
-        labels_file = joinpath(img.meta[:info]["folder_path"], img.meta[:info]["mcmc_labels_path"])
+        labels_file = joinpath(img.meta[:info]["folder_path"], img.meta[:info][String(mcmc_labels_path)])
         if !isfile(labels_file)
-            @info "MCMC data does not exist (image = $i): $(img.meta[:info]["folder_path"])"
+            @info "MCMC data does not exist (image = $(img_idx)): $(img.meta[:info]["folder_path"])"
             continue
         else
             @info labels_file
-            @info "Loading MCMC data (image = $i):"
+            @info "Loading MCMC data (image = $(img_idx)):"
         end
         @time labels_data = DECAES.MAT.matread(labels_file)
 
@@ -517,32 +518,42 @@ function load_mcmc_labels!(
         x_index           = labels_data["image_x"][1 : samples_per_chain : end]
         y_index           = labels_data["image_y"][1 : samples_per_chain : end]
         z_index           = labels_data["image_z"][1 : samples_per_chain : end]
-        labels_map        = Dict(CartesianIndex.(x_index, y_index, z_index) .=> 1:num_signals)
+        labels_indices    = CartesianIndex.(x_index, y_index, z_index)
+        labels_map        = Dict(labels_indices .=> 1:num_signals)
 
         for dataset in [:train, :val, :test]
             # Fetch theta for each partition
-            theta = mapreduce(vcat, enumerate(mcmc_param_names)) do (i, param_name)
-                indices   = (I -> labels_map[I]).(img.indices[dataset])
-                θ         = reshape(labels_data[param_name], samples_per_chain, :)[:, indices] .|> T
-                θ         = permutedims(reshape(θ, samples_per_chain, :, 1), (3,2,1))
+            dataset_indices = intersect(labels_indices, img.indices[dataset])
+            dataset_map     = Dict(img.indices[dataset] .=> 1:length(img.indices[dataset]))
+            theta_columns   = (I -> labels_map[I]).(dataset_indices)
+            theta = mapreduce(vcat, mcmc_param_names) do param_name
+                θ = reshape(labels_data[param_name], samples_per_chain, :)[:, theta_columns] .|> T
+                θ = permutedims(reshape(θ, samples_per_chain, :, 1), (3,2,1))
             end
 
             # Compute epg signal model
             @time X = signal_model(phys, img, theta[:,:,end])
 
             # Assign outputs
-            labels             = img.meta[:mcmc_labels][dataset] = Dict{Symbol,Any}()
+            labels             = img.meta[mcmc_labels_path][dataset] = Dict{Symbol,Any}()
             labels[:theta]     = theta # θ = α, β, η, δ1, δ2, logϵ, logs
             labels[:signalfit] = X .|> T
+            labels[:indices] = dataset_indices
+            labels[:columns] = (I -> dataset_map[I]).(labels[:indices])
 
             # Errors w.r.t. true labels
             @time if haskey(img.meta, :true_labels)
                 theta_true          = img.meta[:true_labels][dataset][:theta]
+                Y_true              = img.partitions[dataset]
+                if mcmc_labels_path === :mcmc_labels_3000
+                    theta_true      = theta_true[:, labels[:columns]]
+                    Y_true          = Y_true[:, labels[:columns]]
+                end
                 theta_mcmc_mean     = dropdims(mean(theta; dims = 3); dims = 3)
                 theta_mcmc_mean     = clamp.(theta_mcmc_mean, θlower(phys), θupper(phys)) # `mean` can cause `theta_mcmc_mean` to overflow outside of bounds
                 theta_mcmc_med      = fast_median3(theta)
                 theta_mcmc_med      = clamp.(theta_mcmc_med, θlower(phys), θupper(phys)) # shouldn't be necessary for median, but just in case
-                mle_init            = (; Y = lib.cpu64(img.partitions[dataset]), θ = lib.cpu64(theta_mcmc_med))
+                mle_init            = (; Y = lib.cpu64(Y_true), θ = lib.cpu64(theta_mcmc_med))
                 _, mle_res          = lib.mle_biexp_epg(phys, img; initial_guess = mle_init, batch_size = Colon(), verbose = true)
                 theta_mle           = mle_res.theta
                 labels[:theta_errs] = Dict{Symbol,Any}()
@@ -632,7 +643,7 @@ end
 function verify_mcmc_labels(phys::EPGModel)
     for (i, img) in enumerate(phys.images)
         dataset = :val
-        @unpack theta, signalfit = img.meta[:mcmc_labels][dataset]
+        @unpack theta, signalfit = img.meta[:mcmc_labels_100][dataset]
         Y = img.partitions[dataset]
         ℓ = negloglikelihood(phys, Y, signalfit, theta[:,:,end])
         @info "MCMC labels negative log-likelihood (image = $i, dataset = $dataset):"

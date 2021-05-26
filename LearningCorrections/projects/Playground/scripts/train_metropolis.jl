@@ -237,7 +237,7 @@ function sample_batch(batch; dataset::Symbol, batchsize::Int, signalfit::Bool = 
 
         elseif settings["data"]["labels"]["image_labelset"]::String == "mcmc"
             # Use labels drawn from precomputed MCMC chains
-            θ = img.meta[:mcmc_labels][dataset][:theta][:, img_cols, rand(1:end)]
+            θ = img.meta[:mcmc_labels_100][dataset][:theta][:, img_cols, rand(1:end)]
             X = !signalfit ? nothing : lib.signal_model(phys, img, θ) # faster on cpu; move to gpu afterward
             θ = θ |> gpu
             X = !signalfit ? nothing : (X |> gpu)
@@ -380,7 +380,7 @@ function compute_metrics(engine, batch; dataset::Symbol)
 
     # CVAE parameter cdf distances w.r.t. ground truth mcmc
     (img_idx > 0) && @timeit "cvae cdf distances" let
-        θ_mcmc  = img.meta[:mcmc_labels][dataset][:theta]
+        θ_mcmc  = img.meta[:mcmc_labels_100][dataset][:theta]
         θ_dists = mcmc_cdf_distances(θ_mcmc[:, img_cols, :], θ′_samples)
         for (i, lab) in enumerate(lib.θasciilabels(phys)), (ℓ_name, ℓ) in pairs(θ_dists)
             metrics[Symbol("$(lab)_$(ℓ_name)_CVAE")] = ℓ[i]
@@ -389,6 +389,22 @@ function compute_metrics(engine, batch; dataset::Symbol)
         θ_dists = mcmc_cdf_distances(mh_sampler.θ[:, img_cols, :], θ′_samples)
         for (i, lab) in enumerate(lib.θasciilabels(phys)), (ℓ_name, ℓ) in pairs(θ_dists)
             metrics[Symbol("$(lab)_$(ℓ_name)_Self")] = ℓ[i]
+        end
+    end
+
+    (img_idx > 0) && @timeit "cvae 3000 cdf distances" let
+        local θ_cols_ = img.meta[:mcmc_labels_3000][dataset][:columns]
+        local θ_mcmc_ = img.meta[:mcmc_labels_3000][dataset][:theta][:, :, 2501:3000]
+        local Y_mcmc_ = img.partitions[dataset][:, θ_cols_] |> lib.gpu
+        local θ′_sampler_ = lib.θZposterior_sampler(derived["cvae"], Y_mcmc_)
+        local θ′_samples_ = zeros(Float32, size(θ_mcmc_)...)
+        for i in 1:size(θ′_samples_, 3)
+            local θ′, _ = θ′_sampler_()
+            θ′_samples_[:,:,i] .= lib.cpu32(θ′)
+        end
+        local θ_dists_ = mcmc_cdf_distances(θ_mcmc_, θ′_samples_)
+        for (i, lab) in enumerate(lib.θasciilabels(phys)), (ℓ_name, ℓ) in pairs(θ_dists_)
+            metrics[Symbol("$(lab)_$(ℓ_name)_CVAE_3000")] = ℓ[i]
         end
     end
 
@@ -402,7 +418,7 @@ function compute_metrics(engine, batch; dataset::Symbol)
         metrics[:logL_Pseudo]   = mean(filter(!isinf, vec(neglogPXθ)))
 
         # Record cdf distance metrics  (note: these over datasets, not just this batch)
-        θ_mcmc  = img.meta[:mcmc_labels][dataset][:theta]
+        θ_mcmc  = img.meta[:mcmc_labels_100][dataset][:theta]
         θ_dists = mcmc_cdf_distances(θ_mcmc, mh_sampler.θ)
         for (i, lab) in enumerate(lib.θasciilabels(phys)), (ℓ_name, ℓ) in pairs(θ_dists)
             metrics[Symbol("$(lab)_$(ℓ_name)_Pseudo")] = ℓ[i]
@@ -469,7 +485,7 @@ function make_plots(; showplot::Bool = false)
                 )
                 if group_key.img_idx > 0 && contains(String(colname), "_err_")
                     img              = phys.images[group_key.img_idx]
-                    mcmc_errs_dict   = lib.recursive_try_get(img.meta, [:mcmc_labels, group_key.dataset, :theta_errs])
+                    mcmc_errs_dict   = lib.recursive_try_get(img.meta, [:mcmc_labels_100, group_key.dataset, :theta_errs])
                     lab, _           = split(String(colname), "_err_")
                     mcmc_errs_dict !== missing && Plots.hline!(p, [mcmc_errs_dict[Symbol(lab * "_err_MCMC_mean")]]; colour = :red, label = :none)
                     mcmc_errs_dict !== missing && Plots.hline!(p, [mcmc_errs_dict[Symbol(lab * "_err_MCMC_med")]]; colour = :orange, label = :none)

@@ -8,7 +8,7 @@ include("fix/Stacks/Stacks.jl") # workaround until Transformers is updated for j
 
 #### Import/export dependency names
 
-@importexport import ArgParse, BSON, BangBang, BenchmarkTools, CUDA, ChainRules, Conda, CSV, DECAES, DataFrames, Dates, Distributions, DrWatson, EllipsisNotation, FFTW, FileIO, FiniteDifferences, Flux, ForwardDiff, Functors, Glob, HypothesisTests, JLD2, LaTeXStrings, LinearAlgebra, LoopVectorization, NLopt, NNlib, OMEinsum, Optim, Parameters, Pkg, PrettyTables, ProgressMeter, PyCall, PyPlot, Random, ReadableRegex, SpecialFunctions, StatsBase, StatsPlots, Suppressor, TOML, ThreadPools, TimerOutputs, Tullio, Turing, UUIDs, UnicodePlots, Zygote
+@importexport import ArgParse, BSON, BangBang, BenchmarkTools, CUDA, ChainRules, Conda, CSV, DECAES, DataFrames, DataStructures, Dates, Distributions, DrWatson, EllipsisNotation, FFTW, FileIO, FiniteDifferences, Flux, ForwardDiff, Functors, Glob, HypothesisTests, JLD2, LaTeXStrings, LinearAlgebra, LoopVectorization, NLopt, NNlib, OMEinsum, Optim, Parameters, Pkg, PrettyTables, ProgressMeter, PyCall, PyPlot, Random, ReadableRegex, SpecialFunctions, Statistics, StatsBase, StatsPlots, Suppressor, TOML, ThreadPools, TimerOutputs, Tullio, Turing, UUIDs, UnicodePlots, Zygote
 
 #### Dependencies' symbols
 
@@ -16,6 +16,7 @@ include("fix/Stacks/Stacks.jl") # workaround until Transformers is updated for j
 @reexport using BenchmarkTools: @btime
 @reexport using CUDA: @cufunc, CuArray, CuVector, CuMatrix
 @reexport using DataFrames: DataFrame, dropmissing
+@reexport using DataStructures: OrderedDict
 @reexport using Distributions: Gaussian, Uniform, cdf, logpdf, pdf, normcdf, norminvcdf, log2π, logtwo, sqrt2, sqrt2π, sqrtπ, sqrthalfπ, invsqrt2, invsqrt2π
 @reexport using DrWatson: @dict, @ntuple, datadir, projectdir, scriptsdir, srcdir
 @reexport using EllipsisNotation: (..)
