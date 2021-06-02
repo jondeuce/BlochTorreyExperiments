@@ -51,9 +51,19 @@ if !@isdefined(cvae_dict)
     cvae_dict = OrderedDict{Any,Any}(
         "0"     => load_cvae(phys, only(readdir(Glob.glob"*1913r95s/files", lib.projectdir("wandb")))) |> lib.gpu, # train_indices = [0]
         "03"    => load_cvae(phys, only(readdir(Glob.glob"*2wx65cke/files", lib.projectdir("wandb")))) |> lib.gpu, # train_indices = [0,3]
-        "012"   => load_cvae(phys, only(readdir(Glob.glob"*g5wfhjnk/files", lib.projectdir("wandb")))) |> lib.gpu, # train_indices = [0,1,2]
+        "012"   => load_cvae(phys, only(readdir(Glob.glob"*3huk6tcq/files", lib.projectdir("wandb")))) |> lib.gpu, # train_indices = [0,1,2]
         "2112"  => load_cvae(phys, only(readdir(Glob.glob"*3ao70r4e/files", lib.projectdir("wandb")))) |> lib.gpu, # train_indices = [-2,-1,1,2]
         "21012" => load_cvae(phys, only(readdir(Glob.glob"*1wi9jz3m/files", lib.projectdir("wandb")))) |> lib.gpu, # train_indices = [-2,-1,0,1,2]
+    )
+end
+
+if !@isdefined(logger_dict)
+    logger_dict = OrderedDict{Any,Any}(
+        "0"     => FileIO.load(only(readdir(Glob.glob"*1913r95s/files/current-logger.jld2", lib.projectdir("wandb"))))["logger"], # train_indices = [0]
+        "03"    => FileIO.load(only(readdir(Glob.glob"*2wx65cke/files/current-logger.jld2", lib.projectdir("wandb"))))["logger"], # train_indices = [0,3]
+        "012"   => FileIO.load(only(readdir(Glob.glob"*3huk6tcq/files/current-logger.jld2", lib.projectdir("wandb"))))["logger"], # train_indices = [0,1,2]
+        "2112"  => FileIO.load(only(readdir(Glob.glob"*3ao70r4e/files/current-logger.jld2", lib.projectdir("wandb"))))["logger"], # train_indices = [-2,-1,1,2]
+        "21012" => FileIO.load(only(readdir(Glob.glob"*1wi9jz3m/files/current-logger.jld2", lib.projectdir("wandb"))))["logger"], # train_indices = [-2,-1,0,1,2]
     )
 end
 
@@ -110,7 +120,7 @@ function populate_cvae_samples(phys, cvae_dict; dataset::Symbol)
 end
 
 if !@isdefined(θ_dicts)
-    θ_dicts = populate_cvae_samples(phys, cvae_dict; dataset = :val)
+    θ_dicts = populate_cvae_samples(phys, cvae_dict; dataset = :test)
 end
 
 #### Compute metrics
@@ -176,7 +186,7 @@ end
 
 #### Make plots
 
-function default_plot_settings()
+function default_plot_settings(; kwargs...)
     
     # global rcParams = PyDict(PyPlot.matplotlib."rcParams")
     # rcParams["text.usetex"] = false # use matplotlib internal tex rendering
@@ -191,17 +201,18 @@ function default_plot_settings()
     
     Plots.pyplot()
     Plots.default()
-    Plots.default(
+    Plots.default(;
         fontfamily = "serif",
         size = (1600, 900),
         titlefonthalign = :left, # for figure numbering
-        titlefont = 20,
-        guidefont = 20,
-        tickfont = 14,
-        legendfontsize = 12,
+        titlefont = 28,
+        guidefont = 24,
+        tickfont = 20,
+        legendfontsize = 20,
         grid = false,
         yminorgrid = false,
         xminorgrid = false,
+        kwargs...
     )
 end
 
@@ -219,7 +230,7 @@ function error_histograms(phys, θ_dicts; dataset::Symbol)
     ps = Any[]
     θ_widths = lib.θupper(phys) .- lib.θlower(phys)
     for (i, lab) in enumerate(lib.θlabels(phys))
-        p = plot(; legend = :bottomleft)
+        p = plot(; legend = ifelse(i == 1, :topleft, :none))
         stephist!(p, (vec(θ_100_true[i,:] .- mean(θ_100_mcmc[i,:,:]; dims = 3))) ./ θ_widths[i], yscale = :log10, lab = "MCMC-100", line = (:solid, 1.5, :red))
         stephist!(p, (vec(θ_3000_true[i,:] .- mean(θ_3000_mcmc[i,:,:]; dims = 3))) ./ θ_widths[i], yscale = :log10, lab = "MCMC-3000", line = (:solid, 1.5, :green))
         stephist!(p, (vec(θ_100_true[i,:] .- mean(θ_100_cvae[i,:,:]; dims = 3))) ./ θ_widths[i], yscale = :log10, lab = "Metropolis-CVAE", line = (:solid, 1.5, :blue))
@@ -259,7 +270,7 @@ function pp_plot(phys, θ_dicts; dataset::Symbol)
 end
 
 function wasserstein_histograms(phys, θ_dicts; dataset::Symbol)
-    ps = Any[plot(; legend = :topright) for _ in 1:length(lib.θlabels(phys))]
+    ps = Any[plot(; legend = ifelse(i == 1, :topleft, :none)) for i in 1:length(lib.θlabels(phys))]
 
     for img_idx = 1:2
         # MCMC data using 3000 samples (following 500 burn-in iterations)
@@ -334,7 +345,57 @@ function qq_plot(phys, θ_dicts; dataset::Symbol)
     return p
 end
 
-function figure1(phys, θ_dicts; dataset::Symbol)
+function acceptance_ratio_plot(phys, logger_dict; dataset::Symbol)
+    df = logger_dict["012"]
+    p = plot(; xlabel = "Epoch", ylabel = L"MH acceptance ratio $\alpha$")
+    for (group_key, group) in pairs(DataFrames.groupby(df, ["img_idx", "dataset"]))
+        group_key.img_idx == 0 && continue
+        group_key.dataset !== dataset && continue
+        plot!(p, group.epoch, group.accept_Pseudo; label = L"\widetilde{p}_{u,%$(group_key.img_idx)}(\mathbf{x})", line = (:solid, 1.5, ifelse(group_key.img_idx == 1, :blue, :red)))
+    end
+    return p
+end
+
+function wasserstein_mcmc_plot(phys, logger_dict; dataset::Symbol)
+    df = logger_dict["012"]
+    ps = [plot(; xlabel = "Epoch", ylabel = "Wasserstein distance", foreground_color_legend = nothing) for i in 1:2]
+    for (group_key, group) in pairs(DataFrames.groupby(df, ["img_idx", "dataset"]))
+        group_key.img_idx != 1 && continue
+        group_key.dataset !== dataset && continue
+        lines = [
+            (:solid, 1.5, :blue),
+            (:solid, 1.5, :red),
+            (:dash, 1.5, :blue),
+            (:dash, 1.5, :red),
+            (:dash, 1.5, :orange),
+            (:dot, 1.5, :blue),
+            (:dot, 1.5, :red),
+        ]
+        for (i, (lab_ascii, lab)) in enumerate(zip(lib.θasciilabels(phys), lib.θlabels(phys)))
+            plot!(ps[1], group.epoch, group[:, "$(lab_ascii)_L1_CVAE"]; label = lab, xlim = (1,5000), xscale = :log10, line = lines[i])
+            plot!(ps[2], group.epoch, group[:, "$(lab_ascii)_L1_CVAE_3000"]; label = lab, xlim = (1,5000), xscale = :log10, line = lines[i])
+        end
+    end
+    return ps
+end
+
+function figure1(phys, logger_dict; dataset::Symbol)
+    default_plot_settings(size = (1600, 650))
+    p1 = acceptance_ratio_plot(phys, logger_dict; dataset)
+    p2_to_p3 = wasserstein_mcmc_plot(phys, logger_dict; dataset)
+    ps = [p1, p2_to_p3...]
+    for (i,p) in enumerate(ps)
+        title!(p, string.('A':'Z')[i])
+    end
+    p = plot(ps...; layout = (1,3))
+    display(p)
+    savefig(p, "figure1.png")
+    savefig(p, "figure1.eps")
+    savefig(p, "figure1.svg")
+    savefig(p, "figure1.pdf")
+end
+
+function figure2(phys, θ_dicts; dataset::Symbol)
     default_plot_settings()
     p1_to_p7 = error_histograms(phys, θ_dicts; dataset)
     p8 = pp_plot(phys, θ_dicts; dataset)
@@ -344,12 +405,13 @@ function figure1(phys, θ_dicts; dataset::Symbol)
     end
     p = plot(ps...; layout = (2,4))
     display(p)
-    savefig(p, "figure1.eps")
-    savefig(p, "figure1.svg")
-    savefig(p, "figure1.pdf")
+    savefig(p, "figure2.png")
+    savefig(p, "figure2.eps")
+    savefig(p, "figure2.svg")
+    savefig(p, "figure2.pdf")
 end
 
-function figure2(phys, θ_dicts; dataset::Symbol)
+function figure3(phys, θ_dicts; dataset::Symbol)
     default_plot_settings()
     p1_to_p7 = wasserstein_histograms(phys, θ_dicts; dataset)
     p8 = qq_plot(phys, θ_dicts; dataset)
@@ -359,71 +421,11 @@ function figure2(phys, θ_dicts; dataset::Symbol)
     end
     p = plot(ps...; layout = (2,4))
     display(p)
-    savefig(p, "figure2.eps")
-    savefig(p, "figure2.svg")
-    savefig(p, "figure2.pdf")
+    savefig(p, "figure3.png")
+    savefig(p, "figure3.eps")
+    savefig(p, "figure3.svg")
+    savefig(p, "figure3.pdf")
 end
-
-#### Temporary
-
-function copy_mat_files(; dataset::Symbol)
-    in_dir = "/home/jdoucette/Documents/projects/2021-05-24_NeurIPS2021_Initial_Submission/mcmc_3000_samples/image-3"
-    out_dir = "/home/jdoucette/Documents/code/BlochTorreyExperiments-shared/LearningCorrections/projects/Playground/data/images/2019-09-22_56echo_7msTE_CPMG/julia-mcmc-biexpepg"
-    mat_files = readdir(Glob.GlobMatch("*_dataset-$(dataset)_*.mat"), in_dir)
-    mat_out = DECAES.MAT.matread(mat_files[1])
-    for i in 2:length(mat_files)
-        mat = DECAES.MAT.matread(mat_files[i])
-        for k in keys(mat_out)
-            append!(mat_out[k], mat[k])
-        end
-    end
-
-    all_inds = CartesianIndex.(mat_out["image_x"], mat_out["image_y"], mat_out["image_z"])
-    seen_inds = Set{eltype(all_inds)}()
-    is_unique_cols = zeros(Bool, length(all_inds))
-    for i in 1:3000:length(all_inds)
-        I = all_inds[i]
-        is_unique_cols[i .+ (0:2999)] .= I ∉ seen_inds
-        push!(seen_inds, I)
-    end
-
-    for k in keys(mat_out)
-        mat_out[k] = mat_out[k][is_unique_cols][1:5000*3000]
-    end
-    @show length(unique(CartesianIndex.(mat_out["image_x"], mat_out["image_y"], mat_out["image_z"])))
-
-    # DECAES.MAT.matwrite(joinpath(out_dir, "mcmc_theta_samples_3000.mat"), mat_out)
-    mat_out
-end
-
-function copy_all_mat_files()
-    mat_test = copy_mat_files(dataset = :test)
-    mat_val = copy_mat_files(dataset = :val)
-    mat_out = DECAES.MAT.matread("/home/jdoucette/Documents/projects/2021-05-24_NeurIPS2021_Initial_Submission/mcmc_3000_samples/image-3_dataset-train_0000001-to-0005000.mat")
-    for k in keys(mat_out)
-        append!(mat_out[k], mat_val[k])
-        append!(mat_out[k], mat_test[k])
-    end
-    @show length(unique(CartesianIndex.(mat_out["image_x"], mat_out["image_y"], mat_out["image_z"])))
-
-    out_dir = "/home/jdoucette/Documents/code/BlochTorreyExperiments-shared/LearningCorrections/projects/Playground/data/images/2021-05-07_NeurIPS2021_64echo_10msTE_MockBiexpEPG_CPMG/julia-mcmc-biexpepg"
-    DECAES.MAT.matwrite(joinpath(out_dir, "mcmc_theta_samples_3000.mat"), mat_out)
-    mat_out
-end
-
-function test_annot()
-    ps = map(1:8) do i
-        p = plot()
-        plot!(p, 100 .* rand(10,10))
-        annotate!(p, [(0, 1, "A")])
-        i==1 && for (k,v) in Plots.getattr(p)
-            display(k => v)
-        end
-        p
-    end
-    plot(ps...)
-end
-
 
 #=
 
