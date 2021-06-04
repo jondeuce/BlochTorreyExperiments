@@ -57,7 +57,7 @@ torchvision==0.8.2
 tornado==6.1
 tqdm==4.54.1
 typing-extensions==3.7.4.3
-urllib3==1.26.2
+urllib3==1.26.5
 wandb==0.10.12
 watchdog==1.0.1
 wheel==0.36.2
