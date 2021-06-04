@@ -1,0 +1,52 @@
+[data]
+    image_folders = [
+        "Simulated_BiexpEPG_CPMG_64echo_10msTE",
+    ]
+    [data.labels]
+        train_indices     = [0, 1]     # image folders to use for training (0 = simulated data generated on the fly w/ true labels, 1 = precomputed simulated data w/ true labels)
+        eval_indices      = [0, 1]     # image folders to use for evaluation (0 = simulated data generated on the fly w/ true labels, 1 = precomputed simulated data w/ true labels)
+        train_fractions   = [0.5, 0.5] # training samples from `image[train_indices[i]]` are drawn with proportion `train_fractions[i]`; if empty, `train_indices` sampled uniformly
+        image_labelset    = "pseudo"   # label set used for the images is one of "pseudo", precomputed "mcmc", or "cvae"
+        initialize_pseudo = "prior"    # initialize pseudo labels from "prior" or precomputed "mcmc"
+
+[checkpoint]
+    folder = "" # pretrained/checkpointed folder
+    model  = "" # pretrained/checkpointed model within folder
+
+[train]
+    timeout   = 1e9   # training time limit (in seconds)
+    epochs    = 5_000 # number of epochs to train for
+    batchsize = 1024  # number of signal samples per batch
+    nbatches  = 1_000 # number of batches per epoch
+    [train.augment]
+        mask  = 32 # Randomly zero CVAE training signals starting from the `mask`th echo (i.e. Y[i+1:end] .= 0 where i >= `mask`; if `mask` <= 0, no masking is done)
+
+[eval]
+    batchsize         = 8192
+    evalmetricsperiod = 300.0
+    checkpointperiod  = 600.0
+
+[opt]
+    lr       = 1e-4  # Initial learning rate
+    lrthresh = 1e-6  # Minimum learning rate
+    lrdrop   = 3.16  # Drop learning rate by factor `lrdrop` every `lrrate` epochs
+    lrrate   = 1_000 # Drop learning rate by factor `lrdrop` every `lrrate` epochs
+    gclip    = 0.0   # Gradient clipping
+    wdecay   = 0.0   # Weight decay
+    [opt.cvae]
+        INHERIT = "%PARENT%"
+
+[arch]
+    posterior   = "TruncatedGaussian" # "TruncatedGaussian" or "Gaussian"
+    zdim        = 12    # embedding dimension of z
+    hdim        = 512   # size of hidden layers
+    skip        = false # skip connection
+    layernorm   = false # layer normalization following dense layer
+    nhidden     = 2     # number of internal hidden layers, i.e. there are `nhidden + 2` total `Dense` layers
+    nlatent     = 0     # number of marginalized latent variables Z (legacy parameter; unused internally)
+    [arch.enc1]
+        INHERIT = "%PARENT%"
+    [arch.enc2]
+        INHERIT = "%PARENT%"
+    [arch.dec]
+        INHERIT = "%PARENT%"
