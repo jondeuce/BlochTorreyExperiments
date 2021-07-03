@@ -7,7 +7,7 @@ click==7.1.2
 conda-package-handling==1.7.2
 conda==4.10.1
 configparser==5.0.1
-cryptography==3.3.1
+cryptography==3.3.2
 cycler==0.10.0
 docker-pycreds==0.4.0
 gitdb==4.0.5
@@ -24,7 +24,7 @@ mkl-service==2.3.0
 numpy==1.19.2
 olefile==0.46
 omegaconf==2.0.6
-pillow==8.0.1
+pillow==8.2.0
 pip==20.3.3
 promise==2.3
 protobuf==3.14.0
@@ -39,7 +39,7 @@ pyparsing==2.4.7
 pysocks==1.7.1
 python-dateutil==2.8.1
 pytorch-ignite==0.4.2
-pyyaml==5.3.1
+pyyaml==5.4
 requests==2.25.1
 ruamel-yaml==0.15.87
 scikit-learn==0.23.2
@@ -57,7 +57,7 @@ torchvision==0.8.2
 tornado==6.1
 tqdm==4.54.1
 typing-extensions==3.7.4.3
-urllib3==1.26.2
+urllib3==1.26.5
 wandb==0.10.12
 watchdog==1.0.1
 wheel==0.36.2
