@@ -1,43 +1,66 @@
 module Playground
 
 include("fix/Reexport.jl") # workaround until Reexport v1.0 is tagged
-using .Reexport: @reexport, @importexport
+using .Reexport: @reexport
 
 include("fix/Stacks/Stacks.jl") # workaround until Transformers is updated for julia v1.6
 @reexport using .Stacks: @nntopo_str, @nntopo, NNTopo, Stack, show_stackfunc, stack
 
-#### Import/export dependency names
+#### Dependencies
 
-@importexport import ArgParse, BSON, BangBang, BenchmarkTools, CUDA, ChainRules, Conda, CSV, DECAES, DataFrames, DataStructures, Dates, Distributions, DrWatson, EllipsisNotation, FFTW, FileIO, FiniteDifferences, Flux, ForwardDiff, Functors, Glob, HypothesisTests, JLD2, LaTeXStrings, LinearAlgebra, LoopVectorization, NLopt, NNlib, OMEinsum, Optim, Parameters, Pkg, PrettyTables, ProgressMeter, PyCall, PyPlot, Random, ReadableRegex, SpecialFunctions, Statistics, StatsBase, StatsPlots, Suppressor, TOML, ThreadPools, TimerOutputs, Tullio, Turing, UUIDs, UnicodePlots, Zygote
-
-#### Dependencies' symbols
-
-@reexport using BangBang: push!!, setindex!!, append!!
-@reexport using BenchmarkTools: @btime
-@reexport using CUDA: @cufunc, CuArray, CuVector, CuMatrix
-@reexport using DataFrames: DataFrame, dropmissing
-@reexport using DataStructures: OrderedDict
-@reexport using Distributions: Gaussian, Uniform, cdf, logpdf, pdf, normcdf, norminvcdf, log2π, logtwo, sqrt2, sqrt2π, sqrtπ, sqrthalfπ, invsqrt2, invsqrt2π
-@reexport using DrWatson: @dict, @ntuple, datadir, projectdir, scriptsdir, srcdir
-@reexport using EllipsisNotation: (..)
-@reexport using FFTW: fft, ifft, rfft
-@reexport using LaTeXStrings: @L_str, latexstring
-@reexport using LinearAlgebra: BLAS, diag, diagm, dot, mul!, norm, normalize, tr, ×, ⋅
-@reexport using LoopVectorization: @avx, @avxt
-@reexport using OMEinsum: @ein, @ein_str
-@reexport using Parameters: @unpack, @with_kw, @with_kw_noshow
-@reexport using PyCall: @py_str, PyCall, PyDict, PyNULL, PyObject, pycall, pyimport
-@reexport using Random: MersenneTwister, randperm, randperm!
-@reexport using SpecialFunctions: besseli, besselix, erf, erfc, erfcx, erfinv
-@reexport using Statistics: mean, median, quantile, std, var
-@reexport using StatsBase: Histogram, UnitWeights, mean_and_std, sample
-@reexport using Suppressor: @suppress
-@reexport using TimerOutputs: @timeit
-@reexport using Tullio: @tullio
-
-#### TODO: give plotting functions their own namespace
-
-@reexport using StatsPlots
+@reexport using ArgParse: ArgParse
+@reexport using BSON: BSON
+@reexport using BangBang: BangBang, push!!, setindex!!, append!!
+@reexport using BenchmarkTools: BenchmarkTools, @btime
+@reexport using CUDA: CUDA, @cufunc, CuArray, CuVector, CuMatrix
+@reexport using ChainRules: ChainRules
+@reexport using Conda: Conda
+@reexport using CSV: CSV
+@reexport using DECAES: DECAES
+@reexport using DataFrames: DataFrames, DataFrame, dropmissing
+@reexport using DataStructures: DataStructures, OrderedDict
+@reexport using Dates: Dates
+@reexport using Distributions: Distributions, Gaussian, Uniform, cdf, logpdf, pdf, normcdf, norminvcdf, log2π, logtwo, sqrt2, sqrt2π, sqrtπ, sqrthalfπ, invsqrt2, invsqrt2π
+@reexport using DrWatson: DrWatson, @dict, @ntuple, datadir, projectdir, scriptsdir, srcdir
+@reexport using EllipsisNotation: EllipsisNotation, (..)
+@reexport using FFTW: FFTW, fft, ifft, rfft
+@reexport using FileIO: FileIO
+@reexport using FiniteDifferences: FiniteDifferences
+@reexport using Flux: Flux
+@reexport using ForwardDiff: ForwardDiff
+@reexport using Functors: Functors
+@reexport using Glob: Glob
+@reexport using HypothesisTests: HypothesisTests
+@reexport using JLD2: JLD2
+@reexport using LaTeXStrings: LaTeXStrings, @L_str, latexstring
+@reexport using LinearAlgebra: LinearAlgebra, BLAS, diag, diagm, dot, mul!, norm, normalize, tr, ×, ⋅
+@reexport using LoopVectorization: LoopVectorization, @avx, @avxt
+@reexport using NLopt: NLopt
+@reexport using NNlib: NNlib
+@reexport using OMEinsum: OMEinsum, @ein, @ein_str
+@reexport using Optim: Optim
+@reexport using Parameters: Parameters, @unpack, @with_kw, @with_kw_noshow
+@reexport using Pkg: Pkg
+@reexport using Plots: Plots, @layout, cgrad, contourf, density!, heatmap, histogram, plot, plot!, pyplot, savefig, scatter, stephist, stephist!, sticks, surface, title!, vline!, xlabel!
+@reexport using PrettyTables: PrettyTables
+@reexport using ProgressMeter: ProgressMeter
+@reexport using PyCall: PyCall, @py_str, PyCall, PyDict, PyNULL, PyObject, pycall, pyimport
+@reexport using PyPlot: PyPlot
+@reexport using Random: Random, MersenneTwister, randperm, randperm!
+@reexport using ReadableRegex: ReadableRegex
+@reexport using SpecialFunctions: SpecialFunctions, besseli, besselix, erf, erfc, erfcx, erfinv
+@reexport using Statistics: Statistics, mean, median, quantile, std, var
+@reexport using StatsBase: StatsBase, Histogram, UnitWeights, mean_and_std, sample
+@reexport using StatsPlots: StatsPlots, qqplot
+@reexport using Suppressor: Suppressor, @suppress
+@reexport using TOML: TOML
+@reexport using ThreadPools: ThreadPools
+@reexport using TimerOutputs: TimerOutputs, @timeit
+@reexport using Tullio: Tullio, @tullio
+@reexport using Turing: Turing
+@reexport using UUIDs: UUIDs
+@reexport using UnicodePlots: UnicodePlots
+@reexport using Zygote: Zygote
 
 #### Exports
 

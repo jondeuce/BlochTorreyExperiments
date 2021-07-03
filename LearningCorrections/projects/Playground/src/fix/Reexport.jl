@@ -29,20 +29,4 @@ macro reexport(ex)
              [:(eval(Expr(:export, names($mod)...))) for mod in modules]...))
 end
 
-"""
-Import module and export module name:
-
-    @importexport import A, B, C
-
-is equivalent to
-
-    import A, B, C
-    export A, B, C
-"""
-macro importexport(ex)
-    isa(ex, Expr) && ex.head == :import && all(e->isa(e, Symbol), ex.args)
-    modules = Any[e.args[end] for e in ex.args]
-    esc(Expr(:toplevel, ex, Expr(:export, modules...)))
-end
-
 end # module Reexport

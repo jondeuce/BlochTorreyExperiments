@@ -77,10 +77,10 @@ function __pyinstall__()
 
     # Install numpy, scipy, and matplotlib via pip
     #   python -m pip install --user numpy scipy matplotlib
-    @pip install numpy scipy matplotlib
+    @pip "install numpy scipy matplotlib --upgrade"
 
     # Install wandb via pip (https://docs.wandb.com/quickstart)
-    @pip install wandb
+    @pip "install wandb --upgrade"
 
     # Install hydra via pip (https://hydra.cc/docs/intro#installation)
     # @pip "install hydra-core --upgrade"
