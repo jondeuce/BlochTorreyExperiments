@@ -20,11 +20,12 @@ The supplementary material including this `data/` folder can, however, be found 
 The required Julia environment is described by the `Project.toml` and `Manifest.toml` files.
 To install the relevant packages, using Julia v1.6+, run the `make.jl` script as follows:
 
-    julia make.jl
+    PYTHON="" julia make.jl
 
 The included Julia scripts make use of external Python libraries.
-The required libraries will be automatically installed in an anaconda environment specific to Julia (default location `~/.julia/conda/3/`) using the above `make.jl` file.
-However, for completeness, the `requirements.txt` file detailing the conda environment is provided.
+The environment variable `PYTHON=""` is set in order to install the required Python libraries into an anaconda environment specific to Julia (default location `~/.julia/conda/3/`).
+
+For completeness, the `requirements.txt` file detailing the conda environment is provided.
 Additionally, the platform-specific `conda.txt` file detailing the explicit conda environment is provided.
 This file can be used to recreate the conda environment via e.g. `~/.julia/conda/3/bin/conda create --name <env> --file conda.txt`, but this should not be necessary.
 
@@ -33,12 +34,12 @@ This file can be used to recreate the conda environment via e.g. `~/.julia/conda
 To perform training using traditional CVAEs with only simulated data + labels, run the following:
 
     # Set the --threads=XX flag as appropriate for your machine to enable cpu multithreading
-    julia --threads=32 scripts/train_metropolis.jl --data.labels.train_indices 0 --data.labels.eval_indices 0 --data.labels.train_fractions 1.0
+    julia --project=. --threads=32 scripts/train_metropolis.jl --data.labels.train_indices 0 --data.labels.eval_indices 0 --data.labels.train_fractions 1.0
 
 To perform training using Metropolis-CVAEs with both simulated data + labels and unlabeled simulated data initialized with random pseudo labels drawn from the prior, run the following:
 
     # Set the --threads=XX flag as appropriate for your machine to enable cpu multithreading
-    julia --threads=32 scripts/train_metropolis.jl --data.labels.train_indices 0 1 --data.labels.eval_indices 0 1 --data.labels.train_fractions 0.5 0.5
+    julia --project=. --threads=32 scripts/train_metropolis.jl --data.labels.train_indices 0 1 --data.labels.eval_indices 0 1 --data.labels.train_fractions 0.5 0.5
 
 Files produced during training (log files, model checkpoints, loss plots, etc.) will be stored in the `log/`.
 
@@ -50,7 +51,7 @@ Time estimate derived from running Julia v1.6.0 with 32 threads on a AMD Ryzen 9
 To generate the simulated data used in this study, run the following:
 
     # Set the --threads=XX flag as appropriate for your machine to enable cpu multithreading
-    julia --threads=32 scripts/synthetic_data_biexpepg.jl
+    julia --project=. --threads=32 scripts/synthetic_data_biexpepg.jl
 
 Generated simulated data will be stored in the `/data/simulated` folder.
 
@@ -59,7 +60,7 @@ Generated simulated data will be stored in the `/data/simulated` folder.
 To perform MCMC using the NUTS sampler on the generated simulated data, run the following:
 
     # Set the --threads=XX flag as appropriate for your machine to enable cpu multithreading
-    julia --threads=32 scripts/mcmc_biexpepg.jl
+    julia --project=. --threads=32 scripts/mcmc_biexpepg.jl
 
 Generated MCMC samples will be stored in the `/data/mcmc` folder.
 
@@ -71,6 +72,6 @@ Time estimate derived from running Julia v1.6.0 with 32 threads on a AMD Ryzen 9
 Figures from the paper can be reproduced as follows:
 
     # Set the --threads=XX flag as appropriate for your machine to enable cpu multithreading
-    julia --threads=32 scripts/eval_metropolis.jl
+    julia --project=. --threads=32 scripts/eval_metropolis.jl
 
 Note that figure 3 differs from the paper due to the fact that simulated data is used instead of the real MRI data, which cannot be provided due to the aforementioned subject confidentiality.

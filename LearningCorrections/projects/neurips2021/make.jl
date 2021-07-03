@@ -7,3 +7,5 @@ end
 import Pkg
 Pkg.activate(@__DIR__)
 Pkg.instantiate()
+using NeurIPS2021
+

@@ -61,6 +61,10 @@ macro pip(args...)
 end
 
 function __pyinstall__()
+    # Install numpy, scipy, and matplotlib via pip
+    #   python -m pip install --user numpy scipy matplotlib
+    @pip install numpy scipy matplotlib
+
     # Install pip into conda environment
     Conda.add("pip")
 

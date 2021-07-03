@@ -75,8 +75,12 @@ function __pyinstall__()
     #   conda install ignite -c pytorch
     Conda.add("ignite"; channel = "pytorch")
 
+    # Install numpy, scipy, and matplotlib via pip
+    #   python -m pip install --user numpy scipy matplotlib
+    @pip install numpy scipy matplotlib
+
     # Install wandb via pip (https://docs.wandb.com/quickstart)
-    @pip "install wandb"
+    @pip install wandb
 
     # Install hydra via pip (https://hydra.cc/docs/intro#installation)
     # @pip "install hydra-core --upgrade"
