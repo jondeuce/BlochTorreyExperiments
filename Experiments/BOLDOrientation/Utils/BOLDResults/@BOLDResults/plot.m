@@ -79,10 +79,6 @@ if opts.interp
             boldinterps = ppval(coeffs,TEinterps);
             figure(fig), hbold = plot(TEinterps, boldinterps);
             ymax = max( max(boldsignals(:)), max(boldinterps(:)) );
-        case 'CHEBFUN'
-            boldinterps = chebfun(boldsignals,[echotimes(1),echotimes(end)],'equi');
-            figure(fig), hbold = plot(boldinterps);
-            ymax = max( max(boldsignals(:)), max(max(boldinterps)) );
     end
 else
     figure(fig), hbold = plot(echotimes, boldsignals);
@@ -216,7 +212,7 @@ addParameter(p,'minTE',-inf,@(x)VA(x,{'numeric'},{'nonempty'}));
 addParameter(p,'maxTE',+inf,@(x)VA(x,{'numeric'},{'nonempty'}));
 
 addParameter(p,'interp',true,@(x)VA(x,{'logical'},{'scalar'}));
-expectedinterptype = {'spline','chebfun'};
+expectedinterptype = {'spline'};
 addParameter(p,'interptype','spline',@(x) any(VS(x,expectedinterptype)));
 
 end

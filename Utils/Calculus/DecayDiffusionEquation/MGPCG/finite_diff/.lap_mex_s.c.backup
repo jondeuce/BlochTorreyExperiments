@@ -1,0 +1,80 @@
+#include "mex.h"
+
+
+void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
+{
+    
+    float *x = (float*)mxGetData(prhs[0]);
+    mxLogical *Mask = mxGetLogicals(prhs[1]);
+    
+    float hx, hy, hz, hh;
+    if(nrhs < 3) {
+        hx = hy = hz = 1;
+    }
+    else {
+        double *vSize = mxGetData(prhs[2]);
+        hx = (float)(vSize[0]*vSize[0]);
+        hy = (float)(vSize[1]*vSize[1]);
+        hz = (float)(vSize[2]*vSize[2]);
+    }
+    
+    const mwSize *mSize = mxGetDimensions(prhs[0]);
+    int nx   = (int)mSize[0];
+    int ny   = (int)mSize[1];
+    int nz   = (int)mSize[2];
+    int nxny = nx*ny;
+    int N    = nxny*(nz-1);
+    
+    plhs[0] = mxCreateNumericArray(3, mSize, mxSINGLE_CLASS, mxREAL);
+    float *dx = (float*)mxGetData(plhs[0]);
+    
+    int i = nxny;
+    if((int)hx == 1 && (int)hy == 1 && (int)hz == 1) {
+        
+        for(i; i < N; ++i) {
+            if(Mask[i]) {
+                if(Mask[i-1] && Mask[i+1] && 
+                        Mask[i-nx] && Mask[i+nx] && 
+                        Mask[i-nxny] && Mask[i+nxny]) {
+                    dx[i] = (x[i-1] + x[i+1]) + 
+                            (x[i-nx] + x[i+nx]) +
+                            (x[i-nxny] + x[i+nxny]) - 6*x[i];
+                }
+            }
+        }
+        
+    }
+    else if(hx == hy && hy == hz && hx == hz) {
+        
+        for(i; i < N; ++i) {
+            if(Mask[i]) {
+                if(Mask[i-1] && Mask[i+1] && 
+                        Mask[i-nx] && Mask[i+nx] && 
+                        Mask[i-nxny] && Mask[i+nxny]) {
+                    dx[i] = ((x[i-1] + x[i+1]) + 
+                             (x[i-nx] + x[i+nx]) +
+                             (x[i-nxny] + x[i+nxny]) - 6.0*x[i]) / hx;
+                }
+            }
+        }
+        
+    }
+    else {
+        
+        float tmp;
+        for(i; i < N; ++i) {
+            if(Mask[i]) {
+                if(Mask[i-1] && Mask[i+1] && 
+                        Mask[i-nx] && Mask[i+nx] && 
+                        Mask[i-nxny] && Mask[i+nxny]) {
+                    tmp   = 2.0 * x[i];
+                    dx[i] = (x[i-1] + x[i+1] - tmp)/hx + 
+                            (x[i-nx] + x[i+nx] - tmp)/hy +
+                            (x[i-nxny] + x[i+nxny] - tmp)/hz;
+                }
+            }
+        }
+    }
+        
+    return;
+}

@@ -1,0 +1,5 @@
+To compile mtimesx for the first time, run the following command at the
+command line, with mtimesx.c in your current folder:
+
+mex('-DDEFINEUNIX','-largeArrayDims', '-lmwblas','mtimesx.c')
+

@@ -44,8 +44,8 @@ addParameter(p,'Rmajor',[]);
 addParameter(p,'VRSRelativeRad',[]);
 
 addParameter(p,'MediumVessels', []);
-addParameter(p,'MediumVesselRadiusThresh', 0.0);
-        
+addParameter(p,'MediumVesselRadiusThresh', Inf);
+
 %-------------------------------------------------------------------------%
 % Optional parameters
 %-------------------------------------------------------------------------%
