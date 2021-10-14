@@ -32,7 +32,7 @@ switch upper(args.OptVariables)
             AnisoBloodVolume = prod(args.GeomArgs.VoxelSize) * aBVF;
             AnisoCylLength = rayBoxIntersectionLength( args.GeomArgs.VoxelCenter(:), [sind(args.GeomArgs.MajorAngle); 0; cosd(args.GeomArgs.MajorAngle)], args.GeomArgs.VoxelSize(:), args.GeomArgs.VoxelCenter(:) );
             Rmajor = sqrt(AnisoBloodVolume / ( args.GeomArgs.Nmajor * pi * AnisoCylLength ));
-            SpaceFactor = (args.Geom.iBVF/iBVF)^(1/2.3); % empirical model: iBVF = iBVF_max * SpaceFactor^(-2.3)
+            SpaceFactor = (args.Geom.iBVF/iBVF)^(1/2); % fractal dimension of infinite cylinders is two: iBVF = iBVF_max * SpaceFactor^(-2)
             
             args.Geom = SetRmajor(args.Geom, Rmajor); % Update Rmajor in input Geom
             args.Geom = ExpandMinorVessels(args.Geom, SpaceFactor); % Expand minor vessels in input Geom

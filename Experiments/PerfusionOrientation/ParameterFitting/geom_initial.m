@@ -25,9 +25,9 @@ switch upper(OptVariables)
         GeomNameValueArgs = struct2arglist(GeomArgs);
         Geom = Geometry.CylindricalVesselFilledVoxel( GeomNameValueArgs{:} );
         
-        % Generate new initial guesses and bounds via empirical models
+        % Generate new initial guesses and bounds
         getRmajor0 = @(aBVF) sqrt( prod(GeomArgs.VoxelSize) * aBVF / ( GeomArgs.Nmajor * pi * rayBoxIntersectionLength( GeomArgs.VoxelCenter(:), [sind(GeomArgs.MajorAngle); 0; cosd(GeomArgs.MajorAngle)], GeomArgs.VoxelSize(:), GeomArgs.VoxelCenter(:) ) ) );
-        getSpaceFactor0 = @(iBVF) (Geom.iBVF/iBVF)^(1/2.3); % empirical model: iBVF = iBVF_max * SpaceFactor^(-2.3)
+        getSpaceFactor0 = @(iBVF) (Geom.iBVF/iBVF)^(1/2); % fractal dimension of infinite cylinders is two: iBVF = iBVF_max * SpaceFactor^(-2)
         
         lb_old = lb;
         x0_old = x0;

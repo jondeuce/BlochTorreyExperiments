@@ -125,97 +125,51 @@ function G = getDerivedArgs(G)
 % Derived Quantities
 %==============================================================
 
-switch upper(G.opts.MajorVesselMode)
-    case 'ABVF_FIXED'
-        [G] = CalculateBVFValues(G);
-    case 'RMAJOR_FIXED'
-        % do nothing
-    otherwise
-        error('Unknown option "MajorVesselMode = %s"', G.opts.MajorVesselMode)
-end
+% Compute target BVF values
+[G] = CalculateTargetBVFValues(G);
 
-% unpack so that RminorFun doesn't close over G
+% Unpack so that RminorFun doesn't close over G
 [Rminor_mu, Rminor_sig] = deal(G.Rminor_mu, G.Rminor_sig);
 G.RminorFun  = @(varargin) Rminor_mu + Rminor_sig .* randn(varargin{:});
 
 % Calculate blood volumes
 G.SubVoxSize  = mean(G.VoxelSize./G.GridSize);
-Total_Volume   = prod(G.VoxelSize); % total volume of voxel [um^3]
-Total_BloodVol = G.Targets.BVF * Total_Volume; % total blood volume (main and minor vessels)
-Minor_BloodVol = G.Targets.iRBVF .* Total_BloodVol; % blood volume for minor vessels
-Major_BloodVol = Total_BloodVol - Minor_BloodVol; % blood volume for major vessels
+TotalVolume   = prod(G.VoxelSize); % total volume of voxel [um^3]
+TotalBloodVol = G.Targets.BVF * TotalVolume; % total blood volume (main and minor vessels)
+MinorBloodVol = G.Targets.iRBVF .* TotalBloodVol; % blood volume for minor vessels
+MajorBloodVol = TotalBloodVol - MinorBloodVol; % blood volume for major vessels
 
 % If the radius 'r' is normally distributed ~ N(mu,sig), then the
 % expectation of r^2, E[r^2], is given by E[r^2] = mu^2 + sig^2
 Minor_Area = pi * ( G.Rminor_mu.^2 + G.Rminor_sig.^2 );
 
-% Minor Volume ~ N*Area*Height (underestimated)
-% VoxHeight = G.VoxelSize(3);
-% NumMinorVesselsGuess = round( Minor_BloodVol ./ (VoxHeight * Minor_Area) );
-
-% ----------------- %
-% ------ OLD ------ %
-
-% % Empirical model for average cylinder length:
-% %     see: GeometryGeneration/old/test/AvgLineLength.m
-% [xc,yc,zc] = deal(1, 2/3, 0);
-% [xr,yr,zr] = deal(1, 4/3, 1/2);
-% avgCylLengthFun = @(relX, relY) zc + zr * sqrt(1 - min((relX-xc).^2 / xr^2 + (relY-yc).^2 / yr^2, 1));
-% 
-% % avg length should be greater than the smallest dimension; if not,
-% % something is likely wrong with the empirical estimate, so should default
-% % to the smallLength
-% sVSize = sort(G.VoxelSize);
-% smallLength = min(G.VoxelSize);
-% avgCylLength = norm(G.VoxelSize) * avgCylLengthFun(sVSize(1)/sVSize(3), sVSize(2)/sVSize(3));
-% avgCylLength = max(avgCylLength, smallLength);
-
-% % If you model two random vectors X = (x,y,z) and X0 = (x0,y0,z0) as being
-% % drawn uniformly randomly in a domain [0,a]x[0,b]x[0,c], then the
-% % expectation E(|X-X0|^2) = (a^2+b^2+c^2)/6.
-% % An (over-)estimation of the average length of each cylinder, then, is
-% % sqrt((a^2+b^2+c^2)/6). Simulating this empirically, the over-estimation
-% % is never more than ~18%, and never less than ~6%. Since we would over-
-% % estimating the number of cylinders, the expected length is reduced by 25%
-% avgCylLength = norm(G.VoxelSize)/6; % * 0.75;
-
-% f = @(X) sqrt(((X(:,1)-X(:,2)).^2 + X(:,1).^2 + X(:,2).^2)) + ...
-%          sqrt(((X(:,3)-X(:,4)).^2 + X(:,3).^2 + X(:,4).^2)) + ...
-%          sqrt(((X(:,5)-X(:,6)).^2 + X(:,5).^2 + X(:,6).^2));
-% a = G.VoxelSize(1); b = G.VoxelSize(2); c = G.VoxelSize(3); 
-% bd = [0 a; 0 a; 0 b; 0 b; 0 c; 0 c];
-% I = integralN_mc(f, bd, 'k', 1, 'reltol', 1e-12, 'abstol', 1e-8);
-% avgCylLength = I/(3*(a*b*c)^2);
-
-% ---- END OLD ---- %
-% ----------------- %
-
-% Just simulate it! Generate N random cylinder intersections, take the
-% average, and use this for the initial guess.
+% Generate N random cylinders and use their average length to compute the initial guesses
 N = 100000;
-% a = G.VoxelSize(1); b = G.VoxelSize(2); c = G.VoxelSize(3); 
-% Origins = [a*rand(1,N); b*rand(1,N); c*rand(1,N)];
-% Directions = randn(3,N);
-% Directions = bsxfun(@rdivide, Directions, sqrt(sum(Directions.^2, 1)));
 [Origins, Directions, ~] = sampleRandomCylinders( G.VoxelSize, G.VoxelCenter, [], N );
 [tmin, tmax] = rayBoxIntersection( Origins, Directions, G.VoxelSize, G.VoxelCenter );
 avgCylLength = mean(tmax - tmin);
 
 % Expected number of simply minor blood vol divided by expected vessel volume
-NumMinorVesselsGuess = round( Minor_BloodVol ./ (avgCylLength * Minor_Area) );
+NumMinorVesselsGuess = round( MinorBloodVol ./ (avgCylLength * Minor_Area) );
 
-% Major blood vessel diameters: N*pi*r^2*len = V
-majAngleRad = deg2rad(G.MajorAngle);
-majorDir = [sin(majAngleRad), 0, cos(majAngleRad)];
-[tmin, tmax, ~, ~] = rayBoxIntersection( G.VoxelCenter(:), majorDir(:), G.VoxelSize(:), G.VoxelCenter(:) );
-
-MajorLength = tmax - tmin;
-R_MajorGuess = sqrt( Major_BloodVol./( G.Nmajor * pi * MajorLength ) );
+switch upper(G.opts.MajorVesselMode)
+    case 'ABVF_FIXED'
+        % Major blood vessel diameters: N*pi*r^2*len = V
+        MajorDir = [sind(G.MajorAngle), 0, cosd(G.MajorAngle)];
+        [tmin, tmax, ~, ~] = rayBoxIntersection( G.VoxelCenter(:), MajorDir(:), G.VoxelSize(:), G.VoxelCenter(:) );
+        
+        MajorLength = tmax - tmin;
+        RMajorInit  = sqrt( MajorBloodVol./( G.Nmajor * pi * MajorLength ) );
+    case 'RMAJOR_FIXED'
+        RMajorInit  = G.Rmajor;
+    otherwise
+        error('Unknown option "MajorVesselMode = %s"', G.opts.MajorVesselMode)
+end
 
 G.InitGuesses = struct( ...
     'N',      G.Nmajor + NumMinorVesselsGuess, ...
     'Nminor', NumMinorVesselsGuess, ...
-    'Rmajor', R_MajorGuess ...
+    'Rmajor', RMajorInit ...
     );
 
 [G.P,G.Vx,G.Vy,G.Vz] = deal(zeros(3,G.InitGuesses.N));
@@ -231,98 +185,81 @@ G.isMajorDilated = false;
 
 end
 
-function [G] = CalculateBVFValues(G)
+function [G] = CalculateTargetBVFValues(G)
 
 p = G.opts.parser;
-BVFfields = {'BVF','iRBVF','aRBVF','iBVF','aBVF'};
-BVFvalues = {[],[],[],[],[]};
 
-NumSpecified = 0;
-for ii = 1:numel(BVFfields)
-    b = BVFfields{ii};
-    if ~any(ismember(p.UsingDefaults,b))
-        NumSpecified = NumSpecified + 1;
-        BVFvalues{ii} = G.opts.parser.Results.(b);
-    end
+% Any two of these parameters determines target values
+BVF    = p.Results.BVF;
+iRBVF  = p.Results.iRBVF;
+aRBVF  = p.Results.aRBVF;
+iBVF   = p.Results.iBVF;
+aBVF   = p.Results.aBVF;
+Rmajor = p.Results.Rmajor;
+
+% Rmajor determines aBVF
+if ~isempty(Rmajor)
+    % Major blood vessel diameters: N*pi*r^2*len = V (ignoring pathological cases of collision with corners/edges)
+    MajorDir = [sind(G.MajorAngle), 0, cosd(G.MajorAngle)];
+    [tmin, tmax, ~, ~] = rayBoxIntersection( G.VoxelCenter(:), MajorDir(:), G.VoxelSize(:), G.VoxelCenter(:) );
+    MajorLength = tmax - tmin;
+    TotalVolume = prod(G.VoxelSize);
+    aBVF = Rmajor^2 * ( G.Nmajor * pi * MajorLength ) / TotalVolume;
 end
 
-if ~( NumSpecified == 0 || NumSpecified == 2 )
-    bvffieldstrings = strcat(BVFfields,',');
-    bvffieldstrings{end} = [bvffieldstrings{end}(1:end-1),'.'];
-    bvffieldstrings = strrep(bvffieldstrings,',',', ');
-    error(['Must specify either 0 (use defaults) or 2 of: ' [bvffieldstrings{:}] ]);
-end
-
-if NumSpecified == 2 && (~isempty(BVFvalues{2}) && ~isempty(BVFvalues{3}))
+numset = ~isempty(BVF) + ~isempty(iRBVF) + ~isempty(aRBVF) + ~isempty(iBVF) + ~isempty(aBVF);
+if numset == 1
+    error('Must specify either 0 (use defaults) or 2 of: BVF, iRBVF, aRBVF, iBVF, aBVF, Rmajor');
+elseif numset == 2 && ~isempty(iRBVF) && ~isempty(aRBVF)
     error('Cannot specify only iRBVF and aRBVF, as 1 == iRBVF + aRBVF');
 end
 
 %-------------------------------------------------------------%
 % Convert inputs to BVF and iRBVF and set everything from there
 %-------------------------------------------------------------%
-if ~isempty(BVFvalues{1}) && ~isempty(BVFvalues{2})
-    %BVF and iRBVF
-    BVF = BVFvalues{1}; iRBVF = BVFvalues{2};
-    G.Targets.BVF   = BVF;
-    G.Targets.iRBVF = iRBVF;
+if ~isempty(BVF) && ~isempty(iRBVF)
+    BVF   = BVF;
+    iRBVF = iRBVF;
     
-elseif ~isempty(BVFvalues{1}) && ~isempty(BVFvalues{3})
-    %BVF and aRBVF
-    BVF = BVFvalues{1}; aRBVF = BVFvalues{3};
-    G.Targets.BVF   = BVF;
-    G.Targets.iRBVF = (1-aRBVF);
+elseif ~isempty(BVF) && ~isempty(aRBVF)
+    BVF   = BVF;
+    iRBVF = (1-aRBVF);
     
-elseif ~isempty(BVFvalues{1}) && ~isempty(BVFvalues{4})
-    %BVF and iBVF
-    BVF = BVFvalues{1}; iBVF = BVFvalues{4};
-    G.Targets.BVF   = BVF;
-    G.Targets.iRBVF = iBVF/BVF;
+elseif ~isempty(BVF) && ~isempty(iBVF)
+    BVF   = BVF;
+    iRBVF = iBVF/BVF;
     
-elseif ~isempty(BVFvalues{1}) && ~isempty(BVFvalues{5})
-    %BVF and aBVF
-    BVF = BVFvalues{1}; aBVF = BVFvalues{5};
-    G.Targets.BVF   = BVF;
-    G.Targets.iRBVF = (1-aBVF/BVF);
+elseif ~isempty(BVF) && ~isempty(aBVF)
+    BVF   = BVF;
+    iRBVF = (1-aBVF/BVF);
     
-    %--------- iRBVF and aRBVF is NOT enough information ---------%
-    % elseif ~isempty(BVFvalues{2}) && ~isempty(BVFvalues{3})
-    %-------------------------------------------------------------%
+% elseif ~isempty(iRBVF) && ~isempty(aRBVF) % iRBVF and aRBVF is not enough information
     
-elseif ~isempty(BVFvalues{2}) && ~isempty(BVFvalues{4})
-    %iRBVF and iBVF
-    iRBVF = BVFvalues{2}; iBVF = BVFvalues{4};
-    G.Targets.BVF   = iBVF/iRBVF;
-    G.Targets.iRBVF = iRBVF;
+elseif ~isempty(iRBVF) && ~isempty(iBVF)
+    BVF   = iBVF/iRBVF;
+    iRBVF = iRBVF;
     
-elseif ~isempty(BVFvalues{2}) && ~isempty(BVFvalues{5})
-    %iRBVF and aBVF
-    iRBVF = BVFvalues{2}; aBVF = BVFvalues{5};
-    G.Targets.BVF   = aBVF/(1-iRBVF);
-    G.Targets.iRBVF = iRBVF;
+elseif ~isempty(iRBVF) && ~isempty(aBVF)
+    BVF   = aBVF/(1-iRBVF);
+    iRBVF = iRBVF;
     
-elseif ~isempty(BVFvalues{3}) && ~isempty(BVFvalues{4})
-    %aRBVF and iBVF
-    aRBVF = BVFvalues{3}; iBVF = BVFvalues{4};
-    G.Targets.BVF   = iBVF/(1-aRBVF);
-    G.Targets.iRBVF = (1-aRBVF);
+elseif ~isempty(aRBVF) && ~isempty(iBVF)
+    BVF   = iBVF/(1-aRBVF);
+    iRBVF = (1-aRBVF);
     
-elseif ~isempty(BVFvalues{3}) && ~isempty(BVFvalues{5})
-    %aRBVF and aBVF
-    aRBVF = BVFvalues{3}; aBVF = BVFvalues{5};
-    G.Targets.BVF   = aBVF/aRBVF;
-    G.Targets.iRBVF = (1-aRBVF);
+elseif ~isempty(aRBVF) && ~isempty(aBVF)
+    BVF   = aBVF/aRBVF;
+    iRBVF = (1-aRBVF);
     
-elseif ~isempty(BVFvalues{4}) && ~isempty(BVFvalues{5})
-    %iBVF and aBVF
-    iBVF = BVFvalues{4}; aBVF = BVFvalues{5};
-    G.Targets.BVF   = (iBVF+aBVF);
-    G.Targets.iRBVF = iBVF/(iBVF+aBVF);
+elseif ~isempty(iBVF) && ~isempty(aBVF)
+    BVF   = (iBVF+aBVF);
+    iRBVF = iBVF/(iBVF+aBVF);
 end
 
-G.Targets.iBVF  = G.Targets.iRBVF * G.Targets.BVF;
-G.Targets.aBVF  = G.Targets.BVF - G.Targets.iBVF;
-G.Targets.aRBVF = 1 - G.Targets.iRBVF;
-
-if G.Verbose; disp(G.Targets); end
+G.Targets.BVF   = BVF;
+G.Targets.iRBVF = iRBVF;
+G.Targets.iBVF  = iRBVF * BVF;
+G.Targets.aBVF  = BVF * (1 - iRBVF);
+G.Targets.aRBVF = 1 - iRBVF;
 
 end
