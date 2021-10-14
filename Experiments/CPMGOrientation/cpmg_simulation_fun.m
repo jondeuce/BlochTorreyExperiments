@@ -46,13 +46,13 @@ IntegrateSignal = @(M) um3_per_voxel * sum(sum(sum(M,1),2),3); % more accurate t
 
 % Initialize outputs
 t  = 0.0;
-M0 = 1i; % must be on imaginary axis in order for conj(M) to correspond to a 180 degree pulse
-S  = M0 * Vox_Volume; % signal at time t = 0
-M  = M0 * ones(Geom.GridSize); %initial state
+m0 = 1i; % must be on imaginary axis in order for conj(M) to correspond to a 180 degree pulse
+S  = m0 * Vox_Volume; % signal at time t = 0
+M  = m0 * ones(Geom.GridSize); % initial magnetization
 
 if ~isempty(args.PlotRate)
     fprintf('Logging: t = %.2f ms, step %2d/%2d\n', 1000 * t(end), 0, args.TotalSteps);
-    cpmg_simulation_logger('SavePlots', true, 'Gamma', Gamma, 'DiffusionMap', DiffusionMap);
+    cpmg_simulation_logger('SavePlots', args.SavePlots, 'Gamma', Gamma, 'DiffusionMap', DiffusionMap);
 end
 
 total_time = tic;
@@ -65,7 +65,7 @@ for ii = 1:args.TotalSteps
 
     if ~isempty(args.PlotRate) && mod(ii, args.PlotRate) == 0
         fprintf('Logging: t = %.2f ms, step %2d/%2d\n', 1000 * t(end), ii, args.TotalSteps);
-        cpmg_simulation_logger('SavePlots', true, 'Time', t, 'Signal', S, 'Magnetization', M);
+        cpmg_simulation_logger('SavePlots', args.SavePlots, 'Time', t, 'Signal', S, 'Magnetization', M);
     end
 
     if mod(ii - args.StepsPerTE/2, args.StepsPerTE) == 0
@@ -94,6 +94,7 @@ addParameter(p, 'D_Blood', 3037); % Diffusion constant in blood [um^2/s]
 addParameter(p, 'D_VRS', 3037); % Diffusion constant in perivascular space [um^2/s]
 addParameter(p, 'VRSRelativeRad', sqrt(3)); % VRS space volume is approx (relrad^2-1)*BVF, so sqrt(3) => 2X [um/um]
 addParameter(p, 'PlotRate', []); % Create progress plots every 'PlotRate' steps [Int]
+addParameter(p, 'SavePlots', true); % Save and close plots as they appear; if false, leave them open [Bool]
 
 parse(p, varargin{:});
 args = p.Results;
