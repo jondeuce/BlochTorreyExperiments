@@ -53,7 +53,7 @@ GammaArgs = struct( ...
 % plot(Geom); % Visualize vessels in 3D (NOTE: can take a long time to plot/be very slow to interactive for large numbers of vessels)
 
 %% Run simulation
-for nTE = [16,32,64] %[12,16,24,28,32,36,40,48,56,64]
+for nTE = [8,16,32,64]
     % The Bloch-Torrey equation
     %   - dM(x,t)/dt = div(grad(D(x)*M(x,t))) - Gamma(x) * M(x,t)
     % where
@@ -81,7 +81,7 @@ for nTE = [16,32,64] %[12,16,24,28,32,36,40,48,56,64]
 
     Time = {};
     Signal = {};
-    FieldAngles = 0;%0:22.5:90;
+    FieldAngles = [0,90];
 
     for ii = 1:numel(FieldAngles)
         logdir = fullfile(currdir, sprintf('TE_%05.2f_ms_FieldAngle_%05.2f_deg', 1000 * CPMGArgs.TE, FieldAngles(ii)));
