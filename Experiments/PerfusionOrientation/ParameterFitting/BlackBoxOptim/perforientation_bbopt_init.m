@@ -172,7 +172,7 @@ switch upper(OptVariables)
 
         % Generate new initial guesses and bounds
         getRmajor0 = @(aBVF) sqrt( prod(VoxelSize) * aBVF / ( Nmajor * pi * rayBoxIntersectionLength( VoxelCenter(:), [sind(MajorAngle); 0; cosd(MajorAngle)], VoxelSize(:), VoxelCenter(:) ) ) );
-        getSpaceFactor0 = @(iBVF) (Geom.iBVF/iBVF)^(1/2.3); % empirical model: iBVF = iBVF_max * SpaceFactor^(-2.3)
+        getSpaceFactor0 = @(iBVF) (Geom.iBVF/iBVF)^(1/2); % fractal dimension of infinite cylinders is two: iBVF = iBVF_max * SpaceFactor^(-2)
 
         lb_old = lb;
         ub_old = ub;

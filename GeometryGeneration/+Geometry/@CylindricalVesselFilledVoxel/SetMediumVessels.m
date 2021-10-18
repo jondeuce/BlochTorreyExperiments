@@ -7,7 +7,7 @@ if nargin < 2
     if ~isempty(G.MediumVesselRadiusThresh)
         RadiusThresh = G.MediumVesselRadiusThresh;
     else
-        RadiusThresh = 0.0;
+        RadiusThresh = Inf;
     end
 end
 

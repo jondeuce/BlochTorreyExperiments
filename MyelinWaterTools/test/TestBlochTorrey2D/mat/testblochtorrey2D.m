@@ -150,35 +150,3 @@ for f = fields(DefaultArgs).'
 end
 
 end
-
-dom = [-pi, pi, 0.1, 1];
-tspan = [0, 1];
-S = spinop2(dom, tspan);
-
-f = @(t,r) sin(21*pi*(1+cos(pi*r)).*(r.^2-2*r.^5.*cos(5*(t-0.11))));
-f = @(t,r) cos(t) .* r;
-F = diskfun(f, 'polar', dom);
-% F = chebfun2(f, dom);
-
-S.lin = @(u) lap(u);
-S.nonlin = @(u) -u;
-S.init = F;
-
-U = spin2(S, 100, 0.01);
-
-% dom = [-1 1, -1 1];
-% tspan = [0, 60e-3];
-% w = @(x,y) testomega(x,y);
-% W = chebfun2(w, 64, dom, 'splitting', 'on');
-% 
-% dom = [-1 1, -1 1];
-% tspan = [0, 60e-3];
-% w = @(x,y) testomega(x,y);
-% W = chebfun2(w, 64, dom, 'splitting', 'on');
-% 
-% S = spinop2(dom, tspan);
-% S.lin = @(u) lap(u);
-% S.nonlin = @(u) -u;
-% S.init = randnfun2(4, dom, 'trig');
-% S.init = S.init/norm(S.init, inf);
-% U = spin2(S, 128, 1e-3);
