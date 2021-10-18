@@ -267,6 +267,7 @@ end
 end
 @inline_cufunc neglogL_rician(x, ν, logσ; ϵ = epseltype(x), logϵ = log(epseltype(x))) = neglogL_rician_unsafe(max(x,ϵ), max(ν,ϵ), max(logσ,logϵ)) # abs(⋅)+ϵ retains some gradient informating, whereas max(⋅,ϵ) drops gradient when <ϵ; which is preferred?
 
+# TODO: update gradients for asymptotic branch
 ChainRules.@scalar_rule(
     neglogL_rician_unsafe(x, ν, logσ),
     @setup(σ⁻² = exp(-2logσ), z = σ⁻²*x*ν, r = _besselix1_cuda_unsafe(z) / _besselix0_cuda_unsafe(z)),

@@ -7,7 +7,7 @@ using DrWatson: @quickactivate
 using Playground
 lib.initenv()
 Plots.gr()
-Plots.GR.inline("png")
+Plots.GR.inline("png") # workaround for "too many open files" issue, c.f. https://github.com/JuliaPlots/Plots.jl/issues/1723#issuecomment-471363504
 
 lib.settings_template() = TOML.parse(
 """

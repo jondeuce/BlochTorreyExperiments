@@ -85,7 +85,7 @@ lib.settings_template() = TOML.parse(
         loss  = "mmd"        # Kernel loss ("mmd", "tstatistic", or "mmd_diff")
 
 [arch]
-    posterior = "Gaussian" # "TruncatedGaussian", "Gaussian", "Kumaraswamy"
+    posterior = "TruncatedGaussian" # "Gaussian", "Kumaraswamy"
     nlatent   = 1   # number of latent variables Z
     zdim      = 12  # embedding dimension of z
     hdim      = 512 # size of hidden layers
@@ -93,10 +93,10 @@ lib.settings_template() = TOML.parse(
     layernorm = false # layer normalization following dense layer
     nhidden   = 2   # number of hidden layers
     esize     = 32  # transformer input embedding size
-    nheads    = 8   # number of attention heads
-    headsize  = 8   # projection head size
+    nheads    = 4   # number of attention heads
+    headsize  = 16  # projection head size
     seqlength = 64  # number of signal projection shards
-    qseqlength= 8   # number of query shards for Perceiver
+    qseqlength= 16  # number of query tokens for Perceiver
     share     = false # share parameters between recurrent Perceiver layers
     [arch.enc1]
         INHERIT = "%PARENT%"
@@ -133,11 +133,13 @@ lib.settings_template() = TOML.parse(
 )
 
 _DEBUG_ = false
+_WANDB_ = false
 settings = lib.load_settings(force_new_settings = true)
-wandb_logger = lib.init_wandb_logger(settings; activate = !_DEBUG_, dryrun = false, wandb_dir = lib.projectdir())
+wandb_logger = lib.init_wandb_logger(settings; activate = _WANDB_, dryrun = false, wandb_dir = lib.projectdir())
 
 lib.set_logdirname!()
 lib.clear_checkpointdir!()
+# lib.set_checkpointdir!(lib.projectdir("log", "2021-05-09-T-22-28-54-342"))
 # lib.set_checkpointdir!(lib.projectdir("log", "ignite-cvae-2021-01-05-T-13-45-23-425"))
 # lib.set_checkpointdir!(lib.projectdir("wandb", "latest-run", "files"))
 # lib.set_checkpointdir!(only(Glob.glob("run-*-3igrugah/files", lib.projectdir("wandb"))))
@@ -167,7 +169,7 @@ lib.@save_expression lib.logdir("build_models.jl") function build_models(
     # get!(models, "enc2") do; lib.init_xformer_cvae_enc2(phys; kws("arch", "enc2")...); end
     # get!(models, "dec") do; lib.init_xformer_cvae_dec(phys; kws("arch", "dec")...); end
     get!(models, "vae_dec") do; lib.init_mlp_cvae_vae_dec(phys; kws("arch", "vae_dec")...); end
-    get!(models, "discrim") do; lib.init_mlp_discrim(phys; kws("arch", "discrim")..., ninput = lib.domain_transforms_sum_outlengths(phys; kws("train", "augment")...)); end
+    # get!(models, "discrim") do; lib.init_mlp_discrim(phys; kws("arch", "discrim")..., ninput = lib.domain_transforms_sum_outlengths(phys; kws("train", "augment")...)); end
     get!(models, "kernel") do; lib.init_mmd_kernels(phys; kws("arch", "kernel")..., bwsizes = lib.domain_transforms_outlengths(phys; kws("train", "augment")...)); end
 
     derived["domain_transforms"] = lib.DomainTransforms(phys; kws("train", "augment")...)
@@ -182,7 +184,7 @@ lib.@save_expression lib.logdir("build_models.jl") function build_models(
     derived["cvae_theta_prior"] = lib.derived_cvae_theta_prior(phys, derived["genatr_theta_prior"]; kws("arch", "genatr")...)
     derived["cvae_latent_prior"] = lib.derived_cvae_latent_prior(phys, derived["genatr_latent_prior"]; kws("arch", "genatr")...)
     derived["cvae"] = lib.derived_cvae(phys, models["enc1"], models["enc2"], models["dec"]; kws("arch")...)
-    derived["mean_cvae"] = deepcopy(derived["cvae"])
+    # derived["mean_cvae"] = deepcopy(derived["cvae"])
     derived["vae_reg_loss"] = lib.VAEReg(models["vae_dec"]; regtype = settings["arch"]["vae_dec"]["regtype"])
 
     # Pseudo labels for Y data
@@ -200,12 +202,17 @@ lib.@save_expression lib.logdir("build_models.jl") function build_models(
     # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-15v0mdjw/files", lib.projectdir("wandb"))), modelprefix = "best-")
     # derived["pretrained_cvae"] = lib.load_pretrained_cvae(phys; modelfolder = only(Glob.glob("run-*-1p14e3na/files", lib.projectdir("wandb"))), modelprefix = "best-")
 
-    # lib.pseudo_labels!(phys, models["genatr"], derived["pretrained_cvae"]; force_recompute = false, initial_guess_only = false, sigma_reg = 0.5, noisebounds = settings["arch"]["genatr"]["noisebounds"])
-    # lib.verify_pseudo_labels(phys, models["genatr"])
+    # estimate pseudo labels using maximum likelihood estimation from pretrained cvae
+    lib.pseudo_labels!(phys, models["genatr"], derived["pretrained_cvae"]; force_recompute = false, initial_guess_only = false, sigma_reg = 0.5, noisebounds = settings["arch"]["genatr"]["noisebounds"])
+    lib.verify_pseudo_labels(phys, models["genatr"])
 
     # initialize pseudo labels as junk using initial guess of untrained cvae
-    lib.pseudo_labels!(phys, models["genatr"], derived["cvae"]; force_recompute = true, initial_guess_only = true, sigma_reg = 0.5, noisebounds = settings["arch"]["genatr"]["noisebounds"])
+    lib.pseudo_labels!(phys, models["genatr"], derived["cvae"]; force_recompute = false, initial_guess_only = true, sigma_reg = 0.5, noisebounds = settings["arch"]["genatr"]["noisebounds"])
     lib.verify_pseudo_labels(phys, models["genatr"])
+
+    # load mcmc labels, if they exist
+    lib.load_mcmc_labels!(phys, force_reload = false)
+    lib.verify_mcmc_labels_directly(phys)
 
     return models, derived
 end
@@ -461,7 +468,7 @@ end
 function train_step(engine, batch)
     trainer.should_terminate && return Dict{Any,Any}() #TODO
 
-    @unpack Y, Ymeta, θPseudo, ZPseudo = sample_batch(:train; batchsize = settings["train"]["batchsize"])
+    @unpack img_idx, img, Y, Ymeta, θPseudo, ZPseudo = sample_batch(:train; batchsize = settings["train"]["batchsize"])
     outputs = Dict{Any,Any}()
 
     @timeit "train batch" begin #TODO CUDA.@sync
@@ -493,13 +500,19 @@ function train_step(engine, batch)
             for _ in 1:settings["train"]["CVAEsteps"]
                 @timeit "forward" ℓ, back = Zygote.pullback(() -> sum(CVAElosses(Ymeta, θPseudo, ZPseudo; marginalize_Z = false)), ps) #TODO CUDA.@sync #TODO marginalize_Z
                 @timeit "reverse" gs = back(one(ℓ)) #TODO CUDA.@sync
-                #=
                 if _DEBUG_
                     lib.on_bad_params_or_gradients(models, ps, gs) do
-                        lib.save_progress(@dict(models, logger); savefolder = lib.logdir(), prefix = "failure-", ext = ".jld2")
+                        batchdata = Dict(
+                            "img_idx" => img_idx,
+                            "Y" => lib.cpu(Y),
+                            "θ" => lib.cpu(θPseudo),
+                            "Z" => lib.cpu(ZPseudo),
+                        )
+                        lib.save_progress(@dict(models, logger, batchdata); savefolder = lib.logdir(), prefix = "failure-", ext = ".jld2")
                         engine.terminate()
                     end
                 end
+                #=
                 mod(trainer.state.iteration, 10 * 100) == 0 && let
                     log∇ϵ = -6
                     ∇ϵ = 10f0 ^ log∇ϵ
@@ -509,7 +522,7 @@ function train_step(engine, batch)
                             ps_name = Flux.params(models[name])
                             gs_gpu = [gs[p] for p in ps_name if gs[p] !== nothing]
                             isempty(gs_gpu) && return plot(; title = L"%$name: $\log_{10}(10^{%$log∇ϵ} + |g|)$", titlefontsize = 14)
-                            gs_cpu = mapreduce(vec, vcat, gs_gpu) |> Flux.cpu
+                            gs_cpu = mapreduce(vec, vcat, gs_gpu) |> lib.cpu
                             log_gs_cpu = log10.(∇ϵ .+ abs.(gs_cpu))
                             histogram(log_gs_cpu; title = L"%$name: $\log_{10}(10^{%$log∇ϵ} + |g|)$", titlefontsize = 14, xlim = (log∇ϵ - 0.5, 3.0))
                         end...
@@ -653,6 +666,9 @@ function compute_metrics(engine, batch; dataset)
         Y_fit_state = cvae_posterior(Ymeta) #TODO marginalize_Z
         X̂meta = lib.MetaCPMGSignal(phys, img, Y_fit_state.X̂) # Perform inference on X̂, the noisy best fit to Y
         X̂_fit_state = cvae_posterior(X̂meta) #TODO marginalize_Z
+
+        # TODO: sampling likelihood
+        accum!((; Ysample_logL = mean(filter(!isinf, img.meta[:pseudolabels][dataset][:negloglikelihood]))))
 
         let
             ℓ_CVAE = CVAElosses(Ymeta, θPseudo, ZPseudo; marginalize_Z = false) #TODO marginalize_Z
@@ -889,6 +905,155 @@ end
 ####
 #### Run trainer
 ####
+
+#=
+function posterior_predictive_pvalue(Ymeta, nsamples = 10)
+    batchsize = size(lib.signal(Ymeta), 2)
+    y = Ymeta[:,1:batchsize÷2]
+    yholdout = Ymeta[:,batchsize÷2+1:batchsize]
+
+    # Draw `nsamples` posterior states
+    # y_state = cvae_posterior(y)
+    cvae_state_reducer = (a,b) -> map(hcat, a, b) # states `a` and `b` are NamedTuple's of arrays
+    y_state = mapreduce(_ -> cvae_posterior(y), cvae_state_reducer, 1:nsamples)
+
+    # Generate `yrep` samples from predictive distribution, where noise level is given from MLE
+    _, y_mle = lib.mle_biexp_epg_noise_only(y_state.ν, repeat(lib.signal(y), 1, nsamples); batch_size = :, verbose = true)
+    y_scale, y_epsilon = map(x -> (x |> to32 |> permutedims) .|> exp, (y_mle.logscale, y_mle.logepsilon))
+    yrep = lib.MetaCPMGSignal(y, lib.add_noise_instance(models["genatr"], y_scale .* y_state.ν, y_scale .* y_epsilon))
+
+    flatsignal(x) = reshape(lib.signal(x), :, size(lib.signal(y), 2), nsamples) # nsignal x batchsize x nsamples
+    yrep′ = flatsignal(yrep)
+    ys, yholdouts = augment_and_transform(lib.signal(y), lib.signal(yholdout))
+    map(1:nsamples) do slice
+        yreps′, = augment_and_transform(lib.clamp_dim1(lib.signal(y), yrep′[:,:,slice]))
+        ℓ = map(models["kernel"], yreps′, ys, yholdouts) do kern, X, Y, Ȳ
+            return size(Y,2) .* (lib.mmd(kern, X, Ȳ), lib.mmd(kern, Y, Ȳ))
+        end
+    end
+
+    #=
+    # Compute test statistic with MLE using `yrep`
+    _, yrep_mle = lib.mle_biexp_epg_noise_only(y_state.ν, lib.signal(yrep); batch_size = :, verbose = true)
+    # results -> :logepsilon, :logscale, :loss, :retcode, :numevals, :solvetime
+    _flat(x) = permutedims(reshape(x, size(lib.signal(Ymeta), 2), nsamples)) # nsamples x batchsize
+    return (
+        Ty = _flat(y_mle.loss),
+        Tyrep = _flat(yrep_mle.loss),
+        p = _flat(yrep_mle.loss .> y_mle.loss),
+    )
+
+    =#
+end
+
+error("here")
+=#
+
+#=
+error("here")
+tmp = nothing
+tmp_count = 0
+while true
+    global tmp_count += 1
+    global tmp = (;)
+
+    @unpack Ymeta, img, XPseudo, θPseudo, ZPseudo = sample_batch(:train; batchsize = 1024)
+    global tmp = (; tmp..., Ymeta, img, XPseudo, θPseudo, ZPseudo)
+
+    ps = Flux.params(models["enc1"], models["enc2"], models["dec"], models["vae_dec"])
+    global tmp = (; tmp..., ps)
+
+    cvae_loss, back = Zygote.pullback(ps) do
+        ℓ = CVAElosses(Ymeta, θPseudo, ZPseudo; marginalize_Z = false)
+        Zygote.ignore() do
+            global tmp = (; tmp..., ℓ...)
+        end
+        return sum(ℓ)
+    end
+    gs = back(one(cvae_loss)) #TODO CUDA.@sync
+    global tmp = (; tmp..., ps, gs)
+
+    found = false
+    lib.on_bad_params_or_gradients(models, ps, gs) do
+        found = true
+    end
+
+    found && break
+
+    #=
+    if found
+        Y_fit_state = cvae_posterior(Ymeta)
+        Y_metrics, Y_cache_cb_args = fit_metrics(Ymeta, Y_fit_state, θPseudo, ZPseudo)
+
+        X̂Pseudo = lib.sampleX̂(models["genatr"], XPseudo, ZPseudo)
+        X̂meta = lib.MetaCPMGSignal(phys, img, X̂Pseudo)
+        X̂_fit_state = cvae_posterior(X̂meta)
+        X̂_metrics, X̂_cache_cb_args = fit_metrics(X̂meta, X̂_fit_state, θPseudo, ZPseudo)
+
+        # Ymasked, Ymask = lib.pad_and_mask_signal(lib.signal(Ymeta), lib.nsignal(derived["cvae"]); minkept = 32, maxkept = lib.nsignal(Ymeta))
+        # Ystate = lib.CVAEInferenceState(derived["cvae"], Ymasked)
+        # global tmp = @ntuple(cvae_loss, ps, gs, Ymeta, Ymasked, Ymask, Ystate)
+
+        # vae_acts = lib.stack_activations(derived["vae_reg_loss"], lib.signal(Ystate), Ymask, lib.sample_mv_normal(Ystate.μq0, exp.(Ystate.logσq)))
+        # (μr0, σr), zr, (muY, sigY), vae_loss = vae_acts
+        # global tmp = @ntuple(Ymeta, ps, cvae_loss, gs, Ymasked, Ymask, μr0, σr, zr, muY, sigY)
+        # break
+    end
+    =#
+end
+
+for img in phys.images
+    plot(
+        map(1:6) do i
+            @unpack signalfit, theta, latent = img.meta[:pseudolabels][:mask]
+            X, θi, Z = signalfit, theta[i:i,:], latent
+            if i <= 5
+                stephist(vec(i <= 2 ? cosd.(θi) : θi); label = lib.θlabels(phys)[i])
+            else
+                s = models["genatr"].noisescale(X) # scale
+                ϵ = exp.(Z) .* s # ϵ = exp(Z) .* s, or equivalently Z = log.(ϵ ./ s)
+                h = plot()
+                stephist!(h, vec(Z); label = L"Z")
+                stephist!(h, vec(log.(ϵ)); label = L"\log ϵ")
+                Plots.xlims!(h, -8, 0)
+            end
+        end...
+    ) |> display
+end
+
+# find zero sigma's
+let
+    kwargs = Dict(:legendfontsize => 16, :tickfontsize => 12)
+    min_σ = minimum(tmp.sigY; dims = 1) |> vec |> lib.cpu
+    σ = tmp.sigY |> vec |> lib.cpu
+    # histogram(log10.(1e-12 .+ min_σ); label = L"\log_{10}(10^{-12} + σ)", kwargs...) |> display
+    histogram(log10.(1e-12 .+ σ); label = L"\log_{10}(10^{-12} + σ)", kwargs...) |> display
+    J = findall(isapprox.(min_σ, 0; atol = 1e-6))
+    @show J
+    global tmp = setindex!!(tmp, J, :J)
+    Ynan = lib.cpu(tmp.Ymasked[:, tmp.J])
+    display(Ynan)
+    # display.([yj[findall(yj .> 0)]' for yj in Ynan])
+    # plot([plot(yj[findall(yj .> 0)]; label = "signal $j") for (j,yj) in zip(tmp.J, eachcol(Ynan))]...)
+end
+
+# gradient histogram
+# histogram(log10.(1e-3 .+ abs.(filter(x -> !isnan(x) && !iszero(x), mapreduce(vec, vcat, [tmp.gs[p] for p in tmp.ps])))) |> lib.cpu; label = "log10(1e-3 + abs(gradient))")
+
+let
+    image_infos = [
+        (TE = 8e-3, refcon = 180.0, path = DrWatson.datadir("images", "2019-10-28_48echo_8msTE_CPMG", "data-in", "ORIENTATION_B0_08_WIP_MWF_CPMG_CS_AXIAL_5_1.masked-image.nii.gz")),
+        (TE = 7e-3, refcon = 180.0, path = DrWatson.datadir("images", "2019-09-22_56echo_7msTE_CPMG", "data-in", "MW_TRAINING_001_WIP_CPMG56_CS_half_2_1.masked-image.mat")),
+    ]
+    for info in image_infos
+        data = convert(Array{Float32}, DECAES.load_image(info.path, Val(4)))
+        dx = data |> vec |> sort |> unique! |> sort! |> diff |> minimum
+        @show dx
+        @show mean(data), median(data), extrema(data)
+        @show all(lib.is_approx_multiple_of.(data, dx))
+    end
+end
+=#
 
 TimerOutputs.reset_timer!()
 trainer.run(train_loader, settings["train"]["epochs"])

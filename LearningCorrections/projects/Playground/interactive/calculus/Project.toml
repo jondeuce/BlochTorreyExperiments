@@ -1,0 +1,4 @@
+[deps]
+OnlineStats = "a15396b6-48d5-5d58-9928-6d29437db91e"
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+TaylorSeries = "6aa5eb33-94cf-58f4-a9d0-e4b2c4fc25ea"
